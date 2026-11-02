@@ -39,6 +39,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use sc_geom::JobError;
@@ -470,81 +471,203 @@ struct Computed {
     reused: bool,
 }
 
+/// What a hand edit made off the UI thread tells and the UI reads: how
+/// many of its points the engine has tried, and whether to stop (#390).
+#[derive(Debug, Default)]
+pub(crate) struct EditWatch {
+    /// The points the edit places, all sets together.
+    total: AtomicUsize,
+    tried: AtomicUsize,
+    cancel: AtomicBool,
+}
+
+impl EditWatch {
+    /// How many points the engine has tried, of how many the edit places.
+    pub(crate) fn progress(&self) -> (usize, usize) {
+        (
+            self.tried.load(Ordering::Relaxed),
+            self.total.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Asks the engine to stop at its next point: what it made is dropped.
+    fn stop(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    fn stopped(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+}
+
+/// How one set's share of a hand edit came out, with the points it refused
+/// and whether it took a preview's edit.
+type JobDone = (JobOutcome, Vec<(usize, EditError)>, bool);
+
 /// The engine's part of a hand edit, the slow one (placing, then drawing
-/// the whole set again): it runs on any thread.
-fn compute_edit(jobs: Vec<EditJob>, tool: HandTool, how: &AddOptions) -> Computed {
-    let mut refused = Vec::new();
-    let mut reused = false;
-    let outcomes = jobs
+/// the whole set again): it runs on any thread. The sets are independent
+/// (each its own session), so each is made on a thread of its own, as many
+/// at once as the computer has cores; the outcomes and refusals come back
+/// in the jobs' order, the same as made one after the other (#390).
+fn compute_edit(
+    jobs: Vec<EditJob>,
+    tool: HandTool,
+    how: &AddOptions,
+    watch: &EditWatch,
+) -> Computed {
+    let points = |job: &EditJob| match &job.op {
+        EditOp::Points(points) => points.len(),
+        EditOp::RemoveTips(_) | EditOp::MoveTip(..) => 0,
+    };
+    watch
+        .total
+        .store(jobs.iter().map(points).sum(), Ordering::Relaxed);
+    let done: Vec<JobDone> = if jobs.len() < 2 {
+        jobs.into_iter()
+            .map(|job| compute_job(job, tool, how, watch))
+            .collect()
+    } else {
+        compute_jobs_at_once(jobs, tool, how, watch)
+    };
+    let mut computed = Computed {
+        outcomes: Vec::with_capacity(done.len()),
+        refused: Vec::new(),
+        reused: false,
+    };
+    for (outcome, refused, reused) in done {
+        computed.outcomes.push(outcome);
+        computed.refused.extend(refused);
+        computed.reused |= reused;
+    }
+    computed
+}
+
+/// [`compute_edit`]'s sets on worker threads, each job in its slot: a
+/// worker takes the next job, and a job no worker took (no thread would
+/// start) is made here.
+fn compute_jobs_at_once(
+    jobs: Vec<EditJob>,
+    tool: HandTool,
+    how: &AddOptions,
+    watch: &EditWatch,
+) -> Vec<JobDone> {
+    use std::sync::Mutex;
+    let count = jobs.len();
+    let slots: Vec<Mutex<Option<EditJob>>> =
+        jobs.into_iter().map(|job| Mutex::new(Some(job))).collect();
+    let results: Vec<Mutex<Option<JobDone>>> = (0..count).map(|_| Mutex::new(None)).collect();
+    let next = AtomicUsize::new(0);
+    let take = |k: usize| slots[k].lock().ok().and_then(|mut slot| slot.take());
+    let work = || {
+        loop {
+            let k = next.fetch_add(1, Ordering::Relaxed);
+            if k >= count {
+                break;
+            }
+            if let Some(job) = take(k) {
+                let done = compute_job(job, tool, how, watch);
+                if let Ok(mut result) = results[k].lock() {
+                    *result = Some(done);
+                }
+            }
+        }
+    };
+    let workers = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(count);
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            // DragonFruit's router recurses: the same room as the hover
+            // worker. A thread that does not start leaves its jobs to the
+            // others, or to this one below.
+            let _ = std::thread::Builder::new()
+                .name("support-edit-set".into())
+                .stack_size(16 << 20)
+                .spawn_scoped(scope, work);
+        }
+    });
+    results
         .into_iter()
-        .map(|EditJob { start, op }| {
-            let (mut edited, from_preview) = match start {
-                EditStart::Base(base) => (DfSupportSession::clone(&base), false),
-                EditStart::Previewed(edited) => (*edited, true),
-            };
-            reused |= from_preview;
-            // The port is DragonFruit's code on hand-picked input: a panic in
-            // it is an edit that failed, not a reason to lose the person's
-            // work.
-            let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut took = from_preview;
-                let mut one = |edit: Result<(), EditError>| match edit {
-                    Ok(()) => true,
-                    Err(err) => {
-                        crate::breadcrumbs::note(&format!("supports: gesture refused: {err}"));
-                        refused.push((0, err));
-                        false
-                    }
-                };
-                match (&op, from_preview) {
-                    (_, true) | (EditOp::Points(_), false) => {}
-                    (EditOp::RemoveTips(ids), false) => {
-                        took = one(edited.remove_tips(ids).map(|_| ()));
-                    }
-                    (EditOp::MoveTip(tip, to), false) => {
-                        took = one(edited.move_tip(tip, to.map(f64::from), how));
-                    }
-                }
-                if let (EditOp::Points(points), false) = (&op, from_preview) {
-                    for (i, point) in points {
-                        let p = point.map(f64::from);
-                        let edit = match tool {
-                            HandTool::Add => edited.add_at(p, how),
-                            HandTool::AddNear => {
-                                edited.add_trunk_near(p, REVIEW_NUDGE_MM).map(|_| ())
-                            }
-                            HandTool::Remove => edited.remove_near(p).map(|_| ()),
-                        };
-                        match edit {
-                            Ok(()) => took = true,
-                            Err(err) => {
-                                crate::breadcrumbs::note(&format!(
-                                    "supports: point {i} refused: {err}"
-                                ));
-                                refused.push((*i, err));
-                            }
-                        }
-                    }
-                }
-                if !took {
+        .enumerate()
+        .map(|(k, result)| {
+            let done = result.into_inner().ok().flatten();
+            done.unwrap_or_else(|| match take(k) {
+                Some(job) => compute_job(job, tool, how, watch),
+                // Taken by a worker that did not finish it.
+                None => (JobOutcome::Panicked, Vec::new(), false),
+            })
+        })
+        .collect()
+}
+
+/// One set's share of [`compute_edit`]. Stopped through `watch`, it ends
+/// at its next point, and the caller drops what it made.
+fn compute_job(
+    EditJob { start, op }: EditJob,
+    tool: HandTool,
+    how: &AddOptions,
+    watch: &EditWatch,
+) -> JobDone {
+    let mut refused = Vec::new();
+    let (mut edited, from_preview) = match start {
+        EditStart::Base(base) => (DfSupportSession::clone(&base), false),
+        EditStart::Previewed(edited) => (*edited, true),
+    };
+    // The port is DragonFruit's code on hand-picked input: a panic in it is
+    // an edit that failed, not a reason to lose the person's work.
+    let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut took = from_preview;
+        let mut one = |edit: Result<(), EditError>| match edit {
+            Ok(()) => true,
+            Err(err) => {
+                crate::breadcrumbs::note(&format!("supports: gesture refused: {err}"));
+                refused.push((0, err));
+                false
+            }
+        };
+        match (&op, from_preview) {
+            (_, true) | (EditOp::Points(_), false) => {}
+            (EditOp::RemoveTips(ids), false) => {
+                took = one(edited.remove_tips(ids).map(|_| ()));
+            }
+            (EditOp::MoveTip(tip, to), false) => {
+                took = one(edited.move_tip(tip, to.map(f64::from), how));
+            }
+        }
+        if let (EditOp::Points(points), false) = (&op, from_preview) {
+            for (i, point) in points {
+                if watch.stopped() {
                     return Ok(None);
                 }
-                edited.mesh().map(Some)
-            }));
-            match done {
-                Err(_) => JobOutcome::Panicked,
-                Ok(Err(err)) => JobOutcome::Failed(err),
-                Ok(Ok(None)) => JobOutcome::Untouched,
-                Ok(Ok(Some(None))) => JobOutcome::Emptied,
-                Ok(Ok(Some(Some(mesh)))) => JobOutcome::Done(Box::new(edited), Arc::new(mesh)),
+                let p = point.map(f64::from);
+                let edit = match tool {
+                    HandTool::Add => edited.add_at(p, how),
+                    HandTool::AddNear => edited.add_trunk_near(p, REVIEW_NUDGE_MM).map(|_| ()),
+                    HandTool::Remove => edited.remove_near(p).map(|_| ()),
+                };
+                watch.tried.fetch_add(1, Ordering::Relaxed);
+                match edit {
+                    Ok(()) => took = true,
+                    Err(err) => {
+                        crate::breadcrumbs::note(&format!("supports: point {i} refused: {err}"));
+                        refused.push((*i, err));
+                    }
+                }
             }
-        })
-        .collect();
-    Computed {
-        outcomes,
-        refused,
-        reused,
-    }
+        }
+        if !took || watch.stopped() {
+            return Ok(None);
+        }
+        edited.mesh().map(Some)
+    }));
+    let outcome = match done {
+        Err(_) => JobOutcome::Panicked,
+        Ok(Err(err)) => JobOutcome::Failed(err),
+        Ok(Ok(None)) => JobOutcome::Untouched,
+        Ok(Ok(Some(None))) => JobOutcome::Emptied,
+        Ok(Ok(Some(Some(mesh)))) => JobOutcome::Done(Box::new(edited), Arc::new(mesh)),
+    };
+    (outcome, refused, from_preview)
 }
 
 /// A hand click being made off the UI thread (#3).
@@ -557,6 +680,35 @@ struct PendingClick {
     /// Points no set took, already told.
     refused: Refusals,
     done: std::sync::mpsc::Receiver<Computed>,
+    /// How far the engine is, and its stop.
+    watch: Arc<EditWatch>,
+    /// For an edit another panel asked for (Fix All, #390): where it lands.
+    landing: Option<Landing>,
+}
+
+/// Where an edit made off the UI thread for another panel lands (#390).
+type Landing = Box<dyn FnOnce(PointsEdit)>;
+
+/// How an edit made off the UI thread for another panel ended.
+#[derive(Debug)]
+pub(crate) enum PointsEdit {
+    /// It went as [`DfSupportRun::add_supports_at`] tells: in the scene as
+    /// one undoable step, or nothing changed.
+    Done(HandEdit, Refusals),
+    /// It was dropped before it reached the scene, which it left as it was.
+    Dropped(EditDropped),
+}
+
+/// Why an edit made off the UI thread was dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EditDropped {
+    /// Cancel was pressed.
+    Cancelled,
+    /// Undo was pressed before it was made.
+    Undone,
+    /// The scene changed while it was made: another edit, a run, a new
+    /// scene.
+    SceneChanged,
 }
 
 /// An edit that came while another was being made: made once that one is
@@ -1230,10 +1382,13 @@ impl DfSupportRun {
             return;
         }
         // A run replaces the supports a hand click being made would edit.
-        self.drop_click(ctr!(
-            "DfSupportDialog",
-            "Supports are being generated; the click was dropped."
-        ));
+        self.drop_click(
+            ctr!(
+                "DfSupportDialog",
+                "Supports are being generated; the click was dropped."
+            ),
+            EditDropped::SceneChanged,
+        );
         self.raft_layer_height_mm
             .set(self.request_for_printer().layer_height_mm);
         self.raft_armed.set(true);
@@ -1879,6 +2034,43 @@ impl DfSupportRun {
         self.regenerating.borrow().is_some() || self.document.supports_wanted().is_some()
     }
 
+    /// Generates supports for every model of the scene with `options`, then
+    /// and there, as a finished run puts them in: what other modules' tests
+    /// start from.
+    #[cfg(test)]
+    pub(crate) fn generate_now(&self, options: DfSupportOptions) {
+        let graph = self
+            .document
+            .with_scene(|spatial| spatial.graph().clone())
+            .expect("a scene");
+        let request = DfSupportRequest {
+            options,
+            ..DfSupportRequest::default()
+        };
+        let outcome = start_df_supports(&graph, request)
+            .expect("the run starts")
+            .join();
+        *self.started_on.borrow_mut() = Some(self.document.scene_revision());
+        self.finish(outcome);
+    }
+
+    /// Waits for the hand edit being made off the UI thread, and settles it
+    /// as the UI's poll does. Returns the longest the UI thread was held by
+    /// one poll: what landing the edit costs it.
+    #[cfg(test)]
+    pub(crate) fn settle_edit(self: &Rc<Self>) -> Duration {
+        let waited = Instant::now();
+        let mut longest = Duration::ZERO;
+        while self.editing() && waited.elapsed() < Duration::from_secs(120) {
+            std::thread::sleep(Duration::from_millis(5));
+            let poll = Instant::now();
+            self.poll_click();
+            longest = longest.max(poll.elapsed());
+        }
+        assert!(!self.editing(), "the edit settled");
+        longest
+    }
+
     /// The top of the raft the supports in the scene stand on, for the
     /// review (#131): the options of the run that made them, or the options
     /// in force for supports this window did not make. `None` without
@@ -2344,7 +2536,7 @@ impl DfSupportRun {
             self.queued_clicks.borrow_mut().clear();
             return;
         };
-        self.launch_edit(ui, sets, refused, jobs, tool, how);
+        let _ = self.launch_edit(ui, sets, refused, jobs, tool, how, None);
     }
 
     /// The edit of a drag (#3) on `drawn`'s set, made off the UI thread as
@@ -2383,19 +2575,25 @@ impl DfSupportRun {
             None => EditStart::Base(drawn.session.clone()),
         };
         let jobs = vec![EditJob { start, op }];
-        self.launch_edit(
+        let _ = self.launch_edit(
             ui,
             vec![drawn],
             Vec::new(),
             jobs,
             HandTool::Remove,
             AddOptions::default(),
+            None,
         );
     }
 
     /// Makes `jobs` on a worker thread; [`Self::poll_click`] puts the edit
     /// in the scene once it is made, if the scene is still the one it was
     /// made on. Undo before then drops it ([`Self::drop_click`]).
+    /// `landing`, for an edit another panel asked for, hears how it ended;
+    /// the returned watch tells how far the engine is. With no thread to
+    /// make it, nothing is made, `landing` is dropped unheard and the points
+    /// refused so far come back.
+    #[allow(clippy::too_many_arguments)]
     fn launch_edit(
         self: &Rc<Self>,
         ui: &MainWindow,
@@ -2404,10 +2602,15 @@ impl DfSupportRun {
         jobs: Vec<EditJob>,
         tool: HandTool,
         how: AddOptions,
-    ) {
+        landing: Option<Landing>,
+    ) -> Result<Arc<EditWatch>, Refusals> {
         let (send, done) = std::sync::mpsc::channel();
-        let job = move || {
-            let _ = send.send(compute_edit(jobs, tool, &how));
+        let watch = Arc::new(EditWatch::default());
+        let job = {
+            let watch = watch.clone();
+            move || {
+                let _ = send.send(compute_edit(jobs, tool, &how, &watch));
+            }
         };
         // DragonFruit's router recurses: the same room as the hover worker.
         let spawned = std::thread::Builder::new()
@@ -2415,29 +2618,39 @@ impl DfSupportRun {
             .stack_size(16 << 20)
             .spawn(job);
         if spawned.is_err() {
-            ui.set_supports_last_run(ctr!(
+            let why = ctr!(
                 "DfSupportDialog",
                 "That edit failed inside the support engine; nothing was changed."
-            ));
-            return;
+            );
+            ui.set_supports_last_run(why);
+            return Err(refused);
         }
+        let shows_preview = landing.is_none();
         *self.pending_click.borrow_mut() = Some(PendingClick {
             revision: self.document.scene_revision(),
             sets,
             refused,
             done,
+            watch: watch.clone(),
+            landing,
         });
         let weak = Rc::downgrade(self);
         self.document.set_pending_edit(Some(Rc::new(move || {
             if let Some(run) = weak.upgrade() {
-                run.drop_click(ctr!(
-                    "DfSupportDialog",
-                    "Undone before it was placed; nothing was changed."
-                ));
+                run.drop_click(
+                    ctr!(
+                        "DfSupportDialog",
+                        "Undone before it was placed; nothing was changed."
+                    ),
+                    EditDropped::Undone,
+                );
             }
         })));
-        // The preview stays on screen until the edit replaces it.
-        self.show_hover_overlay();
+        // The preview stays on screen until the edit replaces it. Fix All's
+        // points were never previewed.
+        if shows_preview {
+            self.show_hover_overlay();
+        }
         let weak = Rc::downgrade(self);
         self.click_poll
             .start(slint::TimerMode::Repeated, HOVER_POLL, move || {
@@ -2445,6 +2658,7 @@ impl DfSupportRun {
                     run.poll_click();
                 }
             });
+        Ok(watch)
     }
 
     /// Puts a click's edit in the scene once it is made, as one undoable
@@ -2473,10 +2687,14 @@ impl DfSupportRun {
         };
         let Some(computed) = made else {
             self.queued_clicks.borrow_mut().clear();
-            ui.set_supports_last_run(ctr!(
+            let why = ctr!(
                 "DfSupportDialog",
                 "That edit failed inside the support engine; nothing was changed."
-            ));
+            );
+            ui.set_supports_last_run(why.clone());
+            if let Some(landing) = pending.landing {
+                landing(PointsEdit::Done(HandEdit::Failed(why), pending.refused));
+            }
             return;
         };
         if self.document.scene_revision() != pending.revision || self.handle.borrow().is_some() {
@@ -2490,13 +2708,21 @@ impl DfSupportRun {
                 "DfSupportDialog",
                 "The scene changed before the support was placed; nothing was changed."
             ));
+            if let Some(landing) = pending.landing {
+                landing(PointsEdit::Dropped(EditDropped::SceneChanged));
+            }
             return;
         }
         let mut refused = pending.refused;
-        self.commit_edit(&ui, pending.sets, computed, &mut refused);
+        let outcome = self.commit_edit(&ui, pending.sets, computed, &mut refused);
         // The edit is in: its preview would lie over it.
         self.last_ghost.borrow_mut().clear();
         self.ctrl.set_preview_overlay(None);
+        // The panel that asked for it goes on (Fix All slices again) before
+        // a click that came meanwhile is made.
+        if let Some(landing) = pending.landing {
+            landing(PointsEdit::Done(outcome, refused));
+        }
         let next = self.queued_clicks.borrow_mut().pop_front();
         match next {
             Some(QueuedClick::Click { tool, point, how }) => {
@@ -2517,12 +2743,18 @@ impl DfSupportRun {
     }
 
     /// Drops the click being made and those waiting, saying why: nothing of
-    /// them reaches the scene.
-    fn drop_click(&self, why: slint::SharedString) {
+    /// them reaches the scene. The panel that asked for the edit, if one
+    /// did, hears it was dropped, and `reason`.
+    fn drop_click(&self, why: slint::SharedString, reason: EditDropped) {
         self.click_poll.stop();
         self.queued_clicks.borrow_mut().clear();
-        if self.pending_click.borrow_mut().take().is_none() {
+        let Some(pending) = self.pending_click.borrow_mut().take() else {
             return;
+        };
+        // The engine stops at its next point: what it makes is not read.
+        pending.watch.stop();
+        if let Some(landing) = pending.landing {
+            landing(PointsEdit::Dropped(reason));
         }
         self.document.set_pending_edit(None);
         self.last_ghost.borrow_mut().clear();
@@ -2547,6 +2779,82 @@ impl DfSupportRun {
         self.hand_edits(&ui, HandTool::AddNear, points, &AddOptions::default())
     }
 
+    /// [`Self::add_supports_at`] made off the UI thread, for Fix All
+    /// (#390): placing many points on big models takes seconds. The points
+    /// go to their sets here; `landing` hears how the edit ended once the
+    /// engine is done, or that it was dropped: by
+    /// [`Self::cancel_points_edit`], by Undo, or because the scene changed
+    /// meanwhile, which it then left as it was. Returns the engine's watch,
+    /// or how the edit ended then and there (`landing` is not called), as
+    /// [`Self::add_supports_at`] tells: with no set to edit, while supports
+    /// are being generated, or while another edit is being made.
+    pub(crate) fn start_supports_at(
+        self: &Rc<Self>,
+        points: &[[f32; 3]],
+        landing: impl FnOnce(PointsEdit) + 'static,
+    ) -> Result<Arc<EditWatch>, (HandEdit, Refusals)> {
+        let Some(ui) = self.ui.upgrade() else {
+            return Err((HandEdit::Notified, Vec::new()));
+        };
+        if points.is_empty() {
+            return Err((HandEdit::Notified, Vec::new()));
+        }
+        if self.editing() {
+            return Err((
+                HandEdit::Failed(ctr!(
+                    "DfSupportDialog",
+                    "Supports are being edited; try again when that is done."
+                )),
+                Vec::new(),
+            ));
+        }
+        let tool = HandTool::AddNear;
+        let how = AddOptions::default();
+        let mut refused = Vec::new();
+        let Prepared { sets, jobs } = match self.prepare_edit(&ui, tool, points, &how, &mut refused)
+        {
+            Ok(prepared) => prepared,
+            Err(outcome) => return Err((outcome, refused)),
+        };
+        crate::breadcrumbs::note(&format!(
+            "supports: {} points made off the UI thread, {} sets",
+            points.len(),
+            jobs.len()
+        ));
+        // Spawning fails only when the system is out of threads.
+        self.launch_edit(&ui, sets, refused, jobs, tool, how, Some(Box::new(landing)))
+            .map_err(|refused| {
+                (
+                    HandEdit::Failed(ctr!(
+                        "DfSupportDialog",
+                        "That edit failed inside the support engine; nothing was changed."
+                    )),
+                    refused,
+                )
+            })
+    }
+
+    /// Whether a hand edit is being made off the UI thread.
+    pub(crate) fn editing(&self) -> bool {
+        self.pending_click.borrow().is_some()
+    }
+
+    /// Cancel of an edit [`Self::start_supports_at`] made: the engine stops,
+    /// and nothing of it reaches the scene.
+    pub(crate) fn cancel_points_edit(&self) {
+        let ours = self
+            .pending_click
+            .borrow()
+            .as_ref()
+            .is_some_and(|pending| pending.landing.is_some());
+        if ours {
+            self.drop_click(
+                ctr!("DfSupportDialog", "Cancelled; nothing was changed."),
+                EditDropped::Cancelled,
+            );
+        }
+    }
+
     /// Edits the supports at every point of `points` with `tool`, an Add
     /// made as `how` says, as one undoable edit, then and there. A point the
     /// engine refuses is skipped and returned, by index, with why; the edit
@@ -2564,7 +2872,7 @@ impl DfSupportRun {
         let mut refused = Vec::new();
         let outcome = match self.prepare_edit(ui, tool, points, how, &mut refused) {
             Ok(Prepared { sets, jobs }) => {
-                let computed = compute_edit(jobs, tool, how);
+                let computed = compute_edit(jobs, tool, how, &EditWatch::default());
                 self.commit_edit(ui, sets, computed, &mut refused)
             }
             Err(outcome) => outcome,

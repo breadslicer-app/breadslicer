@@ -623,13 +623,22 @@ mod fix_all {
     /// Slices the document's scene with what the panel marked, as the Slice
     /// driver does, stores the slice and shows its review.
     fn slice(document: &SceneDocument, panel: &ReviewPanel, by_fix_all: bool) {
+        slice_with(document, panel, by_fix_all, &profile());
+    }
+
+    /// [`slice`] with `profile`.
+    fn slice_with(
+        document: &SceneDocument,
+        panel: &ReviewPanel,
+        by_fix_all: bool,
+        profile: &SliceProfile,
+    ) {
         let scene = document
             .with_scene(|spatial| spatial.graph().clone())
             .expect("a scene");
-        let profile = profile();
         panel.slice_started(by_fix_all);
         let patches = panel.fills_for_slice();
-        let leaves = slice_scene(&scene, &profile).expect("the scene slices");
+        let leaves = slice_scene(&scene, profile).expect("the scene slices");
         let filled = fill_stack(patches.fills.iter().map(|f| &**f), profile.layer_schedule());
         let erased = erased_stack(
             &leaves,
@@ -637,7 +646,7 @@ mod fix_all {
             patches.erasures.iter().map(|e| &**e),
             profile.layer_schedule(),
         );
-        let outcome = review_slices(&leaves, filled.as_ref(), erased.as_ref(), &profile, None);
+        let outcome = review_slices(&leaves, filled.as_ref(), erased.as_ref(), profile, None);
         let stack = merge_stacks(
             leaves
                 .iter()
@@ -811,6 +820,8 @@ mod fix_all {
         let contours = plate
             .merge_with(filled.into_iter().chain(erased))
             .expect("one schedule");
+        // What the Slice driver does on the UI thread once a slice is in.
+        let landing = std::time::Instant::now();
         document.set_slice_result(SliceResult {
             contours,
             token: "hueco".to_owned(),
@@ -825,6 +836,7 @@ mod fix_all {
         });
         panel.fills_landed(patches.ids);
         panel.show(outcome);
+        eprintln!("slice landing on the UI thread: {:?}", landing.elapsed());
     }
 
     /// Fix All on Damian's `hueco.bread` (#160 follow-up), the full app path:
@@ -895,5 +907,453 @@ mod fix_all {
             assert!(!remains.is_empty(), "{title} says nothing");
         }
         assert_eq!(fix_all_after, 0, "no support is offered again");
+    }
+
+    /// Waits for Fix All's supports, placed off the UI thread, to land
+    /// (#390), and for the rest of Fix All to follow.
+    fn wait_fix_all(panel: &ReviewPanel) -> Duration {
+        panel.supports.settle_edit()
+    }
+
+    /// The models of a plate of `paths`, each lifted 5 mm and set side by
+    /// side along X, with their supports generated: Damian's case of #390.
+    fn minis_plate(paths: &[PathBuf]) -> Scene {
+        let mut scene = Scene::new();
+        let spacing = 45.0;
+        let first = -spacing * (paths.len() as f64 - 1.0) / 2.0;
+        for (i, path) in paths.iter().enumerate() {
+            let loaded =
+                sc_mesh_formats::load_mesh_from_path(path, None, None).expect("the mini loads");
+            let graph = loaded.graph;
+            let leaf = *graph.roots().first().expect("a root");
+            let mesh = graph.leaf_mesh_arc(leaf).expect("a mesh").clone();
+            let mut lo = [f64::MAX; 3];
+            let mut hi = [f64::MIN; 3];
+            for v in &mesh.vertices {
+                let c = v.coords();
+                for k in 0..3 {
+                    lo[k] = lo[k].min(f64::from(c[k]));
+                    hi[k] = hi[k].max(f64::from(c[k]));
+                }
+            }
+            let at = [
+                first + spacing * i as f64 - (lo[0] + hi[0]) / 2.0,
+                -(lo[1] + hi[1]) / 2.0,
+                5.0 - lo[2],
+            ];
+            let leaf = scene
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+                        IDENTITY, at,
+                    )),
+                    LeafPayload::Mesh(mesh),
+                )
+                .expect("inline-mesh leaf");
+            scene.add_root(leaf).expect("a fresh root");
+        }
+        scene
+    }
+
+    /// A fingerprint of what Fix All left: every leaf's mesh, the fills and
+    /// erasures the next slice applies, and the card's message.
+    fn fix_all_fingerprint(document: &SceneDocument, panel: &ReviewPanel, message: &str) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut lines = vec![format!("message: {message}")];
+        document.with_scene(|spatial| {
+            let graph = spatial.graph();
+            let mut i = 0;
+            while let Some(leaf) = spatial.leaf_id_at_index(i) {
+                i += 1;
+                let Some(mesh) = graph.leaf_mesh_arc(leaf) else {
+                    continue;
+                };
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                for v in &mesh.vertices {
+                    v.coords().map(f32::to_bits).hash(&mut h);
+                }
+                for f in &mesh.faces {
+                    format!("{f:?}").hash(&mut h);
+                }
+                lines.push(format!(
+                    "leaf {}: {} vertices, {} faces, {:016x}",
+                    leaf.get(),
+                    mesh.vertices.len(),
+                    mesh.faces.len(),
+                    h.finish()
+                ));
+            }
+        });
+        let patches = panel.fills_for_slice();
+        let digest = |fills: &[Arc<CavityFill>]| {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for fill in fills {
+                format!("{fill:?}").hash(&mut h);
+            }
+            format!("{} {:016x}", fills.len(), h.finish())
+        };
+        lines.push(format!("marks: {}", patches.ids.len()));
+        lines.push(format!("fills: {}", digest(&patches.fills)));
+        lines.push(format!("erasures: {}", digest(&patches.erasures)));
+        lines.join("\n")
+    }
+
+    /// #390: Fix All on 3 real minis with their supports, timed: the
+    /// project `BREADSLICER_FIX_ALL_BREAD` (its printer, resin and supports),
+    /// or Damian's minis set side by side with supports generated. Writes a
+    /// fingerprint of the result and of the review that follows to
+    /// `BREADSLICER_FIX_ALL_OUT`, to compare two builds on the same scene.
+    #[test]
+    #[ignore = "needs Damian's minis in C:/Users/dnaon/Downloads"]
+    fn three_minis_fix_all_timing() {
+        let bread = std::env::var("BREADSLICER_FIX_ALL_BREAD")
+            .ok()
+            .map(PathBuf::from);
+        let paths: Vec<PathBuf> = [
+            "Mini1-32mm_repaired",
+            "Mini2-32mm_repaired",
+            "Mini3-36mm_repaired",
+        ]
+        .iter()
+        .map(|name| PathBuf::from(format!("C:/Users/dnaon/Downloads/{name}.stl")))
+        .collect();
+        if bread.is_none() && !paths.iter().all(|p| p.is_file()) {
+            eprintln!("skipping: the minis are not here");
+            return;
+        }
+        let report = on_fresh_slint_thread(move || {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let t = std::time::Instant::now();
+            let (printer, resin, supports) = match &bread {
+                Some(path) => {
+                    let loaded =
+                        sc_project_formats::load_scene(path, None, |_| {}).expect("it opens");
+                    let sc_project_formats::LoadedContent::Project(mut project) = loaded.content
+                    else {
+                        panic!("a .bread is a project")
+                    };
+                    let restored = crate::support_persist::restore_supports(
+                        &mut project.scene,
+                        project.supports,
+                    );
+                    assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+                    let printer = project.payload.printer.clone().expect("a printer");
+                    let resin = project.payload.resin.clone().expect("a resin");
+                    document.install_graph(project.scene, path.clone());
+                    crate::support_persist::install_sets(&document, restored.sets);
+                    let supports = DfSupportRun::install(
+                        &window,
+                        bus,
+                        document.clone(),
+                        ctrl.dialogs(),
+                        ctrl.clone(),
+                    );
+                    (printer, resin, supports)
+                }
+                None => {
+                    document.install_graph(minis_plate(&paths), PathBuf::from("minis.bread"));
+                    let supports = DfSupportRun::install(
+                        &window,
+                        bus,
+                        document.clone(),
+                        ctrl.dialogs(),
+                        ctrl.clone(),
+                    );
+                    supports.generate_now(Default::default());
+                    (
+                        PrinterId::new("elegoo-saturn-4-ultra").expect("valid id"),
+                        MaterialId::new("standard-405").expect("valid id"),
+                        supports,
+                    )
+                }
+            };
+            eprintln!("load: {:?} ({printer} / {resin})", t.elapsed());
+            let hollow =
+                HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let panel = ReviewPanel::install(
+                &window,
+                document.clone(),
+                ctrl.clone(),
+                supports.clone(),
+                hollow,
+            );
+            panel.set_reslice(|| {});
+            let t = std::time::Instant::now();
+            slice_project(&document, &panel, &printer, &resin, false);
+            eprintln!("slice + review: {:?}", t.elapsed());
+            let before = held_findings(&panel);
+            let offered = window.get_review_fix_all();
+            let t = std::time::Instant::now();
+            window.invoke_review_fix_all_requested();
+            let blocked = t.elapsed();
+            let landing = wait_fix_all(&panel);
+            let total = t.elapsed();
+            let message = window.get_review_message().to_string();
+            let fingerprint = fix_all_fingerprint(&document, &panel, &message);
+            let t = std::time::Instant::now();
+            let _ = panel.fills_for_slice();
+            let patches_time = t.elapsed();
+            slice_project(&document, &panel, &printer, &resin, true);
+            let after = held_findings(&panel);
+            let undo = document.undo().expect("one undo");
+            let mut lines = vec![
+                format!(
+                    "findings before: {} (Fix All offered {offered})",
+                    before.len()
+                ),
+                format!(
+                    "fix all: UI blocked {blocked:?} at the press, {landing:?} at the landing; total {total:?}; marks for the slice {patches_time:?}"
+                ),
+                fingerprint,
+                format!("findings after: {}", after.len()),
+            ];
+            lines.extend(after.iter().map(|f| format!("  {f:?}")));
+            lines.push(format!("undo: {undo}"));
+            lines.join("\n")
+        });
+        eprintln!("{report}");
+        if let Ok(out) = std::env::var("BREADSLICER_FIX_ALL_OUT") {
+            // The timings differ from run to run; the rest must not.
+            let kept: Vec<&str> = report
+                .lines()
+                .filter(|l| !l.starts_with("fix all: "))
+                .collect();
+            std::fs::write(out, kept.join("\n")).expect("the fingerprint is written");
+        }
+    }
+
+    /// Two models, each of two cubes: a 2 mm cube standing 3 mm over the
+    /// plate and, beside it, a 0.6 mm cube floating at its height. The
+    /// supports are generated with islands under 1 mm² left alone, so the
+    /// big cubes stand on supports and the small ones are the islands the
+    /// review asks a support for (#390): two sets, made at once.
+    fn island_plate() -> Scene {
+        let cube = unit_cube_mesh();
+        let mut vertices: Vec<Vertex> = Vec::new();
+        let mut faces: Vec<IndexedTriangle> = Vec::new();
+        for (size, at) in [(2.0f32, [0.0f32, 0.0, 4.0]), (0.6, [3.0, 0.0, 4.3])] {
+            let base = vertices.len() as u32;
+            vertices.extend(cube.vertices.iter().map(|v| {
+                let c = v.coords();
+                Vertex::new([0, 1, 2].map(|k| c[k] * size + at[k]))
+            }));
+            faces.extend(
+                cube.faces
+                    .iter()
+                    .map(|f| IndexedTriangle::from_raw_indices(f.vertices.map(|v| v.get() + base))),
+            );
+        }
+        let mut scene = Scene::new();
+        for x in [-4.0, 4.0] {
+            let mesh = IndexedMesh {
+                meta: None,
+                vertices: vertices.clone(),
+                faces: faces.clone(),
+            };
+            add(&mut scene, mesh, IDENTITY, [x, 0.0, 0.0]);
+        }
+        scene
+    }
+
+    /// A 40 x 40 mm plate of 0.1 mm pixels, 120 layers of 0.05 mm.
+    fn island_profile() -> SliceProfile {
+        SliceProfile::new(
+            BuildVolume::new(40.0, 40.0, 20.0).expect("a valid volume"),
+            PixelResolution::new(400, 400).expect("a valid resolution"),
+            LayerSchedule::uniform(0.05, 0.05, 120).expect("a valid schedule"),
+            Mirror::default(),
+            AaLevel::Off,
+            PackingMode::None,
+        )
+    }
+
+    /// A window on [`island_plate`] with its supports generated and sliced:
+    /// the document, the panel, and how many slices Fix All asked for.
+    struct IslandWindow {
+        window: MainWindow,
+        document: Rc<SceneDocument>,
+        panel: Rc<ReviewPanel>,
+        resliced: Rc<Cell<usize>>,
+    }
+
+    fn island_window() -> IslandWindow {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        document.install_graph(island_plate(), PathBuf::from("island.bread"));
+        let supports =
+            DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        supports.generate_now(sc_geom::df_supports::DfSupportOptions {
+            min_island_area_mm2: 1.0,
+            ..Default::default()
+        });
+        let hollow = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let panel = ReviewPanel::install(&window, document.clone(), ctrl.clone(), supports, hollow);
+        let resliced = Rc::new(Cell::new(0));
+        panel.set_reslice({
+            let resliced = resliced.clone();
+            move || resliced.set(resliced.get() + 1)
+        });
+        slice_with(&document, &panel, false, &island_profile());
+        IslandWindow {
+            window,
+            document,
+            panel,
+            resliced,
+        }
+    }
+
+    /// What Fix All left in a window: the scene's meshes, the marks for the
+    /// next slice, the card's message, the slices it asked for and the
+    /// undo steps.
+    fn island_state(w: &IslandWindow) -> String {
+        format!(
+            "{}\nresliced: {}\nundo: {}",
+            fix_all_fingerprint(
+                &w.document,
+                &w.panel,
+                w.window.get_review_message().as_ref()
+            ),
+            w.resliced.get(),
+            w.document.can_undo(),
+        )
+    }
+
+    /// Fix All through the card's callback, its supports placed off the UI
+    /// thread (#390), leaves what Fix All made then and there leaves: the
+    /// same supports, marks and message, in one undo step; the card shows
+    /// the run and Slice waits for it.
+    #[test]
+    fn fix_all_in_the_background_matches_fix_all_then_and_there() {
+        let (background, then_and_there, offered, during, undone) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let offered = (
+                w.panel.fix_all_plan().supports.len(),
+                w.panel.fix_all_plan().patches.len(),
+            );
+            let before = fix_all_fingerprint(&w.document, &w.panel, "");
+            w.window.invoke_review_fix_all_requested();
+            let during = (
+                w.window.get_review_fixing(),
+                w.panel.fixing(),
+                w.resliced.get(),
+            );
+            let _ = wait_fix_all(&w.panel);
+            assert!(!w.window.get_review_fixing(), "the card shows the run over");
+            let background = island_state(&w);
+            assert!(w.document.undo().expect("one undo"), "an undo step");
+            let undone = fix_all_fingerprint(&w.document, &w.panel, "")
+                .lines()
+                .filter(|l| l.starts_with("leaf"))
+                .eq(before.lines().filter(|l| l.starts_with("leaf")));
+
+            let w = island_window();
+            w.panel.fix_all_then_and_there();
+            (background, island_state(&w), offered, during, undone)
+        });
+        assert!(offered.0 > 0, "Fix All offers a support: {offered:?}");
+        assert_eq!(during, (true, true, 0), "the run shows, no slice yet");
+        assert_eq!(background, then_and_there);
+        assert!(background.contains("supports added"), "{background}");
+        assert!(background.contains("resliced: 1"), "{background}");
+        assert!(undone, "one undo takes the supports back");
+    }
+
+    /// Cancel while Fix All's supports are placed: the scene, the marks and
+    /// the undo history stay as they were, and no slice starts.
+    #[test]
+    fn a_cancelled_fix_all_leaves_the_scene_untouched() {
+        let (before, after, message, fixing) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let before = island_state(&w);
+            w.window.invoke_review_fix_all_requested();
+            assert!(w.panel.fixing());
+            w.window.invoke_review_fix_all_cancel();
+            let fixing = w.panel.fixing() || w.window.get_review_fixing();
+            // A worker still finishing its point is not read.
+            std::thread::sleep(Duration::from_millis(300));
+            let _ = w.panel.supports.settle_edit();
+            let message = w.window.get_review_message().to_string();
+            (before, island_state(&w), message, fixing)
+        });
+        assert!(!fixing, "Cancel ends the run at once");
+        assert!(message.contains("cancelled"), "{message}");
+        let unchanged = |state: &str| -> Vec<String> {
+            state
+                .lines()
+                .filter(|l| !l.starts_with("message"))
+                .map(str::to_owned)
+                .collect()
+        };
+        assert_eq!(unchanged(&before), unchanged(&after));
+    }
+
+    /// The scene edited while Fix All's supports are placed: the run is
+    /// dropped, and only the edit is in the scene.
+    #[test]
+    fn a_scene_edited_during_fix_all_drops_its_result() {
+        let (edited, after, message) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            w.window.invoke_review_fix_all_requested();
+            assert!(w.panel.fixing());
+            let leaf = w
+                .document
+                .with_scene(|spatial| spatial.leaf_id_at_index(0))
+                .flatten()
+                .expect("the model");
+            let before = w
+                .document
+                .with_scene(|spatial| spatial.graph().world_transform_of(leaf).ok())
+                .flatten()
+                .expect("its pose");
+            let edit = sc_scene_edit::SceneEdit::SetLocalTransform {
+                node_id: leaf,
+                before,
+                after: Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
+            };
+            w.document
+                .apply_edit(edit.clone())
+                .expect("the move applies");
+            w.document.push_edit(edit);
+            let edited = fix_all_fingerprint(&w.document, &w.panel, "");
+            let _ = wait_fix_all(&w.panel);
+            let message = w.window.get_review_message().to_string();
+            (
+                edited,
+                fix_all_fingerprint(&w.document, &w.panel, ""),
+                message,
+            )
+        });
+        assert!(message.contains("scene changed"), "{message}");
+        assert_eq!(edited, after, "nothing of Fix All reached the scene");
+    }
+
+    /// Undo while Fix All's supports are placed drops the run, not the
+    /// edit before it.
+    #[test]
+    fn undo_during_fix_all_drops_it() {
+        let (before, after, message, undid) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let before = island_state(&w);
+            w.window.invoke_review_fix_all_requested();
+            let undid = w.document.undo().expect("the undo");
+            let _ = w.panel.supports.settle_edit();
+            let message = w.window.get_review_message().to_string();
+            (before, island_state(&w), message, undid)
+        });
+        assert!(undid);
+        assert!(message.contains("undone"), "{message}");
+        let unchanged = |state: &str| -> Vec<String> {
+            state
+                .lines()
+                .filter(|l| !l.starts_with("message"))
+                .map(str::to_owned)
+                .collect()
+        };
+        assert_eq!(unchanged(&before), unchanged(&after));
     }
 }

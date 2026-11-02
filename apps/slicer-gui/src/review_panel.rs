@@ -46,6 +46,13 @@
 //!   the models' layers, or cures the feature's pixels grown a pixel on
 //!   every side.
 //!
+//! The supports are placed off the UI thread (#390): on three minis that
+//! takes seconds. The card shows how far it is, with Cancel; Cancel, Undo
+//! or a change to the scene meanwhile drops the run, which leaves the scene
+//! and the marks as they were. Once the supports are in, as one undoable
+//! step, the marks are made and the slice starts, as when Fix All ran then
+//! and there.
+//!
 //! Everything else stays as it is: a hollow without drain holes, suction
 //! cups, the output checks, a model in the raft and the supports' own
 //! findings. On the review that follows, each finding left says why Fix All
@@ -55,6 +62,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
@@ -63,7 +71,9 @@ use sc_review::{CavityFill, CheckKind, Finding, Severity, SuggestedFix};
 use sc_scene::NodeId;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
-use crate::df_support_run::{DfSupportRun, HandEdit, raft_lift_label};
+use crate::df_support_run::{
+    DfSupportRun, EditDropped, EditWatch, HandEdit, PointsEdit, Refusals, raft_lift_label,
+};
 use crate::hollow_run::HollowRun;
 use crate::i18n::ctr;
 use crate::review::ReviewOutcome;
@@ -76,6 +86,9 @@ use crate::{MainWindow, ReviewRow, WorkspaceSection};
 /// How much of the plate a jump to a finding frames, in millimetres around
 /// its focus point.
 const JUMP_RADIUS_MM: f32 = 15.0;
+
+/// How often the card reads how far Fix All's supports are.
+const FIX_ALL_POLL: Duration = Duration::from_millis(100);
 
 /// The card's state, as the UI's `review-state` reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,6 +184,10 @@ pub(crate) struct ReviewPanel {
     notes_open: Cell<bool>,
     /// Whether Fix All asked for the slice in flight.
     fix_all_slicing: Cell<bool>,
+    /// Fix All's supports being placed off the UI thread (#390): how far
+    /// the engine is, and the timer that shows it.
+    fixing: RefCell<Option<Arc<EditWatch>>>,
+    fix_poll: slint::Timer,
     /// Starts a slice without asking to overwrite the held one: Fix All
     /// promises one. Set by the Slice driver.
     reslice: RefCell<Option<Box<dyn Fn()>>>,
@@ -197,6 +214,8 @@ impl ReviewPanel {
             marks: RefCell::new(ReviewMarks::default()),
             notes_open: Cell::new(false),
             fix_all_slicing: Cell::new(false),
+            fixing: RefCell::new(None),
+            fix_poll: slint::Timer::default(),
             reslice: RefCell::new(None),
             scene_events: RefCell::new(None),
         });
@@ -260,7 +279,9 @@ impl ReviewPanel {
         });
         let weak = Rc::downgrade(self);
         ui.on_review_fills_cleared(move || {
-            if let Some(panel) = weak.upgrade() {
+            if let Some(panel) = weak.upgrade()
+                && !panel.fixing()
+            {
                 panel.marks.borrow_mut().clear_fills();
                 panel.push(None);
             }
@@ -269,6 +290,12 @@ impl ReviewPanel {
         ui.on_review_fix_all_requested(move || {
             if let Some(panel) = weak.upgrade() {
                 panel.fix_all();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        ui.on_review_fix_all_cancel(move || {
+            if let Some(panel) = weak.upgrade() {
+                panel.cancel_fix_all();
             }
         });
         let weak = Rc::downgrade(self);
@@ -357,6 +384,9 @@ impl ReviewPanel {
 
     /// Marks the finding's cavity to fill on the next slice, or unmarks it.
     fn toggle_fill(&self, id: i32) {
+        if self.fixing() {
+            return;
+        }
         let Some((finding, fill)) = self.fillable(id) else {
             return;
         };
@@ -376,6 +406,9 @@ impl ReviewPanel {
 
     /// Marks every resin trap that offers a fill.
     fn fill_small(&self) {
+        if self.fixing() {
+            return;
+        }
         let Some(models) = self.markable_models() else {
             return;
         };
@@ -444,12 +477,14 @@ impl ReviewPanel {
 
     /// Fix All (#156): adds the supports in one undoable edit, marks the
     /// small traps to fill, the specks to erase and the thin features to
-    /// thicken, then slices again.
-    fn fix_all(&self) {
-        if self
-            .ui
-            .upgrade()
-            .is_some_and(|ui| ui.get_slicing_in_progress())
+    /// thicken, then slices again. The supports are placed off the UI thread
+    /// (#390); the rest follows once they are in ([`Self::fix_all_landed`]).
+    fn fix_all(self: &Rc<Self>) {
+        if self.fixing()
+            || self
+                .ui
+                .upgrade()
+                .is_some_and(|ui| ui.get_slicing_in_progress())
         {
             return;
         }
@@ -460,11 +495,165 @@ impl ReviewPanel {
         if plan.is_empty() {
             return;
         }
+        let points = plan.support_points();
+        let generation = self.held.borrow().as_ref().map(|held| held.generation);
+        let work = FixAllWork {
+            plan,
+            models,
+            points,
+            generation,
+        };
+        if work.points.is_empty() {
+            self.fix_all_landed(&work, None);
+            return;
+        }
+        // A hand edit of the supports being made would make the scene the
+        // run starts from stale: Fix All waits for it.
+        if self.supports.editing() {
+            self.push(Some(ctr!(
+                "Review",
+                "The supports are being edited; press Fix all again once that is done."
+            )));
+            return;
+        }
+        let work = Rc::new(work);
+        let weak = Rc::downgrade(self);
+        let landing = {
+            let work = work.clone();
+            move |edit| {
+                if let Some(panel) = weak.upgrade() {
+                    panel.supports_landed(&work, edit);
+                }
+            }
+        };
+        match self.supports.start_supports_at(&work.points, landing) {
+            Ok(watch) => {
+                *self.fixing.borrow_mut() = Some(watch);
+                let weak = Rc::downgrade(self);
+                self.fix_poll
+                    .start(slint::TimerMode::Repeated, FIX_ALL_POLL, move || {
+                        if let Some(panel) = weak.upgrade() {
+                            panel.show_fix_progress();
+                        }
+                    });
+                self.push(None);
+            }
+            // Nothing to make off the UI thread (no supports to edit, a run
+            // generating them): the rest goes on as it did then and there.
+            Err(outcome) => self.fix_all_landed(&work, Some(outcome)),
+        }
+    }
+
+    /// Fix All as it ran before #390, every step then and there on the UI
+    /// thread: what the background run must leave the same.
+    #[cfg(test)]
+    pub(crate) fn fix_all_then_and_there(&self) {
+        let Some(models) = self.markable_models() else {
+            return;
+        };
+        let plan = self.fix_all_plan();
+        if plan.is_empty() {
+            return;
+        }
+        let points = plan.support_points();
+        let supports = (!points.is_empty()).then(|| self.supports.add_supports_at(&points));
+        let generation = self.held.borrow().as_ref().map(|held| held.generation);
+        let work = FixAllWork {
+            plan,
+            models,
+            points,
+            generation,
+        };
+        self.fix_all_landed(&work, supports);
+    }
+
+    /// Whether Fix All's supports are being placed.
+    pub(crate) fn fixing(&self) -> bool {
+        self.fixing.borrow().is_some()
+    }
+
+    /// Cancel on the card while Fix All's supports are placed: nothing of
+    /// Fix All reaches the scene or the marks.
+    fn cancel_fix_all(&self) {
+        self.supports.cancel_points_edit();
+        // The supports' run tells how it ended; one gone without a word is
+        // over all the same.
+        if self.fixing() {
+            self.stop_fixing();
+            self.push(Some(dropped_message(EditDropped::Cancelled)));
+        }
+    }
+
+    /// Fix All's supports are no longer being placed.
+    fn stop_fixing(&self) {
+        self.fix_poll.stop();
+        *self.fixing.borrow_mut() = None;
+    }
+
+    /// Shows how far Fix All's supports are.
+    fn show_fix_progress(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let (tried, total) = self
+            .fixing
+            .borrow()
+            .as_ref()
+            .map_or((0, 0), |watch| watch.progress());
+        ui.set_review_fix_progress(if total == 0 {
+            0.0
+        } else {
+            tried as f32 / total as f32
+        });
+        ui.set_review_fix_phase(if total == 0 {
+            SharedString::new()
+        } else {
+            ctr!(
+                "Review",
+                "Placing supports: {} of {}",
+                tried.min(total),
+                total
+            )
+        });
+    }
+
+    /// Fix All's supports are made, or the run was dropped.
+    fn supports_landed(&self, work: &FixAllWork, edit: PointsEdit) {
+        self.stop_fixing();
+        match edit {
+            PointsEdit::Done(outcome, refused) => {
+                // The supports are in; a review that was replaced meanwhile
+                // is no longer the one the marks would name.
+                let same =
+                    self.held.borrow().as_ref().map(|held| held.generation) == work.generation;
+                if same {
+                    self.fix_all_landed(work, Some((outcome, refused)));
+                } else {
+                    self.push(Some(ctr!(
+                        "Review",
+                        "The slice changed while Fix All ran. Slice again to review the result."
+                    )));
+                }
+            }
+            PointsEdit::Dropped(reason) => self.push(Some(dropped_message(reason))),
+        }
+    }
+
+    /// The rest of Fix All once its supports are in, or failed, as
+    /// `supports` tells (`None`: there were none to place): the refusals
+    /// and the supports held are noted, the marks made, and the slice
+    /// started.
+    fn fix_all_landed(&self, work: &FixAllWork, supports: Option<(HandEdit, Refusals)>) {
+        let FixAllWork {
+            plan,
+            models,
+            points,
+            ..
+        } = work;
+        let models = models.clone();
         let mut lines: Vec<String> = Vec::new();
         let mut changed = false;
-        if !plan.supports.is_empty() {
-            let points = plan.support_points();
-            let (outcome, refused) = self.supports.add_supports_at(&points);
+        if let Some((outcome, refused)) = supports {
             // The findings at each point the engine refused keep why, so
             // their rows say it and Fix All does not offer them again.
             let refusal_at = |at: [f32; 3]| {
@@ -573,6 +762,9 @@ impl ReviewPanel {
 
     /// Hides the finding until the scene changes.
     fn leave(&self, id: i32) {
+        if self.fixing() {
+            return;
+        }
         let Some(finding) = self.finding(id) else {
             return;
         };
@@ -796,6 +988,8 @@ impl ReviewPanel {
         ui.set_review_notes_open(self.notes_open.get());
         ui.set_review_fill_small(small as i32);
         ui.set_review_fix_all(fix_all as i32);
+        ui.set_review_fixing(self.fixing());
+        self.show_fix_progress();
         ui.set_review_fills_note(
             fills_note(
                 marks.fill_count(),
@@ -839,6 +1033,10 @@ impl ReviewPanel {
 
     /// Applies the finding's suggested fix, and tells how it went.
     fn apply_fix(&self, id: i32) {
+        // Fix All's run settles first: an edit now would drop it.
+        if self.fixing() {
+            return;
+        }
         let Some(finding) = self.finding(id) else {
             return;
         };
@@ -931,6 +1129,9 @@ impl ReviewPanel {
     /// The second fix of a model inside the raft (#131): turns the raft off
     /// in the support options.
     fn turn_raft_off(&self, id: i32) {
+        if self.fixing() {
+            return;
+        }
         let Some(finding) = self.finding(id) else {
             return;
         };
@@ -1102,6 +1303,34 @@ impl FixAllPlan {
 
     fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+/// What a Fix All run works on, kept while its supports are placed off
+/// the UI thread (#390).
+struct FixAllWork {
+    plan: FixAllPlan,
+    /// The models the marks are made on: as the review saw them.
+    models: Vec<ModelPose>,
+    /// Where the supports go, each point once.
+    points: Vec<[f32; 3]>,
+    /// The slice generation of the review the plan was made from.
+    generation: Option<u64>,
+}
+
+/// What the card says of a Fix All run dropped before its supports were
+/// in: nothing of it was made.
+fn dropped_message(reason: EditDropped) -> SharedString {
+    match reason {
+        EditDropped::Cancelled => ctr!("Review", "Fix All was cancelled; nothing was changed."),
+        EditDropped::Undone => ctr!(
+            "Review",
+            "Fix All was undone before it was done; nothing was changed."
+        ),
+        EditDropped::SceneChanged => ctr!(
+            "Review",
+            "The scene changed while Fix All ran; nothing was changed."
+        ),
     }
 }
 

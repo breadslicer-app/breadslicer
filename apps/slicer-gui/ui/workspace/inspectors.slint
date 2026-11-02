@@ -1820,6 +1820,11 @@ export component SliceInspector inherits VerticalLayout {
     in property <string> review-fills-clear-label;
     // How many findings Fix All (#156) would fix: 0 hides its button.
     in property <int> review-fix-all;
+    // Fix All placing its supports (#390): its progress and Cancel stand
+    // where its button was, and Slice waits.
+    in property <bool> review-fixing;
+    in property <float> review-fix-progress;
+    in property <string> review-fix-phase;
     callback printer-picked(int);
     callback resin-picked(int);
     callback first-layer-height-edited(string);
@@ -1833,6 +1838,7 @@ export component SliceInspector inherits VerticalLayout {
     callback review-notes-toggled();
     callback review-raft-off-requested(int);
     callback review-fix-all-requested();
+    callback review-fix-all-cancel();
 
     // The LineEdit's text binding breaks the first time the user types, so
     // a value pushed from Rust is written into it explicitly.
@@ -1884,7 +1890,7 @@ export component SliceInspector inherits VerticalLayout {
             icon: Icons.slice;
             kind: ButtonKind.primary;
             button-height: 38px;
-            enabled: root.printer-current-index >= 0 && root.resin-current-index >= 0 && !root.slicing;
+            enabled: root.printer-current-index >= 0 && root.resin-current-index >= 0 && !root.slicing && !root.review-fixing;
             clicked => {
                 root.slice-requested();
             }
@@ -2064,11 +2070,36 @@ export component SliceInspector inherits VerticalLayout {
                         root.review-notes-toggled();
                     }
                 }
-                if root.review-state == 1 && root.review-fix-all > 0: ScButton {
+                if root.review-state == 1 && root.review-fix-all > 0 && !root.review-fixing: ScButton {
                     text: @tr("Review" => "Fix all ({})", root.review-fix-all);
                     icon: Icons.check;
                     clicked => {
                         root.review-fix-all-requested();
+                    }
+                }
+                if root.review-fixing: HorizontalLayout {
+                    spacing: 8px;
+
+                    VerticalLayout {
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        alignment: center;
+
+                        Text {
+                            text: root.review-fix-phase == "" ? @tr("Review" => "Fixing all…") : root.review-fix-phase;
+                            font-size: Theme.font-sm;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        ProgressIndicator {
+                            progress: root.review-fix-progress;
+                        }
+                    }
+                    ScButton {
+                        text: @tr("Review" => "Cancel");
+                        clicked => {
+                            root.review-fix-all-cancel();
+                        }
                     }
                 }
                 if root.review-state == 1 && root.review-fill-small > 0: ScButton {
