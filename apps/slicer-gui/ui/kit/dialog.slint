@@ -1,0 +1,229 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// The pieces of the dialogs drawn inside the main window, shared by the start
+// dialog (#381) and the message cards (#385): the head with its icon tile,
+// title and close button, the lines between the parts, and the rows that
+// offer a way to go on.
+
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Icon } from "controls.slint";
+
+// The tile an icon sits on at the head of a dialog.
+export component IconTile inherits Rectangle {
+    in property <string> icon;
+    in property <brush> tint: Theme.accent;
+
+    width: 40px;
+    height: 40px;
+    border-radius: Theme.radius-lg;
+    background: self.tint.transparentize(0.86);
+
+    Icon {
+        commands: root.icon;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        size: 24px;
+        color: root.tint;
+    }
+}
+
+// The × at the top right of a dialog: does what Escape does.
+export component CloseButton inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+
+    width: 30px;
+    height: 30px;
+    border-radius: Theme.radius;
+    background: touch.has-hover ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: self.label;
+    accessible-action-default => {
+        self.clicked();
+    }
+
+    Icon {
+        commands: Icons.close;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        size: 16px;
+        color: touch.has-hover ? Theme.text : Theme.text-muted;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// The head of a dialog: the icon tile, the title with a line under it, and
+// the close button at the top right.
+export component DialogHead inherits HorizontalLayout {
+    in property <string> icon;
+    in property <brush> tint: Theme.accent;
+    in property <string> title;
+    // Small text beside the title, such as the version; empty shows none.
+    in property <string> badge;
+    // The line under the title; empty shows none.
+    in property <string> subtitle;
+    // Whether a subtitle too long for the line goes on to more lines
+    // (a file path) or ends in "…".
+    in property <bool> subtitle-wraps: false;
+    in property <string> close-label;
+    callback close();
+
+    padding-left: 22px;
+    padding-right: 12px;
+    padding-top: 18px;
+    padding-bottom: 16px;
+    spacing: 14px;
+
+    IconTile {
+        y: (parent.height - self.height) / 2;
+        icon: root.icon;
+        tint: root.tint;
+    }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 2px;
+        horizontal-stretch: 1;
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            Text {
+                text: root.title;
+                font-size: 18px;
+                font-weight: 700;
+                color: Theme.text;
+                vertical-alignment: bottom;
+                wrap: word-wrap;
+            }
+            if root.badge != "": Text {
+                text: root.badge;
+                font-family: Theme.mono;
+                font-size: Theme.font-xs;
+                color: Theme.text-faint;
+                vertical-alignment: bottom;
+                accessible-role: none;
+            }
+        }
+        if root.subtitle != "": Text {
+            text: root.subtitle;
+            font-size: Theme.font-sm;
+            color: Theme.text-muted;
+            wrap: root.subtitle-wraps ? TextWrap.word-wrap : TextWrap.no-wrap;
+            overflow: elide;
+        }
+    }
+
+    CloseButton {
+        y: 0;
+        label: root.close-label;
+        clicked => {
+            root.close();
+        }
+    }
+}
+
+// The line between the parts of a dialog.
+export component DialogRule inherits Rectangle {
+    height: 1px;
+    background: Theme.border-soft;
+}
+
+// The small capitals over a group of rows, such as "START".
+export component SectionLabel inherits Text {
+    font-size: Theme.font-xs;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    color: Theme.text-faint;
+    height: 22px;
+    vertical-alignment: center;
+}
+
+// 1 way to go on: an icon tile, a title and a line on what it does. 1 click
+// picks it.
+export component ActionRow inherits Rectangle {
+    in property <string> icon;
+    in property <string> title;
+    in property <string> detail;
+    // The way the dialog leads with: the accent around it.
+    in property <bool> lead;
+    // The icon's colour on a row that does not lead.
+    in property <brush> tint: Theme.accent;
+    callback clicked();
+
+    height: 56px;
+    border-radius: Theme.radius;
+    border-width: self.lead ? 1px : 0px;
+    border-color: Theme.accent.transparentize(0.35);
+    background: self.lead
+        ? (touch.has-hover ? Theme.accent.transparentize(0.78) : Theme.accent.transparentize(0.88))
+        : (touch.has-hover ? Theme.hover : transparent);
+    accessible-role: button;
+    accessible-label: self.title;
+    accessible-description: self.detail;
+    accessible-action-default => {
+        self.clicked();
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 12px;
+
+        Rectangle {
+            width: 34px;
+            height: 34px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius;
+            background: root.lead ? Theme.accent : Theme.well;
+
+            Icon {
+                commands: root.icon;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                size: 18px;
+                color: root.lead ? Theme.on-accent : root.tint;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+
+            Text {
+                text: root.title;
+                font-size: Theme.font;
+                font-weight: 600;
+                color: Theme.text;
+                overflow: elide;
+                accessible-role: none;
+            }
+            if root.detail != "": Text {
+                text: root.detail;
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                overflow: elide;
+                accessible-role: none;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}

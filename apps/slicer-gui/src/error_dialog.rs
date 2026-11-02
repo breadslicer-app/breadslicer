@@ -1201,14 +1201,15 @@ mod message_layer_tests {
         assert_eq!(around, (true, true), "(card right of the button, below it)");
     }
 
-    /// The card with the most buttons holds them in Spanish, whose labels
-    /// run longer.
+    /// The scene change with nothing to keep has the most buttons in its
+    /// foot; it holds them in Spanish, whose labels run longer. (Every kind
+    /// is checked in both languages in `tests_message_cards`.)
     #[test]
     fn the_scene_change_card_holds_its_buttons_in_spanish() {
         let around = card_around_primary_button("es", |manager| {
             manager.show_replace_scene_confirm(
                 "dragon.stl".to_owned(),
-                KeepChangesOffer::SaveAsNew,
+                KeepChangesOffer::NothingToKeep,
                 |_| {},
             );
         });

@@ -146,7 +146,7 @@ msgstr "¿Cerrar la escena actual?"
 #: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Replace the current scene?"
-msgstr "¿Quieres sustituir la escena actual?"
+msgstr "¿Reemplazar la escena actual?"
 
 #: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
@@ -587,6 +587,56 @@ msgstr "Cerrar"
 msgctxt "ReplaceSceneDialog"
 msgid "Close scene"
 msgstr "Cerrar escena"
+
+#: ui/message-layer.slint
+msgctxt "ReplaceSceneDialog"
+msgid "The scene has changes that are not saved"
+msgstr "La escena tiene cambios sin guardar"
+
+#: ui/message-layer.slint
+msgctxt "ReplaceSceneDialog"
+msgid "Save as project…"
+msgstr "Guardar como proyecto…"
+
+#: ui/message-layer.slint
+msgctxt "ReplaceSceneDialog"
+msgid "Save the project"
+msgstr "Guardar el proyecto"
+
+#: ui/message-layer.slint
+msgctxt "ReplaceSceneDialog"
+msgid "Keep everything in a .bread file first"
+msgstr "Guardar todo en un archivo .bread antes"
+
+#: ui/message-layer.slint
+msgctxt "ReplaceSceneDialog"
+msgid "Save the changes to its .bread file first"
+msgstr "Guardar los cambios en su archivo .bread antes"
+
+#: ui/message-layer.slint
+msgctxt "ReplaceSceneDialog"
+msgid "Export a copy…"
+msgstr "Exportar una copia…"
+
+#: ui/message-layer.slint
+msgctxt "ReplaceSceneDialog"
+msgid "Save the models as STL, OBJ or 3MF first"
+msgstr "Guardar los modelos en STL, OBJ o 3MF antes"
+
+#: ui/message-layer.slint
+msgctxt "ReplaceSceneDialog"
+msgid "Discard the changes"
+msgstr "Descartar los cambios"
+
+#: ui/message-layer.slint
+msgctxt "ReplaceSceneDialog"
+msgid "Close without saving; the changes are lost"
+msgstr "Cerrar sin guardar; los cambios se pierden"
+
+#: ui/message-layer.slint
+msgctxt "ReplaceSceneDialog"
+msgid "Open without saving; the changes are lost"
+msgstr "Abrir sin guardar; los cambios se pierden"
 
 #: ui/error-dialog.slint:10
 msgctxt "ErrorDialog"
@@ -2739,6 +2789,11 @@ msgctxt "MessageLayer"
 msgid "Don't show again"
 msgstr "No volver a mostrar"
 
+#: ui/message-layer.slint
+msgctxt "MessageLayer"
+msgid "Close"
+msgstr "Cerrar"
+
 #: ui/preferences/appearance.slint
 msgctxt "AppearancePreferences"
 msgid "Show all messages again"
@@ -3428,6 +3483,11 @@ msgctxt "DiagnosticsDialog"
 msgid "Attach {} to your bug report. Nothing was sent: Breadslicer never sends us anything by itself."
 msgstr "Adjuntá {} a tu reporte de error. No se envió nada: Breadslicer nunca nos envía nada por su cuenta."
 
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "A .zip file to attach to a bug report"
+msgstr "Un archivo .zip para adjuntar a un reporte de error"
+
 #: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Previous Versions…"
@@ -3457,6 +3517,41 @@ msgstr "Descartar"
 msgctxt "RecoveryDialog"
 msgid "Recover"
 msgstr "Recuperar"
+
+#: ui/message-layer.slint
+msgctxt "RecoveryDialog"
+msgid "Scenes left with unsaved changes"
+msgstr "Escenas que quedaron con cambios sin guardar"
+
+#: ui/message-layer.slint
+msgctxt "RecoveryDialog"
+msgid "Recover the scenes"
+msgstr "Recuperar las escenas"
+
+#: ui/message-layer.slint
+msgctxt "RecoveryDialog"
+msgid "Each one opens with its changes, to keep working on it"
+msgstr "Cada una se abre con sus cambios, para seguir trabajando"
+
+#: ui/message-layer.slint
+msgctxt "RecoveryDialog"
+msgid "Discard them"
+msgstr "Descartarlas"
+
+#: ui/message-layer.slint
+msgctxt "RecoveryDialog"
+msgid "Their changes are deleted for good"
+msgstr "Sus cambios se borran para siempre"
+
+#: ui/message-layer.slint
+msgctxt "RecoveryDialog"
+msgid "Breadslicer asks again the next time it opens."
+msgstr "Breadslicer vuelve a preguntar la próxima vez que se abra."
+
+#: ui/message-layer.slint
+msgctxt "RecoveryDialog"
+msgid "Decide later"
+msgstr "Decidir después"
 
 #: src/preferences_window/mod.rs
 #, rust-format

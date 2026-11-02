@@ -89,6 +89,8 @@ mod tests_bread_roundtrip;
 #[cfg(test)]
 mod tests_mesh_loader;
 #[cfg(test)]
+mod tests_message_cards;
+#[cfg(test)]
 mod tests_paste_timing;
 #[cfg(test)]
 mod tests_scene_dirty;
