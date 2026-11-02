@@ -17,6 +17,7 @@
 //! `BREADSLICER_STARTUP_TRACE` naming a file, they are also written there, 1
 //! step per line, for the startup timing harness.
 
+use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -38,6 +39,41 @@ struct Timeline {
 static TIMELINE: Mutex<Option<Timeline>> = Mutex::new(None);
 static FRAMES: AtomicU32 = AtomicU32::new(0);
 static REPORTED: AtomicBool = AtomicBool::new(false);
+
+/// Work that waits for the window to take input; `None` once it has.
+type Waiting = Option<Vec<Box<dyn FnOnce()>>>;
+
+thread_local! {
+    static WHEN_INTERACTIVE: RefCell<Waiting> = RefCell::new(Some(Vec::new()));
+}
+
+/// Runs `work` on this thread once the first frame is on screen and the
+/// window takes input, so what it shows or reads does not delay the launch
+/// (#381). Runs it on the next turn of the event loop when that has already
+/// happened.
+pub fn when_interactive(work: impl FnOnce() + 'static) {
+    let work: Box<dyn FnOnce()> = Box::new(work);
+    let late = WHEN_INTERACTIVE.with_borrow_mut(|waiting| match waiting {
+        Some(queue) => {
+            queue.push(work);
+            None
+        }
+        None => Some(work),
+    });
+    if let Some(work) = late {
+        slint::Timer::single_shot(Duration::ZERO, work);
+    }
+}
+
+/// Runs the work that waited for the window to take input.
+fn run_waiting() {
+    let waiting = WHEN_INTERACTIVE
+        .with_borrow_mut(Option::take)
+        .unwrap_or_default();
+    for work in waiting {
+        work();
+    }
+}
 
 /// Notes that step `step` just ended.
 pub fn mark(step: &'static str) {
@@ -76,6 +112,7 @@ pub fn frame_presented() {
             slint::Timer::single_shot(Duration::ZERO, || {
                 mark("interactive");
                 slint::Timer::single_shot(REPORT_AFTER, report);
+                run_waiting();
             });
         }
         1 => mark("second frame"),

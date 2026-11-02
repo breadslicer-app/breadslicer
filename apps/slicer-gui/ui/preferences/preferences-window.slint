@@ -32,6 +32,7 @@ export component PreferencesWindow inherits Window {
     in-out property <int> current-aa-index: 0;
     in-out property <bool> prescan-supports: false;
     in-out property <bool> smooth-models: false;
+    in-out property <bool> show-start-dialog: true;
     in-out property <int> current-frame-rate-index: 0;
     in-out property <int> current-gizmo-style-index: 0;
     in-out property <int> current-gizmo-size-index: 2;
@@ -72,6 +73,7 @@ export component PreferencesWindow inherits Window {
     callback aa-level-changed(int);
     callback prescan-supports-changed(bool);
     callback smooth-models-changed(bool);
+    callback show-start-dialog-changed(bool);
     callback frame-rate-changed(int);
     callback gizmo-style-changed(int);
     callback gizmo-size-changed(int);
@@ -137,6 +139,10 @@ export component PreferencesWindow inherits Window {
                 }
                 smooth-models-changed(on) => {
                     root.smooth-models-changed(on);
+                }
+                show-start-dialog <=> root.show-start-dialog;
+                show-start-dialog-changed(on) => {
+                    root.show-start-dialog-changed(on);
                 }
                 current-frame-rate-index: root.current-frame-rate-index;
                 current-gizmo-style-index: root.current-gizmo-style-index;

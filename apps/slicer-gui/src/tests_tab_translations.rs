@@ -23,6 +23,8 @@ const SPANISH: &str = include_str!("../i18n/es/LC_MESSAGES/sc-slicer-gui.po");
 const INSPECTORS: &str = include_str!("../ui/workspace/inspectors.slint");
 const LAYER_VIEW: &str = include_str!("../ui/workspace/layer-view.slint");
 const HOLLOW_RUN: &str = include_str!("hollow_run.rs");
+const START_DIALOG: &str = include_str!("../ui/start-dialog.slint");
+const RECENT_FILES: &str = include_str!("recent_files.rs");
 
 /// The Rust sources whose texts the Transform, Supports and Slice tabs show:
 /// their cards' notes, the review's rows and the dialogs the tabs open.
@@ -412,4 +414,32 @@ fn the_transform_supports_and_slice_tabs_show_in_spanish() {
         assert!(missing.is_empty(), "{section:?}, not shown: {missing:?}");
         assert!(shown.is_empty(), "{section:?}, shown in English: {shown:?}");
     }
+}
+
+#[test]
+fn every_text_of_the_start_dialog_has_spanish() {
+    let spanish = spanish();
+    let mut texts = slint_texts(START_DIALOG);
+    // A check that finds nothing checks nothing.
+    assert!(texts.len() >= 17, "{} texts found", texts.len());
+    texts.extend(
+        [
+            (
+                "AppearancePreferences",
+                "Show the start window when Breadslicer opens",
+            ),
+            ("FileDialog", "3D models"),
+        ]
+        .iter()
+        .map(main_window_text),
+    );
+    let mut untranslated: Vec<String> = texts
+        .iter()
+        .filter(|text| !text.has_spanish(&spanish))
+        .map(|text| format!("{:?} => {:?}", text.context, text.message))
+        .collect();
+    let (missing, found) = untranslated_calls(&spanish, "recent_files.rs", RECENT_FILES);
+    assert!(found >= 3, "recent_files.rs: {found} texts found");
+    untranslated.extend(missing);
+    assert!(untranslated.is_empty(), "no Spanish for {untranslated:#?}");
 }

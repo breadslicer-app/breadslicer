@@ -1,0 +1,598 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// The start dialog (#381): what the app offers when it opens with no file.
+// Drawn inside the main window like the app's messages (`message-layer.slint`):
+// a dimmed layer with a card on it. The ways to start on the left, the recent
+// files on the right. Escape or a click outside the card closes it, and the
+// window under it stays as it is. Rust (`start_dialog.rs`) fills the list and
+// acts on what the person picks.
+
+import { CheckBox, ScrollView } from "std-widgets.slint";
+import { Theme } from "kit/theme.slint";
+import { Icons } from "kit/icons.slint";
+import { Icon } from "kit/controls.slint";
+
+// 1 file of the recent list.
+export struct RecentFileRow {
+    name: string,
+    // The folder it is in, the home folder shortened to `~`.
+    folder: string,
+    // When it was last opened or saved, as the list says it.
+    when: string,
+    // The extension in capitals, for the tile drawn when there is no
+    // thumbnail.
+    kind: string,
+    // A Breadslicer project (`.bread`), as opposed to a model.
+    project: bool,
+    // The file is no longer where the list says.
+    missing: bool,
+    thumbnail: image,
+    has-thumbnail: bool,
+}
+
+// What the left column of the dialog offers to open.
+export enum StartOpen { project, model }
+
+// 1 way to start: an icon tile, a title and what it opens.
+component StartAction inherits Rectangle {
+    in property <string> icon;
+    in property <string> title;
+    in property <string> detail;
+    // The action the dialog leads with: the accent around it.
+    in property <bool> lead;
+    callback clicked();
+
+    height: 56px;
+    border-radius: Theme.radius;
+    border-width: self.lead ? 1px : 0px;
+    border-color: Theme.accent.transparentize(0.35);
+    background: self.lead
+        ? (touch.has-hover ? Theme.accent.transparentize(0.78) : Theme.accent.transparentize(0.88))
+        : (touch.has-hover ? Theme.hover : transparent);
+    accessible-role: button;
+    accessible-label: self.title;
+    accessible-description: self.detail;
+    accessible-action-default => {
+        self.clicked();
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 12px;
+
+        Rectangle {
+            width: 34px;
+            height: 34px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius;
+            background: root.lead ? Theme.accent : Theme.well;
+
+            Icon {
+                commands: root.icon;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                size: 18px;
+                color: root.lead ? Theme.on-accent : Theme.accent;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+
+            Text {
+                text: root.title;
+                font-size: Theme.font;
+                font-weight: 600;
+                color: Theme.text;
+                overflow: elide;
+                accessible-role: none;
+            }
+            if root.detail != "": Text {
+                text: root.detail;
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                overflow: elide;
+                accessible-role: none;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// The picture of a recent file: its thumbnail, or a tile with its kind.
+component FileTile inherits Rectangle {
+    in property <RecentFileRow> file;
+
+    width: 44px;
+    height: 44px;
+    border-radius: Theme.radius;
+    background: Theme.well;
+    border-width: 1px;
+    border-color: Theme.border-soft;
+    clip: true;
+
+    if root.file.has-thumbnail: Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.file.thumbnail;
+        image-fit: contain;
+    }
+    if !root.file.has-thumbnail: VerticalLayout {
+        alignment: center;
+        spacing: 1px;
+
+        Icon {
+            x: (parent.width - self.width) / 2;
+            commands: Icons.file;
+            size: 18px;
+            color: root.file.project ? Theme.accent : Theme.text-muted;
+        }
+        Text {
+            text: root.file.kind;
+            font-family: Theme.mono;
+            font-size: 8px;
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            horizontal-alignment: center;
+            color: root.file.project ? Theme.accent : Theme.text-muted;
+            accessible-role: none;
+        }
+    }
+}
+
+// 1 row of the recent list. A click opens the file; the × takes it off the
+// list. A missing file shows faded and does not open.
+component RecentRow inherits Rectangle {
+    in property <RecentFileRow> file;
+    callback open();
+    callback remove();
+
+    height: 58px;
+    border-radius: Theme.radius;
+    background: touch.has-hover && !root.file.missing ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.file.name;
+    accessible-description: root.file.missing
+        ? @tr("StartDialog" => "Not found: {}", root.file.folder)
+        : root.file.folder;
+    accessible-enabled: !root.file.missing;
+    accessible-action-default => {
+        if !root.file.missing {
+            root.open();
+        }
+    }
+
+    touch := TouchArea {
+        enabled: !root.file.missing;
+        mouse-cursor: root.file.missing ? default : pointer;
+        clicked => {
+            root.open();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 6px;
+        spacing: 12px;
+
+        FileTile {
+            y: (parent.height - self.height) / 2;
+            file: root.file;
+            opacity: root.file.missing ? 0.45 : 1;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 3px;
+            horizontal-stretch: 1;
+
+            Text {
+                text: root.file.name;
+                font-size: Theme.font;
+                font-weight: 600;
+                color: root.file.missing ? Theme.text-faint : Theme.text;
+                overflow: elide;
+                accessible-role: none;
+            }
+            Text {
+                text: root.file.missing
+                    ? @tr("StartDialog" => "Not found: {}", root.file.folder)
+                    : root.file.folder;
+                font-size: Theme.font-xs;
+                color: root.file.missing ? Theme.danger.transparentize(0.25) : Theme.text-muted;
+                overflow: elide;
+                accessible-role: none;
+            }
+        }
+
+        Text {
+            text: root.file.when;
+            font-size: Theme.font-xs;
+            color: Theme.text-faint;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            accessible-role: none;
+        }
+
+        // Takes the file off the list; the file itself stays where it is.
+        remove-button := Rectangle {
+            width: 26px;
+            height: 26px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            background: remove-touch.has-hover ? Theme.raised : transparent;
+            accessible-role: button;
+            accessible-label: @tr("StartDialog" => "Remove {} from the list", root.file.name);
+            accessible-action-default => {
+                root.remove();
+            }
+
+            Icon {
+                commands: Icons.close;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                size: 14px;
+                color: remove-touch.has-hover ? Theme.text : touch.has-hover || root.file.missing ? Theme.text-muted : Theme.text-faint.transparentize(0.4);
+            }
+
+            remove-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.remove();
+                }
+            }
+        }
+    }
+}
+
+export component StartLayer inherits Rectangle {
+    in property <bool> open: false;
+    in property <[RecentFileRow]> recent;
+    // The name of the file "Reopen" opens; empty offers no Reopen.
+    in property <string> last-name;
+    in property <string> version;
+    in-out property <bool> dont-show: false;
+
+    callback closed();
+    callback reopen-last();
+    callback open-recent(int);
+    callback remove-recent(int);
+    callback open-file(StartOpen);
+    callback dont-show-changed(bool);
+
+    visible: root.open;
+    background: #0000008c;
+
+    // Gives the dialog the keyboard again, after a message over it closed.
+    public function focus-dialog() {
+        fs.focus();
+    }
+
+    changed open => {
+        if (root.open) {
+            fs.focus();
+        }
+    }
+
+    // Owns the keyboard while the dialog shows: Escape closes it, and no
+    // shortcut of the window under it acts.
+    fs := FocusScope {
+        width: 100%;
+        height: 100%;
+        enabled: root.open;
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.closed();
+            }
+            return accept;
+        }
+
+        // The dimmed window around the card.
+        TouchArea {
+            clicked => {
+                root.closed();
+            }
+            scroll-event(event) => {
+                return accept;
+            }
+        }
+
+        card := Rectangle {
+            width: Math.min(parent.width - 48px, 860px);
+            height: Math.min(parent.height - 48px, 540px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.card;
+            border-color: Theme.border;
+            border-width: 1px;
+            border-radius: Theme.radius-lg;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000066;
+            clip: true;
+
+            // A click on the card itself is not a click outside.
+            TouchArea {
+                scroll-event(event) => {
+                    return accept;
+                }
+            }
+
+            VerticalLayout {
+                // The head: the app, and what the dialog is for.
+                HorizontalLayout {
+                    padding-left: 22px;
+                    padding-right: 12px;
+                    padding-top: 18px;
+                    padding-bottom: 16px;
+                    spacing: 14px;
+
+                    Rectangle {
+                        width: 40px;
+                        height: 40px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: Theme.radius-lg;
+                        background: Theme.accent.transparentize(0.86);
+
+                        Icon {
+                            commands: Icons.logo;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            size: 24px;
+                            color: Theme.accent;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+
+                            Text {
+                                text: "Breadslicer";
+                                font-size: 18px;
+                                font-weight: 700;
+                                color: Theme.text;
+                                vertical-alignment: bottom;
+                            }
+                            if root.version != "": Text {
+                                text: root.version;
+                                font-family: Theme.mono;
+                                font-size: Theme.font-xs;
+                                color: Theme.text-faint;
+                                vertical-alignment: bottom;
+                                accessible-role: none;
+                            }
+                        }
+                        Text {
+                            text: @tr("StartDialog" => "Start something new, or pick up where you left off.");
+                            font-size: Theme.font-sm;
+                            color: Theme.text-muted;
+                            overflow: elide;
+                        }
+                    }
+
+                    // Closes the dialog, like Escape.
+                    Rectangle {
+                        width: 30px;
+                        height: 30px;
+                        y: 0;
+                        border-radius: Theme.radius;
+                        background: close-touch.has-hover ? Theme.hover : transparent;
+                        accessible-role: button;
+                        accessible-label: @tr("StartDialog" => "Close");
+                        accessible-action-default => {
+                            root.closed();
+                        }
+
+                        Icon {
+                            commands: Icons.close;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            size: 16px;
+                            color: close-touch.has-hover ? Theme.text : Theme.text-muted;
+                        }
+
+                        close-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.closed();
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border-soft;
+                }
+
+                HorizontalLayout {
+                    vertical-stretch: 1;
+
+                    // The ways to start.
+                    Rectangle {
+                        width: 296px;
+                        background: Theme.panel;
+
+                        VerticalLayout {
+                            padding: 14px;
+                            spacing: 4px;
+                            alignment: start;
+
+                            Text {
+                                text: @tr("StartDialog" => "START");
+                                font-size: Theme.font-xs;
+                                font-weight: 600;
+                                letter-spacing: 0.8px;
+                                color: Theme.text-faint;
+                                height: 22px;
+                                vertical-alignment: center;
+                            }
+
+                            if root.last-name != "": StartAction {
+                                lead: true;
+                                icon: Icons.history;
+                                title: @tr("StartDialog" => "Reopen last file");
+                                detail: root.last-name;
+                                clicked => {
+                                    root.reopen-last();
+                                }
+                            }
+                            if root.last-name != "": Rectangle {
+                                height: 6px;
+                            }
+
+                            StartAction {
+                                icon: Icons.folder;
+                                title: @tr("StartDialog" => "Open project…");
+                                detail: @tr("StartDialog" => "A Breadslicer project (.bread)");
+                                clicked => {
+                                    root.open-file(StartOpen.project);
+                                }
+                            }
+                            StartAction {
+                                icon: Icons.import;
+                                title: @tr("StartDialog" => "Import model…");
+                                detail: @tr("StartDialog" => "STL, OBJ or 3MF");
+                                clicked => {
+                                    root.open-file(StartOpen.model);
+                                }
+                            }
+                            StartAction {
+                                icon: Icons.plus;
+                                title: @tr("StartDialog" => "New empty scene");
+                                detail: @tr("StartDialog" => "Drop a model on the plate later");
+                                clicked => {
+                                    root.closed();
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 1px;
+                        background: Theme.border-soft;
+                    }
+
+                    // The recent files.
+                    VerticalLayout {
+                        padding-top: 14px;
+                        padding-left: 14px;
+                        padding-right: 8px;
+                        padding-bottom: 6px;
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+
+                        Text {
+                            text: @tr("StartDialog" => "RECENT");
+                            font-size: Theme.font-xs;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                            color: Theme.text-faint;
+                            height: 22px;
+                            vertical-alignment: center;
+                        }
+
+                        if root.recent.length > 0: ScrollView {
+                            vertical-stretch: 1;
+
+                            VerticalLayout {
+                                padding-right: 6px;
+                                spacing: 2px;
+                                alignment: start;
+
+                                for file[index] in root.recent: RecentRow {
+                                    file: file;
+                                    open => {
+                                        root.open-recent(index);
+                                    }
+                                    remove => {
+                                        root.remove-recent(index);
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.recent.length == 0: VerticalLayout {
+                            vertical-stretch: 1;
+                            alignment: center;
+                            spacing: 6px;
+
+                            Icon {
+                                x: (parent.width - self.width) / 2;
+                                commands: Icons.history;
+                                size: 28px;
+                                color: Theme.text-faint;
+                            }
+                            Text {
+                                text: @tr("StartDialog" => "No recent files yet");
+                                font-size: Theme.font;
+                                font-weight: 600;
+                                color: Theme.text-soft;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: @tr("StartDialog" => "Files you open or save show up here.");
+                                font-size: Theme.font-sm;
+                                color: Theme.text-muted;
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border-soft;
+                }
+
+                // The foot: whether the dialog comes back next time.
+                HorizontalLayout {
+                    padding-left: 18px;
+                    padding-right: 18px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    spacing: 12px;
+
+                    CheckBox {
+                        text: @tr("StartDialog" => "Don't show at startup");
+                        checked <=> root.dont-show;
+                        toggled => {
+                            root.dont-show-changed(self.checked);
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    Text {
+                        text: @tr("StartDialog" => "Turn it back on in Preferences › UI & Theme");
+                        font-size: Theme.font-xs;
+                        color: Theme.text-faint;
+                        vertical-alignment: center;
+                        visible: root.dont-show;
+                    }
+                }
+            }
+        }
+    }
+}

@@ -372,6 +372,16 @@ pub(crate) fn build_preferences_window(
         }
     });
 
+    prefs.on_show_start_dialog_changed({
+        let bus = bus.clone();
+        move |on| {
+            bus.update(move |snap| {
+                snap.show_start_dialog = on;
+                PreferencesChange::StartDialog
+            });
+        }
+    });
+
     prefs.on_smooth_models_changed({
         let bus = bus.clone();
         move |on| {

@@ -21,6 +21,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::frame_rate::FrameRateCap;
 use crate::language::{BundledLanguage, LanguagePreference};
+use crate::recent_files::RecentFile;
 use crate::{MenuLayout, ThemePreference};
 
 /// On-disk representation of `ThemePreference`. Separate type because the
@@ -392,6 +393,15 @@ fn is_default_gizmo_size(size: &u32) -> bool {
     *size == DEFAULT_GIZMO_SIZE
 }
 
+/// The start dialog shows by default (#381).
+fn default_show_start_dialog() -> bool {
+    true
+}
+
+fn is_default_show_start_dialog(on: &bool) -> bool {
+    *on
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with the
@@ -485,6 +495,17 @@ pub(crate) struct AppSettings {
     /// then falls back to the home directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_open_dir: Option<PathBuf>,
+    /// Whether the start dialog shows when the app opens with no file (#381).
+    /// Omitted in TOML while on (the default).
+    #[serde(
+        default = "default_show_start_dialog",
+        skip_serializing_if = "is_default_show_start_dialog"
+    )]
+    show_start_dialog: bool,
+    /// The files last opened or saved, newest first (#381). User data: the
+    /// diagnostics file leaves them out. Omitted in TOML while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    recent_files: Vec<RecentFile>,
 }
 
 impl Default for AppSettings {
@@ -509,6 +530,8 @@ impl Default for AppSettings {
             slice_panel: SliceControlPanelSettings::default(),
             slice_view: SliceViewSettings::default(),
             last_open_dir: None,
+            show_start_dialog: default_show_start_dialog(),
+            recent_files: Vec::new(),
         }
     }
 }
@@ -848,6 +871,22 @@ impl AppSettings {
     pub(crate) fn set_last_open_dir(&mut self, dir: Option<PathBuf>) {
         self.last_open_dir = dir;
     }
+
+    pub(crate) fn show_start_dialog(&self) -> bool {
+        self.show_start_dialog
+    }
+
+    pub(crate) fn set_show_start_dialog(&mut self, on: bool) {
+        self.show_start_dialog = on;
+    }
+
+    pub(crate) fn recent_files(&self) -> Vec<RecentFile> {
+        self.recent_files.clone()
+    }
+
+    pub(crate) fn set_recent_files(&mut self, files: Vec<RecentFile>) {
+        self.recent_files = files;
+    }
 }
 
 #[cfg(test)]
@@ -945,6 +984,40 @@ mod app_settings_tests {
     #[test]
     fn default_last_open_dir_is_none() {
         assert_eq!(AppSettings::default().last_open_dir(), None);
+    }
+
+    #[test]
+    fn the_start_dialog_shows_and_no_file_is_recent_by_default() {
+        let s = AppSettings::default();
+        assert!(s.show_start_dialog());
+        assert!(s.recent_files().is_empty());
+    }
+
+    #[test]
+    fn the_recent_files_and_the_start_dialog_round_trip() {
+        let mut s = AppSettings::default();
+        let files = vec![
+            RecentFile {
+                path: PathBuf::from("/home/dana/minis/hueco.bread"),
+                opened: 1_800_000_000,
+            },
+            RecentFile {
+                path: PathBuf::from("/home/dana/cubo.stl"),
+                opened: 1_799_000_000,
+            },
+        ];
+        s.set_recent_files(files.clone());
+        s.set_show_start_dialog(false);
+        let text = toml::to_string(&s).unwrap();
+        assert!(text.contains("show_start_dialog = false"), "{text}");
+        let back: AppSettings = toml::from_str(&text).unwrap();
+        assert_eq!(back.recent_files(), files);
+        assert!(!back.show_start_dialog());
+        let fresh = toml::to_string(&AppSettings::default()).unwrap();
+        assert!(
+            !fresh.contains("recent_files") && !fresh.contains("show_start_dialog"),
+            "{fresh}"
+        );
     }
 
     #[test]

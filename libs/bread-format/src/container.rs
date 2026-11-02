@@ -19,7 +19,7 @@
 //! as PNG's does.
 
 use std::fmt;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 
 /// The first bytes of every `.bread` file.
 pub const MAGIC: [u8; 8] = *b"BREAD\0\r\n";
@@ -153,17 +153,38 @@ impl<R: Read> BreadReader<R> {
     /// The next chunk, decompressed and checked, or `None` at the end of the
     /// file.
     pub fn next_chunk(&mut self) -> Result<Option<Chunk>, ReadBreadError> {
+        match self.next_header()? {
+            Some(header) => self.read_body(header).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// The header of the next chunk, or `None` at the end of the file.
+    fn next_header(&mut self) -> Result<Option<ChunkHeader>, ReadBreadError> {
         let mut tag = [0; 4];
         match read_fully(&mut self.input, &mut tag)? {
             0 => return Ok(None),
             4 => {}
             _ => return Err(ReadBreadError::Truncated),
         }
-        let tag = ChunkTag(tag);
-        let version = read_u16(&mut self.input)?;
-        let raw_len = read_u64(&mut self.input)?;
-        let stored_len = read_u64(&mut self.input)?;
-        let crc = read_u32(&mut self.input)?;
+        Ok(Some(ChunkHeader {
+            tag: ChunkTag(tag),
+            version: read_u16(&mut self.input)?,
+            raw_len: read_u64(&mut self.input)?,
+            stored_len: read_u64(&mut self.input)?,
+            crc: read_u32(&mut self.input)?,
+        }))
+    }
+
+    /// The stored bytes of the chunk `header` heads, decompressed and checked.
+    fn read_body(&mut self, header: ChunkHeader) -> Result<Chunk, ReadBreadError> {
+        let ChunkHeader {
+            tag,
+            version,
+            raw_len,
+            stored_len,
+            crc,
+        } = header;
         let mut stored = Vec::new();
         (&mut self.input)
             .take(stored_len)
@@ -187,12 +208,44 @@ impl<R: Read> BreadReader<R> {
         if payload.len() as u64 != raw_len {
             return Err(ReadBreadError::BadPayload(tag));
         }
-        Ok(Some(Chunk {
+        Ok(Chunk {
             tag,
             version,
             payload,
-        }))
+        })
     }
+}
+
+impl<R: Read + Seek> BreadReader<R> {
+    /// The first chunk tagged `tag`, decompressed and checked, seeking past
+    /// the chunks before it without reading their bytes. `None` when the file
+    /// has none, or when its payload is longer than `max_len`.
+    pub fn find_chunk(
+        &mut self,
+        tag: ChunkTag,
+        max_len: u64,
+    ) -> Result<Option<Chunk>, ReadBreadError> {
+        while let Some(header) = self.next_header()? {
+            if header.tag == tag {
+                if header.raw_len > max_len {
+                    return Ok(None);
+                }
+                return self.read_body(header).map(Some);
+            }
+            let skip = i64::try_from(header.stored_len).map_err(|_| ReadBreadError::Truncated)?;
+            self.input.seek(SeekFrom::Current(skip))?;
+        }
+        Ok(None)
+    }
+}
+
+/// What precedes a chunk's stored bytes.
+struct ChunkHeader {
+    tag: ChunkTag,
+    version: u16,
+    raw_len: u64,
+    stored_len: u64,
+    crc: u32,
 }
 
 /// Reads until `buf` is full or the input ends; returns the bytes read.
