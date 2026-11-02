@@ -126,8 +126,29 @@ impl Default for VolumeBand {
 #[serde(rename_all = "camelCase", default)]
 pub struct IgnoreSmallIslands {
     pub enabled: bool,
+    /// An island gathering less resin than this before it joins the rest
+    /// (mm³).
     pub volume_mm3: f64,
+    /// An island that joins the rest within this height, its layers included
+    /// (mm): 0.10 at 0.05 mm layers ignores islands of up to two layers
+    /// (#406).
     pub height_mm: f64,
+}
+
+/// Slack on the island height comparison (mm): a body's height is its
+/// layers times the layer height, in single precision.
+const ISLAND_HEIGHT_TOLERANCE_MM: f64 = 1e-4;
+
+impl IgnoreSmallIslands {
+    /// Whether an island whose body gathers `volume_mm3` and joins the rest
+    /// within `height_mm` (its layers times the layer height) is left alone:
+    /// under the volume, and within the height, its last layer included
+    /// (#406).
+    pub fn ignores(&self, volume_mm3: f64, height_mm: f64) -> bool {
+        self.enabled
+            && volume_mm3 < self.volume_mm3
+            && height_mm <= self.height_mm + ISLAND_HEIGHT_TOLERANCE_MM
+    }
 }
 
 impl Default for IgnoreSmallIslands {
@@ -483,5 +504,27 @@ mod tests {
         let r = rules();
         let text = serde_json::to_string(&r).unwrap();
         assert_eq!(serde_json::from_str::<ZoneRules>(&text).unwrap(), r);
+    }
+    /// #406: 0.10 mm means islands that join the rest within 0.10 mm, their
+    /// layers included: at 0.05 mm layers, up to two layers.
+    #[test]
+    fn ignoring_small_islands_counts_their_layers() {
+        let ignore = IgnoreSmallIslands {
+            enabled: true,
+            volume_mm3: 0.02,
+            height_mm: 0.10,
+        };
+        // A body's height, as the scan measures it: layers times 0.05 mm, in
+        // single precision.
+        let height = |layers: u32| f64::from((f64::from(layers) * 0.05) as f32);
+        assert!(ignore.ignores(0.001, height(1)));
+        assert!(ignore.ignores(0.001, height(2)));
+        assert!(!ignore.ignores(0.001, height(3)));
+        assert!(!ignore.ignores(0.02, height(1)), "the volume stays strict");
+        let off = IgnoreSmallIslands {
+            enabled: false,
+            ..ignore
+        };
+        assert!(!off.ignores(0.001, height(1)));
     }
 }
