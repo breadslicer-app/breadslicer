@@ -17,6 +17,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use sc_mesh_core::transform::Transform3D;
@@ -48,15 +49,18 @@ use crate::build_volume::BuildVolume;
 use crate::camera::AxisView;
 use crate::clipboard;
 use crate::clipboard::Clipboard;
-use crate::error_dialog::{DialogManager, ErrorTexts};
+use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::export_progress_panel::ExportProgressPanel;
 use crate::gizmo;
 use crate::gizmo::axis::Axis;
 use crate::hollow_persist::install_hollows;
 use crate::i18n::ctr;
 use crate::mesh_check::show_card;
-use crate::mesh_loader::start_load_with_ticket;
+use crate::mesh_loader::{LoadDispatch, decide_load_dispatch, start_load_with_ticket};
 use crate::mesh_render::{DeviceLoss, RenderError, RendererInitError, SceneRender, StageRefusal};
+use crate::model_import::{
+    self, ImportJob, PreparedModels, add_to_scene, spawn_import, spawn_placement,
+};
 use crate::pending_load::PendingLoad;
 use crate::picking;
 use crate::preferences_bus::PreferencesBus;
@@ -65,7 +69,7 @@ use crate::preferences_bus::PreferencesSnapshot;
 use crate::print_file_preview;
 use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneEvent};
-use crate::scene_loader::{PreparedScene, SceneLoader};
+use crate::scene_loader::{Finished, PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
 use crate::support_persist::install_sets;
 use sc_scene::SceneError;
@@ -113,6 +117,9 @@ pub(crate) struct ViewportController {
     support_drag_handler: RefCell<Option<std::rc::Weak<dyn SupportDragHandler>>>,
     support_drag: Cell<DragPhase>,
     right_dropped_drag: Cell<bool>,
+    /// The model files that join the scene a load is opening, once it is
+    /// open (#384).
+    queued_imports: RefCell<Vec<PathBuf>>,
     /// The drag tool armed, for tests that run without a window.
     #[cfg(test)]
     drag_tool_for_test: Cell<Option<SupportDragKind>>,
@@ -176,6 +183,7 @@ impl ViewportController {
             support_drag_handler: RefCell::new(None),
             support_drag: Cell::new(DragPhase::Idle),
             right_dropped_drag: Cell::new(false),
+            queued_imports: RefCell::new(Vec::new()),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
         }
@@ -218,6 +226,7 @@ impl ViewportController {
             support_drag_handler: RefCell::new(None),
             support_drag: Cell::new(DragPhase::Idle),
             right_dropped_drag: Cell::new(false),
+            queued_imports: RefCell::new(Vec::new()),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
         };
@@ -307,7 +316,7 @@ impl ViewportController {
         // assertion on `source_path` show its synthetic origin.
         self.session
             .document()
-            .install_graph(graph, std::path::PathBuf::from("<test>"));
+            .install_graph(graph, PathBuf::from("<test>"));
     }
 
     #[cfg(test)]
@@ -1125,12 +1134,202 @@ impl ViewportController {
         // the controller's listener handles the full viewport-state reset
         // (camera, frame, gizmo, keyboard focus, renderer, UI).
         self.session.loader().invalidate_and_clear();
+        self.queued_imports.borrow_mut().clear();
         self.session.document().clear_scene();
     }
 
-    pub(crate) fn on_scene_load_finished(&self) {
-        let Some(prepared) = self.session.loader().take_finished_load() else {
+    /// Queues `path` for the window or starts its load, in place of the
+    /// scene. A window busy loading drops it.
+    pub(crate) fn dispatch_load(&self, path: PathBuf) {
+        let loader = self.session.loader();
+        if decide_load_dispatch(loader.graphics_unavailable()) == LoadDispatch::Queue {
+            // Pre-first-paint: `post_renderer_install` dispatches this once
+            // `handle_rendering_setup` publishes the device.
+            self.session.pending_load().queue(path);
             return;
+        }
+        let Some(ticket) = loader.begin_load() else {
+            // A drop onto a busy window is silently ignored.
+            return;
+        };
+        // Covers both a ready device and a renderer that will never provide
+        // one; `start_load_with_ticket` reads the same graphics state and
+        // deposits the reason for the latter, so a path that can never open
+        // reports its failure at once.
+        start_load_with_ticket(ticket, path, loader, self.session.build_volume());
+    }
+
+    /// Opens the model files `paths` (#384). With a scene open they join it,
+    /// on free room of the plate, as one undo step. Without one, the first
+    /// opens a scene as any file does, and the others join it once it is
+    /// open, as part of the opening.
+    pub(crate) fn open_models(&self, paths: Vec<PathBuf>) {
+        let mut paths = paths.into_iter();
+        let Some(first) = paths.next() else {
+            return;
+        };
+        if self.session.document().is_loaded() {
+            self.start_import(std::iter::once(first).chain(paths).collect(), true);
+            return;
+        }
+        *self.queued_imports.borrow_mut() = paths.collect();
+        self.dispatch_load(first);
+    }
+
+    /// Reads `paths` on a worker, to join the open scene; recorded as an
+    /// undo step when `recorded`. A window busy loading drops them.
+    fn start_import(&self, paths: Vec<PathBuf>, recorded: bool) {
+        let loader = self.session.loader();
+        let Some(ticket) = loader.begin_load() else {
+            return;
+        };
+        let document = self.session.document();
+        let volume = self.session.build_volume();
+        crate::breadcrumbs::started("import");
+        crate::breadcrumbs::note(&format!("import: {} file(s)", paths.len()));
+        let job = ImportJob {
+            paths,
+            standing: crate::arrange_run::standing_bodies(document),
+            plate: crate::arrange_run::plate_of(&volume),
+            build_volume: volume.volume(),
+            revision: document.scene_revision(),
+            recorded,
+        };
+        loader.begin_progress_ui();
+        spawn_import(ticket, job, loader.progress_sink());
+    }
+
+    /// The files queued behind the load that just ended join the scene it
+    /// opened; when it failed, the next of them opens one.
+    fn continue_queued_imports(&self) {
+        let queued = std::mem::take(&mut *self.queued_imports.borrow_mut());
+        if queued.is_empty() {
+            return;
+        }
+        if self.session.document().is_loaded() {
+            self.start_import(queued, false);
+        } else {
+            self.open_models(queued);
+        }
+    }
+
+    /// Adds the models an import read to the scene, selects them and says
+    /// what could not be read or does not fit.
+    fn finish_import(&self, models: PreparedModels) {
+        let document = self.session.document();
+        // The plate changed while the files were read: they are placed
+        // again, off this thread, against it as it stands now.
+        if document.scene_revision() != models.revision
+            && let Some(ticket) = self.session.loader().begin_load()
+        {
+            crate::breadcrumbs::note("import: the plate changed, placed again");
+            spawn_placement(
+                ticket,
+                models,
+                crate::arrange_run::standing_bodies(document),
+                crate::arrange_run::plate_of(&self.session.build_volume()),
+                document.scene_revision(),
+            );
+            return;
+        }
+        crate::breadcrumbs::finished(
+            "import",
+            &format!(
+                "{} read, {} failed",
+                models.files.len(),
+                models.failures.len()
+            ),
+        );
+        self.on_modal_transform_finish(false);
+        let placements = models.placements.clone();
+        match add_to_scene(document, &models.files, &placements, models.recorded) {
+            Ok(added) if !added.is_empty() => {
+                // Each file keeps its import notes, with the scene's.
+                self.session.loader().note_imported(&models);
+                self.set_section(WorkspaceSection::Transform);
+                let check = document.mesh_check();
+                for file in &models.files {
+                    for (mesh, sliceable) in &file.verdicts {
+                        check.remember(mesh, *sliceable, None);
+                    }
+                }
+                if let (Some(ui), Some(Some(card))) = (
+                    self.ui.upgrade(),
+                    document.with_scene(|spatial| check.card(spatial.graph(), false)),
+                ) {
+                    show_card(&ui, &card);
+                }
+            }
+            Ok(_) => {}
+            Err(error) => self.show_edit_rejected(error),
+        }
+        self.report_import_failures(&models.failures);
+        let left_off = model_import::left_off(&models, &placements);
+        if !left_off.is_empty() {
+            let count = left_off.len();
+            self.session.dialogs().show_info(move || InfoTexts {
+                heading: ctr!("ArrangeDialog", "Not everything fits"),
+                message: ctr!(
+                    "ArrangeDialog",
+                    "{n} object does not fit on the plate. It is beside the plate, on the right.",
+                    "{n} objects do not fit on the plate. They are beside the plate, on the right.",
+                    count
+                ),
+                details: left_off.join("\n").into(),
+            });
+        }
+    }
+
+    /// Says which files of an import could not be read, and why.
+    fn report_import_failures(&self, failures: &[(PathBuf, String)]) {
+        match failures {
+            [] => {}
+            [(path, why)] => {
+                let (path, why) = (path.clone(), why.clone());
+                self.session.dialogs().show_error(move || ErrorTexts {
+                    heading: ctr!("ErrorDialog", "Failed to open 3D model"),
+                    context: Some(ctr!("ErrorDialog", "File: {}", path.display())),
+                    message: why.as_str().into(),
+                    details: Default::default(),
+                });
+            }
+            many => {
+                let count = many.len();
+                let details = many
+                    .iter()
+                    .map(|(path, why)| format!("{}: {why}", model_import::file_name(path)))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.session.dialogs().show_error(move || ErrorTexts {
+                    heading: ctr!("ErrorDialog", "Failed to open 3D model"),
+                    context: None,
+                    message: ctr!(
+                        "ErrorDialog",
+                        "{n} file could not be opened.",
+                        "{n} files could not be opened.",
+                        count
+                    ),
+                    details: details.as_str().into(),
+                });
+            }
+        }
+    }
+
+    pub(crate) fn on_scene_load_finished(&self) {
+        let prepared = match self.session.loader().take_finished_load() {
+            Some(Finished::Scene(prepared)) => prepared,
+            Some(Finished::Models(models)) => {
+                self.finish_import(models);
+                return;
+            }
+            Some(Finished::Failed) => {
+                // A first file that failed to open: the next queued one opens
+                // the scene.
+                self.continue_queued_imports();
+                return;
+            }
+            // Nothing, or a load dropped by a close, which left none queued.
+            None => return,
         };
         crate::breadcrumbs::finished("load", "ok");
         let PreparedScene {
@@ -1237,6 +1436,7 @@ impl ViewportController {
         } else {
             self.render.update_frame(FrameState::with_upload_owed);
         }
+        self.continue_queued_imports();
     }
 
     /// Returns the selection as its pre-order leaf index in the live graph.

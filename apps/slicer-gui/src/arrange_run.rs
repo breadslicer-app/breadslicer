@@ -76,7 +76,7 @@ impl Default for ArrangeOptions {
 }
 
 impl ArrangeOptions {
-    fn settings(self) -> Settings {
+    pub(crate) fn settings(self) -> Settings {
         Settings {
             gap: f64::from(self.gap_mm),
             margin: f64::from(self.margin_mm),
@@ -235,13 +235,7 @@ impl ArrangeRun {
 
     /// The printer's plate.
     fn plate(&self) -> Plate {
-        let volume = self.ctrl.build_volume();
-        let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
-        Plate {
-            min: [f64::from(lo.x), f64::from(lo.y)],
-            max: [f64::from(hi.x), f64::from(hi.y)],
-            floor: f64::from(lo.z),
-        }
+        plate_of(&self.ctrl.build_volume())
     }
 
     /// Takes the worker's result on the UI thread and applies it, when the
@@ -338,6 +332,33 @@ impl ArrangeRun {
     }
 }
 
+/// The plate of the printer whose build volume is `volume`.
+pub(crate) fn plate_of(volume: &crate::build_volume::BuildVolume) -> Plate {
+    let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+    Plate {
+        min: [f64::from(lo.x), f64::from(lo.y)],
+        max: [f64::from(hi.x), f64::from(hi.y)],
+        floor: f64::from(lo.z),
+    }
+}
+
+/// The plate's objects as they stand, each model with its supports, none of
+/// them to move: what models imported into the scene keep clear of (#384).
+pub(crate) fn standing_bodies(document: &SceneDocument) -> Vec<Body> {
+    gather_all(document, false)
+        .map(|gathered| {
+            gathered
+                .bodies
+                .into_iter()
+                .map(|body| Body {
+                    fixed: true,
+                    ..body
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The card's line after a run.
 fn last_run_text(moved: usize, left_off: usize, seconds: f64) -> String {
     let time = format!("{seconds:.1}");
@@ -373,84 +394,87 @@ fn affine(t: &Transform3D) -> AffineTransform3D {
 /// the selected models when arranging the selection (#13). `None` when
 /// nothing would move.
 fn gather(document: &SceneDocument, selection: bool) -> Option<Gathered> {
+    gather_all(document, selection).filter(|g| g.bodies.iter().any(|b| !b.fixed))
+}
+
+/// [`gather`], also when nothing would move.
+fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
     let sessions = document.support_sessions();
     let selected = document.selection_node_ids();
-    document
-        .with_scene(|spatial| {
-            let names = crate::viewport::object_names(spatial.graph());
-            let rows: Vec<NodeId> = (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect();
-            let mut gathered = Gathered {
-                bodies: Vec::new(),
-                leaves: Vec::new(),
-                follows: Vec::new(),
-                names: Vec::new(),
+    document.with_scene(|spatial| {
+        let names = crate::viewport::object_names(spatial.graph());
+        let rows: Vec<NodeId> = (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect();
+        let mut gathered = Gathered {
+            bodies: Vec::new(),
+            leaves: Vec::new(),
+            follows: Vec::new(),
+            names: Vec::new(),
+        };
+        let mut body_of: HashMap<NodeId, usize> = HashMap::new();
+        let part = |leaf: NodeId| {
+            let query = spatial.leaf(leaf)?;
+            Some(Part {
+                mesh: spatial.graph().leaf_mesh_arc(leaf)?.clone(),
+                world: affine(&query.world_transform()),
+            })
+        };
+        let name = |row: usize| names.get(row).cloned().unwrap_or_default();
+        for (row, &leaf) in rows.iter().enumerate() {
+            let Some(query) = spatial.leaf(leaf) else {
+                continue;
             };
-            let mut body_of: HashMap<NodeId, usize> = HashMap::new();
-            let part = |leaf: NodeId| {
-                let query = spatial.leaf(leaf)?;
-                Some(Part {
-                    mesh: spatial.graph().leaf_mesh_arc(leaf)?.clone(),
-                    world: affine(&query.world_transform()),
-                })
-            };
-            let name = |row: usize| names.get(row).cloned().unwrap_or_default();
-            for (row, &leaf) in rows.iter().enumerate() {
-                let Some(query) = spatial.leaf(leaf) else {
-                    continue;
-                };
-                if is_support_mesh(query.mesh()) {
-                    continue;
-                }
-                let Some(part) = part(leaf) else {
-                    continue;
-                };
-                body_of.insert(leaf, gathered.bodies.len());
-                gathered.bodies.push(Body {
-                    parts: vec![part],
-                    fixed: selection && !selected.contains(&leaf),
-                });
-                gathered.leaves.push(vec![leaf]);
-                gathered.follows.push(Vec::new());
-                gathered.names.push(name(row));
+            if is_support_mesh(query.mesh()) {
+                continue;
             }
-            for (row, &leaf) in rows.iter().enumerate() {
-                let Some(query) = spatial.leaf(leaf) else {
-                    continue;
-                };
-                if !is_support_mesh(query.mesh()) {
-                    continue;
-                }
-                let Some(support) = part(leaf) else {
-                    continue;
-                };
-                let model = model_of(&sessions, leaf);
-                match model.and_then(|m| body_of.get(&m).copied()) {
-                    Some(i) => {
-                        gathered.bodies[i].parts.push(support);
-                        // A set in force is redrawn where its model goes;
-                        // any other moves with it as it is.
-                        let follows = in_force(spatial, &sessions, leaf)
-                            .is_some_and(|drawn| Some(drawn.model) == model);
-                        if follows {
-                            gathered.follows[i].push(leaf);
-                        } else {
-                            gathered.leaves[i].push(leaf);
-                        }
-                    }
-                    None => {
-                        gathered.bodies.push(Body {
-                            parts: vec![support],
-                            fixed: true,
-                        });
-                        gathered.leaves.push(Vec::new());
-                        gathered.follows.push(Vec::new());
-                        gathered.names.push(name(row));
+            let Some(part) = part(leaf) else {
+                continue;
+            };
+            body_of.insert(leaf, gathered.bodies.len());
+            gathered.bodies.push(Body {
+                parts: vec![part],
+                fixed: selection && !selected.contains(&leaf),
+            });
+            gathered.leaves.push(vec![leaf]);
+            gathered.follows.push(Vec::new());
+            gathered.names.push(name(row));
+        }
+        for (row, &leaf) in rows.iter().enumerate() {
+            let Some(query) = spatial.leaf(leaf) else {
+                continue;
+            };
+            if !is_support_mesh(query.mesh()) {
+                continue;
+            }
+            let Some(support) = part(leaf) else {
+                continue;
+            };
+            let model = model_of(&sessions, leaf);
+            match model.and_then(|m| body_of.get(&m).copied()) {
+                Some(i) => {
+                    gathered.bodies[i].parts.push(support);
+                    // A set in force is redrawn where its model goes;
+                    // any other moves with it as it is.
+                    let follows = in_force(spatial, &sessions, leaf)
+                        .is_some_and(|drawn| Some(drawn.model) == model);
+                    if follows {
+                        gathered.follows[i].push(leaf);
+                    } else {
+                        gathered.leaves[i].push(leaf);
                     }
                 }
+                None => {
+                    gathered.bodies.push(Body {
+                        parts: vec![support],
+                        fixed: true,
+                    });
+                    gathered.leaves.push(Vec::new());
+                    gathered.follows.push(Vec::new());
+                    gathered.names.push(name(row));
+                }
             }
-            gathered
-        })
-        .filter(|g| g.bodies.iter().any(|b| !b.fixed))
+        }
+        gathered
+    })
 }
 
 /// Arranges on this thread and applies the result, as a run does: for

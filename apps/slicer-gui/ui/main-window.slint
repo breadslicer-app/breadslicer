@@ -481,6 +481,8 @@ export component MainWindow inherits Window {
     }
 
     callback open-file-requested();
+    // File > Import model (#384): models join the scene.
+    callback import-model-requested();
     callback close-current-scene();
     callback save-requested();
     callback save-as-requested();
@@ -717,11 +719,20 @@ export component MainWindow inherits Window {
             MenuSeparator { }
 
             MenuItem {
-                title: @tr("MenuBar" => "Open…");
+                title: @tr("MenuBar" => "Open project…");
                 shortcut: @keys(Control + O);
                 enabled: !root.loading;
                 activated => {
                     root.open-file-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Import model…");
+                shortcut: @keys(Control + I);
+                enabled: !root.loading;
+                activated => {
+                    root.import-model-requested();
                 }
             }
             // TODO: "Open Recent"
@@ -2090,10 +2101,18 @@ export component MainWindow inherits Window {
                 MenuSeparator { }
 
                 MenuItem {
-                    title: @tr("MenuBar" => "Open…");
+                    title: @tr("MenuBar" => "Open project…");
                     enabled: !root.loading;
                     activated => {
                         root.open-file-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Import model…");
+                    enabled: !root.loading;
+                    activated => {
+                        root.import-model-requested();
                     }
                 }
 

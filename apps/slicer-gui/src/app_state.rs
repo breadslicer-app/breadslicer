@@ -29,10 +29,7 @@ use crate::graphics_status::GraphicsUnavailable;
 use crate::hollow_run::HollowRun;
 use crate::i18n::ctr;
 use crate::language::InstalledTranslations;
-use crate::mesh_loader::{
-    LoadDispatch, SUPPORTED_MESH_EXTENSIONS, decide_load_dispatch, is_supported_mesh_extension,
-    start_load_with_ticket,
-};
+use crate::mesh_loader::{SUPPORTED_MESH_EXTENSIONS, is_project, is_supported_mesh_extension};
 use crate::mesh_render::DeviceLoss;
 use crate::orient_run::OrientRun;
 use crate::pending_load::PendingLoad;
@@ -204,14 +201,11 @@ thread_local! {
 /// `on_close_requested` drops all of them in 1 step; the drop of
 /// `_subscription` unregisters the window's preferences listener. Holding
 /// `window` by value keeps the Slint component alive. `AppState` reaches the
-/// window's controller and its pending-load slot through the window id.
+/// window's controller, which holds its pending-load slot, through the window
+/// id.
 struct WiredMainWindow {
     window: MainWindow,
     controller: Rc<ViewportController>,
-    // Shared with the controller. Writer side: external entry points park a
-    // path here when the GPU device isn't yet available. The controller drains
-    // it from `handle_rendering_setup`.
-    pending_load: Rc<PendingLoad>,
     /// Autosaves the window's scene (#18); `None` without a data folder.
     autosaver: Option<Rc<Autosaver>>,
     _subscription: Subscription,
@@ -287,6 +281,9 @@ pub(crate) struct AppState {
     ui_language: OnceCell<UiLanguage>,
     /// The start dialog of the launch window (#381), once it has shown.
     start_dialog: RefCell<Option<Rc<StartDialog>>>,
+    /// Per window, the files of a drop not yet opened: the OS hands a drop
+    /// of several files over one by one, and they open together (#384).
+    dropped: RefCell<HashMap<u64, Vec<PathBuf>>>,
     // Bus subscription owned by AppState. It runs on every `bus.update`;
     // dropping it unregisters. Stored here so it lives as long as `AppState`.
     // It holds the only `Sender` clone of the settings saver; dropping it lets
@@ -564,6 +561,7 @@ impl AppState {
             catalog,
             default_envelope,
             clipboard: RefCell::new(None),
+            dropped: RefCell::new(HashMap::new()),
             device_loss,
             autosave: AutosaveStore::platform_root().map(|root| Rc::new(AutosaveStore::new(root))),
             ui_language: OnceCell::new(),
@@ -621,11 +619,10 @@ impl AppState {
         ui.apply_preferences(&snapshot);
         restore_panels(&ui, &snapshot);
         let document = SceneDocument::new();
-        let pending_load = Rc::new(PendingLoad::new());
         let ctrl = Rc::new(ViewportController::new(
             &ui,
             document,
-            pending_load.clone(),
+            Rc::new(PendingLoad::new()),
             self.device_loss.clone(),
             &self.prefs,
         ));
@@ -644,9 +641,17 @@ impl AppState {
             self.prefs.clone(),
             Rc::new(move |path| {
                 if let Some(app) = open_app.upgrade() {
-                    app.open_path_in_window(id, path);
+                    app.replace_scene_with(id, path);
                 }
             }),
+            {
+                let open_app = Rc::downgrade(self);
+                Rc::new(move |paths| {
+                    if let Some(app) = open_app.upgrade() {
+                        app.open_paths_in_window(id, paths);
+                    }
+                })
+            },
         )?;
         crate::startup_timing::mark("window wiring");
         let drivers = self.install_window_drivers(&ui, &ctrl);
@@ -682,7 +687,6 @@ impl AppState {
             WiredMainWindow {
                 window: ui,
                 controller: ctrl,
-                pending_load,
                 autosaver,
                 _subscription: subscription,
                 _drivers: drivers,
@@ -890,14 +894,99 @@ impl AppState {
             FileDrag::HoverCancelled => ui.set_drop_hovering(false),
             FileDrag::Dropped(path) => {
                 ui.set_drop_hovering(false);
-                self.open_path_in_window(id, path);
+                let first = {
+                    let mut dropped = self.dropped.borrow_mut();
+                    let batch = dropped.entry(id).or_default();
+                    batch.push(path);
+                    batch.len() == 1
+                };
+                // The other files of the drop arrive before the timer fires:
+                // they open together, as one import.
+                if first {
+                    let app = Rc::downgrade(self);
+                    slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                        if let Some(app) = app.upgrade() {
+                            app.open_dropped(id);
+                        }
+                    });
+                }
             }
         }
     }
 
-    /// Routes an external (non-menu) open request into the right place: a path
-    /// on `argv` at start-up, a drag-and-drop, or a file that the Finder opens
-    /// on macOS. Branches:
+    /// Opens the files dropped on window `id` since the last time.
+    fn open_dropped(self: &Rc<Self>, id: u64) {
+        let paths = self.dropped.borrow_mut().remove(&id).unwrap_or_default();
+        if !paths.is_empty() {
+            self.open_paths_in_window(id, paths);
+        }
+    }
+
+    /// Routes an external (non-menu) open request of 1 file: a path on
+    /// `argv`, a file the Finder or the start dialog opens. See
+    /// [`Self::open_paths_in_window`].
+    pub(crate) fn open_path_in_window(self: &Rc<Self>, window_id: u64, path: PathBuf) {
+        self.open_paths_in_window(window_id, vec![path]);
+    }
+
+    /// Opens `paths` in window `window_id`, together (#384):
+    ///
+    /// - A file of an unsupported type is reported, and the others still
+    ///   open.
+    /// - A project (`.bread`) is a whole scene: it replaces the window's
+    ///   ([`Self::replace_scene_with`]). It opens alone; with other files it
+    ///   is not opened, and the user is told why.
+    /// - Models (STL, OBJ, 3MF) join the window's scene, all as one undo
+    ///   step; without a scene, they open one
+    ///   ([`ViewportController::open_models`]).
+    pub(crate) fn open_paths_in_window(self: &Rc<Self>, window_id: u64, paths: Vec<PathBuf>) {
+        let Some(controller) = self
+            .main_windows
+            .borrow()
+            .get(&window_id)
+            .map(|wired| wired.controller.clone())
+        else {
+            return;
+        };
+        let (supported, unsupported): (Vec<PathBuf>, Vec<PathBuf>) = paths
+            .into_iter()
+            .partition(|path| is_supported_mesh_extension(path));
+        if !unsupported.is_empty() {
+            let files = unsupported
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            controller.dialogs().show_error(move || ErrorTexts {
+                heading: ctr!("ErrorDialog", "Unsupported file type"),
+                context: Some(ctr!("ErrorDialog", "File: {}", files)),
+                message: ctr!(
+                    "ErrorDialog",
+                    "Only the following file types can be opened: {}",
+                    SUPPORTED_MESH_EXTENSIONS.join(", ")
+                ),
+                details: Default::default(),
+            });
+        }
+        if supported.iter().any(|path| is_project(path)) {
+            match <[PathBuf; 1]>::try_from(supported) {
+                Ok([project]) => self.replace_scene_with(window_id, project),
+                Err(_) => controller.dialogs().show_info(|| InfoTexts {
+                    heading: ctr!("ErrorDialog", "A project opens alone"),
+                    message: ctr!(
+                        "ErrorDialog",
+                        "A project is a whole scene, so it opens by itself, in place of the scene. Open it alone, or drop only models to add them to the scene."
+                    ),
+                    details: Default::default(),
+                }),
+            }
+            return;
+        }
+        controller.open_models(supported);
+    }
+
+    /// Opens `path` in place of window `window_id`'s scene: a project, the
+    /// menu's Open project, a recovered scene. Branches:
     ///
     /// 1. Unrecognised window id (window closed since the request was queued):
     ///    silently drop.
@@ -911,7 +1000,7 @@ impl AppState {
     /// 4. Otherwise dispatch through [`Self::dispatch_path_to_loader`], which
     ///    queues the path on the window's `PendingLoad` slot if the GPU device
     ///    isn't ready yet, or starts the load immediately if it is.
-    pub(crate) fn open_path_in_window(self: &Rc<Self>, window_id: u64, path: PathBuf) {
+    pub(crate) fn replace_scene_with(self: &Rc<Self>, window_id: u64, path: PathBuf) {
         let controller = {
             let main_windows = self.main_windows.borrow();
             let Some(wired) = main_windows.get(&window_id) else {
@@ -1095,32 +1184,14 @@ impl AppState {
     /// Queues `path` for the window or starts its load. The caller must close
     /// any prior scene first.
     fn dispatch_path_to_loader(&self, window_id: u64, path: PathBuf) {
-        let (loader, pending, build_volume) = {
-            let main_windows = self.main_windows.borrow();
-            let Some(wired) = main_windows.get(&window_id) else {
-                return;
-            };
-            (
-                wired.controller.loader(),
-                wired.pending_load.clone(),
-                wired.controller.build_volume(),
-            )
-        };
-        if decide_load_dispatch(loader.graphics_unavailable()) == LoadDispatch::Queue {
-            // Pre-first-paint: the controller will dispatch this once
-            // `handle_rendering_setup` publishes the device.
-            pending.queue(path);
-            return;
+        let controller = self
+            .main_windows
+            .borrow()
+            .get(&window_id)
+            .map(|wired| wired.controller.clone());
+        if let Some(controller) = controller {
+            controller.dispatch_load(path);
         }
-        let Some(ticket) = loader.begin_load() else {
-            // A drop onto a busy window is silently ignored.
-            return;
-        };
-        // Covers both a ready device and a renderer that will never provide
-        // one; `start_load_with_ticket` reads the same graphics state and
-        // deposits the reason for the latter, so a path that can never open
-        // reports its failure at once.
-        start_load_with_ticket(ticket, path, &loader, build_volume);
     }
 
     /// Clears the current scene, then dispatches the new path: the Discard
@@ -1304,11 +1375,11 @@ impl AppState {
                     },
                 };
                 match store.adopt(entry, window) {
-                    Ok(snapshot) => self.open_path_in_window(window, snapshot),
+                    Ok(snapshot) => self.replace_scene_with(window, snapshot),
                     Err(err) => {
                         crate::breadcrumbs::note(&format!("autosave: not adopted: {err:#}"));
                         moved = false;
-                        self.open_path_in_window(window, entry.snapshot.clone());
+                        self.replace_scene_with(window, entry.snapshot.clone());
                     }
                 }
             }
@@ -2593,6 +2664,7 @@ mod window_wiring_tests {
             catalog,
             default_envelope,
             clipboard: RefCell::new(None),
+            dropped: RefCell::new(HashMap::new()),
             device_loss: DeviceLoss::default(),
             // These tests autosave nothing.
             autosave: None,
@@ -2620,7 +2692,7 @@ mod window_wiring_tests {
     /// drivers and its preference listener, but no other callback, and none of
     /// the parts that need a GPU surface.
     fn add_window(app: &Rc<AppState>) -> u64 {
-        let (window, pending_load, controller) = new_window(app);
+        let (window, _pending_load, controller) = new_window(app);
         let drivers = app.install_window_drivers(&window, &controller);
         let subscription = subscribe_window_preferences(
             &app.prefs,
@@ -2635,7 +2707,6 @@ mod window_wiring_tests {
             WiredMainWindow {
                 window,
                 controller,
-                pending_load,
                 autosaver: None,
                 _subscription: subscription,
                 _drivers: drivers,
@@ -2959,13 +3030,135 @@ mod window_wiring_tests {
                 id,
                 FileDrag::Dropped(PathBuf::from("/models/cube.stl")),
             );
+            // What the drop's timer runs once the OS has handed over every
+            // file of the drop.
+            app.open_dropped(id);
             // The window has no GPU device yet, so the path waits on its
             // pending load.
-            let queued = app.main_windows.borrow()[&id].pending_load.take();
+            let queued = controller_of(&app, id).pending_load().take();
             (window.get_drop_hovering(), queued)
         });
         assert!(!hovering);
         assert_eq!(queued, Some(PathBuf::from("/models/cube.stl")));
+    }
+
+    fn leaf_count(controller: &ViewportController) -> usize {
+        controller
+            .document()
+            .with_scene(|spatial| spatial.graph().reachable_leaf_count())
+            .unwrap_or(0)
+    }
+
+    /// #384: two model files dropped on a window with a scene join it
+    /// together, as one import and one undo step; nothing asks to replace
+    /// the scene.
+    #[test]
+    fn models_dropped_on_a_scene_join_it_as_one_import() {
+        let (waited, asked, joined, undone) = on_fresh_slint_thread(|| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let a = crate::tests_model_import::write_box(dir.path(), "a.stl", [10.0, 10.0, 10.0]);
+            let b = crate::tests_model_import::write_two_object_threemf(dir.path(), "b.3mf");
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            load_cube(&controller);
+            app.on_file_drag(&window, id, FileDrag::Hovered);
+            app.on_file_drag(&window, id, FileDrag::Dropped(a));
+            app.on_file_drag(&window, id, FileDrag::Dropped(b));
+            // The OS hands the files over one by one: nothing starts until
+            // the drop's last file is in.
+            let waited = !controller.loader().is_busy();
+            app.open_dropped(id);
+            let asked = window.get_message_open();
+            crate::tests_model_import::finish_loads(&controller);
+            let joined = leaf_count(&controller);
+            controller.on_undo_requested();
+            (waited, asked, joined, leaf_count(&controller))
+        });
+        assert!(waited, "the drop's files open together");
+        assert!(!asked, "a model never asks to replace the scene");
+        assert_eq!(joined, 4, "the cube, the STL and the 3MF's 2 objects");
+        assert_eq!(undone, 1, "one Undo takes the whole drop away");
+    }
+
+    /// #384: the menu's Import model hands every picked file over at once:
+    /// they join the scene as one import.
+    #[test]
+    fn models_picked_together_join_the_scene_as_one_import() {
+        let (joined, undone) = on_fresh_slint_thread(|| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let a = crate::tests_model_import::write_box(dir.path(), "a.stl", [10.0, 10.0, 10.0]);
+            let b = crate::tests_model_import::write_box(dir.path(), "b.stl", [8.0, 12.0, 6.0]);
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let controller = controller_of(&app, id);
+            load_cube(&controller);
+            app.open_paths_in_window(id, vec![a, b]);
+            crate::tests_model_import::finish_loads(&controller);
+            let joined = leaf_count(&controller);
+            controller.on_undo_requested();
+            (joined, leaf_count(&controller))
+        });
+        assert_eq!(joined, 3);
+        assert_eq!(undone, 1);
+    }
+
+    /// #384: a project dropped on a window with a scene still asks to
+    /// replace it, and the scene stays until the answer.
+    #[test]
+    fn a_project_dropped_on_a_scene_still_asks_to_replace_it() {
+        let (asked, heading, kept, busy) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            load_cube(&controller);
+            app.on_file_drag(
+                &window,
+                id,
+                FileDrag::Dropped(PathBuf::from("/projects/plate.bread")),
+            );
+            app.open_dropped(id);
+            (
+                window.get_message_open(),
+                window.get_message().source_name.to_string(),
+                leaf_count(&controller),
+                controller.loader().is_busy(),
+            )
+        });
+        assert!(asked, "the replace prompt is up");
+        assert_eq!(heading, "plate.bread", "it asks about the project");
+        assert_eq!(kept, 1, "the scene stays until the answer");
+        assert!(!busy, "nothing loads before the answer");
+    }
+
+    /// #384: a project dropped with models opens none of them: a project
+    /// replaces the scene, so it opens alone.
+    #[test]
+    fn a_project_dropped_with_models_opens_alone() {
+        let (heading, kept, busy) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            load_cube(&controller);
+            app.open_paths_in_window(
+                id,
+                vec![
+                    PathBuf::from("/projects/plate.bread"),
+                    PathBuf::from("/models/goblin.stl"),
+                ],
+            );
+            (
+                window.get_message().heading.to_string(),
+                leaf_count(&controller),
+                controller.loader().is_busy(),
+            )
+        });
+        assert_eq!(heading, "A project opens alone");
+        assert_eq!(kept, 1);
+        assert!(!busy);
     }
 
     fn bundled(code: &str) -> LanguagePreference {

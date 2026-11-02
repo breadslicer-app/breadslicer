@@ -443,3 +443,31 @@ fn every_text_of_the_start_dialog_has_spanish() {
     untranslated.extend(missing);
     assert!(untranslated.is_empty(), "no Spanish for {untranslated:#?}");
 }
+
+/// #384: the File menu's Open project and Import model, and what an import
+/// says, have their Spanish.
+#[test]
+fn every_text_of_importing_models_has_spanish() {
+    let spanish = spanish();
+    let singular = [
+        ("MenuBar", "Open project…"),
+        ("MenuBar", "Import model…"),
+        ("ErrorDialog", "A project opens alone"),
+        (
+            "ErrorDialog",
+            "A project is a whole scene, so it opens by itself, in place of the scene. Open it alone, or drop only models to add them to the scene.",
+        ),
+    ];
+    let mut untranslated: Vec<String> = singular
+        .iter()
+        .filter(|(context, id)| spanish.singular(context, id).is_none())
+        .map(|(context, id)| format!("{context:?} => {id:?}"))
+        .collect();
+    if spanish
+        .plural("ErrorDialog", "{n} file could not be opened.")
+        .is_none()
+    {
+        untranslated.push("ErrorDialog => {n} file could not be opened.".to_owned());
+    }
+    assert!(untranslated.is_empty(), "no Spanish for {untranslated:#?}");
+}

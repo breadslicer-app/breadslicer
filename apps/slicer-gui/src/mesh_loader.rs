@@ -72,6 +72,14 @@ pub(crate) fn is_supported_mesh_extension(path: &Path) -> bool {
     is_supported_scene_file_extension(path)
 }
 
+/// Returns whether `path` names a project (`.bread`): a whole scene, which
+/// opens in place of the window's, where a model joins it (#384).
+pub(crate) fn is_project(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("bread"))
+}
+
 /// Checks the file at `path` against the size ceiling. Returns a
 /// [`FileTooLarge`] error if the file is over the limit; `Ok(())` otherwise. A
 /// `metadata()` failure falls through as `Ok(())`: the worker will hit the same
