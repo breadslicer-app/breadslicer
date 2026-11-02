@@ -157,9 +157,20 @@ pub(crate) fn show_all_messages_again(bus: &PreferencesBus) {
     });
 }
 
+/// What an error offers to do about itself, besides Close (#407).
+struct ErrorAction {
+    /// The button's text, in the language in force.
+    label: Box<dyn Fn() -> SharedString>,
+    /// Runs once, when the button is pressed.
+    run: Box<dyn FnOnce()>,
+}
+
 /// One message waiting in the queue, or on show.
 enum Entry {
-    Error(Box<dyn Fn() -> ErrorTexts>),
+    Error {
+        build_texts: Box<dyn Fn() -> ErrorTexts>,
+        action: Option<ErrorAction>,
+    },
     Info {
         build_texts: Box<dyn Fn() -> InfoTexts>,
         key: Option<MessageKey>,
@@ -192,7 +203,7 @@ impl Entry {
             // Asked for from the menu and changes nothing: a click outside
             // only closes it.
             Self::Info { .. } | Self::Diagnostics { .. } => MessageClass::Notice,
-            Self::Error(_)
+            Self::Error { .. }
             | Self::SceneChange { .. }
             | Self::SliceOverwrite { .. }
             | Self::Recovery { .. } => MessageClass::MustAnswer,
@@ -221,10 +232,18 @@ impl Entry {
             has_unsaved_changes: false,
             save_as_mode: false,
             has_scene: false,
+            action: SharedString::new(),
         };
         match self {
-            Self::Error(build_texts) => {
+            Self::Error {
+                build_texts,
+                action,
+            } => {
                 let texts = build_texts();
+                message.action = action
+                    .as_ref()
+                    .map(|action| (action.label)())
+                    .unwrap_or_default();
                 message.kind = MessageKind::Error;
                 message.heading = texts.heading;
                 message.context = texts.context.unwrap_or_default();
@@ -271,7 +290,16 @@ impl Entry {
     /// a notice or an error. `include_models` is the diagnostics' tick.
     fn settle(self, answer: MessageAnswer, include_models: bool) {
         match self {
-            Self::Error(_) | Self::Info { .. } => {}
+            Self::Error { action, .. } => {
+                // Only the action's own button runs it: Escape, Close and a
+                // click outside leave things as they are.
+                if answer == MessageAnswer::Confirm
+                    && let Some(action) = action
+                {
+                    (action.run)();
+                }
+            }
+            Self::Info { .. } => {}
             Self::SceneChange { on_choice, .. } => on_choice(match answer {
                 MessageAnswer::Discard => ReplaceSceneChoice::Discard,
                 MessageAnswer::Save => ReplaceSceneChoice::Save,
@@ -441,6 +469,33 @@ impl DialogManager {
     /// texts that `build_texts` gives in the language in force, now and after
     /// each language change. Must run on the Slint UI thread.
     pub(crate) fn show_error(self: &Rc<Self>, build_texts: impl Fn() -> ErrorTexts + 'static) {
+        self.queue_error(Box::new(build_texts), None);
+    }
+
+    /// [`show_error`](Self::show_error) with a button beside Close, labelled
+    /// `label` in the language in force, that runs `on_action` once (#407).
+    /// Close, Escape and a click outside run nothing. Must run on the Slint UI
+    /// thread.
+    pub(crate) fn show_error_with_action(
+        self: &Rc<Self>,
+        build_texts: impl Fn() -> ErrorTexts + 'static,
+        label: impl Fn() -> SharedString + 'static,
+        on_action: impl FnOnce() + 'static,
+    ) {
+        self.queue_error(
+            Box::new(build_texts),
+            Some(ErrorAction {
+                label: Box::new(label),
+                run: Box::new(on_action),
+            }),
+        );
+    }
+
+    fn queue_error(
+        self: &Rc<Self>,
+        build_texts: Box<dyn Fn() -> ErrorTexts>,
+        action: Option<ErrorAction>,
+    ) {
         let texts = build_texts();
         eprintln!(
             "[error] {}: {}\n{}",
@@ -450,7 +505,10 @@ impl DialogManager {
             "message: error: {}: {} {}",
             texts.heading, texts.message, texts.details
         ));
-        self.enqueue(Entry::Error(Box::new(build_texts)));
+        self.enqueue(Entry::Error {
+            build_texts,
+            action,
+        });
     }
 
     /// Shows a neutral notice that a click outside closes and that offers no
@@ -623,7 +681,7 @@ impl DialogManager {
         self.queue
             .borrow()
             .iter()
-            .filter(|e| matches!(e, Entry::Error(_)))
+            .filter(|e| matches!(e, Entry::Error { .. }))
             .map(|e| e.message().heading.to_string())
             .collect()
     }

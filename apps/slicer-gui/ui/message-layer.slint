@@ -49,6 +49,9 @@ export struct AppMessage {
     save-as-mode: bool,
     // Diagnostics only: there is a scene, so its models can go in.
     has-scene: bool,
+    // Error only: the text of a button that does something about the error
+    // (#407), such as Repair; it answers `confirm`. Empty shows none.
+    action: string,
 }
 
 // A paragraph of a card's body.
@@ -92,9 +95,12 @@ export component MessageLayer inherits Rectangle {
     property <bool> scene-rows: root.kind == MessageKind.scene-change && root.message.has-unsaved-changes;
     // A notice of a heading alone has no body.
     property <bool> has-body: !root.notice || root.message.text != "" || root.message.details != "";
+    // An error that offers to do something about itself (#407).
+    property <bool> has-action: root.kind == MessageKind.error && root.message.action != "";
     // The questions whose main answer is to go ahead: Enter gives it.
     property <MessageAnswer> go-ahead: root.kind == MessageKind.diagnostics ? MessageAnswer.export
         : root.kind == MessageKind.diagnostic-log ? MessageAnswer.confirm
+        : root.has-action ? MessageAnswer.confirm
         : MessageAnswer.cancel;
     // Whether Enter's button shows its ring: while the card has the keyboard.
     property <bool> keyboard: fs.has-focus;
@@ -587,12 +593,22 @@ export component MessageLayer inherits Rectangle {
                         horizontal-stretch: 1;
                     }
 
+                    // With an action beside it, Close steps back: no accent.
                     if root.notice: ScButton {
                         text: root.kind == MessageKind.error ? @tr("ErrorDialog" => "Close") : @tr("InfoDialog" => "Close");
+                        kind: root.has-action ? ButtonKind.normal : ButtonKind.primary;
+                        ring: root.keyboard && !root.has-action;
+                        clicked => {
+                            root.answered(MessageAnswer.close);
+                        }
+                    }
+
+                    if root.has-action: ScButton {
+                        text: root.message.action;
                         kind: ButtonKind.primary;
                         ring: root.keyboard;
                         clicked => {
-                            root.answered(MessageAnswer.close);
+                            root.answered(MessageAnswer.confirm);
                         }
                     }
 

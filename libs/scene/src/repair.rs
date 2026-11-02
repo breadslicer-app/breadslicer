@@ -118,6 +118,18 @@ impl Scene {
         watch: &dyn SceneRepairWatch,
     ) -> Result<Vec<SceneRepairOutcome>, RepairCancelled> {
         let targets = self.mesh_targets();
+        self.repair_targets_watched(&targets, passes, watch)
+    }
+
+    /// [`Self::repair_meshes_watched`] over `targets` only, in their order:
+    /// every other stored mesh is left as it is. A target the scene does not
+    /// store gets no outcome.
+    pub fn repair_targets_watched(
+        &mut self,
+        targets: &[MeshTarget],
+        passes: RepairPasses,
+        watch: &dyn SceneRepairWatch,
+    ) -> Result<Vec<SceneRepairOutcome>, RepairCancelled> {
         // Each target weighs its faces; 1 at least, so a run of empty meshes
         // still moves.
         let weights: Vec<f32> = targets
@@ -264,6 +276,49 @@ mod scene_repair_tests {
             .unwrap();
         graph.add_child(parent, leaf).unwrap();
         leaf
+    }
+
+    /// Pins that a run over some targets repairs only those: another broken
+    /// mesh keeps its storage, and the progress counts only the targets
+    /// asked for.
+    #[test]
+    fn a_run_over_some_targets_leaves_the_others_alone() {
+        struct Count(std::cell::Cell<usize>);
+        impl SceneRepairWatch for Count {
+            fn progress(&self, progress: SceneRepairProgress) {
+                self.0.set(self.0.get().max(progress.targets));
+            }
+            fn cancelled(&self) -> bool {
+                false
+            }
+        }
+        let mut graph = Scene::new();
+        let root = add_root_group(&mut graph);
+        let asked = add_inline_leaf(&mut graph, root, flipped_tetrahedron());
+        let other = add_inline_leaf(&mut graph, root, flipped_tetrahedron());
+        let other_before = graph.target_mesh(MeshTarget::InlineLeaf(other)).cloned();
+
+        let watch = Count(std::cell::Cell::new(0));
+        let outcomes = graph
+            .repair_targets_watched(
+                &[MeshTarget::InlineLeaf(asked)],
+                RepairPasses::default_repair(),
+                &watch,
+            )
+            .unwrap();
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].target, MeshTarget::InlineLeaf(asked));
+        assert_eq!(outcomes[0].report.fixes.len(), 1);
+        assert_eq!(watch.0.get(), 1);
+        assert_eq!(
+            graph.target_mesh(MeshTarget::InlineLeaf(other)).cloned(),
+            other_before
+        );
+        assert_ne!(
+            graph.target_mesh(MeshTarget::InlineLeaf(asked)).cloned(),
+            Some(flipped_tetrahedron())
+        );
     }
 
     /// Pins that a resource with repairable winding, a refused NaN inline leaf
