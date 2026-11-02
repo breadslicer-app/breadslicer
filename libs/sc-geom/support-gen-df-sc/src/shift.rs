@@ -40,7 +40,7 @@ impl PlaneMotion {
         }
     }
 
-    fn direction(&self, v: Vec3) -> Vec3 {
+    pub(crate) fn direction(&self, v: Vec3) -> Vec3 {
         match self.turn {
             None => v,
             Some((_, c, s)) => Vec3::new(c * v.x - s * v.y, s * v.x + c * v.y, v.z),
