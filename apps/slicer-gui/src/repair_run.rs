@@ -42,6 +42,7 @@ use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_core::indexed_mesh::repair::RepairEnd;
 use sc_mesh_core::indexed_mesh::repair_progress::{RepairCancelled, RepairStep};
 use sc_mesh_core::transform::Transform3D;
+use sc_mesh_spatial::PrimedMesh;
 use sc_scene::mesh_targets::MeshTarget;
 use sc_scene::repair::{SceneRepairOutcome, SceneRepairProgress, SceneRepairWatch};
 use sc_scene::{NodeId, Scene, SceneError};
@@ -97,6 +98,10 @@ impl MeshReplacement {
 struct CompletedRepair {
     outcomes: Vec<SceneRepairOutcome>,
     replacements: Vec<MeshReplacement>,
+    /// The caches of each repaired mesh (its pick structure among them),
+    /// built on the worker, so the first click after the repair builds
+    /// nothing on the window's thread (#395).
+    primed: Vec<PrimedMesh>,
     /// What each target that still does not slice has left, to mark on the
     /// model.
     marks: Vec<(MeshTarget, Arc<RepairMarks>)>,
@@ -663,6 +668,10 @@ fn run_repair_watched(
                 })
             }
         })
+        .collect::<Vec<MeshReplacement>>();
+    let primed = replacements
+        .iter()
+        .map(|replacement| PrimedMesh::new(Arc::clone(&replacement.after)))
         .collect();
     let marks = outcomes
         .iter()
@@ -676,6 +685,7 @@ fn run_repair_watched(
     Ok(CompletedRepair {
         outcomes,
         replacements,
+        primed,
         marks,
         elapsed: start.elapsed(),
     })
@@ -708,7 +718,7 @@ fn settle(
             .map(MeshReplacement::as_edit)
             .collect(),
     );
-    match document.apply_edit(edit.clone()) {
+    match document.apply_edit_primed(edit.clone(), &completed.primed) {
         Ok(()) => {
             document.push_edit(edit);
             RepairSettlement::Applied
@@ -889,6 +899,38 @@ mod repair_run_tests {
             RepairSettlement::Applied
         );
         assert!(doc.with_scene(|s| scene_slices(s.graph())).unwrap());
+        // Each repaired mesh came with its pick structure built on the
+        // worker (#395): the scene took it instead of building its own, and
+        // it is the one a click would have built.
+        assert_eq!(completed.primed.len(), completed.replacements.len());
+        let taken = doc
+            .with_scene(|spatial| {
+                let mut taken = 0;
+                for id in (0..).map_while(|i| spatial.leaf_id_at_index(i)) {
+                    let query = spatial.leaf(id).expect("a live leaf");
+                    let Some(primed) = completed
+                        .primed
+                        .iter()
+                        .find(|p| std::ptr::eq(p.mesh().as_ref(), query.mesh()))
+                    else {
+                        continue;
+                    };
+                    let clusters = query.clusters();
+                    assert!(std::ptr::eq(
+                        clusters.expect("faces"),
+                        primed.clusters().expect("faces")
+                    ));
+                    assert_eq!(
+                        clusters,
+                        sc_mesh_spatial::TriangleClusters::for_mesh(query.mesh()).as_ref()
+                    );
+                    taken += 1;
+                }
+                taken
+            })
+            .unwrap();
+        // 3 meshes repaired; the resource one shows on 2 leaves.
+        assert_eq!(taken, 4);
         // The apply moved the revision: a slice captured before the repair
         // reads as stale.
         assert!(doc.slice_geometry_changed(captured));

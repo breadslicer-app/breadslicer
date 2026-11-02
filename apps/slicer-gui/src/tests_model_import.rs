@@ -613,3 +613,66 @@ fn files_read_while_the_plate_changes_are_placed_against_it_as_it_stands() {
         assert_eq!(back, Some(before), "and then the move");
     });
 }
+
+/// An import builds the pick structure of every mesh it adds on its worker
+/// (#395), once per mesh, and the scene takes it as it adds the models:
+/// the first click on one builds nothing, and finds what a click would have
+/// built.
+#[test]
+fn an_import_brings_the_pick_structure_of_its_meshes_built() {
+    use std::sync::atomic::AtomicU32;
+
+    use sc_mesh_spatial::TriangleClusters;
+
+    use crate::load_progress::LoadProgressSink;
+    use crate::model_import::{ImportJob, add_to_scene, prepare_models};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let goblin = write_box(dir.path(), "goblin.stl", [12.0, 12.0, 20.0]);
+    let pair = write_two_object_threemf(dir.path(), "pair.3mf");
+    let document = SceneDocument::new();
+    let base = scene_with_a_box(&document, [40.0, 30.0, 10.0]);
+    let volume = NO_PRINTER_BUILD_VOLUME;
+    let job = ImportJob {
+        paths: vec![goblin, pair],
+        standing: crate::arrange_run::standing_bodies(&document),
+        plate: crate::arrange_run::plate_of(&volume),
+        build_volume: volume.volume(),
+        revision: document.scene_revision(),
+        recorded: true,
+        device: None,
+    };
+    let models = prepare_models(job, &LoadProgressSink::new(Arc::new(AtomicU32::new(0))));
+    assert!(models.failures.is_empty());
+    assert_eq!(models.primed.len(), 3, "one per mesh");
+
+    let added = add_to_scene(
+        &document,
+        &models.files,
+        &models.placements,
+        &models.primed,
+        models.recorded,
+    )
+    .expect("the models join");
+    assert_eq!(added.len(), 3);
+    document
+        .with_scene(|spatial| {
+            for id in &added {
+                let query = spatial.leaf(*id).expect("a live leaf");
+                let primed = models
+                    .primed
+                    .iter()
+                    .find(|p| std::ptr::eq(p.mesh().as_ref(), query.mesh()))
+                    .expect("its mesh was primed");
+                let clusters = query.clusters().expect("faces");
+                assert!(std::ptr::eq(clusters, primed.clusters().expect("faces")));
+                assert_eq!(
+                    Some(clusters),
+                    TriangleClusters::for_mesh(query.mesh()).as_ref()
+                );
+            }
+            // What stood there kept its own.
+            assert!(spatial.leaf(base).expect("the base").clusters().is_some());
+        })
+        .expect("a scene");
+}

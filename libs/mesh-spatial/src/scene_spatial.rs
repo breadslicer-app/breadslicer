@@ -26,6 +26,7 @@ use sc_scene_edit::SceneEdit;
 
 use crate::clusters::TriangleClusters;
 use crate::mesh_spatial::MeshSpatial;
+use crate::primed::PrimedMesh;
 
 /// Triangle counts reported while eager cache priming runs.
 ///
@@ -133,8 +134,8 @@ impl SceneSpatial {
     /// extend the per-leaf cache vector to keep
     /// `self.leaves.len() == self.graph.nodes_len()`. The new cache
     /// slot stays `None`: only inline-mesh leaves carry an entry
-    /// here, and a node installed at an unbound id through a typed
-    /// scene edit is always a mesh-resource leaf.
+    /// here, and an inline-mesh leaf installed at the id through a
+    /// typed scene edit gets its entry when the edit applies.
     ///
     /// See [`Scene::allocate_unbound_node_id`] for the underlying
     /// arena contract and its one-slot leak warning.
@@ -194,10 +195,66 @@ impl SceneSpatial {
     /// and, on success, clear the cached state the edit made stale.
     /// On error the graph and every cache are unchanged.
     pub fn apply_edit(&mut self, edit: SceneEdit) -> Result<(), SceneError> {
+        self.apply_edit_primed(edit, &[])
+    }
+
+    /// [`Self::apply_edit`], then each slot the edit put a mesh in takes
+    /// the caches of `primed` built for that very mesh (the same `Arc`),
+    /// so the first query on it builds nothing. A slot whose mesh is not
+    /// among them keeps what `apply_edit` leaves it; one that some later
+    /// edit gives another mesh drops the caches, as `apply_edit` drops any.
+    /// On error nothing changes, as with `apply_edit`.
+    pub fn apply_edit_primed(
+        &mut self,
+        edit: SceneEdit,
+        primed: &[PrimedMesh],
+    ) -> Result<(), SceneError> {
         edit.apply_to_scene(&mut self.graph)?;
         self.invalidate_for(&edit);
         self.share_for(&edit);
+        if !primed.is_empty() {
+            self.adopt_for(&edit, primed);
+        }
         Ok(())
+    }
+
+    /// Gives each slot `edit` put a mesh in the caches of `primed` built
+    /// for the mesh the slot holds now. The check is against the scene as
+    /// the edit left it, not against the edit: a slot takes caches only for
+    /// the `Arc` it holds.
+    fn adopt_for(&mut self, edit: &SceneEdit, primed: &[PrimedMesh]) {
+        let built_for = |mesh: &Arc<IndexedMesh>| {
+            primed
+                .iter()
+                .find_map(|p| p.cache_for(mesh))
+                .map(Arc::clone)
+        };
+        match edit {
+            SceneEdit::AddMeshResource { rid, .. } | SceneEdit::ReplaceMeshResource { rid, .. } => {
+                if let Some(cache) = self.graph.mesh_resource_arc(*rid).and_then(built_for)
+                    && let Some(slot) = self.mesh_resources.get_mut(rid.index())
+                {
+                    *slot = cache;
+                }
+            }
+            SceneEdit::AddLeaf { node_id, .. } | SceneEdit::ReplaceLeafMesh { node_id, .. } => {
+                if let Some(node) = self.graph.node(*node_id)
+                    && let NodeKind::Leaf(LeafPayload::Mesh(mesh)) = &node.kind
+                    && let Some(cache) = built_for(mesh)
+                    && let Some(slot) = self.leaves.get_mut(node_id.index())
+                {
+                    *slot = Some(cache);
+                }
+            }
+            SceneEdit::Compound(edits) => {
+                for edit in edits {
+                    self.adopt_for(edit, primed);
+                }
+            }
+            SceneEdit::SetLocalTransform { .. }
+            | SceneEdit::RemoveLeaf { .. }
+            | SceneEdit::RemoveMeshResource { .. } => {}
+        }
     }
 
     /// Point each mesh resource `edit` added at the cache of another
@@ -205,6 +262,11 @@ impl SceneSpatial {
     fn share_for(&mut self, edit: &SceneEdit) {
         match edit {
             SceneEdit::AddMeshResource { rid, .. } => self.share_resource_cache(*rid),
+            SceneEdit::AddLeaf {
+                node_id,
+                payload: LeafPayload::Mesh(_),
+                ..
+            } => self.give_inline_cache(*node_id),
             SceneEdit::Compound(edits) => {
                 for edit in edits {
                     self.share_for(edit);
@@ -225,31 +287,64 @@ impl SceneSpatial {
         let Some(mesh) = self.graph.mesh_resource_arc(rid) else {
             return;
         };
-        let mut found: Option<Arc<MeshSpatial>> = None;
+        let found = self.cache_held_for(mesh, Some(rid), None);
+        if let (Some(cache), Some(slot)) = (found, self.mesh_resources.get_mut(rid.index())) {
+            *slot = cache;
+        }
+    }
+
+    /// Give the inline-mesh leaf `id`, just installed by an edit, a
+    /// cache slot: the cache of another slot holding the same mesh
+    /// `Arc` (a copy shows the mesh its original shows), else an empty
+    /// one. A slot the leaf held before it was removed is kept: the
+    /// edit that installs the leaf again (the removal's inverse) brings
+    /// back the same `Arc`, whose caches the slot still holds.
+    fn give_inline_cache(&mut self, id: NodeId) {
+        let Some(NodeKind::Leaf(LeafPayload::Mesh(mesh))) = self.graph.node(id).map(|n| &n.kind)
+        else {
+            return;
+        };
+        if matches!(self.leaves.get(id.index()), Some(Some(_))) {
+            return;
+        }
+        let cache = self
+            .cache_held_for(mesh, None, Some(id))
+            .unwrap_or_default();
+        if self.leaves.len() <= id.index() {
+            self.leaves.resize(id.index() + 1, None);
+        }
+        self.leaves[id.index()] = Some(cache);
+    }
+
+    /// The cache of a slot other than `rid` and `id` that holds the
+    /// mesh `Arc` `mesh`: a mesh resource, else a reachable inline leaf.
+    fn cache_held_for(
+        &self,
+        mesh: &Arc<IndexedMesh>,
+        rid: Option<MeshResourceId>,
+        id: Option<NodeId>,
+    ) -> Option<Arc<MeshSpatial>> {
         for (other, _) in self.graph.mesh_resources_iter() {
-            if other != rid
+            if Some(other) != rid
                 && let Some(arc) = self.graph.mesh_resource_arc(other)
                 && Arc::ptr_eq(arc, mesh)
                 && let Some(cache) = self.mesh_resources.get(other.index())
             {
-                found = Some(Arc::clone(cache));
-                break;
+                return Some(Arc::clone(cache));
             }
         }
-        if found.is_none() {
-            self.graph.for_each_reachable_node(|id, node| {
-                if found.is_none()
-                    && let NodeKind::Leaf(LeafPayload::Mesh(arc)) = &node.kind
-                    && Arc::ptr_eq(arc, mesh)
-                    && let Some(Some(cache)) = self.leaves.get(id.index())
-                {
-                    found = Some(Arc::clone(cache));
-                }
-            });
-        }
-        if let (Some(cache), Some(slot)) = (found, self.mesh_resources.get_mut(rid.index())) {
-            *slot = cache;
-        }
+        let mut found: Option<Arc<MeshSpatial>> = None;
+        self.graph.for_each_reachable_node(|other, node| {
+            if found.is_none()
+                && Some(other) != id
+                && let NodeKind::Leaf(LeafPayload::Mesh(arc)) = &node.kind
+                && Arc::ptr_eq(arc, mesh)
+                && let Some(Some(cache)) = self.leaves.get(other.index())
+            {
+                found = Some(Arc::clone(cache));
+            }
+        });
+        found
     }
 
     /// Clear the cache slots `edit` made stale: only the mesh-swap
