@@ -13,8 +13,12 @@
 //! and their thumbnails, are read on a worker after that, so the launch does
 //! not wait for a slow or missing drive (#359).
 //!
+//! It comes back when the person empties the scene, deleting its last object
+//! or closing it (#397), unless they turned it off.
+//!
 //! The dialog itself (`ui/start-dialog.slint`) hides while a file loads and
-//! closes for good once the window holds a scene, whichever way it got there.
+//! closes for good once the window holds a scene or objects again, whichever
+//! way they got there (an undo of that delete too).
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -47,6 +51,31 @@ pub(crate) fn shows_at_launch(
     recovery: Recovery,
 ) -> bool {
     !opened_with_files && show_at_startup && recovery != Recovery::Answered(RecoveryChoice::Recover)
+}
+
+/// Whether the start dialog shows again once the person emptied the scene
+/// (#397): it is the same dialog, so "Don't show at startup" keeps it away
+/// here too, and it never covers a job still running or a message.
+pub(crate) fn shows_when_emptied(
+    show_at_startup: bool,
+    job_running: bool,
+    message_open: bool,
+) -> bool {
+    show_at_startup && !job_running && !message_open
+}
+
+/// Whether `window` runs a job the start dialog must not cover: a load, a
+/// save, a slice, a hollow, supports, a repair or an orientation. Fix all
+/// runs through these.
+pub(crate) fn runs_a_job(window: &MainWindow) -> bool {
+    window.get_loading()
+        || window.get_load_in_progress()
+        || window.get_saving_in_progress()
+        || window.get_slicing_in_progress()
+        || window.get_hollow_running()
+        || window.get_support_gen_in_progress()
+        || window.get_repairing_in_progress()
+        || window.get_orient_running()
 }
 
 /// The largest thumbnail read, a side in pixels (the `.bread` spec's limit).
@@ -372,6 +401,14 @@ mod tests {
             false,
             Recovery::Answered(RecoveryChoice::Discard)
         ));
+    }
+
+    #[test]
+    fn an_emptied_scene_shows_the_dialog_unless_turned_off_busy_or_covered() {
+        assert!(shows_when_emptied(true, false, false));
+        assert!(!shows_when_emptied(false, false, false));
+        assert!(!shows_when_emptied(true, true, false));
+        assert!(!shows_when_emptied(true, false, true));
     }
 
     #[test]

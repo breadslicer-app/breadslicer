@@ -279,8 +279,9 @@ pub(crate) struct AppState {
     /// Keeps the UI language equal to the preference. Set when the first window
     /// is created: Slint can select a language only once a component exists.
     ui_language: OnceCell<UiLanguage>,
-    /// The start dialog of the launch window (#381), once it has shown.
-    start_dialog: RefCell<Option<Rc<StartDialog>>>,
+    /// Per window, its start dialog (#381), once it has shown there: at
+    /// launch, or after the person emptied the scene (#397).
+    start_dialogs: RefCell<HashMap<u64, Rc<StartDialog>>>,
     /// Per window, the files of a drop not yet opened: the OS hands a drop
     /// of several files over one by one, and they open together (#384).
     dropped: RefCell<HashMap<u64, Vec<PathBuf>>>,
@@ -567,7 +568,7 @@ impl AppState {
             device_loss,
             autosave: AutosaveStore::platform_root().map(|root| Rc::new(AutosaveStore::new(root))),
             ui_language: OnceCell::new(),
-            start_dialog: RefCell::new(None),
+            start_dialogs: RefCell::new(HashMap::new()),
             _settings_sub: settings_sub,
             _settings_saver: settings_saver,
         });
@@ -674,6 +675,7 @@ impl AppState {
             self.default_envelope.clone(),
         );
         self.wire_window_events(&ui, id);
+        self.wire_start_dialog_again(&ctrl, id);
         crate::startup_timing::mark("window menus, autosave and events");
 
         ui.show()?;
@@ -1210,7 +1212,7 @@ impl AppState {
         self.dispatch_path_to_loader(window_id, path);
     }
 
-    fn finish_scene_change(&self, window_id: u64, change: SceneChange) {
+    fn finish_scene_change(self: &Rc<Self>, window_id: u64, change: SceneChange) {
         match change {
             SceneChange::Open(path) => self.discard_then_open(window_id, path),
             SceneChange::Clear => {
@@ -1221,6 +1223,7 @@ impl AppState {
                     .map(|w| w.controller.clone());
                 if let Some(ctrl) = ctrl {
                     ctrl.on_close_scene();
+                    self.offer_start_dialog_again(window_id);
                 }
             }
             SceneChange::CloseWindow => {
@@ -1236,6 +1239,7 @@ impl AppState {
     /// the window closes with nothing left to recover.
     fn remove_window(&self, window_id: u64) -> Option<WiredMainWindow> {
         let window = self.main_windows.borrow_mut().remove(&window_id)?;
+        self.start_dialogs.borrow_mut().remove(&window_id);
         crate::breadcrumbs::note("window: closed");
         if let Some(autosaver) = &window.autosaver {
             autosaver.close();
@@ -1274,10 +1278,42 @@ impl AppState {
         });
     }
 
-    /// Shows the start dialog in window `window_id`, unless a file got there
-    /// first.
+    /// Shows the start dialog in window `window_id` once the person emptied
+    /// its scene (#397), when `start_dialog::shows_when_emptied` lets it.
+    fn offer_start_dialog_again(self: &Rc<Self>, window_id: u64) {
+        let Some(window) = self
+            .main_windows
+            .borrow()
+            .get(&window_id)
+            .map(|w| w.window.clone_strong())
+        else {
+            return;
+        };
+        let show_at_startup = self.prefs.snapshot().show_start_dialog;
+        if crate::start_dialog::shows_when_emptied(
+            show_at_startup,
+            crate::start_dialog::runs_a_job(&window),
+            window.get_message_open(),
+        ) {
+            self.show_start_dialog(window_id);
+        }
+    }
+
+    /// Lets Delete of the last object in window `id` bring the start dialog
+    /// back (#397).
+    fn wire_start_dialog_again(self: &Rc<Self>, ctrl: &ViewportController, id: u64) {
+        let app = Rc::downgrade(self);
+        ctrl.set_on_emptied(Rc::new(move || {
+            if let Some(app) = app.upgrade() {
+                app.offer_start_dialog_again(id);
+            }
+        }));
+    }
+
+    /// Shows the start dialog in window `window_id`, unless a file or an
+    /// object got there first.
     fn show_start_dialog(self: &Rc<Self>, window_id: u64) {
-        if !self.is_empty_window(window_id) {
+        if !self.shows_no_object(window_id) {
             return;
         }
         let Some(window) = self
@@ -1288,18 +1324,24 @@ impl AppState {
         else {
             return;
         };
-        let app = Rc::downgrade(self);
-        let dialog = StartDialog::install(
-            &window,
-            &self.prefs,
-            Rc::new(move |path| {
-                if let Some(app) = app.upgrade() {
-                    app.open_path_in_window(window_id, path);
-                }
-            }),
-        );
+        let installed = self.start_dialogs.borrow().get(&window_id).cloned();
+        let dialog = installed.unwrap_or_else(|| {
+            let app = Rc::downgrade(self);
+            let dialog = StartDialog::install(
+                &window,
+                &self.prefs,
+                Rc::new(move |path| {
+                    if let Some(app) = app.upgrade() {
+                        app.open_path_in_window(window_id, path);
+                    }
+                }),
+            );
+            self.start_dialogs
+                .borrow_mut()
+                .insert(window_id, dialog.clone());
+            dialog
+        });
         dialog.show();
-        *self.start_dialog.borrow_mut() = Some(dialog);
     }
 
     /// At start-up: offers back the scenes that earlier runs left with
@@ -1396,6 +1438,15 @@ impl AppState {
         self.main_windows.borrow().get(&window_id).is_some_and(|w| {
             !w.controller.document().is_loaded() && !w.controller.loader().is_busy()
         })
+    }
+
+    /// Whether window `window_id` shows no object and loads none: no scene,
+    /// or one the person emptied (#397).
+    fn shows_no_object(&self, window_id: u64) -> bool {
+        self.main_windows
+            .borrow()
+            .get(&window_id)
+            .is_some_and(|w| !w.controller.holds_objects() && !w.controller.loader().is_busy())
     }
 
     /// Ends this run's autosaves, as the app exits: their folder goes unless
@@ -2671,7 +2722,7 @@ mod window_wiring_tests {
             // nothing.
             _settings_sub: prefs.subscribe(|_, _| {}),
             ui_language: OnceCell::new(),
-            start_dialog: RefCell::new(None),
+            start_dialogs: RefCell::new(HashMap::new()),
             prefs,
             catalog,
             default_envelope,
@@ -3380,6 +3431,195 @@ mod window_wiring_tests {
         });
         assert!(empty, "an empty window shows the dialog");
         assert!(!with_scene, "a file that got there first wins");
+    }
+
+    /// Adds a window to `app` whose start dialog comes back when the person
+    /// empties its scene, as `spawn_main_window` wires it (#397).
+    fn add_window_with_start_again(app: &Rc<AppState>) -> u64 {
+        let id = add_window(app);
+        app.wire_start_dialog_again(&controller_of(app, id), id);
+        id
+    }
+
+    /// Runs the window's change handlers, as the event loop does before a
+    /// frame.
+    fn settle() {
+        slint::platform::update_timers_and_animations();
+    }
+
+    /// Loads 2 cubes into window `id` and selects the 1st.
+    fn load_two_selected_cubes(app: &AppState, id: u64) {
+        let controller = controller_of(app, id);
+        controller.install_graph_for_test(meshes_as_roots([unit_cube_mesh(), unit_cube_mesh()]));
+        let leaf = controller
+            .document()
+            .with_scene(|scene| scene.leaf_id_at_index(0))
+            .flatten()
+            .expect("the 1st cube is a leaf");
+        controller
+            .document()
+            .set_selection(Selection::One(LeafId(leaf)));
+        controller.set_section(WorkspaceSection::Transform);
+    }
+
+    #[test]
+    fn deleting_the_last_object_brings_the_start_dialog_back_and_undo_hides_it() {
+        let (one_left, emptied, undone, objects_back) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window_with_start_again(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            load_two_selected_cubes(&app, id);
+            settle();
+            controller.on_delete_requested();
+            settle();
+            let one_left = window.get_start_open();
+            load_selected_cube(&app, id);
+            settle();
+            controller.on_delete_requested();
+            settle();
+            let emptied = window.get_start_open();
+            controller.on_undo_requested();
+            settle();
+            (
+                one_left,
+                emptied,
+                window.get_start_open(),
+                controller.holds_objects(),
+            )
+        });
+        assert!(!one_left, "an object still on the plate keeps it away");
+        assert!(emptied, "the last object deleted brings it back");
+        assert!(!undone, "the undo hides it");
+        assert!(objects_back, "the undo brings the object back");
+    }
+
+    #[test]
+    fn undo_with_the_keyboard_reaches_the_scene_under_the_start_dialog() {
+        let (emptied, undone, objects_back) = on_fresh_slint_thread(|| {
+            use slint::platform::{Key, WindowEvent};
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window_with_start_again(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            {
+                let controller = controller.clone();
+                window.on_undo_requested(move || controller.on_undo_requested());
+            }
+            window.show().expect("the headless platform shows it");
+            load_selected_cube(&app, id);
+            // A frame goes by between the load and the delete.
+            settle();
+            controller.on_delete_requested();
+            settle();
+            let emptied = window.get_start_open();
+            for event in [
+                WindowEvent::KeyPressed {
+                    text: Key::Control.into(),
+                },
+                WindowEvent::KeyPressed { text: "z".into() },
+                WindowEvent::KeyReleased { text: "z".into() },
+                WindowEvent::KeyReleased {
+                    text: Key::Control.into(),
+                },
+            ] {
+                window.window().dispatch_event(event);
+            }
+            settle();
+            (emptied, window.get_start_open(), controller.holds_objects())
+        });
+        assert!(emptied, "the last object deleted brings it back");
+        assert!(objects_back, "Ctrl+Z over the dialog undoes the delete");
+        assert!(!undone, "and hides the dialog");
+    }
+
+    #[test]
+    fn closing_the_scene_brings_the_start_dialog_back() {
+        let (clean, asking, dirty) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window_with_start_again(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            load_cube(&controller);
+            settle();
+            app.request_scene_close(id, false);
+            settle();
+            let clean = window.get_start_open();
+            window.set_start_open(false);
+            // A dirty scene asks first; the dialog waits for the answer.
+            load_two_selected_cubes(&app, id);
+            settle();
+            controller.on_delete_requested();
+            app.request_scene_close(id, false);
+            settle();
+            let asking = window.get_start_open();
+            controller
+                .dialogs()
+                .answer(crate::MessageAnswer::Discard, false);
+            settle();
+            (clean, asking, window.get_start_open())
+        });
+        assert!(clean, "a closed scene brings it back");
+        assert!(!asking, "never over the question to keep the changes");
+        assert!(dirty, "once the changes are discarded, it shows");
+    }
+
+    #[test]
+    fn the_start_dialog_turned_off_stays_away_when_the_scene_empties() {
+        let (deleted, closed) = on_fresh_slint_thread(|| {
+            let mut snap = PreferencesSnapshot::for_tests();
+            snap.show_start_dialog = false;
+            let app = test_app(snap);
+            let id = add_window_with_start_again(&app);
+            let window = window_of(&app, id);
+            load_selected_cube(&app, id);
+            settle();
+            controller_of(&app, id).on_delete_requested();
+            settle();
+            let deleted = window.get_start_open();
+            app.request_scene_close(id, false);
+            settle();
+            (deleted, window.get_start_open())
+        });
+        assert!(!deleted, "Don't show at startup holds for a delete");
+        assert!(!closed, "and for a closed scene");
+    }
+
+    /// Turns 1 kind of job (or a message) on or off in a window.
+    type SetBusy = fn(&MainWindow, bool);
+
+    #[test]
+    fn the_start_dialog_never_covers_a_job_or_a_message() {
+        let shown = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window_with_start_again(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            let mut shown = Vec::new();
+            let busy: [(&str, SetBusy); 6] = [
+                ("nothing", |_, _| {}),
+                ("slice", |w, on| w.set_slicing_in_progress(on)),
+                ("hollow", |w, on| w.set_hollow_running(on)),
+                ("supports", |w, on| w.set_support_gen_in_progress(on)),
+                ("repair", |w, on| w.set_repairing_in_progress(on)),
+                ("message", |w, on| w.set_message_open(on)),
+            ];
+            for (what, set) in busy {
+                set(&window, true);
+                load_selected_cube(&app, id);
+                settle();
+                controller.on_delete_requested();
+                settle();
+                shown.push((what, window.get_start_open()));
+                set(&window, false);
+                window.set_start_open(false);
+            }
+            shown
+        });
+        assert_eq!(shown[0], ("nothing", true), "with nothing running it shows");
+        for (what, open) in &shown[1..] {
+            assert!(!open, "the dialog covered a running {what}");
+        }
     }
 
     #[test]

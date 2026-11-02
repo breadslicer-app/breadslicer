@@ -88,7 +88,7 @@ export component MainWindow inherits Window {
     callback message-outside-clicked();
     // The start dialog (#381), over the window like the messages. Rust
     // (`start_dialog.rs`) opens it and fills the list; it hides while a file
-    // loads and closes once the window holds a scene.
+    // loads and closes once the window holds a scene, or objects again.
     in-out property <bool> start-open: false;
     in property <[RecentFileRow]> start-recent;
     // The name of the file "Reopen" opens; empty offers no Reopen.
@@ -2589,6 +2589,14 @@ export component MainWindow inherits Window {
     // A scene in the window, however it came, ends the start dialog.
     changed has-scene => {
         if (root.has-scene) {
+            root.start-open = false;
+        }
+    }
+    // So do objects in a scene the person emptied (#397): an undo of the
+    // delete, or a model imported into it.
+    property <bool> holds-objects: root.has-scene && root.object-list.length > 0;
+    changed holds-objects => {
+        if (root.holds-objects) {
             root.start-open = false;
         }
     }

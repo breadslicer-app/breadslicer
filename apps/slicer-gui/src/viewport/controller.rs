@@ -121,6 +121,8 @@ pub(crate) struct ViewportController {
     /// The model files that join the scene a load is opening, once it is
     /// open (#384).
     queued_imports: RefCell<Vec<PathBuf>>,
+    /// Runs when Delete takes the scene's last object (#397).
+    on_emptied: RefCell<Option<Rc<dyn Fn()>>>,
     /// The drag tool armed, for tests that run without a window.
     #[cfg(test)]
     drag_tool_for_test: Cell<Option<SupportDragKind>>,
@@ -185,6 +187,7 @@ impl ViewportController {
             support_drag: Cell::new(DragPhase::Idle),
             right_dropped_drag: Cell::new(false),
             queued_imports: RefCell::new(Vec::new()),
+            on_emptied: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
         }
@@ -228,6 +231,7 @@ impl ViewportController {
             support_drag: Cell::new(DragPhase::Idle),
             right_dropped_drag: Cell::new(false),
             queued_imports: RefCell::new(Vec::new()),
+            on_emptied: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
         };
@@ -1699,9 +1703,29 @@ impl ViewportController {
         if !self.allows_layout_tools() {
             return;
         }
-        if let Err(error) = self.session.document().delete_selected_leaf() {
-            self.show_edit_rejected(error);
+        match self.session.document().delete_selected_leaf() {
+            Ok(true) if !self.holds_objects() => {
+                let emptied = self.on_emptied.borrow().clone();
+                if let Some(emptied) = emptied {
+                    emptied();
+                }
+            }
+            Ok(_) => {}
+            Err(error) => self.show_edit_rejected(error),
         }
+    }
+
+    /// Sets what runs when Delete takes the scene's last object (#397).
+    pub(crate) fn set_on_emptied(&self, emptied: Rc<dyn Fn()>) {
+        *self.on_emptied.borrow_mut() = Some(emptied);
+    }
+
+    /// Whether the window's scene holds at least 1 object.
+    pub(crate) fn holds_objects(&self) -> bool {
+        self.session
+            .document()
+            .with_scene(|scene| scene.leaf_id_at_index(0).is_some())
+            .unwrap_or(false)
     }
 
     /// Handles Esc and a click on empty space. Each call drops 1 level of the
