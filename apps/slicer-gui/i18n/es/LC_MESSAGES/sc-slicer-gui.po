@@ -2754,6 +2754,11 @@ msgctxt "Inspector"
 msgid "Lift to {} mm"
 msgstr "Elevar a {} mm"
 
+#, rust-format
+msgctxt "Inspector"
+msgid "Lift {} mm when the model rests on the plate"
+msgstr "Elevar {} mm cuando el modelo apoya en la plataforma"
+
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "Generate anyway"

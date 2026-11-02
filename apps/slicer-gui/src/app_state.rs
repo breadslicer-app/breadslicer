@@ -346,6 +346,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_gizmo_style(snap.gizmo_style);
     settings.set_gizmo_size(snap.gizmo_size);
     settings.set_orthographic_view(snap.orthographic_view);
+    settings.set_lift_models_on_plate(snap.lift_models_on_plate);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
@@ -500,6 +501,7 @@ impl AppState {
             gizmo_style: settings.gizmo_style(),
             gizmo_size: settings.gizmo_size(),
             orthographic_view: settings.orthographic_view(),
+            lift_models_on_plate: settings.lift_models_on_plate(),
             // Never stored: the log runs until the app closes and every launch
             // starts with it off (#74).
             diagnostic_log: false,
@@ -2169,6 +2171,15 @@ mod settings_saver_tests {
     }
 
     #[test]
+    fn saver_mapping_carries_the_lift_of_models_on_the_plate() {
+        let mut settings = AppSettings::default();
+        let mut snap = snapshot_with(ThemePreference::System);
+        snap.lift_models_on_plate = true;
+        apply_snapshot_to_settings(&mut settings, &snap);
+        assert!(settings.lift_models_on_plate());
+    }
+
+    #[test]
     fn saver_mapping_carries_last_open_dir() {
         // The mapping must copy the remembered open directory so it survives a
         // save.
@@ -2457,6 +2468,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::FrameRate,
             PreferencesChange::Gizmo,
             PreferencesChange::Projection,
+            PreferencesChange::LiftModelsOnPlate,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,

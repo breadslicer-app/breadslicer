@@ -55,9 +55,50 @@ pub(crate) fn raft_clash(
     Some(RaftClash {
         layers,
         raft_top_mm: top,
-        lift_to_mm: recommended_lift_mm(Some(options.lift_mm()))
-            .max(layers as f64 * layer_height_mm),
+        lift_to_mm: support_lift_mm(options, layer_height_mm),
     })
+}
+
+/// Where a model's lowest point should stand for its supports: the
+/// generator's default support lift (or a higher configured one), never
+/// below the last layer of a raft built with `options` in layers of
+/// `layer_height_mm`.
+pub(crate) fn support_lift_mm(options: &DfSupportOptions, layer_height_mm: f64) -> f64 {
+    recommended_lift_mm(Some(options.lift_mm()))
+        .max(options.raft_layers(layer_height_mm) as f64 * layer_height_mm)
+}
+
+/// How high above the plate a model's lowest point may be and still rest on
+/// it (#389): absorbs rounding in a drop to the plate.
+pub(crate) const RESTING_MM: f64 = 0.01;
+
+/// The lowest point of the models of `spatial` (only those `only` names,
+/// when given) once those resting on the plate stand at `lifted_to_mm`
+/// (#389), when given; `None` without a model.
+pub(crate) fn lowest_model_after_lift_mm(
+    spatial: &SceneSpatial,
+    only: Option<&[NodeId]>,
+    lifted_to_mm: Option<f64>,
+) -> Option<f64> {
+    model_bottoms(spatial)
+        .into_iter()
+        .filter(|(id, _)| only.is_none_or(|only| only.contains(id)))
+        .map(|(_, z)| match lifted_to_mm {
+            Some(to) if z < RESTING_MM => to,
+            _ => z,
+        })
+        .reduce(f64::min)
+}
+
+/// The edit that lifts every model of `spatial` (only those `only` names,
+/// when given) that rests on the plate so its lowest point stands at
+/// `lift_to_mm` (#389), as one step; `None` when none rests there.
+pub(crate) fn resting_lift_edit(
+    spatial: &SceneSpatial,
+    lift_to_mm: f64,
+    only: Option<&[NodeId]>,
+) -> Option<SceneEdit> {
+    lift_edit(spatial, RESTING_MM, lift_to_mm, only)
 }
 
 /// Every model leaf of `spatial` (generated supports left out) with its
@@ -79,12 +120,9 @@ pub(crate) fn model_bottoms(spatial: &SceneSpatial) -> Vec<(NodeId, f64)> {
 
 /// The lowest point of every model of `spatial` (only those `only` names,
 /// when given), or `None` without a model.
+#[cfg(test)]
 pub(crate) fn lowest_model_mm(spatial: &SceneSpatial, only: Option<&[NodeId]>) -> Option<f64> {
-    model_bottoms(spatial)
-        .into_iter()
-        .filter(|(id, _)| only.is_none_or(|only| only.contains(id)))
-        .map(|(_, z)| z)
-        .reduce(f64::min)
+    lowest_model_after_lift_mm(spatial, only, None)
 }
 
 /// The edit that lifts every model of `spatial` (only those `only` names,

@@ -264,6 +264,7 @@ mod default_envelope_tests {
             PreferencesChange::FrameRate,
             PreferencesChange::Gizmo,
             PreferencesChange::Projection,
+            PreferencesChange::LiftModelsOnPlate,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,

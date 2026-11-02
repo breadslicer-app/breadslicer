@@ -1291,8 +1291,22 @@ impl SceneDocument {
         placement_translation: [f64; 3],
         replaced: &[NodeId],
     ) -> Result<Vec<NodeId>, SceneError> {
+        self.paste_fragment_replacing_all_after(None, fragment, placement_translation, replaced)
+    }
+
+    /// [`Self::paste_fragment_replacing_all`] after the edit `prior`, when
+    /// given, in the same undo entry: the models a Generate press lifted off
+    /// the plate (#389) and the supports generated for them, undone together.
+    /// `prior` is not applied yet; with an `Err` nothing of it is.
+    pub(crate) fn paste_fragment_replacing_all_after(
+        &self,
+        prior: Option<SceneEdit>,
+        fragment: &SceneFragment,
+        placement_translation: [f64; 3],
+        replaced: &[NodeId],
+    ) -> Result<Vec<NodeId>, SceneError> {
         let Some((compound, new_roots)) =
-            self.replacing_paste(fragment, placement_translation, replaced)?
+            self.replacing_paste(prior, fragment, placement_translation, replaced)?
         else {
             return Ok(Vec::new());
         };
@@ -1323,7 +1337,8 @@ impl SceneDocument {
         if self.scene_revision() != revision {
             return Ok(Vec::new());
         }
-        let Some((compound, new_roots)) = self.replacing_paste(fragment, [0.0; 3], replaced)?
+        let Some((compound, new_roots)) =
+            self.replacing_paste(None, fragment, [0.0; 3], replaced)?
         else {
             return Ok(Vec::new());
         };
@@ -1334,11 +1349,12 @@ impl SceneDocument {
         })
     }
 
-    /// The edit that pastes `fragment` and removes the leaves `replaced`,
-    /// unapplied, and the new root leaves; `None` when no scene is loaded or
-    /// nothing would be pasted.
+    /// The edit that makes `prior` (when given), pastes `fragment` and
+    /// removes the leaves `replaced`, unapplied, and the new root leaves;
+    /// `None` when no scene is loaded or nothing would be pasted.
     fn replacing_paste(
         &self,
+        prior: Option<SceneEdit>,
         fragment: &SceneFragment,
         placement_translation: [f64; 3],
         replaced: &[NodeId],
@@ -1348,14 +1364,19 @@ impl SceneDocument {
         else {
             return Ok(None);
         };
-        let compound = if replaced.is_empty() {
+        let compound = if replaced.is_empty() && prior.is_none() {
             paste
         } else {
             let Some(mut graph) = self.with_scene(|spatial| spatial.graph().clone()) else {
                 return Ok(None);
             };
+            let mut edits = Vec::new();
+            if let Some(prior) = prior {
+                prior.apply_to_scene(&mut graph)?;
+                edits.push(prior);
+            }
             paste.apply_to_scene(&mut graph)?;
-            let mut edits = vec![paste];
+            edits.push(paste);
             // Each removal is worked out on the scene the ones before it
             // leave, so a resource two replaced leaves share goes with the
             // last of them.

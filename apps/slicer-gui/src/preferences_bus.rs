@@ -69,6 +69,9 @@ pub(crate) struct PreferencesSnapshot {
     /// projection while it is open, so a switch in 1 window is written to disk
     /// and left out of the other open windows.
     pub orthographic_view: bool,
+    /// Whether generating supports for a model resting on the plate lifts it
+    /// first (#389), the Supports tab's box. Shared by every open window.
+    pub lift_models_on_plate: bool,
     /// Whether the diagnostic log writes the session's events to disk, for
     /// the box in Preferences > Privacy, which starts and stops the log
     /// itself. Not stored in the settings: it stays on until the app closes,
@@ -168,6 +171,7 @@ impl PreferencesSnapshot {
             gizmo_style: GizmoStyle::Outline,
             gizmo_size: DEFAULT_GIZMO_SIZE,
             orthographic_view: false,
+            lift_models_on_plate: false,
             diagnostic_log: false,
             silenced_messages: BTreeSet::new(),
             object_list_visible: true,
@@ -216,6 +220,8 @@ pub(crate) enum PreferencesChange {
     /// The gizmo style or size (#274, #276).
     Gizmo,
     Projection,
+    /// The Supports tab's "Lift … when the model rests on the plate" (#389).
+    LiftModelsOnPlate,
     DiagnosticLog,
     SilencedMessages,
     ObjectListPanel,
