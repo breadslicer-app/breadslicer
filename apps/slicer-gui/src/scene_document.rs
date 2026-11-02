@@ -23,7 +23,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_spatial::SceneSpatial;
+use sc_mesh_spatial::{PrimedMesh, SceneSpatial};
 use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
 use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload};
 use sc_scene::Scene;
@@ -914,6 +914,34 @@ impl SceneDocument {
     /// Undo and Redo, whose entries already hold the supports' part, and for
     /// the following itself.
     pub(crate) fn apply_edit_unfollowed(&self, edit: SceneEdit) -> Result<(), EditNotApplied> {
+        self.apply_edit_unfollowed_primed(edit, &[])
+    }
+
+    /// [`Self::apply_edit`] for an edit that adds meshes whose caches a
+    /// worker already built (#395): each slot the edit puts one of those
+    /// meshes in takes them ([`SceneSpatial::apply_edit_primed`]), so the
+    /// first click on it builds nothing on this thread.
+    pub(crate) fn apply_edit_primed(
+        &self,
+        edit: SceneEdit,
+        primed: &[PrimedMesh],
+    ) -> Result<(), EditNotApplied> {
+        let moved = crate::support_follow::moved_leaf(&edit);
+        if let Some(leaf) = moved {
+            crate::support_follow::anchor(self, leaf);
+        }
+        self.apply_edit_unfollowed_primed(edit, primed)?;
+        if let Some(leaf) = moved {
+            crate::support_follow::follow_live(self, leaf);
+        }
+        Ok(())
+    }
+
+    fn apply_edit_unfollowed_primed(
+        &self,
+        edit: SceneEdit,
+        primed: &[PrimedMesh],
+    ) -> Result<(), EditNotApplied> {
         let mut slot = self.spatial.borrow_mut();
         let Some(spatial) = slot.as_mut() else {
             return Err(EditNotApplied::NoSceneLoaded);
@@ -928,7 +956,9 @@ impl SceneDocument {
         } else {
             SceneEvent::Mutated
         };
-        spatial.apply_edit(edit).map_err(EditNotApplied::Rejected)?;
+        spatial
+            .apply_edit_primed(edit, primed)
+            .map_err(EditNotApplied::Rejected)?;
         drop(slot);
         // If the edit tombstoned selected leaves, drop them from the selection
         // so observers don't keep pointing at an empty arena slot; the other

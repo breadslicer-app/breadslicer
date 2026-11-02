@@ -17,9 +17,11 @@
 
 pub mod clusters;
 mod mesh_spatial;
+mod primed;
 mod scene_spatial;
 
 pub use clusters::TriangleClusters;
+pub use primed::PrimedMesh;
 pub use scene_spatial::{ObjectQuery, PrimingProgress, SceneSpatial};
 
 use sc_mesh_core::Aabb;

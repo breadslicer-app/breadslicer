@@ -98,6 +98,8 @@ mod tests_model_import;
 #[cfg(test)]
 mod tests_paste_timing;
 #[cfg(test)]
+mod tests_pick_timing;
+#[cfg(test)]
 mod tests_scene_dirty;
 #[cfg(test)]
 mod tests_scene_loader;

@@ -25,7 +25,10 @@
 //!
 //! Files are read at once, each on a thread of its own, and the meshes an
 //! import adds are uploaded to the graphics device on its worker, so the
-//! window's thread only adds them.
+//! window's thread only adds them. The worker also builds what a click on
+//! them needs to find them (#395): their pick structure, as a scene that
+//! opens has it built; the first click on a model just imported builds
+//! nothing.
 //!
 //! A project (`.bread`) is a whole scene: it never comes here, it replaces
 //! the scene. A 3MF carrying project settings adds its models; the settings
@@ -40,7 +43,7 @@ use sc_geom::df_supports::is_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_formats::messages::LoadMeshWarning;
-use sc_mesh_spatial::SceneSpatial;
+use sc_mesh_spatial::{PrimedMesh, SceneSpatial};
 use sc_print_glue::place_on_plate;
 use sc_project_formats::{LoadedContent, LoadedScene, ReadProjectWarning, load_scene};
 use sc_scene::node::{LeafAttachment, LeafPayload, SceneMetadata};
@@ -100,6 +103,9 @@ pub(crate) struct PreparedModels {
     /// Their meshes, uploaded to the window's device on the worker, for the
     /// renderer to take instead of uploading them on the window's thread.
     pub(crate) meshes: Vec<GpuScene>,
+    /// The caches of their meshes (the pick structure among them), built on
+    /// the worker, for the scene to take when it adds them.
+    pub(crate) primed: Vec<PrimedMesh>,
 }
 
 /// The window's graphics device, for a worker to upload meshes to.
@@ -175,6 +181,7 @@ pub(crate) fn spawn_import(ticket: LoadTicket, job: ImportJob, sink: LoadProgres
                 revision,
                 recorded,
                 meshes: Vec::new(),
+                primed: Vec::new(),
             });
         ticket.deposit_models(first, models);
     });
@@ -232,6 +239,7 @@ fn prepare_opening(job: OpeningJob, sink: &LoadProgressSink) -> anyhow::Result<O
             revision: job.revision,
             recorded: false,
             meshes: Vec::new(),
+            primed: Vec::new(),
         }));
     };
     let placements = place_files(standing_of(&opened.scene), &files, &job.plate);
@@ -331,8 +339,8 @@ pub(crate) fn spawn_placement(
     });
 }
 
-/// Reads every file of `job` at once, works out where each goes and uploads
-/// their meshes.
+/// Reads every file of `job` at once, works out where each goes, uploads
+/// their meshes and builds their caches.
 pub(crate) fn prepare_models(job: ImportJob, sink: &LoadProgressSink) -> PreparedModels {
     let read = read_all(&job.paths, sink);
     let mut files = Vec::new();
@@ -344,10 +352,24 @@ pub(crate) fn prepare_models(job: ImportJob, sink: &LoadProgressSink) -> Prepare
         }
     }
     let placements = place_files(job.standing, &files, &job.plate);
-    let meshes = job
-        .device
-        .map(|device| upload_meshes(&files, &device))
-        .unwrap_or_default();
+    // The caches build while the meshes upload.
+    let (meshes, primed) = std::thread::scope(|scope| {
+        let primers: Vec<_> = files
+            .iter()
+            .map(|file| scope.spawn(|| prime_meshes(file)))
+            .collect();
+        let meshes = job
+            .device
+            .map(|device| upload_meshes(&files, &device))
+            .unwrap_or_default();
+        // A primer that panicked leaves its meshes to build on first use.
+        let primed: Vec<PrimedMesh> = primers
+            .into_iter()
+            .filter_map(|primer| primer.join().ok())
+            .flatten()
+            .collect();
+        (meshes, primed)
+    });
     PreparedModels {
         files,
         failures,
@@ -355,7 +377,23 @@ pub(crate) fn prepare_models(job: ImportJob, sink: &LoadProgressSink) -> Prepare
         revision: job.revision,
         recorded: job.recorded,
         meshes,
+        primed,
     }
+}
+
+/// The caches of each mesh the models of `file` show, built once per mesh
+/// however many models show it.
+fn prime_meshes(file: &ImportedFile) -> Vec<PrimedMesh> {
+    let mut meshes: Vec<&Arc<IndexedMesh>> = Vec::new();
+    for leaf in &file.leaves {
+        if !meshes.iter().any(|m| Arc::ptr_eq(m, &leaf.mesh)) {
+            meshes.push(&leaf.mesh);
+        }
+    }
+    meshes
+        .into_iter()
+        .map(|mesh| PrimedMesh::new(Arc::clone(mesh)))
+        .collect()
 }
 
 /// The meshes of `files`, uploaded to `device`. A file whose upload fails is
@@ -609,13 +647,15 @@ fn join_into(
 }
 
 /// Adds the models of `files` to the scene of `document`, each file moved
-/// by its placement, as one edit, and selects them. The edit goes on the
-/// undo stack when `recorded`. Returns the new leaves; none when no scene is
+/// by its placement, as one edit, and selects them; each mesh takes its
+/// caches from `primed`, built on the worker. The edit goes on the undo
+/// stack when `recorded`. Returns the new leaves; none when no scene is
 /// loaded or nothing was read.
 pub(crate) fn add_to_scene(
     document: &SceneDocument,
     files: &[ImportedFile],
     placements: &[Option<Placement>],
+    primed: &[PrimedMesh],
     recorded: bool,
 ) -> Result<Vec<NodeId>, SceneError> {
     let leaves = placed_leaves(files, placements);
@@ -631,7 +671,7 @@ pub(crate) fn add_to_scene(
         return Ok(Vec::new());
     }
     let edit = join_edit(&leaves, &meshes, &ids, &rids, position);
-    match document.apply_edit(edit.clone()) {
+    match document.apply_edit_primed(edit.clone(), primed) {
         Ok(()) => {}
         Err(EditNotApplied::NoSceneLoaded) => return Ok(Vec::new()),
         Err(EditNotApplied::Rejected(error)) => return Err(error),

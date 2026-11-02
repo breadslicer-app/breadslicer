@@ -56,6 +56,11 @@ Scenes are mutated by passing `SceneSpatial::apply_edit` one of the typed
 edits from `sc-scene-edit`. It applies the edit and drops the cache entries
 that edit affects. There is no other mutation entry point.
 
+A mesh made on a worker thread can bring its caches with it: build a
+`PrimedMesh` there and pass it to `SceneSpatial::apply_edit_primed` with the
+edit that adds the mesh. The slot that takes that very mesh (the same `Arc`)
+takes its caches, so the first query on it builds nothing.
+
 ## Conventions
 
 Same as `sc-mesh-core`: right-handed, Z up, millimetres.
