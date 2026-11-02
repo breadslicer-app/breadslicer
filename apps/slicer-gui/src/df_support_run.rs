@@ -7468,4 +7468,86 @@ mod hand_edit_tests {
             );
         });
     }
+
+    /// #384: a model imported beside a supported, hollowed one. Saved as a
+    /// `.bread` and opened again, both models come back where they stood,
+    /// with the set in force and the hollow of the first.
+    #[test]
+    fn an_imported_model_saves_and_reopens_with_the_others_supports_and_hollow() {
+        use crate::hollow_persist::{install_hollows, restore_hollows};
+        use crate::hollow_run::{HollowOptions, Hollowed};
+        use crate::print_selection::PrintDefaults;
+        use crate::support_persist::{install_sets, restore_supports, sets_in_force};
+        use crate::tests_model_import::{finish_loads, write_box};
+        use sc_project_formats::{LoadedContent, load_scene};
+
+        /// Every leaf in row order (name, world transform, mesh size), the
+        /// sets in force and the hollows.
+        fn state(document: &SceneDocument) -> (Vec<(String, String, usize)>, usize, usize) {
+            document
+                .with_scene(|spatial| {
+                    let names = crate::viewport::object_names(spatial.graph());
+                    let rows = (0..)
+                        .map_while(|i| spatial.leaf_id_at_index(i))
+                        .enumerate()
+                        .map(|(row, id)| {
+                            (
+                                names[row].clone(),
+                                format!("{:?}", spatial.leaf(id).unwrap().world_transform()),
+                                spatial.graph().leaf_mesh_arc(id).unwrap().faces().len(),
+                            )
+                        })
+                        .collect();
+                    let sets = sets_in_force(spatial, &document.support_sessions()).len();
+                    (rows, sets, document.hollows().borrow().len())
+                })
+                .expect("a scene is open")
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dragon = write_box(dir.path(), "dragon.stl", [10.0, 10.0, 10.0]);
+        let path = dir.path().join("plate.bread");
+        let (saved, reopened) = on_fresh_slint_thread(move || {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (ctrl, _run, leaves) = supported_in(&window, &[[20.0, 20.0, 5.0]]);
+            let document = ctrl.document();
+            let shown = document
+                .with_scene(|s| s.graph().leaf_mesh_arc(leaves[0]).cloned())
+                .flatten()
+                .expect("the model's mesh");
+            document.hollows().borrow_mut().push(Hollowed {
+                hollow: shown,
+                original: Arc::new(sc_mesh_fixtures::unit_cube_mesh()),
+                drains: Vec::new(),
+                options: HollowOptions::default(),
+                plugs: Vec::new(),
+            });
+
+            ctrl.open_models(vec![dragon]);
+            finish_loads(&ctrl);
+            let saved = state(&document);
+            crate::scene_save::save_project_to(&document, &path, &PrintDefaults::default())
+                .expect("the project saves");
+
+            let loaded = load_scene(&path, None, |_| {}).expect("it opens");
+            let LoadedContent::Project(project) = loaded.content else {
+                panic!("a .bread opens as a project");
+            };
+            let mut scene = project.scene;
+            let supports = restore_supports(&mut scene, project.supports);
+            assert!(supports.failures.is_empty(), "{:?}", supports.failures);
+            let hollows = restore_hollows(&scene, project.hollows);
+            assert!(hollows.failures.is_empty(), "{:?}", hollows.failures);
+            let again = Rc::new(ViewportController::new_for_test()).document();
+            again.install_project_graph(scene, path.clone(), project.payload);
+            install_sets(&again, supports.sets);
+            install_hollows(&again, hollows.hollows);
+            (saved, state(&again))
+        });
+        let (rows, sets, hollows) = &saved;
+        assert_eq!(rows.len(), 3, "the model, its supports and the import");
+        assert!(rows.iter().any(|row| row.0 == "dragon"));
+        assert_eq!((*sets, *hollows), (1, 1));
+        assert_eq!(reopened, saved, "everything comes back as it was saved");
+    }
 }

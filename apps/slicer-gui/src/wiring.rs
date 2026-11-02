@@ -73,15 +73,24 @@ use export_flow_dispatch::{ExportDispatch, decide_export_dispatch};
 /// Installs the Slint callbacks of a `MainWindow` for rendering, the viewport,
 /// the edit menu, the workspace sections, and the open, close, save and export
 /// commands. `prefs` gives the open dialog its start directory and the save
-/// commands the app-wide defaults.
+/// commands the app-wide defaults. `confirm_open` opens a file in place of
+/// the scene, asking first about unsaved changes; `open_files` opens files
+/// as a drop does: models join the scene (#384).
 pub(crate) fn wire_main_window(
     ui: &MainWindow,
     ctrl: Rc<ViewportController>,
     prefs: Rc<PreferencesBus>,
     confirm_open: Rc<dyn Fn(PathBuf)>,
+    open_files: Rc<dyn Fn(Vec<PathBuf>)>,
 ) -> Result<(), slint::SetRenderingNotifierError> {
     install_rendering_notifier(ui, ctrl.clone())?;
-    wire_open_file(ui, ctrl.clone(), prefs.clone(), confirm_open.clone());
+    wire_open_file(
+        ui,
+        ctrl.clone(),
+        prefs.clone(),
+        confirm_open.clone(),
+        open_files,
+    );
     wire_save(ui, ctrl.clone(), prefs.clone());
     wire_save_as(ui, ctrl.clone(), prefs.clone());
     wire_save_as_3mf(ui, ctrl.clone(), prefs.clone());
@@ -300,6 +309,7 @@ fn wire_open_file(
     ctrl: Rc<ViewportController>,
     prefs: Rc<PreferencesBus>,
     confirm_open: Rc<dyn Fn(PathBuf)>,
+    open_files: Rc<dyn Fn(Vec<PathBuf>)>,
 ) {
     {
         let ctrl = ctrl.clone();
@@ -325,6 +335,7 @@ fn wire_open_file(
             ctrl.clone(),
             prefs.clone(),
             confirm_open.clone(),
+            open_files.clone(),
             kind,
         )) {
             eprintln!("Failed to spawn file dialog task: {err}");
@@ -336,7 +347,11 @@ fn wire_open_file(
     let open = Rc::new(open);
     {
         let open = open.clone();
-        ui.on_open_file_requested(move || open(OpenKind::Any));
+        ui.on_open_file_requested(move || open(OpenKind::Project));
+    }
+    {
+        let open = open.clone();
+        ui.on_import_model_requested(move || open(OpenKind::Model));
     }
     // The start dialog's Open project and Import model (#381).
     ui.on_start_open_file(move |kind| {
@@ -347,15 +362,15 @@ fn wire_open_file(
     });
 }
 
-/// Which files the open dialog leads with: its first filter is the one shown
-/// when it opens.
+/// What the open dialog is for. Its first filter is the one shown when it
+/// opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OpenKind {
-    /// Every file the app opens (File > Open).
-    Any,
+    /// A file in place of the scene (File > Open project), led by the
     /// Breadslicer projects.
     Project,
-    /// Models: STL, OBJ and 3MF.
+    /// Models to add to the scene (File > Import model, #384): STL, OBJ and
+    /// 3MF, several at once.
     Model,
 }
 
@@ -373,10 +388,21 @@ async fn run_open_file_flow(
     ctrl: Rc<ViewportController>,
     prefs: Rc<PreferencesBus>,
     confirm_open: Rc<dyn Fn(PathBuf)>,
+    open_files: Rc<dyn Fn(Vec<PathBuf>)>,
     kind: OpenKind,
 ) {
     let start_dir =
         resolve_open_dialog_dir(prefs.snapshot().last_open_dir, sc_app_paths::home_dir());
+    if kind == OpenKind::Model {
+        let paths = pick_model_files(ctrl.dialogs().file_dialog(), start_dir).await;
+        // The import takes a ticket of its own: the dialog's goes first.
+        drop(ticket);
+        if let Some(first) = paths.first() {
+            remember_open_directory(&prefs, first);
+            open_files(paths);
+        }
+        return;
+    }
     let Some(path) = pick_mesh_file(ctrl.dialogs().file_dialog(), start_dir, kind).await else {
         // User cancelled the dialog.
         return;
@@ -570,6 +596,32 @@ async fn pick_mesh_file(
     start_dir: Option<PathBuf>,
     kind: OpenKind,
 ) -> Option<PathBuf> {
+    open_dialog(dialog, start_dir, kind)
+        .pick_file()
+        .await
+        .map(|h| h.path().to_path_buf())
+}
+
+/// The models picked to import, several at once; none when cancelled.
+async fn pick_model_files(
+    dialog: rfd::AsyncFileDialog,
+    start_dir: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    open_dialog(dialog, start_dir, OpenKind::Model)
+        .pick_files()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|h| h.path().to_path_buf())
+        .collect()
+}
+
+/// The open dialog for `kind`, its filters set.
+fn open_dialog(
+    dialog: rfd::AsyncFileDialog,
+    start_dir: Option<PathBuf>,
+    kind: OpenKind,
+) -> rfd::AsyncFileDialog {
     let all_supported = (
         ctr!("FileDialog", "All supported files").to_string(),
         mesh_loader::SUPPORTED_MESH_EXTENSIONS,
@@ -579,7 +631,6 @@ async fn pick_mesh_file(
         &["bread"][..],
     );
     let lead = match kind {
-        OpenKind::Any => vec![all_supported, projects],
         OpenKind::Project => vec![projects, all_supported],
         OpenKind::Model => vec![
             (
@@ -605,7 +656,7 @@ async fn pick_mesh_file(
     if let Some(dir) = start_dir {
         dialog = dialog.set_directory(dir);
     }
-    dialog.pick_file().await.map(|h| h.path().to_path_buf())
+    dialog
 }
 
 fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {

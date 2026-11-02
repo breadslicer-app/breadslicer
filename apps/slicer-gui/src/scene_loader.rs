@@ -63,6 +63,7 @@ use crate::mesh_health::MeshVerdicts;
 use crate::mesh_render::{
     AllocationRefusal, DeviceLoss, GpuScene, RenderAllocation, RenderError, StageRefusal,
 };
+use crate::model_import::PreparedModels;
 use crate::reloaded_slices::ReloadedSlices;
 use crate::support_persist::RestoredSupports;
 
@@ -122,7 +123,25 @@ pub(crate) struct PreparedScene {
     pub restored_hollows: RestoredHollows,
 }
 
-type LoadSlot = Arc<Mutex<Option<(TicketGuard, PathBuf, anyhow::Result<PreparedScene>)>>>;
+/// What a finished load hands the UI thread: a scene to install in place of
+/// any before, or models to add to the open one (#384).
+// Made and moved once per load; boxing would only cost every caller a deref.
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum Finished {
+    Scene(PreparedScene),
+    Models(PreparedModels),
+    /// The file could not be opened; the error dialog is up.
+    Failed,
+}
+
+/// What a worker leaves in the slot.
+#[allow(clippy::large_enum_variant)]
+enum Deposit {
+    Scene(PreparedScene),
+    Models(PreparedModels),
+}
+
+type LoadSlot = Arc<Mutex<Option<(TicketGuard, PathBuf, anyhow::Result<Deposit>)>>>;
 
 /// Inflight-counter RAII guard. Stored inside `LoadSlot` after a deposit so the
 /// counter is decremented (and the UI's `loading` property is flipped) when the
@@ -202,6 +221,16 @@ impl LoadTicket {
     /// `take_finished_load` (or when the slot itself is freed because the
     /// loader was dropped without a drain).
     pub(crate) fn deposit(self, path: PathBuf, result: anyhow::Result<PreparedScene>) {
+        self.deposit_finished(path, result.map(Deposit::Scene));
+    }
+
+    /// [`Self::deposit`] of the models an import read, for the open scene.
+    /// `path` is the first file asked for.
+    pub(crate) fn deposit_models(self, path: PathBuf, models: PreparedModels) {
+        self.deposit_finished(path, Ok(Deposit::Models(models)));
+    }
+
+    fn deposit_finished(self, path: PathBuf, result: anyhow::Result<Deposit>) {
         let LoadTicket { guard, slot } = self;
         let ui = guard.ui.clone();
         *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((guard, path, result));
@@ -493,6 +522,14 @@ impl SceneLoader {
         self.import_notes.open();
     }
 
+    /// Adds the notes of each file `models` brought into the scene to the
+    /// scene's (#384).
+    pub(crate) fn note_imported(&self, models: &PreparedModels) {
+        for file in &models.files {
+            self.import_notes.add(Notes::of_import(file));
+        }
+    }
+
     /// Ends the upload-failure run without touching the load FSM.
     pub(crate) fn reset_upload_failures(&self) {
         self.upload_failures.reset();
@@ -568,17 +605,22 @@ impl SceneLoader {
     }
 
     /// Drains the result slot and applies the stamp check. Returns
-    /// `Some(scene)` if the caller should install a fresh scene (also resets
-    /// the upload-failure gate, so the next failure shows its dialog). Returns
-    /// `None` on a stale / empty deposit, or surfaces the error dialog and
-    /// returns `None` on a worker-side failure.
+    /// `Some(scene)` if the caller should install a fresh scene, or the models
+    /// to add to the open one (also resets the upload-failure gate, so the
+    /// next failure shows its dialog). Returns `None` on a stale / empty
+    /// deposit, or surfaces the error dialog and returns
+    /// `Some(Finished::Failed)` on a worker-side failure.
     ///
     /// The ticket that was in the slot drops here on the UI thread, which
     /// synchronously flips `loading = false` when the counter hits 0.
-    pub(crate) fn take_finished_load(&self) -> Option<PreparedScene> {
+    pub(crate) fn take_finished_load(&self) -> Option<Finished> {
         let (path, result) = self.drain_matching_deposit()?;
         match result {
-            Ok(prepared) => {
+            Ok(Deposit::Models(models)) => {
+                self.upload_failures.reset();
+                Some(Finished::Models(models))
+            }
+            Ok(Deposit::Scene(prepared)) => {
                 log_load_warnings(&path, &prepared);
                 self.import_notes.set(Notes::of(&path, &prepared));
                 self.upload_failures.reset();
@@ -594,7 +636,7 @@ impl SceneLoader {
                         details: details.as_str().into(),
                     });
                 }
-                Some(prepared)
+                Some(Finished::Scene(prepared))
             }
             Err(err) => {
                 crate::breadcrumbs::finished("load", &format!("failed: {err}"));
@@ -604,7 +646,7 @@ impl SceneLoader {
                     message: err.to_string().into(),
                     details: format_anyhow_chain(&err).into(),
                 });
-                None
+                Some(Finished::Failed)
             }
         }
     }
@@ -618,7 +660,12 @@ impl SceneLoader {
     pub(crate) fn drain_deposit_for_test(
         &self,
     ) -> Option<(PathBuf, anyhow::Result<PreparedScene>)> {
-        self.drain_matching_deposit()
+        let (path, result) = self.drain_matching_deposit()?;
+        let result = result.and_then(|finished| match finished {
+            Deposit::Scene(prepared) => Ok(prepared),
+            Deposit::Models(_) => Err(anyhow::anyhow!("an import, not a scene")),
+        });
+        Some((path, result))
     }
 
     /// Drains the result slot and applies the stamp check, returning the raw
@@ -629,7 +676,7 @@ impl SceneLoader {
     /// dialog. Split from `take_finished_load` so the FSM-only behaviour
     /// (drain, stamp check and gate release) is unit-testable without a
     /// `wgpu::Device` or a Slint event loop.
-    fn drain_matching_deposit(&self) -> Option<(PathBuf, anyhow::Result<PreparedScene>)> {
+    fn drain_matching_deposit(&self) -> Option<(PathBuf, anyhow::Result<Deposit>)> {
         let taken = self
             .load_slot
             .lock()

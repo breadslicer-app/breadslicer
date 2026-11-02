@@ -647,8 +647,13 @@ msgstr "Nueva ventana"
 
 #: ui/main-window.slint
 msgctxt "MenuBar"
-msgid "Open…"
-msgstr "Abrir…"
+msgid "Open project…"
+msgstr "Abrir proyecto…"
+
+#: ui/main-window.slint
+msgctxt "MenuBar"
+msgid "Import model…"
+msgstr "Importar modelo…"
 
 #: ui/main-window.slint
 msgctxt "MenuBar"
@@ -5780,3 +5785,21 @@ msgstr "Mostrar la ventana de inicio al abrir Breadslicer"
 msgctxt "FileDialog"
 msgid "3D models"
 msgstr "Modelos 3D"
+
+#: src/app_state.rs
+msgctxt "ErrorDialog"
+msgid "A project opens alone"
+msgstr "Un proyecto se abre solo"
+
+#: src/app_state.rs
+msgctxt "ErrorDialog"
+msgid "A project is a whole scene, so it opens by itself, in place of the scene. Open it alone, or drop only models to add them to the scene."
+msgstr "Un proyecto es una escena entera, así que se abre solo, en lugar de la escena. Abrilo solo, o soltá solo modelos para sumarlos a la escena."
+
+#: src/viewport/controller.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "{n} file could not be opened."
+msgid_plural "{n} files could not be opened."
+msgstr[0] "{n} archivo no se pudo abrir."
+msgstr[1] "{n} archivos no se pudieron abrir."

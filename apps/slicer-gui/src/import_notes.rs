@@ -32,6 +32,7 @@ use slint::SharedString;
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, InfoTexts};
 use crate::i18n::ctr;
+use crate::model_import::ImportedFile;
 use crate::scene_loader::{
     PreparedScene, describe_obj_warning, describe_profile_ref_warning, describe_project_warning,
     describe_scene_warning_naming, describe_threemf_warning,
@@ -60,6 +61,17 @@ impl Notes {
             &prepared.warnings,
             &prepared.project_warnings,
             &prepared.profile_warnings,
+        )
+    }
+
+    /// The notes of a file an import added to the open scene (#384).
+    pub(crate) fn of_import(file: &ImportedFile) -> Self {
+        Self::from_warnings(
+            &file.path,
+            &file.spatial,
+            &file.warnings,
+            &file.project_warnings,
+            &[],
         )
     }
 
@@ -149,40 +161,73 @@ impl Notes {
     }
 
     /// What the status bar says of these notes; empty when there are none.
+    #[cfg(test)]
     pub(crate) fn status_label(&self) -> SharedString {
-        if self.lines.is_empty() {
-            return SharedString::default();
-        }
-        ctr!(
-            "Workspace",
-            "Opened with {n} note",
-            "Opened with {n} notes",
-            self.lines.len()
-        )
+        status_label(std::slice::from_ref(self))
     }
 
     /// The message that lists the notes.
+    #[cfg(test)]
     pub(crate) fn texts(&self) -> InfoTexts {
-        let mut message = ctr!("ImportNotes", "{} opened with these notes:", self.file).to_string();
-        for line in &self.lines {
-            message.push_str("\n• ");
+        texts(std::slice::from_ref(self))
+    }
+}
+
+/// What the status bar says of the notes of the files `all`; empty when
+/// there are none.
+fn status_label(all: &[Notes]) -> SharedString {
+    let count: usize = all.iter().map(|notes| notes.lines.len()).sum();
+    if count == 0 {
+        return SharedString::default();
+    }
+    ctr!(
+        "Workspace",
+        "Opened with {n} note",
+        "Opened with {n} notes",
+        count
+    )
+}
+
+/// The message that lists the notes of the files `all`, file by file.
+fn texts(all: &[Notes]) -> InfoTexts {
+    let mut message = String::new();
+    let mut details: Vec<String> = Vec::new();
+    for notes in all.iter().filter(|notes| !notes.lines.is_empty()) {
+        if !message.is_empty() {
+            message.push_str(
+                "
+
+",
+            );
+        }
+        message.push_str(&ctr!(
+            "ImportNotes",
+            "{} opened with these notes:",
+            notes.file
+        ));
+        for line in &notes.lines {
+            message.push_str(
+                "
+• ",
+            );
             message.push_str(line);
         }
-        let mut details: Vec<String> = self
-            .details
-            .iter()
-            .take(MAX_DETAIL_LINES)
-            .cloned()
-            .collect();
-        let more = self.details.len().saturating_sub(MAX_DETAIL_LINES);
-        if more > 0 {
-            details.push(format!("... and {more} more"));
-        }
-        InfoTexts {
-            heading: ctr!("ImportNotes", "Import notes"),
-            message: message.into(),
-            details: details.join("\n").into(),
-        }
+        details.extend(notes.details.iter().cloned());
+    }
+    let more = details.len().saturating_sub(MAX_DETAIL_LINES);
+    details.truncate(MAX_DETAIL_LINES);
+    if more > 0 {
+        details.push(format!("... and {more} more"));
+    }
+    InfoTexts {
+        heading: ctr!("ImportNotes", "Import notes"),
+        message: message.into(),
+        details: details
+            .join(
+                "
+",
+            )
+            .into(),
     }
 }
 
@@ -398,11 +443,12 @@ fn profile_note(warning: &ProfileRefWarning) -> SharedString {
     }
 }
 
-/// The notes of the open scene, behind the status bar's line.
+/// The notes of the open scene, behind the status bar's line: those of the
+/// file it opened from, and of each file imported into it since (#384).
 pub(crate) struct ImportNotes {
     ui: slint::Weak<MainWindow>,
     dialogs: Rc<DialogManager>,
-    notes: RefCell<Notes>,
+    notes: RefCell<Vec<Notes>>,
 }
 
 impl ImportNotes {
@@ -410,16 +456,30 @@ impl ImportNotes {
         Self {
             ui,
             dialogs,
-            notes: RefCell::new(Notes::default()),
+            notes: RefCell::new(Vec::new()),
         }
     }
 
     /// Takes `notes` as the open scene's, in place of any before.
     pub(crate) fn set(&self, notes: Notes) {
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_import_notes(notes.status_label());
+        *self.notes.borrow_mut() = vec![notes];
+        self.show_label();
+    }
+
+    /// Adds the notes of a file imported into the open scene to those it
+    /// has; nothing for a file without notes.
+    pub(crate) fn add(&self, notes: Notes) {
+        if notes.lines.is_empty() {
+            return;
         }
-        *self.notes.borrow_mut() = notes;
+        self.notes.borrow_mut().push(notes);
+        self.show_label();
+    }
+
+    fn show_label(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_import_notes(status_label(&self.notes.borrow()));
+        }
     }
 
     /// Drops the notes, as the scene closed.
@@ -430,10 +490,10 @@ impl ImportNotes {
     /// Opens the list of the notes; nothing when there are none.
     pub(crate) fn open(&self) {
         let notes = self.notes.borrow().clone();
-        if notes.lines.is_empty() {
+        if notes.iter().all(|notes| notes.lines.is_empty()) {
             return;
         }
-        self.dialogs.show_info(move || notes.texts());
+        self.dialogs.show_info(move || texts(&notes));
     }
 }
 
@@ -693,7 +753,10 @@ endsolid
             let ticket = loader.begin_load().expect("no load is in flight");
             start_load_with_ticket(ticket, path, &loader, BuildVolume::new(100.0, 60.0, 80.0));
             let deadline = Instant::now() + Duration::from_secs(60);
-            while loader.take_finished_load().is_none() {
+            while !matches!(
+                loader.take_finished_load(),
+                Some(crate::scene_loader::Finished::Scene(_))
+            ) {
                 assert!(Instant::now() < deadline, "the load ends within 60 s");
                 std::thread::sleep(Duration::from_millis(10));
             }
