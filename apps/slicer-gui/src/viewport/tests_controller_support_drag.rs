@@ -40,8 +40,11 @@ impl SupportDragHandler for Recorder {
         self.heard
             .borrow_mut()
             .push(Heard::Start(kind, press.cursor));
-        // The camera looks down at the cube: it lands on screen.
-        assert!(project([0.0, 0.0, 0.5]).is_some());
+        // The camera looks down at the cube: its top lands on screen and is
+        // in sight; a point well under it is behind it.
+        assert!(project.project([0.0, 0.0, 0.5]).is_some());
+        assert!(project.visible([0.0, 0.0, 0.5]));
+        assert!(!project.visible([0.0, 0.0, -3.0]));
         self.takes
     }
 

@@ -35,9 +35,34 @@ pub(crate) struct DragPoint {
     pub(crate) support: Option<[f32; 3]>,
 }
 
-/// Where a world point lands on the viewport, in logical pixels; `None`
-/// behind the eye.
-pub(crate) type Project<'a> = &'a dyn Fn([f32; 3]) -> Option<[f32; 2]>;
+/// The view a drag sees the scene through.
+pub(crate) struct DragView<'a> {
+    /// Where a world point lands on the viewport, in logical pixels; `None`
+    /// behind the eye.
+    pub(crate) project: &'a dyn Fn([f32; 3]) -> Option<[f32; 2]>,
+    /// Whether each world point on a support is in sight: nothing of the
+    /// scene, model or support, stands in front of it. Asked many at once,
+    /// so the rays share the cores.
+    pub(crate) in_sight: &'a dyn Fn(&[[f32; 3]]) -> Vec<bool>,
+}
+
+impl DragView<'_> {
+    pub(crate) fn project(&self, p: [f32; 3]) -> Option<[f32; 2]> {
+        (self.project)(p)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn visible(&self, p: [f32; 3]) -> bool {
+        (self.in_sight)(&[p]).first().copied().unwrap_or(false)
+    }
+
+    pub(crate) fn in_sight(&self, points: &[[f32; 3]]) -> Vec<bool> {
+        (self.in_sight)(points)
+    }
+}
+
+/// The view a drag's step sees.
+pub(crate) type Project<'a> = &'a DragView<'a>;
 
 /// The support driver's side of a drag.
 pub(crate) trait SupportDragHandler {

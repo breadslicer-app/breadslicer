@@ -70,6 +70,8 @@ use crate::support_persist::{
     support_leaf, support_leaves,
 };
 use crate::viewport::ViewportController;
+#[cfg(test)]
+use crate::viewport::support_drag::DragView;
 use crate::viewport::support_drag::{DragPoint, Project, SupportDragHandler, SupportDragKind};
 use crate::{MainWindow, WorkspaceSection};
 
@@ -559,11 +561,18 @@ enum DragState {
     Remove {
         drawn: DrawnSet,
         tips: Vec<(String, Vec<[f32; 3]>)>,
+        /// Per point of `tips`, whether it was found in sight (1), not (2),
+        /// or not looked at yet (0).
+        sight: Vec<Vec<u8>>,
         picked: Vec<String>,
         press: [f32; 2],
         brush: Option<[f32; 2]>,
     },
 }
+
+/// How many points along a support, [`PICK_STEP_MM`] apart, one look of
+/// whether it is in sight stands for: 4 mm.
+const SIGHT_STRETCH: usize = 8;
 
 /// How far apart a box or a brush looks along a support, in mm.
 const PICK_STEP_MM: f64 = 0.5;
@@ -3132,23 +3141,63 @@ impl DfSupportRun {
         });
     }
 
-    /// The supports of `supports` a brush at `at`, come from `from`, passes
-    /// over: any point along one.
-    fn brushed(
+    /// The supports of `supports` a box or a brush takes: those with a
+    /// point on screen `inside` it and in sight, as a hover would find them
+    /// (#3); none hidden behind the model or another support. Those `skip`
+    /// names are not looked at. `sight` keeps, per point, whether it was
+    /// found in sight (1) or not (2) during the drag: a ray each, at most one
+    /// a stretch of [`SIGHT_STRETCH`] points.
+    fn taken(
         supports: &[(String, Vec<[f32; 3]>)],
-        from: [f32; 2],
-        at: [f32; 2],
-        radius: f32,
-        project: Project<'_>,
+        sight: &mut [Vec<u8>],
+        skip: &dyn Fn(&str) -> bool,
+        inside: &dyn Fn([f32; 2]) -> bool,
+        view: Project<'_>,
     ) -> Vec<String> {
-        supports
-            .iter()
-            .filter(|(_, along)| {
-                along.iter().any(|p| {
-                    project(*p).is_some_and(|q| screen_segment_distance(q, from, at) <= radius)
-                })
-            })
-            .map(|(id, _)| id.clone())
+        // What a point's stretch already says: the nearest point looked at
+        // at or before it, within the stretch.
+        let known = |sight: &[u8], i: usize| {
+            sight[i.saturating_sub(SIGHT_STRETCH - 1)..=i]
+                .iter()
+                .rev()
+                .find(|&&s| s != 0)
+                .copied()
+        };
+        // Per support, its points inside; those a look is still owed for,
+        // one a stretch, asked all at once.
+        let mut candidates: Vec<(usize, Vec<usize>)> = Vec::new();
+        let mut asks: Vec<(usize, usize)> = Vec::new();
+        for (k, (id, along)) in supports.iter().enumerate() {
+            if skip(id) {
+                continue;
+            }
+            let inner: Vec<usize> = (0..along.len())
+                .filter(|&i| view.project(along[i]).is_some_and(inside))
+                .collect();
+            if inner.is_empty() {
+                continue;
+            }
+            let mut asked_at: Option<usize> = None;
+            for &i in &inner {
+                let covered = known(&sight[k], i).is_some()
+                    || asked_at.is_some_and(|a| i - a < SIGHT_STRETCH);
+                if !covered {
+                    asks.push((k, i));
+                    asked_at = Some(i);
+                }
+            }
+            candidates.push((k, inner));
+        }
+        if !asks.is_empty() {
+            let points: Vec<[f32; 3]> = asks.iter().map(|&(k, i)| supports[k].1[i]).collect();
+            for (&(k, i), seen) in asks.iter().zip(view.in_sight(&points)) {
+                sight[k][i] = if seen { 1 } else { 2 };
+            }
+        }
+        candidates
+            .into_iter()
+            .filter(|(k, inner)| inner.iter().any(|&i| known(&sight[*k], i) == Some(1)))
+            .map(|(k, _)| supports[k].0.clone())
             .collect()
     }
 }
@@ -3194,11 +3243,19 @@ impl SupportDragHandler for DfSupportRun {
                     return false;
                 };
                 let tips = along_supports(drawn.session.support_paths());
+                let mut sight: Vec<Vec<u8>> =
+                    tips.iter().map(|(_, along)| vec![0; along.len()]).collect();
                 let brush = (kind == SupportDragKind::Brush).then_some(press.cursor);
                 let picked = match brush {
                     Some(at) => {
                         let radius = ui.get_support_brush_radius();
-                        Self::brushed(&tips, at, at, radius, project)
+                        Self::taken(
+                            &tips,
+                            &mut sight,
+                            &|_| false,
+                            &|q| screen_segment_distance(q, at, at) <= radius,
+                            project,
+                        )
                     }
                     None => Vec::new(),
                 };
@@ -3209,6 +3266,7 @@ impl SupportDragHandler for DfSupportRun {
                 DragState::Remove {
                     drawn,
                     tips,
+                    sight,
                     picked,
                     press: press.cursor,
                     brush,
@@ -3261,18 +3319,23 @@ impl SupportDragHandler for DfSupportRun {
             Some(DragState::Remove {
                 drawn,
                 tips,
+                sight,
                 picked,
                 press,
                 brush,
             }) => {
                 let next: Vec<String> = match brush {
                     Some(last) => {
+                        let (from, to) = (*last, at.cursor);
+                        let already = picked.clone();
                         let mut next = picked.clone();
-                        for id in Self::brushed(tips, *last, at.cursor, radius, project) {
-                            if !next.contains(&id) {
-                                next.push(id);
-                            }
-                        }
+                        next.extend(Self::taken(
+                            tips,
+                            sight,
+                            &|id| already.iter().any(|p| p == id),
+                            &|q| screen_segment_distance(q, from, to) <= radius,
+                            project,
+                        ));
                         *last = at.cursor;
                         next
                     }
@@ -3281,17 +3344,13 @@ impl SupportDragHandler for DfSupportRun {
                             [press[0].min(at.cursor[0]), press[1].min(at.cursor[1])],
                             [press[0].max(at.cursor[0]), press[1].max(at.cursor[1])],
                         );
-                        tips.iter()
-                            .filter(|(_, along)| {
-                                along.iter().any(|p| {
-                                    project(*p).is_some_and(|q| {
-                                        (lo[0]..=hi[0]).contains(&q[0])
-                                            && (lo[1]..=hi[1]).contains(&q[1])
-                                    })
-                                })
-                            })
-                            .map(|(id, _)| id.clone())
-                            .collect()
+                        Self::taken(
+                            tips,
+                            sight,
+                            &|_| false,
+                            &|q| (lo[0]..=hi[0]).contains(&q[0]) && (lo[1]..=hi[1]).contains(&q[1]),
+                            project,
+                        )
                     }
                 };
                 if next == *picked {
@@ -6105,9 +6164,20 @@ mod hand_edit_tests {
     }
 
     /// The view from straight above, ten pixels a millimetre.
-    fn from_above(p: [f32; 3]) -> Option<[f32; 2]> {
+    fn above(p: [f32; 3]) -> Option<[f32; 2]> {
         Some([p[0] * 10.0, p[1] * 10.0])
     }
+
+    fn all_in_sight(points: &[[f32; 3]]) -> Vec<bool> {
+        vec![true; points.len()]
+    }
+
+    /// The view from straight above, ten pixels a millimetre, everything in
+    /// sight.
+    const FROM_ABOVE: DragView<'static> = DragView {
+        project: &above,
+        in_sight: &all_in_sight,
+    };
 
     fn cursor_at(cursor: [f32; 2]) -> DragPoint {
         DragPoint {
@@ -6150,8 +6220,8 @@ mod hand_edit_tests {
             assert!(left > 0 && left < along.len(), "{left} of {}", along.len());
 
             // A box over x up to 18 mm.
-            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &from_above));
-            run.drag_move(&cursor_at([180.0, 1000.0]), &from_above);
+            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &FROM_ABOVE));
+            run.drag_move(&cursor_at([180.0, 1000.0]), &FROM_ABOVE);
             assert!(
                 window
                     .get_support_add_note()
@@ -6181,9 +6251,9 @@ mod hand_edit_tests {
             assert!(run.drag_start(
                 SupportDragKind::Brush,
                 &cursor_at([150.0, 150.0]),
-                &from_above
+                &FROM_ABOVE
             ));
-            run.drag_move(&cursor_at([150.0, 350.0]), &from_above);
+            run.drag_move(&cursor_at([150.0, 350.0]), &FROM_ABOVE);
             run.drag_end(true);
             settle_click(&run);
             let brushed = in_force_session(&run).unwrap();
@@ -6193,8 +6263,8 @@ mod hand_edit_tests {
             assert!(document.undo().unwrap());
 
             // Dropped: nothing changes.
-            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &from_above));
-            run.drag_move(&cursor_at([400.0, 1000.0]), &from_above);
+            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &FROM_ABOVE));
+            run.drag_move(&cursor_at([400.0, 1000.0]), &FROM_ABOVE);
             run.drag_end(false);
             assert!(run.pending_click.borrow().is_none());
             assert!(run.last_ghost.borrow().is_empty());
@@ -6202,7 +6272,7 @@ mod hand_edit_tests {
 
             // Nothing selected: the box takes nothing, and says why.
             document.set_selection(crate::selection::Selection::None);
-            assert!(!run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &from_above));
+            assert!(!run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &FROM_ABOVE));
             assert!(
                 window
                     .get_support_add_note()
@@ -6256,14 +6326,14 @@ mod hand_edit_tests {
                 model: None,
                 support: Some([from.x as f32, from.y as f32, from.z as f32 - 0.5]),
             };
-            assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &from_above));
+            assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &FROM_ABOVE));
             let to = shifted([from.x, from.y, from.z]).map(|c| c as f32);
             let over = |p: [f32; 3]| DragPoint {
                 cursor: [0.0, 0.0],
                 model: Some(p),
                 support: None,
             };
-            run.drag_move(&over(to), &from_above);
+            run.drag_move(&over(to), &FROM_ABOVE);
             wait_preview(&run);
             run.drag_end(true);
             settle_click(&run);
@@ -6283,10 +6353,10 @@ mod hand_edit_tests {
                     support: Some([from.x as f32, from.y as f32, from.z as f32 - 0.3]),
                     ..grab
                 };
-                assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &from_above));
+                assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &FROM_ABOVE));
                 run.drag_move(
                     &over([from.x as f32 + 1.0, from.y as f32, 9.0]),
-                    &from_above,
+                    &FROM_ABOVE,
                 );
                 wait_preview(&run);
                 assert!(
@@ -6334,12 +6404,12 @@ mod hand_edit_tests {
             println!("{} tips", tips.len());
 
             // A box over half the set, drawn in 20 moves.
-            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([-1e4, -1e4]), &from_above));
+            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([-1e4, -1e4]), &FROM_ABOVE));
             let mut ui_ms: f64 = 0.0;
             for k in 1..=20 {
                 let x = -1e4 + (mid * 10.0 + 1e4) * k as f32 / 20.0;
                 let t = Instant::now();
-                run.drag_move(&cursor_at([x, 1e5]), &from_above);
+                run.drag_move(&cursor_at([x, 1e5]), &FROM_ABOVE);
                 ui_ms = ui_ms.max(ms(t));
             }
             let t = Instant::now();
@@ -6371,7 +6441,7 @@ mod hand_edit_tests {
             assert!(run.drag_start(
                 SupportDragKind::Brush,
                 &cursor_at([lo as f32 * 10.0, 0.0]),
-                &from_above
+                &FROM_ABOVE
             ));
             let ys: Vec<f64> = tips.iter().map(|(_, t)| t[1]).collect();
             let y = (ys.iter().sum::<f64>() / ys.len() as f64) as f32 * 10.0;
@@ -6379,7 +6449,7 @@ mod hand_edit_tests {
             for k in 0..=60 {
                 let x = (lo + (hi - lo) * f64::from(k) / 60.0) as f32 * 10.0;
                 let t = Instant::now();
-                run.drag_move(&cursor_at([x, y]), &from_above);
+                run.drag_move(&cursor_at([x, y]), &FROM_ABOVE);
                 ui_ms = ui_ms.max(ms(t));
             }
             wait_preview(&run);
@@ -6408,7 +6478,7 @@ mod hand_edit_tests {
                 model: None,
                 support: Some([from[0] as f32, from[1] as f32, from[2] as f32 - 0.3]),
             };
-            assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &from_above));
+            assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &FROM_ABOVE));
             let mut previews = Vec::new();
             for k in 1..=10 {
                 let to = [
@@ -6421,7 +6491,7 @@ mod hand_edit_tests {
                         model: Some(to),
                         ..grab
                     },
-                    &from_above,
+                    &FROM_ABOVE,
                 );
                 let t = Instant::now();
                 wait_preview(&run);
@@ -6552,20 +6622,18 @@ mod hand_edit_tests {
             window.set_support_tool(2);
             // Each support where it is seen: halfway down its shaft, not at
             // its tip, which the model mostly hides.
-            let on_screen: Vec<(String, [f32; 2])> = generated
-                .support_paths()
-                .iter()
-                .filter(|(_, path)| path.len() >= 2)
-                .filter_map(|(id, path)| {
-                    let (a, b) = (path[0], path[path.len() - 1]);
-                    let mid = [
-                        (a[0] + b[0]) / 2.0,
-                        (a[1] + b[1]) / 2.0,
-                        (a[2] + b[2]) / 2.0,
-                    ];
-                    let p = ctrl.project_for_test(mid.map(|c| c as f32))?;
+            let on_screen: Vec<(String, [f32; 2])> = along_supports(generated.support_paths())
+                .into_iter()
+                .filter_map(|(id, along)| {
+                    // Halfway along it, in sight there, as a person sees it
+                    // to paint it.
+                    let mid = *along.get(along.len() / 2)?;
+                    if !ctrl.in_sight_for_test(mid) {
+                        return None;
+                    }
+                    let p = ctrl.project_for_test(mid)?;
                     ((20.0..780.0).contains(&p[0]) && (20.0..580.0).contains(&p[1]))
-                        .then(|| (id.clone(), p))
+                        .then_some((id, p))
                 })
                 .collect();
             assert!(on_screen.len() > 3, "{} tips on screen", on_screen.len());
@@ -6745,6 +6813,277 @@ mod hand_edit_tests {
             assert!(far(aimed, tip) < 0.02, "tip {tip:?}, aimed {aimed:?}");
             assert!(document.undo().unwrap(), "one undo");
             assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &session));
+        });
+    }
+
+    /// A box mesh from `lo` to `hi` (world mm).
+    fn box_mesh(lo: [f32; 3], hi: [f32; 3]) -> sc_mesh_core::IndexedMesh {
+        let cube = sc_mesh_fixtures::unit_cube_mesh();
+        let (clo, chi) =
+            cube.vertices()
+                .iter()
+                .fold(([f32::MAX; 3], [f32::MIN; 3]), |(a, b), v| {
+                    let p = v.as_array();
+                    (
+                        std::array::from_fn(|k| a[k].min(p[k])),
+                        std::array::from_fn(|k| b[k].max(p[k])),
+                    )
+                });
+        let vertices = cube
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = v.as_array();
+                sc_mesh_core::Vertex::new(std::array::from_fn(|k| {
+                    lo[k] + (p[k] - clo[k]) / (chi[k] - clo[k]) * (hi[k] - lo[k])
+                }))
+            })
+            .collect();
+        sc_mesh_core::IndexedMesh::new(None, vertices, cube.faces().to_vec())
+    }
+
+    /// Remove's box and brush take only what is in sight (#3): through the
+    /// window's own viewport callbacks, a wall stands in front of the left
+    /// half of a slab's supports; dragged over all of them, they take the
+    /// supports beside the wall and none behind it.
+    #[test]
+    fn the_box_and_the_brush_leave_what_is_out_of_sight() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));
+            {
+                let ctrl = ctrl.clone();
+                window.on_viewport_pointer_down(move |x, y, m| {
+                    ctrl.on_pointer_down(crate::viewport::ScreenPoint::new(x, y), m)
+                });
+            }
+            {
+                let ctrl = ctrl.clone();
+                window.on_viewport_pointer_move(move |x, y, m| {
+                    ctrl.on_pointer_move(crate::viewport::ScreenPoint::new(x, y), m)
+                });
+            }
+            {
+                let ctrl = ctrl.clone();
+                window.on_viewport_pointer_up(move |x, y, m| {
+                    ctrl.on_pointer_up(crate::viewport::ScreenPoint::new(x, y), m)
+                });
+            }
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let slab = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::new(box_mesh([10.0, 20.0, 9.0], [30.0, 30.0, 11.0]))),
+                )
+                .unwrap();
+            graph.add_root(slab).unwrap();
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            // The wall, in front of the left half (y below the slab), comes
+            // after the run: a model of the scene, with no supports of its own.
+            let wall = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::new(box_mesh([4.0, 14.0, 0.0], [19.0, 15.0, 14.0]))),
+                )
+                .unwrap();
+            graph.add_root(wall).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("slab.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                slab,
+            )));
+            ctrl.set_section(WorkspaceSection::Supports);
+            ctrl.set_viewport_for_test(800.0, 600.0);
+            // Seen from the front (from y below), level with the supports.
+            let target = glam::Vec3::new(20.0, 25.0, 5.0);
+            let mut camera = crate::camera::OrbitCamera::new(target, 30.0);
+            camera.set_axis_view(crate::camera::AxisView::Front);
+            if camera.eye().y > target.y {
+                camera.set_axis_view(crate::camera::AxisView::Back);
+            }
+            assert!(camera.eye().y < 14.0, "the wall stands between");
+            ctrl.set_camera_for_test(camera);
+            let generated = in_force_session(&run).expect("editable");
+            window.set_support_tool(2);
+            // Behind the wall, its supports sit wholly at x up to 19 mm; the
+            // others, from x 20 on.
+            let hidden = |session: &DfSupportSession| -> Vec<String> {
+                session
+                    .support_paths()
+                    .into_iter()
+                    .filter(|(_, path)| path.iter().all(|p| p[0] < 18.5))
+                    .map(|(id, _)| id)
+                    .collect()
+            };
+            let behind = hidden(&generated);
+            let beside = generated
+                .support_paths()
+                .iter()
+                .filter(|(_, path)| path.iter().all(|p| p[0] > 20.5))
+                .count();
+            assert!(
+                !behind.is_empty() && beside > 0,
+                "{} behind, {beside} beside",
+                behind.len()
+            );
+            let screen = |p: [f32; 3]| ctrl.project_for_test(p).expect("on screen");
+            let left = screen([6.0, 25.0, 5.0]);
+            let right = screen([30.0, 25.0, 5.0]);
+            let (top, bottom) = (screen([20.0, 25.0, 8.5])[1], screen([20.0, 25.0, 1.5])[1]);
+            let check = |what: &str| {
+                settle_click(&run);
+                let after = in_force_session(&run).unwrap();
+                assert!(
+                    !Arc::ptr_eq(&after, &generated),
+                    "{what} took nothing: {}",
+                    window.get_supports_last_run()
+                );
+                let left_ids: Vec<String> = after.tips().into_iter().map(|(id, _)| id).collect();
+                assert!(
+                    behind.iter().all(|id| left_ids.contains(id)),
+                    "{what} took a support behind the wall"
+                );
+                assert!(after.support_paths().len() < generated.support_paths().len());
+                assert!(document.undo().unwrap(), "one undo");
+            };
+
+            // The brush, along the supports at mid height, left to right.
+            window.set_support_remove_mode(1);
+            let y = (top + bottom) / 2.0;
+            window.invoke_viewport_pointer_down(left[0], y, no_keys());
+            for k in 1..=40 {
+                let x = left[0] + (right[0] - left[0]) * k as f32 / 40.0;
+                window.invoke_viewport_pointer_move(x, y, no_keys());
+            }
+            window.invoke_viewport_pointer_up(right[0], y, no_keys());
+            check("the brush");
+
+            // The box, over all of them.
+            window.set_support_remove_mode(0);
+            window.invoke_viewport_pointer_down(left[0], top - 20.0, no_keys());
+            for k in 1..=10 {
+                let t = k as f32 / 10.0;
+                window.invoke_viewport_pointer_move(
+                    left[0] + (right[0] - left[0]) * t,
+                    top - 20.0 + (bottom + 20.0 - top + 20.0) * t,
+                    no_keys(),
+                );
+            }
+            window.invoke_viewport_pointer_up(right[0], bottom + 20.0, no_keys());
+            check("the box");
+        });
+    }
+
+    /// Measurement, not a gate (#3): what a box and a brush cost on the UI
+    /// thread on a big real model seen as a person sees it, now that they
+    /// take only what is in sight (a ray a point of a support, at most one a
+    /// 2 mm stretch). `SC_STRESS_STL` is the model (scaled to
+    /// `SC_STRESS_HEIGHT_MM` tall when set). `cargo test --profile
+    /// quick-release -p sc-slicer-gui --lib -- --ignored --nocapture
+    /// sight_costs_on_a_real_model`.
+    #[test]
+    #[ignore = "needs SC_STRESS_STL"]
+    fn sight_costs_on_a_real_model() {
+        let Ok(path) = std::env::var("SC_STRESS_STL") else {
+            return;
+        };
+        let height: Option<f32> = std::env::var("SC_STRESS_HEIGHT_MM")
+            .ok()
+            .and_then(|h| h.parse().ok());
+        on_fresh_slint_thread(move || {
+            let (_window, run, faces) = real_model_run(&path, height);
+            let document = run.document.clone();
+            let (supports, _) = run.support_leaf().expect("the supports");
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                supports,
+            )));
+            let (lo, hi) = faces.iter().fold(
+                (glam::Vec3::splat(f32::MAX), glam::Vec3::splat(f32::MIN)),
+                |(a, b), (p, _)| (a.min((*p).into()), b.max((*p).into())),
+            );
+            let centre = (lo + hi) / 2.0;
+            let mut camera = crate::camera::OrbitCamera::new(centre, (hi - lo).length() / 2.0);
+            camera.set_axis_view(crate::camera::AxisView::Front);
+            let ctrl = run.ctrl.clone();
+            ctrl.set_section(WorkspaceSection::Supports);
+            ctrl.set_viewport_for_test(1600.0, 1000.0);
+            ctrl.set_camera_for_test(camera);
+            let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+            let generated = in_force_session(&run).unwrap();
+            println!("{} supports", generated.support_paths().len());
+
+            // The press starts drawing what is in sight on another thread;
+            // asking at once waits for all of it.
+            let t = Instant::now();
+            ctrl.start_sight_depth_for_test();
+            let pressed_ms = ms(t);
+            let t = Instant::now();
+            ctrl.with_view_for_test(|view| view.in_sight(&[centre.into()]));
+            println!(
+                "depth of the scene: press {pressed_ms:.1} ms on the UI thread, drawn in {:.0} ms",
+                ms(t)
+            );
+
+            // A box over the left half of the view, in 20 moves.
+            let started = ctrl
+                .with_view_for_test(|view| {
+                    run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), view)
+                })
+                .unwrap();
+            assert!(started);
+            let (mut worst, mut total) = (0.0f64, 0.0f64);
+            for k in 1..=20 {
+                let at = [800.0 * k as f32 / 20.0, 1000.0 * k as f32 / 20.0];
+                let t = Instant::now();
+                ctrl.with_view_for_test(|view| run.drag_move(&cursor_at(at), view));
+                worst = worst.max(ms(t));
+                total += ms(t);
+            }
+            let picked = match run.drag.borrow().as_ref() {
+                Some(DragState::Remove { picked, sight, .. }) => (
+                    picked.len(),
+                    sight.iter().flatten().filter(|s| **s != 0).count(),
+                ),
+                _ => (0, 0),
+            };
+            run.drag_end(false);
+            println!(
+                "box over half the view: {} supports in sight, {} points looked at; UI per move max {worst:.1} ms, all 20 moves {total:.0} ms",
+                picked.0, picked.1
+            );
+
+            // A brush across the middle, 80 moves.
+            let started = ctrl
+                .with_view_for_test(|view| {
+                    run.drag_start(SupportDragKind::Brush, &cursor_at([0.0, 500.0]), view)
+                })
+                .unwrap();
+            assert!(started);
+            let (mut worst, mut total) = (0.0f64, 0.0f64);
+            for k in 1..=80 {
+                let at = [1600.0 * k as f32 / 80.0, 500.0];
+                let t = Instant::now();
+                ctrl.with_view_for_test(|view| run.drag_move(&cursor_at(at), view));
+                worst = worst.max(ms(t));
+                total += ms(t);
+            }
+            let picked = match run.drag.borrow().as_ref() {
+                Some(DragState::Remove { picked, .. }) => picked.len(),
+                _ => 0,
+            };
+            run.drag_end(false);
+            println!(
+                "brush across the view: {picked} supports in sight; UI per move max {worst:.1} ms, all 80 moves {total:.0} ms"
+            );
         });
     }
 }

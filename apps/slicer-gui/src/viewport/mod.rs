@@ -24,6 +24,7 @@ mod performance_probe;
 mod render_host;
 mod render_scheduler;
 mod session_state;
+mod sight_depth;
 pub(crate) mod support_drag;
 #[cfg(test)]
 mod tests_controller_gizmo_round2;
