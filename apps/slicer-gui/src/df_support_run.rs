@@ -36,6 +36,7 @@
 //! matches.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -72,7 +73,9 @@ use crate::support_persist::{
 use crate::viewport::ViewportController;
 #[cfg(test)]
 use crate::viewport::support_drag::DragView;
-use crate::viewport::support_drag::{DragPoint, Project, SupportDragHandler, SupportDragKind};
+use crate::viewport::support_drag::{
+    DragPoint, Project, ScreenHit, SupportDragHandler, SupportDragKind,
+};
 use crate::{MainWindow, WorkspaceSection};
 
 /// An overlay piece of a mesh in world coordinates.
@@ -181,8 +184,10 @@ pub(crate) struct DfSupportRun {
     /// The hand click being made off the UI thread, those that came while it
     /// was, and the timer that looks for it.
     pending_click: RefCell<Option<PendingClick>>,
-    /// A drag of a Supports tab tool in flight (#3).
+    /// A drag of a Supports tab tool in flight (#3), and the timer that
+    /// sends a box's owed rays between the moves.
     drag: RefCell<Option<DragState>>,
+    box_poll: slint::Timer,
     /// This driver, for what a drag starts from the viewport's side.
     me: RefCell<std::rc::Weak<DfSupportRun>>,
     queued_clicks: RefCell<std::collections::VecDeque<QueuedClick>>,
@@ -561,18 +566,116 @@ enum DragState {
     Remove {
         drawn: DrawnSet,
         tips: Vec<(String, Vec<[f32; 3]>)>,
-        /// Per point of `tips`, whether it was found in sight (1), not (2),
-        /// or not looked at yet (0).
-        sight: Vec<Vec<u8>>,
+        /// The box's far corner, and whether rays are still owed for it.
+        corner: [f32; 2],
+        owed: bool,
+        /// Which support a ray hit, the lines on screen, and what each ray
+        /// found: support and cell of the screen to whether it was seen
+        /// there.
+        locate: SupportLocator,
+        seen_from: SeenFrom,
+        looked: HashMap<(usize, (i32, i32)), bool>,
         picked: Vec<String>,
         press: [f32; 2],
         brush: Option<[f32; 2]>,
     },
 }
 
-/// How many points along a support, [`PICK_STEP_MM`] apart, one look of
-/// whether it is in sight stands for: 4 mm.
-const SIGHT_STRETCH: usize = 8;
+/// The side of a cell of the screen along a support's line, in logical
+/// pixels.
+const SIGHT_CELL_PX: f32 = 5.0;
+
+/// A box or a brush sends a ray through a support every so many cells of
+/// its line on screen.
+const SIGHT_STRIDE: usize = 3;
+
+/// The rays a box sends a step: about 8 ms of them on a big model, the
+/// cores sharing them. Those owed go on between the moves.
+const BOX_RAYS: usize = 300;
+
+/// A cell of the screen a support's line crosses, with a pixel of the line
+/// in it.
+type LineCell = ((i32, i32), [f32; 2]);
+
+/// The supports' lines on screen as a drag sees them: each point projected
+/// once, again only when the view changes (the wheel zooms a box drag).
+struct SeenFrom {
+    /// Where two fixed points land: a change says the view moved.
+    probe: [Option<[f32; 2]>; 2],
+    screen: Vec<Vec<Option<[f32; 2]>>>,
+}
+
+impl SeenFrom {
+    const PROBE: [[f32; 3]; 2] = [[0.0, 0.0, 0.0], [100.0, 100.0, 100.0]];
+
+    fn new(supports: &[(String, Vec<[f32; 3]>)], view: Project<'_>) -> Self {
+        SeenFrom {
+            probe: Self::PROBE.map(|p| view.project(p)),
+            screen: supports
+                .iter()
+                .map(|(_, along)| along.iter().map(|p| view.project(*p)).collect())
+                .collect(),
+        }
+    }
+
+    /// The lines as `view` sees them: as they were, unless it moved.
+    fn refresh(&mut self, supports: &[(String, Vec<[f32; 3]>)], view: Project<'_>) -> bool {
+        if Self::PROBE.map(|p| view.project(p)) == self.probe {
+            return false;
+        }
+        *self = Self::new(supports, view);
+        true
+    }
+}
+
+/// The side of a cell of [`SupportLocator`]'s grid, mm.
+const LOCATE_CELL_MM: f32 = 2.0;
+
+/// Which support of a set a ray hit: its leaf, and the support whose line
+/// runs nearest the hit point, through a grid of the lines' points.
+struct SupportLocator {
+    leaf: NodeId,
+    cells: HashMap<[i32; 3], Vec<(usize, [f32; 3])>>,
+}
+
+impl SupportLocator {
+    fn new(leaf: NodeId, supports: &[(String, Vec<[f32; 3]>)]) -> Self {
+        let mut cells: HashMap<[i32; 3], Vec<(usize, [f32; 3])>> = HashMap::new();
+        for (k, (_, along)) in supports.iter().enumerate() {
+            for p in along {
+                cells
+                    .entry(p.map(|c| (c / LOCATE_CELL_MM).floor() as i32))
+                    .or_default()
+                    .push((k, *p));
+            }
+        }
+        SupportLocator { leaf, cells }
+    }
+
+    /// The support of the set a hit is on: `None` for a hit on any other
+    /// leaf (a model in front, another set) or on no support's line.
+    fn support_at(&self, hit: ScreenHit) -> Option<usize> {
+        if hit.leaf != self.leaf {
+            return None;
+        }
+        let c = hit.point.map(|v| (v / LOCATE_CELL_MM).floor() as i32);
+        let mut best: Option<(f32, usize)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let key = [c[0] + dx, c[1] + dy, c[2] + dz];
+                    for (k, p) in self.cells.get(&key).into_iter().flatten() {
+                        let d = (0..3).map(|i| (p[i] - hit.point[i]).powi(2)).sum::<f32>();
+                        if best.is_none_or(|(b, _)| d < b) {
+                            best = Some((d, *k));
+                        }
+                    }
+                }
+            }
+        }
+        best.map(|(_, k)| k)
+    }
+}
 
 /// How far apart a box or a brush looks along a support, in mm.
 const PICK_STEP_MM: f64 = 0.5;
@@ -943,6 +1046,7 @@ impl DfSupportRun {
             hover_at: Cell::new(None),
             pending_click: RefCell::new(None),
             drag: RefCell::new(None),
+            box_poll: slint::Timer::default(),
             me: RefCell::new(std::rc::Weak::new()),
             queued_clicks: RefCell::new(std::collections::VecDeque::new()),
             click_poll: slint::Timer::default(),
@@ -3141,64 +3245,186 @@ impl DfSupportRun {
         });
     }
 
-    /// The supports of `supports` a box or a brush takes: those with a
-    /// point on screen `inside` it and in sight, as a hover would find them
-    /// (#3); none hidden behind the model or another support. Those `skip`
-    /// names are not looked at. `sight` keeps, per point, whether it was
-    /// found in sight (1) or not (2) during the drag: a ray each, at most one
-    /// a stretch of [`SIGHT_STRETCH`] points.
+    /// The supports a box from `press` to `corner` takes, by their ids, and
+    /// whether rays are still owed for it: at most `budget` are sent.
+    #[allow(clippy::too_many_arguments)]
+    fn boxed(
+        tips: &[(String, Vec<[f32; 3]>)],
+        seen_from: &SeenFrom,
+        locate: &SupportLocator,
+        looked: &mut HashMap<(usize, (i32, i32)), bool>,
+        press: [f32; 2],
+        corner: [f32; 2],
+        view: Project<'_>,
+        budget: usize,
+    ) -> (Vec<String>, bool) {
+        let (lo, hi) = (
+            [press[0].min(corner[0]), press[1].min(corner[1])],
+            [press[0].max(corner[0]), press[1].max(corner[1])],
+        );
+        let (mut ids, more) = Self::taken(
+            seen_from,
+            locate,
+            looked,
+            &|_| false,
+            &|q| (lo[0]..=hi[0]).contains(&q[0]) && (lo[1]..=hi[1]).contains(&q[1]),
+            view,
+            budget,
+        );
+        ids.sort_unstable();
+        (ids.into_iter().map(|k| tips[k].0.clone()).collect(), more)
+    }
+
+    /// Looks on between the moves while a box owes rays: a step every
+    /// [`HOVER_POLL`], [`BOX_RAYS`] at a time, so no move waits for them all.
+    fn keep_looking(self: &Rc<Self>, more: bool) {
+        if !more {
+            self.box_poll.stop();
+            return;
+        }
+        if self.box_poll.running() {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        self.box_poll
+            .start(slint::TimerMode::Repeated, HOVER_POLL, move || {
+                if let Some(run) = weak.upgrade() {
+                    run.box_step(BOX_RAYS);
+                }
+            });
+    }
+
+    /// One step of a box owing rays: up to `budget` more, the picks
+    /// brought up to date. Returns whether it still owes some.
+    fn box_step(self: &Rc<Self>, budget: usize) -> bool {
+        let stepped = self.ctrl.with_drag_view(|view| {
+            let mut drag = self.drag.borrow_mut();
+            let Some(DragState::Remove {
+                drawn,
+                tips,
+                locate,
+                seen_from,
+                looked,
+                picked,
+                press,
+                corner,
+                owed,
+                brush: None,
+            }) = drag.as_mut()
+            else {
+                return None;
+            };
+            if !*owed {
+                return None;
+            }
+            let (ids, more) = Self::boxed(
+                tips, seen_from, locate, looked, *press, *corner, view, budget,
+            );
+            *owed = more;
+            let changed = ids != *picked;
+            *picked = ids;
+            Some((drawn.clone(), picked.clone(), changed, more))
+        });
+        let Some(Some((drawn, picked, changed, more))) = stepped else {
+            self.box_poll.stop();
+            return false;
+        };
+        if changed {
+            self.picks_changed(&drawn, &picked);
+        }
+        if !more {
+            self.box_poll.stop();
+        }
+        more
+    }
+
+    /// somewhere `inside` it (#3). A ray goes through a pixel of a
+    /// support's line on screen; the nearest hit among every leaf of the
+    /// scene decides: on the model or another set, nothing; on this set, the
+    /// support whose line runs nearest the hit. A support is looked at every
+    /// [`SIGHT_STRIDE`] cells of [`SIGHT_CELL_PX`] along its line on screen,
+    /// in two batches across the cores: one ray each first, which finds most
+    /// supports in sight, then the rest for those still in doubt. `looked`
+    /// keeps what each ray found during the drag; those `skip` names are not
+    /// looked at.
     fn taken(
-        supports: &[(String, Vec<[f32; 3]>)],
-        sight: &mut [Vec<u8>],
-        skip: &dyn Fn(&str) -> bool,
+        seen_from: &SeenFrom,
+        locate: &SupportLocator,
+        looked: &mut HashMap<(usize, (i32, i32)), bool>,
+        skip: &dyn Fn(usize) -> bool,
         inside: &dyn Fn([f32; 2]) -> bool,
         view: Project<'_>,
-    ) -> Vec<String> {
-        // What a point's stretch already says: the nearest point looked at
-        // at or before it, within the stretch.
-        let known = |sight: &[u8], i: usize| {
-            sight[i.saturating_sub(SIGHT_STRETCH - 1)..=i]
-                .iter()
-                .rev()
-                .find(|&&s| s != 0)
-                .copied()
-        };
-        // Per support, its points inside; those a look is still owed for,
-        // one a stretch, asked all at once.
-        let mut candidates: Vec<(usize, Vec<usize>)> = Vec::new();
-        let mut asks: Vec<(usize, usize)> = Vec::new();
-        for (k, (id, along)) in supports.iter().enumerate() {
-            if skip(id) {
+        budget: usize,
+    ) -> (Vec<usize>, bool) {
+        let mut taken = Vec::new();
+        let mut doubt: Vec<(usize, Vec<LineCell>)> = Vec::new();
+        for (k, line) in seen_from.screen.iter().enumerate() {
+            if skip(k) {
                 continue;
             }
-            let inner: Vec<usize> = (0..along.len())
-                .filter(|&i| view.project(along[i]).is_some_and(inside))
-                .collect();
-            if inner.is_empty() {
-                continue;
-            }
-            let mut asked_at: Option<usize> = None;
-            for &i in &inner {
-                let covered = known(&sight[k], i).is_some()
-                    || asked_at.is_some_and(|a| i - a < SIGHT_STRETCH);
-                if !covered {
-                    asks.push((k, i));
-                    asked_at = Some(i);
+            // A pixel of its line in each cell inside, in order along it.
+            let mut cells: Vec<LineCell> = Vec::new();
+            for q in line.iter().flatten().filter(|q| inside(**q)) {
+                let c = (
+                    (q[0] / SIGHT_CELL_PX).floor() as i32,
+                    (q[1] / SIGHT_CELL_PX).floor() as i32,
+                );
+                if cells.last().is_none_or(|(last, _)| *last != c)
+                    && !cells.iter().any(|(seen, _)| *seen == c)
+                {
+                    cells.push((c, *q));
                 }
             }
-            candidates.push((k, inner));
-        }
-        if !asks.is_empty() {
-            let points: Vec<[f32; 3]> = asks.iter().map(|&(k, i)| supports[k].1[i]).collect();
-            for (&(k, i), seen) in asks.iter().zip(view.in_sight(&points)) {
-                sight[k][i] = if seen { 1 } else { 2 };
+            if cells
+                .iter()
+                .any(|(c, _)| looked.get(&(k, *c)) == Some(&true))
+            {
+                taken.push(k);
+                continue;
+            }
+            let last = cells.len().saturating_sub(1);
+            let sparse: Vec<_> = cells
+                .into_iter()
+                .enumerate()
+                .filter(|(i, _)| i % SIGHT_STRIDE == 0 || *i == last)
+                .map(|(_, cell)| cell)
+                .filter(|(c, _)| !looked.contains_key(&(k, *c)))
+                .collect();
+            if !sparse.is_empty() {
+                doubt.push((k, sparse));
             }
         }
-        candidates
+        let mut ask = |asks: Vec<(usize, (i32, i32), [f32; 2])>, taken: &mut Vec<usize>| {
+            let pixels: Vec<[f32; 2]> = asks.iter().map(|(_, _, q)| *q).collect();
+            for ((k, c, _), hit) in asks.into_iter().zip(view.hits(&pixels)) {
+                let seen = hit.is_some_and(|hit| locate.support_at(hit) == Some(k));
+                looked.insert((k, c), seen);
+                if seen && !taken.contains(&k) {
+                    taken.push(k);
+                }
+            }
+        };
+        let owed: usize = doubt.iter().map(|(_, cells)| cells.len()).sum();
+        let first: Vec<_> = doubt
+            .iter_mut()
+            .take(budget)
+            .map(|(k, cells)| {
+                let (c, q) = cells.remove(0);
+                (*k, c, q)
+            })
+            .collect();
+        let left = budget - first.len();
+        let asked = first.len();
+        ask(first, &mut taken);
+        let rest: Vec<_> = doubt
             .into_iter()
-            .filter(|(k, inner)| inner.iter().any(|&i| known(&sight[*k], i) == Some(1)))
-            .map(|(k, _)| supports[k].0.clone())
-            .collect()
+            .filter(|(k, _)| !taken.contains(k))
+            .flat_map(|(k, cells)| cells.into_iter().map(move |(c, q)| (k, c, q)))
+            .take(left)
+            .collect();
+        let asked = asked + rest.len();
+        ask(rest, &mut taken);
+        (taken, asked < owed)
     }
 }
 
@@ -3243,19 +3469,26 @@ impl SupportDragHandler for DfSupportRun {
                     return false;
                 };
                 let tips = along_supports(drawn.session.support_paths());
-                let mut sight: Vec<Vec<u8>> =
-                    tips.iter().map(|(_, along)| vec![0; along.len()]).collect();
+                let locate = SupportLocator::new(drawn.leaf, &tips);
+                let seen_from = SeenFrom::new(&tips, project);
+                let mut looked = HashMap::new();
                 let brush = (kind == SupportDragKind::Brush).then_some(press.cursor);
                 let picked = match brush {
                     Some(at) => {
                         let radius = ui.get_support_brush_radius();
                         Self::taken(
-                            &tips,
-                            &mut sight,
+                            &seen_from,
+                            &locate,
+                            &mut looked,
                             &|_| false,
                             &|q| screen_segment_distance(q, at, at) <= radius,
                             project,
+                            usize::MAX,
                         )
+                        .0
+                        .into_iter()
+                        .map(|k| tips[k].0.clone())
+                        .collect()
                     }
                     None => Vec::new(),
                 };
@@ -3266,9 +3499,13 @@ impl SupportDragHandler for DfSupportRun {
                 DragState::Remove {
                     drawn,
                     tips,
-                    sight,
+                    locate,
+                    seen_from,
+                    looked,
                     picked,
                     press: press.cursor,
+                    corner: press.cursor,
+                    owed: false,
                     brush,
                 }
             }
@@ -3319,47 +3556,62 @@ impl SupportDragHandler for DfSupportRun {
             Some(DragState::Remove {
                 drawn,
                 tips,
-                sight,
+                locate,
+                seen_from,
+                looked,
                 picked,
                 press,
+                corner,
+                owed,
                 brush,
             }) => {
+                if seen_from.refresh(tips, project) {
+                    looked.clear();
+                }
                 let next: Vec<String> = match brush {
                     Some(last) => {
                         let (from, to) = (*last, at.cursor);
-                        let already = picked.clone();
+                        let already: Vec<usize> = (0..tips.len())
+                            .filter(|&k| picked.contains(&tips[k].0))
+                            .collect();
                         let mut next = picked.clone();
-                        next.extend(Self::taken(
-                            tips,
-                            sight,
-                            &|id| already.iter().any(|p| p == id),
-                            &|q| screen_segment_distance(q, from, to) <= radius,
-                            project,
-                        ));
+                        next.extend(
+                            Self::taken(
+                                seen_from,
+                                locate,
+                                looked,
+                                &|k| already.contains(&k),
+                                &|q| screen_segment_distance(q, from, to) <= radius,
+                                project,
+                                usize::MAX,
+                            )
+                            .0
+                            .into_iter()
+                            .map(|k| tips[k].0.clone()),
+                        );
                         *last = at.cursor;
                         next
                     }
                     None => {
-                        let (lo, hi) = (
-                            [press[0].min(at.cursor[0]), press[1].min(at.cursor[1])],
-                            [press[0].max(at.cursor[0]), press[1].max(at.cursor[1])],
+                        *corner = at.cursor;
+                        let (ids, more) = Self::boxed(
+                            tips, seen_from, locate, looked, *press, *corner, project, BOX_RAYS,
                         );
-                        Self::taken(
-                            tips,
-                            sight,
-                            &|_| false,
-                            &|q| (lo[0]..=hi[0]).contains(&q[0]) && (lo[1]..=hi[1]).contains(&q[1]),
-                            project,
-                        )
+                        *owed = more;
+                        ids
                     }
                 };
+                let more = *owed;
                 if next == *picked {
+                    drop(drag);
+                    run.keep_looking(more);
                     return;
                 }
                 *picked = next;
                 let (drawn, picked) = (drawn.clone(), picked.clone());
                 drop(drag);
                 run.picks_changed(&drawn, &picked);
+                run.keep_looking(more);
             }
             None => {}
         }
@@ -3369,6 +3621,11 @@ impl SupportDragHandler for DfSupportRun {
         let Some(run) = self.me() else {
             return;
         };
+        self.box_poll.stop();
+        if commit {
+            // The box finishes the rays it owes: its picks are what goes.
+            while run.box_step(usize::MAX) {}
+        }
         let Some(state) = self.drag.borrow_mut().take() else {
             return;
         };
@@ -6168,15 +6425,15 @@ mod hand_edit_tests {
         Some([p[0] * 10.0, p[1] * 10.0])
     }
 
-    fn all_in_sight(points: &[[f32; 3]]) -> Vec<bool> {
-        vec![true; points.len()]
+    fn nothing_seen(pixels: &[[f32; 2]]) -> Vec<Option<ScreenHit>> {
+        vec![None; pixels.len()]
     }
 
-    /// The view from straight above, ten pixels a millimetre, everything in
-    /// sight.
+    /// The view from straight above, ten pixels a millimetre, for what
+    /// projects alone (a tip moved): its rays meet nothing.
     const FROM_ABOVE: DragView<'static> = DragView {
         project: &above,
-        in_sight: &all_in_sight,
+        hits: &nothing_seen,
     };
 
     fn cursor_at(cursor: [f32; 2]) -> DragPoint {
@@ -6195,90 +6452,6 @@ mod hand_edit_tests {
             std::thread::sleep(Duration::from_millis(2));
             run.take_hover_answer();
         }
-    }
-
-    /// Remove's box and brush (#3): what they pick goes as one undo, from
-    /// the selected set only; a drag dropped changes nothing.
-    #[test]
-    fn a_box_and_a_brush_remove_the_supports_they_cover() {
-        on_fresh_slint_thread(|| {
-            let window = MainWindow::new().expect("the headless platform creates a main window");
-            let (document, run) = supported_slab(&window);
-            let generated = in_force_session(&run).expect("editable");
-            let tips = generated.tips();
-            // A support is covered where any part of it is: its tip or its
-            // shaft.
-            let along = along_supports(generated.support_paths());
-            let covered = |within: &dyn Fn(&[f32; 3]) -> bool| -> Vec<String> {
-                along
-                    .iter()
-                    .filter(|(_, points)| points.iter().any(within))
-                    .map(|(id, _)| id.clone())
-                    .collect()
-            };
-            let left = covered(&|p| p[0] <= 18.0).len();
-            assert!(left > 0 && left < along.len(), "{left} of {}", along.len());
-
-            // A box over x up to 18 mm.
-            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &FROM_ABOVE));
-            run.drag_move(&cursor_at([180.0, 1000.0]), &FROM_ABOVE);
-            assert!(
-                window
-                    .get_support_add_note()
-                    .contains(&format!("Supports to remove: {left}"))
-            );
-            wait_preview(&run);
-            assert!(!run.last_ghost.borrow().is_empty(), "what goes is drawn");
-            run.drag_end(true);
-            settle_click(&run);
-            let boxed = in_force_session(&run).unwrap();
-            assert!(
-                boxed
-                    .support_paths()
-                    .iter()
-                    .all(|(_, path)| path.iter().all(|p| p[0] > 18.0 - 1e-3))
-            );
-            assert!(window.get_supports_last_run().contains("edited by hand"));
-            assert!(document.undo().unwrap(), "one undo");
-            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
-
-            // A brush along y at x = 15 mm, 24 px (2.4 mm) wide each way.
-            let near = covered(&|p| {
-                let dy = (p[1] - 35.0).max(15.0 - p[1]).max(0.0);
-                (p[0] - 15.0).hypot(dy) <= 2.4
-            });
-            assert!(!near.is_empty());
-            assert!(run.drag_start(
-                SupportDragKind::Brush,
-                &cursor_at([150.0, 150.0]),
-                &FROM_ABOVE
-            ));
-            run.drag_move(&cursor_at([150.0, 350.0]), &FROM_ABOVE);
-            run.drag_end(true);
-            settle_click(&run);
-            let brushed = in_force_session(&run).unwrap();
-            let left_ids: Vec<String> = brushed.tips().into_iter().map(|(id, _)| id).collect();
-            assert!(near.iter().all(|id| !left_ids.contains(id)));
-            assert!(left_ids.len() < tips.len());
-            assert!(document.undo().unwrap());
-
-            // Dropped: nothing changes.
-            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &FROM_ABOVE));
-            run.drag_move(&cursor_at([400.0, 1000.0]), &FROM_ABOVE);
-            run.drag_end(false);
-            assert!(run.pending_click.borrow().is_none());
-            assert!(run.last_ghost.borrow().is_empty());
-            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
-
-            // Nothing selected: the box takes nothing, and says why.
-            document.set_selection(crate::selection::Selection::None);
-            assert!(!run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &FROM_ABOVE));
-            assert!(
-                window
-                    .get_support_add_note()
-                    .contains("Select these supports")
-            );
-        });
     }
 
     /// A tip's place, by axis.
@@ -6628,10 +6801,15 @@ mod hand_edit_tests {
                     // Halfway along it, in sight there, as a person sees it
                     // to paint it.
                     let mid = *along.get(along.len() / 2)?;
-                    if !ctrl.in_sight_for_test(mid) {
+                    let p = ctrl.project_for_test(mid)?;
+                    let first = ctrl.first_hit_for_test(p)?;
+                    if (0..3)
+                        .map(|k| (first.point[k] - mid[k]).powi(2))
+                        .sum::<f32>()
+                        >= 1.0
+                    {
                         return None;
                     }
-                    let p = ctrl.project_for_test(mid)?;
                     ((20.0..780.0).contains(&p[0]) && (20.0..580.0).contains(&p[1]))
                         .then_some((id, p))
                 })
@@ -6842,145 +7020,336 @@ mod hand_edit_tests {
         sc_mesh_core::IndexedMesh::new(None, vertices, cube.faces().to_vec())
     }
 
-    /// Remove's box and brush take only what is in sight (#3): through the
-    /// window's own viewport callbacks, a wall stands in front of the left
-    /// half of a slab's supports; dragged over all of them, they take the
-    /// supports beside the wall and none behind it.
+    /// A window driven through its viewport callbacks over a slab with its
+    /// supports and a wall standing in front of the left half of them (#3),
+    /// seen from the front, a little from below, in perspective or
+    /// orthographic. The slab's supports are selected, Remove is armed.
+    struct Walled {
+        window: MainWindow,
+        ctrl: Rc<ViewportController>,
+        document: Rc<SceneDocument>,
+        run: Rc<DfSupportRun>,
+        generated: Arc<DfSupportSession>,
+        wall: NodeId,
+        /// The supports wholly behind the wall, and those wholly beside it.
+        behind: Vec<String>,
+        beside: Vec<String>,
+    }
+
+    fn walled(orthographic: bool) -> Walled {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_down(move |x, y, m| {
+                ctrl.on_pointer_down(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_move(move |x, y, m| {
+                ctrl.on_pointer_move(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_up(move |x, y, m| {
+                ctrl.on_pointer_up(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        let document = ctrl.document();
+        let mut graph = Scene::new();
+        let slab = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(box_mesh([10.0, 20.0, 9.0], [30.0, 30.0, 11.0]))),
+            )
+            .unwrap();
+        graph.add_root(slab).unwrap();
+        let outcome = start_df_supports(&graph, DfSupportRequest::default())
+            .unwrap()
+            .join();
+        // The wall, in front of the left half (y below the slab), comes after
+        // the run: a model of the scene, with no supports of its own. It
+        // reaches below the plate, so no ray passes under it.
+        let wall = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(box_mesh([4.0, 14.0, -3.0], [19.0, 15.0, 14.0]))),
+            )
+            .unwrap();
+        graph.add_root(wall).unwrap();
+        document.install_graph(graph.clone(), PathBuf::from("slab.stl"));
+        let run =
+            DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        *run.started_on.borrow_mut() = Some(document.scene_revision());
+        run.finish(outcome);
+        document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+            slab,
+        )));
+        ctrl.set_section(WorkspaceSection::Supports);
+        ctrl.set_viewport_for_test(800.0, 600.0);
+        let target = glam::Vec3::new(20.0, 25.0, 5.0);
+        let mut camera = crate::camera::OrbitCamera::new(target, 30.0);
+        camera.set_axis_view(crate::camera::AxisView::Front);
+        if camera.eye().y > target.y {
+            camera.set_axis_view(crate::camera::AxisView::Back);
+        }
+        // A little from below, so the slab's underside shows in both
+        // projections (edge-on, an orthographic ray would graze it).
+        camera.pitch -= 0.15;
+        camera.distance = 30.0;
+        camera.orthographic = orthographic;
+        assert!(camera.eye().y < 14.0, "the wall stands between");
+        assert!(
+            camera.eye().z > 0.0 && camera.eye().z < 9.0,
+            "below the underside"
+        );
+        ctrl.set_camera_for_test(camera);
+        let generated = in_force_session(&run).expect("editable");
+        let wholly = |keep: &dyn Fn(f64) -> bool| -> Vec<String> {
+            generated
+                .support_paths()
+                .into_iter()
+                .filter(|(_, path)| path.iter().all(|p| keep(p[0])))
+                .map(|(id, _)| id)
+                .collect()
+        };
+        let behind = wholly(&|x| x < 18.5);
+        let beside = wholly(&|x| x > 20.5);
+        assert!(
+            !behind.is_empty() && !beside.is_empty(),
+            "{} behind, {} beside",
+            behind.len(),
+            beside.len()
+        );
+        window.set_support_tool(2);
+        Walled {
+            window,
+            ctrl,
+            document,
+            run,
+            generated,
+            wall,
+            behind,
+            beside,
+        }
+    }
+
+    impl Walled {
+        /// A pixel where `id` shows: one along its line, behind the wall if
+        /// it is, else where the camera sees it first.
+        fn pixel_of(&self, id: &str, hidden: bool) -> [f32; 2] {
+            let (_, along) = along_supports(self.generated.support_paths())
+                .into_iter()
+                .find(|(k, _)| k == id)
+                .expect("the support");
+            along
+                .iter()
+                .rev()
+                .filter_map(|p| {
+                    let at = self.ctrl.project_for_test(*p)?;
+                    let first = self.ctrl.first_hit_for_test(at)?;
+                    let on_it = (0..3).map(|k| (first.point[k] - p[k]).powi(2)).sum::<f32>() < 1.0;
+                    let walled = first.leaf == self.wall;
+                    (if hidden { walled } else { on_it }).then_some(at)
+                })
+                .next()
+                .expect("a pixel of it")
+        }
+
+        fn session(&self) -> Arc<DfSupportSession> {
+            in_force_session(&self.run).unwrap()
+        }
+    }
+
+    /// Remove's hover and click take only a support in sight (#3): behind
+    /// the wall, nothing lights up and a click removes nothing; beside it,
+    /// it lights up and goes. In perspective and orthographic.
+    #[test]
+    fn a_click_takes_only_a_support_in_sight() {
+        for orthographic in [false, true] {
+            on_fresh_slint_thread(move || {
+                let w = walled(orthographic);
+                let hidden = w.pixel_of(&w.behind[0], true);
+                w.window
+                    .invoke_viewport_pointer_move(hidden[0], hidden[1], no_keys());
+                assert!(
+                    w.run.hover_at.get().is_none(),
+                    "a support behind the wall lights up (orthographic {orthographic})"
+                );
+                w.window
+                    .invoke_viewport_pointer_down(hidden[0], hidden[1], no_keys());
+                w.window
+                    .invoke_viewport_pointer_up(hidden[0], hidden[1], no_keys());
+                settle_click(&w.run);
+                assert!(
+                    Arc::ptr_eq(&w.session(), &w.generated),
+                    "a click behind the wall removed: {}",
+                    w.window.get_supports_last_run()
+                );
+
+                let seen = w.pixel_of(&w.beside[0], false);
+                w.window
+                    .invoke_viewport_pointer_move(seen[0], seen[1], no_keys());
+                assert!(w.run.hover_at.get().is_some(), "it lights up");
+                w.window
+                    .invoke_viewport_pointer_down(seen[0], seen[1], no_keys());
+                w.window
+                    .invoke_viewport_pointer_up(seen[0], seen[1], no_keys());
+                settle_click(&w.run);
+                let after = w.session();
+                assert!(
+                    !after.tips().iter().any(|(id, _)| *id == w.beside[0]),
+                    "the support in sight goes: {}",
+                    w.window.get_supports_last_run()
+                );
+                assert!(w.document.undo().unwrap(), "one undo");
+            });
+        }
+    }
+
+    /// Remove's box and brush take only what is in sight (#3): dragged over
+    /// every support, they take those beside the wall and none behind it. In
+    /// perspective and orthographic.
     #[test]
     fn the_box_and_the_brush_leave_what_is_out_of_sight() {
-        on_fresh_slint_thread(|| {
-            let window = MainWindow::new().expect("the headless platform creates a main window");
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));
-            {
-                let ctrl = ctrl.clone();
-                window.on_viewport_pointer_down(move |x, y, m| {
-                    ctrl.on_pointer_down(crate::viewport::ScreenPoint::new(x, y), m)
-                });
-            }
-            {
-                let ctrl = ctrl.clone();
-                window.on_viewport_pointer_move(move |x, y, m| {
-                    ctrl.on_pointer_move(crate::viewport::ScreenPoint::new(x, y), m)
-                });
-            }
-            {
-                let ctrl = ctrl.clone();
-                window.on_viewport_pointer_up(move |x, y, m| {
-                    ctrl.on_pointer_up(crate::viewport::ScreenPoint::new(x, y), m)
-                });
-            }
-            let document = ctrl.document();
-            let mut graph = Scene::new();
-            let slab = graph
-                .add_leaf(
-                    None,
-                    Transform3D::Identity,
-                    LeafPayload::Mesh(Arc::new(box_mesh([10.0, 20.0, 9.0], [30.0, 30.0, 11.0]))),
-                )
-                .unwrap();
-            graph.add_root(slab).unwrap();
-            let outcome = start_df_supports(&graph, DfSupportRequest::default())
-                .unwrap()
-                .join();
-            // The wall, in front of the left half (y below the slab), comes
-            // after the run: a model of the scene, with no supports of its own.
-            let wall = graph
-                .add_leaf(
-                    None,
-                    Transform3D::Identity,
-                    LeafPayload::Mesh(Arc::new(box_mesh([4.0, 14.0, 0.0], [19.0, 15.0, 14.0]))),
-                )
-                .unwrap();
-            graph.add_root(wall).unwrap();
-            document.install_graph(graph.clone(), PathBuf::from("slab.stl"));
-            let run =
-                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
-            *run.started_on.borrow_mut() = Some(document.scene_revision());
-            run.finish(outcome);
-            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
-                slab,
-            )));
-            ctrl.set_section(WorkspaceSection::Supports);
-            ctrl.set_viewport_for_test(800.0, 600.0);
-            // Seen from the front (from y below), level with the supports.
-            let target = glam::Vec3::new(20.0, 25.0, 5.0);
-            let mut camera = crate::camera::OrbitCamera::new(target, 30.0);
-            camera.set_axis_view(crate::camera::AxisView::Front);
-            if camera.eye().y > target.y {
-                camera.set_axis_view(crate::camera::AxisView::Back);
-            }
-            assert!(camera.eye().y < 14.0, "the wall stands between");
-            ctrl.set_camera_for_test(camera);
-            let generated = in_force_session(&run).expect("editable");
-            window.set_support_tool(2);
-            // Behind the wall, its supports sit wholly at x up to 19 mm; the
-            // others, from x 20 on.
-            let hidden = |session: &DfSupportSession| -> Vec<String> {
-                session
-                    .support_paths()
-                    .into_iter()
-                    .filter(|(_, path)| path.iter().all(|p| p[0] < 18.5))
-                    .map(|(id, _)| id)
-                    .collect()
-            };
-            let behind = hidden(&generated);
-            let beside = generated
-                .support_paths()
-                .iter()
-                .filter(|(_, path)| path.iter().all(|p| p[0] > 20.5))
-                .count();
-            assert!(
-                !behind.is_empty() && beside > 0,
-                "{} behind, {beside} beside",
-                behind.len()
-            );
-            let screen = |p: [f32; 3]| ctrl.project_for_test(p).expect("on screen");
-            let left = screen([6.0, 25.0, 5.0]);
-            let right = screen([30.0, 25.0, 5.0]);
-            let (top, bottom) = (screen([20.0, 25.0, 8.5])[1], screen([20.0, 25.0, 1.5])[1]);
-            let check = |what: &str| {
-                settle_click(&run);
-                let after = in_force_session(&run).unwrap();
-                assert!(
-                    !Arc::ptr_eq(&after, &generated),
-                    "{what} took nothing: {}",
-                    window.get_supports_last_run()
-                );
-                let left_ids: Vec<String> = after.tips().into_iter().map(|(id, _)| id).collect();
-                assert!(
-                    behind.iter().all(|id| left_ids.contains(id)),
-                    "{what} took a support behind the wall"
-                );
-                assert!(after.support_paths().len() < generated.support_paths().len());
-                assert!(document.undo().unwrap(), "one undo");
-            };
+        for orthographic in [false, true] {
+            on_fresh_slint_thread(move || {
+                let w = walled(orthographic);
+                let screen = |p: [f32; 3]| w.ctrl.project_for_test(p).expect("on screen");
+                let left = screen([6.0, 25.0, 5.0]);
+                let right = screen([30.0, 25.0, 5.0]);
+                let (top, bottom) = (screen([20.0, 25.0, 8.5])[1], screen([20.0, 25.0, 1.5])[1]);
+                let check = |what: &str| {
+                    settle_click(&w.run);
+                    let after = w.session();
+                    assert!(
+                        !Arc::ptr_eq(&after, &w.generated),
+                        "{what} took nothing (orthographic {orthographic}): {}",
+                        w.window.get_supports_last_run()
+                    );
+                    let left_ids: Vec<String> =
+                        after.tips().into_iter().map(|(id, _)| id).collect();
+                    assert!(
+                        w.behind.iter().all(|id| left_ids.contains(id)),
+                        "{what} took a support behind the wall (orthographic {orthographic})"
+                    );
+                    assert!(w.document.undo().unwrap(), "one undo");
+                };
 
-            // The brush, along the supports at mid height, left to right.
-            window.set_support_remove_mode(1);
-            let y = (top + bottom) / 2.0;
-            window.invoke_viewport_pointer_down(left[0], y, no_keys());
-            for k in 1..=40 {
-                let x = left[0] + (right[0] - left[0]) * k as f32 / 40.0;
-                window.invoke_viewport_pointer_move(x, y, no_keys());
-            }
-            window.invoke_viewport_pointer_up(right[0], y, no_keys());
-            check("the brush");
+                // The brush, along the supports at mid height.
+                w.window.set_support_remove_mode(1);
+                let y = (top + bottom) / 2.0;
+                w.window.invoke_viewport_pointer_down(left[0], y, no_keys());
+                for k in 1..=40 {
+                    let x = left[0] + (right[0] - left[0]) * k as f32 / 40.0;
+                    w.window.invoke_viewport_pointer_move(x, y, no_keys());
+                }
+                w.window.invoke_viewport_pointer_up(right[0], y, no_keys());
+                check("the brush");
 
-            // The box, over all of them.
-            window.set_support_remove_mode(0);
-            window.invoke_viewport_pointer_down(left[0], top - 20.0, no_keys());
-            for k in 1..=10 {
-                let t = k as f32 / 10.0;
-                window.invoke_viewport_pointer_move(
-                    left[0] + (right[0] - left[0]) * t,
-                    top - 20.0 + (bottom + 20.0 - top + 20.0) * t,
-                    no_keys(),
+                // The box, over all of them.
+                w.window.set_support_remove_mode(0);
+                w.window
+                    .invoke_viewport_pointer_down(left[0], top - 20.0, no_keys());
+                for k in 1..=10 {
+                    let t = k as f32 / 10.0;
+                    w.window.invoke_viewport_pointer_move(
+                        left[0] + (right[0] - left[0]) * t,
+                        top - 20.0 + (bottom - top + 40.0) * t,
+                        no_keys(),
+                    );
+                }
+                w.window
+                    .invoke_viewport_pointer_up(right[0], bottom + 20.0, no_keys());
+                check("the box");
+            });
+        }
+    }
+
+    /// Move tip grabs only a support in sight (#3): dragged from behind the
+    /// wall, nothing moves; from beside it, the support follows. In
+    /// perspective and orthographic.
+    #[test]
+    fn move_tip_grabs_only_a_support_in_sight() {
+        for orthographic in [false, true] {
+            on_fresh_slint_thread(move || {
+                let w = walled(orthographic);
+                w.window.set_support_tool(3);
+                // Dropped on the slab's underside, beside the wall.
+                let to = w
+                    .ctrl
+                    .project_for_test([26.0, 21.0, 9.0])
+                    .expect("on screen");
+                let drag = |from: [f32; 2]| {
+                    w.window
+                        .invoke_viewport_pointer_down(from[0], from[1], no_keys());
+                    for k in 1..=8 {
+                        let t = k as f32 / 8.0;
+                        w.window.invoke_viewport_pointer_move(
+                            from[0] + (to[0] - from[0]) * t,
+                            from[1] + (to[1] - from[1]) * t,
+                            no_keys(),
+                        );
+                    }
+                    w.window.invoke_viewport_pointer_up(to[0], to[1], no_keys());
+                    settle_click(&w.run);
+                };
+                // A tip is grabbed within 3 mm of it: a pixel of the line
+                // near the top.
+                let near_tip = |id: &str, hidden: bool| {
+                    let (_, along) = along_supports(w.generated.support_paths())
+                        .into_iter()
+                        .find(|(k, _)| k == id)
+                        .unwrap();
+                    along
+                        .iter()
+                        .take(4)
+                        .filter_map(|p| {
+                            let at = w.ctrl.project_for_test(*p)?;
+                            let first = w.ctrl.first_hit_for_test(at)?;
+                            let on_it =
+                                (0..3).map(|k| (first.point[k] - p[k]).powi(2)).sum::<f32>() < 1.0;
+                            (if hidden { first.leaf == w.wall } else { on_it }).then_some(at)
+                        })
+                        .next()
+                };
+                let hidden = w
+                    .behind
+                    .iter()
+                    .find_map(|id| near_tip(id, true))
+                    .expect("a hidden tip on screen");
+                drag(hidden);
+                assert!(
+                    Arc::ptr_eq(&w.session(), &w.generated),
+                    "a tip behind the wall moved (orthographic {orthographic}): {}",
+                    w.window.get_supports_last_run()
                 );
-            }
-            window.invoke_viewport_pointer_up(right[0], bottom + 20.0, no_keys());
-            check("the box");
-        });
+                // One the engine moves there: nothing hangs from it.
+                let movable = |id: &String| {
+                    w.generated
+                        .preview_move_tip(id, [26.0, 21.0, 9.0], &AddOptions::default())
+                        .is_ok_and(|(preview, _)| preview.valid)
+                };
+                let (id, seen) = w
+                    .beside
+                    .iter()
+                    .filter(|id| movable(id))
+                    .find_map(|id| near_tip(id, false).map(|at| (id.clone(), at)))
+                    .expect("a tip in sight that moves");
+                drag(seen);
+                assert!(
+                    !w.session().tips().iter().any(|(k, _)| *k == id),
+                    "the tip in sight moves (orthographic {orthographic}): {}",
+                    w.window.get_supports_last_run()
+                );
+                assert!(w.document.undo().unwrap(), "one undo");
+            });
+        }
     }
 
     /// Measurement, not a gate (#3): what a box and a brush cost on the UI
@@ -7020,22 +7389,22 @@ mod hand_edit_tests {
             let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
             let generated = in_force_session(&run).unwrap();
             println!("{} supports", generated.support_paths().len());
-
-            // The press starts drawing what is in sight on another thread;
-            // asking at once waits for all of it.
-            let t = Instant::now();
-            ctrl.start_sight_depth_for_test();
-            let pressed_ms = ms(t);
-            let t = Instant::now();
-            ctrl.with_view_for_test(|view| view.in_sight(&[centre.into()]));
-            println!(
-                "depth of the scene: press {pressed_ms:.1} ms on the UI thread, drawn in {:.0} ms",
-                ms(t)
-            );
+            {
+                let t = Instant::now();
+                let mut seen = 0;
+                for k in 0..200 {
+                    let at = [
+                        400.0 + (k % 20) as f32 * 40.0,
+                        200.0 + (k / 20) as f32 * 60.0,
+                    ];
+                    seen += usize::from(ctrl.first_hit_for_test(at).is_some());
+                }
+                println!("one ray: {:.2} ms ({seen} of 200 hit)", ms(t) / 200.0);
+            }
 
             // A box over the left half of the view, in 20 moves.
             let started = ctrl
-                .with_view_for_test(|view| {
+                .with_drag_view(|view| {
                     run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), view)
                 })
                 .unwrap();
@@ -7044,26 +7413,39 @@ mod hand_edit_tests {
             for k in 1..=20 {
                 let at = [800.0 * k as f32 / 20.0, 1000.0 * k as f32 / 20.0];
                 let t = Instant::now();
-                ctrl.with_view_for_test(|view| run.drag_move(&cursor_at(at), view));
+                ctrl.with_drag_view(|view| run.drag_move(&cursor_at(at), view));
                 worst = worst.max(ms(t));
                 total += ms(t);
             }
+            // What the box still owes goes on between the moves, a step a
+            // tick: the longest step, and all of them.
+            let (mut step_worst, mut steps, mut owed_total) = (0.0f64, 0, 0.0f64);
+            loop {
+                let t = Instant::now();
+                let more = run.box_step(BOX_RAYS);
+                step_worst = step_worst.max(ms(t));
+                owed_total += ms(t);
+                steps += 1;
+                if !more {
+                    break;
+                }
+            }
+            println!(
+                "box, owed rays after the moves: {steps} steps, longest {step_worst:.1} ms, all {owed_total:.0} ms"
+            );
             let picked = match run.drag.borrow().as_ref() {
-                Some(DragState::Remove { picked, sight, .. }) => (
-                    picked.len(),
-                    sight.iter().flatten().filter(|s| **s != 0).count(),
-                ),
+                Some(DragState::Remove { picked, looked, .. }) => (picked.len(), looked.len()),
                 _ => (0, 0),
             };
             run.drag_end(false);
             println!(
-                "box over half the view: {} supports in sight, {} points looked at; UI per move max {worst:.1} ms, all 20 moves {total:.0} ms",
+                "box over half the view: {} supports in sight, {} rays; UI per move max {worst:.1} ms, all 20 moves {total:.0} ms",
                 picked.0, picked.1
             );
 
             // A brush across the middle, 80 moves.
             let started = ctrl
-                .with_view_for_test(|view| {
+                .with_drag_view(|view| {
                     run.drag_start(SupportDragKind::Brush, &cursor_at([0.0, 500.0]), view)
                 })
                 .unwrap();
@@ -7072,7 +7454,7 @@ mod hand_edit_tests {
             for k in 1..=80 {
                 let at = [1600.0 * k as f32 / 80.0, 500.0];
                 let t = Instant::now();
-                ctrl.with_view_for_test(|view| run.drag_move(&cursor_at(at), view));
+                ctrl.with_drag_view(|view| run.drag_move(&cursor_at(at), view));
                 worst = worst.max(ms(t));
                 total += ms(t);
             }

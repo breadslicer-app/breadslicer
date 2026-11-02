@@ -40,11 +40,11 @@ impl SupportDragHandler for Recorder {
         self.heard
             .borrow_mut()
             .push(Heard::Start(kind, press.cursor));
-        // The camera looks down at the cube: its top lands on screen and is
-        // in sight; a point well under it is behind it.
+        // The camera looks down at the cube: its top lands on screen, and
+        // the ray through the centre meets it first.
         assert!(project.project([0.0, 0.0, 0.5]).is_some());
-        assert!(project.visible([0.0, 0.0, 0.5]));
-        assert!(!project.visible([0.0, 0.0, -3.0]));
+        let hit = project.hits(&[[100.0, 50.0]])[0].expect("the cube");
+        assert!((hit.point[2] - 0.5).abs() < 1e-3, "{hit:?}");
         self.takes
     }
 

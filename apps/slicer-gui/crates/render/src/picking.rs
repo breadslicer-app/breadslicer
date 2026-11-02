@@ -305,33 +305,51 @@ fn ray_hit_face(ray: &Ray, query: &ObjectQuery<'_>) -> Option<(f32, usize)> {
     let mesh = query.mesh();
     let vertices = mesh.vertices();
     let faces = mesh.faces();
+    // The clusters the ray reaches, nearest first through their tree, each
+    // left out once a nearer hit is known (#3). `t` is in the object's own
+    // units until the end.
     let mut best: Option<(f32, usize)> = None;
-    for (face_range, aabb) in clusters.iter() {
-        let aabb_min = Vec3::from(aabb.min().coords());
-        let aabb_max = Vec3::from(aabb.max().coords());
-        if !ray_hits_aabb(&local_ray, aabb_min, aabb_max) {
-            continue;
-        }
-        for (index, face) in faces[face_range.start as usize..face_range.end as usize]
-            .iter()
-            .enumerate()
-        {
-            let index = face_range.start as usize + index;
-            let v0 = Vec3::from(vertices.get(usize::from(face.vertices[0]))?.coords());
-            let v1 = Vec3::from(vertices.get(usize::from(face.vertices[1]))?.coords());
-            let v2 = Vec3::from(vertices.get(usize::from(face.vertices[2]))?.coords());
-            if let Some(t_local) =
-                ray_hits_triangle_oriented(&local_ray, v0, v1, v2, local.det_sign)
+    let mut corrupt = false;
+    clusters.walk_nearest(
+        |aabb| {
+            ray_hits_aabb_t(
+                &local_ray,
+                Vec3::from(aabb.min().coords()),
+                Vec3::from(aabb.max().coords()),
+            )
+        },
+        |range, _| {
+            let mut nearest: Option<f32> = None;
+            for (offset, face) in faces[range.start as usize..range.end as usize]
+                .iter()
+                .enumerate()
             {
-                let t = t_local / local.world_to_local_scale;
-                best = Some(match best {
-                    Some(prev) if prev.0 <= t => prev,
-                    _ => (t, index),
-                });
+                let index = range.start as usize + offset;
+                let corner = |k: usize| {
+                    vertices
+                        .get(usize::from(face.vertices[k]))
+                        .map(|v| Vec3::from(v.coords()))
+                };
+                let (Some(v0), Some(v1), Some(v2)) = (corner(0), corner(1), corner(2)) else {
+                    corrupt = true;
+                    continue;
+                };
+                if let Some(t_local) =
+                    ray_hits_triangle_oriented(&local_ray, v0, v1, v2, local.det_sign)
+                {
+                    if best.is_none_or(|(t, _)| t_local < t) {
+                        best = Some((t_local, index));
+                    }
+                    nearest = Some(nearest.map_or(t_local, |n| n.min(t_local)));
+                }
             }
-        }
+            nearest
+        },
+    );
+    if corrupt {
+        return None;
     }
-    best
+    best.map(|(t_local, index)| (t_local / local.world_to_local_scale, index))
 }
 
 /// Builds the object-space form of `ray` for `transform`. Returns `None` when

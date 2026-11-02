@@ -67,11 +67,6 @@ impl Projector {
     }
 
     /// The pixel `p` lands on; `None` behind the eye.
-    /// How far in front of the eye `p` is, along the view (mm).
-    pub(super) fn depth(&self, p: Vec3) -> f32 {
-        (p - self.eye).dot(self.forward.normalize_or_zero())
-    }
-
     pub(super) fn project(&self, p: Vec3) -> Option<[f32; 2]> {
         let clip = self.view_proj * Vec4::new(p.x, p.y, p.z, 1.0);
         if clip.w <= 0.0 || (p - self.eye).dot(self.forward) <= 0.0 {

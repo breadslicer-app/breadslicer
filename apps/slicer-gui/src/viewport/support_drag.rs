@@ -35,15 +35,26 @@ pub(crate) struct DragPoint {
     pub(crate) support: Option<[f32; 3]>,
 }
 
+/// What the camera sees first through a pixel: the leaf (a model or a set
+/// of supports) and the point (world mm).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ScreenHit {
+    pub(crate) leaf: sc_scene::NodeId,
+    pub(crate) point: [f32; 3],
+}
+
+/// Per pixel, what a ray from the camera through it meets first.
+pub(crate) type Hits<'a> = dyn Fn(&[[f32; 2]]) -> Vec<Option<ScreenHit>> + 'a;
+
 /// The view a drag sees the scene through.
 pub(crate) struct DragView<'a> {
     /// Where a world point lands on the viewport, in logical pixels; `None`
     /// behind the eye.
     pub(crate) project: &'a dyn Fn([f32; 3]) -> Option<[f32; 2]>,
-    /// Whether each world point on a support is in sight: nothing of the
-    /// scene, model or support, stands in front of it. Asked many at once,
-    /// so the rays share the cores.
-    pub(crate) in_sight: &'a dyn Fn(&[[f32; 3]]) -> Vec<bool>,
+    /// Per pixel, what a ray from the camera through it meets first among
+    /// every leaf of the scene; asked many at once, so the rays share the
+    /// cores.
+    pub(crate) hits: &'a Hits<'a>,
 }
 
 impl DragView<'_> {
@@ -51,13 +62,8 @@ impl DragView<'_> {
         (self.project)(p)
     }
 
-    #[cfg(test)]
-    pub(crate) fn visible(&self, p: [f32; 3]) -> bool {
-        (self.in_sight)(&[p]).first().copied().unwrap_or(false)
-    }
-
-    pub(crate) fn in_sight(&self, points: &[[f32; 3]]) -> Vec<bool> {
-        (self.in_sight)(points)
+    pub(crate) fn hits(&self, pixels: &[[f32; 2]]) -> Vec<Option<ScreenHit>> {
+        (self.hits)(pixels)
     }
 }
 

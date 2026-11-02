@@ -39,7 +39,6 @@ use super::object_list::{build_object_list_names, push_object_list};
 use super::performance_probe::{Detail, ProbeResult, ProbeRun, ProbeUpdate};
 use super::render_host::RenderHost;
 use super::session_state::SessionState;
-use super::sight_depth::SightDepth;
 use super::support_drag::{DragPhase, DragPoint, SupportDragHandler, SupportDragKind};
 use super::types::{FrameState, ScreenDelta, ScreenPoint};
 use crate::MainWindow;
@@ -114,31 +113,9 @@ pub(crate) struct ViewportController {
     support_drag_handler: RefCell<Option<std::rc::Weak<dyn SupportDragHandler>>>,
     support_drag: Cell<DragPhase>,
     right_dropped_drag: Cell<bool>,
-    /// The scene's depth as the camera last saw it for a box or a brush,
-    /// kept while the camera, the viewport and the scene stay as they were.
-    sight_depth: RefCell<Option<(SightKey, Rc<SightDepth>)>>,
-    /// The depth being drawn on another thread since a press of a box or a
-    /// brush, for the drag to find ready.
-    sight_drawing: RefCell<Option<(SightKey, std::thread::JoinHandle<SightDepth>)>>,
     /// The drag tool armed, for tests that run without a window.
     #[cfg(test)]
     drag_tool_for_test: Cell<Option<SupportDragKind>>,
-}
-
-/// How far in front of a point on a support the scene may first meet the
-/// ray to it and the point still count as in sight, mm: a shaft's radius,
-/// for a point on its axis, with room to spare (a heavy trunk is 3 mm).
-const IN_SIGHT_DEPTH_MM: f32 = 1.6;
-
-/// What a [`SightDepth`] was drawn for: the camera, the viewport and the
-/// scene.
-#[derive(Clone, Copy, PartialEq)]
-struct SightKey {
-    eye: [f32; 3],
-    target: [f32; 3],
-    orthographic: bool,
-    size: [f32; 2],
-    scene: crate::scene_document::SceneRevision,
 }
 
 /// A tool of a workspace tab that acts where the model is clicked.
@@ -199,8 +176,6 @@ impl ViewportController {
             support_drag_handler: RefCell::new(None),
             support_drag: Cell::new(DragPhase::Idle),
             right_dropped_drag: Cell::new(false),
-            sight_depth: RefCell::new(None),
-            sight_drawing: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
         }
@@ -243,8 +218,6 @@ impl ViewportController {
             support_drag_handler: RefCell::new(None),
             support_drag: Cell::new(DragPhase::Idle),
             right_dropped_drag: Cell::new(false),
-            sight_depth: RefCell::new(None),
-            sight_drawing: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
         };
@@ -279,27 +252,24 @@ impl ViewportController {
             .map(|(_, p, _)| [p.x, p.y, p.z])
     }
 
-    /// Runs `with` with the view a drag sees now.
-    #[cfg(test)]
-    pub(crate) fn with_view_for_test<R>(
+    /// Runs `with` with the view a drag sees now: what a box goes on
+    /// looking through between the moves.
+    pub(crate) fn with_drag_view<R>(
         &self,
         with: impl FnOnce(super::support_drag::Project<'_>) -> R,
     ) -> Option<R> {
         self.with_projection(with)
     }
 
-    /// Starts drawing the scene's depth, as a press of a box or a brush
-    /// does.
+    /// What a ray from the camera through pixel `at` meets first, as a box
+    /// or a brush sees it.
     #[cfg(test)]
-    pub(crate) fn start_sight_depth_for_test(&self) {
-        self.start_sight_depth();
-    }
-
-    /// Whether `p` (world mm) is in sight now, as a box or a brush finds it.
-    #[cfg(test)]
-    pub(crate) fn in_sight_for_test(&self, p: [f32; 3]) -> bool {
-        self.with_projection(|view| view.visible(p))
-            .unwrap_or(false)
+    pub(crate) fn first_hit_for_test(
+        &self,
+        at: [f32; 2],
+    ) -> Option<super::support_drag::ScreenHit> {
+        self.with_projection(|view| view.hits(&[at]).pop().flatten())
+            .flatten()
     }
 
     /// The support point a ray through `cursor` hits first, as Remove and
@@ -1925,11 +1895,6 @@ impl ViewportController {
             Some(kind) => DragPhase::Pressed([cursor.x, cursor.y], kind),
             None => DragPhase::Idle,
         });
-        // A box or a brush asks what is in sight: the scene's depth starts
-        // drawing now, while the press is still a click.
-        if matches!(drag, Some(SupportDragKind::Box | SupportDragKind::Brush)) {
-            self.start_sight_depth();
-        }
         let boxing = self.input.on_pointer_down(
             self.session.document(),
             self.camera.camera_cell(),
@@ -2131,117 +2096,53 @@ impl ViewportController {
             (projector, camera)
         };
         let project = |p: [f32; 3]| projector.project(glam::Vec3::from(p));
-        // In sight when the ray through its pixel meets nothing of the scene
-        // before it: the same pick a click makes, every leaf counted. A point
-        // on a shaft's axis sits a radius behind its own surface.
         let (width, height) = (viewport.width(), viewport.height());
-        // In sight when nothing of the scene stands in front of it on screen:
-        // the scene drawn once into a depth buffer, a lookup each point. A
-        // point on a shaft's axis sits a radius behind its own surface.
-        let in_sight = |points: &[[f32; 3]]| -> Vec<bool> {
-            let Some(depth) = self.sight_depth(&projector, &camera, width, height) else {
-                return vec![false; points.len()];
-            };
-            points
-                .iter()
-                .map(|p| {
-                    project(*p).is_some_and(|at| {
-                        depth.in_sight(&projector, glam::Vec3::from(*p), at, IN_SIGHT_DEPTH_MM)
+        // What the camera sees first through each pixel: a ray from it, the
+        // nearest hit among every leaf, model or supports. A ray is about a
+        // millisecond on a big model and a box asks hundreds: they share
+        // the cores.
+        let document = self.session.document();
+        let hits = |pixels: &[[f32; 2]]| -> Vec<Option<super::support_drag::ScreenHit>> {
+            document
+                .with_scene(|spatial| {
+                    let one = |at: &[f32; 2]| {
+                        let ray =
+                            picking::ray_from_pixel(&camera, fov, width, height, at[0], at[1]);
+                        let (leaf, t) = picking::pick_object_where(&ray, spatial, |_| true)?;
+                        Some(super::support_drag::ScreenHit {
+                            leaf,
+                            point: (ray.origin + ray.direction * t).into(),
+                        })
+                    };
+                    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+                    let threads = cores.min(pixels.len().div_ceil(8)).max(1);
+                    if threads == 1 {
+                        return pixels.iter().map(one).collect();
+                    }
+                    let chunk = pixels.len().div_ceil(threads);
+                    std::thread::scope(|scope| {
+                        let parts: Vec<_> = pixels
+                            .chunks(chunk)
+                            .map(|part| {
+                                scope.spawn(move || part.iter().map(one).collect::<Vec<_>>())
+                            })
+                            .collect();
+                        parts
+                            .into_iter()
+                            .zip(pixels.chunks(chunk))
+                            .flat_map(|(part, pixels)| {
+                                part.join().unwrap_or_else(|_| vec![None; pixels.len()])
+                            })
+                            .collect()
                     })
                 })
-                .collect()
+                .unwrap_or_else(|| vec![None; pixels.len()])
         };
         let view = super::support_drag::DragView {
             project: &project,
-            in_sight: &in_sight,
+            hits: &hits,
         };
         Some(with(&view))
-    }
-
-    /// What a depth drawn now would be for.
-    fn sight_key(&self, camera: &crate::camera::OrbitCamera, width: f32, height: f32) -> SightKey {
-        SightKey {
-            eye: camera.eye().into(),
-            target: camera.target.into(),
-            orthographic: camera.orthographic,
-            size: [width, height],
-            scene: self.session.document().scene_revision(),
-        }
-    }
-
-    /// Starts drawing the scene's depth as the camera sees it now on
-    /// another thread, unless it is drawn already.
-    fn start_sight_depth(&self) {
-        let Some(viewport) = self.render.viewport() else {
-            return;
-        };
-        let (width, height) = (viewport.width(), viewport.height());
-        let Some(camera) = self.camera.camera_cell().borrow().clone() else {
-            return;
-        };
-        let key = self.sight_key(&camera, width, height);
-        if self
-            .sight_depth
-            .borrow()
-            .as_ref()
-            .is_some_and(|(k, _)| *k == key)
-            || self
-                .sight_drawing
-                .borrow()
-                .as_ref()
-                .is_some_and(|(k, _)| *k == key)
-        {
-            return;
-        }
-        let Some(meshes) = self.session.document().with_scene(SightDepth::meshes_of) else {
-            return;
-        };
-        let projector = super::box_select::Projector::new(
-            &camera,
-            crate::mesh_render::default_fov_y(),
-            width,
-            height,
-        );
-        let drawing = std::thread::Builder::new()
-            .name("support-sight-depth".into())
-            .spawn(move || {
-                SightDepth::draw(&meshes, &projector, camera.orthographic, width, height)
-            });
-        if let Ok(handle) = drawing {
-            *self.sight_drawing.borrow_mut() = Some((key, handle));
-        }
-    }
-
-    /// The scene's depth as `camera` sees it: the one drawn for this
-    /// camera, viewport and scene, the one drawing for them (waited for),
-    /// or one drawn now.
-    fn sight_depth(
-        &self,
-        projector: &super::box_select::Projector,
-        camera: &crate::camera::OrbitCamera,
-        width: f32,
-        height: f32,
-    ) -> Option<Rc<SightDepth>> {
-        let key = self.sight_key(camera, width, height);
-        if let Some((drawn_for, depth)) = self.sight_depth.borrow().as_ref()
-            && *drawn_for == key
-        {
-            return Some(depth.clone());
-        }
-        let drawing = self.sight_drawing.borrow_mut().take();
-        let depth = match drawing {
-            Some((drawn_for, handle)) if drawn_for == key => handle.join().ok(),
-            _ => None,
-        };
-        let depth = match depth {
-            Some(depth) => Rc::new(depth),
-            None => Rc::new(self.session.document().with_scene(|spatial| {
-                let meshes = SightDepth::meshes_of(spatial);
-                SightDepth::draw(&meshes, projector, camera.orthographic, width, height)
-            })?),
-        };
-        *self.sight_depth.borrow_mut() = Some((key, depth.clone()));
-        Some(depth)
     }
 
     /// Moves a drag of a Supports tab tool: one past the click threshold
@@ -2354,9 +2255,15 @@ impl ViewportController {
             .document()
             .with_scene(|spatial| {
                 let on_supports = matches!(tool, TabTool::RemoveSupport | TabTool::MoveTip);
-                let (id, t) = picking::pick_object_where(&ray, spatial, |id| {
-                    shows_supports(spatial, id) == on_supports
-                })?;
+                // Remove and Move tip take only a support in sight (#3): the
+                // nearest hit among every leaf, model or supports, is one.
+                // Add and the drain look through the supports to the model.
+                let (id, t) = if on_supports {
+                    picking::pick_object_where(&ray, spatial, |_| true)
+                        .filter(|(id, _)| shows_supports(spatial, *id))?
+                } else {
+                    picking::pick_object_where(&ray, spatial, |id| !shows_supports(spatial, id))?
+                };
                 let normal = picking::ray_hit_normal(&ray, &spatial.leaf(id)?)
                     .map_or(glam::Vec3::Z, |(_, n)| n);
                 Some((id, ray.origin + ray.direction * t, normal))
