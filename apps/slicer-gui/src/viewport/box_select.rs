@@ -46,7 +46,7 @@ impl ScreenRect {
 }
 
 /// Projects world points onto the viewport as the renderer draws them.
-struct Projector {
+pub(super) struct Projector {
     view_proj: Mat4,
     eye: Vec3,
     forward: Vec3,
@@ -54,7 +54,7 @@ struct Projector {
 }
 
 impl Projector {
-    fn new(camera: &OrbitCamera, fov_y: f32, width: f32, height: f32) -> Self {
+    pub(super) fn new(camera: &OrbitCamera, fov_y: f32, width: f32, height: f32) -> Self {
         let aspect = width / height.max(1.0);
         // As `picking::project_world_to_screen`: the depths only affect z.
         let view_proj = camera.projection(fov_y, aspect, 0.01, 100.0) * camera.view_matrix();
@@ -67,7 +67,7 @@ impl Projector {
     }
 
     /// The pixel `p` lands on; `None` behind the eye.
-    fn project(&self, p: Vec3) -> Option<[f32; 2]> {
+    pub(super) fn project(&self, p: Vec3) -> Option<[f32; 2]> {
         let clip = self.view_proj * Vec4::new(p.x, p.y, p.z, 1.0);
         if clip.w <= 0.0 || (p - self.eye).dot(self.forward) <= 0.0 {
             return None;

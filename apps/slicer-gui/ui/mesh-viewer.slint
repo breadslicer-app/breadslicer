@@ -65,6 +65,10 @@ export component MeshViewer inherits Rectangle {
     // no gizmo handle; it spans from the press to the cursor while the
     // button is held.
     in property <bool> box-select-armed: false;
+    // Remove's brush (#3): drawn at the cursor; the wheel sizes it.
+    in property <bool> brush-on: false;
+    in property <length> brush-radius: 24px;
+    callback brush-wheel(bool);
     property <length> box-x0;
     property <length> box-y0;
 
@@ -606,6 +610,10 @@ export component MeshViewer inherits Rectangle {
 
             scroll-event(event) => {
                 if (root.modal-transform-active) { return accept; }
+                if (root.brush-on && event.delta-y != 0) {
+                    root.brush-wheel(event.delta-y > 0);
+                    return accept;
+                }
                 root.zoom-at(event.delta-y, ta.mouse-x, ta.mouse-y);
                 return accept;
             }
@@ -645,6 +653,16 @@ export component MeshViewer inherits Rectangle {
                 }
             }
         }
+    }
+    if root.brush-on && ta.has-hover: Rectangle {
+        x: ta.mouse-x - root.brush-radius;
+        y: ta.mouse-y - root.brush-radius;
+        width: root.brush-radius * 2;
+        height: root.brush-radius * 2;
+        border-radius: root.brush-radius;
+        border-width: 1.5px;
+        border-color: #ff5a5acc;
+        background: root.left-pressed ? #ff5a5a22 : transparent;
     }
     if root.box-select-armed && root.left-pressed
         && (abs(ta.mouse-x - root.box-x0) > 3px || abs(ta.mouse-y - root.box-y0) > 3px): Rectangle {

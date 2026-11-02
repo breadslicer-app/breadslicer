@@ -70,6 +70,7 @@ use crate::support_persist::{
     support_leaf, support_leaves,
 };
 use crate::viewport::ViewportController;
+use crate::viewport::support_drag::{DragPoint, Project, SupportDragHandler, SupportDragKind};
 use crate::{MainWindow, WorkspaceSection};
 
 /// An overlay piece of a mesh in world coordinates.
@@ -171,13 +172,17 @@ pub(crate) struct DfSupportRun {
     /// The last preview drawn, for a click on the same point to reuse.
     last_preview: RefCell<Option<HoverAnswer>>,
     /// The worker's last ghost, kept on screen while the next is computed.
-    last_ghost: RefCell<Option<Arc<OverlayMesh>>>,
+    last_ghost: RefCell<Vec<Arc<OverlayMesh>>>,
     /// The last point hovered with a hand tool, and whether Shift was held:
     /// a new tip size previews there again.
     hover_at: Cell<Option<([f32; 3], bool)>>,
     /// The hand click being made off the UI thread, those that came while it
     /// was, and the timer that looks for it.
     pending_click: RefCell<Option<PendingClick>>,
+    /// A drag of a Supports tab tool in flight (#3).
+    drag: RefCell<Option<DragState>>,
+    /// This driver, for what a drag starts from the viewport's side.
+    me: RefCell<std::rc::Weak<DfSupportRun>>,
     queued_clicks: RefCell<std::collections::VecDeque<QueuedClick>>,
     click_poll: slint::Timer,
     /// The raft warning (#131) is shown from a Generate press until a new
@@ -295,6 +300,7 @@ fn note_text(note: AddNote) -> slint::SharedString {
             "DfSupportDialog",
             "the surface there is too steep for a tip"
         ),
+        AddNote::CarriesOthers => ctr!("DfSupportDialog", "other supports hang from it"),
     }
 }
 
@@ -315,6 +321,25 @@ fn preview_line(preview: &EditPreview, attach: bool) -> (slint::SharedString, bo
             ctr!(
                 "DfSupportDialog",
                 "Cannot place it: no support can reach that point."
+            ),
+            true,
+        ),
+    }
+}
+
+/// Move tip's line for a preview: why the support stands on its own there,
+/// or why it cannot go there, and whether that warns.
+fn move_line(preview: &EditPreview) -> (slint::SharedString, bool) {
+    match (preview.valid, preview.note.map(note_text)) {
+        (true, _) => preview_line(preview, false),
+        (false, Some(why)) => (
+            ctr!("DfSupportDialog", "Cannot move it there: {}.", why),
+            true,
+        ),
+        (false, None) => (
+            ctr!(
+                "DfSupportDialog",
+                "Cannot move it there: no support can reach that point."
             ),
             true,
         ),
@@ -367,10 +392,21 @@ enum EditStart {
     Previewed(Box<DfSupportSession>),
 }
 
-/// One set's share of a hand edit: where it starts and its points.
+/// What a set's share of a hand edit does.
+#[derive(Clone, Debug)]
+enum EditOp {
+    /// The tool's edit at each point.
+    Points(Vec<IndexedPoint>),
+    /// Removes these supports, by their ids (a box or a brush, #3).
+    RemoveTips(Vec<String>),
+    /// Moves this support's tip to this point (#3).
+    MoveTip(String, [f32; 3]),
+}
+
+/// One set's share of a hand edit: where it starts and what it does.
 struct EditJob {
     start: EditStart,
-    points: Vec<IndexedPoint>,
+    op: EditOp,
 }
 
 /// A hand edit ready for the engine: the sets it edits and, in the same
@@ -410,7 +446,7 @@ fn compute_edit(jobs: Vec<EditJob>, tool: HandTool, how: &AddOptions) -> Compute
     let mut reused = false;
     let outcomes = jobs
         .into_iter()
-        .map(|EditJob { start, points }| {
+        .map(|EditJob { start, op }| {
             let (mut edited, from_preview) = match start {
                 EditStart::Base(base) => (DfSupportSession::clone(&base), false),
                 EditStart::Previewed(edited) => (*edited, true),
@@ -421,8 +457,25 @@ fn compute_edit(jobs: Vec<EditJob>, tool: HandTool, how: &AddOptions) -> Compute
             // work.
             let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut took = from_preview;
-                if !from_preview {
-                    for (i, point) in &points {
+                let mut one = |edit: Result<(), EditError>| match edit {
+                    Ok(()) => true,
+                    Err(err) => {
+                        crate::breadcrumbs::note(&format!("supports: gesture refused: {err}"));
+                        refused.push((0, err));
+                        false
+                    }
+                };
+                match (&op, from_preview) {
+                    (_, true) | (EditOp::Points(_), false) => {}
+                    (EditOp::RemoveTips(ids), false) => {
+                        took = one(edited.remove_tips(ids).map(|_| ()));
+                    }
+                    (EditOp::MoveTip(tip, to), false) => {
+                        took = one(edited.move_tip(tip, to.map(f64::from), how));
+                    }
+                }
+                if let (EditOp::Points(points), false) = (&op, from_preview) {
+                    for (i, point) in points {
                         let p = point.map(f64::from);
                         let edit = match tool {
                             HandTool::Add => edited.add_at(p, how),
@@ -475,11 +528,51 @@ struct PendingClick {
     done: std::sync::mpsc::Receiver<Computed>,
 }
 
-/// A click that came while another was being made: made once that one is in.
-struct QueuedClick {
-    tool: HandTool,
-    point: [f32; 3],
-    how: AddOptions,
+/// An edit that came while another was being made: made once that one is
+/// in.
+enum QueuedClick {
+    /// A click of a tool.
+    Click {
+        tool: HandTool,
+        point: [f32; 3],
+        how: AddOptions,
+    },
+    /// A drag's edit of the set its leaf shows.
+    Gesture { leaf: NodeId, op: EditOp },
+}
+
+/// A drag of a Supports tab tool in flight (#3).
+enum DragState {
+    /// Move tip: the support grabbed, and where its tip was last asked to.
+    Move {
+        drawn: DrawnSet,
+        tip: String,
+        to: Option<[f32; 3]>,
+    },
+    /// Remove's box or brush: the set it removes from, its tips, the ones
+    /// picked so far and, for the brush, where the cursor last was.
+    Remove {
+        drawn: DrawnSet,
+        tips: Vec<(String, [f64; 3])>,
+        picked: Vec<String>,
+        press: [f32; 2],
+        brush: Option<[f32; 2]>,
+    },
+}
+
+/// How far from a support's tip a press on the support grabs it, in mm.
+const GRAB_REACH_MM: f64 = 3.0;
+
+/// Distance from `p` to the segment `a`-`b`, on screen.
+fn screen_segment_distance(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
+    let ab = [b[0] - a[0], b[1] - a[1]];
+    let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+    let t = if len2 <= f32::EPSILON {
+        0.0
+    } else {
+        (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0)
+    };
+    (p[0] - (a[0] + ab[0] * t)).hypot(p[1] - (a[1] + ab[1] * t))
 }
 
 /// A preview to compute: the session to edit, where, and with which tool.
@@ -494,6 +587,10 @@ struct HoverAsk {
     tool: i32,
     /// For an Add: how the support is made.
     how: AddOptions,
+    /// For a move (`tool` 3): the support whose tip moves to `point`.
+    tip: Option<String>,
+    /// For a box or a brush (`tool` 5): the supports they take.
+    tips: Arc<[String]>,
     /// For a warm-up (`tool` 0): the other sets' sessions, warmed with it.
     others: Vec<Arc<DfSupportSession>>,
 }
@@ -511,6 +608,7 @@ struct HoverAnswer {
     point: [f32; 3],
     tool: i32,
     how: AddOptions,
+    tip: Option<String>,
     preview: Option<EditPreview>,
     /// For an Add that goes through: the session the click leaves.
     edited: Option<DfSupportSession>,
@@ -549,10 +647,18 @@ impl HoverWorker {
                     }
                     let p = ask.point.map(f64::from);
                     let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        if ask.tool == 1 {
-                            ask.base.preview_add_with(p, &ask.how)
-                        } else {
-                            ask.base.preview_remove_at(p).map(|v| (v, None))
+                        match (ask.tool, &ask.tip) {
+                            (1, _) => ask.base.preview_add_with(p, &ask.how),
+                            (3, Some(tip)) => ask.base.preview_move_tip(tip, p, &ask.how),
+                            // Move tip's hover: what a press there grabs.
+                            (4, _) => ask
+                                .base
+                                .tip_near(p, GRAB_REACH_MM)
+                                .ok_or(EditError::NothingThere)
+                                .and_then(|tip| ask.base.preview_remove_tips(&[tip]))
+                                .map(|v| (v, None)),
+                            (5, _) => ask.base.preview_remove_tips(&ask.tips).map(|v| (v, None)),
+                            _ => ask.base.preview_remove_at(p).map(|v| (v, None)),
                         }
                     }));
                     let (preview, edited) = match done {
@@ -565,6 +671,7 @@ impl HoverWorker {
                         point: ask.point,
                         tool: ask.tool,
                         how: ask.how,
+                        tip: ask.tip,
                         preview,
                         edited,
                     };
@@ -793,9 +900,11 @@ impl DfSupportRun {
             hover_shown: Cell::new(0),
             hover_poll: slint::Timer::default(),
             last_preview: RefCell::new(None),
-            last_ghost: RefCell::new(None),
+            last_ghost: RefCell::new(Vec::new()),
             hover_at: Cell::new(None),
             pending_click: RefCell::new(None),
+            drag: RefCell::new(None),
+            me: RefCell::new(std::rc::Weak::new()),
             queued_clicks: RefCell::new(std::collections::VecDeque::new()),
             click_poll: slint::Timer::default(),
             raft_armed,
@@ -836,6 +945,11 @@ impl DfSupportRun {
                     run.on_tip_size_changed();
                 }
             });
+        }
+        *run.me.borrow_mut() = Rc::downgrade(&run);
+        {
+            let handler: Rc<dyn SupportDragHandler> = run.clone();
+            run.ctrl.set_support_drag_handler(Rc::downgrade(&handler));
         }
         run.reload_presets();
         run.push_options(ui);
@@ -1683,8 +1797,22 @@ impl DfSupportRun {
         let ask = point.and_then(|point| {
             let ui = self.ui.upgrade()?;
             let tool = ui.get_support_tool();
-            if tool == 0 || self.handle.borrow().is_some() {
+            if tool == 0 || self.handle.borrow().is_some() || self.drag.borrow().is_some() {
                 return None;
+            }
+            if tool == 3 {
+                let drawn = self.set_of_tip(point)?;
+                return Some(HoverAsk {
+                    generation,
+                    base: drawn.session.clone(),
+                    from: session_key(&drawn),
+                    point,
+                    tool: 4,
+                    how: AddOptions::default(),
+                    tip: None,
+                    tips: Arc::from([]),
+                    others: Vec::new(),
+                });
             }
             let (hand, how) = self.click_tool(&ui, tool, shift);
             let drawn = self.set_at(point, hand)?;
@@ -1698,13 +1826,15 @@ impl DfSupportRun {
                 point,
                 tool,
                 how,
+                tip: None,
+                tips: Arc::from([]),
                 others: Vec::new(),
             })
         });
         let Some(ask) = ask else {
             self.hover_poll.stop();
             self.hover_shown.set(generation);
-            *self.last_ghost.borrow_mut() = None;
+            self.last_ghost.borrow_mut().clear();
             self.ctrl.set_preview_overlay(None);
             self.show_add_note(Default::default());
             return;
@@ -1821,20 +1951,26 @@ impl DfSupportRun {
         if answer.generation == self.hover_generation.get() {
             self.hover_poll.stop();
         }
-        let piece = answer.preview.as_ref().map(|preview| {
-            let tint = if preview.valid {
-                OverlayTint::Valid
-            } else {
-                OverlayTint::Invalid
+        let mut pieces = Vec::new();
+        if let Some(preview) = &answer.preview {
+            let tint = match answer.tool {
+                4 => OverlayTint::Pending,
+                _ if preview.valid => OverlayTint::Valid,
+                _ => OverlayTint::Invalid,
             };
-            Arc::new(overlay_of(&preview.mesh, tint))
-        });
-        let line = match (&answer.preview, answer.tool) {
-            (Some(preview), 1) => preview_line(preview, answer.how.attach),
-            _ => Default::default(),
-        };
-        self.show_add_note(line);
-        *self.last_ghost.borrow_mut() = piece;
+            pieces.push(Arc::new(overlay_of(&preview.mesh, tint)));
+            if let Some(taken) = &preview.taken {
+                pieces.push(Arc::new(overlay_of(taken, OverlayTint::Invalid)));
+            }
+        }
+        match (&answer.preview, answer.tool) {
+            (Some(preview), 1) => self.show_add_note(preview_line(preview, answer.how.attach)),
+            (Some(preview), 3) => self.show_add_note(move_line(preview)),
+            // A box's or a brush's line says how many go, as they pick.
+            (_, 5) => {}
+            _ => self.show_add_note(Default::default()),
+        }
+        *self.last_ghost.borrow_mut() = pieces;
         self.show_hover_overlay();
         let older = self.last_preview.borrow_mut().replace(answer);
         // It holds a whole copy of the supports, slow to let go of on a big
@@ -1846,7 +1982,7 @@ impl DfSupportRun {
 
     /// The worker's last ghost, the only hover overlay.
     fn show_hover_overlay(&self) {
-        let pieces: Vec<Arc<OverlayMesh>> = self.last_ghost.borrow().iter().cloned().collect();
+        let pieces: Vec<Arc<OverlayMesh>> = self.last_ghost.borrow().clone();
         self.ctrl
             .set_preview_overlay((!pieces.is_empty()).then(|| pieces.into()));
     }
@@ -1865,6 +2001,8 @@ impl DfSupportRun {
             point: [0.0; 3],
             tool: 0,
             how: AddOptions::default(),
+            tip: None,
+            tips: Arc::from([]),
             others: sets.map(|drawn| drawn.session).collect(),
         });
     }
@@ -1905,7 +2043,7 @@ impl DfSupportRun {
         if self.pending_click.borrow().is_some() {
             self.queued_clicks
                 .borrow_mut()
-                .push_back(QueuedClick { tool, point, how });
+                .push_back(QueuedClick::Click { tool, point, how });
             return;
         }
         self.start_click(&ui, tool, point, how);
@@ -1927,6 +2065,67 @@ impl DfSupportRun {
             self.queued_clicks.borrow_mut().clear();
             return;
         };
+        self.launch_edit(ui, sets, refused, jobs, tool, how);
+    }
+
+    /// The edit of a drag (#3) on `drawn`'s set, made off the UI thread as
+    /// a click is, or after the edit being made; `previewed` is the session
+    /// its preview left, the edit in it.
+    fn start_gesture(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        drawn: DrawnSet,
+        op: EditOp,
+        previewed: Option<DfSupportSession>,
+    ) {
+        crate::breadcrumbs::note(&format!("supports: gesture {op:?}"));
+        if self.pending_click.borrow().is_some() {
+            self.queued_clicks
+                .borrow_mut()
+                .push_back(QueuedClick::Gesture {
+                    leaf: drawn.leaf,
+                    op,
+                });
+            return;
+        }
+        let in_force = self
+            .sets_in_force()
+            .into_iter()
+            .any(|d| session_key(&d) == session_key(&drawn));
+        if !in_force || self.handle.borrow().is_some() {
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "The scene changed before the support was placed; nothing was changed."
+            ));
+            return;
+        }
+        let start = match previewed {
+            Some(edited) => EditStart::Previewed(Box::new(edited)),
+            None => EditStart::Base(drawn.session.clone()),
+        };
+        let jobs = vec![EditJob { start, op }];
+        self.launch_edit(
+            ui,
+            vec![drawn],
+            Vec::new(),
+            jobs,
+            HandTool::Remove,
+            AddOptions::default(),
+        );
+    }
+
+    /// Makes `jobs` on a worker thread; [`Self::poll_click`] puts the edit
+    /// in the scene once it is made, if the scene is still the one it was
+    /// made on. Undo before then drops it ([`Self::drop_click`]).
+    fn launch_edit(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        sets: Vec<DrawnSet>,
+        refused: Refusals,
+        jobs: Vec<EditJob>,
+        tool: HandTool,
+        how: AddOptions,
+    ) {
         let (send, done) = std::sync::mpsc::channel();
         let job = move || {
             let _ = send.send(compute_edit(jobs, tool, &how));
@@ -2006,7 +2205,7 @@ impl DfSupportRun {
             // scene that is gone.
             crate::breadcrumbs::note("supports: click dropped, the scene moved on");
             self.queued_clicks.borrow_mut().clear();
-            *self.last_ghost.borrow_mut() = None;
+            self.last_ghost.borrow_mut().clear();
             self.ctrl.set_preview_overlay(None);
             ui.set_supports_last_run(ctr!(
                 "DfSupportDialog",
@@ -2017,11 +2216,24 @@ impl DfSupportRun {
         let mut refused = pending.refused;
         self.commit_edit(&ui, pending.sets, computed, &mut refused);
         // The edit is in: its preview would lie over it.
-        *self.last_ghost.borrow_mut() = None;
+        self.last_ghost.borrow_mut().clear();
         self.ctrl.set_preview_overlay(None);
         let next = self.queued_clicks.borrow_mut().pop_front();
-        if let Some(next) = next {
-            self.start_click(&ui, next.tool, next.point, next.how);
+        match next {
+            Some(QueuedClick::Click { tool, point, how }) => {
+                self.start_click(&ui, tool, point, how);
+            }
+            Some(QueuedClick::Gesture { leaf, op }) => {
+                let drawn = self
+                    .sets_in_force()
+                    .into_iter()
+                    .find(|drawn| drawn.leaf == leaf);
+                match drawn {
+                    Some(drawn) => self.start_gesture(&ui, drawn, op, None),
+                    None => self.queued_clicks.borrow_mut().clear(),
+                }
+            }
+            None => {}
         }
     }
 
@@ -2034,7 +2246,7 @@ impl DfSupportRun {
             return;
         }
         self.document.set_pending_edit(None);
-        *self.last_ghost.borrow_mut() = None;
+        self.last_ghost.borrow_mut().clear();
         self.ctrl.set_preview_overlay(None);
         crate::breadcrumbs::note("supports: click dropped");
         if let Some(ui) = self.ui.upgrade() {
@@ -2167,7 +2379,10 @@ impl DfSupportRun {
                 Some(edited) => EditStart::Previewed(Box::new(edited)),
                 None => EditStart::Base(drawn.session.clone()),
             };
-            jobs.push(EditJob { start, points });
+            jobs.push(EditJob {
+                start,
+                op: EditOp::Points(points),
+            });
             sets.push(drawn);
         }
         Ok(Prepared { sets, jobs })
@@ -2778,6 +2993,341 @@ impl DfSupportRun {
                     ),
                     details: details.as_str().into(),
                 });
+            }
+        }
+    }
+    /// This driver, shared.
+    fn me(&self) -> Option<Rc<Self>> {
+        self.me.borrow().upgrade()
+    }
+
+    /// The set in force whose support has its tip within grab of `point`
+    /// (world mm, on the supports), the nearest: what Move tip grabs.
+    fn set_of_tip(&self, point: [f32; 3]) -> Option<DrawnSet> {
+        let p = point.map(f64::from);
+        self.sets_in_force()
+            .into_iter()
+            .filter_map(|drawn| {
+                let tip = drawn.session.tip_near(p, GRAB_REACH_MM)?;
+                let d = drawn
+                    .session
+                    .tips()
+                    .into_iter()
+                    .find(|(id, _)| *id == tip)
+                    .map(|(_, at)| (0..3).map(|k| (at[k] - p[k]).powi(2)).sum::<f64>().sqrt())?;
+                Some((d, drawn))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, drawn)| drawn)
+    }
+
+    /// The set a box or a brush removes from: the selected supports, or the
+    /// selected model's, in force ([`Self::selected_set`], #197).
+    fn selected_set_in_force(&self) -> Option<DrawnSet> {
+        let leaf = self.selected_set()?;
+        self.sets_in_force()
+            .into_iter()
+            .find(|drawn| drawn.leaf == leaf)
+    }
+
+    /// Asks the preview worker for what a drag would do, and polls for it.
+    fn ask_drag_preview(self: &Rc<Self>, ask: impl FnOnce(u64) -> HoverAsk) {
+        let generation = self.hover_generation.get() + 1;
+        self.hover_generation.set(generation);
+        if self.hover_worker.asks.send(ask(generation)).is_err() || self.hover_poll.running() {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        self.hover_poll
+            .start(slint::TimerMode::Repeated, HOVER_POLL, move || {
+                if let Some(run) = weak.upgrade() {
+                    run.take_hover_answer();
+                }
+            });
+    }
+
+    /// Stops drawing previews: one still on its way is not drawn.
+    fn end_previews(&self) {
+        self.hover_poll.stop();
+        self.hover_shown.set(self.hover_generation.get());
+        self.hover_at.set(None);
+    }
+
+    /// The worker's newest answer, drawn or not.
+    fn newest_answer(&self) -> Option<HoverAnswer> {
+        let unseen = self
+            .hover_worker
+            .answer
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        match unseen {
+            Some(answer) => {
+                let drawn = self.last_preview.borrow_mut().take();
+                if let Some(drawn) = drawn {
+                    let _ = self.hover_worker.discard.send(drawn);
+                }
+                Some(answer)
+            }
+            None => self.last_preview.borrow_mut().take(),
+        }
+    }
+
+    /// A box's or a brush's picks changed: what they take is drawn red.
+    fn picks_changed(self: &Rc<Self>, drawn: &DrawnSet, picked: &[String]) {
+        if picked.is_empty() {
+            self.end_previews();
+            self.last_ghost.borrow_mut().clear();
+            self.ctrl.set_preview_overlay(None);
+            self.show_add_note(Default::default());
+            return;
+        }
+        self.show_add_note((
+            ctr!("DfSupportDialog", "Supports to remove: {}.", picked.len()),
+            true,
+        ));
+        let tips: Arc<[String]> = picked.into();
+        let base = drawn.session.clone();
+        let from = session_key(drawn);
+        self.ask_drag_preview(move |generation| HoverAsk {
+            generation,
+            base,
+            from,
+            point: [0.0; 3],
+            tool: 5,
+            how: AddOptions::default(),
+            tip: None,
+            tips,
+            others: Vec::new(),
+        });
+    }
+
+    /// The tips of `tips` a brush at `at`, come from `from`, passes over.
+    fn brushed(
+        tips: &[(String, [f64; 3])],
+        from: [f32; 2],
+        at: [f32; 2],
+        radius: f32,
+        project: Project<'_>,
+    ) -> Vec<String> {
+        tips.iter()
+            .filter(|(_, tip)| {
+                project(tip.map(|c| c as f32))
+                    .is_some_and(|p| screen_segment_distance(p, from, at) <= radius)
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+}
+
+impl SupportDragHandler for DfSupportRun {
+    fn drag_start(&self, kind: SupportDragKind, press: &DragPoint, project: Project<'_>) -> bool {
+        let Some(run) = self.me() else {
+            return false;
+        };
+        let Some(ui) = self.ui.upgrade() else {
+            return false;
+        };
+        if self.handle.borrow().is_some() {
+            return false;
+        }
+        let state = match kind {
+            SupportDragKind::MoveTip => {
+                let Some(at) = press.support else {
+                    return false;
+                };
+                let Some(drawn) = self.set_of_tip(at) else {
+                    return false;
+                };
+                let Some(tip) = drawn.session.tip_near(at.map(f64::from), GRAB_REACH_MM) else {
+                    return false;
+                };
+                crate::breadcrumbs::note("supports: move tip started");
+                DragState::Move {
+                    drawn,
+                    tip,
+                    to: None,
+                }
+            }
+            SupportDragKind::Box | SupportDragKind::Brush => {
+                let Some(drawn) = self.selected_set_in_force() else {
+                    self.show_add_note((
+                        ctr!(
+                            "DfSupportDialog",
+                            "Select these supports, or their model, to remove them."
+                        ),
+                        true,
+                    ));
+                    return false;
+                };
+                let tips = drawn.session.tips();
+                let brush = (kind == SupportDragKind::Brush).then_some(press.cursor);
+                let picked = match brush {
+                    Some(at) => {
+                        let radius = ui.get_support_brush_radius();
+                        Self::brushed(&tips, at, at, radius, project)
+                    }
+                    None => Vec::new(),
+                };
+                crate::breadcrumbs::note(&format!(
+                    "supports: {kind:?} started over {} tips",
+                    tips.len()
+                ));
+                DragState::Remove {
+                    drawn,
+                    tips,
+                    picked,
+                    press: press.cursor,
+                    brush,
+                }
+            }
+        };
+        self.end_previews();
+        self.last_ghost.borrow_mut().clear();
+        self.ctrl.set_preview_overlay(None);
+        if let DragState::Remove { drawn, picked, .. } = &state
+            && !picked.is_empty()
+        {
+            run.picks_changed(drawn, picked);
+        }
+        *self.drag.borrow_mut() = Some(state);
+        true
+    }
+
+    fn drag_move(&self, at: &DragPoint, project: Project<'_>) {
+        let Some(run) = self.me() else {
+            return;
+        };
+        let radius = self
+            .ui
+            .upgrade()
+            .map_or(24.0, |ui| ui.get_support_brush_radius());
+        let mut drag = self.drag.borrow_mut();
+        match drag.as_mut() {
+            Some(DragState::Move { drawn, tip, to }) => {
+                let Some(model) = at.model else {
+                    return;
+                };
+                *to = Some(model);
+                let base = drawn.session.clone();
+                let from = session_key(drawn);
+                let tip = Some(tip.clone());
+                drop(drag);
+                run.ask_drag_preview(move |generation| HoverAsk {
+                    generation,
+                    base,
+                    from,
+                    point: model,
+                    tool: 3,
+                    how: AddOptions::default(),
+                    tip,
+                    tips: Arc::from([]),
+                    others: Vec::new(),
+                });
+            }
+            Some(DragState::Remove {
+                drawn,
+                tips,
+                picked,
+                press,
+                brush,
+            }) => {
+                let next: Vec<String> = match brush {
+                    Some(last) => {
+                        let mut next = picked.clone();
+                        for id in Self::brushed(tips, *last, at.cursor, radius, project) {
+                            if !next.contains(&id) {
+                                next.push(id);
+                            }
+                        }
+                        *last = at.cursor;
+                        next
+                    }
+                    None => {
+                        let (lo, hi) = (
+                            [press[0].min(at.cursor[0]), press[1].min(at.cursor[1])],
+                            [press[0].max(at.cursor[0]), press[1].max(at.cursor[1])],
+                        );
+                        tips.iter()
+                            .filter(|(_, tip)| {
+                                project(tip.map(|c| c as f32)).is_some_and(|p| {
+                                    (lo[0]..=hi[0]).contains(&p[0])
+                                        && (lo[1]..=hi[1]).contains(&p[1])
+                                })
+                            })
+                            .map(|(id, _)| id.clone())
+                            .collect()
+                    }
+                };
+                if next == *picked {
+                    return;
+                }
+                *picked = next;
+                let (drawn, picked) = (drawn.clone(), picked.clone());
+                drop(drag);
+                run.picks_changed(&drawn, &picked);
+            }
+            None => {}
+        }
+    }
+
+    fn drag_end(&self, commit: bool) {
+        let Some(run) = self.me() else {
+            return;
+        };
+        let Some(state) = self.drag.borrow_mut().take() else {
+            return;
+        };
+        let newest = self.newest_answer();
+        self.end_previews();
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let drop_it = || {
+            self.last_ghost.borrow_mut().clear();
+            self.ctrl.set_preview_overlay(None);
+        };
+        if !commit {
+            crate::breadcrumbs::note("supports: drag dropped");
+            drop_it();
+            self.show_add_note(Default::default());
+            return;
+        }
+        match state {
+            DragState::Move { drawn, tip, to } => {
+                let Some(to) = to else {
+                    drop_it();
+                    return;
+                };
+                // The preview of this very spot: a red one leaves the support
+                // where it was; a green one is the move already made.
+                let previewed = newest.filter(|answer| {
+                    answer.tool == 3
+                        && answer.point == to
+                        && answer.tip.as_deref() == Some(tip.as_str())
+                        && answer.from == session_key(&drawn)
+                });
+                if let Some(answer) = &previewed
+                    && let Some(preview) = &answer.preview
+                    && !preview.valid
+                {
+                    drop_it();
+                    let (why, _) = move_line(preview);
+                    ui.set_supports_last_run(ctr!("DfSupportDialog", "Left where it was. {}", why));
+                    self.show_add_note(Default::default());
+                    return;
+                }
+                let edited = previewed.and_then(|answer| answer.edited);
+                self.show_add_note(Default::default());
+                run.start_gesture(&ui, drawn, EditOp::MoveTip(tip, to), edited);
+            }
+            DragState::Remove { drawn, picked, .. } => {
+                self.show_add_note(Default::default());
+                if picked.is_empty() {
+                    drop_it();
+                    return;
+                }
+                run.start_gesture(&ui, drawn, EditOp::RemoveTips(picked), None);
             }
         }
     }
@@ -5084,6 +5634,7 @@ mod hand_edit_tests {
                 valid,
                 attached,
                 note,
+                taken: None,
             };
             assert_eq!(
                 preview_line(&preview(true, true, None), false),
@@ -5462,6 +6013,382 @@ mod hand_edit_tests {
                     swept.settle_ms
                 );
             }
+        });
+    }
+
+    /// A slab 20 × 10 × 2 mm, its underside 9 mm up, with the supports a
+    /// run gives it, those selected.
+    fn supported_slab(window: &MainWindow) -> (Rc<SceneDocument>, Rc<DfSupportRun>) {
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        let cube = sc_mesh_fixtures::unit_cube_mesh();
+        let (lo, hi) =
+            cube.vertices()
+                .iter()
+                .fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| {
+                    let p = v.as_array();
+                    (
+                        std::array::from_fn(|k| lo[k].min(p[k])),
+                        std::array::from_fn(|k| hi[k].max(p[k])),
+                    )
+                });
+        let size = [20.0, 10.0, 2.0];
+        let vertices = cube
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = v.as_array();
+                sc_mesh_core::Vertex::new(std::array::from_fn(|k| {
+                    (p[k] - lo[k]) / (hi[k] - lo[k]) * size[k]
+                }))
+            })
+            .collect();
+        let slab = sc_mesh_core::IndexedMesh::new(None, vertices, cube.faces().to_vec());
+        let mut graph = Scene::new();
+        let leaf = graph
+            .add_leaf(
+                None,
+                translation([10.0, 20.0, 9.0]),
+                LeafPayload::Mesh(Arc::new(slab)),
+            )
+            .unwrap();
+        graph.add_root(leaf).unwrap();
+        document.install_graph(graph.clone(), PathBuf::from("slab.stl"));
+        let run =
+            DfSupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let outcome = start_df_supports(&graph, DfSupportRequest::default())
+            .unwrap()
+            .join();
+        *run.started_on.borrow_mut() = Some(document.scene_revision());
+        run.finish(outcome);
+        let (supports, _) = run.support_leaf().expect("the supports");
+        document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+            supports,
+        )));
+        (document, run)
+    }
+
+    /// The view from straight above, ten pixels a millimetre.
+    fn from_above(p: [f32; 3]) -> Option<[f32; 2]> {
+        Some([p[0] * 10.0, p[1] * 10.0])
+    }
+
+    fn cursor_at(cursor: [f32; 2]) -> DragPoint {
+        DragPoint {
+            cursor,
+            model: None,
+            support: None,
+        }
+    }
+
+    /// Waits for the preview worker's answer to the newest ask, drawn.
+    fn wait_preview(run: &Rc<DfSupportRun>) {
+        let started = Instant::now();
+        while run.hover_shown.get() < run.hover_generation.get() {
+            assert!(started.elapsed() < Duration::from_secs(60), "no answer");
+            std::thread::sleep(Duration::from_millis(2));
+            run.take_hover_answer();
+        }
+    }
+
+    /// Remove's box and brush (#3): what they pick goes as one undo, from
+    /// the selected set only; a drag dropped changes nothing.
+    #[test]
+    fn a_box_and_a_brush_remove_the_tips_they_cover() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            let tips = generated.tips();
+            let left = tips.iter().filter(|(_, t)| t[0] <= 18.0).count();
+            assert!(left > 0 && left < tips.len(), "{left} of {}", tips.len());
+
+            // A box over x up to 18 mm.
+            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &from_above));
+            run.drag_move(&cursor_at([180.0, 1000.0]), &from_above);
+            assert!(
+                window
+                    .get_support_add_note()
+                    .contains(&format!("Supports to remove: {left}"))
+            );
+            wait_preview(&run);
+            assert!(!run.last_ghost.borrow().is_empty(), "what goes is drawn");
+            run.drag_end(true);
+            settle_click(&run);
+            let boxed = in_force_session(&run).unwrap();
+            assert!(boxed.tips().iter().all(|(_, t)| t[0] > 18.0));
+            assert!(window.get_supports_last_run().contains("edited by hand"));
+            assert!(document.undo().unwrap(), "one undo");
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+
+            // A brush along y at x = 15 mm, 24 px (2.4 mm) wide each way.
+            let near: Vec<&String> = tips
+                .iter()
+                .filter(|(_, t)| (t[0] - 15.0).abs() <= 2.4)
+                .map(|(id, _)| id)
+                .collect();
+            assert!(!near.is_empty());
+            assert!(run.drag_start(
+                SupportDragKind::Brush,
+                &cursor_at([150.0, 150.0]),
+                &from_above
+            ));
+            run.drag_move(&cursor_at([150.0, 350.0]), &from_above);
+            run.drag_end(true);
+            settle_click(&run);
+            let brushed = in_force_session(&run).unwrap();
+            let left_ids: Vec<String> = brushed.tips().into_iter().map(|(id, _)| id).collect();
+            assert!(near.iter().all(|id| !left_ids.contains(id)));
+            assert!(left_ids.len() < tips.len());
+            assert!(document.undo().unwrap());
+
+            // Dropped: nothing changes.
+            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &from_above));
+            run.drag_move(&cursor_at([400.0, 1000.0]), &from_above);
+            run.drag_end(false);
+            assert!(run.pending_click.borrow().is_none());
+            assert!(run.last_ghost.borrow().is_empty());
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+
+            // Nothing selected: the box takes nothing, and says why.
+            document.set_selection(crate::selection::Selection::None);
+            assert!(!run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &from_above));
+            assert!(
+                window
+                    .get_support_add_note()
+                    .contains("Select these supports")
+            );
+        });
+    }
+
+    /// A tip's place, by axis.
+    #[derive(Clone, Copy)]
+    struct TipAt {
+        x: f64,
+        y: f64,
+        z: f64,
+    }
+
+    /// Move tip (#3): a tip dragged over the model is routed again where it
+    /// is let go, as one undo; where it cannot go, it stays.
+    #[test]
+    fn a_tip_dragged_over_the_model_moves_its_support() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            // A tip that moves 1.5 mm over, and one others hang from, as
+            // the engine itself tells them.
+            let shifted = |t: [f64; 3]| [t[0] + 1.5, t[1] + 1.0, 9.0];
+            let tips = generated.tips();
+            let movable = |(id, t): &&(String, [f64; 3])| {
+                generated
+                    .preview_move_tip(id, shifted(*t), &AddOptions::default())
+                    .is_ok_and(|(p, _)| p.valid)
+            };
+            let carrying = |(id, t): &&(String, [f64; 3])| {
+                generated
+                    .preview_move_tip(id, shifted(*t), &AddOptions::default())
+                    .is_ok_and(|(p, _)| p.note == Some(AddNote::CarriesOthers))
+            };
+            let tip_of = |id: &String| {
+                let t = tips.iter().find(|(i, _)| i == id).unwrap().1;
+                TipAt {
+                    x: t[0],
+                    y: t[1],
+                    z: t[2],
+                }
+            };
+            let free = &tips.iter().find(movable).expect("a tip that moves").0;
+            let from = tip_of(free);
+            let grab = DragPoint {
+                cursor: [0.0, 0.0],
+                model: None,
+                support: Some([from.x as f32, from.y as f32, from.z as f32 - 0.5]),
+            };
+            assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &from_above));
+            let to = shifted([from.x, from.y, from.z]).map(|c| c as f32);
+            let over = |p: [f32; 3]| DragPoint {
+                cursor: [0.0, 0.0],
+                model: Some(p),
+                support: None,
+            };
+            run.drag_move(&over(to), &from_above);
+            wait_preview(&run);
+            run.drag_end(true);
+            settle_click(&run);
+            let moved = in_force_session(&run).unwrap();
+            assert!(!Arc::ptr_eq(&moved, &generated));
+            let near = |s: &DfSupportSession, p: [f64; 3]| s.tip_near(p, 0.3).is_some();
+            assert!(!near(&moved, [from.x, from.y, from.z]), "gone from there");
+            assert!(near(&moved, to.map(f64::from)), "there now");
+            assert!(document.undo().unwrap(), "one undo");
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+
+            // A trunk others hang from cannot move: red, and it stays.
+            {
+                let (host, _) = tips.iter().find(carrying).expect("a tip others hang from");
+                let from = tip_of(host);
+                let grab = DragPoint {
+                    support: Some([from.x as f32, from.y as f32, from.z as f32 - 0.3]),
+                    ..grab
+                };
+                assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &from_above));
+                run.drag_move(
+                    &over([from.x as f32 + 1.0, from.y as f32, 9.0]),
+                    &from_above,
+                );
+                wait_preview(&run);
+                assert!(
+                    window
+                        .get_support_add_note()
+                        .contains("Cannot move it there")
+                );
+                run.drag_end(true);
+                assert!(run.pending_click.borrow().is_none());
+                assert!(window.get_supports_last_run().contains("Left where it was"));
+                assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+            }
+        });
+    }
+
+    /// Measurement, not a gate (#3): what Remove's box and brush and Move
+    /// tip cost on a big real model. `SC_STRESS_STL` is the model (scaled to
+    /// `SC_STRESS_HEIGHT_MM` tall when set). `cargo test --profile
+    /// quick-release -p sc-slicer-gui --lib -- --ignored --nocapture
+    /// drag_costs_on_a_real_model`.
+    #[test]
+    #[ignore = "needs SC_STRESS_STL"]
+    fn drag_costs_on_a_real_model() {
+        let Ok(path) = std::env::var("SC_STRESS_STL") else {
+            return;
+        };
+        let height: Option<f32> = std::env::var("SC_STRESS_HEIGHT_MM")
+            .ok()
+            .and_then(|h| h.parse().ok());
+        on_fresh_slint_thread(move || {
+            let (window, run, _) = real_model_run(&path, height);
+            let document = run.document.clone();
+            let (supports, _) = run.support_leaf().expect("the supports");
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                supports,
+            )));
+            let generated = in_force_session(&run).unwrap();
+            let tips = generated.tips();
+            let xs: Vec<f64> = tips.iter().map(|(_, t)| t[0]).collect();
+            let (lo, hi) = xs
+                .iter()
+                .fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+            let mid = ((lo + hi) / 2.0) as f32;
+            let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+            println!("{} tips", tips.len());
+
+            // A box over half the set, drawn in 20 moves.
+            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([-1e4, -1e4]), &from_above));
+            let mut ui_ms: f64 = 0.0;
+            for k in 1..=20 {
+                let x = -1e4 + (mid * 10.0 + 1e4) * k as f32 / 20.0;
+                let t = Instant::now();
+                run.drag_move(&cursor_at([x, 1e5]), &from_above);
+                ui_ms = ui_ms.max(ms(t));
+            }
+            let t = Instant::now();
+            wait_preview(&run);
+            let preview_ms = ms(t);
+            let picked = match run.drag.borrow().as_ref() {
+                Some(DragState::Remove { picked, .. }) => picked.len(),
+                _ => 0,
+            };
+            let t = Instant::now();
+            run.drag_end(true);
+            let hand_over_ms = ms(t);
+            let made = Instant::now();
+            let mut land_ms: f64 = 0.0;
+            while run.pending_click.borrow().is_some() {
+                std::thread::sleep(Duration::from_millis(1));
+                let t = Instant::now();
+                run.poll_click();
+                land_ms = land_ms.max(ms(t));
+            }
+            println!(
+                "box over {picked} tips: UI per move max {ui_ms:.1} ms; red preview {preview_ms:.0} ms after the last move; release {hand_over_ms:.1} ms; made in {:.0} ms; put in the scene {land_ms:.1} ms; {}",
+                ms(made),
+                window.get_supports_last_run()
+            );
+            assert!(document.undo().unwrap());
+
+            // A brush across the set, 60 moves.
+            assert!(run.drag_start(
+                SupportDragKind::Brush,
+                &cursor_at([lo as f32 * 10.0, 0.0]),
+                &from_above
+            ));
+            let ys: Vec<f64> = tips.iter().map(|(_, t)| t[1]).collect();
+            let y = (ys.iter().sum::<f64>() / ys.len() as f64) as f32 * 10.0;
+            let mut ui_ms: f64 = 0.0;
+            for k in 0..=60 {
+                let x = (lo + (hi - lo) * f64::from(k) / 60.0) as f32 * 10.0;
+                let t = Instant::now();
+                run.drag_move(&cursor_at([x, y]), &from_above);
+                ui_ms = ui_ms.max(ms(t));
+            }
+            wait_preview(&run);
+            run.drag_end(true);
+            let made = Instant::now();
+            settle_click(&run);
+            println!(
+                "brush: UI per move max {ui_ms:.1} ms; made in {:.0} ms; {}",
+                ms(made),
+                window.get_supports_last_run()
+            );
+            assert!(document.undo().unwrap());
+
+            // Move tip: a tip dragged 2 mm, previews along the way.
+            let (id, from) = tips
+                .iter()
+                .find(|(id, t)| {
+                    generated
+                        .preview_move_tip(id, [t[0] + 0.3, t[1], t[2]], &AddOptions::default())
+                        .is_ok_and(|(p, _)| p.valid)
+                })
+                .cloned()
+                .expect("a tip that moves");
+            let grab = DragPoint {
+                cursor: [0.0, 0.0],
+                model: None,
+                support: Some([from[0] as f32, from[1] as f32, from[2] as f32 - 0.3]),
+            };
+            assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &from_above));
+            let mut previews = Vec::new();
+            for k in 1..=10 {
+                let to = [
+                    from[0] as f32 + 0.03 * k as f32,
+                    from[1] as f32,
+                    from[2] as f32,
+                ];
+                run.drag_move(
+                    &DragPoint {
+                        model: Some(to),
+                        ..grab
+                    },
+                    &from_above,
+                );
+                let t = Instant::now();
+                wait_preview(&run);
+                previews.push(ms(t));
+            }
+            previews.sort_by(f64::total_cmp);
+            run.drag_end(true);
+            let made = Instant::now();
+            settle_click(&run);
+            println!(
+                "move tip {id}: preview median {:.0} ms, max {:.0} ms; made in {:.0} ms; {}",
+                previews[previews.len() / 2],
+                previews.last().unwrap(),
+                ms(made),
+                window.get_supports_last_run()
+            );
         });
     }
 }

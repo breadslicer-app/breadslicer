@@ -1419,6 +1419,12 @@ export component SupportsInspector inherits VerticalLayout {
     in property <string> add-note;
     in property <bool> add-note-warns;
     callback tip-size-picked(int);
+    // Remove (#3): whether it is armed, and its drag: 0 a box, 1 a brush of
+    // this radius (logical px).
+    in property <bool> remove-tool-on;
+    in property <int> remove-mode;
+    in property <float> brush-radius;
+    callback remove-mode-picked(int);
     // The selected object lift, editable here too.
     in property <bool> selection-valid;
     in property <float> lift;
@@ -1541,6 +1547,31 @@ export component SupportsInspector inherits VerticalLayout {
         }
         Note {
             text: @tr("Inspector" => "Keys 1–4 pick the tip: extra small, small, medium, large. Shift+click hangs the support from the nearest one, or places nothing.");
+        }
+        if root.add-note != "": Note {
+            text: root.add-note;
+            color: root.add-note-warns ? Theme.danger : Theme.text-soft;
+        }
+    }
+
+    if root.remove-tool-on: Card {
+        title: @tr("Inspector" => "REMOVE SUPPORTS");
+
+        LabeledRow {
+            label: @tr("Inspector" => "Drag");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Box"), @tr("Inspector" => "Brush")];
+                current: root.remove-mode;
+                picked(i) => {
+                    root.remove-mode-picked(i);
+                }
+            }
+        }
+        Note {
+            text: root.remove-mode == 1
+                ? @tr("Inspector" => "Paint over the tips to remove; [ ] or the mouse wheel size the brush ({} px). B switches to a box.", Math.round(root.brush-radius))
+                : @tr("Inspector" => "Drag a box: every tip inside it goes, from the selected supports only. B switches to a brush.");
         }
         if root.add-note != "": Note {
             text: root.add-note;
