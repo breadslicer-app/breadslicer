@@ -33,6 +33,7 @@ use support_gen_df::supports::auto_support::auto_place::place::{
 use support_gen_df::supports::auto_support::parameter_sizing::SizingBands;
 use support_gen_df::supports::auto_support::types::{CandidatePoint, CandidateSource};
 use support_gen_df::supports::auto_support::zone_rules::ZoneRules;
+use support_gen_df::supports::placement_logic::cone_axis_policy::is_side_wall_contact;
 use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use support_gen_df::supports::support_type_registry::{
@@ -212,6 +213,10 @@ pub enum AddNote {
     HostsFull,
     /// The surface there is too steep for a tip.
     SteepSurface,
+    /// Other supports hang from the support being moved.
+    CarriesOthers,
+    /// The surface there faces up: a support from below cannot reach it.
+    FacesUp,
 }
 
 impl AddNote {
@@ -251,6 +256,8 @@ pub struct EditPreview {
     /// For an addition: why it stands on its own, or why it cannot be
     /// placed, when there is a reason to tell.
     pub note: Option<AddNote>,
+    /// For a move: the pieces it takes away from where the support was.
+    pub taken: Option<IndexedMesh>,
 }
 
 /// What [`DfSupportSession::place`] added.
@@ -914,6 +921,28 @@ impl DfSupportSession {
         let Some((i, tip, normal)) = self.contact(point) else {
             return Err((EditError::NothingThere, None));
         };
+        // The tip goes exactly where the person points (#3): a face that
+        // looks up is no place for one, and says so, rather than the tip
+        // going to some other surface near it.
+        if normal.z > 0.0 {
+            return Err((
+                EditError::NoRoute("the surface faces up".to_owned()),
+                Some(AddNote::FacesUp),
+            ));
+        }
+        // Nor is a wall: a run keeps its trunks off one, and a tip placed
+        // by hand keeps to the same rule whatever holds it.
+        let tip_settings = &self.settings.supports.tip;
+        if is_side_wall_contact(
+            normal,
+            tip_settings.cone_angle_mode.unwrap_or_default(),
+            tip_settings.adaptive_cone_angle_offset_deg,
+        ) {
+            return Err((
+                EditError::NoRoute(RejectReason::SideWallContact.as_str().to_owned()),
+                Some(AddNote::SteepSurface),
+            ));
+        }
         let bvh = self.bvh(i);
         let mut settings = (*self.settings).clone();
         let zone = hand_settings(&mut settings, how);
@@ -942,6 +971,7 @@ impl DfSupportSession {
                 &mut new_id,
             );
             ctx.set_zone(zone);
+            ctx.set_exact_contact(Some((tip, normal)));
             let candidate = CandidatePoint {
                 id: "manual".to_owned(),
                 tip_pos: tip,
@@ -1137,51 +1167,54 @@ impl DfSupportSession {
                     valid: true,
                     attached: placed.attached,
                     note: placed.note,
+                    taken: None,
                 };
                 Ok((preview, Some(copy)))
             }
             Err((EditError::NoRoute(_) | EditError::CannotAttach(_), note)) => {
-                let (i, tip, normal) = self.contact(point).ok_or(EditError::NothingThere)?;
-                let model_id = self.models[i].id.clone();
-                let mut copy = self.clone();
-                let built = {
-                    let mut new_id = copy.id_source();
-                    build_trunk_data(
-                        &TrunkBuildInput {
-                            tip_pos: tip,
-                            tip_normal: normal,
-                            model_id: &model_id,
-                            mesh: None,
-                            is_preview: Some(true),
-                            overrides: None,
-                            is_small_island: None,
-                            ignore_grid: Some(true),
-                        },
-                        &self.settings.supports,
-                        &mut new_id,
-                    )
-                }
-                .ok_or(EditError::NothingThere)?;
-                let ids: HashSet<String> =
-                    [built.root.base.id.clone(), built.trunk.base.id.clone()].into();
-                copy.state
-                    .collections
-                    .roots
-                    .insert(built.root.base.id.clone(), built.root);
-                copy.state
-                    .collections
-                    .trunks
-                    .insert(built.trunk.base.id.clone(), built.trunk);
                 let preview = EditPreview {
-                    mesh: copy.mesh_of(|id| ids.contains(id))?,
+                    mesh: self.straight_trunk(point)?,
                     valid: false,
                     attached: false,
                     note,
+                    taken: None,
                 };
                 Ok((preview, None))
             }
             Err((other, _)) => Err(other),
         }
+    }
+
+    /// A straight trunk from the model surface at `point` to the plate,
+    /// drawn on its own: what a preview shows red where nothing can hold
+    /// that point.
+    fn straight_trunk(&self, point: [f64; 3]) -> Result<IndexedMesh, EditError> {
+        let (i, tip, normal) = self.contact(point).ok_or(EditError::NothingThere)?;
+        let mut n = 0;
+        let mut new_id = || {
+            n += 1;
+            format!("preview-{n}")
+        };
+        let built = build_trunk_data(
+            &TrunkBuildInput {
+                tip_pos: tip,
+                tip_normal: normal,
+                model_id: &self.models[i].id,
+                mesh: None,
+                is_preview: Some(true),
+                overrides: None,
+                is_small_island: None,
+                ignore_grid: Some(true),
+            },
+            &self.settings.supports,
+            &mut new_id,
+        )
+        .ok_or(EditError::NothingThere)?;
+        let mut state = SupportState::default();
+        let c = &mut state.collections;
+        c.roots.insert(built.root.base.id.clone(), built.root);
+        c.trunks.insert(built.trunk.base.id.clone(), built.trunk);
+        self.draw_alone(&state)
     }
 
     /// The entities a click at `point` removes: the nearest one within reach
@@ -1216,20 +1249,28 @@ impl DfSupportSession {
     }
 
     fn removal(&self, point: [f64; 3]) -> Result<HashSet<String>, EditError> {
-        let index = self.removal_index();
-        let c = &self.state.collections;
         let Some((d, start)) = self.nearest_support(point) else {
             return Err(EditError::NothingThere);
         };
         if d > REMOVE_REACH_MM {
             return Err(EditError::NothingThere);
         }
+        Ok(self.cascade(&[start]))
+    }
+
+    /// The ids removing the entities at `starts` (places in the removal
+    /// index) takes.
+    fn cascade(&self, starts: &[usize]) -> HashSet<String> {
+        let index = self.removal_index();
+        let c = &self.state.collections;
         // The cascade: what names the removed entity or any of its parts (a
         // knot names the shaft segment it sits on) goes with it.
         let n = index.ids.len();
         let mut gone = vec![false; n];
-        gone[start] = true;
-        let mut queue = vec![start];
+        for &start in starts {
+            gone[start] = true;
+        }
+        let mut queue = starts.to_vec();
         while let Some(g) = queue.pop() {
             for part in &index.parts[g] {
                 for &k in index.named_by.get(part).into_iter().flatten() {
@@ -1268,10 +1309,263 @@ impl DfSupportSession {
         for k in orphans {
             gone[k] = true;
         }
-        Ok((0..n)
+        (0..n)
             .filter(|&k| gone[k])
             .map(|k| index.ids[k].clone())
-            .collect())
+            .collect()
+    }
+
+    /// Every support's tip on the model, with its id: the trunks', branches'
+    /// and leaves' contact points (world mm). What a box or a brush removes
+    /// supports by, and what Move tip grabs (#3).
+    pub fn tips(&self) -> Vec<(String, [f64; 3])> {
+        let c = &self.state.collections;
+        let at = |p: Vec3| [p.x, p.y, p.z];
+        c.trunks
+            .iter()
+            .filter_map(|(id, t)| t.contact_cone.as_ref().map(|k| (id.clone(), at(k.pos))))
+            .chain(
+                c.branches
+                    .iter()
+                    .filter_map(|(id, b)| b.contact_cone.as_ref().map(|k| (id.clone(), at(k.pos)))),
+            )
+            .chain(
+                c.leaves
+                    .iter()
+                    .map(|(id, l)| (id.clone(), at(l.contact_cone.pos))),
+            )
+            .collect()
+    }
+
+    /// Every support the person sees as one, with its id and the line it
+    /// runs along (world mm), from its tip down: its joints, then the root it
+    /// stands on or the knot it hangs from. What a box or a brush removes by
+    /// (#3): a tip touching the model's underside is mostly hidden behind
+    /// it, and the shaft below is what is on screen.
+    pub fn support_paths(&self) -> Vec<(String, Vec<[f64; 3]>)> {
+        let c = &self.state.collections;
+        let at = |p: Vec3| [p.x, p.y, p.z];
+        let joints = |segments: &[support_gen_df::supports::types::Segment]| {
+            segments
+                .iter()
+                .flat_map(|s| [s.top_joint.as_ref(), s.bottom_joint.as_ref()])
+                .flatten()
+                .map(|j| at(j.pos))
+                .collect::<Vec<_>>()
+        };
+        let knot = |id: &str| c.knots.get(id).map(|k| at(k.pos));
+        let path = |tip: Option<Vec3>, mut points: Vec<[f64; 3]>, end: Option<[f64; 3]>| {
+            points.extend(tip.map(at));
+            points.extend(end);
+            points.sort_by(|a, b| b[2].total_cmp(&a[2]));
+            points.dedup();
+            points
+        };
+        let mut out = Vec::new();
+        for (id, t) in &c.trunks {
+            let root = c.roots.get(&t.root_id).map(|r| at(r.transform.pos));
+            let points = path(
+                t.contact_cone.as_ref().map(|k| k.pos),
+                joints(&t.segments),
+                root,
+            );
+            out.push((id.clone(), points));
+        }
+        for (id, b) in &c.branches {
+            let points = path(
+                b.contact_cone.as_ref().map(|k| k.pos),
+                joints(&b.segments),
+                knot(&b.parent_knot_id),
+            );
+            out.push((id.clone(), points));
+        }
+        for (id, l) in &c.leaves {
+            let points = path(
+                Some(l.contact_cone.pos),
+                Vec::new(),
+                knot(&l.parent_knot_id),
+            );
+            out.push((id.clone(), points));
+        }
+        out
+    }
+
+    /// The support whose tip is nearest `point` (world mm), within
+    /// `reach_mm`.
+    pub fn tip_near(&self, point: [f64; 3], reach_mm: f64) -> Option<String> {
+        self.tips()
+            .into_iter()
+            .map(|(id, tip)| (dist(point, tip), id))
+            .filter(|(d, _)| *d <= reach_mm)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, id)| id)
+    }
+
+    /// The tip diameter of support `id`, when it has one.
+    fn tip_diameter(&self, id: &str) -> Option<f64> {
+        let c = &self.state.collections;
+        c.trunks
+            .get(id)
+            .and_then(|t| t.contact_cone.as_ref())
+            .or_else(|| c.branches.get(id).and_then(|b| b.contact_cone.as_ref()))
+            .or_else(|| c.leaves.get(id).map(|l| &l.contact_cone))
+            .map(|k| k.profile.contact_diameter_mm)
+    }
+
+    /// The size (#360) support `id`'s tip was drawn with: one of the run's
+    /// zone sizes, else one of the shipped ones; `None` for a tip no size
+    /// draws (a run without sizes scales its tips by the surface).
+    fn size_of(&self, id: &str) -> Option<String> {
+        let d = self.tip_diameter(id)?;
+        let same = |s: &&support_gen_df::supports::auto_support::zone_rules::SupportSize| {
+            (s.tip_diameter_mm - d).abs() < 1e-6
+        };
+        self.settings
+            .supports
+            .auto_support
+            .zone_rules
+            .as_ref()
+            .and_then(|r| r.sizes.iter().find(same).map(|s| s.id.clone()))
+            .or_else(|| {
+                crate::zone_presets::support_sizes()
+                    .iter()
+                    .find(same)
+                    .map(|s| s.id.clone())
+            })
+    }
+
+    /// The entities removing the supports `ids` takes, by the removal's
+    /// cascade.
+    fn removal_of(&self, ids: &[String]) -> Result<HashSet<String>, EditError> {
+        let index = self.removal_index();
+        let starts: Vec<usize> = ids
+            .iter()
+            .filter_map(|id| index.index_of.get(id).copied())
+            .collect();
+        if starts.is_empty() {
+            return Err(EditError::NothingThere);
+        }
+        Ok(self.cascade(&starts))
+    }
+
+    /// Removes the supports `ids` (by their own ids, as [`Self::tips`]
+    /// gives them) and everything that hangs from them, as one edit.
+    /// Returns how many entities went.
+    pub fn remove_tips(&mut self, ids: &[String]) -> Result<usize, EditError> {
+        let gone = self.removal_of(ids)?;
+        self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
+        self.removal_index = Arc::default();
+        self.hand_edited = true;
+        Ok(gone.len())
+    }
+
+    /// What [`Self::remove_tips`] would take away, drawn on its own.
+    pub fn preview_remove_tips(&self, ids: &[String]) -> Result<EditPreview, EditError> {
+        let gone = self.removal_of(ids)?;
+        Ok(EditPreview {
+            mesh: self.mesh_of(|id| gone.contains(id))?,
+            valid: false,
+            attached: false,
+            note: None,
+            taken: None,
+        })
+    }
+
+    /// Moves the tip of support `tip` to `to` (world mm) in place: the
+    /// support goes, with what its removal takes (its root, its braces),
+    /// and one is added at `to` as Add places it, with the size its tip had.
+    /// A support others hang from stays. Returns what the move added and
+    /// what it took.
+    fn move_in_place(
+        &mut self,
+        tip: &str,
+        to: [f64; 3],
+        how: &AddOptions,
+    ) -> Result<(Placed, HashSet<String>), (EditError, Option<AddNote>)> {
+        let gone = self
+            .removal_of(&[tip.to_owned()])
+            .map_err(|err| (err, None))?;
+        let c = &self.state.collections;
+        let carries = gone.iter().any(|id| {
+            id != tip
+                && (c.trunks.contains_key(id)
+                    || c.branches.contains_key(id)
+                    || c.leaves.contains_key(id)
+                    || c.twigs.contains_key(id)
+                    || c.sticks.contains_key(id)
+                    || c.stumps.contains_key(id))
+        });
+        if carries {
+            return Err((
+                EditError::CannotAttach(AddNote::CarriesOthers),
+                Some(AddNote::CarriesOthers),
+            ));
+        }
+        let how = AddOptions {
+            attach: how.attach,
+            size: how.size.clone().or_else(|| self.size_of(tip)),
+        };
+        self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
+        self.removal_index = Arc::default();
+        let placed = self.place(to, &how)?;
+        Ok((placed, gone))
+    }
+
+    /// Moves the tip of support `tip` (an id [`Self::tips`] gives) to `to`
+    /// (world mm), the support routed again behind it the way Add places one
+    /// (#3). On a refusal the session is as it was.
+    pub fn move_tip(&mut self, tip: &str, to: [f64; 3], how: &AddOptions) -> Result<(), EditError> {
+        let mut moved = self.clone();
+        moved.move_in_place(tip, to, how).map_err(|(err, _)| err)?;
+        *self = moved;
+        Ok(())
+    }
+
+    /// What moving the tip of support `tip` to `to` would do: the support
+    /// placed there (green, with what it leaves in `taken`), or red where
+    /// nothing can hold that point or others hang from the support. With
+    /// the session the move leaves when it goes through.
+    pub fn preview_move_tip(
+        &self,
+        tip: &str,
+        to: [f64; 3],
+        how: &AddOptions,
+    ) -> Result<(EditPreview, Option<Self>), EditError> {
+        let mut copy = self.clone();
+        match copy.move_in_place(tip, to, how) {
+            Ok((placed, gone)) => {
+                let preview = EditPreview {
+                    mesh: copy.mesh_of(|id| placed.added.contains(id))?,
+                    valid: true,
+                    attached: placed.attached,
+                    note: placed.note,
+                    taken: Some(self.mesh_of(|id| gone.contains(id))?),
+                };
+                Ok((preview, Some(copy)))
+            }
+            Err((_, Some(AddNote::CarriesOthers))) => {
+                let gone = self.removal_of(&[tip.to_owned()])?;
+                let preview = EditPreview {
+                    mesh: self.mesh_of(|id| gone.contains(id))?,
+                    valid: false,
+                    attached: false,
+                    note: Some(AddNote::CarriesOthers),
+                    taken: None,
+                };
+                Ok((preview, None))
+            }
+            Err((EditError::NoRoute(_) | EditError::CannotAttach(_), note)) => {
+                let preview = EditPreview {
+                    mesh: self.straight_trunk(to)?,
+                    valid: false,
+                    attached: false,
+                    note,
+                    taken: None,
+                };
+                Ok((preview, None))
+            }
+            Err((other, _)) => Err(other),
+        }
     }
 
     /// Builds the removal index now (a worker does it right after an edit,
@@ -1298,6 +1592,7 @@ impl DfSupportSession {
             valid: false,
             attached: false,
             note: None,
+            taken: None,
         })
     }
 
@@ -1306,10 +1601,14 @@ impl DfSupportSession {
     /// copied, and the models go without their geometry, which only a raft
     /// reads (a 1.9M-face model cost ~8 ms a preview, #3).
     fn mesh_of(&self, keep: impl Fn(&String) -> bool) -> Result<IndexedMesh, EditError> {
-        let state = SupportState {
+        self.draw_alone(&SupportState {
             collections: picked(&self.state.collections, keep),
             ..SupportState::default()
-        };
+        })
+    }
+
+    /// `state`'s supports tessellated on their own, without a raft.
+    fn draw_alone(&self, state: &SupportState) -> Result<IndexedMesh, EditError> {
         let mut settings = (*self.settings).clone();
         settings.rafts.global.bottom_mode = RaftBottomMode::Off;
         settings.rafts.per_model.clear();
@@ -1323,7 +1622,7 @@ impl DfSupportSession {
                 visible: m.visible,
             })
             .collect();
-        let sink = support_soup(&state, &models, &settings)
+        let sink = support_soup(state, &models, &settings)
             .map_err(|e| EditError::Tessellation(format!("{e:?}")))?;
         weld_parts(&sink.floats, &sink.parts, DF_SUPPORT_MESH_NAME).ok_or(EditError::NothingThere)
     }
@@ -1845,6 +2144,179 @@ mod session_tests {
         let now = session.mesh_of(keep).unwrap();
         assert_eq!(now.vertices(), before.vertices());
         assert_eq!(now.faces(), before.faces());
+    }
+
+    /// A slab with its run's supports, as a box or a brush finds them.
+    fn supported_slab() -> DfSupportSession {
+        crate::start_df_supports(&slab_scene(12.0), crate::DfSupportRequest::default())
+            .unwrap()
+            .join()
+            .unwrap()
+            .sets
+            .remove(0)
+            .session
+    }
+
+    #[test]
+    fn several_supports_go_at_once_as_one_by_one() {
+        let session = supported_slab();
+        let tips = session.tips();
+        assert!(tips.len() > 6, "{}", tips.len());
+        let some: Vec<String> = tips.iter().step_by(3).map(|(id, _)| id.clone()).collect();
+        // At once, and one tip after another: the same supports are left.
+        let mut at_once = session.clone();
+        let preview = at_once.preview_remove_tips(&some).expect("a preview");
+        assert!(!preview.valid && !preview.mesh.faces().is_empty());
+        at_once.remove_tips(&some).expect("they go");
+        let mut in_turn = session.clone();
+        for (id, tip) in tips.iter().step_by(3) {
+            if in_turn.tips().iter().any(|(left, _)| left == id) {
+                in_turn
+                    .remove_near([tip[0], tip[1], tip[2] - 0.05])
+                    .unwrap();
+            }
+        }
+        assert_eq!(at_once.state, in_turn.state);
+        assert!(at_once.hand_edited());
+        // Nothing left behind: no knot or brace naming what went.
+        let left = all_ids(&at_once.state.collections);
+        for knot in at_once.state.collections.knots.values() {
+            let host = &knot.parent_shaft_id;
+            assert!(
+                at_once
+                    .state
+                    .collections
+                    .trunks
+                    .values()
+                    .any(|t| t.segments.iter().any(|g| &g.id == host))
+                    || at_once
+                        .state
+                        .collections
+                        .branches
+                        .values()
+                        .any(|b| b.segments.iter().any(|g| &g.id == host))
+                    || left.contains(host),
+                "a knot on {host}, gone"
+            );
+        }
+        assert_eq!(
+            at_once.remove_tips(&["nothing".to_owned()]),
+            Err(EditError::NothingThere)
+        );
+    }
+
+    #[test]
+    fn a_tip_moves_and_its_support_is_routed_again() {
+        let session = slab_with_a_trunk();
+        let tip = session.tip_near([5.0, 5.0, 12.0], 1.0).expect("its tip");
+        assert_eq!(session.tip_near([30.0, 5.0, 12.0], 1.0), None);
+        let to = [30.0, 5.0, 12.0];
+        let (preview, moved) = session
+            .preview_move_tip(&tip, to, &AddOptions::default())
+            .expect("a preview");
+        assert!(preview.valid && preview.taken.is_some());
+        let moved = moved.expect("the session the move leaves");
+        let mut by_hand = session.clone();
+        by_hand.move_tip(&tip, to, &AddOptions::default()).unwrap();
+        assert_eq!(by_hand.state, moved.state, "the preview is the move");
+        let tips = by_hand.tips();
+        assert_eq!(tips.len(), 1);
+        assert!(dist(tips[0].1, to) < 0.5, "{:?}", tips[0].1);
+        assert!(
+            by_hand.tip_near([5.0, 5.0, 12.0], 1.0).is_none(),
+            "gone from there"
+        );
+        // Off the model: nothing moves.
+        let mut kept = session.clone();
+        assert!(
+            kept.move_tip(&tip, [500.0, 5.0, 12.0], &AddOptions::default())
+                .is_err()
+        );
+        assert_eq!(kept.state, session.state);
+    }
+
+    #[test]
+    fn a_moved_tip_keeps_its_size_and_one_others_hang_from_stays() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        let large = AddOptions {
+            attach: false,
+            size: Some("large".to_owned()),
+        };
+        session.add_at([5.0, 5.0, 12.0], &large).unwrap();
+        let tip = session.tip_near([5.0, 5.0, 12.0], 1.0).unwrap();
+        let mut moved = session.clone();
+        moved
+            .move_tip(&tip, [30.0, 5.0, 12.0], &AddOptions::default())
+            .unwrap();
+        let (id, _) = moved.tips().remove(0);
+        assert_eq!(moved.tip_diameter(&id), Some(0.40));
+        // A support hanging from it: the trunk cannot move from under it.
+        session.add_trunk_at([11.0, 5.0, 12.0]).unwrap();
+        assert_eq!(session.state.collections.knots.len(), 1, "it hangs");
+        let (preview, kept) = session
+            .preview_move_tip(&tip, [30.0, 5.0, 12.0], &AddOptions::default())
+            .unwrap();
+        assert!(!preview.valid && kept.is_none());
+        assert_eq!(preview.note, Some(AddNote::CarriesOthers));
+        let before = session.state.clone();
+        assert!(
+            session
+                .move_tip(&tip, [30.0, 5.0, 12.0], &AddOptions::default())
+                .is_err()
+        );
+        assert_eq!(session.state, before);
+    }
+
+    /// The contact tip of the support `edited` holds and `before` does not.
+    fn new_tip(before: &DfSupportSession, edited: &DfSupportSession) -> [f64; 3] {
+        let old: Vec<String> = before.tips().into_iter().map(|(id, _)| id).collect();
+        edited
+            .tips()
+            .into_iter()
+            .find(|(id, _)| !old.contains(id))
+            .expect("a new tip")
+            .1
+    }
+
+    /// A tip placed by hand lands on the very point picked (#3), or the
+    /// placement is refused with why: never on another surface near it.
+    #[test]
+    fn a_hand_placed_tip_lands_on_the_point_picked() {
+        let mut session = slab_with_a_wall(crate::DfSupportRequest::default());
+        // On the underside, where Add and Move tip both put it.
+        for at in [[14.3, 6.1, 25.0], [30.7, 2.2, 25.0]] {
+            let before = session.clone();
+            session.add_trunk_at(at).expect("held");
+            let tip = new_tip(&before, &session);
+            assert!(dist(tip, at) < 0.01, "{tip:?} for {at:?}");
+        }
+        let (id, from) = session.tips().pop().unwrap();
+        let to = [40.4, 7.7, 25.0];
+        let before = session.clone();
+        session.move_tip(&id, to, &AddOptions::default()).unwrap();
+        assert!(dist(new_tip(&before, &session), to) < 0.01);
+        assert!(session.tip_near(from, 0.01).is_none());
+
+        // On the wall: the tip goes there (an adaptive cone leans to hold a
+        // wall), or nowhere. The surface search a run uses cast up from
+        // below and took the slab's underside right above it, 7 mm off.
+        let wall = [11.0, 5.0, 18.0];
+        let (preview, edited) = session
+            .preview_add_with(wall, &AddOptions::default())
+            .expect("a preview");
+        match edited {
+            Some(edited) => {
+                assert!(preview.valid);
+                assert!(dist(new_tip(&session, &edited), wall) < 0.01);
+            }
+            None => assert!(!preview.valid && preview.note.is_some()),
+        }
+        // On top: it looks up.
+        let (top, _) = session
+            .preview_add_with([20.0, 5.0, 27.0], &AddOptions::default())
+            .expect("a preview");
+        assert!(!top.valid);
+        assert_eq!(top.note, Some(AddNote::FacesUp));
     }
 
     #[test]

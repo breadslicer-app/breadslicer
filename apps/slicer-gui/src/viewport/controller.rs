@@ -39,6 +39,7 @@ use super::object_list::{build_object_list_names, push_object_list};
 use super::performance_probe::{Detail, ProbeResult, ProbeRun, ProbeUpdate};
 use super::render_host::RenderHost;
 use super::session_state::SessionState;
+use super::support_drag::{DragPhase, DragPoint, SupportDragHandler, SupportDragKind};
 use super::types::{FrameState, ScreenDelta, ScreenPoint};
 use crate::MainWindow;
 use crate::PointerModifiers;
@@ -106,6 +107,15 @@ pub(crate) struct ViewportController {
     probe_timer: slint::Timer,
     /// Hides the pivot marker a moment after a numpad orbit step (#348).
     orbit_marker_timer: slint::Timer,
+    /// The Supports tab's drags (#3): who handles them, where a press of a
+    /// drag tool stands, and a right press that dropped one (it opens no
+    /// menu).
+    support_drag_handler: RefCell<Option<std::rc::Weak<dyn SupportDragHandler>>>,
+    support_drag: Cell<DragPhase>,
+    right_dropped_drag: Cell<bool>,
+    /// The drag tool armed, for tests that run without a window.
+    #[cfg(test)]
+    drag_tool_for_test: Cell<Option<SupportDragKind>>,
 }
 
 /// A tool of a workspace tab that acts where the model is clicked.
@@ -113,6 +123,7 @@ pub(crate) struct ViewportController {
 enum TabTool {
     AddSupport,
     RemoveSupport,
+    MoveTip,
     Drain,
 }
 
@@ -162,6 +173,11 @@ impl ViewportController {
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
             orbit_marker_timer: slint::Timer::default(),
+            support_drag_handler: RefCell::new(None),
+            support_drag: Cell::new(DragPhase::Idle),
+            right_dropped_drag: Cell::new(false),
+            #[cfg(test)]
+            drag_tool_for_test: Cell::new(None),
         }
     }
 
@@ -199,6 +215,11 @@ impl ViewportController {
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
             orbit_marker_timer: slint::Timer::default(),
+            support_drag_handler: RefCell::new(None),
+            support_drag: Cell::new(DragPhase::Idle),
+            right_dropped_drag: Cell::new(false),
+            #[cfg(test)]
+            drag_tool_for_test: Cell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -206,6 +227,57 @@ impl ViewportController {
         // they need explicitly.
         controller.session.set_section(WorkspaceSection::Transform);
         controller
+    }
+
+    /// A controller for tests that drive a window: as [`Self::new_for_test`],
+    /// mirroring into `ui` and reading its tools.
+    #[cfg(test)]
+    pub(crate) fn new_for_test_with_ui(ui: &MainWindow) -> Self {
+        let mut controller = Self::new_for_test();
+        controller.ui = ui.as_weak();
+        controller
+    }
+
+    /// Where `p` (world mm) lands on the viewport now, as a drag reads it.
+    #[cfg(test)]
+    pub(crate) fn project_for_test(&self, p: [f32; 3]) -> Option<[f32; 2]> {
+        self.with_projection(|view| view.project(p)).flatten()
+    }
+
+    /// The model point a ray through `cursor` hits first, as the Add tool
+    /// takes it.
+    #[cfg(test)]
+    pub(crate) fn model_hit_for_test(&self, cursor: ScreenPoint) -> Option<[f32; 3]> {
+        self.tab_tool_hit(TabTool::AddSupport, cursor)
+            .map(|(_, p, _)| [p.x, p.y, p.z])
+    }
+
+    /// Runs `with` with the view a drag sees now: what a box goes on
+    /// looking through between the moves.
+    pub(crate) fn with_drag_view<R>(
+        &self,
+        with: impl FnOnce(super::support_drag::Project<'_>) -> R,
+    ) -> Option<R> {
+        self.with_projection(with)
+    }
+
+    /// What a ray from the camera through pixel `at` meets first, as a box
+    /// or a brush sees it.
+    #[cfg(test)]
+    pub(crate) fn first_hit_for_test(
+        &self,
+        at: [f32; 2],
+    ) -> Option<super::support_drag::ScreenHit> {
+        self.with_projection(|view| view.hits(&[at]).pop().flatten())
+            .flatten()
+    }
+
+    /// The support point a ray through `cursor` hits first, as Remove and
+    /// Move tip take it.
+    #[cfg(test)]
+    pub(crate) fn support_hit_for_test(&self, cursor: ScreenPoint) -> Option<[f32; 3]> {
+        self.tab_tool_hit(TabTool::RemoveSupport, cursor)
+            .map(|(_, p, _)| [p.x, p.y, p.z])
     }
 
     /// Installs a pre-built `Box<dyn MeshRenderer>` into the render-host's
@@ -1814,6 +1886,15 @@ impl ViewportController {
         if modifiers.shift && self.add_support_armed() {
             modifiers.shift = false;
         }
+        // A press of a drag tool (Move tip; Remove's box or brush, Shift
+        // keeping its selection box) is a click until it moves.
+        let drag = self
+            .drag_tool_armed()
+            .filter(|kind| !(modifiers.shift && *kind != SupportDragKind::MoveTip));
+        self.support_drag.set(match drag {
+            Some(kind) => DragPhase::Pressed([cursor.x, cursor.y], kind),
+            None => DragPhase::Idle,
+        });
         let boxing = self.input.on_pointer_down(
             self.session.document(),
             self.camera.camera_cell(),
@@ -1832,6 +1913,9 @@ impl ViewportController {
         // Track the cursor in every section so a later paste anchors on it; the
         // gizmo drag and hover run in Prepare and Transform.
         self.input.note_hover_cursor(cursor);
+        if self.support_drag_move(cursor) {
+            return;
+        }
         self.tab_tool_hover(cursor, modifiers.shift);
         if self.input.modal.get().is_some() {
             self.update_modal(cursor, super::drag_modifiers(modifiers));
@@ -1858,7 +1942,19 @@ impl ViewportController {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_box_select_armed(false);
         }
-        match self.input.on_pointer_up(self.session.document(), cursor) {
+        let outcome = self.input.on_pointer_up(self.session.document(), cursor);
+        match self.support_drag.replace(DragPhase::Idle) {
+            DragPhase::Dragging(_) => {
+                if let Some(handler) = self.support_drag_handler() {
+                    handler.drag_end(true);
+                }
+                self.mark_dirty();
+                return;
+            }
+            DragPhase::Ignored => return,
+            DragPhase::Idle | DragPhase::Pressed(..) => {}
+        }
+        match outcome {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
             PointerUpOutcome::Click(cursor) => {
                 let forced = modifiers.shift && self.add_support_armed();
@@ -1930,6 +2026,190 @@ impl ViewportController {
         document.set_selection(next);
     }
 
+    /// Hands the Supports tab's drags to `handler` (the support driver).
+    pub(crate) fn set_support_drag_handler(&self, handler: std::rc::Weak<dyn SupportDragHandler>) {
+        *self.support_drag_handler.borrow_mut() = Some(handler);
+    }
+
+    fn support_drag_handler(&self) -> Option<Rc<dyn SupportDragHandler>> {
+        self.support_drag_handler.borrow().as_ref()?.upgrade()
+    }
+
+    /// The drag a press makes now, if a drag tool is armed.
+    fn drag_tool_armed(&self) -> Option<SupportDragKind> {
+        #[cfg(test)]
+        if let Some(kind) = self.drag_tool_for_test.get() {
+            return Some(kind);
+        }
+        self.ui.upgrade().and_then(|ui| self.support_drag_kind(&ui))
+    }
+
+    /// Arms a drag tool, for tests that run without a window.
+    #[cfg(test)]
+    pub(crate) fn arm_drag_tool_for_test(&self, kind: Option<SupportDragKind>) {
+        self.drag_tool_for_test.set(kind);
+    }
+
+    /// The drag a press makes with the tool armed: Move tip's, or Remove's
+    /// box or brush.
+    fn support_drag_kind(&self, ui: &MainWindow) -> Option<SupportDragKind> {
+        match self.tab_tool(ui)? {
+            TabTool::MoveTip => Some(SupportDragKind::MoveTip),
+            TabTool::RemoveSupport if ui.get_support_remove_mode() == 1 => {
+                Some(SupportDragKind::Brush)
+            }
+            TabTool::RemoveSupport => Some(SupportDragKind::Box),
+            TabTool::AddSupport | TabTool::Drain => None,
+        }
+    }
+
+    /// What lies under `cursor` for a drag: the model, looking through the
+    /// supports, and the supports.
+    fn drag_point(&self, cursor: ScreenPoint) -> DragPoint {
+        let at = |tool| {
+            self.tab_tool_hit(tool, cursor)
+                .map(|(_, p, _)| [p.x, p.y, p.z])
+        };
+        DragPoint {
+            cursor: [cursor.x, cursor.y],
+            model: at(TabTool::AddSupport),
+            support: at(TabTool::RemoveSupport),
+        }
+    }
+
+    /// Runs `with` with where world points land on the viewport now.
+    fn with_projection<R>(
+        &self,
+        with: impl FnOnce(super::support_drag::Project<'_>) -> R,
+    ) -> Option<R> {
+        let viewport = self.render.viewport()?;
+        let fov = crate::mesh_render::default_fov_y();
+        let (projector, camera) = {
+            let camera_slot = self.camera.camera_cell().borrow();
+            let camera = camera_slot.as_ref()?.clone();
+            let projector = super::box_select::Projector::new(
+                &camera,
+                fov,
+                viewport.width(),
+                viewport.height(),
+            );
+            (projector, camera)
+        };
+        let project = |p: [f32; 3]| projector.project(glam::Vec3::from(p));
+        let (width, height) = (viewport.width(), viewport.height());
+        // What the camera sees first through each pixel: a ray from it, the
+        // nearest hit among every leaf, model or supports. A ray is about a
+        // millisecond on a big model and a box asks hundreds: they share
+        // the cores.
+        let document = self.session.document();
+        let hits = |pixels: &[[f32; 2]]| -> Vec<Option<super::support_drag::ScreenHit>> {
+            document
+                .with_scene(|spatial| {
+                    let one = |at: &[f32; 2]| {
+                        let ray =
+                            picking::ray_from_pixel(&camera, fov, width, height, at[0], at[1]);
+                        let (leaf, t) = picking::pick_object_where(&ray, spatial, |_| true)?;
+                        Some(super::support_drag::ScreenHit {
+                            leaf,
+                            point: (ray.origin + ray.direction * t).into(),
+                        })
+                    };
+                    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+                    let threads = cores.min(pixels.len().div_ceil(8)).max(1);
+                    if threads == 1 {
+                        return pixels.iter().map(one).collect();
+                    }
+                    let chunk = pixels.len().div_ceil(threads);
+                    std::thread::scope(|scope| {
+                        let parts: Vec<_> = pixels
+                            .chunks(chunk)
+                            .map(|part| {
+                                scope.spawn(move || part.iter().map(one).collect::<Vec<_>>())
+                            })
+                            .collect();
+                        parts
+                            .into_iter()
+                            .zip(pixels.chunks(chunk))
+                            .flat_map(|(part, pixels)| {
+                                part.join().unwrap_or_else(|_| vec![None; pixels.len()])
+                            })
+                            .collect()
+                    })
+                })
+                .unwrap_or_else(|| vec![None; pixels.len()])
+        };
+        let view = super::support_drag::DragView {
+            project: &project,
+            hits: &hits,
+        };
+        Some(with(&view))
+    }
+
+    /// Moves a drag of a Supports tab tool: one past the click threshold
+    /// starts, if the driver takes it. Returns whether the move was the
+    /// drag's, so the hover leaves it alone.
+    fn support_drag_move(&self, cursor: ScreenPoint) -> bool {
+        match self.support_drag.get() {
+            DragPhase::Idle => false,
+            DragPhase::Ignored => true,
+            DragPhase::Pressed(at, kind) => {
+                let moved = (cursor.x - at[0]).hypot(cursor.y - at[1]);
+                if moved <= super::input_state::CLICK_DRAG_THRESHOLD {
+                    return false;
+                }
+                let Some(handler) = self.support_drag_handler() else {
+                    self.support_drag.set(DragPhase::Ignored);
+                    return true;
+                };
+                let press = self.drag_point(ScreenPoint { x: at[0], y: at[1] });
+                let taken = self
+                    .with_projection(|project| handler.drag_start(kind, &press, project))
+                    .unwrap_or(false);
+                if !taken {
+                    self.support_drag.set(DragPhase::Ignored);
+                    return true;
+                }
+                self.support_drag.set(DragPhase::Dragging(kind));
+                if kind == SupportDragKind::Box
+                    && let Some(ui) = self.ui.upgrade()
+                {
+                    ui.set_box_select_armed(true);
+                }
+                self.support_drag_move(cursor)
+            }
+            DragPhase::Dragging(_) => {
+                if let Some(handler) = self.support_drag_handler() {
+                    let at = self.drag_point(cursor);
+                    self.with_projection(|project| handler.drag_move(&at, project));
+                }
+                true
+            }
+        }
+    }
+
+    /// Drops a drag of a Supports tab tool in flight (Esc, a right press, a
+    /// tool put away): nothing of it is made. Returns whether there was one.
+    pub(crate) fn cancel_support_drag(&self) -> bool {
+        match self.support_drag.get() {
+            DragPhase::Dragging(_) => {
+                self.support_drag.set(DragPhase::Ignored);
+                if let Some(ui) = self.ui.upgrade() {
+                    ui.set_box_select_armed(false);
+                }
+                if let Some(handler) = self.support_drag_handler() {
+                    handler.drag_end(false);
+                }
+                self.mark_dirty();
+                true
+            }
+            DragPhase::Pressed(..) => {
+                self.support_drag.set(DragPhase::Ignored);
+                false
+            }
+            DragPhase::Idle | DragPhase::Ignored => false,
+        }
+    }
+
     /// Whether the Supports tab's Add tool is armed.
     fn add_support_armed(&self) -> bool {
         self.ui
@@ -1944,6 +2224,7 @@ impl ViewportController {
             WorkspaceSection::Supports => match ui.get_support_tool() {
                 1 => Some(TabTool::AddSupport),
                 2 => Some(TabTool::RemoveSupport),
+                3 => Some(TabTool::MoveTip),
                 _ => None,
             },
             _ => None,
@@ -1973,9 +2254,16 @@ impl ViewportController {
         self.session
             .document()
             .with_scene(|spatial| {
-                let (id, t) = picking::pick_object_where(&ray, spatial, |id| {
-                    shows_supports(spatial, id) == (tool == TabTool::RemoveSupport)
-                })?;
+                let on_supports = matches!(tool, TabTool::RemoveSupport | TabTool::MoveTip);
+                // Remove and Move tip take only a support in sight (#3): the
+                // nearest hit among every leaf, model or supports, is one.
+                // Add and the drain look through the supports to the model.
+                let (id, t) = if on_supports {
+                    picking::pick_object_where(&ray, spatial, |_| true)
+                        .filter(|(id, _)| shows_supports(spatial, *id))?
+                } else {
+                    picking::pick_object_where(&ray, spatial, |id| !shows_supports(spatial, id))?
+                };
                 let normal = picking::ray_hit_normal(&ray, &spatial.leaf(id)?)
                     .map_or(glam::Vec3::Z, |(_, n)| n);
                 Some((id, ray.origin + ray.direction * t, normal))
@@ -1995,6 +2283,10 @@ impl ViewportController {
         let Some(tool) = self.tab_tool(&ui) else {
             return false;
         };
+        // Move tip only drags: a click grabs nothing.
+        if tool == TabTool::MoveTip {
+            return true;
+        }
         // The preview showed what this click does; the edit replaces it.
         self.set_preview_overlay(None);
         if let Some((id, p, n)) = self.tab_tool_hit(tool, cursor) {
@@ -2038,6 +2330,7 @@ impl ViewportController {
     /// The armed tab tool changed (or the tab did): a preview of the old tool
     /// no longer applies.
     pub(crate) fn on_tab_tools_changed(&self) {
+        self.cancel_support_drag();
         self.set_preview_overlay(None);
         if let Some(ui) = self.ui.upgrade() {
             crate::breadcrumbs::note(&format!(
@@ -2062,6 +2355,11 @@ impl ViewportController {
     /// gesture as click (context menu) or drag (camera orbit) by comparing
     /// displacement against the click threshold.
     pub(crate) fn on_right_pointer_down(&self, x: f32, y: f32) {
+        // A right press drops a Supports drag in flight, and is no more.
+        if self.cancel_support_drag() {
+            self.right_dropped_drag.set(true);
+            return;
+        }
         self.input.on_right_pointer_down(ScreenPoint { x, y });
     }
 
@@ -2070,6 +2368,9 @@ impl ViewportController {
     /// pixel); `None` for a drag the orbit gesture already consumed or a
     /// release without a matching press.
     pub(crate) fn on_right_pointer_up(&self, x: f32, y: f32) -> Option<(f32, f32)> {
+        if self.right_dropped_drag.take() {
+            return None;
+        }
         self.input
             .on_right_pointer_up(ScreenPoint { x, y })
             .map(|p| (p.x, p.y))

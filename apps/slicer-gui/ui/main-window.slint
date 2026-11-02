@@ -281,6 +281,11 @@ export component MainWindow inherits Window {
     in property <string> support-tip-label;
     in property <string> support-add-note;
     in property <bool> support-add-note-warns;
+    // Remove's drag (#3): 0 a box, 1 a brush of this radius (logical px).
+    in-out property <int> support-remove-mode: 0;
+    in-out property <float> support-brush-radius: 24;
+    // Drops a Supports tab drag in flight (Esc); whether there was one.
+    callback support-drag-cancel() -> bool;
     // The drain tool's hover: point, surface normal (world), whether on the model.
     // The point and normal under the cursor, whether the cursor is on a
     // model, and whether that model is the selected one.
@@ -1249,6 +1254,16 @@ export component MainWindow inherits Window {
                         }
                     }
                     if root.workspace-section == WorkspaceSection.Supports: ToolButton {
+                        icon: Icons.move-tip;
+                        label: @tr("Inspector" => "Move tip (drag it)");
+                        shortcut: "M";
+                        active: root.support-tool == 3;
+                        enabled: root.has-scene && !root.support-gen-in-progress;
+                        clicked => {
+                            root.support-tool = root.support-tool == 3 ? 0 : 3;
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Supports: ToolButton {
                         icon: Icons.remove-support;
                         label: @tr("Inspector" => "Remove support (click it)");
                         shortcut: "X";
@@ -1314,7 +1329,16 @@ export component MainWindow inherits Window {
                         root.orient-close-requested();
                         root.modal-transform-start(code,x,y);
                     }
+                    brush-on: root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2
+                        && root.support-remove-mode == 1;
+                    brush-radius: root.support-brush-radius * 1px;
+                    brush-wheel(up) => {
+                        root.support-brush-radius = clamp(root.support-brush-radius + (up ? 4 : -4), 4, 200);
+                    }
                     tool-escape => {
+                        if root.support-drag-cancel() {
+                            return true;
+                        }
                         if root.orient-open {
                             root.orient-close-requested();
                             return true;
@@ -1335,6 +1359,19 @@ export component MainWindow inherits Window {
                             }
                             if key == "x" || key == "X" {
                                 root.support-tool = root.support-tool == 2 ? 0 : 2;
+                                return true;
+                            }
+                            if key == "m" || key == "M" {
+                                root.support-tool = root.support-tool == 3 ? 0 : 3;
+                                return true;
+                            }
+                            // Remove: B a box or a brush; [ and ] the brush.
+                            if root.support-tool == 2 && (key == "b" || key == "B") {
+                                root.support-remove-mode = root.support-remove-mode == 1 ? 0 : 1;
+                                return true;
+                            }
+                            if root.support-tool == 2 && root.support-remove-mode == 1 && (key == "[" || key == "]") {
+                                root.support-brush-radius = clamp(root.support-brush-radius + (key == "]" ? 4 : -4), 4, 200);
                                 return true;
                             }
                             // The tip size while Add is armed; the view keys
@@ -1888,6 +1925,12 @@ export component MainWindow inherits Window {
                                 root.support-raft-ignore-requested();
                             }
                             add-tool-on: root.support-tool == 1;
+                            remove-tool-on: root.support-tool == 2;
+                            remove-mode: root.support-remove-mode;
+                            brush-radius: root.support-brush-radius;
+                            remove-mode-picked(i) => {
+                                root.support-remove-mode = i;
+                            }
                             tip-size: root.support-tip-size;
                             tip-label: root.support-tip-label;
                             add-note: root.support-add-note;
@@ -1973,15 +2016,17 @@ export component MainWindow inherits Window {
                         : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool && root.hollow-drain-reach == 4 ? @tr("Workspace" => "At its set depth a drain here would reach the far side of the cavity: it is drilled shorter, as drawn.")
                         : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool ? @tr("Workspace" => "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Hollow ? @tr("Workspace" => "Hollow the selected model to save resin, then place its drains with D.")
-                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 && root.support-add-note != "" ? root.support-add-note
+                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool != 0 && root.support-add-note != "" ? root.support-add-note
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 ? @tr("Workspace" => "Click the model where a support should touch it; Shift+click hangs it from the nearest support. 1–4 set the tip size. Undo takes it back.")
-                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 ? @tr("Workspace" => "Click a support to remove it and everything hanging from it.")
+                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 && root.support-remove-mode == 1 ? @tr("Workspace" => "Click a support to remove it, or paint over supports to remove them; [ ] or the wheel size the brush, B a box. Esc drops it.")
+                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 ? @tr("Workspace" => "Click a support to remove it, or drag a box over supports to remove them; B a brush. Esc drops it.")
+                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 3 ? @tr("Workspace" => "Drag a support by its tip over the model; it is routed again where you let go. Esc or a right click drops it.")
                         : root.workspace-section == WorkspaceSection.Supports ? @tr("Workspace" => "Generate supports for every model on the plate.")
                         : root.workspace-section == WorkspaceSection.Slice ? @tr("Workspace" => "Drag the layer slider to inspect the slice.")
                         : @tr("Workspace" => "The printer file uses the printer and resin in force.");
                     font-size: Theme.font-xs;
                     color: root.drain-misses
-                        || (root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1
+                        || (root.workspace-section == WorkspaceSection.Supports && root.support-tool != 0
                             && root.support-add-note != "" && root.support-add-note-warns)
                         ? Theme.danger : Theme.text-muted;
                     vertical-alignment: center;

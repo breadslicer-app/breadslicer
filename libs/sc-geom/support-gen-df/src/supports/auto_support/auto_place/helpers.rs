@@ -89,6 +89,9 @@ pub struct PlanCtx<'a> {
     /// the support being placed takes.
     zone_lives: Vec<SupportSettings>,
     active_zone: Cell<Option<usize>>,
+    /// SoulCrafted (#3): a contact placed by hand, its point and its face's
+    /// normal. Its tip goes there and nowhere else ([`Self::contact_at`]).
+    exact_contact: Cell<Option<(Vec3, Vec3)>>,
 }
 
 impl<'a> PlanCtx<'a> {
@@ -106,6 +109,7 @@ impl<'a> PlanCtx<'a> {
             stats: RefCell::new(RouterStats::default()),
             zone_lives: zone_lives(live),
             active_zone: Cell::new(None),
+            exact_contact: Cell::new(None),
         }
     }
 
@@ -116,6 +120,26 @@ impl<'a> PlanCtx<'a> {
             .get()
             .and_then(|i| self.zone_lives.get(i))
             .unwrap_or(self.base_live)
+    }
+
+    /// Places the contact at `point`, with `normal`, exactly there (#3): a
+    /// point picked by hand on the surface the person sees. `None` lets
+    /// every contact find its surface as a run's does.
+    pub fn set_exact_contact(&self, contact: Option<(Vec3, Vec3)>) {
+        self.exact_contact.set(contact);
+    }
+
+    /// The surface point and normal a tip aimed at `tip_pos` takes: the
+    /// exact contact when it is that point, else what
+    /// [`resolve_surface_normal`] finds around it. That search casts up
+    /// from below the point and takes the first surface at or above it,
+    /// which on a wall is the next overhang up, often millimetres away:
+    /// right for a run's candidates, wrong for a point the person picked.
+    pub fn contact_at(&self, tip_pos: Vec3) -> (Vec3, Vec3) {
+        match self.exact_contact.get() {
+            Some((point, normal)) if point == tip_pos => (point, normal),
+            _ => resolve_surface_normal(tip_pos, self.mesh.as_ref()),
+        }
     }
 
     /// Places what follows with zone size `size` (`None`: the run's own).

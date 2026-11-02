@@ -24,6 +24,7 @@ mod performance_probe;
 mod render_host;
 mod render_scheduler;
 mod session_state;
+pub(crate) mod support_drag;
 #[cfg(test)]
 mod tests_controller_gizmo_round2;
 #[cfg(test)]
@@ -40,6 +41,8 @@ mod tests_controller_orbit;
 mod tests_controller_rotate;
 #[cfg(test)]
 mod tests_controller_section_gating;
+#[cfg(test)]
+mod tests_controller_support_drag;
 #[cfg(test)]
 mod tests_controller_supports_selection;
 mod types;

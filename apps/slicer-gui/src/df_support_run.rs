@@ -36,6 +36,7 @@
 //! matches.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -70,6 +71,11 @@ use crate::support_persist::{
     support_leaf, support_leaves,
 };
 use crate::viewport::ViewportController;
+#[cfg(test)]
+use crate::viewport::support_drag::DragView;
+use crate::viewport::support_drag::{
+    DragPoint, Project, ScreenHit, SupportDragHandler, SupportDragKind,
+};
 use crate::{MainWindow, WorkspaceSection};
 
 /// An overlay piece of a mesh in world coordinates.
@@ -171,13 +177,19 @@ pub(crate) struct DfSupportRun {
     /// The last preview drawn, for a click on the same point to reuse.
     last_preview: RefCell<Option<HoverAnswer>>,
     /// The worker's last ghost, kept on screen while the next is computed.
-    last_ghost: RefCell<Option<Arc<OverlayMesh>>>,
+    last_ghost: RefCell<Vec<Arc<OverlayMesh>>>,
     /// The last point hovered with a hand tool, and whether Shift was held:
     /// a new tip size previews there again.
     hover_at: Cell<Option<([f32; 3], bool)>>,
     /// The hand click being made off the UI thread, those that came while it
     /// was, and the timer that looks for it.
     pending_click: RefCell<Option<PendingClick>>,
+    /// A drag of a Supports tab tool in flight (#3), and the timer that
+    /// sends a box's owed rays between the moves.
+    drag: RefCell<Option<DragState>>,
+    box_poll: slint::Timer,
+    /// This driver, for what a drag starts from the viewport's side.
+    me: RefCell<std::rc::Weak<DfSupportRun>>,
     queued_clicks: RefCell<std::collections::VecDeque<QueuedClick>>,
     click_poll: slint::Timer,
     /// The raft warning (#131) is shown from a Generate press until a new
@@ -295,6 +307,11 @@ fn note_text(note: AddNote) -> slint::SharedString {
             "DfSupportDialog",
             "the surface there is too steep for a tip"
         ),
+        AddNote::CarriesOthers => ctr!("DfSupportDialog", "other supports hang from it"),
+        AddNote::FacesUp => ctr!(
+            "DfSupportDialog",
+            "the surface there faces up; nothing below can reach it"
+        ),
     }
 }
 
@@ -315,6 +332,25 @@ fn preview_line(preview: &EditPreview, attach: bool) -> (slint::SharedString, bo
             ctr!(
                 "DfSupportDialog",
                 "Cannot place it: no support can reach that point."
+            ),
+            true,
+        ),
+    }
+}
+
+/// Move tip's line for a preview: why the support stands on its own there,
+/// or why it cannot go there, and whether that warns.
+fn move_line(preview: &EditPreview) -> (slint::SharedString, bool) {
+    match (preview.valid, preview.note.map(note_text)) {
+        (true, _) => preview_line(preview, false),
+        (false, Some(why)) => (
+            ctr!("DfSupportDialog", "Cannot move it there: {}.", why),
+            true,
+        ),
+        (false, None) => (
+            ctr!(
+                "DfSupportDialog",
+                "Cannot move it there: no support can reach that point."
             ),
             true,
         ),
@@ -367,10 +403,21 @@ enum EditStart {
     Previewed(Box<DfSupportSession>),
 }
 
-/// One set's share of a hand edit: where it starts and its points.
+/// What a set's share of a hand edit does.
+#[derive(Clone, Debug)]
+enum EditOp {
+    /// The tool's edit at each point.
+    Points(Vec<IndexedPoint>),
+    /// Removes these supports, by their ids (a box or a brush, #3).
+    RemoveTips(Vec<String>),
+    /// Moves this support's tip to this point (#3).
+    MoveTip(String, [f32; 3]),
+}
+
+/// One set's share of a hand edit: where it starts and what it does.
 struct EditJob {
     start: EditStart,
-    points: Vec<IndexedPoint>,
+    op: EditOp,
 }
 
 /// A hand edit ready for the engine: the sets it edits and, in the same
@@ -410,7 +457,7 @@ fn compute_edit(jobs: Vec<EditJob>, tool: HandTool, how: &AddOptions) -> Compute
     let mut reused = false;
     let outcomes = jobs
         .into_iter()
-        .map(|EditJob { start, points }| {
+        .map(|EditJob { start, op }| {
             let (mut edited, from_preview) = match start {
                 EditStart::Base(base) => (DfSupportSession::clone(&base), false),
                 EditStart::Previewed(edited) => (*edited, true),
@@ -421,8 +468,25 @@ fn compute_edit(jobs: Vec<EditJob>, tool: HandTool, how: &AddOptions) -> Compute
             // work.
             let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut took = from_preview;
-                if !from_preview {
-                    for (i, point) in &points {
+                let mut one = |edit: Result<(), EditError>| match edit {
+                    Ok(()) => true,
+                    Err(err) => {
+                        crate::breadcrumbs::note(&format!("supports: gesture refused: {err}"));
+                        refused.push((0, err));
+                        false
+                    }
+                };
+                match (&op, from_preview) {
+                    (_, true) | (EditOp::Points(_), false) => {}
+                    (EditOp::RemoveTips(ids), false) => {
+                        took = one(edited.remove_tips(ids).map(|_| ()));
+                    }
+                    (EditOp::MoveTip(tip, to), false) => {
+                        took = one(edited.move_tip(tip, to.map(f64::from), how));
+                    }
+                }
+                if let (EditOp::Points(points), false) = (&op, from_preview) {
+                    for (i, point) in points {
                         let p = point.map(f64::from);
                         let edit = match tool {
                             HandTool::Add => edited.add_at(p, how),
@@ -475,11 +539,182 @@ struct PendingClick {
     done: std::sync::mpsc::Receiver<Computed>,
 }
 
-/// A click that came while another was being made: made once that one is in.
-struct QueuedClick {
-    tool: HandTool,
-    point: [f32; 3],
-    how: AddOptions,
+/// An edit that came while another was being made: made once that one is
+/// in.
+enum QueuedClick {
+    /// A click of a tool.
+    Click {
+        tool: HandTool,
+        point: [f32; 3],
+        how: AddOptions,
+    },
+    /// A drag's edit of the set its leaf shows.
+    Gesture { leaf: NodeId, op: EditOp },
+}
+
+/// A drag of a Supports tab tool in flight (#3).
+enum DragState {
+    /// Move tip: the support grabbed, and where its tip was last asked to.
+    Move {
+        drawn: DrawnSet,
+        tip: String,
+        to: Option<[f32; 3]>,
+    },
+    /// Remove's box or brush: the set it removes from, its supports as
+    /// points along each (tip and shaft), the ones picked so far and, for
+    /// the brush, where the cursor last was.
+    Remove {
+        drawn: DrawnSet,
+        tips: Vec<(String, Vec<[f32; 3]>)>,
+        /// The box's far corner, and whether rays are still owed for it.
+        corner: [f32; 2],
+        owed: bool,
+        /// Which support a ray hit, the lines on screen, and what each ray
+        /// found: support and cell of the screen to whether it was seen
+        /// there.
+        locate: SupportLocator,
+        seen_from: SeenFrom,
+        looked: HashMap<(usize, (i32, i32)), bool>,
+        picked: Vec<String>,
+        press: [f32; 2],
+        brush: Option<[f32; 2]>,
+    },
+}
+
+/// The side of a cell of the screen along a support's line, in logical
+/// pixels.
+const SIGHT_CELL_PX: f32 = 5.0;
+
+/// A box or a brush sends a ray through a support every so many cells of
+/// its line on screen.
+const SIGHT_STRIDE: usize = 3;
+
+/// The rays a box sends a step: about 8 ms of them on a big model, the
+/// cores sharing them. Those owed go on between the moves.
+const BOX_RAYS: usize = 300;
+
+/// A cell of the screen a support's line crosses, with a pixel of the line
+/// in it.
+type LineCell = ((i32, i32), [f32; 2]);
+
+/// The supports' lines on screen as a drag sees them: each point projected
+/// once, again only when the view changes (the wheel zooms a box drag).
+struct SeenFrom {
+    /// Where two fixed points land: a change says the view moved.
+    probe: [Option<[f32; 2]>; 2],
+    screen: Vec<Vec<Option<[f32; 2]>>>,
+}
+
+impl SeenFrom {
+    const PROBE: [[f32; 3]; 2] = [[0.0, 0.0, 0.0], [100.0, 100.0, 100.0]];
+
+    fn new(supports: &[(String, Vec<[f32; 3]>)], view: Project<'_>) -> Self {
+        SeenFrom {
+            probe: Self::PROBE.map(|p| view.project(p)),
+            screen: supports
+                .iter()
+                .map(|(_, along)| along.iter().map(|p| view.project(*p)).collect())
+                .collect(),
+        }
+    }
+
+    /// The lines as `view` sees them: as they were, unless it moved.
+    fn refresh(&mut self, supports: &[(String, Vec<[f32; 3]>)], view: Project<'_>) -> bool {
+        if Self::PROBE.map(|p| view.project(p)) == self.probe {
+            return false;
+        }
+        *self = Self::new(supports, view);
+        true
+    }
+}
+
+/// The side of a cell of [`SupportLocator`]'s grid, mm.
+const LOCATE_CELL_MM: f32 = 2.0;
+
+/// Which support of a set a ray hit: its leaf, and the support whose line
+/// runs nearest the hit point, through a grid of the lines' points.
+struct SupportLocator {
+    leaf: NodeId,
+    cells: HashMap<[i32; 3], Vec<(usize, [f32; 3])>>,
+}
+
+impl SupportLocator {
+    fn new(leaf: NodeId, supports: &[(String, Vec<[f32; 3]>)]) -> Self {
+        let mut cells: HashMap<[i32; 3], Vec<(usize, [f32; 3])>> = HashMap::new();
+        for (k, (_, along)) in supports.iter().enumerate() {
+            for p in along {
+                cells
+                    .entry(p.map(|c| (c / LOCATE_CELL_MM).floor() as i32))
+                    .or_default()
+                    .push((k, *p));
+            }
+        }
+        SupportLocator { leaf, cells }
+    }
+
+    /// The support of the set a hit is on: `None` for a hit on any other
+    /// leaf (a model in front, another set) or on no support's line.
+    fn support_at(&self, hit: ScreenHit) -> Option<usize> {
+        if hit.leaf != self.leaf {
+            return None;
+        }
+        let c = hit.point.map(|v| (v / LOCATE_CELL_MM).floor() as i32);
+        let mut best: Option<(f32, usize)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let key = [c[0] + dx, c[1] + dy, c[2] + dz];
+                    for (k, p) in self.cells.get(&key).into_iter().flatten() {
+                        let d = (0..3).map(|i| (p[i] - hit.point[i]).powi(2)).sum::<f32>();
+                        if best.is_none_or(|(b, _)| d < b) {
+                            best = Some((d, *k));
+                        }
+                    }
+                }
+            }
+        }
+        best.map(|(_, k)| k)
+    }
+}
+
+/// How far apart a box or a brush looks along a support, in mm.
+const PICK_STEP_MM: f64 = 0.5;
+
+/// Each support of `paths` as points along it, [`PICK_STEP_MM`] apart:
+/// what a box or a brush finds it by on screen.
+fn along_supports(paths: Vec<(String, Vec<[f64; 3]>)>) -> Vec<(String, Vec<[f32; 3]>)> {
+    paths
+        .into_iter()
+        .map(|(id, path)| {
+            let mut points = Vec::new();
+            for w in path.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                let len = (0..3).map(|k| (b[k] - a[k]).powi(2)).sum::<f64>().sqrt();
+                let steps = (len / PICK_STEP_MM).ceil().max(1.0) as usize;
+                for k in 0..steps {
+                    let t = k as f64 / steps as f64;
+                    points.push(std::array::from_fn(|i| (a[i] + (b[i] - a[i]) * t) as f32));
+                }
+            }
+            points.extend(path.last().map(|p| p.map(|c| c as f32)));
+            (id, points)
+        })
+        .collect()
+}
+
+/// How far from a support's tip a press on the support grabs it, in mm.
+const GRAB_REACH_MM: f64 = 3.0;
+
+/// Distance from `p` to the segment `a`-`b`, on screen.
+fn screen_segment_distance(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
+    let ab = [b[0] - a[0], b[1] - a[1]];
+    let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+    let t = if len2 <= f32::EPSILON {
+        0.0
+    } else {
+        (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0)
+    };
+    (p[0] - (a[0] + ab[0] * t)).hypot(p[1] - (a[1] + ab[1] * t))
 }
 
 /// A preview to compute: the session to edit, where, and with which tool.
@@ -494,6 +729,10 @@ struct HoverAsk {
     tool: i32,
     /// For an Add: how the support is made.
     how: AddOptions,
+    /// For a move (`tool` 3): the support whose tip moves to `point`.
+    tip: Option<String>,
+    /// For a box or a brush (`tool` 5): the supports they take.
+    tips: Arc<[String]>,
     /// For a warm-up (`tool` 0): the other sets' sessions, warmed with it.
     others: Vec<Arc<DfSupportSession>>,
 }
@@ -511,6 +750,7 @@ struct HoverAnswer {
     point: [f32; 3],
     tool: i32,
     how: AddOptions,
+    tip: Option<String>,
     preview: Option<EditPreview>,
     /// For an Add that goes through: the session the click leaves.
     edited: Option<DfSupportSession>,
@@ -549,10 +789,18 @@ impl HoverWorker {
                     }
                     let p = ask.point.map(f64::from);
                     let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        if ask.tool == 1 {
-                            ask.base.preview_add_with(p, &ask.how)
-                        } else {
-                            ask.base.preview_remove_at(p).map(|v| (v, None))
+                        match (ask.tool, &ask.tip) {
+                            (1, _) => ask.base.preview_add_with(p, &ask.how),
+                            (3, Some(tip)) => ask.base.preview_move_tip(tip, p, &ask.how),
+                            // Move tip's hover: what a press there grabs.
+                            (4, _) => ask
+                                .base
+                                .tip_near(p, GRAB_REACH_MM)
+                                .ok_or(EditError::NothingThere)
+                                .and_then(|tip| ask.base.preview_remove_tips(&[tip]))
+                                .map(|v| (v, None)),
+                            (5, _) => ask.base.preview_remove_tips(&ask.tips).map(|v| (v, None)),
+                            _ => ask.base.preview_remove_at(p).map(|v| (v, None)),
                         }
                     }));
                     let (preview, edited) = match done {
@@ -565,6 +813,7 @@ impl HoverWorker {
                         point: ask.point,
                         tool: ask.tool,
                         how: ask.how,
+                        tip: ask.tip,
                         preview,
                         edited,
                     };
@@ -793,9 +1042,12 @@ impl DfSupportRun {
             hover_shown: Cell::new(0),
             hover_poll: slint::Timer::default(),
             last_preview: RefCell::new(None),
-            last_ghost: RefCell::new(None),
+            last_ghost: RefCell::new(Vec::new()),
             hover_at: Cell::new(None),
             pending_click: RefCell::new(None),
+            drag: RefCell::new(None),
+            box_poll: slint::Timer::default(),
+            me: RefCell::new(std::rc::Weak::new()),
             queued_clicks: RefCell::new(std::collections::VecDeque::new()),
             click_poll: slint::Timer::default(),
             raft_armed,
@@ -836,6 +1088,11 @@ impl DfSupportRun {
                     run.on_tip_size_changed();
                 }
             });
+        }
+        *run.me.borrow_mut() = Rc::downgrade(&run);
+        {
+            let handler: Rc<dyn SupportDragHandler> = run.clone();
+            run.ctrl.set_support_drag_handler(Rc::downgrade(&handler));
         }
         run.reload_presets();
         run.push_options(ui);
@@ -1683,8 +1940,22 @@ impl DfSupportRun {
         let ask = point.and_then(|point| {
             let ui = self.ui.upgrade()?;
             let tool = ui.get_support_tool();
-            if tool == 0 || self.handle.borrow().is_some() {
+            if tool == 0 || self.handle.borrow().is_some() || self.drag.borrow().is_some() {
                 return None;
+            }
+            if tool == 3 {
+                let drawn = self.set_of_tip(point)?;
+                return Some(HoverAsk {
+                    generation,
+                    base: drawn.session.clone(),
+                    from: session_key(&drawn),
+                    point,
+                    tool: 4,
+                    how: AddOptions::default(),
+                    tip: None,
+                    tips: Arc::from([]),
+                    others: Vec::new(),
+                });
             }
             let (hand, how) = self.click_tool(&ui, tool, shift);
             let drawn = self.set_at(point, hand)?;
@@ -1698,13 +1969,15 @@ impl DfSupportRun {
                 point,
                 tool,
                 how,
+                tip: None,
+                tips: Arc::from([]),
                 others: Vec::new(),
             })
         });
         let Some(ask) = ask else {
             self.hover_poll.stop();
             self.hover_shown.set(generation);
-            *self.last_ghost.borrow_mut() = None;
+            self.last_ghost.borrow_mut().clear();
             self.ctrl.set_preview_overlay(None);
             self.show_add_note(Default::default());
             return;
@@ -1821,20 +2094,26 @@ impl DfSupportRun {
         if answer.generation == self.hover_generation.get() {
             self.hover_poll.stop();
         }
-        let piece = answer.preview.as_ref().map(|preview| {
-            let tint = if preview.valid {
-                OverlayTint::Valid
-            } else {
-                OverlayTint::Invalid
+        let mut pieces = Vec::new();
+        if let Some(preview) = &answer.preview {
+            let tint = match answer.tool {
+                4 => OverlayTint::Pending,
+                _ if preview.valid => OverlayTint::Valid,
+                _ => OverlayTint::Invalid,
             };
-            Arc::new(overlay_of(&preview.mesh, tint))
-        });
-        let line = match (&answer.preview, answer.tool) {
-            (Some(preview), 1) => preview_line(preview, answer.how.attach),
-            _ => Default::default(),
-        };
-        self.show_add_note(line);
-        *self.last_ghost.borrow_mut() = piece;
+            pieces.push(Arc::new(overlay_of(&preview.mesh, tint)));
+            if let Some(taken) = &preview.taken {
+                pieces.push(Arc::new(overlay_of(taken, OverlayTint::Invalid)));
+            }
+        }
+        match (&answer.preview, answer.tool) {
+            (Some(preview), 1) => self.show_add_note(preview_line(preview, answer.how.attach)),
+            (Some(preview), 3) => self.show_add_note(move_line(preview)),
+            // A box's or a brush's line says how many go, as they pick.
+            (_, 5) => {}
+            _ => self.show_add_note(Default::default()),
+        }
+        *self.last_ghost.borrow_mut() = pieces;
         self.show_hover_overlay();
         let older = self.last_preview.borrow_mut().replace(answer);
         // It holds a whole copy of the supports, slow to let go of on a big
@@ -1846,7 +2125,7 @@ impl DfSupportRun {
 
     /// The worker's last ghost, the only hover overlay.
     fn show_hover_overlay(&self) {
-        let pieces: Vec<Arc<OverlayMesh>> = self.last_ghost.borrow().iter().cloned().collect();
+        let pieces: Vec<Arc<OverlayMesh>> = self.last_ghost.borrow().clone();
         self.ctrl
             .set_preview_overlay((!pieces.is_empty()).then(|| pieces.into()));
     }
@@ -1865,6 +2144,8 @@ impl DfSupportRun {
             point: [0.0; 3],
             tool: 0,
             how: AddOptions::default(),
+            tip: None,
+            tips: Arc::from([]),
             others: sets.map(|drawn| drawn.session).collect(),
         });
     }
@@ -1905,7 +2186,7 @@ impl DfSupportRun {
         if self.pending_click.borrow().is_some() {
             self.queued_clicks
                 .borrow_mut()
-                .push_back(QueuedClick { tool, point, how });
+                .push_back(QueuedClick::Click { tool, point, how });
             return;
         }
         self.start_click(&ui, tool, point, how);
@@ -1927,6 +2208,67 @@ impl DfSupportRun {
             self.queued_clicks.borrow_mut().clear();
             return;
         };
+        self.launch_edit(ui, sets, refused, jobs, tool, how);
+    }
+
+    /// The edit of a drag (#3) on `drawn`'s set, made off the UI thread as
+    /// a click is, or after the edit being made; `previewed` is the session
+    /// its preview left, the edit in it.
+    fn start_gesture(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        drawn: DrawnSet,
+        op: EditOp,
+        previewed: Option<DfSupportSession>,
+    ) {
+        crate::breadcrumbs::note(&format!("supports: gesture {op:?}"));
+        if self.pending_click.borrow().is_some() {
+            self.queued_clicks
+                .borrow_mut()
+                .push_back(QueuedClick::Gesture {
+                    leaf: drawn.leaf,
+                    op,
+                });
+            return;
+        }
+        let in_force = self
+            .sets_in_force()
+            .into_iter()
+            .any(|d| session_key(&d) == session_key(&drawn));
+        if !in_force || self.handle.borrow().is_some() {
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "The scene changed before the support was placed; nothing was changed."
+            ));
+            return;
+        }
+        let start = match previewed {
+            Some(edited) => EditStart::Previewed(Box::new(edited)),
+            None => EditStart::Base(drawn.session.clone()),
+        };
+        let jobs = vec![EditJob { start, op }];
+        self.launch_edit(
+            ui,
+            vec![drawn],
+            Vec::new(),
+            jobs,
+            HandTool::Remove,
+            AddOptions::default(),
+        );
+    }
+
+    /// Makes `jobs` on a worker thread; [`Self::poll_click`] puts the edit
+    /// in the scene once it is made, if the scene is still the one it was
+    /// made on. Undo before then drops it ([`Self::drop_click`]).
+    fn launch_edit(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        sets: Vec<DrawnSet>,
+        refused: Refusals,
+        jobs: Vec<EditJob>,
+        tool: HandTool,
+        how: AddOptions,
+    ) {
         let (send, done) = std::sync::mpsc::channel();
         let job = move || {
             let _ = send.send(compute_edit(jobs, tool, &how));
@@ -2006,7 +2348,7 @@ impl DfSupportRun {
             // scene that is gone.
             crate::breadcrumbs::note("supports: click dropped, the scene moved on");
             self.queued_clicks.borrow_mut().clear();
-            *self.last_ghost.borrow_mut() = None;
+            self.last_ghost.borrow_mut().clear();
             self.ctrl.set_preview_overlay(None);
             ui.set_supports_last_run(ctr!(
                 "DfSupportDialog",
@@ -2017,11 +2359,24 @@ impl DfSupportRun {
         let mut refused = pending.refused;
         self.commit_edit(&ui, pending.sets, computed, &mut refused);
         // The edit is in: its preview would lie over it.
-        *self.last_ghost.borrow_mut() = None;
+        self.last_ghost.borrow_mut().clear();
         self.ctrl.set_preview_overlay(None);
         let next = self.queued_clicks.borrow_mut().pop_front();
-        if let Some(next) = next {
-            self.start_click(&ui, next.tool, next.point, next.how);
+        match next {
+            Some(QueuedClick::Click { tool, point, how }) => {
+                self.start_click(&ui, tool, point, how);
+            }
+            Some(QueuedClick::Gesture { leaf, op }) => {
+                let drawn = self
+                    .sets_in_force()
+                    .into_iter()
+                    .find(|drawn| drawn.leaf == leaf);
+                match drawn {
+                    Some(drawn) => self.start_gesture(&ui, drawn, op, None),
+                    None => self.queued_clicks.borrow_mut().clear(),
+                }
+            }
+            None => {}
         }
     }
 
@@ -2034,7 +2389,7 @@ impl DfSupportRun {
             return;
         }
         self.document.set_pending_edit(None);
-        *self.last_ghost.borrow_mut() = None;
+        self.last_ghost.borrow_mut().clear();
         self.ctrl.set_preview_overlay(None);
         crate::breadcrumbs::note("supports: click dropped");
         if let Some(ui) = self.ui.upgrade() {
@@ -2167,7 +2522,10 @@ impl DfSupportRun {
                 Some(edited) => EditStart::Previewed(Box::new(edited)),
                 None => EditStart::Base(drawn.session.clone()),
             };
-            jobs.push(EditJob { start, points });
+            jobs.push(EditJob {
+                start,
+                op: EditOp::Points(points),
+            });
             sets.push(drawn);
         }
         Ok(Prepared { sets, jobs })
@@ -2778,6 +3136,549 @@ impl DfSupportRun {
                     ),
                     details: details.as_str().into(),
                 });
+            }
+        }
+    }
+    /// This driver, shared.
+    fn me(&self) -> Option<Rc<Self>> {
+        self.me.borrow().upgrade()
+    }
+
+    /// The set in force whose support has its tip within grab of `point`
+    /// (world mm, on the supports), the nearest: what Move tip grabs.
+    fn set_of_tip(&self, point: [f32; 3]) -> Option<DrawnSet> {
+        let p = point.map(f64::from);
+        self.sets_in_force()
+            .into_iter()
+            .filter_map(|drawn| {
+                let tip = drawn.session.tip_near(p, GRAB_REACH_MM)?;
+                let d = drawn
+                    .session
+                    .tips()
+                    .into_iter()
+                    .find(|(id, _)| *id == tip)
+                    .map(|(_, at)| (0..3).map(|k| (at[k] - p[k]).powi(2)).sum::<f64>().sqrt())?;
+                Some((d, drawn))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, drawn)| drawn)
+    }
+
+    /// The set a box or a brush removes from: the selected supports, or the
+    /// selected model's, in force ([`Self::selected_set`], #197).
+    fn selected_set_in_force(&self) -> Option<DrawnSet> {
+        let leaf = self.selected_set()?;
+        self.sets_in_force()
+            .into_iter()
+            .find(|drawn| drawn.leaf == leaf)
+    }
+
+    /// Asks the preview worker for what a drag would do, and polls for it.
+    fn ask_drag_preview(self: &Rc<Self>, ask: impl FnOnce(u64) -> HoverAsk) {
+        let generation = self.hover_generation.get() + 1;
+        self.hover_generation.set(generation);
+        if self.hover_worker.asks.send(ask(generation)).is_err() || self.hover_poll.running() {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        self.hover_poll
+            .start(slint::TimerMode::Repeated, HOVER_POLL, move || {
+                if let Some(run) = weak.upgrade() {
+                    run.take_hover_answer();
+                }
+            });
+    }
+
+    /// Stops drawing previews: one still on its way is not drawn.
+    fn end_previews(&self) {
+        self.hover_poll.stop();
+        self.hover_shown.set(self.hover_generation.get());
+        self.hover_at.set(None);
+    }
+
+    /// The worker's newest answer, drawn or not.
+    fn newest_answer(&self) -> Option<HoverAnswer> {
+        let unseen = self
+            .hover_worker
+            .answer
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        match unseen {
+            Some(answer) => {
+                let drawn = self.last_preview.borrow_mut().take();
+                if let Some(drawn) = drawn {
+                    let _ = self.hover_worker.discard.send(drawn);
+                }
+                Some(answer)
+            }
+            None => self.last_preview.borrow_mut().take(),
+        }
+    }
+
+    /// A box's or a brush's picks changed: what they take is drawn red.
+    fn picks_changed(self: &Rc<Self>, drawn: &DrawnSet, picked: &[String]) {
+        if picked.is_empty() {
+            self.end_previews();
+            self.last_ghost.borrow_mut().clear();
+            self.ctrl.set_preview_overlay(None);
+            self.show_add_note(Default::default());
+            return;
+        }
+        self.show_add_note((
+            ctr!("DfSupportDialog", "Supports to remove: {}.", picked.len()),
+            true,
+        ));
+        let tips: Arc<[String]> = picked.into();
+        let base = drawn.session.clone();
+        let from = session_key(drawn);
+        self.ask_drag_preview(move |generation| HoverAsk {
+            generation,
+            base,
+            from,
+            point: [0.0; 3],
+            tool: 5,
+            how: AddOptions::default(),
+            tip: None,
+            tips,
+            others: Vec::new(),
+        });
+    }
+
+    /// The supports a box from `press` to `corner` takes, by their ids, and
+    /// whether rays are still owed for it: at most `budget` are sent.
+    #[allow(clippy::too_many_arguments)]
+    fn boxed(
+        tips: &[(String, Vec<[f32; 3]>)],
+        seen_from: &SeenFrom,
+        locate: &SupportLocator,
+        looked: &mut HashMap<(usize, (i32, i32)), bool>,
+        press: [f32; 2],
+        corner: [f32; 2],
+        view: Project<'_>,
+        budget: usize,
+    ) -> (Vec<String>, bool) {
+        let (lo, hi) = (
+            [press[0].min(corner[0]), press[1].min(corner[1])],
+            [press[0].max(corner[0]), press[1].max(corner[1])],
+        );
+        let (mut ids, more) = Self::taken(
+            seen_from,
+            locate,
+            looked,
+            &|_| false,
+            &|q| (lo[0]..=hi[0]).contains(&q[0]) && (lo[1]..=hi[1]).contains(&q[1]),
+            view,
+            budget,
+        );
+        ids.sort_unstable();
+        (ids.into_iter().map(|k| tips[k].0.clone()).collect(), more)
+    }
+
+    /// Looks on between the moves while a box owes rays: a step every
+    /// [`HOVER_POLL`], [`BOX_RAYS`] at a time, so no move waits for them all.
+    fn keep_looking(self: &Rc<Self>, more: bool) {
+        if !more {
+            self.box_poll.stop();
+            return;
+        }
+        if self.box_poll.running() {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        self.box_poll
+            .start(slint::TimerMode::Repeated, HOVER_POLL, move || {
+                if let Some(run) = weak.upgrade() {
+                    run.box_step(BOX_RAYS);
+                }
+            });
+    }
+
+    /// One step of a box owing rays: up to `budget` more, the picks
+    /// brought up to date. Returns whether it still owes some.
+    fn box_step(self: &Rc<Self>, budget: usize) -> bool {
+        let stepped = self.ctrl.with_drag_view(|view| {
+            let mut drag = self.drag.borrow_mut();
+            let Some(DragState::Remove {
+                drawn,
+                tips,
+                locate,
+                seen_from,
+                looked,
+                picked,
+                press,
+                corner,
+                owed,
+                brush: None,
+            }) = drag.as_mut()
+            else {
+                return None;
+            };
+            if !*owed {
+                return None;
+            }
+            let (ids, more) = Self::boxed(
+                tips, seen_from, locate, looked, *press, *corner, view, budget,
+            );
+            *owed = more;
+            let changed = ids != *picked;
+            *picked = ids;
+            Some((drawn.clone(), picked.clone(), changed, more))
+        });
+        let Some(Some((drawn, picked, changed, more))) = stepped else {
+            self.box_poll.stop();
+            return false;
+        };
+        if changed {
+            self.picks_changed(&drawn, &picked);
+        }
+        if !more {
+            self.box_poll.stop();
+        }
+        more
+    }
+
+    /// somewhere `inside` it (#3). A ray goes through a pixel of a
+    /// support's line on screen; the nearest hit among every leaf of the
+    /// scene decides: on the model or another set, nothing; on this set, the
+    /// support whose line runs nearest the hit. A support is looked at every
+    /// [`SIGHT_STRIDE`] cells of [`SIGHT_CELL_PX`] along its line on screen,
+    /// in two batches across the cores: one ray each first, which finds most
+    /// supports in sight, then the rest for those still in doubt. `looked`
+    /// keeps what each ray found during the drag; those `skip` names are not
+    /// looked at.
+    fn taken(
+        seen_from: &SeenFrom,
+        locate: &SupportLocator,
+        looked: &mut HashMap<(usize, (i32, i32)), bool>,
+        skip: &dyn Fn(usize) -> bool,
+        inside: &dyn Fn([f32; 2]) -> bool,
+        view: Project<'_>,
+        budget: usize,
+    ) -> (Vec<usize>, bool) {
+        let mut taken = Vec::new();
+        let mut doubt: Vec<(usize, Vec<LineCell>)> = Vec::new();
+        for (k, line) in seen_from.screen.iter().enumerate() {
+            if skip(k) {
+                continue;
+            }
+            // A pixel of its line in each cell inside, in order along it.
+            let mut cells: Vec<LineCell> = Vec::new();
+            for q in line.iter().flatten().filter(|q| inside(**q)) {
+                let c = (
+                    (q[0] / SIGHT_CELL_PX).floor() as i32,
+                    (q[1] / SIGHT_CELL_PX).floor() as i32,
+                );
+                if cells.last().is_none_or(|(last, _)| *last != c)
+                    && !cells.iter().any(|(seen, _)| *seen == c)
+                {
+                    cells.push((c, *q));
+                }
+            }
+            if cells
+                .iter()
+                .any(|(c, _)| looked.get(&(k, *c)) == Some(&true))
+            {
+                taken.push(k);
+                continue;
+            }
+            let last = cells.len().saturating_sub(1);
+            let sparse: Vec<_> = cells
+                .into_iter()
+                .enumerate()
+                .filter(|(i, _)| i % SIGHT_STRIDE == 0 || *i == last)
+                .map(|(_, cell)| cell)
+                .filter(|(c, _)| !looked.contains_key(&(k, *c)))
+                .collect();
+            if !sparse.is_empty() {
+                doubt.push((k, sparse));
+            }
+        }
+        let mut ask = |asks: Vec<(usize, (i32, i32), [f32; 2])>, taken: &mut Vec<usize>| {
+            let pixels: Vec<[f32; 2]> = asks.iter().map(|(_, _, q)| *q).collect();
+            for ((k, c, _), hit) in asks.into_iter().zip(view.hits(&pixels)) {
+                let seen = hit.is_some_and(|hit| locate.support_at(hit) == Some(k));
+                looked.insert((k, c), seen);
+                if seen && !taken.contains(&k) {
+                    taken.push(k);
+                }
+            }
+        };
+        let owed: usize = doubt.iter().map(|(_, cells)| cells.len()).sum();
+        let first: Vec<_> = doubt
+            .iter_mut()
+            .take(budget)
+            .map(|(k, cells)| {
+                let (c, q) = cells.remove(0);
+                (*k, c, q)
+            })
+            .collect();
+        let left = budget - first.len();
+        let asked = first.len();
+        ask(first, &mut taken);
+        let rest: Vec<_> = doubt
+            .into_iter()
+            .filter(|(k, _)| !taken.contains(k))
+            .flat_map(|(k, cells)| cells.into_iter().map(move |(c, q)| (k, c, q)))
+            .take(left)
+            .collect();
+        let asked = asked + rest.len();
+        ask(rest, &mut taken);
+        (taken, asked < owed)
+    }
+}
+
+impl SupportDragHandler for DfSupportRun {
+    fn drag_start(&self, kind: SupportDragKind, press: &DragPoint, project: Project<'_>) -> bool {
+        let Some(run) = self.me() else {
+            return false;
+        };
+        let Some(ui) = self.ui.upgrade() else {
+            return false;
+        };
+        if self.handle.borrow().is_some() {
+            return false;
+        }
+        let state = match kind {
+            SupportDragKind::MoveTip => {
+                let Some(at) = press.support else {
+                    return false;
+                };
+                let Some(drawn) = self.set_of_tip(at) else {
+                    return false;
+                };
+                let Some(tip) = drawn.session.tip_near(at.map(f64::from), GRAB_REACH_MM) else {
+                    return false;
+                };
+                crate::breadcrumbs::note("supports: move tip started");
+                DragState::Move {
+                    drawn,
+                    tip,
+                    to: None,
+                }
+            }
+            SupportDragKind::Box | SupportDragKind::Brush => {
+                let Some(drawn) = self.selected_set_in_force() else {
+                    self.show_add_note((
+                        ctr!(
+                            "DfSupportDialog",
+                            "Select these supports, or their model, to remove them."
+                        ),
+                        true,
+                    ));
+                    return false;
+                };
+                let tips = along_supports(drawn.session.support_paths());
+                let locate = SupportLocator::new(drawn.leaf, &tips);
+                let seen_from = SeenFrom::new(&tips, project);
+                let mut looked = HashMap::new();
+                let brush = (kind == SupportDragKind::Brush).then_some(press.cursor);
+                let picked = match brush {
+                    Some(at) => {
+                        let radius = ui.get_support_brush_radius();
+                        Self::taken(
+                            &seen_from,
+                            &locate,
+                            &mut looked,
+                            &|_| false,
+                            &|q| screen_segment_distance(q, at, at) <= radius,
+                            project,
+                            usize::MAX,
+                        )
+                        .0
+                        .into_iter()
+                        .map(|k| tips[k].0.clone())
+                        .collect()
+                    }
+                    None => Vec::new(),
+                };
+                crate::breadcrumbs::note(&format!(
+                    "supports: {kind:?} started over {} supports",
+                    tips.len()
+                ));
+                DragState::Remove {
+                    drawn,
+                    tips,
+                    locate,
+                    seen_from,
+                    looked,
+                    picked,
+                    press: press.cursor,
+                    corner: press.cursor,
+                    owed: false,
+                    brush,
+                }
+            }
+        };
+        self.end_previews();
+        self.last_ghost.borrow_mut().clear();
+        self.ctrl.set_preview_overlay(None);
+        if let DragState::Remove { drawn, picked, .. } = &state
+            && !picked.is_empty()
+        {
+            run.picks_changed(drawn, picked);
+        }
+        *self.drag.borrow_mut() = Some(state);
+        true
+    }
+
+    fn drag_move(&self, at: &DragPoint, project: Project<'_>) {
+        let Some(run) = self.me() else {
+            return;
+        };
+        let radius = self
+            .ui
+            .upgrade()
+            .map_or(24.0, |ui| ui.get_support_brush_radius());
+        let mut drag = self.drag.borrow_mut();
+        match drag.as_mut() {
+            Some(DragState::Move { drawn, tip, to }) => {
+                let Some(model) = at.model else {
+                    return;
+                };
+                *to = Some(model);
+                let base = drawn.session.clone();
+                let from = session_key(drawn);
+                let tip = Some(tip.clone());
+                drop(drag);
+                run.ask_drag_preview(move |generation| HoverAsk {
+                    generation,
+                    base,
+                    from,
+                    point: model,
+                    tool: 3,
+                    how: AddOptions::default(),
+                    tip,
+                    tips: Arc::from([]),
+                    others: Vec::new(),
+                });
+            }
+            Some(DragState::Remove {
+                drawn,
+                tips,
+                locate,
+                seen_from,
+                looked,
+                picked,
+                press,
+                corner,
+                owed,
+                brush,
+            }) => {
+                if seen_from.refresh(tips, project) {
+                    looked.clear();
+                }
+                let next: Vec<String> = match brush {
+                    Some(last) => {
+                        let (from, to) = (*last, at.cursor);
+                        let already: Vec<usize> = (0..tips.len())
+                            .filter(|&k| picked.contains(&tips[k].0))
+                            .collect();
+                        let mut next = picked.clone();
+                        next.extend(
+                            Self::taken(
+                                seen_from,
+                                locate,
+                                looked,
+                                &|k| already.contains(&k),
+                                &|q| screen_segment_distance(q, from, to) <= radius,
+                                project,
+                                usize::MAX,
+                            )
+                            .0
+                            .into_iter()
+                            .map(|k| tips[k].0.clone()),
+                        );
+                        *last = at.cursor;
+                        next
+                    }
+                    None => {
+                        *corner = at.cursor;
+                        let (ids, more) = Self::boxed(
+                            tips, seen_from, locate, looked, *press, *corner, project, BOX_RAYS,
+                        );
+                        *owed = more;
+                        ids
+                    }
+                };
+                let more = *owed;
+                if next == *picked {
+                    drop(drag);
+                    run.keep_looking(more);
+                    return;
+                }
+                *picked = next;
+                let (drawn, picked) = (drawn.clone(), picked.clone());
+                drop(drag);
+                run.picks_changed(&drawn, &picked);
+                run.keep_looking(more);
+            }
+            None => {}
+        }
+    }
+
+    fn drag_end(&self, commit: bool) {
+        let Some(run) = self.me() else {
+            return;
+        };
+        self.box_poll.stop();
+        if commit {
+            // The box finishes the rays it owes: its picks are what goes.
+            while run.box_step(usize::MAX) {}
+        }
+        let Some(state) = self.drag.borrow_mut().take() else {
+            return;
+        };
+        let newest = self.newest_answer();
+        self.end_previews();
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let drop_it = || {
+            self.last_ghost.borrow_mut().clear();
+            self.ctrl.set_preview_overlay(None);
+        };
+        if !commit {
+            crate::breadcrumbs::note("supports: drag dropped");
+            drop_it();
+            self.show_add_note(Default::default());
+            return;
+        }
+        match state {
+            DragState::Move { drawn, tip, to } => {
+                let Some(to) = to else {
+                    drop_it();
+                    return;
+                };
+                // The preview of this very spot: a red one leaves the support
+                // where it was; a green one is the move already made.
+                let previewed = newest.filter(|answer| {
+                    answer.tool == 3
+                        && answer.point == to
+                        && answer.tip.as_deref() == Some(tip.as_str())
+                        && answer.from == session_key(&drawn)
+                });
+                if let Some(answer) = &previewed
+                    && let Some(preview) = &answer.preview
+                    && !preview.valid
+                {
+                    drop_it();
+                    let (why, _) = move_line(preview);
+                    ui.set_supports_last_run(ctr!("DfSupportDialog", "Left where it was. {}", why));
+                    self.show_add_note(Default::default());
+                    return;
+                }
+                let edited = previewed.and_then(|answer| answer.edited);
+                self.show_add_note(Default::default());
+                run.start_gesture(&ui, drawn, EditOp::MoveTip(tip, to), edited);
+            }
+            DragState::Remove { drawn, picked, .. } => {
+                self.show_add_note(Default::default());
+                if picked.is_empty() {
+                    drop_it();
+                    return;
+                }
+                run.start_gesture(&ui, drawn, EditOp::RemoveTips(picked), None);
             }
         }
     }
@@ -5084,6 +5985,7 @@ mod hand_edit_tests {
                 valid,
                 attached,
                 note,
+                taken: None,
             };
             assert_eq!(
                 preview_line(&preview(true, true, None), false),
@@ -5462,6 +6364,1108 @@ mod hand_edit_tests {
                     swept.settle_ms
                 );
             }
+        });
+    }
+
+    /// A slab 20 × 10 × 2 mm, its underside 9 mm up, with the supports a
+    /// run gives it, those selected.
+    fn supported_slab(window: &MainWindow) -> (Rc<SceneDocument>, Rc<DfSupportRun>) {
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        let cube = sc_mesh_fixtures::unit_cube_mesh();
+        let (lo, hi) =
+            cube.vertices()
+                .iter()
+                .fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| {
+                    let p = v.as_array();
+                    (
+                        std::array::from_fn(|k| lo[k].min(p[k])),
+                        std::array::from_fn(|k| hi[k].max(p[k])),
+                    )
+                });
+        let size = [20.0, 10.0, 2.0];
+        let vertices = cube
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = v.as_array();
+                sc_mesh_core::Vertex::new(std::array::from_fn(|k| {
+                    (p[k] - lo[k]) / (hi[k] - lo[k]) * size[k]
+                }))
+            })
+            .collect();
+        let slab = sc_mesh_core::IndexedMesh::new(None, vertices, cube.faces().to_vec());
+        let mut graph = Scene::new();
+        let leaf = graph
+            .add_leaf(
+                None,
+                translation([10.0, 20.0, 9.0]),
+                LeafPayload::Mesh(Arc::new(slab)),
+            )
+            .unwrap();
+        graph.add_root(leaf).unwrap();
+        document.install_graph(graph.clone(), PathBuf::from("slab.stl"));
+        let run =
+            DfSupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let outcome = start_df_supports(&graph, DfSupportRequest::default())
+            .unwrap()
+            .join();
+        *run.started_on.borrow_mut() = Some(document.scene_revision());
+        run.finish(outcome);
+        let (supports, _) = run.support_leaf().expect("the supports");
+        document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+            supports,
+        )));
+        (document, run)
+    }
+
+    /// The view from straight above, ten pixels a millimetre.
+    fn above(p: [f32; 3]) -> Option<[f32; 2]> {
+        Some([p[0] * 10.0, p[1] * 10.0])
+    }
+
+    fn nothing_seen(pixels: &[[f32; 2]]) -> Vec<Option<ScreenHit>> {
+        vec![None; pixels.len()]
+    }
+
+    /// The view from straight above, ten pixels a millimetre, for what
+    /// projects alone (a tip moved): its rays meet nothing.
+    const FROM_ABOVE: DragView<'static> = DragView {
+        project: &above,
+        hits: &nothing_seen,
+    };
+
+    fn cursor_at(cursor: [f32; 2]) -> DragPoint {
+        DragPoint {
+            cursor,
+            model: None,
+            support: None,
+        }
+    }
+
+    /// Waits for the preview worker's answer to the newest ask, drawn.
+    fn wait_preview(run: &Rc<DfSupportRun>) {
+        let started = Instant::now();
+        while run.hover_shown.get() < run.hover_generation.get() {
+            assert!(started.elapsed() < Duration::from_secs(60), "no answer");
+            std::thread::sleep(Duration::from_millis(2));
+            run.take_hover_answer();
+        }
+    }
+
+    /// A tip's place, by axis.
+    #[derive(Clone, Copy)]
+    struct TipAt {
+        x: f64,
+        y: f64,
+        z: f64,
+    }
+
+    /// Move tip (#3): a tip dragged over the model is routed again where it
+    /// is let go, as one undo; where it cannot go, it stays.
+    #[test]
+    fn a_tip_dragged_over_the_model_moves_its_support() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            // A tip that moves 1.5 mm over, and one others hang from, as
+            // the engine itself tells them.
+            let shifted = |t: [f64; 3]| [t[0] + 1.5, t[1] + 1.0, 9.0];
+            let tips = generated.tips();
+            let movable = |(id, t): &&(String, [f64; 3])| {
+                generated
+                    .preview_move_tip(id, shifted(*t), &AddOptions::default())
+                    .is_ok_and(|(p, _)| p.valid)
+            };
+            let carrying = |(id, t): &&(String, [f64; 3])| {
+                generated
+                    .preview_move_tip(id, shifted(*t), &AddOptions::default())
+                    .is_ok_and(|(p, _)| p.note == Some(AddNote::CarriesOthers))
+            };
+            let tip_of = |id: &String| {
+                let t = tips.iter().find(|(i, _)| i == id).unwrap().1;
+                TipAt {
+                    x: t[0],
+                    y: t[1],
+                    z: t[2],
+                }
+            };
+            let free = &tips.iter().find(movable).expect("a tip that moves").0;
+            let from = tip_of(free);
+            let grab = DragPoint {
+                cursor: [0.0, 0.0],
+                model: None,
+                support: Some([from.x as f32, from.y as f32, from.z as f32 - 0.5]),
+            };
+            assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &FROM_ABOVE));
+            let to = shifted([from.x, from.y, from.z]).map(|c| c as f32);
+            let over = |p: [f32; 3]| DragPoint {
+                cursor: [0.0, 0.0],
+                model: Some(p),
+                support: None,
+            };
+            run.drag_move(&over(to), &FROM_ABOVE);
+            wait_preview(&run);
+            run.drag_end(true);
+            settle_click(&run);
+            let moved = in_force_session(&run).unwrap();
+            assert!(!Arc::ptr_eq(&moved, &generated));
+            let near = |s: &DfSupportSession, p: [f64; 3]| s.tip_near(p, 0.3).is_some();
+            assert!(!near(&moved, [from.x, from.y, from.z]), "gone from there");
+            assert!(near(&moved, to.map(f64::from)), "there now");
+            assert!(document.undo().unwrap(), "one undo");
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+
+            // A trunk others hang from cannot move: red, and it stays.
+            {
+                let (host, _) = tips.iter().find(carrying).expect("a tip others hang from");
+                let from = tip_of(host);
+                let grab = DragPoint {
+                    support: Some([from.x as f32, from.y as f32, from.z as f32 - 0.3]),
+                    ..grab
+                };
+                assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &FROM_ABOVE));
+                run.drag_move(
+                    &over([from.x as f32 + 1.0, from.y as f32, 9.0]),
+                    &FROM_ABOVE,
+                );
+                wait_preview(&run);
+                assert!(
+                    window
+                        .get_support_add_note()
+                        .contains("Cannot move it there")
+                );
+                run.drag_end(true);
+                assert!(run.pending_click.borrow().is_none());
+                assert!(window.get_supports_last_run().contains("Left where it was"));
+                assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+            }
+        });
+    }
+
+    /// Measurement, not a gate (#3): what Remove's box and brush and Move
+    /// tip cost on a big real model. `SC_STRESS_STL` is the model (scaled to
+    /// `SC_STRESS_HEIGHT_MM` tall when set). `cargo test --profile
+    /// quick-release -p sc-slicer-gui --lib -- --ignored --nocapture
+    /// drag_costs_on_a_real_model`.
+    #[test]
+    #[ignore = "needs SC_STRESS_STL"]
+    fn drag_costs_on_a_real_model() {
+        let Ok(path) = std::env::var("SC_STRESS_STL") else {
+            return;
+        };
+        let height: Option<f32> = std::env::var("SC_STRESS_HEIGHT_MM")
+            .ok()
+            .and_then(|h| h.parse().ok());
+        on_fresh_slint_thread(move || {
+            let (window, run, _) = real_model_run(&path, height);
+            let document = run.document.clone();
+            let (supports, _) = run.support_leaf().expect("the supports");
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                supports,
+            )));
+            let generated = in_force_session(&run).unwrap();
+            let tips = generated.tips();
+            let xs: Vec<f64> = tips.iter().map(|(_, t)| t[0]).collect();
+            let (lo, hi) = xs
+                .iter()
+                .fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+            let mid = ((lo + hi) / 2.0) as f32;
+            let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+            println!("{} tips", tips.len());
+
+            // A box over half the set, drawn in 20 moves.
+            assert!(run.drag_start(SupportDragKind::Box, &cursor_at([-1e4, -1e4]), &FROM_ABOVE));
+            let mut ui_ms: f64 = 0.0;
+            for k in 1..=20 {
+                let x = -1e4 + (mid * 10.0 + 1e4) * k as f32 / 20.0;
+                let t = Instant::now();
+                run.drag_move(&cursor_at([x, 1e5]), &FROM_ABOVE);
+                ui_ms = ui_ms.max(ms(t));
+            }
+            let t = Instant::now();
+            wait_preview(&run);
+            let preview_ms = ms(t);
+            let picked = match run.drag.borrow().as_ref() {
+                Some(DragState::Remove { picked, .. }) => picked.len(),
+                _ => 0,
+            };
+            let t = Instant::now();
+            run.drag_end(true);
+            let hand_over_ms = ms(t);
+            let made = Instant::now();
+            let mut land_ms: f64 = 0.0;
+            while run.pending_click.borrow().is_some() {
+                std::thread::sleep(Duration::from_millis(1));
+                let t = Instant::now();
+                run.poll_click();
+                land_ms = land_ms.max(ms(t));
+            }
+            println!(
+                "box over {picked} tips: UI per move max {ui_ms:.1} ms; red preview {preview_ms:.0} ms after the last move; release {hand_over_ms:.1} ms; made in {:.0} ms; put in the scene {land_ms:.1} ms; {}",
+                ms(made),
+                window.get_supports_last_run()
+            );
+            assert!(document.undo().unwrap());
+
+            // A brush across the set, 60 moves.
+            assert!(run.drag_start(
+                SupportDragKind::Brush,
+                &cursor_at([lo as f32 * 10.0, 0.0]),
+                &FROM_ABOVE
+            ));
+            let ys: Vec<f64> = tips.iter().map(|(_, t)| t[1]).collect();
+            let y = (ys.iter().sum::<f64>() / ys.len() as f64) as f32 * 10.0;
+            let mut ui_ms: f64 = 0.0;
+            for k in 0..=60 {
+                let x = (lo + (hi - lo) * f64::from(k) / 60.0) as f32 * 10.0;
+                let t = Instant::now();
+                run.drag_move(&cursor_at([x, y]), &FROM_ABOVE);
+                ui_ms = ui_ms.max(ms(t));
+            }
+            wait_preview(&run);
+            run.drag_end(true);
+            let made = Instant::now();
+            settle_click(&run);
+            println!(
+                "brush: UI per move max {ui_ms:.1} ms; made in {:.0} ms; {}",
+                ms(made),
+                window.get_supports_last_run()
+            );
+            assert!(document.undo().unwrap());
+
+            // Move tip: a tip dragged 2 mm, previews along the way.
+            let (id, from) = tips
+                .iter()
+                .find(|(id, t)| {
+                    generated
+                        .preview_move_tip(id, [t[0] + 0.3, t[1], t[2]], &AddOptions::default())
+                        .is_ok_and(|(p, _)| p.valid)
+                })
+                .cloned()
+                .expect("a tip that moves");
+            let grab = DragPoint {
+                cursor: [0.0, 0.0],
+                model: None,
+                support: Some([from[0] as f32, from[1] as f32, from[2] as f32 - 0.3]),
+            };
+            assert!(run.drag_start(SupportDragKind::MoveTip, &grab, &FROM_ABOVE));
+            let mut previews = Vec::new();
+            for k in 1..=10 {
+                let to = [
+                    from[0] as f32 + 0.03 * k as f32,
+                    from[1] as f32,
+                    from[2] as f32,
+                ];
+                run.drag_move(
+                    &DragPoint {
+                        model: Some(to),
+                        ..grab
+                    },
+                    &FROM_ABOVE,
+                );
+                let t = Instant::now();
+                wait_preview(&run);
+                previews.push(ms(t));
+            }
+            previews.sort_by(f64::total_cmp);
+            run.drag_end(true);
+            let made = Instant::now();
+            settle_click(&run);
+            println!(
+                "move tip {id}: preview median {:.0} ms, max {:.0} ms; made in {:.0} ms; {}",
+                previews[previews.len() / 2],
+                previews.last().unwrap(),
+                ms(made),
+                window.get_supports_last_run()
+            );
+        });
+    }
+
+    /// A window driven as the app drives it (#3): its viewport callbacks
+    /// reach a controller, and a slab 20 x 10 x 2 mm, its underside 9 mm up
+    /// and placed by `transform`, stands with the supports a run gives it,
+    /// those selected, in the Supports tab, seen by `camera`.
+    fn wired_slab(
+        window: &MainWindow,
+        transform: Transform3D,
+        camera: crate::camera::OrbitCamera,
+    ) -> (Rc<ViewportController>, Rc<SceneDocument>, Rc<DfSupportRun>) {
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test_with_ui(window));
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_down(move |x, y, m| {
+                ctrl.on_pointer_down(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_move(move |x, y, m| {
+                ctrl.on_pointer_move(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_up(move |x, y, m| {
+                ctrl.on_pointer_up(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        let document = ctrl.document();
+        let mut graph = Scene::new();
+        let leaf = graph
+            .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(slab_mesh())))
+            .unwrap();
+        graph.add_root(leaf).unwrap();
+        document.install_graph(graph.clone(), PathBuf::from("slab.stl"));
+        let run =
+            DfSupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let outcome = start_df_supports(&graph, DfSupportRequest::default())
+            .unwrap()
+            .join();
+        *run.started_on.borrow_mut() = Some(document.scene_revision());
+        run.finish(outcome);
+        let (supports, _) = run.support_leaf().expect("the supports");
+        document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+            supports,
+        )));
+        ctrl.set_section(WorkspaceSection::Supports);
+        ctrl.set_viewport_for_test(800.0, 600.0);
+        ctrl.set_camera_for_test(camera);
+        (ctrl, document, run)
+    }
+
+    /// A slab 20 x 10 x 2 mm, its corner at the origin.
+    fn slab_mesh() -> sc_mesh_core::IndexedMesh {
+        let cube = sc_mesh_fixtures::unit_cube_mesh();
+        let (lo, hi) =
+            cube.vertices()
+                .iter()
+                .fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| {
+                    let p = v.as_array();
+                    (
+                        std::array::from_fn(|k| lo[k].min(p[k])),
+                        std::array::from_fn(|k| hi[k].max(p[k])),
+                    )
+                });
+        let size = [20.0, 10.0, 2.0];
+        let vertices = cube
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = v.as_array();
+                sc_mesh_core::Vertex::new(std::array::from_fn(|k| {
+                    (p[k] - lo[k]) / (hi[k] - lo[k]) * size[k]
+                }))
+            })
+            .collect();
+        sc_mesh_core::IndexedMesh::new(None, vertices, cube.faces().to_vec())
+    }
+
+    /// The camera looking at `target` from `distance` mm, from below the
+    /// plate at `pitch` radians.
+    fn camera_at(
+        target: [f32; 3],
+        yaw: f32,
+        pitch: f32,
+        distance: f32,
+    ) -> crate::camera::OrbitCamera {
+        let mut camera = crate::camera::OrbitCamera::new(glam::Vec3::from(target), distance);
+        camera.yaw = yaw;
+        camera.pitch = pitch;
+        camera.distance = distance;
+        camera
+    }
+
+    fn no_keys() -> crate::PointerModifiers {
+        crate::PointerModifiers::default()
+    }
+
+    /// Remove's brush and box through the window's own viewport callbacks
+    /// (#3): a press on a tip, moves past the click threshold, a release.
+    #[test]
+    fn the_brush_and_the_box_remove_through_the_viewport() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let camera = camera_at([20.0, 25.0, 9.0], 0.6, -0.5, 40.0);
+            let (ctrl, document, run) = wired_slab(&window, translation([10.0, 20.0, 9.0]), camera);
+            let generated = in_force_session(&run).expect("editable");
+            window.set_support_tool(2);
+            // Each support where it is seen: halfway down its shaft, not at
+            // its tip, which the model mostly hides.
+            let on_screen: Vec<(String, [f32; 2])> = along_supports(generated.support_paths())
+                .into_iter()
+                .filter_map(|(id, along)| {
+                    // Halfway along it, in sight there, as a person sees it
+                    // to paint it.
+                    let mid = *along.get(along.len() / 2)?;
+                    let p = ctrl.project_for_test(mid)?;
+                    let first = ctrl.first_hit_for_test(p)?;
+                    if (0..3)
+                        .map(|k| (first.point[k] - mid[k]).powi(2))
+                        .sum::<f32>()
+                        >= 1.0
+                    {
+                        return None;
+                    }
+                    ((20.0..780.0).contains(&p[0]) && (20.0..580.0).contains(&p[1]))
+                        .then_some((id, p))
+                })
+                .collect();
+            assert!(on_screen.len() > 3, "{} tips on screen", on_screen.len());
+
+            // The brush: pressed on a shaft, dragged 30 px.
+            window.set_support_remove_mode(1);
+            let (id, at) = on_screen[0].clone();
+            window.invoke_viewport_pointer_down(at[0], at[1], no_keys());
+            for k in 1..=6 {
+                window.invoke_viewport_pointer_move(at[0] + 5.0 * k as f32, at[1], no_keys());
+            }
+            window.invoke_viewport_pointer_up(at[0] + 30.0, at[1], no_keys());
+            settle_click(&run);
+            let brushed = in_force_session(&run).unwrap();
+            assert!(
+                !brushed.tips().iter().any(|(left, _)| *left == id),
+                "the support brushed is gone: {}",
+                window.get_supports_last_run()
+            );
+            assert!(document.undo().unwrap(), "one undo");
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+
+            // The box: around a shaft.
+            window.set_support_remove_mode(0);
+            let (id, at) = on_screen[1].clone();
+            window.invoke_viewport_pointer_down(at[0] - 15.0, at[1] - 15.0, no_keys());
+            for k in 1..=6 {
+                let d = 5.0 * k as f32;
+                window.invoke_viewport_pointer_move(at[0] - 15.0 + d, at[1] - 15.0 + d, no_keys());
+            }
+            window.invoke_viewport_pointer_up(at[0] + 15.0, at[1] + 15.0, no_keys());
+            settle_click(&run);
+            let boxed = in_force_session(&run).unwrap();
+            assert!(
+                !boxed.tips().iter().any(|(left, _)| *left == id),
+                "the support boxed is gone: {}",
+                window.get_supports_last_run()
+            );
+            assert!(document.undo().unwrap());
+        });
+    }
+
+    /// Where a ray through pixel `at` of the 800 x 600 viewport first meets
+    /// the plane through `p0` with normal `n` (world mm).
+    fn ray_meets_plane(
+        camera: &crate::camera::OrbitCamera,
+        at: [f32; 2],
+        p0: glam::Vec3,
+        n: glam::Vec3,
+    ) -> [f32; 3] {
+        let ray = crate::picking::ray_from_pixel(
+            camera,
+            crate::mesh_render::default_fov_y(),
+            800.0,
+            600.0,
+            at[0],
+            at[1],
+        );
+        let t = (p0 - ray.origin).dot(n) / ray.direction.dot(n);
+        (ray.origin + ray.direction * t).into()
+    }
+
+    fn far(a: [f32; 3], b: [f64; 3]) -> f64 {
+        (0..3)
+            .map(|k| (f64::from(a[k]) - b[k]).powi(2))
+            .sum::<f64>()
+            .sqrt()
+    }
+
+    /// The tip `after` holds that `before` does not.
+    fn tip_added(before: &DfSupportSession, after: &DfSupportSession) -> Option<[f64; 3]> {
+        let old: Vec<String> = before.tips().into_iter().map(|(id, _)| id).collect();
+        after
+            .tips()
+            .into_iter()
+            .find(|(id, _)| !old.contains(id))
+            .map(|(_, t)| t)
+    }
+
+    /// A tip placed by hand lands on the model surface under the cursor
+    /// (#3), to the pixel: the ray through the pixel clicked meets the model
+    /// there first. For Add and for Move tip, on a model turned and tilted,
+    /// through the window's own viewport callbacks.
+    #[test]
+    fn a_tip_lands_on_the_surface_under_the_cursor() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            // The slab turned 0.5 rad about Z and tilted 0.15 rad about X,
+            // its underside corner 12 mm up.
+            let place = AffineTransform3D::from_translation([25.0, 22.0, 12.0])
+                .compose(&AffineTransform3D::from_rotation_z(0.5))
+                .compose(&AffineTransform3D::from_rotation_x(0.15));
+            let local = |p: [f64; 3]| {
+                let v = place.apply_to_vertex(sc_mesh_core::Vertex::new(p.map(|c| c as f32)));
+                glam::Vec3::from(*v.as_array())
+            };
+            let p0 = local([0.0, 0.0, 0.0]);
+            let n = (local([0.0, 0.0, -1.0]) - p0).normalize();
+            let centre = local([10.0, 5.0, 0.0]);
+            let camera = camera_at(centre.into(), 0.7, -0.6, 45.0);
+            assert!(
+                camera.eye().z < centre.z,
+                "the camera looks up at the underside"
+            );
+            let (ctrl, document, run) =
+                wired_slab(&window, Transform3D::Affine(place), camera.clone());
+            // A point of the underside on screen, to the whole pixel.
+            let pixel_of = |p: [f64; 3]| {
+                let at = ctrl.project_for_test(local(p).into()).expect("on screen");
+                [at[0].round(), at[1].round()]
+            };
+
+            // Add, at two pixels.
+            window.set_support_tool(1);
+            for p in [[6.3, 3.1, 0.0], [14.6, 7.2, 0.0]] {
+                let at = pixel_of(p);
+                let aimed = ray_meets_plane(&camera, at, p0, n);
+                let hit = ctrl
+                    .model_hit_for_test(crate::viewport::ScreenPoint::new(at[0], at[1]))
+                    .expect("the model under the cursor");
+                assert!(
+                    far(hit, aimed.map(f64::from)) < 0.01,
+                    "picked {hit:?}, ray {aimed:?}"
+                );
+                let before = in_force_session(&run).unwrap();
+                window.invoke_viewport_pointer_down(at[0], at[1], no_keys());
+                window.invoke_viewport_pointer_up(at[0], at[1], no_keys());
+                settle_click(&run);
+                let after = in_force_session(&run).unwrap();
+                let tip = tip_added(&before, &after)
+                    .unwrap_or_else(|| panic!("nothing added: {}", window.get_supports_last_run()));
+                assert!(far(aimed, tip) < 0.02, "tip {tip:?}, aimed {aimed:?}");
+            }
+
+            // Move tip: the last one added, grabbed by its shaft just below
+            // its tip, dropped on another pixel.
+            window.set_support_tool(3);
+            let session = in_force_session(&run).unwrap();
+            let paths = session.support_paths();
+            let (id, grab) = paths
+                .iter()
+                .filter(|(_, path)| path.len() >= 2)
+                .find_map(|(id, path)| {
+                    let (tip, next) = (path[0], path[1]);
+                    let len = (0..3)
+                        .map(|k| (next[k] - tip[k]).powi(2))
+                        .sum::<f64>()
+                        .sqrt();
+                    let below: [f64; 3] =
+                        std::array::from_fn(|k| tip[k] + (next[k] - tip[k]) * (0.8 / len.max(0.8)));
+                    let at = ctrl.project_for_test(below.map(|c| c as f32))?;
+                    let on =
+                        ctrl.support_hit_for_test(crate::viewport::ScreenPoint::new(at[0], at[1]))?;
+                    (far(on, tip) < 2.0).then(|| (id.clone(), at))
+                })
+                .expect("a tip to grab on screen");
+            let to = pixel_of([10.2, 2.4, 0.0]);
+            let aimed = ray_meets_plane(&camera, to, p0, n);
+            window.invoke_viewport_pointer_down(grab[0], grab[1], no_keys());
+            for k in 1..=8 {
+                let t = k as f32 / 8.0;
+                window.invoke_viewport_pointer_move(
+                    grab[0] + (to[0] - grab[0]) * t,
+                    grab[1] + (to[1] - grab[1]) * t,
+                    no_keys(),
+                );
+            }
+            window.invoke_viewport_pointer_up(to[0], to[1], no_keys());
+            settle_click(&run);
+            let moved = in_force_session(&run).unwrap();
+            assert!(
+                !moved.tips().iter().any(|(left, _)| *left == id),
+                "the support grabbed moved: {}",
+                window.get_supports_last_run()
+            );
+            let tip = tip_added(&session, &moved).expect("its new tip");
+            assert!(far(aimed, tip) < 0.02, "tip {tip:?}, aimed {aimed:?}");
+            assert!(document.undo().unwrap(), "one undo");
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &session));
+        });
+    }
+
+    /// A box mesh from `lo` to `hi` (world mm).
+    fn box_mesh(lo: [f32; 3], hi: [f32; 3]) -> sc_mesh_core::IndexedMesh {
+        let cube = sc_mesh_fixtures::unit_cube_mesh();
+        let (clo, chi) =
+            cube.vertices()
+                .iter()
+                .fold(([f32::MAX; 3], [f32::MIN; 3]), |(a, b), v| {
+                    let p = v.as_array();
+                    (
+                        std::array::from_fn(|k| a[k].min(p[k])),
+                        std::array::from_fn(|k| b[k].max(p[k])),
+                    )
+                });
+        let vertices = cube
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = v.as_array();
+                sc_mesh_core::Vertex::new(std::array::from_fn(|k| {
+                    lo[k] + (p[k] - clo[k]) / (chi[k] - clo[k]) * (hi[k] - lo[k])
+                }))
+            })
+            .collect();
+        sc_mesh_core::IndexedMesh::new(None, vertices, cube.faces().to_vec())
+    }
+
+    /// A window driven through its viewport callbacks over a slab with its
+    /// supports and a wall standing in front of the left half of them (#3),
+    /// seen from the front, a little from below, in perspective or
+    /// orthographic. The slab's supports are selected, Remove is armed.
+    struct Walled {
+        window: MainWindow,
+        ctrl: Rc<ViewportController>,
+        document: Rc<SceneDocument>,
+        run: Rc<DfSupportRun>,
+        generated: Arc<DfSupportSession>,
+        wall: NodeId,
+        /// The supports wholly behind the wall, and those wholly beside it.
+        behind: Vec<String>,
+        beside: Vec<String>,
+    }
+
+    fn walled(orthographic: bool) -> Walled {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_down(move |x, y, m| {
+                ctrl.on_pointer_down(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_move(move |x, y, m| {
+                ctrl.on_pointer_move(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_up(move |x, y, m| {
+                ctrl.on_pointer_up(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        let document = ctrl.document();
+        let mut graph = Scene::new();
+        let slab = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(box_mesh([10.0, 20.0, 9.0], [30.0, 30.0, 11.0]))),
+            )
+            .unwrap();
+        graph.add_root(slab).unwrap();
+        let outcome = start_df_supports(&graph, DfSupportRequest::default())
+            .unwrap()
+            .join();
+        // The wall, in front of the left half (y below the slab), comes after
+        // the run: a model of the scene, with no supports of its own. It
+        // reaches below the plate, so no ray passes under it.
+        let wall = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(box_mesh([4.0, 14.0, -3.0], [19.0, 15.0, 14.0]))),
+            )
+            .unwrap();
+        graph.add_root(wall).unwrap();
+        document.install_graph(graph.clone(), PathBuf::from("slab.stl"));
+        let run =
+            DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        *run.started_on.borrow_mut() = Some(document.scene_revision());
+        run.finish(outcome);
+        document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+            slab,
+        )));
+        ctrl.set_section(WorkspaceSection::Supports);
+        ctrl.set_viewport_for_test(800.0, 600.0);
+        let target = glam::Vec3::new(20.0, 25.0, 5.0);
+        let mut camera = crate::camera::OrbitCamera::new(target, 30.0);
+        camera.set_axis_view(crate::camera::AxisView::Front);
+        if camera.eye().y > target.y {
+            camera.set_axis_view(crate::camera::AxisView::Back);
+        }
+        // A little from below, so the slab's underside shows in both
+        // projections (edge-on, an orthographic ray would graze it).
+        camera.pitch -= 0.15;
+        camera.distance = 30.0;
+        camera.orthographic = orthographic;
+        assert!(camera.eye().y < 14.0, "the wall stands between");
+        assert!(
+            camera.eye().z > 0.0 && camera.eye().z < 9.0,
+            "below the underside"
+        );
+        ctrl.set_camera_for_test(camera);
+        let generated = in_force_session(&run).expect("editable");
+        let wholly = |keep: &dyn Fn(f64) -> bool| -> Vec<String> {
+            generated
+                .support_paths()
+                .into_iter()
+                .filter(|(_, path)| path.iter().all(|p| keep(p[0])))
+                .map(|(id, _)| id)
+                .collect()
+        };
+        let behind = wholly(&|x| x < 18.5);
+        let beside = wholly(&|x| x > 20.5);
+        assert!(
+            !behind.is_empty() && !beside.is_empty(),
+            "{} behind, {} beside",
+            behind.len(),
+            beside.len()
+        );
+        window.set_support_tool(2);
+        Walled {
+            window,
+            ctrl,
+            document,
+            run,
+            generated,
+            wall,
+            behind,
+            beside,
+        }
+    }
+
+    impl Walled {
+        /// A pixel where `id` shows: one along its line, behind the wall if
+        /// it is, else where the camera sees it first.
+        fn pixel_of(&self, id: &str, hidden: bool) -> [f32; 2] {
+            let (_, along) = along_supports(self.generated.support_paths())
+                .into_iter()
+                .find(|(k, _)| k == id)
+                .expect("the support");
+            along
+                .iter()
+                .rev()
+                .filter_map(|p| {
+                    let at = self.ctrl.project_for_test(*p)?;
+                    let first = self.ctrl.first_hit_for_test(at)?;
+                    let on_it = (0..3).map(|k| (first.point[k] - p[k]).powi(2)).sum::<f32>() < 1.0;
+                    let walled = first.leaf == self.wall;
+                    (if hidden { walled } else { on_it }).then_some(at)
+                })
+                .next()
+                .expect("a pixel of it")
+        }
+
+        fn session(&self) -> Arc<DfSupportSession> {
+            in_force_session(&self.run).unwrap()
+        }
+    }
+
+    /// Remove's hover and click take only a support in sight (#3): behind
+    /// the wall, nothing lights up and a click removes nothing; beside it,
+    /// it lights up and goes. In perspective and orthographic.
+    #[test]
+    fn a_click_takes_only_a_support_in_sight() {
+        for orthographic in [false, true] {
+            on_fresh_slint_thread(move || {
+                let w = walled(orthographic);
+                let hidden = w.pixel_of(&w.behind[0], true);
+                w.window
+                    .invoke_viewport_pointer_move(hidden[0], hidden[1], no_keys());
+                assert!(
+                    w.run.hover_at.get().is_none(),
+                    "a support behind the wall lights up (orthographic {orthographic})"
+                );
+                w.window
+                    .invoke_viewport_pointer_down(hidden[0], hidden[1], no_keys());
+                w.window
+                    .invoke_viewport_pointer_up(hidden[0], hidden[1], no_keys());
+                settle_click(&w.run);
+                assert!(
+                    Arc::ptr_eq(&w.session(), &w.generated),
+                    "a click behind the wall removed: {}",
+                    w.window.get_supports_last_run()
+                );
+
+                let seen = w.pixel_of(&w.beside[0], false);
+                w.window
+                    .invoke_viewport_pointer_move(seen[0], seen[1], no_keys());
+                assert!(w.run.hover_at.get().is_some(), "it lights up");
+                w.window
+                    .invoke_viewport_pointer_down(seen[0], seen[1], no_keys());
+                w.window
+                    .invoke_viewport_pointer_up(seen[0], seen[1], no_keys());
+                settle_click(&w.run);
+                let after = w.session();
+                assert!(
+                    !after.tips().iter().any(|(id, _)| *id == w.beside[0]),
+                    "the support in sight goes: {}",
+                    w.window.get_supports_last_run()
+                );
+                assert!(w.document.undo().unwrap(), "one undo");
+            });
+        }
+    }
+
+    /// Remove's box and brush take only what is in sight (#3): dragged over
+    /// every support, they take those beside the wall and none behind it. In
+    /// perspective and orthographic.
+    #[test]
+    fn the_box_and_the_brush_leave_what_is_out_of_sight() {
+        for orthographic in [false, true] {
+            on_fresh_slint_thread(move || {
+                let w = walled(orthographic);
+                let screen = |p: [f32; 3]| w.ctrl.project_for_test(p).expect("on screen");
+                let left = screen([6.0, 25.0, 5.0]);
+                let right = screen([30.0, 25.0, 5.0]);
+                let (top, bottom) = (screen([20.0, 25.0, 8.5])[1], screen([20.0, 25.0, 1.5])[1]);
+                let check = |what: &str| {
+                    settle_click(&w.run);
+                    let after = w.session();
+                    assert!(
+                        !Arc::ptr_eq(&after, &w.generated),
+                        "{what} took nothing (orthographic {orthographic}): {}",
+                        w.window.get_supports_last_run()
+                    );
+                    let left_ids: Vec<String> =
+                        after.tips().into_iter().map(|(id, _)| id).collect();
+                    assert!(
+                        w.behind.iter().all(|id| left_ids.contains(id)),
+                        "{what} took a support behind the wall (orthographic {orthographic})"
+                    );
+                    assert!(w.document.undo().unwrap(), "one undo");
+                };
+
+                // The brush, along the supports at mid height.
+                w.window.set_support_remove_mode(1);
+                let y = (top + bottom) / 2.0;
+                w.window.invoke_viewport_pointer_down(left[0], y, no_keys());
+                for k in 1..=40 {
+                    let x = left[0] + (right[0] - left[0]) * k as f32 / 40.0;
+                    w.window.invoke_viewport_pointer_move(x, y, no_keys());
+                }
+                w.window.invoke_viewport_pointer_up(right[0], y, no_keys());
+                check("the brush");
+
+                // The box, over all of them.
+                w.window.set_support_remove_mode(0);
+                w.window
+                    .invoke_viewport_pointer_down(left[0], top - 20.0, no_keys());
+                for k in 1..=10 {
+                    let t = k as f32 / 10.0;
+                    w.window.invoke_viewport_pointer_move(
+                        left[0] + (right[0] - left[0]) * t,
+                        top - 20.0 + (bottom - top + 40.0) * t,
+                        no_keys(),
+                    );
+                }
+                w.window
+                    .invoke_viewport_pointer_up(right[0], bottom + 20.0, no_keys());
+                check("the box");
+            });
+        }
+    }
+
+    /// Move tip grabs only a support in sight (#3): dragged from behind the
+    /// wall, nothing moves; from beside it, the support follows. In
+    /// perspective and orthographic.
+    #[test]
+    fn move_tip_grabs_only_a_support_in_sight() {
+        for orthographic in [false, true] {
+            on_fresh_slint_thread(move || {
+                let w = walled(orthographic);
+                w.window.set_support_tool(3);
+                // Dropped on the slab's underside, beside the wall.
+                let to = w
+                    .ctrl
+                    .project_for_test([26.0, 21.0, 9.0])
+                    .expect("on screen");
+                let drag = |from: [f32; 2]| {
+                    w.window
+                        .invoke_viewport_pointer_down(from[0], from[1], no_keys());
+                    for k in 1..=8 {
+                        let t = k as f32 / 8.0;
+                        w.window.invoke_viewport_pointer_move(
+                            from[0] + (to[0] - from[0]) * t,
+                            from[1] + (to[1] - from[1]) * t,
+                            no_keys(),
+                        );
+                    }
+                    w.window.invoke_viewport_pointer_up(to[0], to[1], no_keys());
+                    settle_click(&w.run);
+                };
+                // A tip is grabbed within 3 mm of it: a pixel of the line
+                // near the top.
+                let near_tip = |id: &str, hidden: bool| {
+                    let (_, along) = along_supports(w.generated.support_paths())
+                        .into_iter()
+                        .find(|(k, _)| k == id)
+                        .unwrap();
+                    along
+                        .iter()
+                        .take(4)
+                        .filter_map(|p| {
+                            let at = w.ctrl.project_for_test(*p)?;
+                            let first = w.ctrl.first_hit_for_test(at)?;
+                            let on_it =
+                                (0..3).map(|k| (first.point[k] - p[k]).powi(2)).sum::<f32>() < 1.0;
+                            (if hidden { first.leaf == w.wall } else { on_it }).then_some(at)
+                        })
+                        .next()
+                };
+                let hidden = w
+                    .behind
+                    .iter()
+                    .find_map(|id| near_tip(id, true))
+                    .expect("a hidden tip on screen");
+                drag(hidden);
+                assert!(
+                    Arc::ptr_eq(&w.session(), &w.generated),
+                    "a tip behind the wall moved (orthographic {orthographic}): {}",
+                    w.window.get_supports_last_run()
+                );
+                // One the engine moves there: nothing hangs from it.
+                let movable = |id: &String| {
+                    w.generated
+                        .preview_move_tip(id, [26.0, 21.0, 9.0], &AddOptions::default())
+                        .is_ok_and(|(preview, _)| preview.valid)
+                };
+                let (id, seen) = w
+                    .beside
+                    .iter()
+                    .filter(|id| movable(id))
+                    .find_map(|id| near_tip(id, false).map(|at| (id.clone(), at)))
+                    .expect("a tip in sight that moves");
+                drag(seen);
+                assert!(
+                    !w.session().tips().iter().any(|(k, _)| *k == id),
+                    "the tip in sight moves (orthographic {orthographic}): {}",
+                    w.window.get_supports_last_run()
+                );
+                assert!(w.document.undo().unwrap(), "one undo");
+            });
+        }
+    }
+
+    /// Measurement, not a gate (#3): what a box and a brush cost on the UI
+    /// thread on a big real model seen as a person sees it, now that they
+    /// take only what is in sight (a ray a point of a support, at most one a
+    /// 2 mm stretch). `SC_STRESS_STL` is the model (scaled to
+    /// `SC_STRESS_HEIGHT_MM` tall when set). `cargo test --profile
+    /// quick-release -p sc-slicer-gui --lib -- --ignored --nocapture
+    /// sight_costs_on_a_real_model`.
+    #[test]
+    #[ignore = "needs SC_STRESS_STL"]
+    fn sight_costs_on_a_real_model() {
+        let Ok(path) = std::env::var("SC_STRESS_STL") else {
+            return;
+        };
+        let height: Option<f32> = std::env::var("SC_STRESS_HEIGHT_MM")
+            .ok()
+            .and_then(|h| h.parse().ok());
+        on_fresh_slint_thread(move || {
+            let (_window, run, faces) = real_model_run(&path, height);
+            let document = run.document.clone();
+            let (supports, _) = run.support_leaf().expect("the supports");
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                supports,
+            )));
+            let (lo, hi) = faces.iter().fold(
+                (glam::Vec3::splat(f32::MAX), glam::Vec3::splat(f32::MIN)),
+                |(a, b), (p, _)| (a.min((*p).into()), b.max((*p).into())),
+            );
+            let centre = (lo + hi) / 2.0;
+            let mut camera = crate::camera::OrbitCamera::new(centre, (hi - lo).length() / 2.0);
+            camera.set_axis_view(crate::camera::AxisView::Front);
+            let ctrl = run.ctrl.clone();
+            ctrl.set_section(WorkspaceSection::Supports);
+            ctrl.set_viewport_for_test(1600.0, 1000.0);
+            ctrl.set_camera_for_test(camera);
+            let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+            let generated = in_force_session(&run).unwrap();
+            println!("{} supports", generated.support_paths().len());
+            {
+                let t = Instant::now();
+                let mut seen = 0;
+                for k in 0..200 {
+                    let at = [
+                        400.0 + (k % 20) as f32 * 40.0,
+                        200.0 + (k / 20) as f32 * 60.0,
+                    ];
+                    seen += usize::from(ctrl.first_hit_for_test(at).is_some());
+                }
+                println!("one ray: {:.2} ms ({seen} of 200 hit)", ms(t) / 200.0);
+            }
+
+            // A box over the left half of the view, in 20 moves.
+            let started = ctrl
+                .with_drag_view(|view| {
+                    run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), view)
+                })
+                .unwrap();
+            assert!(started);
+            let (mut worst, mut total) = (0.0f64, 0.0f64);
+            for k in 1..=20 {
+                let at = [800.0 * k as f32 / 20.0, 1000.0 * k as f32 / 20.0];
+                let t = Instant::now();
+                ctrl.with_drag_view(|view| run.drag_move(&cursor_at(at), view));
+                worst = worst.max(ms(t));
+                total += ms(t);
+            }
+            // What the box still owes goes on between the moves, a step a
+            // tick: the longest step, and all of them.
+            let (mut step_worst, mut steps, mut owed_total) = (0.0f64, 0, 0.0f64);
+            loop {
+                let t = Instant::now();
+                let more = run.box_step(BOX_RAYS);
+                step_worst = step_worst.max(ms(t));
+                owed_total += ms(t);
+                steps += 1;
+                if !more {
+                    break;
+                }
+            }
+            println!(
+                "box, owed rays after the moves: {steps} steps, longest {step_worst:.1} ms, all {owed_total:.0} ms"
+            );
+            let picked = match run.drag.borrow().as_ref() {
+                Some(DragState::Remove { picked, looked, .. }) => (picked.len(), looked.len()),
+                _ => (0, 0),
+            };
+            run.drag_end(false);
+            println!(
+                "box over half the view: {} supports in sight, {} rays; UI per move max {worst:.1} ms, all 20 moves {total:.0} ms",
+                picked.0, picked.1
+            );
+
+            // A brush across the middle, 80 moves.
+            let started = ctrl
+                .with_drag_view(|view| {
+                    run.drag_start(SupportDragKind::Brush, &cursor_at([0.0, 500.0]), view)
+                })
+                .unwrap();
+            assert!(started);
+            let (mut worst, mut total) = (0.0f64, 0.0f64);
+            for k in 1..=80 {
+                let at = [1600.0 * k as f32 / 80.0, 500.0];
+                let t = Instant::now();
+                ctrl.with_drag_view(|view| run.drag_move(&cursor_at(at), view));
+                worst = worst.max(ms(t));
+                total += ms(t);
+            }
+            let picked = match run.drag.borrow().as_ref() {
+                Some(DragState::Remove { picked, .. }) => picked.len(),
+                _ => 0,
+            };
+            run.drag_end(false);
+            println!(
+                "brush across the view: {picked} supports in sight; UI per move max {worst:.1} ms, all 80 moves {total:.0} ms"
+            );
         });
     }
 }

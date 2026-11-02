@@ -5585,6 +5585,88 @@ msgid "Fit"
 msgstr "Ajustar"
 
 
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Click a support to remove it, or paint over supports to remove them; [ ] or the wheel size the brush, B a box. Esc drops it."
+msgstr "Hacé clic en un soporte para quitarlo, o pintá sobre los soportes para quitarlos; [ ] o la rueda cambian el pincel, B pasa a recuadro. Esc lo cancela."
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Click a support to remove it, or drag a box over supports to remove them; B a brush. Esc drops it."
+msgstr "Hacé clic en un soporte para quitarlo, o arrastrá un recuadro sobre los soportes para quitarlos; B pasa a pincel. Esc lo cancela."
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Drag a support by its tip over the model; it is routed again where you let go. Esc or a right click drops it."
+msgstr "Arrastrá un soporte por la punta sobre el modelo; se vuelve a armar donde lo soltás. Esc o clic derecho lo cancelan."
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Move tip (drag it)"
+msgstr "Mover punta (arrastrala)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "REMOVE SUPPORTS"
+msgstr "QUITAR SOPORTES"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Drag"
+msgstr "Arrastre"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Box"
+msgstr "Recuadro"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Brush"
+msgstr "Pincel"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Paint over the supports to remove, anywhere along them; [ ] or the mouse wheel size the brush ({} px). B switches to a box."
+msgstr "Pintá sobre los soportes a quitar, en cualquier parte de ellos; [ ] o la rueda del mouse cambian el pincel ({} px). B pasa a recuadro."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Drag a box: every support it touches goes, from the selected supports only. B switches to a brush."
+msgstr "Arrastrá un recuadro: se va cada soporte que toque, solo de los soportes seleccionados. B pasa a pincel."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "other supports hang from it"
+msgstr "otros soportes cuelgan de él"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "Cannot move it there: {}."
+msgstr "No se puede mover ahí: {}."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Cannot move it there: no support can reach that point."
+msgstr "No se puede mover ahí: ningún soporte llega a ese punto."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "Supports to remove: {}."
+msgstr "Soportes a quitar: {}."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "Left where it was. {}"
+msgstr "Quedó donde estaba. {}"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the surface there faces up; nothing below can reach it"
+msgstr "ahí la superficie mira hacia arriba; nada desde abajo llega"
 #: ui/start-dialog.slint
 msgctxt "StartDialog"
 msgid "Not found: {}"

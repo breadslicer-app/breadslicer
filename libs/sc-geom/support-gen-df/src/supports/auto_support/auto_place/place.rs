@@ -15,7 +15,6 @@ use super::helpers::{
     branch_departure_angle_deg, build_hosted_branch, collect_fan_shaft_points,
     contact_cone_collides, find_merge_host, free_knot_id, host_entity_of, host_segment_span,
     is_host_at_attachment_capacity, member_max_angle_from_vertical_deg, origin_by_source,
-    resolve_surface_normal,
 };
 use crate::supports::auto_support::constants::{
     CAVITY_FAN_RADIUS_MM, GRID_HOST_FAN_RADIUS_MM, MAX_CAVITY_BRIDGE_MM,
@@ -220,7 +219,7 @@ pub fn place_one_candidate(
         if candidate.grid_point == Some(true) && candidate.tip_normal.z < 0.0 {
             (candidate.tip_pos, candidate.tip_normal)
         } else {
-            resolve_surface_normal(candidate.tip_pos, mesh)
+            ctx.contact_at(candidate.tip_pos)
         };
 
     let preset = preset_for_area(candidate.island_area_mm2);
