@@ -14,6 +14,7 @@ import { CheckBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "kit/theme.slint";
 import { Icons } from "kit/icons.slint";
 import { Icon } from "kit/controls.slint";
+import { ActionRow, DialogHead, DialogRule, SectionLabel } from "kit/dialog.slint";
 
 // 1 file of the recent list.
 export struct RecentFileRow {
@@ -35,81 +36,6 @@ export struct RecentFileRow {
 
 // What the left column of the dialog offers to open.
 export enum StartOpen { project, model }
-
-// 1 way to start: an icon tile, a title and what it opens.
-component StartAction inherits Rectangle {
-    in property <string> icon;
-    in property <string> title;
-    in property <string> detail;
-    // The action the dialog leads with: the accent around it.
-    in property <bool> lead;
-    callback clicked();
-
-    height: 56px;
-    border-radius: Theme.radius;
-    border-width: self.lead ? 1px : 0px;
-    border-color: Theme.accent.transparentize(0.35);
-    background: self.lead
-        ? (touch.has-hover ? Theme.accent.transparentize(0.78) : Theme.accent.transparentize(0.88))
-        : (touch.has-hover ? Theme.hover : transparent);
-    accessible-role: button;
-    accessible-label: self.title;
-    accessible-description: self.detail;
-    accessible-action-default => {
-        self.clicked();
-    }
-
-    HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
-        spacing: 12px;
-
-        Rectangle {
-            width: 34px;
-            height: 34px;
-            y: (parent.height - self.height) / 2;
-            border-radius: Theme.radius;
-            background: root.lead ? Theme.accent : Theme.well;
-
-            Icon {
-                commands: root.icon;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-                size: 18px;
-                color: root.lead ? Theme.on-accent : Theme.accent;
-            }
-        }
-
-        VerticalLayout {
-            alignment: center;
-            spacing: 2px;
-            horizontal-stretch: 1;
-
-            Text {
-                text: root.title;
-                font-size: Theme.font;
-                font-weight: 600;
-                color: Theme.text;
-                overflow: elide;
-                accessible-role: none;
-            }
-            if root.detail != "": Text {
-                text: root.detail;
-                font-size: Theme.font-xs;
-                color: Theme.text-muted;
-                overflow: elide;
-                accessible-role: none;
-            }
-        }
-    }
-
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => {
-            root.clicked();
-        }
-    }
-}
 
 // The picture of a recent file: its thumbnail, or a tile with its kind.
 component FileTile inherits Rectangle {
@@ -332,96 +258,19 @@ export component StartLayer inherits Rectangle {
 
             VerticalLayout {
                 // The head: the app, and what the dialog is for.
-                HorizontalLayout {
-                    padding-left: 22px;
-                    padding-right: 12px;
-                    padding-top: 18px;
-                    padding-bottom: 16px;
-                    spacing: 14px;
-
-                    Rectangle {
-                        width: 40px;
-                        height: 40px;
-                        y: (parent.height - self.height) / 2;
-                        border-radius: Theme.radius-lg;
-                        background: Theme.accent.transparentize(0.86);
-
-                        Icon {
-                            commands: Icons.logo;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            size: 24px;
-                            color: Theme.accent;
-                        }
-                    }
-
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 2px;
-                        horizontal-stretch: 1;
-
-                        HorizontalLayout {
-                            spacing: 8px;
-                            alignment: start;
-
-                            Text {
-                                text: "Breadslicer";
-                                font-size: 18px;
-                                font-weight: 700;
-                                color: Theme.text;
-                                vertical-alignment: bottom;
-                            }
-                            if root.version != "": Text {
-                                text: root.version;
-                                font-family: Theme.mono;
-                                font-size: Theme.font-xs;
-                                color: Theme.text-faint;
-                                vertical-alignment: bottom;
-                                accessible-role: none;
-                            }
-                        }
-                        Text {
-                            text: @tr("StartDialog" => "Start something new, or pick up where you left off.");
-                            font-size: Theme.font-sm;
-                            color: Theme.text-muted;
-                            overflow: elide;
-                        }
-                    }
-
+                DialogHead {
+                    icon: Icons.logo;
+                    title: "Breadslicer";
+                    badge: root.version;
+                    subtitle: @tr("StartDialog" => "Start something new, or pick up where you left off.");
                     // Closes the dialog, like Escape.
-                    Rectangle {
-                        width: 30px;
-                        height: 30px;
-                        y: 0;
-                        border-radius: Theme.radius;
-                        background: close-touch.has-hover ? Theme.hover : transparent;
-                        accessible-role: button;
-                        accessible-label: @tr("StartDialog" => "Close");
-                        accessible-action-default => {
-                            root.closed();
-                        }
-
-                        Icon {
-                            commands: Icons.close;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            size: 16px;
-                            color: close-touch.has-hover ? Theme.text : Theme.text-muted;
-                        }
-
-                        close-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => {
-                                root.closed();
-                            }
-                        }
+                    close-label: @tr("StartDialog" => "Close");
+                    close => {
+                        root.closed();
                     }
                 }
 
-                Rectangle {
-                    height: 1px;
-                    background: Theme.border-soft;
-                }
+                DialogRule { }
 
                 HorizontalLayout {
                     vertical-stretch: 1;
@@ -436,17 +285,11 @@ export component StartLayer inherits Rectangle {
                             spacing: 4px;
                             alignment: start;
 
-                            Text {
+                            SectionLabel {
                                 text: @tr("StartDialog" => "START");
-                                font-size: Theme.font-xs;
-                                font-weight: 600;
-                                letter-spacing: 0.8px;
-                                color: Theme.text-faint;
-                                height: 22px;
-                                vertical-alignment: center;
                             }
 
-                            if root.last-name != "": StartAction {
+                            if root.last-name != "": ActionRow {
                                 lead: true;
                                 icon: Icons.history;
                                 title: @tr("StartDialog" => "Reopen last file");
@@ -459,7 +302,7 @@ export component StartLayer inherits Rectangle {
                                 height: 6px;
                             }
 
-                            StartAction {
+                            ActionRow {
                                 icon: Icons.folder;
                                 title: @tr("StartDialog" => "Open project…");
                                 detail: @tr("StartDialog" => "A Breadslicer project (.bread)");
@@ -467,7 +310,7 @@ export component StartLayer inherits Rectangle {
                                     root.open-file(StartOpen.project);
                                 }
                             }
-                            StartAction {
+                            ActionRow {
                                 icon: Icons.import;
                                 title: @tr("StartDialog" => "Import model…");
                                 detail: @tr("StartDialog" => "STL, OBJ or 3MF");
@@ -475,7 +318,7 @@ export component StartLayer inherits Rectangle {
                                     root.open-file(StartOpen.model);
                                 }
                             }
-                            StartAction {
+                            ActionRow {
                                 icon: Icons.plus;
                                 title: @tr("StartDialog" => "New empty scene");
                                 detail: @tr("StartDialog" => "Drop a model on the plate later");
@@ -500,14 +343,8 @@ export component StartLayer inherits Rectangle {
                         spacing: 4px;
                         horizontal-stretch: 1;
 
-                        Text {
+                        SectionLabel {
                             text: @tr("StartDialog" => "RECENT");
-                            font-size: Theme.font-xs;
-                            font-weight: 600;
-                            letter-spacing: 0.8px;
-                            color: Theme.text-faint;
-                            height: 22px;
-                            vertical-alignment: center;
                         }
 
                         if root.recent.length > 0: ScrollView {
@@ -576,10 +413,7 @@ export component StartLayer inherits Rectangle {
                     }
                 }
 
-                Rectangle {
-                    height: 1px;
-                    background: Theme.border-soft;
-                }
+                DialogRule { }
 
                 // The foot: whether the dialog comes back next time.
                 HorizontalLayout {

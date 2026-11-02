@@ -48,6 +48,8 @@ export component ScButton inherits Rectangle {
     in property <ButtonKind> kind: ButtonKind.normal;
     in property <bool> enabled: true;
     in property <length> button-height: 32px;
+    // A ring around the button: what Enter presses.
+    in property <bool> ring;
     callback clicked();
 
     height: self.button-height;
@@ -66,6 +68,16 @@ export component ScButton inherits Rectangle {
         if self.enabled {
             self.clicked();
         }
+    }
+
+    if root.ring: Rectangle {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: Theme.radius + 3px;
+        border-width: 1.5px;
+        border-color: Theme.accent.transparentize(0.45);
     }
 
     layout := HorizontalLayout {

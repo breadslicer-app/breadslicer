@@ -9,10 +9,17 @@
 // owns the queue and the policy: it decides which messages a click outside
 // closes and which offer "Don't show again"; this layer only reports what the
 // person did.
+//
+// The cards speak the start dialog's language (#385): a head with the kind's
+// icon, the title and a line under it, and the close button; the body under
+// a line; the buttons in a foot under another line. Where a card offers
+// several ways to go on, they are rows like the start dialog's, 1 click each.
 
 import { CheckBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "kit/theme.slint";
+import { Icons } from "kit/icons.slint";
 import { ButtonKind, DisclosureChevron, ScButton } from "kit/controls.slint";
+import { ActionRow, DialogHead, DialogRule } from "kit/dialog.slint";
 
 // `diagnostics` is Help > Export Diagnostics (#74); `diagnostic-log` asks
 // before the diagnostic log starts (Preferences > Privacy).
@@ -44,6 +51,13 @@ export struct AppMessage {
     has-scene: bool,
 }
 
+// A paragraph of a card's body.
+component BodyText inherits Text {
+    font-size: Theme.font-sm;
+    color: Theme.text-soft;
+    wrap: word-wrap;
+}
+
 export component MessageLayer inherits Rectangle {
     in property <AppMessage> message;
     in property <bool> open: false;
@@ -66,13 +80,18 @@ export component MessageLayer inherits Rectangle {
     property <bool> details-visible: false;
     // The details were copied since they were last shown.
     property <bool> copied: false;
-    property <length> font-secondary: 0.85rem;
-    property <length> font-footnote: 0.8rem;
-    property <bool> notice: root.message.kind == MessageKind.info || root.message.kind == MessageKind.error;
+    property <MessageKind> kind: root.message.kind;
+    property <bool> notice: root.kind == MessageKind.info || root.kind == MessageKind.error;
+    // A scene change with changes to keep: its ways to go on are rows.
+    property <bool> scene-rows: root.kind == MessageKind.scene-change && root.message.has-unsaved-changes;
+    // A notice of a heading alone has no body.
+    property <bool> has-body: !root.notice || root.message.text != "" || root.message.details != "";
     // The questions whose main answer is to go ahead: Enter gives it.
-    property <MessageAnswer> go-ahead: root.message.kind == MessageKind.diagnostics ? MessageAnswer.export
-        : root.message.kind == MessageKind.diagnostic-log ? MessageAnswer.confirm
+    property <MessageAnswer> go-ahead: root.kind == MessageKind.diagnostics ? MessageAnswer.export
+        : root.kind == MessageKind.diagnostic-log ? MessageAnswer.confirm
         : MessageAnswer.cancel;
+    // Whether Enter's button shows its ring: while the card has the keyboard.
+    property <bool> keyboard: fs.has-focus;
 
     changed serial => {
         root.details-visible = false;
@@ -120,13 +139,16 @@ export component MessageLayer inherits Rectangle {
             width: Math.min(
                 parent.width - 32px,
                 Math.max(
-                    root.message.kind == MessageKind.scene-change ? 500px : root.message.kind == MessageKind.slice-overwrite ? 440px : 520px,
-                    foot.preferred-width + 2 * self.inset));
-            // Down to the buttons as the layout placed them. The layout's
+                    root.kind == MessageKind.diagnostics ? 600px
+                        : root.kind == MessageKind.slice-overwrite ? 480px
+                        : root.kind == MessageKind.diagnostic-log ? 540px
+                        : 520px,
+                    foot.preferred-width));
+            // Down to the foot as the layout placed it. The layout's
             // preferred height can't serve: Slint measures a wrapping text in
             // an `if` element as 1 line, so with long texts the buttons hung
             // below the card's edge.
-            height: foot.y + foot.height + self.inset;
+            height: foot.y + foot.height;
             x: (parent.width - self.width) / 2;
             y: Math.max(16px, (parent.height - self.height) / 2);
             background: Theme.card;
@@ -136,9 +158,6 @@ export component MessageLayer inherits Rectangle {
             drop-shadow-blur: 24px;
             drop-shadow-color: #00000066;
 
-            // Space between the card's edge and what it holds.
-            property <length> inset: 18px;
-
             // A click on the card itself is not a click outside.
             TouchArea {
                 scroll-event(event) => {
@@ -146,128 +165,131 @@ export component MessageLayer inherits Rectangle {
                 }
             }
 
-            body := VerticalLayout {
+            VerticalLayout {
                 // Its own height, not the card's: the card's height comes
-                // from where this layout puts the buttons. At the top: with a
+                // from where this layout puts the foot. At the top: with a
                 // height of its own it would be centred.
                 y: 0;
                 height: self.preferred-height;
-                padding: card.inset;
-                spacing: 16px;
 
-                // Stretched, not packed at the start: the text column takes
-                // the card's width, so the details wrap at it.
-                if root.notice: HorizontalLayout {
-                    spacing: 14px;
-
-                    if root.message.kind == MessageKind.error: Text {
-                        text: "⚠";
-                        font-size: 32px;
-                        color: Theme.warning;
-                        vertical-alignment: top;
-                        horizontal-alignment: center;
-                        width: 44px;
-                        accessible-role: text;
-                        accessible-label: @tr("ErrorDialog" => "Warning");
+                DialogHead {
+                    icon: root.kind == MessageKind.error ? Icons.error
+                        : root.kind == MessageKind.info ? Icons.info
+                        : root.kind == MessageKind.scene-change ? (root.message.has-unsaved-changes ? Icons.save : Icons.file)
+                        : root.kind == MessageKind.slice-overwrite ? Icons.warning
+                        : root.kind == MessageKind.recovery ? Icons.history
+                        : Icons.pulse;
+                    tint: root.kind == MessageKind.error ? Theme.danger : Theme.accent;
+                    title: root.notice ? (root.message.heading != "" ? root.message.heading : root.default-heading)
+                        : root.kind == MessageKind.scene-change ? (root.message.closing ? @tr("ReplaceSceneDialog" => "Close the current scene?") : @tr("ReplaceSceneDialog" => "Replace the current scene?"))
+                        : root.kind == MessageKind.slice-overwrite ? @tr("SliceOverwriteDialog" => "Re-slice this scene?")
+                        : root.kind == MessageKind.recovery ? root.message.heading
+                        : root.kind == MessageKind.diagnostics ? @tr("DiagnosticsDialog" => "Export diagnostics")
+                        : @tr("DiagnosticLogDialog" => "Save a diagnostic log?");
+                    subtitle: root.notice ? root.message.context
+                        : root.kind == MessageKind.scene-change ? (root.message.source-name != "" ? @tr("ReplaceSceneDialog" => "Opening: {}", root.message.source-name)
+                            : root.message.has-unsaved-changes ? @tr("ReplaceSceneDialog" => "The scene has changes that are not saved")
+                            : "")
+                        : root.kind == MessageKind.recovery ? @tr("RecoveryDialog" => "Scenes left with unsaved changes")
+                        : root.kind == MessageKind.diagnostics ? @tr("DiagnosticsDialog" => "A .zip file to attach to a bug report")
+                        : "";
+                    // A file's path must show whole.
+                    subtitle-wraps: true;
+                    close-label: @tr("MessageLayer" => "Close");
+                    close => {
+                        root.answered(MessageAnswer.cancel);
                     }
-                    if root.message.kind == MessageKind.info: Text {
-                        text: "ℹ";
-                        font-size: 32px;
-                        color: Theme.accent;
-                        vertical-alignment: top;
-                        horizontal-alignment: center;
-                        width: 44px;
-                        accessible-role: text;
-                        accessible-label: @tr("InfoDialog" => "Information");
+                }
+
+                DialogRule { }
+
+                // A notice: its text, and its details folded under a toggle.
+                // Stretched, not packed at the start: the text takes the
+                // card's width, so the details wrap at it.
+                if root.notice && root.has-body: VerticalLayout {
+                    padding-left: 22px;
+                    padding-right: 22px;
+                    padding-top: 16px;
+                    padding-bottom: 18px;
+                    spacing: 10px;
+
+                    if root.message.text != "": BodyText {
+                        text: root.message.text;
                     }
 
-                    VerticalLayout {
-                        spacing: 6px;
-                        horizontal-stretch: 1;
+                    // The toggle, and the details folded under it. The
+                    // details are always there, of no height while folded,
+                    // so the Copy link beside the toggle reaches them.
+                    if root.message.details != "": VerticalLayout {
+                        spacing: root.details-visible ? 8px : 0px;
 
-                        Text {
-                            text: root.message.heading != "" ? root.message.heading : root.default-heading;
-                            font-weight: 700;
-                            color: Theme.text;
-                            wrap: word-wrap;
-                        }
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 16px;
 
-                        if root.message.context != "": Text {
-                            text: root.message.context;
-                            font-size: root.font-secondary;
-                            color: Theme.text-muted;
-                            wrap: word-wrap;
-                        }
-
-                        if root.message.text != "": Text {
-                            text: root.message.text;
-                            font-size: root.font-secondary;
-                            color: Theme.text-soft;
-                            wrap: word-wrap;
-                        }
-
-                        // The toggle, and the details folded under it. The
-                        // details are always there, of no height while folded,
-                        // so the Copy link beside the toggle reaches them.
-                        if root.message.details != "": VerticalLayout {
-                            spacing: root.details-visible ? 6px : 0px;
-
-                            HorizontalLayout {
-                                alignment: start;
-                                spacing: 16px;
-
-                                TouchArea {
-                                    width: toggle.preferred-width;
-                                    height: toggle.preferred-height;
-                                    mouse-cursor: pointer;
-                                    toggle := HorizontalLayout {
-                                        spacing: 5px;
-                                        alignment: start;
-                                        DisclosureChevron {
-                                            open: root.details-visible;
-                                            color: Theme.accent;
-                                            size: 9px;
-                                            y: (parent.height - self.height) / 2;
-                                        }
-                                        Text {
-                                            text: root.message.kind == MessageKind.error
-                                                ? (root.details-visible ? @tr("ErrorDialog" => "Hide technical details") : @tr("ErrorDialog" => "Show technical details"))
-                                                : (root.details-visible ? @tr("InfoDialog" => "Hide details") : @tr("InfoDialog" => "Show details"));
-                                            font-size: root.font-footnote;
-                                            color: Theme.accent;
-                                            vertical-alignment: center;
-                                        }
+                            TouchArea {
+                                width: toggle.preferred-width;
+                                height: toggle.preferred-height;
+                                mouse-cursor: pointer;
+                                toggle := HorizontalLayout {
+                                    spacing: 5px;
+                                    alignment: start;
+                                    DisclosureChevron {
+                                        open: root.details-visible;
+                                        color: Theme.accent;
+                                        size: 9px;
+                                        y: (parent.height - self.height) / 2;
                                     }
-
-                                    clicked => {
-                                        root.details-visible = !root.details-visible;
-                                    }
-                                }
-
-                                // Copies the details as text, to paste them in
-                                // a message or an issue.
-                                if root.details-visible: TouchArea {
-                                    width: copy-label.preferred-width;
-                                    height: copy-label.preferred-height;
-                                    mouse-cursor: pointer;
-                                    copy-label := Text {
-                                        text: root.copied ? @tr("InfoDialog" => "Copied") : @tr("InfoDialog" => "Copy details");
-                                        font-size: root.font-footnote;
+                                    Text {
+                                        text: root.kind == MessageKind.error
+                                            ? (root.details-visible ? @tr("ErrorDialog" => "Hide technical details") : @tr("ErrorDialog" => "Show technical details"))
+                                            : (root.details-visible ? @tr("InfoDialog" => "Hide details") : @tr("InfoDialog" => "Show details"));
+                                        font-size: Theme.font-sm;
                                         color: Theme.accent;
                                         vertical-alignment: center;
                                     }
-                                    clicked => {
-                                        details-text.select-all();
-                                        details-text.copy();
-                                        details-text.clear-selection();
-                                        root.copied = true;
-                                    }
+                                }
+
+                                clicked => {
+                                    root.details-visible = !root.details-visible;
                                 }
                             }
 
+                            // Copies the details as text, to paste them in
+                            // a message or an issue.
+                            if root.details-visible: TouchArea {
+                                width: copy-label.preferred-width;
+                                height: copy-label.preferred-height;
+                                mouse-cursor: pointer;
+                                copy-label := Text {
+                                    text: root.copied ? @tr("InfoDialog" => "Copied") : @tr("InfoDialog" => "Copy details");
+                                    font-size: Theme.font-sm;
+                                    color: Theme.accent;
+                                    vertical-alignment: center;
+                                }
+                                clicked => {
+                                    details-text.select-all();
+                                    details-text.copy();
+                                    details-text.clear-selection();
+                                    root.copied = true;
+                                }
+                            }
+                        }
+
+                        // In a well, as the start dialog shows a file.
+                        Rectangle {
+                            visible: root.details-visible;
+                            height: root.details-visible ? details-scroll.height + 16px : 0px;
+                            background: Theme.well;
+                            border-radius: Theme.radius;
+                            border-width: 1px;
+                            border-color: Theme.border-soft;
+
                             details-scroll := ScrollView {
-                                visible: root.details-visible;
-                                height: root.details-visible ? Math.min(details-text.preferred-height, 180px) : 0px;
+                                x: 10px;
+                                y: 8px;
+                                width: parent.width - 20px;
+                                height: Math.min(details-text.preferred-height, 160px);
                                 // A viewport as wide as the view, so the text
                                 // wraps instead of scrolling sideways.
                                 content-width: self.visible-width;
@@ -275,7 +297,8 @@ export component MessageLayer inherits Rectangle {
                                 details-text := TextInput {
                                     width: details-scroll.visible-width;
                                     text: root.message.details;
-                                    font-size: root.font-footnote;
+                                    font-family: Theme.mono;
+                                    font-size: Theme.font-xs;
                                     wrap: word-wrap;
                                     single-line: false;
                                     read-only: true;
@@ -287,110 +310,148 @@ export component MessageLayer inherits Rectangle {
                     }
                 }
 
-                if root.message.kind == MessageKind.scene-change: VerticalLayout {
-                    spacing: 6px;
+                // A scene change with changes to keep: 1 row per way to go
+                // on, saving first.
+                if root.scene-rows: VerticalLayout {
+                    padding: 12px;
+                    spacing: 4px;
 
-                    Text {
-                        text: root.message.closing ? @tr("ReplaceSceneDialog" => "Close the current scene?") : @tr("ReplaceSceneDialog" => "Replace the current scene?");
-                        font-weight: 700;
-                        color: Theme.text;
-                        wrap: word-wrap;
+                    ActionRow {
+                        lead: true;
+                        icon: Icons.save;
+                        title: root.message.save-as-mode ? @tr("ReplaceSceneDialog" => "Save as project…") : @tr("ReplaceSceneDialog" => "Save the project");
+                        detail: root.message.save-as-mode
+                            ? @tr("ReplaceSceneDialog" => "Keep everything in a .bread file first")
+                            : @tr("ReplaceSceneDialog" => "Save the changes to its .bread file first");
+                        clicked => {
+                            root.answered(MessageAnswer.save);
+                        }
                     }
-
-                    if root.message.source-name != "": Text {
-                        text: @tr("ReplaceSceneDialog" => "Opening: {}", root.message.source-name);
-                        font-size: root.font-secondary;
-                        color: Theme.text-muted;
-                        wrap: word-wrap;
+                    Rectangle {
+                        height: 6px;
                     }
-
-                    Text {
-                        text: !root.message.has-unsaved-changes
-                            ? @tr("ReplaceSceneDialog" => "The current scene will be closed.")
-                            : (root.message.save-as-mode
-                                ? @tr(
-                                    "ReplaceSceneDialog"
-                                    => "The current scene will be closed. Save it as a project or export a copy first to keep the changes you've made."
-                                )
-                                : @tr(
-                                    "ReplaceSceneDialog"
-                                    => "The current scene will be closed. Save it or export a copy first to keep the changes you've made."
-                                ));
-                        font-size: root.font-secondary;
-                        color: Theme.text-soft;
-                        wrap: word-wrap;
+                    ActionRow {
+                        icon: Icons.export;
+                        title: @tr("ReplaceSceneDialog" => "Export a copy…");
+                        detail: @tr("ReplaceSceneDialog" => "Save the models as STL, OBJ or 3MF first");
+                        clicked => {
+                            root.answered(MessageAnswer.export);
+                        }
                     }
-                }
-
-                // The scenes a run left unsaved (#18): heading, why, then 1
-                // line per scene.
-                if root.message.kind == MessageKind.recovery: VerticalLayout {
-                    spacing: 6px;
-
-                    Text {
-                        text: root.message.heading;
-                        font-weight: 700;
-                        color: Theme.text;
-                        wrap: word-wrap;
-                    }
-
-                    Text {
-                        text: root.message.text;
-                        font-size: root.font-secondary;
-                        color: Theme.text-soft;
-                        wrap: word-wrap;
-                    }
-
-                    ScrollView {
-                        max-height: 160px;
-                        Text {
-                            text: root.message.context;
-                            font-size: root.font-secondary;
-                            color: Theme.text-muted;
-                            wrap: word-wrap;
+                    ActionRow {
+                        icon: Icons.trash;
+                        tint: Theme.danger;
+                        title: @tr("ReplaceSceneDialog" => "Discard the changes");
+                        detail: root.message.closing
+                            ? @tr("ReplaceSceneDialog" => "Close without saving; the changes are lost")
+                            : @tr("ReplaceSceneDialog" => "Open without saving; the changes are lost");
+                        clicked => {
+                            root.answered(MessageAnswer.discard);
                         }
                     }
                 }
 
-                if root.message.kind == MessageKind.slice-overwrite: VerticalLayout {
-                    spacing: 6px;
+                // A scene change with nothing to keep: what happens.
+                if root.kind == MessageKind.scene-change && !root.message.has-unsaved-changes: VerticalLayout {
+                    padding-left: 22px;
+                    padding-right: 22px;
+                    padding-top: 16px;
+                    padding-bottom: 18px;
 
-                    Text {
-                        text: @tr("SliceOverwriteDialog" => "Re-slice this scene?");
-                        font-weight: 700;
-                        color: Theme.text;
-                        wrap: word-wrap;
+                    BodyText {
+                        text: @tr("ReplaceSceneDialog" => "The current scene will be closed.");
                     }
+                }
 
-                    Text {
+                if root.kind == MessageKind.slice-overwrite: VerticalLayout {
+                    padding-left: 22px;
+                    padding-right: 22px;
+                    padding-top: 16px;
+                    padding-bottom: 18px;
+
+                    BodyText {
                         text: @tr(
                             "SliceOverwriteDialog"
                             => "The geometry or the print settings changed since the last slice. Re-slicing replaces the slice data you already have."
                         );
-                        font-size: root.font-secondary;
-                        color: Theme.text-soft;
-                        wrap: word-wrap;
                     }
                 }
 
-                if root.message.kind == MessageKind.diagnostics: VerticalLayout {
+                // The scenes a run left unsaved (#18), 1 line each, then the
+                // ways to go on.
+                if root.kind == MessageKind.recovery: VerticalLayout {
+                    padding: 12px;
+                    spacing: 4px;
+
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-bottom: 8px;
+
+                        Rectangle {
+                            background: Theme.well;
+                            border-radius: Theme.radius;
+                            border-width: 1px;
+                            border-color: Theme.border-soft;
+
+                            VerticalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+
+                                scenes-scroll := ScrollView {
+                                    height: Math.min(scenes-text.preferred-height, 120px);
+                                    // As wide as the view, so the lines
+                                    // wrap instead of scrolling sideways.
+                                    content-width: self.visible-width;
+                                    scenes-text := Text {
+                                        width: scenes-scroll.visible-width;
+                                        text: root.message.context;
+                                        font-size: Theme.font-sm;
+                                        color: Theme.text-soft;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    ActionRow {
+                        lead: true;
+                        icon: Icons.history;
+                        title: @tr("RecoveryDialog" => "Recover the scenes");
+                        detail: @tr("RecoveryDialog" => "Each one opens with its changes, to keep working on it");
+                        clicked => {
+                            root.answered(MessageAnswer.confirm);
+                        }
+                    }
+                    Rectangle {
+                        height: 6px;
+                    }
+                    ActionRow {
+                        icon: Icons.trash;
+                        tint: Theme.danger;
+                        title: @tr("RecoveryDialog" => "Discard them");
+                        detail: @tr("RecoveryDialog" => "Their changes are deleted for good");
+                        clicked => {
+                            root.answered(MessageAnswer.discard);
+                        }
+                    }
+                }
+
+                if root.kind == MessageKind.diagnostics: VerticalLayout {
+                    padding-left: 22px;
+                    padding-right: 22px;
+                    padding-top: 14px;
+                    padding-bottom: 16px;
                     spacing: 6px;
 
-                    Text {
-                        text: @tr("DiagnosticsDialog" => "Export diagnostics");
-                        font-weight: 700;
-                        color: Theme.text;
-                        wrap: word-wrap;
-                    }
-
-                    Text {
+                    BodyText {
                         text: @tr("DiagnosticsDialog" => "Saves a .zip file to attach to a bug report. It holds:");
-                        font-size: root.font-secondary;
-                        color: Theme.text-soft;
-                        wrap: word-wrap;
                     }
 
-                    // The glyph is kept out of the translatable strings so
+                    // The bullet is kept out of the translatable strings so
                     // translators can't drop it.
                     for item in [
                         @tr("DiagnosticsDialog" => "What the app did in this session: steps, times and errors, without models, file names or anything you typed."),
@@ -398,18 +459,24 @@ export component MessageLayer inherits Rectangle {
                         @tr("DiagnosticsDialog" => "The app version, the system, the graphics card and the screens."),
                         @tr("DiagnosticsDialog" => "Your preferences, without folders."),
                         @tr("DiagnosticsDialog" => "The scene in numbers: models, triangles, supports and hollowing."),
-                    ]: Text {
-                        text: "•  " + item;
-                        font-size: root.font-secondary;
-                        color: Theme.text-soft;
-                        wrap: word-wrap;
+                    ]: HorizontalLayout {
+                        padding-left: 4px;
+                        spacing: 8px;
+
+                        Text {
+                            text: "•";
+                            font-size: Theme.font-sm;
+                            color: Theme.accent;
+                            accessible-role: none;
+                        }
+                        BodyText {
+                            text: item;
+                            horizontal-stretch: 1;
+                        }
                     }
 
-                    Text {
+                    BodyText {
                         text: @tr("DiagnosticsDialog" => "Your user name and your user folder are replaced in every file.");
-                        font-size: root.font-secondary;
-                        color: Theme.text-soft;
-                        wrap: word-wrap;
                     }
 
                     if root.message.has-scene: CheckBox {
@@ -417,52 +484,47 @@ export component MessageLayer inherits Rectangle {
                         checked <=> root.include-models;
                     }
 
-                    Text {
+                    BodyText {
                         text: @tr("DiagnosticsDialog" => "Breadslicer never sends us anything. The file stays on your computer, and only reaches us if you send it yourself.");
-                        font-size: root.font-secondary;
                         font-weight: 600;
                         color: Theme.text;
-                        wrap: word-wrap;
                     }
                 }
 
-                if root.message.kind == MessageKind.diagnostic-log: VerticalLayout {
-                    spacing: 6px;
+                if root.kind == MessageKind.diagnostic-log: VerticalLayout {
+                    padding-left: 22px;
+                    padding-right: 22px;
+                    padding-top: 14px;
+                    padding-bottom: 16px;
+                    spacing: 8px;
 
-                    Text {
-                        text: @tr("DiagnosticLogDialog" => "Save a diagnostic log?");
-                        font-weight: 700;
-                        color: Theme.text;
-                        wrap: word-wrap;
-                    }
-
-                    Text {
+                    BodyText {
                         text: @tr(
                             "DiagnosticLogDialog"
                             => "Until you close Breadslicer, closing included, it writes what it does to the logs folder on this computer: steps, times and errors, without models, file names or anything you type."
                         );
-                        font-size: root.font-secondary;
-                        color: Theme.text-soft;
-                        wrap: word-wrap;
                     }
 
-                    Text {
+                    BodyText {
                         text: @tr("DiagnosticLogDialog" => "The next time you open Breadslicer, the log turns off by itself.");
-                        font-size: root.font-secondary;
-                        color: Theme.text-soft;
-                        wrap: word-wrap;
                     }
 
-                    Text {
+                    BodyText {
                         text: @tr("DiagnosticLogDialog" => "Breadslicer never sends us anything. The log stays on your computer, and only reaches us if you send it yourself.");
-                        font-size: root.font-secondary;
                         font-weight: 600;
                         color: Theme.text;
-                        wrap: word-wrap;
                     }
                 }
 
+                if root.has-body: DialogRule { }
+
+                // "Don't show again" on the left, the buttons on the right;
+                // the one Enter presses has a ring.
                 foot := HorizontalLayout {
+                    padding-left: 18px;
+                    padding-right: 18px;
+                    padding-top: 10px;
+                    padding-bottom: 10px;
                     spacing: 8px;
 
                     if root.message.can-silence: CheckBox {
@@ -470,104 +532,95 @@ export component MessageLayer inherits Rectangle {
                         checked <=> root.silence;
                     }
 
+                    // What Escape and Enter do with the scenes.
+                    if root.kind == MessageKind.recovery: Text {
+                        text: @tr("RecoveryDialog" => "Breadslicer asks again the next time it opens.");
+                        font-size: Theme.font-xs;
+                        color: Theme.text-faint;
+                        vertical-alignment: center;
+                    }
+
                     Rectangle {
                         horizontal-stretch: 1;
                     }
 
                     if root.notice: ScButton {
-                        text: root.message.kind == MessageKind.error ? @tr("ErrorDialog" => "Close") : @tr("InfoDialog" => "Close");
+                        text: root.kind == MessageKind.error ? @tr("ErrorDialog" => "Close") : @tr("InfoDialog" => "Close");
                         kind: ButtonKind.primary;
+                        ring: root.keyboard;
                         clicked => {
                             root.answered(MessageAnswer.close);
                         }
                     }
 
-                    if root.message.kind == MessageKind.scene-change: ScButton {
+                    if root.kind == MessageKind.scene-change && !root.message.has-unsaved-changes: ScButton {
                         text: root.message.closing ? @tr("ReplaceSceneDialog" => "Discard & Close") : @tr("ReplaceSceneDialog" => "Discard & Open");
                         clicked => {
                             root.answered(MessageAnswer.discard);
                         }
                     }
 
-                    if root.message.kind == MessageKind.scene-change && root.message.has-unsaved-changes: ScButton {
-                        text: root.message.closing
-                            ? (root.message.save-as-mode ? @tr("ReplaceSceneDialog" => "Save As & Close…") : @tr("ReplaceSceneDialog" => "Save & Close"))
-                            : (root.message.save-as-mode ? @tr("ReplaceSceneDialog" => "Save As & Open…") : @tr("ReplaceSceneDialog" => "Save & Open"));
+                    // With rows to pick from, Cancel steps back: no accent.
+                    if root.kind == MessageKind.scene-change: ScButton {
+                        text: @tr("ReplaceSceneDialog" => "Cancel");
+                        kind: root.scene-rows ? ButtonKind.normal : ButtonKind.primary;
+                        ring: root.keyboard;
                         clicked => {
-                            root.answered(MessageAnswer.save);
+                            root.answered(MessageAnswer.cancel);
                         }
                     }
 
-                    if root.message.kind == MessageKind.scene-change && root.message.has-unsaved-changes: ScButton {
-                        text: root.message.closing ? @tr("ReplaceSceneDialog" => "Export & Close…") : @tr("ReplaceSceneDialog" => "Export & Open…");
-                        clicked => {
-                            root.answered(MessageAnswer.export);
-                        }
-                    }
-
-                    if root.message.kind == MessageKind.slice-overwrite: ScButton {
+                    if root.kind == MessageKind.slice-overwrite: ScButton {
                         text: @tr("SliceOverwriteDialog" => "Re-slice");
                         clicked => {
                             root.answered(MessageAnswer.confirm);
                         }
                     }
 
-                    if root.message.kind == MessageKind.scene-change: ScButton {
-                        text: @tr("ReplaceSceneDialog" => "Cancel");
-                        kind: ButtonKind.primary;
-                        clicked => {
-                            root.answered(MessageAnswer.cancel);
-                        }
-                    }
-
-                    if root.message.kind == MessageKind.recovery: ScButton {
-                        text: @tr("RecoveryDialog" => "Discard");
-                        clicked => {
-                            root.answered(MessageAnswer.discard);
-                        }
-                    }
-
-                    if root.message.kind == MessageKind.recovery: ScButton {
-                        text: @tr("RecoveryDialog" => "Recover");
-                        kind: ButtonKind.primary;
-                        clicked => {
-                            root.answered(MessageAnswer.confirm);
-                        }
-                    }
-
-                    if root.message.kind == MessageKind.slice-overwrite: ScButton {
+                    if root.kind == MessageKind.slice-overwrite: ScButton {
                         text: @tr("SliceOverwriteDialog" => "Cancel");
                         kind: ButtonKind.primary;
+                        ring: root.keyboard;
                         clicked => {
                             root.answered(MessageAnswer.cancel);
                         }
                     }
 
-                    if root.message.kind == MessageKind.diagnostics: ScButton {
+                    if root.kind == MessageKind.recovery: ScButton {
+                        text: @tr("RecoveryDialog" => "Decide later");
+                        ring: root.keyboard;
+                        clicked => {
+                            root.answered(MessageAnswer.cancel);
+                        }
+                    }
+
+                    if root.kind == MessageKind.diagnostics: ScButton {
                         text: @tr("DiagnosticsDialog" => "Cancel");
                         clicked => {
                             root.answered(MessageAnswer.cancel);
                         }
                     }
 
-                    if root.message.kind == MessageKind.diagnostics: ScButton {
+                    if root.kind == MessageKind.diagnostics: ScButton {
                         text: @tr("DiagnosticsDialog" => "Save…");
                         kind: ButtonKind.primary;
+                        ring: root.keyboard;
                         clicked => {
                             root.answered(MessageAnswer.export);
                         }
                     }
 
-                    if root.message.kind == MessageKind.diagnostic-log: ScButton {
+                    if root.kind == MessageKind.diagnostic-log: ScButton {
                         text: @tr("DiagnosticLogDialog" => "Cancel");
                         clicked => {
                             root.answered(MessageAnswer.cancel);
                         }
                     }
 
-                    if root.message.kind == MessageKind.diagnostic-log: ScButton {
+                    if root.kind == MessageKind.diagnostic-log: ScButton {
                         text: @tr("DiagnosticLogDialog" => "Turn on");
                         kind: ButtonKind.primary;
+                        ring: root.keyboard;
                         clicked => {
                             root.answered(MessageAnswer.confirm);
                         }

@@ -24,6 +24,7 @@ const INSPECTORS: &str = include_str!("../ui/workspace/inspectors.slint");
 const LAYER_VIEW: &str = include_str!("../ui/workspace/layer-view.slint");
 const HOLLOW_RUN: &str = include_str!("hollow_run.rs");
 const START_DIALOG: &str = include_str!("../ui/start-dialog.slint");
+const MESSAGE_LAYER: &str = include_str!("../ui/message-layer.slint");
 const RECENT_FILES: &str = include_str!("recent_files.rs");
 
 /// The Rust sources whose texts the Transform, Supports and Slice tabs show:
@@ -441,6 +442,22 @@ fn every_text_of_the_start_dialog_has_spanish() {
     let (missing, found) = untranslated_calls(&spanish, "recent_files.rs", RECENT_FILES);
     assert!(found >= 3, "recent_files.rs: {found} texts found");
     untranslated.extend(missing);
+    assert!(untranslated.is_empty(), "no Spanish for {untranslated:#?}");
+}
+
+/// Every message card speaks Spanish (#385), the texts of its rows and of its
+/// head included.
+#[test]
+fn every_text_of_the_message_cards_has_spanish() {
+    let spanish = spanish();
+    let texts = slint_texts(MESSAGE_LAYER);
+    // A check that finds nothing checks nothing.
+    assert!(texts.len() >= 55, "{} texts found", texts.len());
+    let untranslated: Vec<String> = texts
+        .iter()
+        .filter(|text| !text.has_spanish(&spanish))
+        .map(|text| format!("{:?} => {:?}", text.context, text.message))
+        .collect();
     assert!(untranslated.is_empty(), "no Spanish for {untranslated:#?}");
 }
 
