@@ -41,6 +41,7 @@ mod material_form;
 mod mesh_check;
 mod mesh_health;
 mod mesh_loader;
+mod model_import;
 mod orient_run;
 mod pending_load;
 mod preferences_bus;
@@ -90,6 +91,8 @@ mod tests_bread_roundtrip;
 mod tests_mesh_loader;
 #[cfg(test)]
 mod tests_message_cards;
+#[cfg(test)]
+mod tests_model_import;
 #[cfg(test)]
 mod tests_paste_timing;
 #[cfg(test)]
