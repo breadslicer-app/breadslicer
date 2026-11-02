@@ -293,6 +293,10 @@ pub struct Renderer {
     /// The world box of each leaf, for the out-of-volume warning; emptied on
     /// every scene install.
     world_boxes: WorldBoxes,
+    /// Buffers of meshes uploaded on a worker for models about to join the
+    /// scene (#391), for the next upload to take instead of uploading them on
+    /// the window's thread.
+    adopted: scene_upload::UploadedMeshes,
     overlay: overlay::OverlaySlot,
     target_manager: TargetManager,
 }
@@ -373,6 +377,7 @@ impl Renderer {
             pipelines,
             scene: None,
             world_boxes: WorldBoxes::default(),
+            adopted: scene_upload::UploadedMeshes::default(),
             overlay: overlay::OverlaySlot::default(),
             target_manager: TargetManager {
                 msaa: None,
@@ -391,6 +396,7 @@ impl Renderer {
 
     pub fn clear_scene(&mut self) {
         self.scene = None;
+        self.adopted = scene_upload::UploadedMeshes::default();
         self.world_boxes.clear();
         self.target_manager.msaa = None;
         self.target_manager.targets = None;
@@ -428,11 +434,12 @@ impl Renderer {
         // Released before the build, but for the buffers of the meshes the new
         // scene still draws, so the old and the new scene never occupy device
         // memory at the same time.
-        let uploaded = self
+        let mut uploaded = self
             .scene
             .take()
             .map(|installed| installed.gpu.into_uploaded())
             .unwrap_or_default();
+        uploaded.absorb(std::mem::take(&mut self.adopted));
         // An empty model uniform buffer would fail bind-group validation, so a
         // leafless graph gets no scene at all.
         let built = renderable_leaf_count(graph).and_then(|count| {
@@ -478,6 +485,19 @@ impl Renderer {
             return false;
         }
         self.attach_scene(gpu);
+        true
+    }
+
+    /// Keeps the mesh buffers of `gpu`, built on a worker for models about to
+    /// join the scene, for the next [`Self::upload_scene`] to take instead of
+    /// uploading those meshes again (#391). Returns `false`, keeping nothing,
+    /// when `gpu` was built on another device or the device is lost: the
+    /// upload then builds them itself.
+    pub fn adopt_meshes(&mut self, gpu: GpuScene) -> bool {
+        if self.core.device_token != gpu.device_token() || self.core.device_loss.is_lost() {
+            return false;
+        }
+        self.adopted.absorb(gpu.into_uploaded());
         true
     }
 

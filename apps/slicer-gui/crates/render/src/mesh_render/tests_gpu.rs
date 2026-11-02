@@ -1253,6 +1253,77 @@ fn an_upload_after_a_paste_reuses_the_buffers_already_uploaded() {
     assert!(!objects[2].shares_buffers_with(&objects[0]));
 }
 
+/// The buffers of meshes uploaded on a worker for models about to join the
+/// scene (#391) are the ones the next upload draws them with; the meshes it
+/// then no longer draws are let go.
+#[test]
+fn an_upload_takes_the_buffers_adopted_for_joining_meshes() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut graph = Scene::new();
+    let rid = graph.add_mesh_resource_arc(Arc::new(wedge_mesh()));
+    paste_resource_leaf(&mut graph, rid, 0.0, 0.0);
+    let mut renderer = renderer_on(&device, &queue);
+    renderer.upload_scene(&graph).expect("upload");
+
+    // What the worker read and uploaded, with the same mesh.
+    let joining = Arc::new(wedge_mesh());
+    let mut read = Scene::new();
+    let read_rid = read.add_mesh_resource_arc(Arc::clone(&joining));
+    paste_resource_leaf(&mut read, read_rid, 0.0, 0.0);
+    let built = GpuScene::build(
+        &device,
+        renderer.device_token(),
+        &read,
+        &DeviceLoss::default(),
+    )
+    .expect("built");
+    let probe = built.objects()[0].buffers_for_test();
+    assert!(renderer.adopt_meshes(built));
+
+    let other = graph.add_mesh_resource_arc(joining);
+    paste_resource_leaf(&mut graph, other, 20.0, 0.0);
+    renderer.upload_scene(&graph).expect("upload");
+    let objects = installed_objects(&renderer);
+    assert_eq!(objects.len(), 2);
+    assert!(Arc::ptr_eq(&objects[1].buffers_for_test(), &probe));
+
+    // A mesh adopted but never drawn is let go at the next upload.
+    let unused = Arc::new(wedge_mesh());
+    let mut read = Scene::new();
+    let read_rid = read.add_mesh_resource_arc(Arc::clone(&unused));
+    paste_resource_leaf(&mut read, read_rid, 0.0, 0.0);
+    let built = GpuScene::build(
+        &device,
+        renderer.device_token(),
+        &read,
+        &DeviceLoss::default(),
+    )
+    .expect("built");
+    let probe = built.objects()[0].buffers_for_test();
+    assert!(renderer.adopt_meshes(built));
+    renderer.upload_scene(&graph).expect("upload");
+    assert_eq!(Arc::strong_count(&probe), 1);
+}
+
+/// Buffers built on another device are not adopted.
+#[test]
+fn buffers_of_another_device_are_not_adopted() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut read = Scene::new();
+    let rid = read.add_mesh_resource_arc(Arc::new(wedge_mesh()));
+    paste_resource_leaf(&mut read, rid, 0.0, 0.0);
+    let mut renderer = renderer_on(&device, &queue);
+    let built = GpuScene::build(&device, DeviceToken::next(), &read, &DeviceLoss::default())
+        .expect("built");
+    assert!(!renderer.adopt_meshes(built));
+}
+
 /// The buffers of a mesh the scene no longer draws are released at the next
 /// upload, and a mesh drawn again after a replacement is uploaded afresh.
 #[test]

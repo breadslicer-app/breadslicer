@@ -59,7 +59,8 @@ use crate::mesh_check::show_card;
 use crate::mesh_loader::{LoadDispatch, decide_load_dispatch, start_load_with_ticket};
 use crate::mesh_render::{DeviceLoss, RenderError, RendererInitError, SceneRender, StageRefusal};
 use crate::model_import::{
-    self, ImportJob, PreparedModels, add_to_scene, spawn_import, spawn_placement,
+    self, ImportJob, OpeningJob, PreparedModels, WorkerDevice, add_to_scene, spawn_import,
+    spawn_opening, spawn_placement,
 };
 use crate::pending_load::PendingLoad;
 use crate::picking;
@@ -69,7 +70,7 @@ use crate::preferences_bus::PreferencesSnapshot;
 use crate::print_file_preview;
 use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneEvent};
-use crate::scene_loader::{Finished, PreparedScene, SceneLoader};
+use crate::scene_loader::{Finished, LoadTicket, PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
 use crate::support_persist::install_sets;
 use sc_scene::SceneError;
@@ -327,6 +328,12 @@ impl ViewportController {
     #[cfg(test)]
     pub(crate) fn redraw_owed_for_test(&self) -> bool {
         self.render.redraw_owed()
+    }
+
+    /// Whether the renderer still owes the live scene an upload.
+    #[cfg(test)]
+    pub(crate) fn upload_owed_for_test(&self) -> bool {
+        self.render.frame().upload_owed()
     }
 
     #[cfg(test)]
@@ -1160,20 +1167,74 @@ impl ViewportController {
     }
 
     /// Opens the model files `paths` (#384). With a scene open they join it,
-    /// on free room of the plate, as one undo step. Without one, the first
-    /// opens a scene as any file does, and the others join it once it is
-    /// open, as part of the opening.
+    /// on free room of the plate, as one undo step. Without one, they open
+    /// one together (#391): the first file read is the scene, as it opens
+    /// alone, the others join it, as part of the opening, and the window
+    /// shows them all at once.
     pub(crate) fn open_models(&self, paths: Vec<PathBuf>) {
-        let mut paths = paths.into_iter();
-        let Some(first) = paths.next() else {
-            return;
-        };
-        if self.session.document().is_loaded() {
-            self.start_import(std::iter::once(first).chain(paths).collect(), true);
+        if paths.is_empty() {
             return;
         }
-        *self.queued_imports.borrow_mut() = paths.collect();
-        self.dispatch_load(first);
+        if self.session.document().is_loaded() {
+            self.start_import(paths, true);
+            return;
+        }
+        let loader = self.session.loader();
+        if decide_load_dispatch(loader.graphics_unavailable()) == LoadDispatch::Queue {
+            // Pre-first-paint: the first waits for the device as any file
+            // does, and the others with it, in the window's queue.
+            let mut paths = paths.into_iter();
+            if let Some(first) = paths.next() {
+                *self.queued_imports.borrow_mut() = paths.collect();
+                self.session.pending_load().queue(first);
+            }
+            return;
+        }
+        let Some(ticket) = loader.begin_load() else {
+            // A drop onto a busy window is silently ignored.
+            return;
+        };
+        self.start_opening(ticket, paths);
+    }
+
+    /// Opens `paths`, never empty, in place of the scene: one file as any
+    /// file opens, several together as one scene, read on one worker.
+    fn start_opening(&self, ticket: LoadTicket, paths: Vec<PathBuf>) {
+        let loader = self.session.loader();
+        let volume = self.session.build_volume();
+        let device = loader.gpu_snapshot();
+        let (Some((device, token, _queue)), [_, _, ..]) = (device, paths.as_slice()) else {
+            // One file; or no device, which the load of the first reports,
+            // as it would for that file alone.
+            if let Some(first) = paths.into_iter().next() {
+                start_load_with_ticket(ticket, first, loader, volume);
+            }
+            return;
+        };
+        crate::breadcrumbs::started("load");
+        crate::breadcrumbs::note(&format!("load: {} files together", paths.len()));
+        let job = OpeningJob {
+            paths,
+            plate: crate::arrange_run::plate_of(&volume),
+            build_volume: volume.volume(),
+            revision: self.session.document().scene_revision(),
+            device: WorkerDevice {
+                device,
+                token,
+                loss: loader.device_loss(),
+            },
+        };
+        loader.begin_progress_ui();
+        spawn_opening(ticket, job, loader.progress_sink());
+    }
+
+    /// Starts the load `pending` once the window has a device, with the
+    /// files queued to open with it.
+    fn start_pending_load(&self, pending: PathBuf) {
+        let queued = std::mem::take(&mut *self.queued_imports.borrow_mut());
+        if let Some(ticket) = self.session.loader().begin_load() {
+            self.start_opening(ticket, std::iter::once(pending).chain(queued).collect());
+        }
     }
 
     /// Reads `paths` on a worker, to join the open scene; recorded as an
@@ -1187,6 +1248,13 @@ impl ViewportController {
         let volume = self.session.build_volume();
         crate::breadcrumbs::started("import");
         crate::breadcrumbs::note(&format!("import: {} file(s)", paths.len()));
+        let device = loader
+            .gpu_snapshot()
+            .map(|(device, token, _queue)| WorkerDevice {
+                device,
+                token,
+                loss: loader.device_loss(),
+            });
         let job = ImportJob {
             paths,
             standing: crate::arrange_run::standing_bodies(document),
@@ -1194,32 +1262,20 @@ impl ViewportController {
             build_volume: volume.volume(),
             revision: document.scene_revision(),
             recorded,
+            device,
         };
         loader.begin_progress_ui();
         spawn_import(ticket, job, loader.progress_sink());
     }
 
-    /// The files queued behind the load that just ended join the scene it
-    /// opened; when it failed, the next of them opens one.
-    fn continue_queued_imports(&self) {
-        let queued = std::mem::take(&mut *self.queued_imports.borrow_mut());
-        if queued.is_empty() {
-            return;
-        }
-        if self.session.document().is_loaded() {
-            self.start_import(queued, false);
-        } else {
-            self.open_models(queued);
-        }
-    }
-
     /// Adds the models an import read to the scene, selects them and says
     /// what could not be read or does not fit.
-    fn finish_import(&self, models: PreparedModels) {
+    fn finish_import(&self, mut models: PreparedModels) {
         let document = self.session.document();
         // The plate changed while the files were read: they are placed
         // again, off this thread, against it as it stands now.
         if document.scene_revision() != models.revision
+            && !models.files.is_empty()
             && let Some(ticket) = self.session.loader().begin_load()
         {
             crate::breadcrumbs::note("import: the plate changed, placed again");
@@ -1241,6 +1297,13 @@ impl ViewportController {
             ),
         );
         self.on_modal_transform_finish(false);
+        // The meshes the worker uploaded, for the upload the added models owe
+        // to take instead of uploading them on this thread.
+        if let Some(renderer) = self.render.renderer_cell().borrow_mut().as_mut() {
+            for meshes in models.meshes.drain(..) {
+                renderer.adopt_meshes(meshes);
+            }
+        }
         let placements = models.placements.clone();
         match add_to_scene(document, &models.files, &placements, models.recorded) {
             Ok(added) if !added.is_empty() => {
@@ -1264,7 +1327,11 @@ impl ViewportController {
             Err(error) => self.show_edit_rejected(error),
         }
         self.report_import_failures(&models.failures);
-        let left_off = model_import::left_off(&models, &placements);
+        self.report_left_off(model_import::left_off(&models, &placements));
+    }
+
+    /// Says which files of an import do not fit on the plate.
+    fn report_left_off(&self, left_off: Vec<String>) {
         if !left_off.is_empty() {
             let count = left_off.len();
             self.session.dialogs().show_info(move || InfoTexts {
@@ -1322,14 +1389,9 @@ impl ViewportController {
                 self.finish_import(models);
                 return;
             }
-            Some(Finished::Failed) => {
-                // A first file that failed to open: the next queued one opens
-                // the scene.
-                self.continue_queued_imports();
-                return;
-            }
-            // Nothing, or a load dropped by a close, which left none queued.
-            None => return,
+            // The file could not be opened, and the error dialog is up;
+            // nothing, or a load dropped by a close.
+            Some(Finished::Failed) | None => return,
         };
         crate::breadcrumbs::finished("load", "ok");
         let PreparedScene {
@@ -1341,6 +1403,7 @@ impl ViewportController {
             mesh_verdicts,
             restored_supports,
             restored_hollows,
+            joined,
             ..
         } = prepared;
 
@@ -1436,7 +1499,13 @@ impl ViewportController {
         } else {
             self.render.update_frame(FrameState::with_upload_owed);
         }
-        self.continue_queued_imports();
+        // The models opened together with it (#391) are selected, and the
+        // files that could not be read or do not fit are named.
+        if !joined.models.is_empty() {
+            document.set_selection(Selection::of(joined.models.iter().copied().map(LeafId)));
+        }
+        self.report_import_failures(&joined.failures);
+        self.report_left_off(joined.left_off);
     }
 
     /// Returns the selection as its pre-order leaf index in the live graph.
@@ -3030,15 +3099,8 @@ impl ViewportController {
                 message: err.to_string().into(),
                 details: err.source.to_string().into(),
             });
-        if let Some(path) = self.session.pending_load().take()
-            && let Some(ticket) = self.session.loader().begin_load()
-        {
-            start_load_with_ticket(
-                ticket,
-                path,
-                self.session.loader(),
-                self.session.build_volume(),
-            );
+        if let Some(path) = self.session.pending_load().take() {
+            self.start_pending_load(path);
         }
     }
 
@@ -3060,15 +3122,8 @@ impl ViewportController {
         // which is rare but possible when a teardown -> setup cycle races a
         // click on Open; the queued path is then dropped, as
         // `AppState::dispatch_path_to_loader` drops a path for a busy window.
-        if let Some(path) = self.session.pending_load().take()
-            && let Some(ticket) = self.session.loader().begin_load()
-        {
-            start_load_with_ticket(
-                ticket,
-                path,
-                self.session.loader(),
-                self.session.build_volume(),
-            );
+        if let Some(path) = self.session.pending_load().take() {
+            self.start_pending_load(path);
         }
     }
 

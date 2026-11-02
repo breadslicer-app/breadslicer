@@ -185,6 +185,11 @@ impl UploadedMeshes {
             .any(|smooth| self.get(MeshKey { mesh, smooth }).is_some())
     }
 
+    /// Takes in the entries of `other`, built on the same device.
+    pub(super) fn absorb(&mut self, other: UploadedMeshes) {
+        self.entries.extend(other.entries);
+    }
+
     /// Keeps only the entries of meshes `graph` draws, the way it draws them.
     pub(super) fn retain_drawn(&mut self, graph: &Scene) -> Result<()> {
         let mut drawn: HashSet<MeshKey> = HashSet::new();

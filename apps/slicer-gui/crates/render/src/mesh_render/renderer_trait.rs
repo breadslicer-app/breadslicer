@@ -32,6 +32,12 @@ pub trait MeshRenderer {
     /// the caller falls back to [`MeshRenderer::upload_scene`].
     fn install_scene(&mut self, gpu: GpuScene) -> bool;
 
+    /// Keep the mesh buffers of a [`GpuScene`] built on a worker for
+    /// models about to join the scene, for the next
+    /// [`MeshRenderer::upload_scene`] to reuse. Returns `false`, keeping
+    /// nothing, when it was built on another device.
+    fn adopt_meshes(&mut self, gpu: GpuScene) -> bool;
+
     /// World-space AABB of the currently installed scene, or `None`
     /// when no scene has been installed yet.
     fn scene_bounds(&self) -> Option<(Vec3, Vec3)>;
@@ -104,6 +110,10 @@ impl MeshRenderer for Renderer {
 
     fn install_scene(&mut self, gpu: GpuScene) -> bool {
         Renderer::install_scene(self, gpu)
+    }
+
+    fn adopt_meshes(&mut self, gpu: GpuScene) -> bool {
+        Renderer::adopt_meshes(self, gpu)
     }
 
     fn scene_bounds(&self) -> Option<(Vec3, Vec3)> {
