@@ -256,6 +256,11 @@ export component MainWindow inherits Window {
     in property <string> support-raft-clash-message;
     in property <string> support-raft-lift-label;
     callback support-raft-lift-requested();
+    // Generate lifts the models resting on the plate first (#389): the
+    // setting, its box's text, and a click on the box.
+    in property <bool> support-lift-on-plate;
+    in property <string> support-lift-on-plate-label;
+    callback support-lift-on-plate-toggled(bool);
     callback support-raft-off-requested();
     callback support-raft-ignore-requested();
     // The Supports tab manual tool: 0 none, 1 add a support where the model
@@ -1926,6 +1931,11 @@ export component MainWindow inherits Window {
                             zone-summary: root.support-zone-summary;
                             raft-clash-message: root.support-raft-clash-message;
                             raft-lift-label: root.support-raft-lift-label;
+                            lift-on-plate: root.support-lift-on-plate;
+                            lift-on-plate-label: root.support-lift-on-plate-label;
+                            lift-on-plate-toggled(on) => {
+                                root.support-lift-on-plate-toggled(on);
+                            }
                             raft-lift => {
                                 root.support-raft-lift-requested();
                             }

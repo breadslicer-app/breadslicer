@@ -58,9 +58,12 @@ use slint::ComponentHandle;
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey};
 use crate::i18n::ctr;
 use crate::mesh_render::{OverlayMesh, OverlayTint};
-use crate::preferences_bus::PreferencesBus;
+use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::print_selection::PrintDefaults;
-use crate::raft_clash::{RaftClash, lift_edit, lowest_model_mm, raft_clash};
+use crate::raft_clash::{
+    RaftClash, lift_edit, lowest_model_after_lift_mm, raft_clash, resting_lift_edit,
+    support_lift_mm,
+};
 use crate::scene_document::{
     SceneDocument, SceneEdit, SceneEvent, SceneRevision, SceneSubscription, SupportsWanted,
     leaf_mesh_swap,
@@ -102,17 +105,24 @@ const SPECULATE_SETTLE: Duration = Duration::from_millis(1500);
 
 /// Supports generated ahead of a Generate press, for the scene and request
 /// they were made for. A request is told apart by its printer figures and
-/// options (`ahead_key`).
+/// options (`ahead_key`). Each run carries the lift of the models resting on the plate it was
+/// generated for (#389), which a Generate press makes with the paste.
 #[derive(Default)]
 struct Ahead {
-    running: Option<(JobHandle<DfSupportOutcome>, SceneRevision, String)>,
-    ready: Option<(SceneRevision, String, DfSupportOutcome)>,
+    running: Option<(
+        JobHandle<DfSupportOutcome>,
+        SceneRevision,
+        String,
+        Option<SceneEdit>,
+    )>,
+    ready: Option<(SceneRevision, String, DfSupportOutcome, Option<SceneEdit>)>,
 }
 
-/// What tells two requests apart for [`Ahead`].
-fn ahead_key(request: &DfSupportRequest) -> String {
+/// What tells two requests apart for [`Ahead`], with whether models resting
+/// on the plate are lifted first (#389).
+fn ahead_key(request: &DfSupportRequest, lift_on_plate: bool) -> String {
     format!(
-        "{:?}|{:?}|{:?}|{:?}",
+        "{:?}|{:?}|{:?}|{:?}|{lift_on_plate}",
         request.layer_height_mm, request.pixel_pitch_mm, request.options, request.models
     )
 }
@@ -141,6 +151,16 @@ pub(crate) struct DfSupportRun {
     // The scene the run was started on: a run that finishes on edited
     // geometry is discarded rather than pasted.
     started_on: RefCell<Option<SceneRevision>>,
+    /// The lift of the models resting on the plate that the run in flight
+    /// was generated for (#389), not made yet: it goes into the scene with
+    /// the supports, as one undo step, or not at all.
+    plate_lift: RefCell<Option<SceneEdit>>,
+    /// Cancel was pressed for the run in flight: whatever it returns, even a
+    /// result that came in just before, changes nothing.
+    cancelled: Cell<bool>,
+    /// Keeps the Supports tab's "Lift ... when the model rests on the plate"
+    /// box (#389) in step with the settings, shared by every window.
+    lift_pref: RefCell<Option<Subscription>>,
     /// For the run in flight that regenerates supports (#153): the scene
     /// revision that left its models waiting, and the models.
     regenerating: RefCell<Option<(SceneRevision, SupportsWanted)>>,
@@ -1026,6 +1046,9 @@ impl DfSupportRun {
             dialogs,
             handle: RefCell::new(None),
             started_on: RefCell::new(None),
+            plate_lift: RefCell::new(None),
+            cancelled: Cell::new(false),
+            lift_pref: RefCell::new(None),
             regenerating: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
@@ -1162,11 +1185,40 @@ impl DfSupportRun {
                         .settle_supports_wanted(*revision, &wanted.ids());
                 }
                 if let Some(handle) = run.handle.borrow().as_ref() {
+                    // Every model of the batch (#388) at once: the scene stays
+                    // as it was, the plate lift (#389) included.
+                    run.cancelled.set(true);
                     handle.cancel();
                 }
                 run.drop_waiting_run();
             });
         }
+        {
+            let bus = run.bus.clone();
+            ui.on_support_lift_on_plate_toggled(move |on| {
+                bus.update(move |snap| {
+                    snap.lift_models_on_plate = on;
+                    PreferencesChange::LiftModelsOnPlate
+                });
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            let subscription = run.bus.subscribe(move |snap, change| {
+                if matches!(change, PreferencesChange::LiftModelsOnPlate)
+                    && let Some(run) = weak.upgrade()
+                {
+                    if let Some(ui) = run.ui.upgrade() {
+                        ui.set_support_lift_on_plate(snap.lift_models_on_plate);
+                    }
+                    // A model resting on the plate is no longer, or is again,
+                    // in the raft's way.
+                    run.refresh_raft_warning();
+                }
+            });
+            *run.lift_pref.borrow_mut() = Some(subscription);
+        }
+        ui.set_support_lift_on_plate(run.bus.snapshot().lift_models_on_plate);
         run
     }
 
@@ -1216,14 +1268,53 @@ impl DfSupportRun {
                 job.cancel();
             }
         }
-        self.launch(&ui, self.request_for_selection());
+        self.launch_generate(&ui);
+    }
+
+    /// Starts the run of a Generate press: every model it supports (#388),
+    /// those resting on the plate lifted first when the box says so (#389).
+    fn launch_generate(self: &Rc<Self>, ui: &MainWindow) {
+        let request = self.request_for_selection();
+        let lift = self.plate_lift(&request);
+        self.launch(ui, request, lift);
+    }
+
+    /// The edit that lifts the models of `request` resting on the plate to
+    /// the support lift (#389), not applied; `None` with the Supports tab's
+    /// box off or no such model.
+    fn plate_lift(&self, request: &DfSupportRequest) -> Option<SceneEdit> {
+        if !self.bus.snapshot().lift_models_on_plate {
+            return None;
+        }
+        let lift_to = support_lift_mm(&request.options, request.layer_height_mm);
+        self.document
+            .with_scene(|spatial| resting_lift_edit(spatial, lift_to, request.models.as_deref()))
+            .flatten()
+    }
+
+    /// The scene a run works on: the document's, with `lift` made on a copy
+    /// when given. The document itself stays as it is until the run's
+    /// supports come in.
+    fn run_scene(&self, lift: Option<&SceneEdit>) -> Option<sc_scene::Scene> {
+        let mut scene = self
+            .document
+            .with_scene(|spatial| spatial.graph().clone())?;
+        if let Some(lift) = lift {
+            lift.apply_to_scene(&mut scene).ok()?;
+        }
+        Some(scene)
     }
 
     /// Starts the run of `request`, from the last prescan when it still
-    /// matches.
-    fn launch(self: &Rc<Self>, ui: &MainWindow, mut request: DfSupportRequest) {
+    /// matches, on the scene with `lift` made (#389).
+    fn launch(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        mut request: DfSupportRequest,
+        lift: Option<SceneEdit>,
+    ) {
         crate::breadcrumbs::started("supports");
-        let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
+        let Some(scene) = self.run_scene(lift.as_ref()) else {
             ui.set_support_gen_in_progress(false);
             ui.set_support_gen_cancelable(false);
             self.regenerating.borrow_mut().take();
@@ -1247,6 +1338,8 @@ impl DfSupportRun {
                 ui.set_support_gen_phase(slint::SharedString::default());
                 *self.handle.borrow_mut() = Some(handle);
                 *self.started_on.borrow_mut() = Some(self.document.scene_revision());
+                *self.plate_lift.borrow_mut() = lift;
+                self.cancelled.set(false);
                 self.start_poll();
             }
             Err(err) => {
@@ -1315,7 +1408,7 @@ impl DfSupportRun {
             if prescan.run_waiting {
                 prescan.run_waiting = false;
                 drop(prescan);
-                self.launch(&ui, self.request_for_selection());
+                self.launch_generate(&ui);
                 return;
             }
         }
@@ -1342,7 +1435,7 @@ impl DfSupportRun {
             if prescan.run_waiting {
                 prescan.run_waiting = false;
                 drop(prescan);
-                self.launch(&ui, self.request_for_selection());
+                self.launch_generate(&ui);
                 return;
             }
         }
@@ -1351,7 +1444,7 @@ impl DfSupportRun {
             || ui.get_support_gen_in_progress()
             || ui.get_slicing_in_progress();
         if ui.get_slicing_in_progress()
-            && let Some((job, _, _)) = self.ahead.borrow_mut().running.take()
+            && let Some((job, _, _, _)) = self.ahead.borrow_mut().running.take()
         {
             // A slice is waited on; supports ahead of time are not.
             job.cancel();
@@ -1370,10 +1463,12 @@ impl DfSupportRun {
             self.generate_ahead(&ui, scans);
             return;
         }
-        let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
+        let mut request = self.request_for_selection();
+        // The geometry the Generate press will run on: models resting on the
+        // plate lifted, when they will be (#389).
+        let Some(scene) = self.run_scene(self.plate_lift(&request).as_ref()) else {
             return;
         };
-        let mut request = self.request_for_selection();
         // Models the last prescan already scanned are taken from it.
         request.prescanned = prescan.ready.as_ref().map(|(_, scans)| scans.clone());
         let job = start_df_prescan(&scene, request);
@@ -1421,7 +1516,8 @@ impl DfSupportRun {
             wanted.models.len()
         ));
         *self.regenerating.borrow_mut() = Some((revision, wanted));
-        self.launch(ui, request);
+        // The person chose the pose: it is not lifted off the plate (#389).
+        self.launch(ui, request, None);
     }
 
     /// Keeps the supports generated ahead in step with the scene: drops them
@@ -1431,7 +1527,7 @@ impl DfSupportRun {
     fn generate_ahead(&self, ui: &MainWindow, scans: Option<Arc<ScanCache>>) {
         let mut ahead = self.ahead.borrow_mut();
         let hollow_busy = ui.get_hollow_busy();
-        if let Some((job, revision, key)) = &ahead.running {
+        if let Some((job, revision, _, _)) = &ahead.running {
             if hollow_busy || self.document.slice_geometry_changed(*revision) {
                 job.cancel();
                 ahead.running = None;
@@ -1440,10 +1536,9 @@ impl DfSupportRun {
                     "supports: ahead finished ok={}",
                     finished.is_ok()
                 ));
-                let (revision, key) = (*revision, key.clone());
-                ahead.running = None;
+                let (_, revision, key, lift) = ahead.running.take().expect("checked above");
                 if let Ok(outcome) = finished {
-                    ahead.ready = Some((revision, key, outcome));
+                    ahead.ready = Some((revision, key, outcome, lift));
                 }
             }
         }
@@ -1456,19 +1551,20 @@ impl DfSupportRun {
             return;
         }
         let mut request = self.request_for_selection();
-        let key = ahead_key(&request);
-        if ahead.ready.as_ref().is_some_and(|(revision, k, _)| {
+        let key = ahead_key(&request, self.bus.snapshot().lift_models_on_plate);
+        if ahead.ready.as_ref().is_some_and(|(revision, k, _, _)| {
             *k == key && !self.document.slice_geometry_changed(*revision)
         }) {
             return;
         }
-        let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
+        let lift = self.plate_lift(&request);
+        let Some(scene) = self.run_scene(lift.as_ref()) else {
             return;
         };
         request.prescanned = scans;
         if let Ok(job) = start_df_supports(&scene, request) {
             crate::breadcrumbs::note("supports: ahead started");
-            ahead.running = Some((job, self.document.scene_revision(), key));
+            ahead.running = Some((job, self.document.scene_revision(), key, lift));
         }
     }
 
@@ -1476,26 +1572,31 @@ impl DfSupportRun {
     /// when ready for this scene and request, or the run in flight is taken
     /// over (its progress shows). Returns whether it took them.
     fn take_ahead(self: &Rc<Self>, ui: &MainWindow) -> bool {
-        let key = ahead_key(&self.request_for_selection());
+        let key = ahead_key(
+            &self.request_for_selection(),
+            self.bus.snapshot().lift_models_on_plate,
+        );
         let mut ahead = self.ahead.borrow_mut();
-        if let Some((revision, k, _)) = &ahead.ready
+        if let Some((revision, k, _, _)) = &ahead.ready
             && *k == key
             && !self.document.slice_geometry_changed(*revision)
         {
-            let (revision, _, outcome) = ahead.ready.take().expect("checked above");
+            let (revision, _, outcome, lift) = ahead.ready.take().expect("checked above");
             drop(ahead);
             crate::breadcrumbs::note("supports: generate used the supports made ahead");
             *self.started_on.borrow_mut() = Some(revision);
+            *self.plate_lift.borrow_mut() = lift;
+            self.cancelled.set(false);
             self.finish(Ok(outcome));
             return true;
         }
-        let matches = ahead.running.as_ref().is_some_and(|(_, revision, k)| {
+        let matches = ahead.running.as_ref().is_some_and(|(_, revision, k, _)| {
             *k == key && !self.document.slice_geometry_changed(*revision)
         });
         if !matches {
             return false;
         }
-        let (job, revision, _) = ahead.running.take().expect("checked above");
+        let (job, revision, _, lift) = ahead.running.take().expect("checked above");
         drop(ahead);
         crate::breadcrumbs::note("supports: generate took over the run made ahead");
         ui.set_support_gen_in_progress(true);
@@ -1504,6 +1605,8 @@ impl DfSupportRun {
         ui.set_support_gen_phase(slint::SharedString::default());
         *self.handle.borrow_mut() = Some(job);
         *self.started_on.borrow_mut() = Some(revision);
+        *self.plate_lift.borrow_mut() = lift;
+        self.cancelled.set(false);
         self.start_poll();
         true
     }
@@ -1520,24 +1623,40 @@ impl DfSupportRun {
         request
     }
 
-    /// The models a Generate press supports (#197): the selected model, or
-    /// the model the selected supports stand on. `None`, for every model,
-    /// when nothing of that kind is selected or the scene holds only the one
-    /// model.
+    /// The models a Generate press supports (#197, #388): every selected
+    /// model and every model selected supports stand on, in the scene's
+    /// order, each given its own set by the one run. `None`, for every
+    /// model, when nothing of that kind is selected or the scene holds only
+    /// the one model.
     fn target_models(&self) -> Option<Vec<NodeId>> {
-        let selected = self.document.selection_primary_node_id()?;
+        let selected = self.document.selection_node_ids();
+        if selected.is_empty() {
+            return None;
+        }
         self.document
             .with_scene(|spatial| {
                 let models: Vec<NodeId> = crate::raft_clash::model_bottoms(spatial)
                     .into_iter()
                     .map(|(id, _)| id)
                     .collect();
-                let model = if models.contains(&selected) {
-                    selected
-                } else {
-                    model_of(&self.sessions, selected)?
-                };
-                (models.len() > 1).then(|| vec![model])
+                if models.len() < 2 {
+                    return None;
+                }
+                let wanted: Vec<NodeId> = selected
+                    .iter()
+                    .filter_map(|&id| {
+                        if models.contains(&id) {
+                            Some(id)
+                        } else {
+                            model_of(&self.sessions, id)
+                        }
+                    })
+                    .collect();
+                let targets: Vec<NodeId> = models
+                    .into_iter()
+                    .filter(|id| wanted.contains(id))
+                    .collect();
+                (!targets.is_empty()).then_some(targets)
             })
             .flatten()
     }
@@ -1603,6 +1722,10 @@ impl DfSupportRun {
         ui.set_support_raft_thickness(o.raft_thickness_mm as f32);
         ui.set_support_raft_wall(o.raft_wall);
         ui.set_support_zone_summary(zone_summary(&o));
+        ui.set_support_lift_on_plate_label(lift_on_plate_label(support_lift_mm(
+            &o,
+            self.raft_layer_height_mm.get(),
+        )));
     }
 
     /// Replaces the options, saves them and shows them.
@@ -1623,18 +1746,31 @@ impl DfSupportRun {
 
     /// Whether the raft of the options in force would take the models'
     /// first layers, and by how much, for the layer height of the last
-    /// Generate press.
+    /// Generate press. Models resting on the plate count as lifted when the
+    /// Supports tab's box lifts them on Generate (#389).
     fn raft_clash(&self) -> Option<RaftClash> {
         let targets = self.target_models();
+        let lifted_to = self.lift_on_plate_mm();
         let lowest = self
             .document
-            .with_scene(|spatial| lowest_model_mm(spatial, targets.as_deref()))
+            .with_scene(|spatial| {
+                lowest_model_after_lift_mm(spatial, targets.as_deref(), lifted_to)
+            })
             .flatten();
         raft_clash(
             &self.options.borrow(),
             self.raft_layer_height_mm.get(),
             lowest,
         )
+    }
+
+    /// Where a Generate press lifts the models resting on the plate (#389),
+    /// for the layer height of the last press; `None` with the box off.
+    fn lift_on_plate_mm(&self) -> Option<f64> {
+        self.bus
+            .snapshot()
+            .lift_models_on_plate
+            .then(|| support_lift_mm(&self.options.borrow(), self.raft_layer_height_mm.get()))
     }
 
     /// Shows or clears the Supports tab's raft warning (#131), raised by a
@@ -2794,6 +2930,14 @@ impl DfSupportRun {
         crate::breadcrumbs::finished("supports", &ended);
         let started_on = self.started_on.borrow_mut().take();
         let regenerating = self.regenerating.borrow_mut().take();
+        let lift = self.plate_lift.borrow_mut().take();
+        // Cancel pressed: nothing changes, even for a run that ended just
+        // before it was seen.
+        let outcome = if self.cancelled.replace(false) {
+            Err(JobError::Cancelled)
+        } else {
+            outcome
+        };
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(JobError::Cancelled) => return,
@@ -2882,7 +3026,8 @@ impl DfSupportRun {
         let replaced_note = (!replaced.is_empty()).then(|| {
             let fresh: Vec<&sc_mesh_core::IndexedMesh> =
                 sets.iter().map(|(_, mesh, _)| mesh.as_ref()).collect();
-            if self.same_supports(&replaced, &fresh) {
+            // Lifted models (#389) get supports for their new place.
+            if lift.is_none() && self.same_supports(&replaced, &fresh) {
                 ReplacedNote::Same
             } else {
                 ReplacedNote::Replaced
@@ -2894,9 +3039,14 @@ impl DfSupportRun {
         let unchanged = matches!(replaced_note, Some(ReplacedNote::Same))
             && self.already_shown(&replaced, &sets);
         if !unchanged {
-            let pasted =
-                self.document
-                    .paste_fragment_replacing_all(&fragment, [0.0, 0.0, 0.0], &replaced);
+            // The lift of the models resting on the plate (#389) and their
+            // supports: one undo step.
+            let pasted = self.document.paste_fragment_replacing_all_after(
+                lift,
+                &fragment,
+                [0.0, 0.0, 0.0],
+                &replaced,
+            );
             if let Ok(leaves) = &pasted
                 && leaves.len() == sets.len()
             {
@@ -3719,6 +3869,16 @@ fn raft_clash_message(layers: usize, lift_to_mm: f64) -> slint::SharedString {
 /// The label of a button that lifts the models to `lift_to_mm`.
 pub(crate) fn raft_lift_label(lift_to_mm: f64) -> slint::SharedString {
     ctr!("Inspector", "Lift to {} mm", mm_text(lift_to_mm))
+}
+
+/// The Supports tab's box that lifts the models resting on the plate to
+/// `lift_to_mm` on Generate (#389).
+fn lift_on_plate_label(lift_to_mm: f64) -> slint::SharedString {
+    ctr!(
+        "Inspector",
+        "Lift {} mm when the model rests on the plate",
+        mm_text(lift_to_mm)
+    )
 }
 
 /// Millimetres to two decimals at most, without trailing zeros ("5",
@@ -5668,6 +5828,269 @@ mod hand_edit_tests {
                 sets.iter()
                     .all(|(_, m)| !Arc::ptr_eq(m, &first_mesh) && !Arc::ptr_eq(m, &second_mesh))
             );
+        });
+    }
+
+    /// A window's support driver on unit cubes centred at `cubes` (a cube
+    /// centred 0.5 mm up rests on the plate), with the bus it reads the
+    /// settings from: nothing generated yet.
+    fn cubes_on(
+        window: &MainWindow,
+        cubes: &[[f64; 3]],
+    ) -> (
+        Rc<SceneDocument>,
+        Rc<DfSupportRun>,
+        Rc<PreferencesBus>,
+        Vec<NodeId>,
+    ) {
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        let mut graph = Scene::new();
+        let mut leaves = Vec::new();
+        for &at in cubes {
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation(at)),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            leaves.push(leaf);
+        }
+        document.install_graph(graph, PathBuf::from("cubes.stl"));
+        let run = DfSupportRun::install(
+            window,
+            bus.clone(),
+            document.clone(),
+            ctrl.dialogs(),
+            ctrl.clone(),
+        );
+        run.set_options(DfSupportOptions::default());
+        (document, run, bus, leaves)
+    }
+
+    /// Runs the event loop's timers, as the app does, until the run in
+    /// flight has ended and its result is in the scene.
+    fn until_generated(window: &MainWindow, run: &DfSupportRun) {
+        let started = Instant::now();
+        while window.get_support_gen_in_progress() || run.handle.borrow().is_some() {
+            assert!(
+                started.elapsed() < Duration::from_secs(60),
+                "the run never ended"
+            );
+            slint::platform::update_timers_and_animations();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// The models each support set in the scene stands on, in no order.
+    fn supported_models(document: &SceneDocument, run: &DfSupportRun) -> Vec<NodeId> {
+        let mut models: Vec<NodeId> = support_sets(document)
+            .into_iter()
+            .filter_map(|(leaf, _)| model_of(&run.sessions, leaf))
+            .collect();
+        models.sort();
+        models
+    }
+
+    /// The lowest point of `model` above the plate.
+    fn bottom_of(document: &SceneDocument, model: NodeId) -> f64 {
+        document
+            .with_scene(|spatial| {
+                crate::raft_clash::model_bottoms(spatial)
+                    .into_iter()
+                    .find(|(id, _)| *id == model)
+                    .map(|(_, z)| z)
+            })
+            .flatten()
+            .expect("the model is in the scene")
+    }
+
+    /// #388: Generate with 3 of 4 models selected, pressed in the window,
+    /// gives each of the 3 a set of its own in one undo step; Cancel during
+    /// the batch leaves the scene exactly as it was, Redo included.
+    #[test]
+    fn generate_supports_every_selected_model_in_one_undo_step() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, _, leaves) = cubes_on(
+                &window,
+                &[
+                    [20.0, 20.0, 8.0],
+                    [40.0, 20.0, 8.0],
+                    [60.0, 20.0, 8.0],
+                    [80.0, 20.0, 8.0],
+                ],
+            );
+            let picked = vec![leaves[0], leaves[1], leaves[3]];
+            // Picked in another order than the scene's: the run follows the
+            // scene's.
+            document.set_selection(crate::selection::Selection::of(
+                [leaves[3], leaves[0], leaves[1]].map(crate::selection::LeafId),
+            ));
+            assert_eq!(run.target_models(), Some(picked.clone()));
+
+            window.invoke_df_support_requested();
+            until_generated(&window, &run);
+            assert_eq!(supported_models(&document, &run), picked, "a set for each");
+            assert_eq!(run.sets_in_force().len(), 3, "each editable by hand");
+
+            // One undo takes the 3 sets away, and only them.
+            assert!(document.undo().unwrap());
+            assert!(support_sets(&document).is_empty());
+            assert!(!document.can_undo(), "one undo step for the batch");
+            let revision = document.scene_revision();
+
+            // Cancel while the batch runs: nothing changes, and Redo still
+            // brings the sets back.
+            window.invoke_df_support_requested();
+            assert!(window.get_support_gen_in_progress(), "the batch runs");
+            window.invoke_support_gen_cancel_requested();
+            until_generated(&window, &run);
+            assert!(support_sets(&document).is_empty(), "nothing added");
+            assert_eq!(
+                document.scene_revision(),
+                revision,
+                "the scene is untouched"
+            );
+            assert!(!document.can_undo(), "no undo step");
+            assert!(document.can_redo(), "the redo step stays");
+            assert!(document.redo().unwrap());
+            assert_eq!(supported_models(&document, &run), picked);
+            assert_eq!(run.sets_in_force().len(), 3);
+        });
+    }
+
+    /// #389: the Supports tab's box is a setting; with it on, Generate lifts
+    /// the selected model resting on the plate to the support lift and
+    /// leaves the one already lifted where it is, in the same undo step as
+    /// the supports (#388's batch). Cancel lifts nothing.
+    #[test]
+    fn the_lift_on_plate_box_lifts_resting_models_with_their_supports() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, bus, leaves) = cubes_on(
+                &window,
+                &[[20.0, 20.0, 0.5], [40.0, 20.0, 8.0], [60.0, 20.0, 0.5]],
+            );
+            let (resting, lifted, left_out) = (leaves[0], leaves[1], leaves[2]);
+            document.set_selection(crate::selection::Selection::of(
+                [resting, lifted].map(crate::selection::LeafId),
+            ));
+            assert!(!window.get_support_lift_on_plate());
+            assert_eq!(
+                window.get_support_lift_on_plate_label(),
+                "Lift 5 mm when the model rests on the plate"
+            );
+
+            // Off: the raft warning holds the press back.
+            window.invoke_df_support_requested();
+            assert!(run.handle.borrow().is_none(), "held back by the raft");
+            assert!(!window.get_support_raft_clash_message().is_empty());
+
+            // The box, ticked in the window, is stored and answers the
+            // warning for the model resting on the plate.
+            window.invoke_support_lift_on_plate_toggled(true);
+            assert!(
+                bus.snapshot().lift_models_on_plate,
+                "stored in the settings"
+            );
+            assert!(window.get_support_lift_on_plate());
+            assert!(window.get_support_raft_clash_message().is_empty());
+
+            // Cancel: nothing moves.
+            let revision = document.scene_revision();
+            window.invoke_df_support_requested();
+            window.invoke_support_gen_cancel_requested();
+            until_generated(&window, &run);
+            assert_eq!(document.scene_revision(), revision);
+            assert!(bottom_of(&document, resting).abs() < 1e-6);
+            assert!(support_sets(&document).is_empty());
+            assert!(!document.can_undo());
+
+            window.invoke_df_support_requested();
+            until_generated(&window, &run);
+            let lift = sc_geom::df_supports::DEFAULT_SUPPORT_LIFT_MM;
+            assert!(
+                (bottom_of(&document, resting) - lift).abs() < 1e-6,
+                "lifted"
+            );
+            assert!(
+                (bottom_of(&document, lifted) - 7.5).abs() < 1e-6,
+                "left where it was"
+            );
+            assert!(bottom_of(&document, left_out).abs() < 1e-6, "not selected");
+            assert_eq!(
+                supported_models(&document, &run),
+                {
+                    let mut both = vec![resting, lifted];
+                    both.sort();
+                    both
+                },
+                "a set for each"
+            );
+            assert_eq!(run.sets_in_force().len(), 2, "both editable by hand");
+            assert!(
+                document.supports_wanted().is_none(),
+                "the lift does not wait for other supports"
+            );
+
+            // One undo: back on the plate, without supports.
+            assert!(document.undo().unwrap());
+            assert!(bottom_of(&document, resting).abs() < 1e-6);
+            assert!(support_sets(&document).is_empty());
+            assert!(
+                !document.can_undo(),
+                "the lift and the supports are one step"
+            );
+            assert!(document.redo().unwrap());
+            assert!((bottom_of(&document, resting) - lift).abs() < 1e-6);
+            assert_eq!(run.sets_in_force().len(), 2);
+
+            // Ticked off again: stored, and a model resting on the plate is
+            // in the raft's way again.
+            window.invoke_support_lift_on_plate_toggled(false);
+            assert!(!bus.snapshot().lift_models_on_plate);
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                left_out,
+            )));
+            window.invoke_df_support_requested();
+            assert!(run.handle.borrow().is_none(), "held back by the raft");
+            assert!(bottom_of(&document, left_out).abs() < 1e-6);
+        });
+    }
+
+    /// #389: a window opens with the box as the settings have it, and a
+    /// switch in one window shows in the others.
+    #[test]
+    fn the_lift_on_plate_box_follows_the_settings() {
+        on_fresh_slint_thread(|| {
+            let snapshot = PreferencesSnapshot {
+                lift_models_on_plate: true,
+                ..PreferencesSnapshot::for_tests()
+            };
+            let bus = PreferencesBus::new(snapshot);
+            let open = |bus: &Rc<PreferencesBus>| {
+                let window =
+                    MainWindow::new().expect("the headless platform creates a main window");
+                let ctrl = Rc::new(ViewportController::new_for_test());
+                let run = DfSupportRun::install(
+                    &window,
+                    bus.clone(),
+                    ctrl.document(),
+                    ctrl.dialogs(),
+                    ctrl.clone(),
+                );
+                (window, run, ctrl)
+            };
+            let (first, _first_run, _first_ctrl) = open(&bus);
+            let (second, _second_run, _second_ctrl) = open(&bus);
+            assert!(first.get_support_lift_on_plate());
+            first.invoke_support_lift_on_plate_toggled(false);
+            assert!(!second.get_support_lift_on_plate());
+            assert!(!bus.snapshot().lift_models_on_plate);
         });
     }
 

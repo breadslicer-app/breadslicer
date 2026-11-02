@@ -401,6 +401,7 @@ impl PanelUpdate {
             | PreferencesChange::FrameRate
             | PreferencesChange::Gizmo
             | PreferencesChange::Projection
+            | PreferencesChange::LiftModelsOnPlate
             | PreferencesChange::DiagnosticLog
             | PreferencesChange::SilencedMessages => None,
         }
@@ -468,6 +469,7 @@ mod panel_update_tests {
             (PreferencesChange::FrameRate, None),
             (PreferencesChange::Gizmo, None),
             (PreferencesChange::Projection, None),
+            (PreferencesChange::LiftModelsOnPlate, None),
             (PreferencesChange::DiagnosticLog, None),
             (PreferencesChange::SilencedMessages, None),
             (PreferencesChange::Profiles, Some(PanelUpdate::Profiles)),

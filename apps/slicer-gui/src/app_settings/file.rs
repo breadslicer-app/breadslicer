@@ -978,6 +978,26 @@ gizmo_size = 400
     }
 
     #[test]
+    fn the_lift_of_models_on_the_plate_round_trips_and_is_omitted_while_off() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        let mut s = AppSettings::default();
+        file.save(&s).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(!written.contains("lift_models_on_plate"), "got:\n{written}");
+        assert!(!file.load().settings().lift_models_on_plate());
+
+        s.set_lift_models_on_plate(true);
+        file.save(&s).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            written.contains("lift_models_on_plate = true"),
+            "got:\n{written}"
+        );
+        assert!(file.load().settings().lift_models_on_plate());
+    }
+
+    #[test]
     fn orthographic_view_round_trips() {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);

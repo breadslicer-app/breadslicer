@@ -1410,6 +1410,11 @@ export component SupportsInspector inherits VerticalLayout {
     // when it does not, and the label of its lift button.
     in property <string> raft-clash-message;
     in property <string> raft-lift-label;
+    // Whether Generate lifts the models resting on the plate first (#389),
+    // a setting, and its box's text with the height.
+    in property <bool> lift-on-plate;
+    in property <string> lift-on-plate-label;
+    callback lift-on-plate-toggled(bool);
     // The Add tool (#3): whether it is armed, the tip size it places (0 the
     // preset's, 1 to 4 extra small to large), that tip in words, and the
     // hover preview's line, with whether it warns.
@@ -1471,6 +1476,13 @@ export component SupportsInspector inherits VerticalLayout {
                 }
             }
         }
+        CheckBox {
+            text: root.lift-on-plate-label;
+            checked: root.lift-on-plate;
+            toggled => {
+                root.lift-on-plate-toggled(self.checked);
+            }
+        }
         ScButton {
             text: @tr("Inspector" => "Generate anyway");
             kind: ButtonKind.ghost;
@@ -1504,6 +1516,14 @@ export component SupportsInspector inherits VerticalLayout {
             enabled: root.has-scene && !root.running;
             clicked => {
                 root.generate-requested();
+            }
+        }
+        // Under the raft warning's lift button while the warning shows.
+        if root.raft-clash-message == "": CheckBox {
+            text: root.lift-on-plate-label;
+            checked: root.lift-on-plate;
+            toggled => {
+                root.lift-on-plate-toggled(self.checked);
             }
         }
         if root.running: VerticalLayout {

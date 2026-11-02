@@ -474,6 +474,11 @@ pub(crate) struct AppSettings {
     /// perspective one. Omitted in TOML while off (the default, perspective).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     orthographic_view: bool,
+    /// Whether generating supports for a model that rests on the build plate
+    /// lifts it to the support lift first, in the same undo step (#389).
+    /// Omitted in TOML while off (the default).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    lift_models_on_plate: bool,
     /// The app messages the user silenced with "Don't show again", by key
     /// (see `error_dialog::MessageKey`). Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -525,6 +530,7 @@ impl Default for AppSettings {
             gizmo_style: GizmoStyle::default(),
             gizmo_size: DEFAULT_GIZMO_SIZE,
             orthographic_view: false,
+            lift_models_on_plate: false,
             silenced_messages: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
@@ -678,6 +684,14 @@ impl AppSettings {
 
     pub(crate) fn set_orthographic_view(&mut self, on: bool) {
         self.orthographic_view = on;
+    }
+
+    pub(crate) fn lift_models_on_plate(&self) -> bool {
+        self.lift_models_on_plate
+    }
+
+    pub(crate) fn set_lift_models_on_plate(&mut self, on: bool) {
+        self.lift_models_on_plate = on;
     }
 
     pub(crate) fn silenced_messages(&self) -> BTreeSet<String> {
