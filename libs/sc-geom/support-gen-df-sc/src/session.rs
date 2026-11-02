@@ -1311,6 +1311,51 @@ impl DfSupportSession {
             .collect()
     }
 
+    /// Every support the person sees as one, with its id and the line it
+    /// runs along (world mm), from its tip down: its joints, then the root it
+    /// stands on or the knot it hangs from. What a box or a brush removes by
+    /// (#3): a tip touching the model's underside is mostly hidden behind
+    /// it, and the shaft below is what is on screen.
+    pub fn support_paths(&self) -> Vec<(String, Vec<[f64; 3]>)> {
+        let c = &self.state.collections;
+        let at = |p: Vec3| [p.x, p.y, p.z];
+        let joints = |segments: &[support_gen_df::supports::types::Segment]| {
+            segments
+                .iter()
+                .flat_map(|s| [s.top_joint.as_ref(), s.bottom_joint.as_ref()])
+                .flatten()
+                .map(|j| at(j.pos))
+                .collect::<Vec<_>>()
+        };
+        let knot = |id: &str| c.knots.get(id).map(|k| at(k.pos));
+        let path = |tip: Option<Vec3>, mut points: Vec<[f64; 3]>, end: Option<[f64; 3]>| {
+            points.extend(tip.map(at));
+            points.extend(end);
+            points.sort_by(|a, b| b[2].total_cmp(&a[2]));
+            points.dedup();
+            points
+        };
+        let mut out = Vec::new();
+        for (id, t) in &c.trunks {
+            let root = c.roots.get(&t.root_id).map(|r| at(r.transform.pos));
+            let points = path(t.contact_cone.as_ref().map(|k| k.pos), joints(&t.segments), root);
+            out.push((id.clone(), points));
+        }
+        for (id, b) in &c.branches {
+            let points = path(
+                b.contact_cone.as_ref().map(|k| k.pos),
+                joints(&b.segments),
+                knot(&b.parent_knot_id),
+            );
+            out.push((id.clone(), points));
+        }
+        for (id, l) in &c.leaves {
+            let points = path(Some(l.contact_cone.pos), Vec::new(), knot(&l.parent_knot_id));
+            out.push((id.clone(), points));
+        }
+        out
+    }
+
     /// The support whose tip is nearest `point` (world mm), within
     /// `reach_mm`.
     pub fn tip_near(&self, point: [f64; 3], reach_mm: f64) -> Option<String> {

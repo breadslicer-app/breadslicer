@@ -549,15 +549,41 @@ enum DragState {
         tip: String,
         to: Option<[f32; 3]>,
     },
-    /// Remove's box or brush: the set it removes from, its tips, the ones
-    /// picked so far and, for the brush, where the cursor last was.
+    /// Remove's box or brush: the set it removes from, its supports as
+    /// points along each (tip and shaft), the ones picked so far and, for
+    /// the brush, where the cursor last was.
     Remove {
         drawn: DrawnSet,
-        tips: Vec<(String, [f64; 3])>,
+        tips: Vec<(String, Vec<[f32; 3]>)>,
         picked: Vec<String>,
         press: [f32; 2],
         brush: Option<[f32; 2]>,
     },
+}
+
+/// How far apart a box or a brush looks along a support, in mm.
+const PICK_STEP_MM: f64 = 0.5;
+
+/// Each support of `paths` as points along it, [`PICK_STEP_MM`] apart:
+/// what a box or a brush finds it by on screen.
+fn along_supports(paths: Vec<(String, Vec<[f64; 3]>)>) -> Vec<(String, Vec<[f32; 3]>)> {
+    paths
+        .into_iter()
+        .map(|(id, path)| {
+            let mut points = Vec::new();
+            for w in path.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                let len = (0..3).map(|k| (b[k] - a[k]).powi(2)).sum::<f64>().sqrt();
+                let steps = (len / PICK_STEP_MM).ceil().max(1.0) as usize;
+                for k in 0..steps {
+                    let t = k as f64 / steps as f64;
+                    points.push(std::array::from_fn(|i| (a[i] + (b[i] - a[i]) * t) as f32));
+                }
+            }
+            points.extend(path.last().map(|p| p.map(|c| c as f32)));
+            (id, points)
+        })
+        .collect()
 }
 
 /// How far from a support's tip a press on the support grabs it, in mm.
@@ -3102,18 +3128,21 @@ impl DfSupportRun {
         });
     }
 
-    /// The tips of `tips` a brush at `at`, come from `from`, passes over.
+    /// The supports of `supports` a brush at `at`, come from `from`, passes
+    /// over: any point along one.
     fn brushed(
-        tips: &[(String, [f64; 3])],
+        supports: &[(String, Vec<[f32; 3]>)],
         from: [f32; 2],
         at: [f32; 2],
         radius: f32,
         project: Project<'_>,
     ) -> Vec<String> {
-        tips.iter()
-            .filter(|(_, tip)| {
-                project(tip.map(|c| c as f32))
-                    .is_some_and(|p| screen_segment_distance(p, from, at) <= radius)
+        supports
+            .iter()
+            .filter(|(_, along)| {
+                along.iter().any(|p| {
+                    project(*p).is_some_and(|q| screen_segment_distance(q, from, at) <= radius)
+                })
             })
             .map(|(id, _)| id.clone())
             .collect()
@@ -3160,7 +3189,7 @@ impl SupportDragHandler for DfSupportRun {
                     ));
                     return false;
                 };
-                let tips = drawn.session.tips();
+                let tips = along_supports(drawn.session.support_paths());
                 let brush = (kind == SupportDragKind::Brush).then_some(press.cursor);
                 let picked = match brush {
                     Some(at) => {
@@ -3170,7 +3199,7 @@ impl SupportDragHandler for DfSupportRun {
                     None => Vec::new(),
                 };
                 crate::breadcrumbs::note(&format!(
-                    "supports: {kind:?} started over {} tips",
+                    "supports: {kind:?} started over {} supports",
                     tips.len()
                 ));
                 DragState::Remove {
@@ -3249,10 +3278,12 @@ impl SupportDragHandler for DfSupportRun {
                             [press[0].max(at.cursor[0]), press[1].max(at.cursor[1])],
                         );
                         tips.iter()
-                            .filter(|(_, tip)| {
-                                project(tip.map(|c| c as f32)).is_some_and(|p| {
-                                    (lo[0]..=hi[0]).contains(&p[0])
-                                        && (lo[1]..=hi[1]).contains(&p[1])
+                            .filter(|(_, along)| {
+                                along.iter().any(|p| {
+                                    project(*p).is_some_and(|q| {
+                                        (lo[0]..=hi[0]).contains(&q[0])
+                                            && (lo[1]..=hi[1]).contains(&q[1])
+                                    })
                                 })
                             })
                             .map(|(id, _)| id.clone())
@@ -6095,14 +6126,24 @@ mod hand_edit_tests {
     /// Remove's box and brush (#3): what they pick goes as one undo, from
     /// the selected set only; a drag dropped changes nothing.
     #[test]
-    fn a_box_and_a_brush_remove_the_tips_they_cover() {
+    fn a_box_and_a_brush_remove_the_supports_they_cover() {
         on_fresh_slint_thread(|| {
             let window = MainWindow::new().expect("the headless platform creates a main window");
             let (document, run) = supported_slab(&window);
             let generated = in_force_session(&run).expect("editable");
             let tips = generated.tips();
-            let left = tips.iter().filter(|(_, t)| t[0] <= 18.0).count();
-            assert!(left > 0 && left < tips.len(), "{left} of {}", tips.len());
+            // A support is covered where any part of it is: its tip or its
+            // shaft.
+            let along = along_supports(generated.support_paths());
+            let covered = |within: &dyn Fn(&[f32; 3]) -> bool| -> Vec<String> {
+                along
+                    .iter()
+                    .filter(|(_, points)| points.iter().any(within))
+                    .map(|(id, _)| id.clone())
+                    .collect()
+            };
+            let left = covered(&|p| p[0] <= 18.0).len();
+            assert!(left > 0 && left < along.len(), "{left} of {}", along.len());
 
             // A box over x up to 18 mm.
             assert!(run.drag_start(SupportDragKind::Box, &cursor_at([0.0, 0.0]), &from_above));
@@ -6117,17 +6158,21 @@ mod hand_edit_tests {
             run.drag_end(true);
             settle_click(&run);
             let boxed = in_force_session(&run).unwrap();
-            assert!(boxed.tips().iter().all(|(_, t)| t[0] > 18.0));
+            assert!(
+                boxed
+                    .support_paths()
+                    .iter()
+                    .all(|(_, path)| path.iter().all(|p| p[0] > 18.0 - 1e-3))
+            );
             assert!(window.get_supports_last_run().contains("edited by hand"));
             assert!(document.undo().unwrap(), "one undo");
             assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
 
             // A brush along y at x = 15 mm, 24 px (2.4 mm) wide each way.
-            let near: Vec<&String> = tips
-                .iter()
-                .filter(|(_, t)| (t[0] - 15.0).abs() <= 2.4)
-                .map(|(id, _)| id)
-                .collect();
+            let near = covered(&|p| {
+                let dy = (p[1] - 35.0).max(15.0 - p[1]).max(0.0);
+                (p[0] - 15.0).hypot(dy) <= 2.4
+            });
             assert!(!near.is_empty());
             assert!(run.drag_start(
                 SupportDragKind::Brush,
@@ -6389,6 +6434,173 @@ mod hand_edit_tests {
                 ms(made),
                 window.get_supports_last_run()
             );
+        });
+    }
+
+    /// A window driven as the app drives it (#3): its viewport callbacks
+    /// reach a controller, and a slab 20 x 10 x 2 mm, its underside 9 mm up
+    /// and placed by `transform`, stands with the supports a run gives it,
+    /// those selected, in the Supports tab, seen by `camera`.
+    fn wired_slab(
+        window: &MainWindow,
+        transform: Transform3D,
+        camera: crate::camera::OrbitCamera,
+    ) -> (Rc<ViewportController>, Rc<SceneDocument>, Rc<DfSupportRun>) {
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test_with_ui(window));
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_down(move |x, y, m| {
+                ctrl.on_pointer_down(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_move(move |x, y, m| {
+                ctrl.on_pointer_move(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_up(move |x, y, m| {
+                ctrl.on_pointer_up(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        let document = ctrl.document();
+        let mut graph = Scene::new();
+        let leaf = graph
+            .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(slab_mesh())))
+            .unwrap();
+        graph.add_root(leaf).unwrap();
+        document.install_graph(graph.clone(), PathBuf::from("slab.stl"));
+        let run =
+            DfSupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let outcome = start_df_supports(&graph, DfSupportRequest::default())
+            .unwrap()
+            .join();
+        *run.started_on.borrow_mut() = Some(document.scene_revision());
+        run.finish(outcome);
+        let (supports, _) = run.support_leaf().expect("the supports");
+        document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+            supports,
+        )));
+        ctrl.set_section(WorkspaceSection::Supports);
+        ctrl.set_viewport_for_test(800.0, 600.0);
+        ctrl.set_camera_for_test(camera);
+        (ctrl, document, run)
+    }
+
+    /// A slab 20 x 10 x 2 mm, its corner at the origin.
+    fn slab_mesh() -> sc_mesh_core::IndexedMesh {
+        let cube = sc_mesh_fixtures::unit_cube_mesh();
+        let (lo, hi) =
+            cube.vertices()
+                .iter()
+                .fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| {
+                    let p = v.as_array();
+                    (
+                        std::array::from_fn(|k| lo[k].min(p[k])),
+                        std::array::from_fn(|k| hi[k].max(p[k])),
+                    )
+                });
+        let size = [20.0, 10.0, 2.0];
+        let vertices = cube
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = v.as_array();
+                sc_mesh_core::Vertex::new(std::array::from_fn(|k| {
+                    (p[k] - lo[k]) / (hi[k] - lo[k]) * size[k]
+                }))
+            })
+            .collect();
+        sc_mesh_core::IndexedMesh::new(None, vertices, cube.faces().to_vec())
+    }
+
+    /// The camera looking at `target` from `distance` mm, from below the
+    /// plate at `pitch` radians.
+    fn camera_at(
+        target: [f32; 3],
+        yaw: f32,
+        pitch: f32,
+        distance: f32,
+    ) -> crate::camera::OrbitCamera {
+        let mut camera = crate::camera::OrbitCamera::new(glam::Vec3::from(target), distance);
+        camera.yaw = yaw;
+        camera.pitch = pitch;
+        camera.distance = distance;
+        camera
+    }
+
+    fn no_keys() -> crate::PointerModifiers {
+        crate::PointerModifiers::default()
+    }
+
+    /// Remove's brush and box through the window's own viewport callbacks
+    /// (#3): a press on a tip, moves past the click threshold, a release.
+    #[test]
+    fn the_brush_and_the_box_remove_through_the_viewport() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let camera = camera_at([20.0, 25.0, 9.0], 0.6, -0.5, 40.0);
+            let (ctrl, document, run) = wired_slab(&window, translation([10.0, 20.0, 9.0]), camera);
+            let generated = in_force_session(&run).expect("editable");
+            window.set_support_tool(2);
+            // Each support where it is seen: halfway down its shaft, not at
+            // its tip, which the model mostly hides.
+            let on_screen: Vec<(String, [f32; 2])> = generated
+                .support_paths()
+                .iter()
+                .filter(|(_, path)| path.len() >= 2)
+                .filter_map(|(id, path)| {
+                    let (a, b) = (path[0], path[path.len() - 1]);
+                    let mid = [
+                        (a[0] + b[0]) / 2.0,
+                        (a[1] + b[1]) / 2.0,
+                        (a[2] + b[2]) / 2.0,
+                    ];
+                    let p = ctrl.project_for_test(mid.map(|c| c as f32))?;
+                    ((20.0..780.0).contains(&p[0]) && (20.0..580.0).contains(&p[1]))
+                        .then(|| (id.clone(), p))
+                })
+                .collect();
+            assert!(on_screen.len() > 3, "{} tips on screen", on_screen.len());
+
+            // The brush: pressed on a shaft, dragged 30 px.
+            window.set_support_remove_mode(1);
+            let (id, at) = on_screen[0].clone();
+            window.invoke_viewport_pointer_down(at[0], at[1], no_keys());
+            for k in 1..=6 {
+                window.invoke_viewport_pointer_move(at[0] + 5.0 * k as f32, at[1], no_keys());
+            }
+            window.invoke_viewport_pointer_up(at[0] + 30.0, at[1], no_keys());
+            settle_click(&run);
+            let brushed = in_force_session(&run).unwrap();
+            assert!(
+                !brushed.tips().iter().any(|(left, _)| *left == id),
+                "the support brushed is gone: {}",
+                window.get_supports_last_run()
+            );
+            assert!(document.undo().unwrap(), "one undo");
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+
+            // The box: around a shaft.
+            window.set_support_remove_mode(0);
+            let (id, at) = on_screen[1].clone();
+            window.invoke_viewport_pointer_down(at[0] - 15.0, at[1] - 15.0, no_keys());
+            for k in 1..=6 {
+                let d = 5.0 * k as f32;
+                window.invoke_viewport_pointer_move(at[0] - 15.0 + d, at[1] - 15.0 + d, no_keys());
+            }
+            window.invoke_viewport_pointer_up(at[0] + 15.0, at[1] + 15.0, no_keys());
+            settle_click(&run);
+            let boxed = in_force_session(&run).unwrap();
+            assert!(
+                !boxed.tips().iter().any(|(left, _)| *left == id),
+                "the support boxed is gone: {}",
+                window.get_supports_last_run()
+            );
+            assert!(document.undo().unwrap());
         });
     }
 }

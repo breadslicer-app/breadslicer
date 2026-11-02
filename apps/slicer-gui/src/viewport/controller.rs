@@ -229,6 +229,29 @@ impl ViewportController {
         controller
     }
 
+    /// A controller for tests that drive a window: as [`Self::new_for_test`],
+    /// mirroring into `ui` and reading its tools.
+    #[cfg(test)]
+    pub(crate) fn new_for_test_with_ui(ui: &MainWindow) -> Self {
+        let mut controller = Self::new_for_test();
+        controller.ui = ui.as_weak();
+        controller
+    }
+
+    /// Where `p` (world mm) lands on the viewport now, as a drag reads it.
+    #[cfg(test)]
+    pub(crate) fn project_for_test(&self, p: [f32; 3]) -> Option<[f32; 2]> {
+        self.with_projection(|project| project(p)).flatten()
+    }
+
+    /// The model point a ray through `cursor` hits first, as the Add tool
+    /// takes it.
+    #[cfg(test)]
+    pub(crate) fn model_hit_for_test(&self, cursor: ScreenPoint) -> Option<[f32; 3]> {
+        self.tab_tool_hit(TabTool::AddSupport, cursor)
+            .map(|(_, p, _)| [p.x, p.y, p.z])
+    }
+
     /// Installs a pre-built `Box<dyn MeshRenderer>` into the render-host's
     /// renderer slot, so a test can drive `handle_before_rendering` and the
     /// lifecycle hooks against a `MockRenderer`.
