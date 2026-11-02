@@ -1309,7 +1309,13 @@ impl ViewportController {
             }
         }
         let placements = models.placements.clone();
-        match add_to_scene(document, &models.files, &placements, models.recorded) {
+        match add_to_scene(
+            document,
+            &models.files,
+            &placements,
+            &models.primed,
+            models.recorded,
+        ) {
             Ok(added) if !added.is_empty() => {
                 // Each file keeps its import notes, with the scene's.
                 self.session.loader().note_imported(&models);
