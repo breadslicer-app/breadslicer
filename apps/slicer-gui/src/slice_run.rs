@@ -208,7 +208,9 @@ impl SliceRun {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        if ui.get_slicing_in_progress() {
+        // While Fix All places its supports, the slice it promises comes
+        // once they are in (#390).
+        if ui.get_slicing_in_progress() || self.review.fixing() {
             return;
         }
         let snapshot = self.bus.snapshot();

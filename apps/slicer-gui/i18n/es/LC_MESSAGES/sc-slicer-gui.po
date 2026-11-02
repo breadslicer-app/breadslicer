@@ -5898,3 +5898,54 @@ msgid "{n} file could not be opened."
 msgid_plural "{n} files could not be opened."
 msgstr[0] "{n} archivo no se pudo abrir."
 msgstr[1] "{n} archivos no se pudieron abrir."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Fixing all…"
+msgstr "Corrigiendo todo…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Placing supports: {} of {}"
+msgstr "Poniendo soportes: {} de {}"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The supports are being edited; press Fix all again once that is done."
+msgstr "Se están editando los soportes; tocá Corregir todo de nuevo cuando termine."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The slice changed while Fix All ran. Slice again to review the result."
+msgstr "El laminado cambió mientras corría Corregir todo. Laminá de nuevo para revisar el resultado."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Fix All was cancelled; nothing was changed."
+msgstr "Se canceló Corregir todo; no cambió nada."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Fix All was undone before it was done; nothing was changed."
+msgstr "Se deshizo Corregir todo antes de que terminara; no cambió nada."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The scene changed while Fix All ran; nothing was changed."
+msgstr "La escena cambió mientras corría Corregir todo; no cambió nada."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Supports are being edited; try again when that is done."
+msgstr "Se están editando los soportes; probá de nuevo cuando termine."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Cancelled; nothing was changed."
+msgstr "Cancelado; no cambió nada."
