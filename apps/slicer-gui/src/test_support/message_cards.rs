@@ -69,7 +69,7 @@ pub(crate) fn card_around_primary_button(window: &slint::Window) -> (bool, bool)
     (card(right + margin, mid_y), card(mid_x, bottom + margin))
 }
 
-/// What [`open_details`] saw in the card of a notice once its details opened.
+/// What [`open_details`] saw in the card of a notice with its details open.
 #[derive(Debug)]
 pub(crate) struct OpenDetails {
     /// Accent-toned pixels in the leftmost mark of the toggle row: the
@@ -112,49 +112,15 @@ fn toggle_rows(pixel: &dyn Fn(u32, u32) -> [u8; 3], width: u32, height: u32) -> 
     (top, bottom, button_top)
 }
 
-/// Clicks the "Show details" toggle of the notice open in `window` and reads
-/// the card that results. The toggle is found by its accent tone above the
-/// primary button.
+/// Reads the card of the notice open in `window`, whose details a notice
+/// shows from the start (#392). The toggle is found by its accent tone
+/// above the primary button.
 pub(crate) fn open_details(window: &slint::Window) -> OpenDetails {
-    use slint::platform::{PointerEventButton, WindowEvent};
-
     render_frames();
     let shot = window
         .take_snapshot()
         .expect("the software renderer takes snapshots");
     let (width, height) = (shot.width(), shot.height());
-    let pixel = |x: u32, y: u32| {
-        let p = shot.as_slice()[(y * width + x) as usize];
-        [p.r, p.g, p.b]
-    };
-    let (top, bottom, _) = toggle_rows(&pixel, width, height);
-    let columns: Vec<u32> = (0..width)
-        .filter(|&x| (top..=bottom).any(|y| accent_toned(pixel(x, y))))
-        .collect();
-    let (left, right) = (columns[0], *columns.last().unwrap_or(&columns[0]));
-    let scale = window.scale_factor();
-    let position = slint::LogicalPosition::new(
-        ((left + right) / 2) as f32 / scale,
-        ((top + bottom) / 2) as f32 / scale,
-    );
-    for event in [
-        WindowEvent::PointerMoved { position },
-        WindowEvent::PointerPressed {
-            position,
-            button: PointerEventButton::Left,
-        },
-        WindowEvent::PointerReleased {
-            position,
-            button: PointerEventButton::Left,
-        },
-    ] {
-        window.dispatch_event(event);
-    }
-    render_frames();
-
-    let shot = window
-        .take_snapshot()
-        .expect("the software renderer takes snapshots");
     let pixel = |x: u32, y: u32| {
         let p = shot.as_slice()[(y * width + x) as usize];
         [p.r, p.g, p.b]
