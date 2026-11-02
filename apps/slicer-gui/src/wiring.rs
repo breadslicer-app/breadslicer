@@ -13,7 +13,6 @@ use std::rc::Rc;
 use futures_channel::oneshot;
 use slint::ComponentHandle;
 
-use crate::MainWindow;
 use crate::error_dialog::{DialogManager, ErrorTexts, format_anyhow_chain};
 use crate::export_progress_panel::ExportProgressPanel;
 use crate::i18n::ctr;
@@ -27,6 +26,7 @@ use crate::scene_export;
 use crate::scene_loader::LoadTicket;
 use crate::scene_save::{self, ProjectFormat, SaveDispatch, SaveTargetDispatch};
 use crate::viewport::{RESIZE_SETTLE, ScreenDelta, ScreenPoint, ViewportController};
+use crate::{MainWindow, StartOpen};
 
 mod export_flow_dispatch {
     use std::path::PathBuf;
@@ -310,7 +310,7 @@ fn wire_open_file(
         ui.on_import_notes_requested(move || ctrl.loader().open_import_notes());
     }
 
-    ui.on_open_file_requested(move || {
+    let open = move |kind: OpenKind| {
         ctrl.on_modal_transform_finish(false);
         // The Slint event loop keeps processing callbacks while the native file
         // dialog is open, and `enabled: !root.loading` on the menu item cannot
@@ -325,13 +325,38 @@ fn wire_open_file(
             ctrl.clone(),
             prefs.clone(),
             confirm_open.clone(),
+            kind,
         )) {
             eprintln!("Failed to spawn file dialog task: {err}");
             // `ticket` was moved into the future; when `spawn_local` returns
             // `Err`, the future is dropped and the ticket with it, releasing
             // the gate.
         }
+    };
+    let open = Rc::new(open);
+    {
+        let open = open.clone();
+        ui.on_open_file_requested(move || open(OpenKind::Any));
+    }
+    // The start dialog's Open project and Import model (#381).
+    ui.on_start_open_file(move |kind| {
+        open(match kind {
+            StartOpen::Project => OpenKind::Project,
+            StartOpen::Model => OpenKind::Model,
+        });
     });
+}
+
+/// Which files the open dialog leads with: its first filter is the one shown
+/// when it opens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenKind {
+    /// Every file the app opens (File > Open).
+    Any,
+    /// Breadslicer projects.
+    Project,
+    /// Models: STL, OBJ and 3MF.
+    Model,
 }
 
 /// Orchestrates 1 "Open..." command: show the dialog, hand the picked path to
@@ -348,10 +373,11 @@ async fn run_open_file_flow(
     ctrl: Rc<ViewportController>,
     prefs: Rc<PreferencesBus>,
     confirm_open: Rc<dyn Fn(PathBuf)>,
+    kind: OpenKind,
 ) {
     let start_dir =
         resolve_open_dialog_dir(prefs.snapshot().last_open_dir, sc_app_paths::home_dir());
-    let Some(path) = pick_mesh_file(ctrl.dialogs().file_dialog(), start_dir).await else {
+    let Some(path) = pick_mesh_file(ctrl.dialogs().file_dialog(), start_dir, kind).await else {
         // User cancelled the dialog.
         return;
     };
@@ -535,19 +561,40 @@ fn remember_projection(prefs: &PreferencesBus, orthographic: bool) {
     });
 }
 
+/// The extensions of the models the app imports: every one it opens but the
+/// project's.
+const MODEL_EXTENSIONS: &[&str] = &["stl", "stla", "stlb", "obj", "3mf"];
+
 async fn pick_mesh_file(
     dialog: rfd::AsyncFileDialog,
     start_dir: Option<PathBuf>,
+    kind: OpenKind,
 ) -> Option<PathBuf> {
-    let mut dialog = dialog
-        .add_filter(
-            ctr!("FileDialog", "All supported files").to_string(),
-            mesh_loader::SUPPORTED_MESH_EXTENSIONS,
-        )
-        .add_filter(
-            ctr!("FileDialog", "Breadslicer projects").to_string(),
-            &["bread"],
-        )
+    let all_supported = (
+        ctr!("FileDialog", "All supported files").to_string(),
+        mesh_loader::SUPPORTED_MESH_EXTENSIONS,
+    );
+    let projects = (
+        ctr!("FileDialog", "Breadslicer projects").to_string(),
+        &["bread"][..],
+    );
+    let lead = match kind {
+        OpenKind::Any => vec![all_supported, projects],
+        OpenKind::Project => vec![projects, all_supported],
+        OpenKind::Model => vec![
+            (
+                ctr!("FileDialog", "3D models").to_string(),
+                MODEL_EXTENSIONS,
+            ),
+            all_supported,
+            projects,
+        ],
+    };
+    let mut dialog = lead
+        .into_iter()
+        .fold(dialog, |dialog, (name, extensions)| {
+            dialog.add_filter(name, extensions)
+        })
         .add_filter(ctr!("FileDialog", "3MF files").to_string(), &["3mf"])
         .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"])
         .add_filter(
@@ -716,6 +763,8 @@ async fn save_to_target(
     crate::breadcrumbs::finished("save", &ended);
     match outcome {
         Ok(Ok(())) => {
+            // The file on disk is a project to reopen later (#381).
+            crate::recent_files::note(target);
             if let Some(why) = supports_as_mesh {
                 dialogs.show_info(move || scene_save::supports_as_mesh_texts(why));
             }

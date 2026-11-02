@@ -270,6 +270,8 @@ mod default_envelope_tests {
             PreferencesChange::SliceControlPanel,
             PreferencesChange::SliceViewPanel,
             PreferencesChange::LastOpenDir,
+            PreferencesChange::StartDialog,
+            PreferencesChange::RecentFiles,
         ] {
             let bus = bus_with_default(None);
             let catalog_cell = cell(catalog(OTHER, GENERIC));

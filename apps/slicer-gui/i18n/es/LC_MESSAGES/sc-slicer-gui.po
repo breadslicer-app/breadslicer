@@ -5667,3 +5667,116 @@ msgstr "Quedó donde estaba. {}"
 msgctxt "DfSupportDialog"
 msgid "the surface there faces up; nothing below can reach it"
 msgstr "ahí la superficie mira hacia arriba; nada desde abajo llega"
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "Not found: {}"
+msgstr "No está: {}"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "Remove {} from the list"
+msgstr "Quitar {} de la lista"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "Start something new, or pick up where you left off."
+msgstr "Empezá algo nuevo o seguí donde lo dejaste."
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "Close"
+msgstr "Cerrar"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "START"
+msgstr "EMPEZAR"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "Reopen last file"
+msgstr "Reabrir el último archivo"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "Open project…"
+msgstr "Abrir proyecto…"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "A Breadslicer project (.bread)"
+msgstr "Un proyecto de Breadslicer (.bread)"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "Import model…"
+msgstr "Importar modelo…"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "STL, OBJ or 3MF"
+msgstr "STL, OBJ o 3MF"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "New empty scene"
+msgstr "Escena vacía"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "Drop a model on the plate later"
+msgstr "Soltá un modelo cuando quieras"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "RECENT"
+msgstr "RECIENTES"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "No recent files yet"
+msgstr "Todavía no hay archivos recientes"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "Files you open or save show up here."
+msgstr "Los archivos que abras o guardes aparecen acá."
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "Don't show at startup"
+msgstr "No mostrar al iniciar"
+
+#: ui/start-dialog.slint
+msgctxt "StartDialog"
+msgid "Turn it back on in Preferences › UI & Theme"
+msgstr "Se vuelve a activar en Ajustes › Interfaz de usuario y tema"
+
+#: src/recent_files.rs
+#, rust-format
+msgctxt "StartDialog"
+msgid "Today, {}"
+msgstr "Hoy, {}"
+
+#: src/recent_files.rs
+msgctxt "StartDialog"
+msgid "Yesterday"
+msgstr "Ayer"
+
+#: src/recent_files.rs
+#, rust-format
+msgctxt "StartDialog"
+msgid "{n} day ago"
+msgid_plural "{n} days ago"
+msgstr[0] "hace {n} día"
+msgstr[1] "hace {n} días"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Show the start window when Breadslicer opens"
+msgstr "Mostrar la ventana de inicio al abrir Breadslicer"
+
+#: src/wiring.rs
+msgctxt "FileDialog"
+msgid "3D models"
+msgstr "Modelos 3D"

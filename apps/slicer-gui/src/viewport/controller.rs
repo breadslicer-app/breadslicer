@@ -1142,6 +1142,11 @@ impl ViewportController {
         // A scene read from an autosave or an earlier version stands for the
         // file it came from (#18).
         let recovered = crate::autosave::recovered_identity(&source_path);
+        // A file the person opened goes first in the recent list (#381); a
+        // recovered copy is not a file they opened.
+        if recovered.is_none() {
+            crate::recent_files::note(&source_path);
+        }
 
         // Fires `SceneEvent::Installed`; the listener resets the camera to
         // `None` (so the bounds-based framing below sees a fresh slot), pushes

@@ -16,6 +16,7 @@ import { PreferencesWindow } from "./preferences/preferences-window.slint";
 import { ExtendDialog } from "extend-dialog.slint";
 import { ForkDialog } from "fork-dialog.slint";
 import { AppMessage, MessageAnswer, MessageKind, MessageLayer } from "message-layer.slint";
+import { RecentFileRow, StartLayer, StartOpen } from "start-dialog.slint";
 import { ProfileViewDialog } from "profile-view-dialog.slint";
 
 // Embeds Noto Sans into the executable and registers it process wide.
@@ -24,7 +25,7 @@ import { ProfileViewDialog } from "profile-view-dialog.slint";
 // thread the first time any text is laid out (e.g. opening a menu).
 import "../assets/fonts/NotoSans-Variable.ttf";
 
-export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, ProfileViewDialog, ThemePreference }
+export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, ProfileViewDialog, RecentFileRow, StartOpen, ThemePreference }
 
 // Load-pipeline phase shown by the floating progress panel. Values
 // mirror the Rust-side worker phases; the Rust poll maps between the
@@ -85,6 +86,21 @@ export component MainWindow inherits Window {
     out property <string> message-default-heading: @tr("ErrorDialog" => "An error occurred");
     callback message-answered(MessageAnswer);
     callback message-outside-clicked();
+    // The start dialog (#381), over the window like the messages. Rust
+    // (`start_dialog.rs`) opens it and fills the list; it hides while a file
+    // loads and closes once the window holds a scene.
+    in-out property <bool> start-open: false;
+    in property <[RecentFileRow]> start-recent;
+    // The name of the file "Reopen" opens; empty offers no Reopen.
+    in property <string> start-last-name;
+    in property <string> start-version;
+    in-out property <bool> start-dont-show: false;
+    callback start-open-recent(int);
+    callback start-reopen-last();
+    callback start-remove-recent(int);
+    // Open project or Import model: File > Open's dialog, led by that kind.
+    callback start-open-file(StartOpen);
+    callback start-dont-show-changed(bool);
     in property <bool> loading: false;
     in property <bool> has-scene: false;
     in property <bool> can-undo: false;
@@ -2511,6 +2527,48 @@ export component MainWindow inherits Window {
         }
     }
 
+    // The start dialog (#381), under the messages: a message that opens
+    // while it shows sits over it.
+    start-layer := StartLayer {
+        width: 100%;
+        height: 100%;
+        open: root.start-open && !root.loading;
+        recent: root.start-recent;
+        last-name: root.start-last-name;
+        version: root.start-version;
+        dont-show <=> root.start-dont-show;
+        closed => {
+            root.start-open = false;
+        }
+        reopen-last => {
+            root.start-reopen-last();
+        }
+        open-recent(row) => {
+            root.start-open-recent(row);
+        }
+        remove-recent(row) => {
+            root.start-remove-recent(row);
+        }
+        open-file(kind) => {
+            root.start-open-file(kind);
+        }
+        dont-show-changed(on) => {
+            root.start-dont-show-changed(on);
+        }
+    }
+
+    // A scene in the window, however it came, ends the start dialog.
+    changed has-scene => {
+        if (root.has-scene) {
+            root.start-open = false;
+        }
+    }
+    changed start-open => {
+        if (!root.start-open) {
+            mv.focus-viewport();
+        }
+    }
+
     // App messages (#133): last, so they sit over everything else.
     MessageLayer {
         width: 100%;
@@ -2529,10 +2587,15 @@ export component MainWindow inherits Window {
         }
     }
 
-    // A closed message hands the keyboard back to the viewport.
+    // A closed message hands the keyboard back to the start dialog when it
+    // shows, to the viewport otherwise.
     changed message-open => {
         if (!root.message-open) {
-            mv.focus-viewport();
+            if (start-layer.visible) {
+                start-layer.focus-dialog();
+            } else {
+                mv.focus-viewport();
+            }
         }
     }
 }

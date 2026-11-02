@@ -96,3 +96,29 @@ fn a_wrong_recorded_length_is_a_bad_payload() {
     bytes[16..24].copy_from_slice(&(1u64 << 40).to_le_bytes());
     assert!(matches!(read_all(&bytes), Err(ReadBreadError::BadPayload(tag)) if tag == A));
 }
+
+#[test]
+fn a_chunk_is_found_past_others_without_reading_them() {
+    let big = vec![9u8; 50_000];
+    let bytes = file(&[(A, 1, &big), (B, 3, b"found"), (B, 4, b"second")]);
+    let mut reader = BreadReader::new(std::io::Cursor::new(&bytes)).unwrap();
+    let chunk = reader
+        .find_chunk(B, 1024)
+        .unwrap()
+        .expect("the chunk is there");
+    assert_eq!((chunk.version, chunk.payload), (3, b"found".to_vec()));
+    let mut reader = BreadReader::new(std::io::Cursor::new(&bytes)).unwrap();
+    assert!(
+        reader
+            .find_chunk(ChunkTag(*b"NONE"), 1024)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn a_chunk_longer_than_asked_is_not_read() {
+    let bytes = file(&[(A, 1, &[1; 100])]);
+    let mut reader = BreadReader::new(std::io::Cursor::new(&bytes)).unwrap();
+    assert!(reader.find_chunk(A, 99).unwrap().is_none());
+}
