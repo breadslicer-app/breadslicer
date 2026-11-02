@@ -51,6 +51,9 @@ pub(crate) enum ReviewOutcome {
         /// The pixels that thicken each thin model feature, by the index
         /// its fix names (#156).
         thickenings: Vec<CavityFill>,
+        /// The pixels that join each island to the model just below it, by
+        /// the index its fix names (#235).
+        joins: Vec<CavityFill>,
         /// How long the review took, layer regions included.
         took: Duration,
     },
@@ -125,6 +128,7 @@ pub(crate) fn review_slices(
             fills: report.fills,
             erasures: report.erasures,
             thickenings: report.thickenings,
+            joins: report.joins,
             took: report.timings.total,
         })
     })

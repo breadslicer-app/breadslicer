@@ -515,9 +515,61 @@ fn a_growing_tip_is_one_island_over_its_layers() {
     assert_eq!(finding.severity, Severity::Error);
     assert_eq!(
         finding.detail,
-        "0.0400 mm² of model starts with nothing cured below it (0 % supported), and the part it starts grows to 1.00 mm² with nothing else holding it."
+        "0.0400 mm² of model starts with nothing cured below it (0 % supported), and the part it starts grows to 1.00 mm² with nothing else holding it. Its first layer is smaller than a support tip, so the support aims one layer higher, where it is large enough."
     );
     assert_eq!(finding.focus, at_pixel(&fixture, 3, 99, 59));
+    // #405: the 2 x 2 tip (0.04 mm²) is smaller than a tip's contact
+    // (0.07 mm²): the support goes one layer up, on the 6 x 6 layer (0.36
+    // mm²), on the ring that grew around the tip, at the bottom of layer 4.
+    let Some(SuggestedFix::AddSupport { at }) = finding.fix else {
+        panic!("{:?}", finding.fix)
+    };
+    let span = fixture.input().layers()[4];
+    assert!((at.z_mm - span.bottom_mm).abs() < 1e-9, "{at:?}");
+    let ring = |[x, y]: [u32; 2]| (97..103).contains(&x) && (57..63).contains(&y);
+    let tip = |[x, y]: [u32; 2]| (99..101).contains(&x) && (59..61).contains(&y);
+    let raster = |at: PlatePoint| {
+        (0..WIDTH_PX)
+            .flat_map(|x| (0..HEIGHT_PX).map(move |y| [x, y]))
+            .find(|&[x, y]| {
+                let p = fixture
+                    .input()
+                    .pixel_to_plate([f64::from(x) + 0.5, f64::from(y) + 0.5]);
+                (p[0] - at.x_mm).abs() < 1e-9 && (p[1] - at.y_mm).abs() < 1e-9
+            })
+    };
+    let pixel = raster(at).expect("a pixel centre");
+    assert!(ring(pixel) && !tip(pixel), "{pixel:?}");
+    // Without the policy, it aims at the tip itself.
+    let plain = only(&islands_with(
+        &fixture,
+        &IslandOptions::default().without_policy(),
+    ))
+    .clone();
+    assert_eq!(
+        plain.fix,
+        Some(SuggestedFix::AddSupport {
+            at: fixture.input().underside(3, plain.focus)
+        })
+    );
+}
+
+/// #405: a first layer as large as a tip's contact keeps its support.
+#[test]
+fn a_first_layer_as_large_as_a_tip_keeps_its_support() {
+    // A 3 x 3 tip (0.09 mm², larger than the 0.07 mm² contact) that grows.
+    let fixture = FixtureBuilder::new(8)
+        .model(3..4, square(99, 59, 3))
+        .model(4.., square(96, 56, 9))
+        .build();
+    let finding = only(&islands(&fixture)).clone();
+    assert_eq!(
+        finding.fix,
+        Some(SuggestedFix::AddSupport {
+            at: fixture.input().underside(3, finding.focus)
+        })
+    );
+    assert!(!finding.detail.contains("aims"), "{}", finding.detail);
 }
 
 #[test]
@@ -537,7 +589,7 @@ fn an_island_spans_the_part_hanging_from_it() {
     assert_eq!((finding.first_layer, finding.last_layer), (3, 6));
     assert_eq!(
         finding.detail,
-        "0.0400 mm² of model starts with nothing cured below it (0 % supported), and the part it starts grows to 1.96 mm² before the rest of the print holds it."
+        "0.0400 mm² of model starts with nothing cured below it (0 % supported), and the part it starts grows to 1.96 mm² before the rest of the print holds it. Its first layer is smaller than a support tip, so the support aims one layer higher, where it is large enough."
     );
 }
 
@@ -664,18 +716,228 @@ fn two_tips_side_by_side_are_two_islands() {
 
 #[test]
 fn islands_stacked_over_a_gap_are_two_islands() {
-    // A one-layer island at layer 2, nothing at layer 3, another at layer 4
-    // over the same pixels: they never touch, so they are two islands.
-    let fixture = FixtureBuilder::new(6)
+    // A one-layer island at layer 2, nothing at layers 3 and 4, another at
+    // layer 5 over the same pixels: a 0.10 mm gap no exposure cures through,
+    // so they are two islands.
+    let fixture = FixtureBuilder::new(7)
         .model(2..3, square(60, 60, 8))
-        .model(4.., square(60, 60, 8))
+        .model(5.., square(60, 60, 8))
         .build();
     let findings = islands(&fixture);
     let layers: Vec<(usize, usize)> = findings
         .iter()
         .map(|f| (f.first_layer, f.last_layer))
         .collect();
-    assert_eq!(layers, vec![(2, 2), (4, 5)]);
+    assert_eq!(layers, vec![(2, 2), (5, 6)]);
+}
+
+/// #403: the exposure of a layer cures through one layer of liquid at 0.05
+/// mm, so what has solid two layers below rests on it.
+#[test]
+fn solid_one_layer_of_liquid_below_holds_a_part() {
+    // A block on the plate to layer 2, nothing at layer 3, and the same
+    // block again from layer 4: no island.
+    let fixture = FixtureBuilder::new(8)
+        .model(0..3, square(60, 60, 8))
+        .model(4.., square(60, 60, 8))
+        .build();
+    assert!(islands(&fixture).is_empty(), "{:?}", islands(&fixture));
+    // Counting only the layer right below, it is an island.
+    let plain = IslandOptions {
+        cure_depth_mm: 0.0,
+        ..IslandOptions::default()
+    };
+    assert_eq!(islands_with(&fixture, &plain).len(), 1);
+    // Two islands over one layer of liquid are one island.
+    let stacked = FixtureBuilder::new(6)
+        .model(2..3, square(60, 60, 8))
+        .model(4.., square(60, 60, 8))
+        .build();
+    let layers: Vec<(usize, usize)> = islands(&stacked)
+        .iter()
+        .map(|f| (f.first_layer, f.last_layer))
+        .collect();
+    assert_eq!(layers, vec![(2, 5)]);
+    // At 0.1 mm layers the exposure does not reach through a layer.
+    let thick = FixtureBuilder::new(8)
+        .layer_height_mm(0.1)
+        .max_z_mm(10.0)
+        .model(0..3, square(60, 60, 8))
+        .model(4.., square(60, 60, 8))
+        .build();
+    assert_eq!(islands(&thick).len(), 1);
+}
+
+/// #403: how many layers of liquid the exposure cures through, by layer
+/// height: one at 0.05 mm, two at 0.03 mm, none at 0.1 mm.
+#[test]
+fn the_cure_depth_reaches_through_layers_by_their_height() {
+    let gap = |layer_mm: f64| {
+        let fixture = FixtureBuilder::new(12)
+            .layer_height_mm(layer_mm)
+            .model(.., square(10, 10, 4))
+            .build();
+        pieces::cured_gap_layers(&fixture.input(), 8, island_policy::CURE_DEPTH_MM)
+    };
+    assert_eq!(gap(0.05), 1);
+    assert_eq!(gap(0.03), 2);
+    assert_eq!(gap(0.1), 0);
+    assert_eq!(gap(0.01), island_policy::MAX_CURED_GAP_LAYERS);
+}
+
+/// A wall on the plate, and a 2 x 2 speck beside it at layer 3 that a ledge
+/// from the wall covers from layer `ledge`: an island of `ledge - 3` layers.
+fn speck_under_a_ledge(ledge: usize, speck_side: u32) -> Fixture {
+    FixtureBuilder::new(10)
+        .model(.., Shape::rect(20.0, 20.0, 40.0, 100.0))
+        .model(3..ledge, square(50, 50, speck_side))
+        .model(ledge.., Shape::rect(20.0, 48.0, 56.0, 56.0))
+        .build()
+}
+
+/// #402: a speck the next layers take in is a minimal island: a note, with
+/// no support.
+#[test]
+fn a_speck_the_next_layer_takes_in_is_a_minimal_island() {
+    // One layer (0.05 mm), 0.04 mm², 0.002 mm³.
+    let fixture = speck_under_a_ledge(4, 2);
+    let finding = only(&islands(&fixture)).clone();
+    assert_eq!(finding.title, "Minimal island");
+    assert_eq!(finding.severity, Severity::Info);
+    assert_eq!(finding.fix, None);
+    assert_eq!((finding.first_layer, finding.last_layer), (3, 3));
+    assert_eq!(
+        finding.detail,
+        "0.0400 mm² of model starts with nothing cured below it, but the next layer holds it (0.0500 mm), 0.00200 mm³ in all and never larger than 0.0400 mm². The next layers lift it with them; a support this small would do more harm than good."
+    );
+    // Two layers (0.10 mm) still are.
+    let two = speck_under_a_ledge(5, 2);
+    assert_eq!(only(&islands(&two)).severity, Severity::Info);
+    // Without the policy, it is an unsupported island.
+    let plain = only(&islands_with(
+        &fixture,
+        &IslandOptions::default().without_policy(),
+    ))
+    .clone();
+    assert_eq!(plain.title, "Unsupported island");
+    assert!(matches!(plain.fix, Some(SuggestedFix::AddSupport { .. })));
+}
+
+/// #402: an island that grows higher, wider or loose is not minimal.
+#[test]
+fn a_higher_wider_or_loose_island_is_not_minimal() {
+    // Three layers (0.15 mm).
+    let three = speck_under_a_ledge(6, 2);
+    let finding = only(&islands(&three)).clone();
+    assert_eq!(finding.title, "Unsupported island");
+    assert!(matches!(finding.fix, Some(SuggestedFix::AddSupport { .. })));
+    // A 3 x 3 section (0.09 mm²), larger than a tip's contact.
+    let wide = speck_under_a_ledge(4, 3);
+    assert_eq!(only(&islands(&wide)).title, "Unsupported island");
+    // A one-layer speck nothing ever takes in.
+    let loose = FixtureBuilder::new(6)
+        .model(.., Shape::rect(20.0, 20.0, 40.0, 100.0))
+        .model(3..4, square(50, 50, 2))
+        .build();
+    assert_eq!(only(&islands(&loose)).title, "Unsupported island");
+}
+
+/// #402: a support sliver the next layer takes in is a minimal floating
+/// support.
+#[test]
+fn a_support_sliver_the_next_layer_takes_in_is_minimal() {
+    let fixture = FixtureBuilder::new(8)
+        .support(.., Shape::rect(20.0, 20.0, 40.0, 100.0))
+        .support(3..4, square(50, 50, 2))
+        .support(4.., Shape::rect(20.0, 48.0, 56.0, 56.0))
+        .build();
+    let finding = only(&islands(&fixture)).clone();
+    assert_eq!(finding.title, "Minimal floating support");
+    assert_eq!(finding.severity, Severity::Info);
+    assert_eq!(finding.scope, RoleScope::Support);
+}
+
+/// #404: a piece no larger than a tip's contact stays with the part it
+/// touches across a weak joint.
+#[test]
+fn a_tiny_piece_on_a_weak_joint_stays_with_what_it_touches() {
+    // 0.05 mm pixels (0.0025 mm²): a block on the plate and, from layer 3,
+    // a 5 x 5 square (25 pixels, 0.0625 mm²) touching its corner through
+    // one pixel, with nothing below it.
+    let fixture = FixtureBuilder::new(8)
+        .screen(160, 120, 0.05)
+        .model(.., Shape::rect(20.0, 20.0, 60.0, 60.0))
+        .model(3.., Shape::rect(60.0, 60.0, 65.0, 65.0))
+        .build();
+    assert!(islands(&fixture).is_empty(), "{:?}", islands(&fixture));
+    // Cutting every weak joint, it is an island of its own.
+    let cut = IslandOptions {
+        weak_joint_keep_mm2: 0.0,
+        ..IslandOptions::default()
+    };
+    assert_eq!(islands_with(&fixture, &cut).len(), 1);
+    // A 6 x 6 square (0.09 mm²) is cut off as before.
+    let larger = FixtureBuilder::new(8)
+        .screen(160, 120, 0.05)
+        .model(.., Shape::rect(20.0, 20.0, 60.0, 60.0))
+        .model(3.., Shape::rect(60.0, 60.0, 66.0, 66.0))
+        .build();
+    assert_eq!(islands(&larger).len(), 1);
+}
+
+/// #235: an island over model across a gap thinner than a support offers to
+/// join it, and the join cures that gap.
+#[test]
+fn an_island_just_above_the_model_offers_to_join_it() {
+    // A block on the plate to layer 2, nothing at layers 3 and 4 (0.10 mm),
+    // and an 8 x 8 block from layer 5 over it.
+    let fixture = FixtureBuilder::new(9)
+        .model(0..3, square(60, 60, 8))
+        .model(5.., square(60, 60, 8))
+        .build();
+    let input = fixture.input();
+    let regions = fixture.regions();
+    let ctx = ReviewContext::new(&input, &regions);
+    let (findings, joins) = run_with_joins(&ctx, &IslandOptions::default());
+    let finding = only(&findings).clone();
+    assert_eq!(finding.title, "Unsupported island");
+    let Some(SuggestedFix::JoinBelow { at, join }) = finding.fix else {
+        panic!("{:?}", finding.fix)
+    };
+    assert_eq!(at, fixture.input().underside(5, finding.focus));
+    assert_eq!(join, 0);
+    assert_eq!(joins.len(), 1);
+    assert!(
+        finding.detail.ends_with(
+            "Model lies 0.100 mm below it, too close for a support: curing that gap joins it to the model."
+        ),
+        "{}",
+        finding.detail
+    );
+    // The gap's two layers, under the whole block: 0.64 mm² x 0.10 mm.
+    let fill = &joins[0];
+    assert_eq!(fill.slabs.len(), 2);
+    assert!((fill.slabs[0].bottom_mm - 0.15).abs() < 1e-9);
+    assert!((fill.slabs[1].top_mm - 0.25).abs() < 1e-9);
+    assert!(
+        (fill.volume_mm3() - 0.064).abs() < 1e-9,
+        "{}",
+        fill.volume_mm3()
+    );
+    // Over a support, never: it would glue the part to its support.
+    let on_support = FixtureBuilder::new(9)
+        .support(0..3, square(60, 60, 8))
+        .model(5.., square(60, 60, 8))
+        .build();
+    let finding = only(&islands(&on_support)).clone();
+    assert!(matches!(finding.fix, Some(SuggestedFix::AddSupport { .. })));
+    // Across a thicker gap (0.15 mm), a support.
+    let far = FixtureBuilder::new(9)
+        .model(0..3, square(60, 60, 8))
+        .model(6.., square(60, 60, 8))
+        .build();
+    let finding = only(&islands(&far)).clone();
+    assert!(matches!(finding.fix, Some(SuggestedFix::AddSupport { .. })));
 }
 
 #[test]
@@ -905,7 +1167,15 @@ fn margins_out_of_range_are_clamped_and_nan_falls_back() {
     let nan = IslandOptions {
         min_supported_fraction: f64::NAN,
         min_tip_supported_fraction: f64::NAN,
-        min_area_px: MIN_ISLAND_AREA_PX,
+        cure_depth_mm: f64::NAN,
+        weak_joint_keep_mm2: f64::NAN,
+        minimal_height_mm: f64::NAN,
+        minimal_volume_mm3: f64::NAN,
+        minimal_section_mm2: f64::NAN,
+        join_gap_mm: f64::NAN,
+        support_climb_mm: f64::NAN,
+        tip_contact_mm2: f64::NAN,
+        ..IslandOptions::default()
     };
     assert_eq!(nan.sanitized(), IslandOptions::default());
     assert_eq!(islands_with(&floating, &nan).len(), 1);

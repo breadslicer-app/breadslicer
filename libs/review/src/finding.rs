@@ -232,6 +232,15 @@ pub enum SuggestedFix {
         /// The feature's index among the review's thickenings.
         feature: usize,
     },
+    /// Join an island to the model just below it on the next slice (#235):
+    /// the gap between them, thinner than a support, is cured as
+    /// [`ReviewReport::joins`](crate::runner::ReviewReport::joins)`[join]`.
+    JoinBelow {
+        /// The island's underside, where the camera looks.
+        at: PlatePoint,
+        /// The gap's index among the review's joins.
+        join: usize,
+    },
 }
 
 impl SuggestedFix {
@@ -243,6 +252,7 @@ impl SuggestedFix {
             Self::ClearRaft { lift_to_mm } => (3, PlatePoint::new(0.0, 0.0, lift_to_mm)),
             Self::Erase { at, .. } => (4, at),
             Self::Thicken { at, .. } => (5, at),
+            Self::JoinBelow { at, .. } => (6, at),
         }
     }
 
@@ -255,7 +265,8 @@ impl SuggestedFix {
             .then_with(|| match (self, other) {
                 (Self::Fill { cavity: a, .. }, Self::Fill { cavity: b, .. })
                 | (Self::Erase { speck: a, .. }, Self::Erase { speck: b, .. })
-                | (Self::Thicken { feature: a, .. }, Self::Thicken { feature: b, .. }) => a.cmp(b),
+                | (Self::Thicken { feature: a, .. }, Self::Thicken { feature: b, .. })
+                | (Self::JoinBelow { join: a, .. }, Self::JoinBelow { join: b, .. }) => a.cmp(b),
                 _ => Ordering::Equal,
             })
     }

@@ -33,6 +33,19 @@
 //! a thin feature stays with the piece it hangs from, and a part that is thin
 //! all over (a support stem, a stray pixel, a narrow strip) is one piece.
 //!
+//! 5. A piece that the cut leaves no larger than the given size (the tip's
+//!    contact, [`WEAK_JOINT_KEEP_MM2`](super::island_policy::WEAK_JOINT_KEEP_MM2),
+//!    #404) joins the largest piece it touches: pulled apart by a joint of a
+//!    pixel or two, a speck that small is part of what it touches.
+//!
+//! # Contacts
+//!
+//! A piece rests on the pieces of the layer below through the pixels they
+//! share straight above one another. Where a pixel has nothing below it, the
+//! exposure of its layer cures through the liquid down to solid a layer or
+//! more below, as deep as the cure depth reaches (#403): it rests on that
+//! solid as well, through a contact that names how many layers below it is.
+//!
 //! Piece indices are deterministic: anchors in scan order, then the clusters
 //! that touch no anchor, by their first part (cores before thin parts, each
 //! in scan order). [`LayerPieces::compute`] gives the same pieces every
@@ -40,6 +53,7 @@
 
 use rayon::prelude::*;
 
+use super::island_policy::{HEIGHT_TOLERANCE_MM, MAX_CURED_GAP_LAYERS};
 use crate::input::ReviewInput;
 use crate::regions::{Connectivity, LayerPixels, label_runs};
 use crate::runs::{Run, for_each_overlap};
@@ -65,6 +79,10 @@ pub const MIN_JOINT_PX: u32 = 3;
 /// 7 to 123 pixels along braces and thin strips that are held as a whole.
 pub const MIN_ANCHOR_PX: u32 = 5;
 
+/// A layer's runs split where model starts and stops, each with its piece
+/// and whether it is model.
+type RoleSplit = (Vec<Run>, Vec<(u32, bool)>);
+
 /// The statistics of one piece.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Piece {
@@ -76,10 +94,13 @@ pub(super) struct Piece {
     pub support_px: u64,
 }
 
-/// How a piece of one layer rests on a piece of the layer below: the pixels
-/// they share straight above one another.
+/// How a piece of one layer rests on a piece of a layer below: the pixels
+/// they share straight above one another, with nothing solid between them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Contact {
+    /// How many layers below the piece of the upper layer it rests on: 1
+    /// for the layer right below, more through cured liquid (#403).
+    pub below: u8,
     /// The piece of the lower layer.
     pub lower: u32,
     /// The piece of the upper layer.
@@ -102,17 +123,27 @@ pub(super) struct LayerPieces {
     pub pieces: Vec<Piece>,
     /// The model pixels of the layer.
     pub model: Vec<Run>,
+    /// The runs split where model starts and stops, each with its piece and
+    /// whether it is model: what the layers above rest on, made once.
+    split: std::sync::OnceLock<RoleSplit>,
 }
 
 impl LayerPieces {
-    /// Rasterises layer `layer` of `input` and cuts it into pieces.
-    pub(super) fn compute(input: &ReviewInput<'_>, layer: usize) -> Self {
-        Self::cut(LayerPixels::compute(input, layer))
+    /// Rasterises layer `layer` of `input` and cuts it into pieces, a piece
+    /// cut off with no more than `keep_px` pixels joining the largest piece
+    /// it touches.
+    pub(super) fn compute(input: &ReviewInput<'_>, layer: usize, keep_px: u64) -> Self {
+        Self::cut(LayerPixels::compute(input, layer), keep_px)
     }
 
-    /// Cuts the solid of `pixels` into pieces.
-    pub(super) fn cut(pixels: LayerPixels) -> Self {
-        let (runs, labels, count) = cut(&pixels.solid, &pixels.solid_labels, pixels.solid_count);
+    /// Cuts the solid of `pixels` into pieces (see [`Self::compute`]).
+    pub(super) fn cut(pixels: LayerPixels, keep_px: u64) -> Self {
+        let (runs, labels, count) = cut(
+            &pixels.solid,
+            &pixels.solid_labels,
+            pixels.solid_count,
+            keep_px,
+        );
         let mut pieces = vec![Piece::default(); count];
         for (run, &label) in runs.iter().zip(&labels) {
             pieces[label as usize].area_px += u64::from(run.len());
@@ -128,6 +159,7 @@ impl LayerPieces {
             labels,
             pieces,
             model: pixels.model,
+            split: std::sync::OnceLock::new(),
         }
     }
 
@@ -148,9 +180,9 @@ impl LayerPieces {
 pub(super) struct PieceScan {
     /// Every layer's pieces, from the plate up.
     pub layers: Vec<Vec<Piece>>,
-    /// `contacts[k]`: how the pieces of layer `k` rest on those of layer
-    /// `k - 1`, sorted by `(lower, upper)`. Empty for the layers that rest
-    /// on the plate, which need none.
+    /// `contacts[k]`: how the pieces of layer `k` rest on those of the
+    /// layers below, sorted by `(below, lower, upper)`. Empty for the layers
+    /// that rest on the plate, which need none.
     pub contacts: Vec<Vec<Contact>>,
     /// `touches[k]`: for every piece of layer `k` that rests on nothing, the
     /// pieces of layer `k - 1` it touches through an edge or a corner, as
@@ -158,16 +190,46 @@ pub(super) struct PieceScan {
     pub touches: Vec<Vec<(u32, u32)>>,
 }
 
-/// The contacts and touches of one layer with the layer below it.
+/// The contacts and touches of one layer with the layers below it.
 type Links = (Vec<Contact>, Vec<(u32, u32)>);
 
-/// Cuts every layer of `input` into pieces and links consecutive layers from
-/// layer `first_linked` up.
+/// How many layers of liquid below layer `layer` of `input` its exposure
+/// cures through to the solid under them (#403): the most layers `g` such
+/// that the layer and the `g` below it are no thicker than `cure_depth_mm`,
+/// at most [`MAX_CURED_GAP_LAYERS`].
+pub(super) fn cured_gap_layers(input: &ReviewInput<'_>, layer: usize, cure_depth_mm: f64) -> usize {
+    let layers = input.layers();
+    let Some(own) = layers.get(layer) else {
+        return 0;
+    };
+    let mut depth = own.height_mm();
+    let mut gap = 0;
+    while gap < MAX_CURED_GAP_LAYERS && gap < layer {
+        depth += layers[layer - gap - 1].height_mm();
+        if depth > cure_depth_mm + HEIGHT_TOLERANCE_MM {
+            break;
+        }
+        gap += 1;
+    }
+    gap
+}
+
+/// Cuts every layer of `input` into pieces, a piece of no more than
+/// `keep_px` pixels cut off at a weak joint staying with what it touches,
+/// and links the layers from layer `first_linked` up to those below them:
+/// the layer right below, and as many more below a pixel with nothing under
+/// it as `cure_depth_mm` reaches through.
 ///
 /// Layers are processed in parallel, a batch of a few per thread at a time,
-/// so only one batch of pixels is held in memory at once. The result does
-/// not depend on the number of threads.
-pub(super) fn scan(input: &ReviewInput<'_>, first_linked: usize) -> PieceScan {
+/// so only one batch of pixels is held in memory at once (and the few layers
+/// below it that its contacts reach). The result does not depend on the
+/// number of threads.
+pub(super) fn scan(
+    input: &ReviewInput<'_>,
+    first_linked: usize,
+    keep_px: u64,
+    cure_depth_mm: f64,
+) -> PieceScan {
     let count = input.layer_count();
     let batch = (rayon::current_num_threads() * 4).max(8);
     let mut scan = PieceScan {
@@ -175,30 +237,39 @@ pub(super) fn scan(input: &ReviewInput<'_>, first_linked: usize) -> PieceScan {
         contacts: Vec::with_capacity(count),
         touches: Vec::with_capacity(count),
     };
-    let mut previous: Option<LayerPieces> = None;
+    // The last layers of the batch before, nearest last: the layers below
+    // the first layers of a batch.
+    let mut previous: Vec<LayerPieces> = Vec::new();
     let mut start = 0;
     while start < count {
         let end = (start + batch).min(count);
-        let mut cut: Vec<LayerPieces> = (start..end)
+        let cut: Vec<LayerPieces> = (start..end)
             .into_par_iter()
-            .map(|layer| LayerPieces::compute(input, layer))
+            .map(|layer| LayerPieces::compute(input, layer, keep_px))
             .collect();
         let links: Vec<Links> = (0..cut.len())
             .into_par_iter()
             .map(|i| {
-                let lower = if i == 0 {
-                    previous.as_ref()
-                } else {
-                    Some(&cut[i - 1])
-                };
-                match lower {
-                    Some(lower) if start + i >= first_linked => {
-                        let contacts = contacts(lower, &cut[i]);
-                        let touches = touches(lower, &cut[i], &contacts);
-                        (contacts, touches)
-                    }
-                    _ => Default::default(),
+                let layer = start + i;
+                if layer < first_linked || layer == 0 {
+                    return Default::default();
                 }
+                let reach = 1 + cured_gap_layers(input, layer, cure_depth_mm);
+                let lowers: Vec<&LayerPieces> = (1..=reach.min(layer))
+                    .map_while(|below| {
+                        if below <= i {
+                            Some(&cut[i - below])
+                        } else {
+                            previous.len().checked_sub(below - i).map(|k| &previous[k])
+                        }
+                    })
+                    .collect();
+                if lowers.is_empty() {
+                    return Default::default();
+                }
+                let contacts = contacts(&lowers, &cut[i]);
+                let touches = touches(lowers[0], &cut[i], &contacts);
+                (contacts, touches)
             })
             .collect();
         for (layer, (contacts, touches)) in cut.iter().zip(links) {
@@ -206,7 +277,11 @@ pub(super) fn scan(input: &ReviewInput<'_>, first_linked: usize) -> PieceScan {
             scan.contacts.push(contacts);
             scan.touches.push(touches);
         }
-        previous = cut.pop();
+        previous.extend(cut);
+        let keep = MAX_CURED_GAP_LAYERS + 1;
+        if previous.len() > keep {
+            previous.drain(..previous.len() - keep);
+        }
         start = end;
     }
     scan
@@ -216,8 +291,14 @@ pub(super) fn scan(input: &ReviewInput<'_>, first_linked: usize) -> PieceScan {
 /// `region_count`), into pieces: runs covering exactly `solid`, sorted by
 /// `(row, x0)`, each within one piece; the piece of each run; the number of
 /// pieces. A region with at most one core is one piece, numbered first in
-/// region order; the pieces of the other regions follow.
-fn cut(solid: &[Run], regions: &[u32], region_count: usize) -> (Vec<Run>, Vec<u32>, usize) {
+/// region order; the pieces of the other regions follow. A piece of no more
+/// than `keep_px` pixels joins the largest piece it touches.
+fn cut(
+    solid: &[Run],
+    regions: &[u32],
+    region_count: usize,
+    keep_px: u64,
+) -> (Vec<Run>, Vec<u32>, usize) {
     // A region with at most one core is one piece whatever its thin parts:
     // they all join that core, or each other. Only regions with several
     // cores need the whole cut, which costs as much as the erosion again.
@@ -248,7 +329,7 @@ fn cut(solid: &[Run], regions: &[u32], region_count: usize) -> (Vec<Run>, Vec<u3
         .filter(|(_, region)| cores_in[**region as usize] >= 2)
         .map(|(run, _)| *run)
         .collect();
-    let (cut_runs, cut_labels, cut_count) = cut_regions(&several);
+    let (cut_runs, cut_labels, cut_count) = keep_small_pieces(cut_regions(&several), keep_px);
     let offset = count;
     count += u32::try_from(cut_count).expect("fewer pieces than pixels");
 
@@ -383,6 +464,90 @@ fn cut_regions(solid: &[Run]) -> (Vec<Run>, Vec<u32>, usize) {
         }
     }
     (runs, labels, count as usize)
+}
+
+/// The pieces `(runs, labels, count)` with every piece of no more than
+/// `keep_px` pixels joined to the largest piece it touches (#404), on a tie
+/// the first; a small piece that touches none stays as it is. Pieces are
+/// numbered again in the order of their first piece.
+fn keep_small_pieces(
+    (runs, labels, count): (Vec<Run>, Vec<u32>, usize),
+    keep_px: u64,
+) -> (Vec<Run>, Vec<u32>, usize) {
+    if keep_px == 0 || count < 2 {
+        return (runs, labels, count);
+    }
+    let mut area = vec![0u64; count];
+    for (run, &label) in runs.iter().zip(&labels) {
+        area[label as usize] += u64::from(run.len());
+    }
+    if area.iter().all(|&a| a > keep_px) {
+        return (runs, labels, count);
+    }
+    // The pieces each small piece touches.
+    let mut neighbours: Vec<Vec<u32>> = vec![Vec::new(); count];
+    for (run, &label) in runs.iter().zip(&labels) {
+        if area[label as usize] > keep_px {
+            continue;
+        }
+        for index in touching(&runs, run) {
+            let other = labels[index];
+            if other != label && !neighbours[label as usize].contains(&other) {
+                neighbours[label as usize].push(other);
+            }
+        }
+    }
+    let mut sets = UnionFind::new(count);
+    for (piece, touched) in neighbours.iter().enumerate() {
+        let largest = touched
+            .iter()
+            .copied()
+            .max_by(|a, b| area[*a as usize].cmp(&area[*b as usize]).then(b.cmp(a)));
+        if let Some(other) = largest {
+            sets.union(piece, other as usize);
+        }
+    }
+    let mut renumber = vec![u32::MAX; count];
+    let mut next = 0u32;
+    let mut label_of = vec![0u32; count];
+    for (piece, slot) in label_of.iter_mut().enumerate() {
+        let root = sets.find(piece);
+        if renumber[root] == u32::MAX {
+            renumber[root] = next;
+            next += 1;
+        }
+        *slot = renumber[root];
+    }
+    let labels = labels.iter().map(|&l| label_of[l as usize]).collect();
+    (runs, labels, next as usize)
+}
+
+/// The pixels of `runs` (each with its label of `labels`) that `cover`
+/// leaves out, each with the label of its run.
+fn uncovered(runs: &[Run], labels: &[u32], cover: &[Run]) -> (Vec<Run>, Vec<u32>) {
+    let mut out_runs = Vec::new();
+    let mut out_labels = Vec::new();
+    let mut j = 0;
+    for (run, &label) in runs.iter().zip(labels) {
+        while j < cover.len() && (cover[j].row, cover[j].x1) <= (run.row, run.x0) {
+            j += 1;
+        }
+        let mut x = run.x0;
+        let mut k = j;
+        while k < cover.len() && cover[k].row == run.row && cover[k].x0 < run.x1 {
+            if cover[k].x0 > x {
+                out_runs.push(Run::new(run.row, x, cover[k].x0));
+                out_labels.push(label);
+            }
+            x = x.max(cover[k].x1);
+            k += 1;
+        }
+        if x < run.x1 {
+            out_runs.push(Run::new(run.row, x, run.x1));
+            out_labels.push(label);
+        }
+    }
+    (out_runs, out_labels)
 }
 
 /// The rows of a run list: `(row, start, end)` with `runs[start..end]` on
@@ -546,24 +711,41 @@ fn touching<'a>(list: &'a [Run], run: &Run) -> impl Iterator<Item = usize> + 'a 
     })
 }
 
-/// How the pieces of `upper` rest on those of `lower`, sorted by
-/// `(lower, upper)`.
-fn contacts(lower: &LayerPieces, upper: &LayerPieces) -> Vec<Contact> {
-    let (split, tags) = split_by_role(lower);
+/// How the pieces of `upper` rest on those of the layers `lowers` below it
+/// (the layer right below first): on the layer right below through the
+/// pixels they share, and on a deeper layer through the pixels with nothing
+/// in the layers between (#403). Sorted by `(below, lower, upper)`.
+fn contacts(lowers: &[&LayerPieces], upper: &LayerPieces) -> Vec<Contact> {
     let mut out: Vec<Contact> = Vec::new();
-    for_each_overlap(&split, &upper.runs, |i, j, px| {
-        let (piece, on_model) = tags[i];
-        let px = u64::from(px);
-        out.push(Contact {
-            lower: piece,
-            upper: upper.labels[j],
-            model_px: if on_model { px } else { 0 },
-            support_px: if on_model { 0 } else { px },
+    let mut open: Option<(Vec<Run>, Vec<u32>)> = None;
+    for (depth, lower) in lowers.iter().enumerate() {
+        let below = u8::try_from(depth + 1).expect("a few layers");
+        let (runs, labels) = match &open {
+            None => (upper.runs.as_slice(), upper.labels.as_slice()),
+            Some((runs, labels)) => (runs.as_slice(), labels.as_slice()),
+        };
+        if runs.is_empty() {
+            break;
+        }
+        let (split, tags) = lower.split.get_or_init(|| split_by_role(lower));
+        for_each_overlap(split, runs, |i, j, px| {
+            let (piece, on_model) = tags[i];
+            let px = u64::from(px);
+            out.push(Contact {
+                below,
+                lower: piece,
+                upper: labels[j],
+                model_px: if on_model { px } else { 0 },
+                support_px: if on_model { 0 } else { px },
+            });
         });
-    });
-    out.sort_unstable_by_key(|c| (c.lower, c.upper));
+        if depth + 1 < lowers.len() {
+            open = Some(uncovered(runs, labels, &lower.runs));
+        }
+    }
+    out.sort_unstable_by_key(|c| (c.below, c.lower, c.upper));
     out.dedup_by(|next, kept| {
-        if (next.lower, next.upper) == (kept.lower, kept.upper) {
+        if (next.below, next.lower, next.upper) == (kept.below, kept.lower, kept.upper) {
             kept.model_px += next.model_px;
             kept.support_px += next.support_px;
             true
@@ -576,7 +758,7 @@ fn contacts(lower: &LayerPieces, upper: &LayerPieces) -> Vec<Contact> {
 
 /// The runs of `layer` split where model starts and stops, each tagged with
 /// its piece and whether it is model.
-fn split_by_role(layer: &LayerPieces) -> (Vec<Run>, Vec<(u32, bool)>) {
+fn split_by_role(layer: &LayerPieces) -> RoleSplit {
     let model = &layer.model;
     let mut runs = Vec::with_capacity(layer.runs.len());
     let mut tags = Vec::with_capacity(layer.runs.len());

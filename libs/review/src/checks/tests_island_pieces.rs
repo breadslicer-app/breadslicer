@@ -33,7 +33,7 @@ fn runs(rows: &[&str]) -> Vec<Run> {
 /// The pieces of `solid`, labelled into regions first as a layer is.
 fn cut_of(solid: &[Run]) -> (Vec<Run>, Vec<u32>, usize) {
     let (regions, count) = label_runs(solid, Connectivity::Eight);
-    cut(solid, &regions, count)
+    cut(solid, &regions, count, 0)
 }
 
 /// The pieces of `rows` drawn back: each pixel shows its piece as a letter.
@@ -388,14 +388,17 @@ fn layer(model: &[&str], support: &[&str]) -> LayerPieces {
     let support = runs(support);
     let solid = crate::runs::union(&model, &support);
     let (solid_labels, solid_count) = label_runs(&solid, Connectivity::Eight);
-    LayerPieces::cut(LayerPixels {
-        model,
-        support,
-        solid,
-        solid_labels,
-        solid_count,
-        ..LayerPixels::default()
-    })
+    LayerPieces::cut(
+        LayerPixels {
+            model,
+            support,
+            solid,
+            solid_labels,
+            solid_count,
+            ..LayerPixels::default()
+        },
+        0,
+    )
 }
 
 #[test]
@@ -408,17 +411,19 @@ fn contacts_split_model_and_support_below() {
     );
     let upper = layer(&["########", "########", "########", "########"], &[]);
     assert_eq!(lower.pieces.len(), 2);
-    let found = contacts(&lower, &upper);
+    let found = contacts(&[&lower], &upper);
     assert_eq!(
         found,
         vec![
             Contact {
+                below: 1,
                 lower: 0,
                 upper: 0,
                 model_px: 16,
                 support_px: 0,
             },
             Contact {
+                below: 1,
                 lower: 1,
                 upper: 0,
                 model_px: 0,
@@ -436,7 +441,7 @@ fn a_piece_resting_on_nothing_lists_what_it_touches() {
         &["........", "........", "........", "...###..", "...###.."],
         &[],
     );
-    let found = contacts(&lower, &upper);
+    let found = contacts(&[&lower], &upper);
     assert!(found.is_empty());
     assert_eq!(touches(&lower, &upper, &found), vec![(0, 0)]);
     let apart = layer(

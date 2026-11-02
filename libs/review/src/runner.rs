@@ -87,6 +87,11 @@ pub struct ReviewReport {
     /// [`SuggestedFix::Thicken`](crate::SuggestedFix::Thicken) names: cured
     /// with [`fill_stack`](crate::fill_stack), as fills are.
     pub thickenings: Vec<CavityFill>,
+    /// The pixels that join each island to the model just below it, by the
+    /// index its [`SuggestedFix::JoinBelow`](crate::SuggestedFix::JoinBelow)
+    /// names (#235): cured with [`fill_stack`](crate::fill_stack), as
+    /// fills are.
+    pub joins: Vec<CavityFill>,
     /// Where the time went.
     pub timings: ReviewTimings,
 }
@@ -109,12 +114,12 @@ pub fn review_with(input: &ReviewInput<'_>, options: &ReviewOptions) -> ReviewRe
 pub fn review_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> ReviewReport {
     let started = Instant::now();
     let (
-        ((islands, islands_time), ((traps, fills), traps_time)),
+        (((islands, joins), islands_time), ((traps, fills), traps_time)),
         (((thin, thickenings), thin_time), ((output, erasures), output_time)),
     ) = rayon::join(
         || {
             rayon::join(
-                || timed(|| islands::run(ctx, &options.islands)),
+                || timed(|| islands::run_with_joins(ctx, &options.islands)),
                 || timed(|| traps::run_with_fills(ctx, &options.traps)),
             )
         },
@@ -151,6 +156,7 @@ pub fn review_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Revie
         fills,
         erasures,
         thickenings,
+        joins,
         timings,
     }
 }

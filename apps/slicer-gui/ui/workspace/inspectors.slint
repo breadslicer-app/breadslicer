@@ -39,6 +39,9 @@ export struct ReviewRow {
     leave: bool,
     // The lift button of fix 4 ("Lift 17 layers").
     lift-label: string,
+    // An island just above the model (#235): 0 no join, 1 offered, 2 marked
+    // to join on the next slice. Its button is the fix.
+    join: int,
     // After Fix All (#156): why it left this finding, else empty.
     remains: string,
 }
@@ -225,6 +228,17 @@ component FindingRow inherits VerticalLayout {
                     root.fix-alt();
                 }
             }
+        }
+        if root.finding.join > 0: ScButton {
+            text: root.finding.join == 2 ? @tr("Review" => "Do not join") : @tr("Review" => "Join to below");
+            icon: root.finding.join == 2 ? "" : Icons.check;
+            clicked => {
+                root.fix();
+            }
+        }
+        if root.finding.join == 2: Note {
+            text: @tr("Review" => "Marked: the next slice joins it to the model below.");
+            color: Theme.success;
         }
         if root.finding.fixed: Note {
             text: root.finding.fix == 1 ? @tr("Review" => "Support added.")

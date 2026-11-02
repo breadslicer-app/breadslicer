@@ -6015,3 +6015,51 @@ msgstr "Corregir todo hizo {} pasadas, lo máximo que hace por vez. Tocá Correg
 msgctxt "Review"
 msgid "No support could be added here: {}. Supports were added since, so Fix All tries it again."
 msgstr "No se pudo agregar un soporte acá: {}. Desde entonces se agregaron soportes, así que Corregir todo lo vuelve a intentar."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Join to below"
+msgstr "Unir abajo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Do not join"
+msgstr "No unir"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Marked: the next slice joins it to the model below."
+msgstr "Marcada: el próximo laminado la une al modelo de abajo."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "No support fits here"
+msgstr "No entra un soporte acá"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The island will be joined to the model below on the next slice."
+msgstr "La isla se va a unir al modelo de abajo en el próximo laminado."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The island will not be joined."
+msgstr "La isla no se va a unir."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One island to join to the model below."
+msgid_plural "{n} islands to join to the model below."
+msgstr[0] "Una isla para unir al modelo de abajo."
+msgstr[1] "{n} islas para unir al modelo de abajo."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: too small for a support; the next layers lift it."
+msgstr "Corregir todo la dejó: es demasiado chica para un soporte; las capas siguientes la levantan."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: the join did not hold it. Close the gap in the model by hand."
+msgstr "Corregir todo la dejó: la unión no la sostuvo. Cerrá el hueco en el modelo a mano."

@@ -331,6 +331,60 @@ fn a_model_inside_the_raft_offers_its_lift_and_no_raft() {
     assert_eq!(rows[0].fix, FixKind::None as i32);
 }
 
+/// #402: a minimal island is a note with no button, Fix All leaves it,
+/// and its row says why.
+#[test]
+fn a_minimal_island_is_a_note_fix_all_leaves() {
+    let minimal = finding(CheckKind::Island, Severity::Info, 10, 10, "Minimal island");
+    let findings = vec![minimal];
+    let rows = review_rows(&findings, &[None], &BTreeSet::new(), true, true);
+    assert_eq!(rows[0].fix, FixKind::None as i32);
+    assert_eq!(rows[0].severity, 2);
+    assert!(
+        rows[0].remains.contains("too small for a support"),
+        "{}",
+        rows[0].remains
+    );
+    let plan = plan_fix_all(&findings, &FixPixels::default(), |_| false);
+    assert!(plan.is_empty());
+}
+
+/// #235: an island whose support the engine refused on the scene as it
+/// stands reads "No support fits here", as a warning, not an error.
+#[test]
+fn a_refused_island_reads_no_support_fits_here_as_a_warning() {
+    let at = PlatePoint::new(1.0, 2.0, 0.5);
+    let island = |layer: usize| {
+        finding(
+            CheckKind::Island,
+            Severity::Error,
+            layer,
+            layer,
+            "Unsupported island",
+        )
+        .with_fix(SuggestedFix::AddSupport { at })
+    };
+    let findings = vec![island(10), island(20)];
+    let now = SceneRevision::from_top_edit_id(Some(3));
+    let mut marks: ReviewMarks<i32> = ReviewMarks::default();
+    marks.refuse(FindingKey::of(&findings[0]), "no route", now, &7);
+    let shown = no_support_fits(
+        &findings,
+        &RowMarks::of(&findings, &marks, true, false, now),
+    );
+    assert_eq!(shown[0].title, "No support fits here");
+    assert_eq!(shown[0].severity, Severity::Warning);
+    assert_eq!(shown[1].title, "Unsupported island");
+    assert_eq!(shown[1].severity, Severity::Error);
+    // Once supports went in since, it is offered again, as an island.
+    let later = SceneRevision::from_top_edit_id(Some(4));
+    let shown = no_support_fits(
+        &findings,
+        &RowMarks::of(&findings, &marks, true, false, later),
+    );
+    assert_eq!(shown[0].severity, Severity::Error);
+}
+
 /// #163: a row offers "Add support here" exactly when Fix All would add
 /// that support. Before, a row kept the button where Fix All held the
 /// support back (it went in and did not hold, or the engine refused it),
@@ -373,7 +427,7 @@ fn a_row_offers_a_support_exactly_when_fix_all_takes_it() {
             .filter(|row| row.fix == FixKind::AddSupport as i32)
             .map(|row| row.id as usize)
             .collect();
-        let plan = plan_fix_all(&findings, &[], &[], &[], |i| {
+        let plan = plan_fix_all(&findings, &FixPixels::default(), |i| {
             support_held_back(&findings[i], &marks, now)
         });
         let by_fix_all: Vec<usize> = plan.supports.iter().map(|(i, _)| *i).collect();
@@ -531,10 +585,28 @@ mod fix_all {
         (findings, fills, erasures, thickenings)
     }
 
+    /// The pixels of a review without joins.
+    fn fix_pixels<'a>(
+        fills: &'a [CavityFill],
+        erasures: &'a [CavityFill],
+        thickenings: &'a [CavityFill],
+    ) -> FixPixels<'a> {
+        FixPixels {
+            fills,
+            erasures,
+            thickenings,
+            joins: &[],
+        }
+    }
+
     #[test]
     fn fix_all_plans_supports_small_traps_specks_and_thin_model_features() {
         let (findings, fills, erasures, thickenings) = review();
-        let plan = plan_fix_all(&findings, &fills, &erasures, &thickenings, |_| false);
+        let plan = plan_fix_all(
+            &findings,
+            &fix_pixels(&fills, &erasures, &thickenings),
+            |_| false,
+        );
         let supported: Vec<usize> = plan.supports.iter().map(|s| s.0).collect();
         assert_eq!(supported, [0, 1]);
         // The island and its floating part share one support.
@@ -553,7 +625,11 @@ mod fix_all {
         );
         assert_eq!(plan.len(), 6);
         // Findings fixed, marked or left alone already are skipped.
-        let rest = plan_fix_all(&findings, &fills, &erasures, &thickenings, |i| i != 2);
+        let rest = plan_fix_all(
+            &findings,
+            &fix_pixels(&fills, &erasures, &thickenings),
+            |i| i != 2,
+        );
         assert_eq!(rest.len(), 1);
     }
 
@@ -567,10 +643,18 @@ mod fix_all {
             at: PlatePoint::new(5.5, 0.5, 0.02),
         });
         erasures[0] = pixels(5.0, 6.0);
-        let plan = plan_fix_all(&findings, &fills, &erasures, &thickenings, |_| false);
+        let plan = plan_fix_all(
+            &findings,
+            &fix_pixels(&fills, &erasures, &thickenings),
+            |_| false,
+        );
         assert!(plan.patches.iter().all(|p| p.1 != PatchKind::Erase));
         // With the island skipped (its support did not hold), the speck goes.
-        let plan = plan_fix_all(&findings, &fills, &erasures, &thickenings, |i| i == 0);
+        let plan = plan_fix_all(
+            &findings,
+            &fix_pixels(&fills, &erasures, &thickenings),
+            |i| i == 0,
+        );
         assert!(plan.patches.iter().any(|p| p.1 == PatchKind::Erase));
     }
 
@@ -755,6 +839,115 @@ mod fix_all {
         let mut titles: Vec<String> = rows.iter().map(|r| r.0.clone()).collect();
         titles.sort();
         titles
+    }
+
+    /// A 2 x 2 mm block on the plate up to 1.0 mm, and the same block from
+    /// 1.10 mm up: an island over a 0.10 mm gap (two layers), too thin for
+    /// a support (#235).
+    fn gap_plate() -> Scene {
+        let mut scene = Scene::new();
+        add(
+            &mut scene,
+            unit_cube_mesh(),
+            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 0.0, 0.5],
+        );
+        add(
+            &mut scene,
+            unit_cube_mesh(),
+            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 0.9]],
+            [0.0, 0.0, 1.55],
+        );
+        scene
+    }
+
+    /// The island findings of the panel's review, by title.
+    fn island_titles(panel: &ReviewPanel) -> Vec<String> {
+        held_findings(panel)
+            .into_iter()
+            .filter(|(title, ..)| title.contains("island") || title.contains("Island"))
+            .map(|(title, ..)| title)
+            .collect()
+    }
+
+    /// #235: an island just above the model offers "Join to below"; marked
+    /// from its row, the next slice cures the gap and the island is gone.
+    /// Fix All joins it as well.
+    #[test]
+    fn join_to_below_cures_the_gap_and_the_island_goes() {
+        let (offered, join_row, marked_row, message, after, by_fix_all, fix_all) =
+            on_fresh_slint_thread(|| {
+                let window =
+                    MainWindow::new().expect("the headless platform creates a main window");
+                let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+                let ctrl = Rc::new(ViewportController::new_for_test());
+                let document = ctrl.document();
+                document.install_graph(gap_plate(), PathBuf::from("gap.bread"));
+                let supports = DfSupportRun::install(
+                    &window,
+                    bus.clone(),
+                    document.clone(),
+                    ctrl.dialogs(),
+                    ctrl.clone(),
+                );
+                let hollow =
+                    HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+                let panel = ReviewPanel::install(
+                    &window,
+                    bus.clone(),
+                    document.clone(),
+                    ctrl.clone(),
+                    supports,
+                    hollow,
+                );
+                panel.set_reslice(|| true);
+                slice(&document, &panel, false);
+                let offered = island_titles(&panel);
+                let join_id = {
+                    let held = panel.held.borrow();
+                    let Some(ReviewOutcome::Reviewed { findings, .. }) =
+                        held.as_ref().map(|h| &h.outcome)
+                    else {
+                        panic!("reviewed")
+                    };
+                    findings
+                        .iter()
+                        .position(|f| matches!(f.fix, Some(SuggestedFix::JoinBelow { .. })))
+                        .expect("a join") as i32
+                };
+                let row_of = |window: &MainWindow| {
+                    let rows = window.get_review_rows();
+                    (0..rows.row_count())
+                        .filter_map(|i| rows.row_data(i))
+                        .find(|row| row.id == join_id)
+                        .map(|row| (row.fix, row.join))
+                };
+                let join_row = row_of(&window);
+                let fix_all = window.get_review_fix_all();
+                window.invoke_review_fix_requested(join_id);
+                let marked_row = row_of(&window);
+                let message = window.get_review_message().to_string();
+                slice(&document, &panel, false);
+                let after = island_titles(&panel);
+
+                // The same plate, by Fix All.
+                let document = ctrl.document();
+                document.install_graph(gap_plate(), PathBuf::from("gap.bread"));
+                slice(&document, &panel, false);
+                window.invoke_review_fix_all_requested();
+                slice(&document, &panel, true);
+                let by_fix_all = island_titles(&panel);
+                (
+                    offered, join_row, marked_row, message, after, by_fix_all, fix_all,
+                )
+            });
+        assert_eq!(offered, ["Unsupported island"], "{offered:?}");
+        assert_eq!(join_row, Some((FixKind::JoinBelow as i32, 1)));
+        assert_eq!(marked_row, Some((FixKind::JoinBelow as i32, 2)));
+        assert!(message.contains("joined"), "{message}");
+        assert!(after.is_empty(), "{after:?}");
+        assert!(fix_all >= 1, "Fix All takes the join");
+        assert!(by_fix_all.is_empty(), "{by_fix_all:?}");
     }
 
     /// Fix All on a plate with an island, a speck and a small trap: the

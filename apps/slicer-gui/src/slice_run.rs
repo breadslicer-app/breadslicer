@@ -729,6 +729,7 @@ mod capture_tests {
             fills: Vec::new(),
             erasures: Vec::new(),
             thickenings: Vec::new(),
+            joins: Vec::new(),
             took: Duration::ZERO,
         }
     }

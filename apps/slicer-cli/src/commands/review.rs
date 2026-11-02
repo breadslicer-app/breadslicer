@@ -13,9 +13,10 @@
 //!
 //! With `--fix-all`, the plate gets what the app's Fix All gives it on the
 //! next slice (#156): the small resin traps filled, the floating specks
-//! erased and the thin model features thickened. The supports Fix All would
-//! add for islands and floating parts are only counted: the CLI does not
-//! edit supports. The plate is then reviewed again.
+//! erased, the thin model features thickened and the islands just above the
+//! model joined to it (#235). The supports Fix All would add for islands and
+//! floating parts are only counted: the CLI does not edit supports. The
+//! plate is then reviewed again.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -110,7 +111,11 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
     let fixed_all = args.fix_all.then(|| {
         let plan = FixAll::of(&report);
         let filled = fill_stack(
-            plan.fills.iter().chain(&plan.thickenings).copied(),
+            plan.fills
+                .iter()
+                .chain(&plan.thickenings)
+                .chain(&plan.joins)
+                .copied(),
             plate.schedule(),
         );
         // Specks come out of the models and the fills, never the supports.
@@ -138,6 +143,7 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
             cavities: plan.fills.len(),
             specks: plan.erasures.len(),
             features: plan.thickenings.len(),
+            joined: plan.joins.len(),
             report: review_with(&again, &ReviewOptions::default()),
         }
     });
@@ -166,14 +172,16 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
 }
 
 /// What the app's Fix All applies to a review (#156), as far as the CLI
-/// applies it: the small traps' fills, the specks' erasures and the thin
-/// model features' thickenings, those an erasure touches left out; plus the
-/// number of findings it would hold with a support.
+/// applies it: the small traps' fills, the specks' erasures, the thin model
+/// features' thickenings (those an erasure touches left out) and the joins
+/// of islands to the model below (#235); plus the number of findings it
+/// would hold with a support.
 struct FixAll<'r> {
     supports: usize,
     fills: Vec<&'r CavityFill>,
     erasures: Vec<&'r CavityFill>,
     thickenings: Vec<&'r CavityFill>,
+    joins: Vec<&'r CavityFill>,
 }
 
 impl<'r> FixAll<'r> {
@@ -183,6 +191,7 @@ impl<'r> FixAll<'r> {
             fills: Vec::new(),
             erasures: Vec::new(),
             thickenings: Vec::new(),
+            joins: Vec::new(),
         };
         let mut thicken = Vec::new();
         for finding in &report.findings {
@@ -199,6 +208,9 @@ impl<'r> FixAll<'r> {
                 }
                 Some(SuggestedFix::Thicken { feature, .. }) => {
                     thicken.extend(report.thickenings.get(feature));
+                }
+                Some(SuggestedFix::JoinBelow { join, .. }) => {
+                    plan.joins.extend(report.joins.get(join));
                 }
                 _ => {}
             }
@@ -217,6 +229,7 @@ struct FixedAll {
     cavities: usize,
     specks: usize,
     features: usize,
+    joined: usize,
     report: ReviewReport,
 }
 
@@ -224,10 +237,11 @@ struct FixedAll {
 fn write_fixed_all(input: &ReviewInput<'_>, fixed: &FixedAll, out: &mut dyn Write) -> Result<()> {
     writeln!(
         out,
-        "Fix all: filled {}, erased {}, thickened {}; {} would get a support in the app (not added here). The review again:",
+        "Fix all: filled {}, erased {}, thickened {}, joined {} to the model below; {} would get a support in the app (not added here). The review again:",
         plural(fixed.cavities, "cavity", "cavities"),
         plural(fixed.specks, "speck", "specks"),
         plural(fixed.features, "thin feature", "thin features"),
+        plural(fixed.joined, "island", "islands"),
         plural(fixed.supports, "finding", "findings"),
     )?;
     for finding in &fixed.report.findings {
@@ -400,6 +414,9 @@ fn finding_line(finding: &Finding) -> String {
         }
         Some(SuggestedFix::Erase { .. }) => " Fix: erase it on the next slice.".to_owned(),
         Some(SuggestedFix::Thicken { .. }) => " Fix: thicken it on the next slice.".to_owned(),
+        Some(SuggestedFix::JoinBelow { .. }) => {
+            " Fix: join it to the model below on the next slice.".to_owned()
+        }
     };
     format!(
         "{layers:<15} {:<7} {:<13} {:<7} {}. {} At ({:.2}, {:.2}, {:.2}) mm.{fix}",
@@ -493,6 +510,7 @@ fn write_json(
             "cavities": fixed.cavities,
             "specks": fixed.specks,
             "thin_features": fixed.features,
+            "joined": fixed.joined,
             "supports_not_added": fixed.supports,
             "findings": fixed.report.findings,
             "summary": summary(&fixed.report.findings),

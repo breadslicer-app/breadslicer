@@ -23,10 +23,11 @@
 //! asked for differ from those ([`ReviewMarks::pending`]), even though the
 //! scene did not change.
 //!
-//! Fix All (#156) marks two more kinds of pixels the same way
-//! ([`PatchKind`]): a thin feature to thicken, cured as a fill is, and a
-//! floating speck to erase, which the next slice removes from the models'
-//! layers ([`sc_review::erase_stack`]).
+//! Fix All (#156) marks more kinds of pixels the same way ([`PatchKind`]): a
+//! thin feature to thicken and the gap under an island to join it to the
+//! model below (#235), cured as a fill is, and a floating speck to erase,
+//! which the next slice removes from the models' layers
+//! ([`sc_review::erase_stack`]).
 //!
 //! It also keeps the findings whose support the engine refused, with why
 //! ([`ReviewMarks::refuse`]), and those that got a support
@@ -73,6 +74,8 @@ pub(crate) enum PatchKind {
     Thicken,
     /// Removes a floating speck (#156).
     Erase,
+    /// Cures the gap under an island, joining it to the model below (#235).
+    Join,
 }
 
 /// Pixels to change on the next slice: a cavity to fill, a feature to
@@ -174,14 +177,34 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
     /// Marks the cavity of `key` to fill with `fill`, or unmarks it.
     /// Returns whether it is marked now.
     pub(crate) fn toggle_fill(&mut self, key: FindingKey, fill: &CavityFill, models: &P) -> bool {
+        self.toggle(PatchKind::Fill, key, fill, models)
+    }
+
+    /// Marks the finding of `key` for the next slice to change `fill`'s
+    /// pixels as `kind` says, or unmarks it. Returns whether it is marked
+    /// now.
+    pub(crate) fn toggle(
+        &mut self,
+        kind: PatchKind,
+        key: FindingKey,
+        fill: &CavityFill,
+        models: &P,
+    ) -> bool {
         self.adopt(models);
         if let Some(at) = self.fills.iter().position(|mark| mark.key == key) {
             self.fills.remove(at);
             self.release();
             return false;
         }
-        self.mark_fill(key, PatchKind::Fill, fill);
+        self.mark_fill(key, kind, fill);
         true
+    }
+
+    /// Whether the finding of `key` has a mark of `kind`.
+    pub(crate) fn has(&self, kind: PatchKind, key: &FindingKey) -> bool {
+        self.fills
+            .iter()
+            .any(|mark| &mark.key == key && mark.kind == kind)
     }
 
     /// Marks the cavity of `key` to fill, unless it is marked already.
@@ -297,7 +320,9 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
         for mark in &self.fills {
             patches.ids.push(mark.id);
             match mark.kind {
-                PatchKind::Fill | PatchKind::Thicken => patches.fills.push(mark.fill.clone()),
+                PatchKind::Fill | PatchKind::Thicken | PatchKind::Join => {
+                    patches.fills.push(mark.fill.clone());
+                }
                 PatchKind::Erase => patches.erasures.push(mark.fill.clone()),
             }
         }
