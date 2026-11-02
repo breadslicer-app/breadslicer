@@ -100,6 +100,134 @@ fn error(shown: &Shown) {
     });
 }
 
+/// The details of a Repair run over `objects` objects, as the app writes
+/// them (`repair_report`): 1 block per object, then the total time.
+fn repair_details(objects: usize) -> String {
+    let names = [
+        "Mini2-32mm",
+        "dragon-rojo-pose-final-v3",
+        "busto-elfa",
+        "torre-blanca",
+        "base-redonda-60mm",
+        "escudo",
+        "capa-larga",
+        "espada",
+        "casco",
+        "pedestal",
+    ];
+    // Literals after the message would read as its plural form.
+    let times = [
+        "2.18 s",
+        "closing holes and separating parts 1.35 s",
+        "836 ms",
+    ];
+    let mut blocks: Vec<String> = (0..objects)
+        .map(|i| {
+            let name = names[i % names.len()];
+            let faces = 1_872_212 - 13_000 * i;
+            let mut lines = vec![
+                ctr!("RepairDialog", "{}: repaired, can be sliced now", name).to_string(),
+                ctr!(
+                    "RepairDialog",
+                    "Before: {n} face, can't be sliced",
+                    "Before: {n} faces, can't be sliced",
+                    faces
+                )
+                .to_string(),
+                ctr!(
+                    "RepairDialog",
+                    "After: {n} face, {} ml, can be sliced",
+                    "After: {n} faces, {} ml, can be sliced",
+                    faces - 26,
+                    "7.07"
+                )
+                .to_string(),
+                format!(
+                    "• {}",
+                    ctr!(
+                        "RepairDialog",
+                        "Flipped {n} face that faced the wrong way",
+                        "Flipped {n} faces that faced the wrong way",
+                        2
+                    )
+                ),
+            ];
+            if i % 2 == 1 {
+                lines.push(format!(
+                    "• {}",
+                    ctr!(
+                        "RepairDialog",
+                        "Filled {n} hole ({} mm²)",
+                        "Filled {n} holes (largest {} mm²)",
+                        8,
+                        "0.01"
+                    )
+                ));
+                lines.push(format!(
+                    "• {}",
+                    ctr!(
+                        "RepairDialog",
+                        "Separated parts that touched at {n} edge",
+                        "Separated parts that touched at {n} edges",
+                        7
+                    )
+                ));
+                lines.push(format!(
+                    "• {}",
+                    ctr!(
+                        "RepairDialog",
+                        "Removed {n} face of a double wall",
+                        "Removed {n} faces of double walls",
+                        20
+                    )
+                ));
+            }
+            lines.push(
+                ctr!(
+                    "RepairDialog",
+                    "Time: {} ({}, checks {})",
+                    times[0],
+                    times[1],
+                    times[2]
+                )
+                .to_string(),
+            );
+            lines.join("\n")
+        })
+        .collect();
+    let total = "4.02 s";
+    blocks.push(ctr!("RepairDialog", "Total time: {}", total).to_string());
+    blocks.join("\n\n")
+}
+
+fn repair(shown: &Shown, objects: usize) {
+    shown
+        .manager
+        .show_notice(MessageKey::MeshRepairSummary, move || InfoTexts {
+            heading: ctr!("RepairDialog", "Mesh repair"),
+            message: format!(
+                "{} {}",
+                ctr!(
+                    "RepairDialog",
+                    "Repaired {n} object.",
+                    "Repaired {n} objects.",
+                    objects
+                ),
+                ctr!("RepairDialog", "Everything can be sliced now.")
+            )
+            .into(),
+            details: repair_details(objects).into(),
+        });
+}
+
+fn repair_2(shown: &Shown) {
+    repair(shown, 2);
+}
+
+fn repair_10(shown: &Shown) {
+    repair(shown, 10);
+}
+
 fn close_scene_unsaved(shown: &Shown) {
     shown
         .manager
@@ -166,6 +294,16 @@ const CASES: &[Case] = &[
     Case {
         name: "error",
         show: error,
+        primary: true,
+    },
+    Case {
+        name: "reparar-2-objetos",
+        show: repair_2,
+        primary: true,
+    },
+    Case {
+        name: "reparar-10-objetos",
+        show: repair_10,
         primary: true,
     },
     Case {
@@ -275,6 +413,100 @@ fn every_card_holds_what_it_draws_in_english_and_spanish() {
                         .into_iter()
                         .map(|p| format!("{} {language} {size:?}: {p}", case.name)),
                 );
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// The least room the layer leaves above and below a card
+/// (`MessageLayer.margin`).
+const MARGIN: f32 = 24.0;
+
+/// How a card with details sits in its window.
+#[derive(Debug)]
+struct DetailsFit {
+    /// The layer's top and bottom: the window under the menu bar.
+    layer: (f32, f32),
+    /// The card's top and bottom.
+    card: (f32, f32),
+    /// The height of the details, all of them.
+    details: f32,
+    /// The height of the view they show in.
+    view: f32,
+}
+
+impl DetailsFit {
+    /// Whether every line of the details shows without scrolling.
+    fn whole(&self) -> bool {
+        self.details <= self.view + 0.5
+    }
+}
+
+fn details_fit(ui: &MainWindow) -> DetailsFit {
+    let drawn = |id: &str| {
+        ElementHandle::find_by_element_id(ui, id)
+            .find(|e| e.size().height > 0.0)
+            .unwrap_or_else(|| panic!("{id} is drawn"))
+    };
+    let (_, top, _, bottom) = bounds(&card(ui));
+    let (_, layer_top, _, layer_bottom) = bounds(&drawn("MessageLayer::fs"));
+    DetailsFit {
+        layer: (layer_top, layer_bottom),
+        card: (top, bottom),
+        details: drawn("MessageLayer::details-text").size().height,
+        view: drawn("MessageLayer::details-scroll").size().height,
+    }
+}
+
+/// A notice opens with its details shown (#392): the card grows down to
+/// hold the whole report and stays centred; only a report taller than the
+/// window leaves scrolls, and then the card takes the window's height less
+/// the margins. Errors behave the same.
+#[test]
+fn a_card_with_details_grows_to_hold_them_centred() {
+    // Per card: whether its details must show whole at a usual size, or
+    // must scroll at the least size.
+    let cards: [(&str, Show, bool); 4] = [
+        ("repair 2", repair_2, true),
+        ("repair 10", repair_10, false),
+        ("notice", notice, true),
+        ("error", error, true),
+    ];
+    let mut problems = Vec::new();
+    for language in ["en", "es"] {
+        for size in SIZES {
+            for (name, show, must_fit) in cards {
+                let fit = on_fresh_slint_thread(move || {
+                    let shown = window_in(language, size);
+                    show(&shown);
+                    render_frames();
+                    details_fit(&shown.ui)
+                });
+                let (layer_top, layer_bottom) = fit.layer;
+                let (top, bottom) = fit.card;
+                let label = format!("{name} {language} {size:?}: {fit:?}");
+                if ((top - layer_top) - (layer_bottom - bottom)).abs() > 1.0 {
+                    problems.push(format!("not centred: {label}"));
+                }
+                if top - layer_top < MARGIN - 0.5 {
+                    problems.push(format!("past the margin: {label}"));
+                }
+                if fit.whole() {
+                    if !must_fit && size == (960, 560) {
+                        problems.push(format!("should scroll: {label}"));
+                    }
+                    continue;
+                }
+                if must_fit && size == (1280, 800) {
+                    problems.push(format!("should show whole: {label}"));
+                }
+                if (top - layer_top - MARGIN).abs() > 1.0 {
+                    problems.push(format!("scrolls with room to grow: {label}"));
+                }
+                if fit.view < 60.0 {
+                    problems.push(format!("too short a view: {label}"));
+                }
             }
         }
     }

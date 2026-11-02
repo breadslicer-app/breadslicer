@@ -62,7 +62,7 @@ export component MessageLayer inherits Rectangle {
     in property <AppMessage> message;
     in property <bool> open: false;
     // Changes with each message shown, so a new message gets the keyboard and
-    // starts with its details folded.
+    // starts with its details open.
     in property <int> serial: 0;
     in-out property <bool> silence: false;
     // Diagnostics only: whether the scene's models go in the file.
@@ -77,7 +77,13 @@ export component MessageLayer inherits Rectangle {
     visible: root.open;
     background: #0000008c;
 
-    property <bool> details-visible: false;
+    // A notice opens with its details shown whole (#392): the card grows
+    // down to hold them, and they scroll only when the window is too short.
+    property <bool> details-visible: true;
+    // The least room left above and below a card.
+    property <length> margin: 24px;
+    // `Theme.well` as a colour, for the fades over the details' edges.
+    property <color> well-color: Theme.dark ? #16181a : #e7eaec;
     // The details were copied since they were last shown.
     property <bool> copied: false;
     property <MessageKind> kind: root.message.kind;
@@ -94,7 +100,7 @@ export component MessageLayer inherits Rectangle {
     property <bool> keyboard: fs.has-focus;
 
     changed serial => {
-        root.details-visible = false;
+        root.details-visible = true;
         root.copied = false;
         if (root.open) {
             fs.focus();
@@ -139,7 +145,9 @@ export component MessageLayer inherits Rectangle {
             width: Math.min(
                 parent.width - 32px,
                 Math.max(
-                    root.kind == MessageKind.diagnostics ? 600px
+                    // A notice with details is wider, so the report's
+                    // lines fit on 1 line each.
+                    root.kind == MessageKind.diagnostics || (root.notice && root.message.details != "") ? 600px
                         : root.kind == MessageKind.slice-overwrite ? 480px
                         : root.kind == MessageKind.diagnostic-log ? 540px
                         : 520px,
@@ -150,7 +158,8 @@ export component MessageLayer inherits Rectangle {
             // below the card's edge.
             height: foot.y + foot.height;
             x: (parent.width - self.width) / 2;
-            y: Math.max(16px, (parent.height - self.height) / 2);
+            // Centred, however tall the card grows.
+            y: Math.max(root.margin, (parent.height - self.height) / 2);
             background: Theme.card;
             border-color: Theme.border;
             border-width: 1px;
@@ -168,9 +177,11 @@ export component MessageLayer inherits Rectangle {
             VerticalLayout {
                 // Its own height, not the card's: the card's height comes
                 // from where this layout puts the foot. At the top: with a
-                // height of its own it would be centred.
+                // height of its own it would be centred. No taller than the
+                // window leaves room for: then the details give up height,
+                // the only part that can, and scroll.
                 y: 0;
-                height: self.preferred-height;
+                height: Math.min(self.preferred-height, root.height - 2 * root.margin);
 
                 DialogHead {
                     icon: root.kind == MessageKind.error ? Icons.error
@@ -276,10 +287,17 @@ export component MessageLayer inherits Rectangle {
                             }
                         }
 
-                        // In a well, as the start dialog shows a file.
+                        // In a well, as the start dialog shows a file. As
+                        // tall as the details, so the whole report shows;
+                        // shorter only when the window is, down to a few
+                        // lines, and then they scroll.
                         Rectangle {
                             visible: root.details-visible;
-                            height: root.details-visible ? details-scroll.height + 16px : 0px;
+                            property <length> full: details-text.preferred-height + 16px;
+                            preferred-height: root.details-visible ? self.full : 0px;
+                            min-height: root.details-visible ? Math.min(self.full, 72px) : 0px;
+                            max-height: root.details-visible ? self.full : 0px;
+                            vertical-stretch: 1;
                             background: Theme.well;
                             border-radius: Theme.radius;
                             border-width: 1px;
@@ -289,22 +307,47 @@ export component MessageLayer inherits Rectangle {
                                 x: 10px;
                                 y: 8px;
                                 width: parent.width - 20px;
-                                height: Math.min(details-text.preferred-height, 160px);
+                                height: parent.height - 16px;
                                 // A viewport as wide as the view, so the text
                                 // wraps instead of scrolling sideways.
                                 content-width: self.visible-width;
+                                content-height: details-text.height;
                                 // Selectable, so a part can be copied too.
                                 details-text := TextInput {
                                     width: details-scroll.visible-width;
+                                    height: self.preferred-height;
                                     text: root.message.details;
                                     font-family: Theme.mono;
-                                    font-size: Theme.font-xs;
+                                    font-size: Theme.font-sm;
                                     wrap: word-wrap;
                                     single-line: false;
                                     read-only: true;
                                     horizontal-alignment: left;
-                                    color: Theme.text-muted;
+                                    color: Theme.text-soft;
                                 }
+                            }
+
+                            // A fade at an edge with more of the report past
+                            // it, so a report that scrolls says so.
+                            Rectangle {
+                                x: 1px;
+                                y: 1px;
+                                width: parent.width - 2px;
+                                height: 20px;
+                                visible: details-scroll.viewport-y < -0.5px;
+                                border-top-left-radius: Theme.radius - 1px;
+                                border-top-right-radius: Theme.radius - 1px;
+                                background: @linear-gradient(180deg, root.well-color 0%, root.well-color.transparentize(100%) 100%);
+                            }
+                            Rectangle {
+                                x: 1px;
+                                y: parent.height - self.height - 1px;
+                                width: parent.width - 2px;
+                                height: 28px;
+                                visible: details-scroll.viewport-y > details-scroll.visible-height - details-scroll.viewport-height + 0.5px;
+                                border-bottom-left-radius: Theme.radius - 1px;
+                                border-bottom-right-radius: Theme.radius - 1px;
+                                background: @linear-gradient(0deg, root.well-color 0%, root.well-color.transparentize(100%) 100%);
                             }
                         }
                     }

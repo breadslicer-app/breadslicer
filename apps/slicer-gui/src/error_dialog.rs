@@ -1149,7 +1149,7 @@ mod message_layer_tests {
     }
 
     /// Opens a notice whose details are 1 short line, in a main window of the
-    /// main window's least size, clicks "Show details" and reads the card.
+    /// main window's least size, and reads the card, its details open.
     fn open_short_details() -> crate::test_support::message_cards::OpenDetails {
         on_fresh_slint_thread(|| {
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
