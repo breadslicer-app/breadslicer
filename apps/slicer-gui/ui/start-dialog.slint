@@ -530,30 +530,47 @@ export component StartLayer inherits Rectangle {
                             }
                         }
 
-                        if root.recent.length == 0: VerticalLayout {
+                        // Nothing to list: a note in the middle of the
+                        // column, placed by hand so it does not shrink to its
+                        // text at the column's left.
+                        if root.recent.length == 0: empty-area := Rectangle {
                             vertical-stretch: 1;
-                            alignment: center;
-                            spacing: 6px;
+                            horizontal-stretch: 1;
 
-                            Icon {
-                                x: (parent.width - self.width) / 2;
-                                commands: Icons.history;
-                                size: 28px;
-                                color: Theme.text-faint;
-                            }
-                            Text {
-                                text: @tr("StartDialog" => "No recent files yet");
-                                font-size: Theme.font;
-                                font-weight: 600;
-                                color: Theme.text-soft;
-                                horizontal-alignment: center;
-                            }
-                            Text {
-                                text: @tr("StartDialog" => "Files you open or save show up here.");
-                                font-size: Theme.font-sm;
-                                color: Theme.text-muted;
-                                horizontal-alignment: center;
-                                wrap: word-wrap;
+                            empty-note := VerticalLayout {
+                                width: Math.min(empty-area.width - 24px, 320px);
+                                height: self.preferred-height;
+                                // The column's padding is wider on the left;
+                                // the shift centres the note on the column.
+                                x: (empty-area.width - self.width) / 2 - 3px;
+                                // Up by half the header and the uneven
+                                // padding above it, so the note sits in the
+                                // middle of the column, not of the space under
+                                // the header.
+                                y: Math.max(0px, (empty-area.height - self.height) / 2 - 17px);
+                                spacing: 6px;
+
+                                Icon {
+                                    x: (empty-note.width - self.width) / 2;
+                                    commands: Icons.history;
+                                    size: 28px;
+                                    color: Theme.text-faint;
+                                }
+                                Text {
+                                    text: @tr("StartDialog" => "No recent files yet");
+                                    font-size: Theme.font;
+                                    font-weight: 600;
+                                    color: Theme.text-soft;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: @tr("StartDialog" => "Files you open or save show up here.");
+                                    font-size: Theme.font-sm;
+                                    color: Theme.text-muted;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
                             }
                         }
                     }

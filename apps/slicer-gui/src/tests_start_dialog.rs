@@ -188,6 +188,68 @@ fn the_start_dialog_fits_the_smallest_window_in_english_and_spanish() {
     });
 }
 
+/// The texts of the start dialog in 1 language that the centring check reads.
+struct EmptyTexts {
+    language: &'static str,
+    recent: &'static str,
+    title: &'static str,
+    hint: &'static str,
+    checkbox: &'static str,
+    close: &'static str,
+}
+
+/// How far the note of an empty list sits from the middle of the Recent
+/// column, across and down, in `texts`' language at `size`.
+fn empty_note_offset(texts: &EmptyTexts, size: (f32, f32)) -> (f32, f32) {
+    let (window, _dialog) = dialog_in(texts.language, size, Vec::new(), false);
+    // The column: from its header (14px of padding above and to the left of
+    // it) to the card's right edge (12px past the close button) and down to
+    // the foot (its line and 8px of padding above the checkbox).
+    let (header_left, header_top, _, _) = span(&window, texts.recent);
+    let (_, _, close_right, _) = span(&window, texts.close);
+    let (_, box_top, _, _) = span(&window, texts.checkbox);
+    let (left, right) = (header_left - 14.0, close_right + 12.0);
+    let (top, bottom) = (header_top - 14.0, box_top - 9.0);
+    // The note: the icon (28px, 6px above the title) down to the hint.
+    let (title_left, title_top, title_right, _) = span(&window, texts.title);
+    let (_, _, _, hint_bottom) = span(&window, texts.hint);
+    let note_top = title_top - 6.0 - 28.0;
+    (
+        (title_left + title_right) / 2.0 - (left + right) / 2.0,
+        (note_top + hint_bottom) / 2.0 - (top + bottom) / 2.0,
+    )
+}
+
+#[test]
+fn an_empty_list_says_so_in_the_middle_of_its_column() {
+    let english = EmptyTexts {
+        language: "en",
+        recent: "RECENT",
+        title: "No recent files yet",
+        hint: "Files you open or save show up here.",
+        checkbox: "Don't show at startup",
+        close: "Close",
+    };
+    let spanish = EmptyTexts {
+        language: "es",
+        recent: "RECIENTES",
+        title: "Todavía no hay archivos recientes",
+        hint: "Los archivos que abras o guardes aparecen acá.",
+        checkbox: "No mostrar al iniciar",
+        close: "Cerrar",
+    };
+    for texts in [english, spanish] {
+        for size in [(1280.0, 800.0), SMALLEST] {
+            let (across, down) = on_fresh_slint_thread(|| empty_note_offset(&texts, size));
+            assert!(
+                across.abs() <= 1.0 && down.abs() <= 1.0,
+                "{} at {size:?}: {across} across, {down} down",
+                texts.language
+            );
+        }
+    }
+}
+
 /// Writes the window's picture to `dir/name.png`.
 fn write_shot(window: &MainWindow, dir: &Path, name: &str) {
     render_frames();
@@ -219,6 +281,9 @@ fn the_start_dialog_pictures_are_written_when_asked() {
             drop(window);
             let (window, _d) = dialog_in(language, (1280.0, 800.0), Vec::new(), false);
             write_shot(&window, &dir, &format!("{language}-sin-recientes"));
+            drop(window);
+            let (window, _d) = dialog_in(language, SMALLEST, Vec::new(), false);
+            write_shot(&window, &dir, &format!("{language}-sin-recientes-960x560"));
             drop(window);
             let (window, _d) = dialog_in(language, (1280.0, 800.0), recent_files(&home()), true);
             window.set_start_dont_show(true);
