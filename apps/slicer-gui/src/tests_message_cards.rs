@@ -100,6 +100,24 @@ fn error(shown: &Shown) {
     });
 }
 
+/// A slice the slicer refused, whose card offers Repair (#407).
+fn slice_refused(shown: &Shown) {
+    shown.manager.show_error_with_action(
+        || ErrorTexts {
+            heading: ctr!("ErrorDialog", "Can't slice “{}”", "Dragón rojo pose final v3"),
+            context: None,
+            message: ctr!(
+                "ErrorDialog",
+                "“{}” is not a closed mesh: it has holes, cracks or faces that don't line up. Press Repair to fix it and slice again.",
+                "Dragón rojo pose final v3"
+            ),
+            details: "mesh validation failed for 1 of the scene's leaves:\nleaf #1: mesh manifold validation failed: 14 error(s)\n  11x InconsistentWindingOrder\n  2x BoundaryEdge\n  1x NonManifoldEdge".into(),
+        },
+        || ctr!("ErrorDialog", "Repair"),
+        || {},
+    );
+}
+
 /// The details of a Repair run over `objects` objects, as the app writes
 /// them (`repair_report`): 1 block per object, then the total time.
 fn repair_details(objects: usize) -> String {
@@ -319,6 +337,11 @@ const CASES: &[Case] = &[
     Case {
         name: "error",
         show: error,
+        primary: true,
+    },
+    Case {
+        name: "laminado-rechazado-reparar",
+        show: slice_refused,
         primary: true,
     },
     Case {
@@ -596,9 +619,10 @@ fn keyboard_answers(case: Show) -> Vec<MessageAnswer> {
 fn the_keyboard_answers_as_before() {
     use MessageAnswer::{Cancel, Confirm, Export};
     // Per message: Enter's answer, then Escape's.
-    let expected: [(&str, Show); 7] = [
+    let expected: [(&str, Show); 8] = [
         ("notice", notice),
         ("error", error),
+        ("slice refused, Repair", slice_refused),
         ("scene change", close_scene_unsaved),
         ("slice overwrite", slice_overwrite),
         ("recovery", recovery),
@@ -608,6 +632,7 @@ fn the_keyboard_answers_as_before() {
     let answers = [
         [Cancel, Cancel],
         [Cancel, Cancel],
+        [Confirm, Cancel],
         [Cancel, Cancel],
         [Cancel, Cancel],
         [Cancel, Cancel],
