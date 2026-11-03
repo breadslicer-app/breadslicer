@@ -4,7 +4,7 @@
  */
 
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
@@ -62,6 +62,9 @@ enum SceneChange {
     Clear,
     CloseWindow,
 }
+
+mod handoff;
+pub(crate) use handoff::receive as receive_handoff;
 
 mod replace_scene_policy {
     use crate::error_dialog::{KeepChangesOffer, ReplaceSceneChoice};
@@ -192,7 +195,7 @@ impl FileDrag {
 
 thread_local! {
     /// The Slint thread's `AppState`, for delivering a device loss raised on
-    /// another thread.
+    /// another thread, and the files a later launch hands over (#418).
     static DEVICE_LOST_TARGET: RefCell<Weak<AppState>> = const { RefCell::new(Weak::new()) };
 }
 
@@ -285,6 +288,14 @@ pub(crate) struct AppState {
     /// Per window, the files of a drop not yet opened: the OS hands a drop
     /// of several files over one by one, and they open together (#384).
     dropped: RefCell<HashMap<u64, Vec<PathBuf>>>,
+    /// The main window focused last: files a later launch hands over go
+    /// there (#418).
+    focused_window: Cell<Option<u64>>,
+    /// Files later launches handed over, by what opens together, waiting
+    /// for their window to be free (#418).
+    handoffs: RefCell<VecDeque<Vec<PathBuf>>>,
+    /// Whether a timer will try `handoffs` again.
+    handoff_retry: Cell<bool>,
     // Bus subscription owned by AppState. It runs on every `bus.update`;
     // dropping it unregisters. Stored here so it lives as long as `AppState`.
     // It holds the only `Sender` clone of the settings saver; dropping it lets
@@ -567,6 +578,9 @@ impl AppState {
             default_envelope,
             clipboard: RefCell::new(None),
             dropped: RefCell::new(HashMap::new()),
+            focused_window: Cell::new(None),
+            handoffs: RefCell::new(VecDeque::new()),
+            handoff_retry: Cell::new(false),
             device_loss,
             autosave: AutosaveStore::platform_root().map(|root| Rc::new(AutosaveStore::new(root))),
             ui_language: OnceCell::new(),
@@ -664,6 +678,8 @@ impl AppState {
         self.wire_app_level_menus(&ui, &ctrl);
 
         self.next_window_id.set(id.wrapping_add(1));
+        // A new window comes up in front, before it reports the focus.
+        self.note_focus(id);
         let autosaver = self
             .autosave
             .as_ref()
@@ -883,6 +899,11 @@ impl AppState {
             let app_weak = Rc::downgrade(self);
             let ui_weak = ui.as_weak();
             ui.window().on_winit_window_event(move |_window, event| {
+                if matches!(event, winit::event::WindowEvent::Focused(true))
+                    && let Some(app) = app_weak.upgrade()
+                {
+                    app.note_focus(id);
+                }
                 if let Some(drag) = FileDrag::from_winit(event)
                     && let Some(app) = app_weak.upgrade()
                     && let Some(w) = ui_weak.upgrade()
@@ -2742,6 +2763,9 @@ mod window_wiring_tests {
             default_envelope,
             clipboard: RefCell::new(None),
             dropped: RefCell::new(HashMap::new()),
+            focused_window: Cell::new(None),
+            handoffs: RefCell::new(VecDeque::new()),
+            handoff_retry: Cell::new(false),
             device_loss: DeviceLoss::default(),
             // These tests autosave nothing.
             autosave: None,
@@ -3677,5 +3701,103 @@ mod window_wiring_tests {
         });
         assert_ne!(changed, stored);
         assert_eq!(changed, heading_after_first_window("de"));
+    }
+
+    /// The paths of a launch's command line, as `launch_files` takes them.
+    fn command_line(paths: &[&std::path::Path]) -> Vec<PathBuf> {
+        crate::launch_files::paths_of(paths.iter().map(|p| p.as_os_str().to_owned()))
+    }
+
+    /// #418: the files a later launch hands over join the scene of the
+    /// running window as one import: one undo step takes them all away. A
+    /// file that is missing is reported once, and the others are added.
+    #[test]
+    fn files_handed_over_join_the_scene_as_one_undo_step() {
+        let (joined, heading, undone) = on_fresh_slint_thread(|| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let a = crate::tests_model_import::write_box(
+                dir.path(),
+                "Pirate Male ñandú.stl",
+                [10.0, 10.0, 10.0],
+            );
+            let b = crate::tests_model_import::write_box(
+                dir.path(),
+                "Pirate Female 海賊.stl",
+                [8.0, 12.0, 6.0],
+            );
+            let missing = dir.path().join("Pirate Child.stl");
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let controller = controller_of(&app, id);
+            load_cube(&controller);
+            app.receive_handoff(command_line(&[&a, &missing, &b]));
+            crate::tests_model_import::finish_loads(&controller);
+            let joined = leaf_count(&controller);
+            let window = window_of(&app, id);
+            let heading = window
+                .get_message_open()
+                .then(|| window.get_message().heading.to_string());
+            controller.on_undo_requested();
+            (joined, heading, leaf_count(&controller))
+        });
+        assert_eq!(joined, 3, "the cube and both models that exist");
+        assert_eq!(heading.as_deref(), Some("Failed to open 3D model"));
+        assert_eq!(undone, 1, "one Undo takes the whole handover away");
+    }
+
+    /// #418: handed-over files go to the window focused last.
+    #[test]
+    fn files_handed_over_go_to_the_window_focused_last() {
+        let (first, second) = on_fresh_slint_thread(|| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let a = crate::tests_model_import::write_box(dir.path(), "a.stl", [10.0, 10.0, 10.0]);
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let first = add_window(&app);
+            let second = add_window(&app);
+            for id in [first, second] {
+                load_cube(&controller_of(&app, id));
+            }
+            app.note_focus(first);
+            app.receive_handoff(vec![a]);
+            for id in [first, second] {
+                crate::tests_model_import::finish_loads(&controller_of(&app, id));
+            }
+            (
+                leaf_count(&controller_of(&app, first)),
+                leaf_count(&controller_of(&app, second)),
+            )
+        });
+        assert_eq!((first, second), (2, 1));
+    }
+
+    /// #418: files handed over while the window imports others wait for that
+    /// import to end, then join as a step of their own; nothing is dropped.
+    #[test]
+    fn files_handed_over_to_a_busy_window_wait_their_turn() {
+        let (waited, joined, undone) = on_fresh_slint_thread(|| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let a = crate::tests_model_import::write_box(dir.path(), "a.stl", [10.0, 10.0, 10.0]);
+            let b = crate::tests_model_import::write_box(dir.path(), "b.stl", [8.0, 12.0, 6.0]);
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let controller = controller_of(&app, id);
+            load_cube(&controller);
+            app.receive_handoff(vec![a]);
+            app.receive_handoff(vec![b]);
+            let waited = app.handoffs.borrow().len();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            while !app.handoffs.borrow().is_empty() || controller.loader().is_busy() {
+                assert!(std::time::Instant::now() < deadline, "the handovers end");
+                crate::tests_model_import::finish_loads(&controller);
+                thread::sleep(std::time::Duration::from_millis(20));
+                crate::test_support::slint_thread::render_frames();
+            }
+            let joined = leaf_count(&controller);
+            controller.on_undo_requested();
+            (waited, joined, leaf_count(&controller))
+        });
+        assert_eq!(waited, 1, "the 2nd handover waits for the 1st import");
+        assert_eq!(joined, 3);
+        assert_eq!(undone, 2, "each handover is its own undo step");
     }
 }
