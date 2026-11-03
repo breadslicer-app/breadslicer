@@ -8,6 +8,7 @@ description = "A library to load, inspect & write 3d mesh data."
 categories = ["rendering::data-formats"]
 keywords = ["3d", "mesh", "stl"]
 repository.workspace = true
+autotests = false
 
 [lints]
 workspace = true
@@ -26,3 +27,9 @@ proptest.workspace = true
 sc-mesh-fixtures.workspace = true
 sc-scene-fixtures.workspace = true
 tempfile = "3.23.0"
+
+# Every file in `tests/` is a module of this one test binary, so the crate is
+# linked once for its integration tests instead of once per file.
+[[test]]
+name = "main"
+path = "tests/main.rs"

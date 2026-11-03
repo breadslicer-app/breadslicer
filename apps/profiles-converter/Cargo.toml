@@ -5,6 +5,7 @@ edition.workspace = true
 license = "AGPL-3.0-or-later"
 publish = false
 description = "Convert third-party printer and material profiles into the SoulCrafted Slicer TOML format."
+autotests = false
 
 [lints]
 workspace = true
@@ -27,3 +28,9 @@ scraper = "0.29.0"
 
 [dev-dependencies]
 tempfile = "3.23.0"
+
+# Every file in `tests/` is a module of this one test binary, so the crate is
+# linked once for its integration tests instead of once per file.
+[[test]]
+name = "main"
+path = "tests/main.rs"

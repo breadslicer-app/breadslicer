@@ -25,7 +25,6 @@
 //! it.
 
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
@@ -64,9 +63,6 @@ struct TestGpus {
     instance: wgpu::Instance,
 }
 
-/// Grants 1 test at a time the right to call into wgpu.
-static GPU_TURN: Mutex<()> = Mutex::new(());
-
 /// Runs `body` against 1 freshly opened device per adapter, with no other test
 /// touching the GPU meanwhile, then closes them again. `body` does not run when
 /// the machine has no usable adapter.
@@ -74,7 +70,7 @@ fn with_test_gpus(body: impl FnOnce(&TestGpus)) {
     // A test that panics poisons the lock. The failure is already being
     // reported on its own thread, and the remaining tests still need their
     // turn, so the poison itself is not interesting here.
-    let _turn = GPU_TURN
+    let _turn = crate::GPU_TURN
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 

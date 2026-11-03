@@ -8,6 +8,7 @@ description = "Slicing engine for resin 3d printers, built on sc-mesh-core"
 categories = ["algorithms"]
 keywords = ["3d", "slicer", "resin", "sla"]
 repository.workspace = true
+autotests = false
 
 [lints]
 workspace = true
@@ -23,3 +24,9 @@ sc-scene.workspace = true
 sc-mesh-fixtures.workspace = true
 
 proptest.workspace = true
+
+# Every file in `tests/` is a module of this one test binary, so the crate is
+# linked once for its integration tests instead of once per file.
+[[test]]
+name = "main"
+path = "tests/main.rs"

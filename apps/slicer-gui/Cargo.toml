@@ -3,6 +3,7 @@ name = "sc-slicer-gui"
 version = "0.3.1"
 edition.workspace = true
 license = "AGPL-3.0-or-later"
+autotests = false
 
 [lints]
 workspace = true
@@ -94,3 +95,9 @@ float-cmp = { workspace = true }
 # layout tests; the same version as `slint`.
 i-slint-backend-testing = "=1.18.1"
 tempfile = "3.23.0"
+
+# Every file in `tests/` is a module of this one test binary, so the crate is
+# linked once for its integration tests instead of once per file.
+[[test]]
+name = "main"
+path = "tests/main.rs"

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-mod df_analytics;
+use crate::df_analytics;
 
 use support_gen_df::native::mesh_minima::CombinedIslandScanResult;
 use support_gen_df::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
