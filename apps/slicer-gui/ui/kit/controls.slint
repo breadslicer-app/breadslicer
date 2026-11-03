@@ -433,6 +433,10 @@ export component NumberField inherits HorizontalLayout {
     // When set, a value of 0 or less shows as an empty field with this hint,
     // and emptying the field commits 0.
     in property <string> placeholder;
+    // The input's width; narrower where two columns share a row.
+    in property <length> field-width: 112px;
+    // What screen readers hear when the row has no visible label.
+    in property <string> accessible-name;
     callback committed(float);
 
     function shown() -> string {
@@ -450,7 +454,7 @@ export component NumberField inherits HorizontalLayout {
     spacing: 10px;
     min-height: 28px;
 
-    Text {
+    if root.label != "": Text {
         text: root.label;
         font-size: Theme.font;
         color: root.enabled ? Theme.text-soft : Theme.text-faint;
@@ -459,7 +463,7 @@ export component NumberField inherits HorizontalLayout {
         overflow: elide;
     }
     Rectangle {
-        width: 112px;
+        width: root.field-width;
         height: 28px;
         background: Theme.well;
         border-width: 1px;
@@ -481,7 +485,7 @@ export component NumberField inherits HorizontalLayout {
                 vertical-alignment: center;
                 single-line: true;
                 input-type: decimal;
-                accessible-label: root.label;
+                accessible-label: root.accessible-name != "" ? root.accessible-name : root.label;
                 accepted => {
                     if self.text.is-float() {
                         root.committed(self.text.to-float());

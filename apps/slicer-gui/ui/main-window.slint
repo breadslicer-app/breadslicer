@@ -200,6 +200,12 @@ export component MainWindow inherits Window {
     // Rust at most once per frame (`ViewportController::refresh_readout`).
     in property <bool> selection-valid: false;
     in property <float> selection-size-x;
+    // Size along the selected object's own axes, and whether a tilt makes
+    // it differ from the world box (BS-393).
+    in property <float> selection-model-x;
+    in property <float> selection-model-y;
+    in property <float> selection-model-z;
+    in property <bool> selection-tilted;
     in property <float> selection-size-y;
     in property <float> selection-size-z;
     in property <float> selection-pos-x;
@@ -1838,6 +1844,10 @@ export component MainWindow inherits Window {
                             size-x: root.selection-size-x;
                             size-y: root.selection-size-y;
                             size-z: root.selection-size-z;
+                            model-x: root.selection-model-x;
+                            model-y: root.selection-model-y;
+                            model-z: root.selection-model-z;
+                            tilted: root.selection-tilted;
                             pos-x: root.selection-pos-x;
                             pos-y: root.selection-pos-y;
                             pos-z: root.selection-pos-z;

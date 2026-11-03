@@ -387,6 +387,55 @@ fn tab_labels(
     )
 }
 
+/// The left and right edges of the widest visible element labelled `label`.
+fn edges(window: &MainWindow, label: &str) -> Option<(f32, f32)> {
+    ElementHandle::find_by_accessible_label(window, label)
+        .filter(|e| e.size().height > 0.0)
+        .map(|e| {
+            (
+                e.absolute_position().x,
+                e.absolute_position().x + e.size().width,
+            )
+        })
+        .max_by(|a, b| (a.1 - a.0).total_cmp(&(b.1 - b.0)))
+}
+
+#[test]
+fn a_tilted_model_shows_world_and_model_sizes_side_by_side() {
+    let shown = |tilted: bool| {
+        in_spanish(
+            WorkspaceSection::Transform,
+            |window| {
+                window.set_selection_valid(true);
+                window.set_selection_tilted(tilted);
+                window.set_selection_size_z(28.28);
+                window.set_selection_model_z(20.0);
+            },
+            |window| {
+                (
+                    shows(window, "Mundo") && shows(window, "Modelo"),
+                    edges(window, "Alto (Z)"),
+                    edges(window, "Alto del modelo (Z)"),
+                )
+            },
+        )
+    };
+    // 45° about X: two columns, the model's own size on the right, inside
+    // the inspector.
+    let (headers, world, model) = shown(true);
+    assert!(headers, "the World and Model headers show");
+    let (world, model) = (world.expect("world field"), model.expect("model field"));
+    assert!(world.1 < model.0, "world {world:?} left of model {model:?}");
+    assert!(
+        model.1 <= 1400.0,
+        "model field inside the window: {model:?}"
+    );
+    // No tilt: the card as before, one column.
+    let (headers, world, model) = shown(false);
+    assert!(!headers, "no column headers without a tilt");
+    assert!(world.is_some() && model.is_none(), "one column");
+}
+
 #[test]
 fn the_transform_supports_and_slice_tabs_show_in_spanish() {
     for (section, spanish, english) in [

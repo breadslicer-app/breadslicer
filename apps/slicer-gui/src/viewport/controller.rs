@@ -35,7 +35,7 @@ use super::input_dispatch::{InputDispatch, PointerUpOutcome, shows_supports};
 use super::keyboard_drive::KbdFocus;
 use super::modal_transform::{ModalGesture, ModalOp};
 use super::numeric_transform::{
-    GestureKind, NumericEdit, Readout, cheap_readout, gesture_delta_text, readout,
+    GestureKind, NumericEdit, Readout, cheap_readout, gesture_delta_text, model_size, readout,
 };
 use super::object_list::{build_object_list_names, push_object_list};
 use super::performance_probe::{Detail, ProbeResult, ProbeRun, ProbeUpdate};
@@ -2938,6 +2938,7 @@ impl ViewportController {
                     let t = translation(world);
                     return Some(Readout {
                         size: full.size,
+                        model_size: model_size(&query, world).unwrap_or(full.model_size),
                         position: [0, 1, 2].map(|k| full.position[k] + t[k] - t0[k]),
                         ..cheap_readout(world)
                     });
@@ -2955,6 +2956,10 @@ impl ViewportController {
         ui.set_selection_size_x(r.size[0] as f32);
         ui.set_selection_size_y(r.size[1] as f32);
         ui.set_selection_size_z(r.size[2] as f32);
+        ui.set_selection_model_x(r.model_size[0] as f32);
+        ui.set_selection_model_y(r.model_size[1] as f32);
+        ui.set_selection_model_z(r.model_size[2] as f32);
+        ui.set_selection_tilted(r.tilted);
         ui.set_selection_pos_x(r.position[0] as f32);
         ui.set_selection_pos_y(r.position[1] as f32);
         ui.set_selection_pos_z(r.position[2] as f32);
