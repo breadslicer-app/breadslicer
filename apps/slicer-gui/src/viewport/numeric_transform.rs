@@ -20,6 +20,12 @@ use sc_mesh_spatial::ObjectQuery;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Readout {
     pub size: [f64; 3],
+    /// Size along the object's own axes: its file box times the scale on
+    /// each axis (BS-393).
+    pub model_size: [f64; 3],
+    /// Turned by other than a multiple of 90° about X or Y, so the world
+    /// box and the model's own size differ and the inspector shows both.
+    pub tilted: bool,
     /// Footprint centre X/Y, lowest point Z.
     pub position: [f64; 3],
     pub rotation_deg: [f64; 3],
@@ -39,6 +45,9 @@ pub(crate) enum NumericEdit {
     ScalePct(f64),
     /// Uniform scale that brings one world dimension to `mm`.
     Size { axis: usize, mm: f64 },
+    /// Uniform scale that brings one dimension along the object's own axes
+    /// to `mm` (BS-393).
+    ModelSize { axis: usize, mm: f64 },
     /// Lift 0.
     DropToPlate,
     /// Footprint centre on the plate's centre.
@@ -68,6 +77,10 @@ impl NumericEdit {
             },
             10 => NumericEdit::DropToPlate,
             11 => NumericEdit::Center(plate_centre),
+            12..=14 => NumericEdit::ModelSize {
+                axis: (code - 12) as usize,
+                mm: value,
+            },
             _ => return None,
         })
     }
@@ -136,6 +149,35 @@ fn world_box(query: &ObjectQuery<'_>, world: Transform3D) -> Option<([f64; 3], [
     Some((min.map(f64::from), max.map(f64::from)))
 }
 
+/// Size along the object's own axes: the extents of its file box times the
+/// length each axis has under `linear`.
+fn model_extent(local_min: [f64; 3], local_max: [f64; 3], linear: &[[f64; 3]; 3]) -> [f64; 3] {
+    let s = column_norms(linear);
+    [0, 1, 2].map(|k| (local_max[k] - local_min[k]) * s[k])
+}
+
+/// Whether `linear` tilts the object off a multiple of 90° about X or Y:
+/// world Z then lies along none of the object's own axes.
+fn is_tilted(linear: &[[f64; 3]; 3]) -> bool {
+    let s = column_norms(linear);
+    if s.iter().any(|v| *v <= 1e-12) {
+        return false;
+    }
+    (0..3).all(|j| (linear[2][j] / s[j]).abs() < 1.0 - 1e-6)
+}
+
+/// The object's size along its own axes under the world transform `world`.
+/// Cheap: the file box is cached.
+pub(crate) fn model_size(query: &ObjectQuery<'_>, world: Transform3D) -> Option<[f64; 3]> {
+    let aabb = query.local_aabb()?;
+    let (min, max) = (aabb.min().coords(), aabb.max().coords());
+    Some(model_extent(
+        min.map(f64::from),
+        max.map(f64::from),
+        affine(world).linear(),
+    ))
+}
+
 fn anchor(min: [f64; 3], max: [f64; 3]) -> [f64; 3] {
     [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, min[2]]
 }
@@ -146,13 +188,15 @@ pub(crate) fn readout(query: &ObjectQuery<'_>) -> Option<Readout> {
     let (min, max) = world_box(query, world)?;
     Some(Readout {
         size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
+        model_size: model_size(query, world)?,
         position: anchor(min, max),
         ..cheap_readout(world)
     })
 }
 
 /// Rotation and scale only, from the matrix: what a gesture tick can afford.
-/// Size and position are left at zero for the caller to carry over.
+/// Size, model size and position are left at zero for the caller to carry
+/// over.
 pub(crate) fn cheap_readout(world: Transform3D) -> Readout {
     let m = *affine(world).linear();
     let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
@@ -160,6 +204,8 @@ pub(crate) fn cheap_readout(world: Transform3D) -> Readout {
         + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
     Readout {
         size: [0.0; 3],
+        model_size: [0.0; 3],
+        tilted: is_tilted(&m),
         position: [0.0; 3],
         rotation_deg: euler_deg(&m),
         scale_pct: det.abs().cbrt() * 100.0,
@@ -195,6 +241,14 @@ pub(crate) fn apply(query: &ObjectQuery<'_>, edit: NumericEdit) -> Option<Transf
         }
         NumericEdit::Size { axis, mm } => {
             let now = max[axis] - min[axis];
+            if mm <= 0.0 || now <= 1e-9 {
+                return None;
+            }
+            let f = mm / now;
+            Some(m.map(|row| row.map(|v| v * f)))
+        }
+        NumericEdit::ModelSize { axis, mm } => {
+            let now = model_size(query, world)?[axis];
             if mm <= 0.0 || now <= 1e-9 {
                 return None;
             }
@@ -377,7 +431,58 @@ mod numeric_transform_tests {
             NumericEdit::from_ui(11, 0.0, c),
             Some(NumericEdit::Center(c))
         );
+        assert_eq!(
+            NumericEdit::from_ui(13, 12.0, c),
+            Some(NumericEdit::ModelSize { axis: 1, mm: 12.0 })
+        );
         assert_eq!(NumericEdit::from_ui(99, 0.0, c), None);
         assert_eq!(NumericEdit::from_ui(0, f64::NAN, c), None);
+    }
+
+    /// The world box of a 2 mm cube centred on the origin under `linear`,
+    /// from its corners (tight for a box).
+    fn cube_world_size(linear: &[[f64; 3]; 3]) -> [f64; 3] {
+        let mut lo = [f64::MAX; 3];
+        let mut hi = [f64::MIN; 3];
+        for c in 0..8 {
+            let p = [0, 1, 2].map(|k| if c >> k & 1 == 1 { 1.0 } else { -1.0 });
+            for i in 0..3 {
+                let v: f64 = (0..3).map(|k| linear[i][k] * p[k]).sum();
+                lo[i] = lo[i].min(v);
+                hi[i] = hi[i].max(v);
+            }
+        }
+        [0, 1, 2].map(|i| hi[i] - lo[i])
+    }
+
+    #[test]
+    fn a_tilted_cube_shows_world_and_model_sizes() {
+        let (lo, hi) = ([-1.0; 3], [1.0; 3]);
+
+        // 45° about X: taller in world Z than along its own axes.
+        let m = rotation_from_euler([45.0, 0.0, 0.0]);
+        assert!(is_tilted(&m));
+        assert!(close(model_extent(lo, hi, &m), [2.0, 2.0, 2.0]));
+        let world = cube_world_size(&m);
+        assert!((world[2] - 2.0 * 2f64.sqrt()).abs() < 1e-9, "{world:?}");
+
+        // No rotation: one column, both the same.
+        let id = rotation_from_euler([0.0; 3]);
+        assert!(!is_tilted(&id));
+        assert!(close(model_extent(lo, hi, &id), cube_world_size(&id)));
+
+        // 90° about X on a 2 × 4 × 6 box: one column, Y and Z swapped.
+        let (lo, hi) = ([-1.0, -2.0, -3.0], [1.0, 2.0, 3.0]);
+        let m = rotation_from_euler([90.0, 0.0, 0.0]);
+        assert!(!is_tilted(&m));
+        assert!(close(model_extent(lo, hi, &m), [2.0, 4.0, 6.0]));
+
+        // A Z turn alone keeps it flat; scale shows in the model size.
+        let scaled = mat_mul(
+            &rotation_from_euler([0.0, 0.0, 30.0]),
+            &[[1.5, 0.0, 0.0], [0.0, 1.5, 0.0], [0.0, 0.0, 1.5]],
+        );
+        assert!(!is_tilted(&scaled));
+        assert!(close(model_extent(lo, hi, &scaled), [3.0, 6.0, 9.0]));
     }
 }

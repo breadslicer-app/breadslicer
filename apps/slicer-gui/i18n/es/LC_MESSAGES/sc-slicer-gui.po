@@ -5213,6 +5213,36 @@ msgstr "El tamaño cambia parejo y mantiene las proporciones."
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
+msgid "World"
+msgstr "Mundo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Model"
+msgstr "Modelo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Model width (X)"
+msgstr "Ancho del modelo (X)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Model depth (Y)"
+msgstr "Profundidad del modelo (Y)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Model height (Z)"
+msgstr "Alto del modelo (Z)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Tilted: World is the box it takes on the plate; Model is its size along its own axes."
+msgstr "Inclinado: Mundo es la caja que ocupa sobre la placa; Modelo, su tamaño según sus propios ejes."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
 msgid "AUTO SUPPORTS"
 msgstr "SOPORTES AUTOMÁTICOS"
 

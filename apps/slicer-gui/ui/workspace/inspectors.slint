@@ -718,6 +718,41 @@ component RepairControls inherits VerticalLayout {
     }
 }
 
+// One row of the SIZE card: the world box and, when `split`, the size along
+// the object's own axes beside it (BS-393).
+component SizeRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> model-label;
+    in property <bool> split;
+    in property <float> world;
+    in property <float> model;
+    callback world-committed(float);
+    callback model-committed(float);
+
+    spacing: 10px;
+
+    NumberField {
+        horizontal-stretch: 1;
+        label: root.label;
+        unit: "mm";
+        field-width: root.split ? 88px : 112px;
+        value: root.world;
+        committed(v) => {
+            root.world-committed(v);
+        }
+    }
+    if root.split: NumberField {
+        horizontal-stretch: 0;
+        accessible-name: root.model-label;
+        unit: "mm";
+        field-width: 88px;
+        value: root.model;
+        committed(v) => {
+            root.model-committed(v);
+        }
+    }
+}
+
 export component TransformInspector inherits VerticalLayout {
     in property <[StandardListViewItem]> objects;
     in property <int> selected-index: -1;
@@ -744,6 +779,12 @@ export component TransformInspector inherits VerticalLayout {
     in property <float> size-x;
     in property <float> size-y;
     in property <float> size-z;
+    // Size along the object's own axes; shown next to the world box when
+    // `tilted` (a turn off a multiple of 90° about X or Y, BS-393).
+    in property <float> model-x;
+    in property <float> model-y;
+    in property <float> model-z;
+    in property <bool> tilted;
     in property <float> pos-x;
     in property <float> pos-y;
     in property <float> pos-z;
@@ -1046,41 +1087,91 @@ export component TransformInspector inherits VerticalLayout {
         title: @tr("Inspector" => "SIZE");
         note: "S";
 
-        NumberField {
+        if root.tilted: HorizontalLayout {
+            spacing: 10px;
+
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            Text {
+                width: 88px;
+                text: @tr("Inspector" => "World");
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                horizontal-alignment: center;
+            }
+            Text {
+                width: 88px;
+                text: @tr("Inspector" => "Model");
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                horizontal-alignment: center;
+            }
+        }
+        SizeRow {
             label: @tr("Inspector" => "Width (X)");
-            unit: "mm";
-            value: root.size-x;
-            committed(v) => {
+            model-label: @tr("Inspector" => "Model width (X)");
+            split: root.tilted;
+            world: root.size-x;
+            model: root.model-x;
+            world-committed(v) => {
                 root.numeric-edit(7, v);
             }
+            model-committed(v) => {
+                root.numeric-edit(12, v);
+            }
         }
-        NumberField {
+        SizeRow {
             label: @tr("Inspector" => "Depth (Y)");
-            unit: "mm";
-            value: root.size-y;
-            committed(v) => {
+            model-label: @tr("Inspector" => "Model depth (Y)");
+            split: root.tilted;
+            world: root.size-y;
+            model: root.model-y;
+            world-committed(v) => {
                 root.numeric-edit(8, v);
             }
-        }
-        NumberField {
-            label: @tr("Inspector" => "Height (Z)");
-            unit: "mm";
-            value: root.size-z;
-            committed(v) => {
-                root.numeric-edit(9, v);
+            model-committed(v) => {
+                root.numeric-edit(13, v);
             }
         }
-        NumberField {
-            label: @tr("Inspector" => "Scale");
-            unit: "%";
-            decimals: 1;
-            value: root.scale;
-            committed(v) => {
-                root.numeric-edit(6, v);
+        SizeRow {
+            label: @tr("Inspector" => "Height (Z)");
+            model-label: @tr("Inspector" => "Model height (Z)");
+            split: root.tilted;
+            world: root.size-z;
+            model: root.model-z;
+            world-committed(v) => {
+                root.numeric-edit(9, v);
+            }
+            model-committed(v) => {
+                root.numeric-edit(14, v);
+            }
+        }
+        // With two columns, Scale spans from the middle of World to the
+        // middle of Model, centred under both (BS-393).
+        HorizontalLayout {
+            spacing: 0px;
+
+            NumberField {
+                horizontal-stretch: 1;
+                label: @tr("Inspector" => "Scale");
+                unit: "%";
+                decimals: 1;
+                field-width: root.tilted ? 88px + 10px : 112px;
+                value: root.scale;
+                committed(v) => {
+                    root.numeric-edit(6, v);
+                }
+            }
+            if root.tilted: Rectangle {
+                width: 88px / 2;
             }
         }
         Note {
             text: @tr("Inspector" => "Sizes scale uniformly, keeping proportions.");
+        }
+        if root.tilted: Note {
+            text: @tr("Inspector" => "Tilted: World is the box it takes on the plate; Model is its size along its own axes.");
         }
     }
 
