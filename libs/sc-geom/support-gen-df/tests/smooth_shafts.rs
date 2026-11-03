@@ -28,9 +28,11 @@ type Edge = ([u32; 3], [u32; 3]);
 fn topology(soup: &[f32]) -> (HashMap<Edge, usize>, f64) {
     let mut edges = HashMap::new();
     let mut volume = 0.0;
-    for t in soup.chunks_exact(9) {
+    for t in soup.as_chunks::<9>().0 {
         let v: Vec<[u32; 3]> = t
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()])
             .collect();
         for (a, b) in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
@@ -88,7 +90,9 @@ fn a_bent_chain_is_one_closed_outward_tube_with_a_bicone() {
     // The waist at a bulging joint, and nothing wider elsewhere.
     let waist = params.bulge_ratio * r;
     let widest_near = |c: Vec3, axis: Vec3| {
-        soup.chunks_exact(3)
+        soup.as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64))
             .filter(|p| p.distance_to(c) < 2.0 * waist)
             .map(|p| {
@@ -207,7 +211,9 @@ fn a_joint_the_shaft_runs_straight_through_does_not_bulge() {
     );
     let soup = soup.floats;
     let widest = soup
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| (p[0] as f64).hypot(p[1] as f64))
         .fold(0.0_f64, f64::max);
     assert!(
@@ -243,7 +249,9 @@ fn a_shaft_bends_into_its_contact_cone_without_a_gap() {
     // The far end is the tip's radius.
     let end = points[2].pos;
     let at_tip = soup
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64))
         .filter(|p| p.distance_to(end) < 0.3)
         .map(|p| p.distance_to(end))
@@ -253,7 +261,7 @@ fn a_shaft_bends_into_its_contact_cone_without_a_gap() {
 
 /// Every vertex within `reach` of the chain's centre line.
 fn stays_near(soup: &[f32], points: &[ChainPoint], reach: f64) -> bool {
-    soup.chunks_exact(3).all(|p| {
+    soup.as_chunks::<3>().0.iter().all(|p| {
         let q = Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64);
         points.windows(2).any(|w| {
             let (a, b) = (w[0].pos, w[1].pos);
@@ -339,7 +347,7 @@ fn on_dragonfruit_states_no_vertex_flies_off() {
                 }),
         );
     let bounds = |soup: &[f32]| {
-        soup.chunks_exact(3).fold(
+        soup.as_chunks::<3>().0.iter().fold(
             [
                 f32::INFINITY,
                 f32::INFINITY,

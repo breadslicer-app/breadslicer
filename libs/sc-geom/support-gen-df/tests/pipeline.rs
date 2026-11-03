@@ -145,7 +145,11 @@ fn wire_rafts(rafts: &[RaftGroup]) -> Value {
 }
 
 fn triples(soup: &[f32]) -> Vec<[f32; 3]> {
-    soup.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect()
+    soup.as_chunks::<3>()
+        .0
+        .iter()
+        .map(|c| [c[0], c[1], c[2]])
+        .collect()
 }
 
 /// The stages called one by one, as the parity tests chain them.

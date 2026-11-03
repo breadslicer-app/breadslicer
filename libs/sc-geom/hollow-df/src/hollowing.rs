@@ -956,11 +956,11 @@ impl HollowSession {
                     *p = p.rotate_by_quat(inv_quat);
                 }
             }
-            for chunk in removed_voxel_centers.chunks_exact_mut(3) {
+            for chunk in removed_voxel_centers.as_chunks_mut::<3>().0 {
                 let v = Vec3::new(chunk[0], chunk[1], chunk[2]).rotate_by_quat(inv_quat);
                 chunk.copy_from_slice(&v.to_array());
             }
-            for chunk in blocked_voxel_centers.chunks_exact_mut(3) {
+            for chunk in blocked_voxel_centers.as_chunks_mut::<3>().0 {
                 let v = Vec3::new(chunk[0], chunk[1], chunk[2]).rotate_by_quat(inv_quat);
                 chunk.copy_from_slice(&v.to_array());
             }

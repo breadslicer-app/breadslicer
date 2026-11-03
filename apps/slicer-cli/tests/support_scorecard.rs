@@ -189,7 +189,7 @@ fn world_mesh(model: &ModelInput, scale: f32) -> IndexedMesh {
     let soup = world_soup(model);
     let mut lo = [f32::INFINITY; 3];
     let mut hi = [f32::NEG_INFINITY; 3];
-    for p in soup.chunks_exact(3) {
+    for p in soup.as_chunks::<3>().0 {
         for k in 0..3 {
             lo[k] = lo[k].min(p[k]);
             hi[k] = hi[k].max(p[k]);
@@ -199,9 +199,9 @@ fn world_mesh(model: &ModelInput, scale: f32) -> IndexedMesh {
     let mut vertices = Vec::new();
     let mut faces = Vec::new();
     let mut index: HashMap<[u32; 3], u32> = HashMap::new();
-    for tri in soup.chunks_exact(9) {
+    for tri in soup.as_chunks::<9>().0 {
         let mut ids = [0u32; 3];
-        for (k, p) in tri.chunks_exact(3).enumerate() {
+        for (k, p) in tri.as_chunks::<3>().0.iter().enumerate() {
             let key = [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()];
             ids[k] = *index.entry(key).or_insert_with(|| {
                 vertices.push(Vertex::new([0, 1, 2].map(|j| c[j] + (p[j] - c[j]) * scale)));
@@ -243,7 +243,7 @@ fn load_meshes(path: &Path, height_mm: Option<f32>) -> Vec<IndexedMesh> {
     let scale = height_mm.map_or(1.0, |h| {
         let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
         for m in &models {
-            for p in world_soup(m).chunks_exact(3) {
+            for p in world_soup(m).as_chunks::<3>().0 {
                 lo = lo.min(p[2]);
                 hi = hi.max(p[2]);
             }
@@ -588,7 +588,9 @@ impl ModelGeom {
         let mut min = [f64::INFINITY; 3];
         let mut max = [f64::NEG_INFINITY; 3];
         let tris: Vec<[f32; 3]> = soup
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| {
                 for k in 0..3 {
                     min[k] = min[k].min(f64::from(p[k]));
@@ -964,7 +966,7 @@ fn placement(
                 let mut worst_body = (0.0f64, Vec3::new(0.0, 0.0, 0.0), usize::MAX);
                 let mut worst_tip = (0.0f64, Vec3::new(0.0, 0.0, 0.0), usize::MAX);
                 let mut seen: HashSet<[u32; 3]> = HashSet::new();
-                for q in sink.floats.chunks_exact(3) {
+                for q in sink.floats.as_chunks::<3>().0 {
                     if !seen.insert([q[0].to_bits(), q[1].to_bits(), q[2].to_bits()]) {
                         continue;
                     }
@@ -1228,7 +1230,9 @@ fn run_scene(
         .iter()
         .flat_map(|m| {
             world_soup(m)
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|p| f64::from(p[2]))
                 .collect::<Vec<_>>()
         })

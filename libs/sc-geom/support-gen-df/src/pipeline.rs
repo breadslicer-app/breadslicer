@@ -258,7 +258,13 @@ pub struct PipelineOutput {
 fn bounding_box_center(geometry: &BufferGeometry) -> Vec3 {
     let mut min = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
     let mut max = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-    for v in geometry.position.as_deref().unwrap_or(&[]).chunks_exact(3) {
+    for v in geometry
+        .position
+        .as_deref()
+        .unwrap_or(&[])
+        .as_chunks::<3>()
+        .0
+    {
         let p = Vec3::new(v[0] as f64, v[1] as f64, v[2] as f64);
         min = min.min(p);
         max = max.max(p);
@@ -286,7 +292,11 @@ pub fn world_soup(model: &ModelInput) -> Vec<f32> {
 }
 
 fn triples(soup: &[f32]) -> Vec<[f32; 3]> {
-    soup.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect()
+    soup.as_chunks::<3>()
+        .0
+        .iter()
+        .map(|c| [c[0], c[1], c[2]])
+        .collect()
 }
 
 /// `computeVertexNormals` on the soup: the face normal at every corner.

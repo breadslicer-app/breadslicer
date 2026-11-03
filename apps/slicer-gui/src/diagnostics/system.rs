@@ -157,7 +157,9 @@ mod platform {
         let mut data = [0u8; 512];
         let len = read(name, RRF_RT_REG_SZ, &mut data)?;
         let units: Vec<u16> = data[..len]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .take_while(|&unit| unit != 0)
             .collect();

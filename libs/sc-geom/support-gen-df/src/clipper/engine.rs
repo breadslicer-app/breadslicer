@@ -1568,30 +1568,29 @@ impl Clipper {
     fn add_local_min_poly(&mut self, e1: usize, e2: usize, pt: IntPoint) -> usize {
         let result;
         let e;
-        let prev_e;
-        if self.is_horizontal(e2) || self.e(e1).dx > self.e(e2).dx {
+        let prev_e = if self.is_horizontal(e2) || self.e(e1).dx > self.e(e2).dx {
             result = self.add_out_pt(e1, pt);
             self.em(e2).out_idx = self.e(e1).out_idx;
             self.em(e1).side = EdgeSide::Left;
             self.em(e2).side = EdgeSide::Right;
             e = e1;
-            prev_e = if self.e(e).prev_in_ael == Some(e2) {
+            if self.e(e).prev_in_ael == Some(e2) {
                 self.e(e2).prev_in_ael
             } else {
                 self.e(e).prev_in_ael
-            };
+            }
         } else {
             result = self.add_out_pt(e2, pt);
             self.em(e1).out_idx = self.e(e2).out_idx;
             self.em(e1).side = EdgeSide::Right;
             self.em(e2).side = EdgeSide::Left;
             e = e2;
-            prev_e = if self.e(e).prev_in_ael == Some(e1) {
+            if self.e(e).prev_in_ael == Some(e1) {
                 self.e(e1).prev_in_ael
             } else {
                 self.e(e).prev_in_ael
-            };
-        }
+            }
+        };
         if let Some(pe) = prev_e
             && self.e(pe).out_idx >= 0
             && self.e(pe).top.y < pt.y

@@ -71,7 +71,7 @@ fn to_world_point(p: Vector2, m: &Matrix4) -> Vector2 {
 fn bounding_box(position: &[f32]) -> (Vec3, Vec3) {
     let mut min = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
     let mut max = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-    for v in position.chunks_exact(3) {
+    for v in position.as_chunks::<3>().0 {
         let p = Vec3::new(v[0] as f64, v[1] as f64, v[2] as f64);
         min = min.min(p);
         max = max.max(p);

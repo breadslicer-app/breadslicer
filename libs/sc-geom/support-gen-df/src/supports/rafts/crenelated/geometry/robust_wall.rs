@@ -184,7 +184,7 @@ fn split_t_junctions(geom: &mut BufferGeometry) {
     };
     let vertex_count = pos.len() / 3;
     let mut uses: HashMap<(u32, u32), u32> = HashMap::new();
-    for t in index.chunks_exact(3) {
+    for t in index.as_chunks::<3>().0 {
         for k in 0..3 {
             let (a, b) = (t[k], t[(k + 1) % 3]);
             *uses.entry((a.min(b), a.max(b))).or_default() += 1;
@@ -214,7 +214,7 @@ fn split_t_junctions(geom: &mut BufferGeometry) {
         hits.into_iter().map(|(_, v)| v).collect()
     };
     let mut out: Vec<u32> = Vec::with_capacity(index.len());
-    for t in index.chunks_exact(3) {
+    for t in index.as_chunks::<3>().0 {
         let split = (0..3).find_map(|k| {
             let (a, b) = (t[k], t[(k + 1) % 3]);
             if uses[&(a.min(b), a.max(b))] != 1 {

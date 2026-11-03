@@ -341,10 +341,13 @@ fn every_anycubic_printer_mirrors_x_and_not_y() {
     }
 }
 
+/// A panel: its id, its pixels, its millimetres.
+type Panel = (&'static str, (u32, u32), (f64, f64));
+
 /// The Anycubic panels the first dataset laid out the other way round, or at
 /// another resolution, as UVtools' printer data lists them: pixels, then
 /// millimetres (#195).
-const ANYCUBIC_PANELS_AS_UVTOOLS_LISTS_THEM: [(&str, (u32, u32), (f64, f64)); 6] = [
+const ANYCUBIC_PANELS_AS_UVTOOLS_LISTS_THEM: [Panel; 6] = [
     ("anycubic-photon-s", (1440, 2560), (68.04, 120.96)),
     ("anycubic-photon-zero", (480, 854), (55.4, 98.63)),
     ("anycubic-photon-mono", (1620, 2560), (82.62, 130.56)),

@@ -859,6 +859,237 @@ pub fn brace_new_shaft(
     added
 }
 
+/// Why a brace laid by hand between two shafts cannot go there (#3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HandBraceRefusal {
+    /// Both ends are on the same shaft.
+    SameSupport,
+    /// The shafts hold different models.
+    OtherModel,
+    /// One end is no shaft a brace can join (a leaf, a twig, nothing).
+    NotAShaft,
+    /// An end is off its shaft: above where its tip starts, or below where
+    /// a brace may begin.
+    OffShaft,
+    /// The shafts are closer than a brace can span.
+    TooClose,
+    /// Longer than the bracing settings let a brace be.
+    TooLong,
+    /// At 45° from the first end, the second would be off its shaft: the
+    /// engine lays no brace flatter than that.
+    TooFlat,
+    /// The brace would cross the model.
+    HitsModel,
+}
+
+/// A brace laid by hand, with its knots: the first on the shaft it starts
+/// from, the second on the other.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandBrace {
+    pub brace: Brace,
+    pub knots: [Knot; 2],
+}
+
+/// What [`hand_brace`] makes of two ends: the brace when it can go, else
+/// why not, with the brace as it would be when both ends lie on their
+/// shafts (to draw it red).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandBraceOutcome {
+    pub brace: Option<HandBrace>,
+    pub refusal: Option<HandBraceRefusal>,
+}
+
+/// SoulCrafted (#3): a brace laid by hand from shaft `from.0` at height
+/// `from.1` to shaft `to.0` near height `to.1` (mm above the plate), by the
+/// rules and sizes a bracing run lays one with: the ends where the run's
+/// ladder anchors them (on the shaft's axis at that height), no flatter
+/// than the run's 45° (a second end asked flatter is moved up or down its
+/// shaft to 45°, the side it was asked), no longer than the settings'
+/// length, clear of the model, at the settings' diameter. Ids come from
+/// `new_id`; the brace is the person's (`generated_by` none), which a
+/// bracing run's "remove existing" leaves alone. `state` is not changed.
+pub fn hand_brace(
+    state: &SupportState,
+    from: (&str, f64),
+    to: (&str, f64),
+    input_settings: &AutoBracingSettings,
+    live: &SupportSettings,
+    meshes: &BraceMeshes<'_>,
+    new_id: &mut dyn FnMut() -> String,
+) -> HandBraceOutcome {
+    let refused = |why| HandBraceOutcome {
+        brace: None,
+        refusal: Some(why),
+    };
+    if from.0 == to.0 {
+        return refused(HandBraceRefusal::SameSupport);
+    }
+    let settings = normalize_auto_bracing_settings(input_settings);
+    let c = &state.collections;
+    let arena: Vec<SupportSample> = build_support_samples(c, c)
+        .into_iter()
+        .filter(|s| is_auto_braceable_shaft_type(s.support_kind))
+        .collect();
+    let find = |id: &str| arena.iter().position(|s| s.support_id == id);
+    let (Some(a), Some(b)) = (find(from.0), find(to.0)) else {
+        return refused(HandBraceRefusal::NotAShaft);
+    };
+    let (sa, sb) = (&arena[a], &arena[b]);
+    if sa.model_id != sb.model_id {
+        return refused(HandBraceRefusal::OtherModel);
+    }
+    // Where on a shaft an end may lie: below where its tip starts, as the
+    // ladder keeps it, and for a bracing preset a diameter above where the
+    // shaft starts, as its chains keep it.
+    let floor = |s: &SupportSample| {
+        s.bottom_reference_z
+            + if settings.stacked.is_some() {
+                settings.brace_diameter_mm
+            } else {
+                0.0
+            }
+    };
+    let ceiling = |s: &SupportSample| s.top_reference_z - 0.1;
+    let on = |s: &SupportSample, z: f64| z >= floor(s) - EPS && z <= ceiling(s) + EPS;
+    let clamped = |s: &SupportSample, z: f64| js_max(floor(s), js_min(ceiling(s), z));
+    let mut why: Option<HandBraceRefusal> = None;
+    if !on(sa, from.1) || !on(sb, to.1) {
+        why.get_or_insert(HandBraceRefusal::OffShaft);
+    }
+    let Some(low) = resolve_anchor_at_z(sa, clamped(sa, from.1)) else {
+        return refused(HandBraceRefusal::OffShaft);
+    };
+    // Shafts farther apart than a brace may span: that says it first, as
+    // no height on either makes it shorter.
+    if let Some(there) = resolve_anchor_at_z(sb, clamped(sb, to.1)) {
+        let h = ((there.pos.x - low.pos.x).powi(2) + (there.pos.y - low.pos.y).powi(2)).sqrt();
+        if h > settings.max_brace_length_mm + EPS {
+            why.get_or_insert(HandBraceRefusal::TooLong);
+        }
+    }
+    // The second end: as asked, or at 45° when that is flatter, solved as
+    // the ladder solves its links (the shafts may lean).
+    let sign = if to.1 >= low.pos.z { 1.0 } else { -1.0 };
+    let mut z = clamped(sb, to.1);
+    let mut snapped = false;
+    for _ in 0..4 {
+        let Some(there) = resolve_anchor_at_z(sb, z) else {
+            break;
+        };
+        let h = ((there.pos.x - low.pos.x).powi(2) + (there.pos.y - low.pos.y).powi(2)).sqrt();
+        let rise = (to.1 - low.pos.z).abs();
+        let want = if rise + EPS >= h {
+            to.1
+        } else {
+            snapped = true;
+            low.pos.z + sign * h
+        };
+        let next = clamped(sb, want);
+        if !on(sb, want) {
+            why.get_or_insert(if snapped {
+                HandBraceRefusal::TooFlat
+            } else {
+                HandBraceRefusal::OffShaft
+            });
+        }
+        if (next - z).abs() < 0.001 {
+            z = next;
+            break;
+        }
+        z = next;
+    }
+    let Some(high) = resolve_anchor_at_z(sb, z) else {
+        return refused(why.unwrap_or(HandBraceRefusal::OffShaft));
+    };
+    let dx = high.pos.x - low.pos.x;
+    let dy = high.pos.y - low.pos.y;
+    let span = (dx * dx + dy * dy).sqrt();
+    let rise = (high.pos.z - low.pos.z).abs();
+    // Flatter than 45° once clamped to the shaft: the 45° end is off it.
+    if rise + 0.01 < span {
+        why.get_or_insert(HandBraceRefusal::TooFlat);
+    }
+    if span < js_max(0.001, min_pair_span_mm(&settings)) {
+        why.get_or_insert(HandBraceRefusal::TooClose);
+    }
+    if span > settings.max_brace_length_mm + EPS || rise > settings.max_brace_length_mm + EPS {
+        why.get_or_insert(HandBraceRefusal::TooLong);
+    }
+    if !line_passes_mesh_clearance(
+        low.pos,
+        high.pos,
+        meshes.get(&low.model_id),
+        settings.brace_diameter_mm,
+    ) {
+        why.get_or_insert(HandBraceRefusal::HitsModel);
+    }
+    // A bracing preset draws its braces at its own diameter, never thicker
+    // than the thinner shaft they join, as the ladder's writer does.
+    let exact = settings.stacked.is_some().then(|| {
+        settings
+            .brace_diameter_mm
+            .min(low.host_diameter_mm)
+            .min(high.host_diameter_mm)
+    });
+    // The ladder's own writer, without the preset's height rule it would
+    // refuse an end by in silence: the ends were kept on their shafts above.
+    let plain = AutoBracingSettings {
+        stacked: None,
+        ..settings.clone()
+    };
+    let no_overrides = HashSet::new();
+    let mut ladder = Ladder {
+        arena: &arena,
+        settings: &plain,
+        grid: GridSnap {
+            enabled: live.grid.enabled,
+            spacing_mm: live.grid.spacing_mm,
+        },
+        meshes,
+        max_run: settings.max_brace_length_mm,
+        pair_distance_overrides: &no_overrides,
+        brace_profile: build_brace_profile(settings.brace_diameter_mm),
+        brace_ids: c.braces.keys().cloned().collect(),
+        knot_ids: c.knots.keys().cloned().collect(),
+        brace_id_factory: UniqueIds {
+            prefix: "auto-brace",
+            index: 1,
+        },
+        knot_id_factory: UniqueIds {
+            prefix: "auto-brace-knot",
+            index: 1,
+        },
+        generated_braces: IndexMap::new(),
+        generated_knots: IndexMap::new(),
+        braced_axes_by_trunk_id: HashMap::new(),
+    };
+    ladder.commit(a, b, BraceDebugSection::Initial, low, high);
+    let Some((_, mut brace)) = ladder.generated_braces.pop() else {
+        return refused(why.unwrap_or(HandBraceRefusal::OffShaft));
+    };
+    let mut knots = ladder.generated_knots.into_values();
+    let (Some(mut start), Some(mut end)) = (knots.next(), knots.next()) else {
+        return refused(why.unwrap_or(HandBraceRefusal::OffShaft));
+    };
+    if let Some(exact) = exact {
+        start.diameter = Some(exact + JOINT_DIAMETER_OFFSET_MM);
+        end.diameter = Some(exact + JOINT_DIAMETER_OFFSET_MM);
+    }
+    start.id = new_id();
+    end.id = new_id();
+    brace.base.id = new_id();
+    brace.base.generated_by = None;
+    brace.start_knot_id = start.id.clone();
+    brace.end_knot_id = end.id.clone();
+    HandBraceOutcome {
+        brace: Some(HandBrace {
+            brace,
+            knots: [start, end],
+        }),
+        refusal: why,
+    }
+}
+
 /// The brace ladder of one model's pairs, `max_z` its tallest shaft top:
 /// a bracing preset's chains, else the zigzag chains and the pattern tiers.
 fn lay_ladder(

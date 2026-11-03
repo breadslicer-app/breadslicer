@@ -997,8 +997,7 @@ fn radial_pairs(
         }
     }
     let left: Vec<usize> = (0..k).filter(|&a| !used[a]).collect();
-    for pair in left.chunks_exact(2) {
-        let (a, b) = (pair[0], pair[1]);
+    for &[a, b] in left.as_chunks::<2>().0 {
         pairs.push((ring[a].1, ring[b].1, ring[a].2 == ring[b].2));
     }
     pairs

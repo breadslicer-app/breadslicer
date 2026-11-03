@@ -538,7 +538,7 @@ fn drains_key(drains: &[LocalDrain]) -> u64 {
     if drains.is_empty() {
         return 0;
     }
-    let shape = |v: Option<f32>| v.map_or(f32::NAN, |v| v);
+    let shape = |v: Option<f32>| v.unwrap_or(f32::NAN);
     drains
         .iter()
         .flat_map(|d| {

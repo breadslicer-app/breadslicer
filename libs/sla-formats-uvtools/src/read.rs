@@ -121,7 +121,9 @@ impl<'a> Cursor<'a> {
         let length = self.u32_be()? as usize;
         let units: Vec<u16> = self
             .take(length)?
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
             .collect();
         String::from_utf16(&units).map_err(|_| error("a setting is not UTF-16"))
@@ -224,7 +226,7 @@ pub fn read_cxdlp(bytes: &[u8]) -> Result<CxdlpFile, ReadError> {
         let lines = cursor.take(line_count * LINE_BYTES)?;
         cursor.page_break()?;
         let mut image = vec![0_u8; width * height];
-        for line in lines.chunks_exact(LINE_BYTES) {
+        for line in lines.as_chunks::<LINE_BYTES>().0 {
             let (b0, b1, b2, b3, b4) = (
                 usize::from(line[0]),
                 usize::from(line[1]),

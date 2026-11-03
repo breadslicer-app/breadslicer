@@ -140,6 +140,8 @@ enum TabTool {
     AddSupport,
     RemoveSupport,
     MoveTip,
+    /// The brace tool (#3): a click on a support, then on another.
+    Brace,
     Drain,
 }
 
@@ -2427,7 +2429,7 @@ impl ViewportController {
                 Some(SupportDragKind::Brush)
             }
             TabTool::RemoveSupport => Some(SupportDragKind::Box),
-            TabTool::AddSupport | TabTool::Drain => None,
+            TabTool::AddSupport | TabTool::Brace | TabTool::Drain => None,
         }
     }
 
@@ -2556,8 +2558,14 @@ impl ViewportController {
     }
 
     /// Drops a drag of a Supports tab tool in flight (Esc, a right press, a
-    /// tool put away): nothing of it is made. Returns whether there was one.
+    /// tool put away): nothing of it is made; with none, what a tool holds
+    /// between two clicks (the brace tool's first end, #3). Returns whether
+    /// there was one.
     pub(crate) fn cancel_support_drag(&self) -> bool {
+        let pending = || {
+            self.support_drag_handler()
+                .is_some_and(|handler| handler.cancel_pending())
+        };
         match self.support_drag.get() {
             DragPhase::Dragging(_) => {
                 self.support_drag.set(DragPhase::Ignored);
@@ -2574,7 +2582,7 @@ impl ViewportController {
                 self.support_drag.set(DragPhase::Ignored);
                 false
             }
-            DragPhase::Idle | DragPhase::Ignored => false,
+            DragPhase::Idle | DragPhase::Ignored => pending(),
         }
     }
 
@@ -2593,6 +2601,7 @@ impl ViewportController {
                 1 => Some(TabTool::AddSupport),
                 2 => Some(TabTool::RemoveSupport),
                 3 => Some(TabTool::MoveTip),
+                4 => Some(TabTool::Brace),
                 _ => None,
             },
             _ => None,
@@ -2622,7 +2631,10 @@ impl ViewportController {
         self.session
             .document()
             .with_scene(|spatial| {
-                let on_supports = matches!(tool, TabTool::RemoveSupport | TabTool::MoveTip);
+                let on_supports = matches!(
+                    tool,
+                    TabTool::RemoveSupport | TabTool::MoveTip | TabTool::Brace
+                );
                 // Remove and Move tip take only a support in sight (#3): the
                 // nearest hit among every leaf, model or supports, is one.
                 // Add and the drain look through the supports to the model.

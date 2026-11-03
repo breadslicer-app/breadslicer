@@ -300,7 +300,7 @@ fn write_utf16_number(out: &mut impl Write, value: f32) -> io::Result<()> {
 /// Packs a preview as RGB565, big-endian.
 pub(crate) fn rgb565_be(image: &PreviewImage) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(image.rgb().len() / 3 * 2);
-    for pixel in image.rgb().chunks_exact(3) {
+    for pixel in image.rgb().as_chunks::<3>().0 {
         let (r, g, b) = (
             u16::from(pixel[0]),
             u16::from(pixel[1]),

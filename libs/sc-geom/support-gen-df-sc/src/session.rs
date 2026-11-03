@@ -18,7 +18,9 @@ use std::sync::{Arc, OnceLock};
 use sc_mesh_core::IndexedMesh;
 use serde_json::Value;
 use support_gen_df::pipeline::{ModelInput, PipelineSettings, support_soup, world_soup};
-use support_gen_df::supports::auto_bracing::auto_brace::brace_new_shaft;
+use support_gen_df::supports::auto_bracing::auto_brace::{
+    HandBrace, HandBraceRefusal, brace_new_shaft, hand_brace,
+};
 use support_gen_df::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use support_gen_df::supports::auto_support::auto_place::fan::{
     FanArgs, FanHostOrder, FanLeafRefusal, FanLeafResult, add_fanned, fan_leaf_to_host,
@@ -43,13 +45,14 @@ use support_gen_df::supports::support_types::trunk::trunk_builder::{
     TrunkBuildInput, build_trunk_data,
 };
 use support_gen_df::supports::types::LimitationCode;
-use support_gen_df::supports::types::{SupportCollections, SupportState};
+use support_gen_df::supports::types::{Knot, SupportCollections, SupportState};
 use support_gen_df::three::{Matrix4, Vec3};
 use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
 
 use crate::document::ModelPrint;
 use crate::hand_log::{
-    HandEditKind, HandLog, HandPlaced, HandRemoved, KeptEdits, LostEdit, LostWhy,
+    HandBraced, HandEditKind, HandLog, HandPlaced, HandRemoved, HandUnbraced, KeptEdits, LostEdit,
+    LostWhy,
 };
 use crate::shift::{PlaneMotion, bases, model_collections, move_model_supports};
 use crate::{DF_SUPPORT_MESH_NAME, SettingsRecipe, weld_parts};
@@ -69,6 +72,12 @@ const FORCED_ATTACH_REACH_MM: f64 = 30.0;
 const FORCED_MAX_ANGLE_DEG: f64 = 60.0;
 /// How far from a support a click may land and still remove it.
 const REMOVE_REACH_MM: f64 = 3.0;
+/// How far off a brace's surface a point may lie and still be on it, for
+/// Remove (#3): the hit point of a ray, a little off the drawn facets.
+const ON_BRACE_MM: f64 = 0.1;
+/// How far from a support's axis a point of the brace tool may land and
+/// still take that support (#3): the removal's reach.
+const BRACE_REACH_MM: f64 = REMOVE_REACH_MM;
 /// How much lower [`DfSupportSession::add_trunk_near`] may move a point the
 /// engine cannot hold: a point a layer or two up the island's underside.
 const NUDGE_DOWN_MM: [f64; 4] = [0.05, 0.1, 0.2, 0.4];
@@ -221,6 +230,8 @@ pub enum EditError {
     Tessellation(String),
     /// A forced attach found no support to hang from, for this reason.
     CannotAttach(AddNote),
+    /// A brace laid by hand cannot go there, for this reason (#3).
+    CannotBrace(HandBraceRefusal),
 }
 
 impl std::fmt::Display for EditError {
@@ -232,6 +243,7 @@ impl std::fmt::Display for EditError {
             }
             EditError::Tessellation(why) => write!(f, "the supports could not be drawn ({why})"),
             EditError::CannotAttach(why) => write!(f, "no support to hang it from ({why:?})"),
+            EditError::CannotBrace(why) => write!(f, "no brace there ({why:?})"),
         }
     }
 }
@@ -312,6 +324,16 @@ pub struct EditPreview {
     pub note: Option<AddNote>,
     /// For a move: the pieces it takes away from where the support was.
     pub taken: Option<IndexedMesh>,
+    /// For a brace laid by hand: why it cannot go there.
+    pub brace: Option<HandBraceRefusal>,
+}
+
+/// One end of a brace laid by hand (#3): the support's shaft, and the point
+/// on its axis nearest where the person pointed (world mm).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BraceEnd {
+    pub shaft: String,
+    pub at: [f64; 3],
 }
 
 /// Where a support is placed: at the model surface nearest a point, or on
@@ -518,14 +540,19 @@ fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
 
 /// Distance from `p` to the segment `a`-`b`.
 fn segment_dist(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> f64 {
+    dist(p, segment_nearest(p, a, b))
+}
+
+/// The point of the segment `a`-`b` nearest `p`.
+fn segment_nearest(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
     let len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
     if len2 <= 1e-18 {
-        return dist(p, a);
+        return a;
     }
     let t = (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1] + (p[2] - a[2]) * ab[2]) / len2)
         .clamp(0.0, 1.0);
-    dist(p, [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t])
+    [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t]
 }
 
 /// Every `{x, y, z}` point in a serialized entity, in document order: tips,
@@ -982,8 +1009,12 @@ impl DfSupportSession {
         self.bvhs[i]
             .get_or_init(|| {
                 let soup = world_soup(&self.models[i]);
-                let triples: Vec<[f32; 3]> =
-                    soup.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+                let triples: Vec<[f32; 3]> = soup
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|c| [c[0], c[1], c[2]])
+                    .collect();
                 Arc::new(MeshBvh::new(triples, None))
             })
             .clone()
@@ -1332,6 +1363,7 @@ impl DfSupportSession {
                     attached: placed.attached,
                     note: placed.note,
                     taken: None,
+                    brace: None,
                 };
                 Ok((preview, Some(copy)))
             }
@@ -1342,6 +1374,7 @@ impl DfSupportSession {
                     attached: false,
                     note,
                     taken: None,
+                    brace: None,
                 };
                 Ok((preview, None))
             }
@@ -1398,6 +1431,20 @@ impl DfSupportSession {
         let mut best: Option<(f64, usize)> = None;
         for (k, pts) in index.points.iter().enumerate() {
             if c.knots.contains_key(&index.ids[k]) {
+                continue;
+            }
+            // A brace holds no point of its own: it runs between its knots
+            // (#3). It is taken only for a point on its own surface: a radius
+            // off the part of it out in the open, its ends inside the shafts
+            // it joins left out. A point on a shaft beside where a brace
+            // meets it is the shaft's.
+            if let Some(brace) = c.braces.get(&index.ids[k]) {
+                let Some(d) = self.on_brace(brace, point) else {
+                    continue;
+                };
+                if d < best.map_or(f64::INFINITY, |b| b.0) {
+                    best = Some((d, k));
+                }
                 continue;
             }
             let d = pts
@@ -1595,6 +1642,19 @@ impl DfSupportSession {
     /// placed by hand that goes leaves the log; one of the run moved by hand
     /// leaves its old place removed.
     fn log_removal(&mut self, picked: &[String], gone: &HashSet<String>) {
+        self.forget_braces(gone);
+        for id in picked {
+            if !gone.contains(id) || is_hand_id(id) {
+                continue;
+            }
+            let c = &self.state.collections;
+            if let (Some(brace), Some([from, to])) = (c.braces.get(id), self.brace_ends(id)) {
+                let model = brace.base.model_id.clone();
+                self.hand_log
+                    .unbraced
+                    .push(HandUnbraced { model, from, to });
+            }
+        }
         let mut ids: Vec<&String> = gone.iter().collect();
         ids.sort();
         for id in ids {
@@ -1759,7 +1819,51 @@ impl DfSupportSession {
                     EditError::CannotAttach(_) => LostWhy::CannotAttach,
                     EditError::NothingThere => LostWhy::SurfaceChanged,
                     EditError::NoRoute(_) | EditError::Tessellation(_) => LostWhy::NoRoute,
+                    EditError::CannotBrace(why) => LostWhy::BraceRefused(why),
                 })),
+            }
+        }
+        // The braces last: a support placed by hand may hold one end, and a
+        // brace of the run removed by hand may be one a placement lays.
+        for unbraced in &log.unbraced {
+            if cancelled() {
+                return None;
+            }
+            if let Some(id) = session.run_brace_near(unbraced.from, unbraced.to) {
+                let _ = session.remove_tips(&[id]);
+            }
+            report.kept += 1;
+        }
+        for braced in &log.braces {
+            if cancelled() {
+                return None;
+            }
+            let lost = |why| LostEdit {
+                kind: HandEditKind::Braced,
+                at: braced.from,
+                why,
+            };
+            let ends = (
+                session.brace_end_within(braced.from, MATCH_TIP_MM),
+                session.brace_end_within(braced.to, MATCH_TIP_MM),
+            );
+            let (Some(mut from), Some(mut to)) = ends else {
+                report.lost.push(lost(LostWhy::BraceEndsGone));
+                continue;
+            };
+            // The heights it had, on the shafts there now.
+            from.at[2] = braced.from[2];
+            to.at[2] = braced.to[2];
+            let mut laid = session.clone();
+            match laid.brace_between(&from, &to) {
+                Ok(_) => {
+                    session = laid;
+                    report.kept += 1;
+                }
+                Err((EditError::CannotBrace(why), _)) => {
+                    report.lost.push(lost(LostWhy::BraceRefused(why)));
+                }
+                Err(_) => report.lost.push(lost(LostWhy::BraceEndsGone)),
             }
         }
         Some((session, report))
@@ -1833,6 +1937,7 @@ impl DfSupportSession {
             attached: false,
             note: None,
             taken: None,
+            brace: None,
         })
     }
 
@@ -1877,6 +1982,7 @@ impl DfSupportSession {
             None if is_hand_id(tip) => None,
             None => self.support_tip(tip).map(|(at, _)| at),
         };
+        self.forget_braces(&gone);
         self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
         self.removal_index = Arc::default();
         let placed = self.place_at(to, &how)?;
@@ -1919,6 +2025,7 @@ impl DfSupportSession {
                     attached: placed.attached,
                     note: placed.note,
                     taken: Some(self.mesh_of(|id| gone.contains(id))?),
+                    brace: None,
                 };
                 Ok((preview, Some(copy)))
             }
@@ -1930,6 +2037,7 @@ impl DfSupportSession {
                     attached: false,
                     note: Some(AddNote::CarriesOthers),
                     taken: None,
+                    brace: None,
                 };
                 Ok((preview, None))
             }
@@ -1940,6 +2048,7 @@ impl DfSupportSession {
                     attached: false,
                     note,
                     taken: None,
+                    brace: None,
                 };
                 Ok((preview, None))
             }
@@ -1978,7 +2087,272 @@ impl DfSupportSession {
             attached: false,
             note: None,
             taken: None,
+            brace: None,
         })
+    }
+
+    /// Where brace `id` has its ends (world mm): its knots.
+    fn brace_ends(&self, id: &str) -> Option<[[f64; 3]; 2]> {
+        let c = &self.state.collections;
+        let brace = c.braces.get(id)?;
+        let at = |knot: &str| c.knots.get(knot).map(|k| [k.pos.x, k.pos.y, k.pos.z]);
+        Some([at(&brace.start_knot_id)?, at(&brace.end_knot_id)?])
+    }
+
+    /// How far `point` lies off brace `brace`'s surface, 0 on it, when it
+    /// lies on it: within [`ON_BRACE_MM`] of the brace's surface where it
+    /// runs in the open, between the shafts it joins (#3).
+    fn on_brace(
+        &self,
+        brace: &support_gen_df::supports::types::Brace,
+        point: [f64; 3],
+    ) -> Option<f64> {
+        let c = &self.state.collections;
+        let (s, e) = (
+            c.knots.get(&brace.start_knot_id)?,
+            c.knots.get(&brace.end_knot_id)?,
+        );
+        let (a, b) = ([s.pos.x, s.pos.y, s.pos.z], [e.pos.x, e.pos.y, e.pos.z]);
+        let len = dist(a, b);
+        // Each end sinks into its shaft by the shaft's radius.
+        let (ra, rb) = (
+            s.diameter.unwrap_or(0.0) / 2.0,
+            e.diameter.unwrap_or(0.0) / 2.0,
+        );
+        if len <= ra + rb {
+            return None;
+        }
+        let at = |t: f64| std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t);
+        let (from, to) = (at(ra / len), at(1.0 - rb / len));
+        let radius = brace.profile.diameter / 2.0;
+        let d = segment_dist(point, from, to);
+        (d <= radius + ON_BRACE_MM).then(|| (d - radius).max(0.0))
+    }
+
+    /// Every brace with its id and its two ends (world mm): what a box or a
+    /// brush finds it by on screen, as [`Self::support_paths`] does a
+    /// support (#3).
+    pub fn brace_paths(&self) -> Vec<(String, Vec<[f64; 3]>)> {
+        self.state
+            .collections
+            .braces
+            .keys()
+            .filter_map(|id| Some((id.clone(), self.brace_ends(id)?.to_vec())))
+            .collect()
+    }
+
+    /// Drops from the log the braces laid by hand among `gone` (#408): a
+    /// support removed or moved takes its braces with it.
+    fn forget_braces(&mut self, gone: &HashSet<String>) {
+        self.hand_log.braces.retain(|b| !gone.contains(&b.id));
+    }
+
+    /// The brace of the run (not one laid by hand) whose ends lie within
+    /// [`MATCH_TIP_MM`] of `from` and `to`, either way round.
+    fn run_brace_near(&self, from: [f64; 3], to: [f64; 3]) -> Option<String> {
+        self.state
+            .collections
+            .braces
+            .keys()
+            .filter(|id| !is_hand_id(id))
+            .filter_map(|id| {
+                let [a, b] = self.brace_ends(id)?;
+                let d = (dist(a, from).max(dist(b, to))).min(dist(a, to).max(dist(b, from)));
+                (d <= MATCH_TIP_MM).then(|| (d, id.clone()))
+            })
+            .min_by(|x, y| x.0.total_cmp(&y.0))
+            .map(|(_, id)| id)
+    }
+
+    /// The end a brace laid by hand takes at `point` (world mm, on or near a
+    /// support): the trunk or branch whose axis runs nearest, within reach
+    /// of it, and the point of that axis nearest `point` (#3). `None` with no
+    /// shaft in reach.
+    pub fn brace_end_near(&self, point: [f64; 3]) -> Option<BraceEnd> {
+        self.brace_end_within(point, BRACE_REACH_MM)
+    }
+
+    fn brace_end_within(&self, point: [f64; 3], reach_mm: f64) -> Option<BraceEnd> {
+        let c = &self.state.collections;
+        let mut best: Option<(f64, String, [f64; 3])> = None;
+        for (id, path) in self.support_paths() {
+            if !c.trunks.contains_key(&id) && !c.branches.contains_key(&id) {
+                continue;
+            }
+            for w in path.windows(2) {
+                let q = segment_nearest(point, w[0], w[1]);
+                let d = dist(point, q);
+                if d <= reach_mm && best.as_ref().is_none_or(|b| d < b.0) {
+                    best = Some((d, id.clone(), q));
+                }
+            }
+        }
+        best.map(|(_, shaft, at)| BraceEnd { shaft, at })
+    }
+
+    /// The index of the model shaft `id` stands on.
+    fn model_of_shaft(&self, id: &str) -> Option<usize> {
+        let c = &self.state.collections;
+        let model = c
+            .trunks
+            .get(id)
+            .map(|t| &t.base.model_id)
+            .or_else(|| c.branches.get(id).map(|b| &b.base.model_id))
+            .or_else(|| c.kickstands.get(id).map(|k| &k.base.model_id))?;
+        self.models.iter().position(|m| m.id == *model)
+    }
+
+    /// Lays a brace from `from` to `to` by the run's bracing rules and sizes
+    /// (#3) and logs it (#408). Returns what it added; a refusal comes with
+    /// the brace as it would be, to draw red, when both ends lie on their
+    /// shafts.
+    fn brace_between(
+        &mut self,
+        from: &BraceEnd,
+        to: &BraceEnd,
+    ) -> Result<HashSet<String>, (EditError, Option<Box<HandBrace>>)> {
+        let Some(i) = self.model_of_shaft(&from.shaft) else {
+            return Err((EditError::CannotBrace(HandBraceRefusal::NotAShaft), None));
+        };
+        let bvh = self.bvh(i);
+        let meshes: BraceMeshes<'_> = [(
+            self.models[i].id.clone(),
+            BraceMesh {
+                bvh: &bvh,
+                matrix: Matrix4::IDENTITY,
+            },
+        )]
+        .into();
+        let prefix = self.id_prefix.clone();
+        let mut next = self.next_id;
+        let mut new_id = || {
+            next += 1;
+            format!("{prefix}-m{next}")
+        };
+        let outcome = hand_brace(
+            &self.state,
+            (&from.shaft, from.at[2]),
+            (&to.shaft, to.at[2]),
+            &self.settings.supports.auto_bracing,
+            &self.settings.supports,
+            &meshes,
+            &mut new_id,
+        );
+        let laid = match (outcome.brace, outcome.refusal) {
+            (Some(laid), None) => laid,
+            (laid, why) => {
+                let why = why.unwrap_or(HandBraceRefusal::OffShaft);
+                return Err((EditError::CannotBrace(why), laid.map(Box::new)));
+            }
+        };
+        self.next_id = next;
+        let [start, end] = laid.knots;
+        let pos = |k: &Knot| [k.pos.x, k.pos.y, k.pos.z];
+        self.hand_log.braces.push(HandBraced {
+            id: laid.brace.base.id.clone(),
+            model: laid.brace.base.model_id.clone(),
+            from: pos(&start),
+            to: pos(&end),
+        });
+        let added: HashSet<String> =
+            [laid.brace.base.id.clone(), start.id.clone(), end.id.clone()].into();
+        let c = &mut self.state.collections;
+        c.knots.insert(start.id.clone(), start);
+        c.knots.insert(end.id.clone(), end);
+        c.braces.insert(laid.brace.base.id.clone(), laid.brace);
+        self.removal_index = Arc::default();
+        self.hand_edited = true;
+        Ok(added)
+    }
+
+    /// Shaft `id` drawn on its own, with what it stands on or hangs from:
+    /// a trunk's root, a branch's knot.
+    fn shaft_mesh(&self, id: &str) -> Result<IndexedMesh, EditError> {
+        let c = &self.state.collections;
+        let under = c
+            .trunks
+            .get(id)
+            .map(|t| t.root_id.clone())
+            .or_else(|| c.branches.get(id).map(|b| b.parent_knot_id.clone()));
+        self.mesh_of(|e| e == id || under.as_ref() == Some(e))
+    }
+
+    /// Lays a brace from the end `from` (one [`Self::brace_end_near`] gave)
+    /// to the support at `to` (world mm), by the run's bracing rules and
+    /// sizes, as one hand edit (#3). On a refusal the session is as it was.
+    pub fn add_brace(&mut self, from: &BraceEnd, to: [f64; 3]) -> Result<(), EditError> {
+        let to = self.brace_end_near(to).ok_or(EditError::NothingThere)?;
+        let mut laid = self.clone();
+        laid.brace_between(from, &to).map_err(|(err, _)| err)?;
+        *self = laid;
+        Ok(())
+    }
+
+    /// What [`Self::add_brace`] would lay, drawn on its own: green when it
+    /// goes, red with why when not (the brace as it would be, or the support
+    /// pointed at when no brace can be drawn), with the session it leaves
+    /// when it goes. `NothingThere` with no support at `to`.
+    pub fn preview_brace(
+        &self,
+        from: &BraceEnd,
+        to: [f64; 3],
+    ) -> Result<(EditPreview, Option<Self>), EditError> {
+        let to = self.brace_end_near(to).ok_or(EditError::NothingThere)?;
+        let mut copy = self.clone();
+        match copy.brace_between(from, &to) {
+            Ok(added) => {
+                let preview = EditPreview {
+                    mesh: copy.mesh_of(|id| added.contains(id))?,
+                    valid: true,
+                    attached: false,
+                    note: None,
+                    taken: None,
+                    brace: None,
+                };
+                Ok((preview, Some(copy)))
+            }
+            Err((EditError::CannotBrace(why), laid)) => {
+                let mesh = match laid {
+                    Some(laid) => {
+                        let laid = *laid;
+                        let mut state = SupportState::default();
+                        let c = &mut state.collections;
+                        for knot in laid.knots {
+                            c.knots.insert(knot.id.clone(), knot);
+                        }
+                        c.braces.insert(laid.brace.base.id.clone(), laid.brace);
+                        self.draw_alone(&state)?
+                    }
+                    None => self.shaft_mesh(&to.shaft)?,
+                };
+                let preview = EditPreview {
+                    mesh,
+                    valid: false,
+                    attached: false,
+                    note: None,
+                    taken: None,
+                    brace: Some(why),
+                };
+                Ok((preview, None))
+            }
+            Err((other, _)) => Err(other),
+        }
+    }
+
+    /// The support a first point of the brace tool at `point` takes (#3),
+    /// drawn on its own, with the end it gives. `NothingThere` with no trunk
+    /// or branch in reach.
+    pub fn preview_brace_end(&self, point: [f64; 3]) -> Result<(EditPreview, BraceEnd), EditError> {
+        let end = self.brace_end_near(point).ok_or(EditError::NothingThere)?;
+        let preview = EditPreview {
+            mesh: self.shaft_mesh(&end.shaft)?,
+            valid: true,
+            attached: false,
+            note: None,
+            taken: None,
+            brace: None,
+        };
+        Ok((preview, end))
     }
 
     /// The entities `keep` names, tessellated without a raft. A preview
@@ -2516,9 +2890,9 @@ mod session_tests {
                 continue;
             }
             let first = vertices.len();
-            for tri in piece.chunks_exact(9) {
+            for tri in piece.as_chunks::<9>().0 {
                 let mut ids = [0u32; 3];
-                for (k, p) in tri.chunks_exact(3).enumerate() {
+                for (k, p) in tri.as_chunks::<3>().0.iter().enumerate() {
                     let z = if p[2] <= 0.0 && p[2] > -crate::PLATE_SNAP_MM {
                         0.0
                     } else {
@@ -2968,6 +3342,301 @@ mod session_tests {
         // A set with no hand edits writes no log, as before.
         let plain = supported_slab().to_document().unwrap();
         assert!(!String::from_utf8(plain).unwrap().contains("handLog"));
+    }
+
+    /// Where trunk `id`'s axis is at height `z` (world mm).
+    fn axis_at(session: &DfSupportSession, id: &str, z: f64) -> [f64; 3] {
+        let (_, path) = session
+            .support_paths()
+            .into_iter()
+            .find(|(t, _)| t == id)
+            .expect("the trunk");
+        path.windows(2)
+            .find(|w| (w[1][2]..=w[0][2]).contains(&z))
+            .map(|w| {
+                let t = (w[0][2] - z) / (w[0][2] - w[1][2]);
+                std::array::from_fn(|k| w[0][k] + (w[1][k] - w[0][k]) * t)
+            })
+            .expect("a height along it")
+    }
+
+    /// Where trunk `id`'s shaft ends below its tip: its highest joint.
+    fn shaft_top(session: &DfSupportSession, id: &str) -> f64 {
+        let (_, path) = session
+            .support_paths()
+            .into_iter()
+            .find(|(t, _)| t == id)
+            .expect("the trunk");
+        path[1][2]
+    }
+
+    /// Two trunks of the slab's run whose roots stand `lo` to `hi` mm apart.
+    fn trunk_pair(session: &DfSupportSession, lo: f64, hi: f64) -> (String, String) {
+        let c = &session.state.collections;
+        let root = |id: &String| {
+            let p = c.roots[&c.trunks[id].root_id].transform.pos;
+            [p.x, p.y]
+        };
+        let ids: Vec<&String> = c.trunks.keys().collect();
+        for (i, a) in ids.iter().enumerate() {
+            for b in &ids[i + 1..] {
+                let (p, q) = (root(a), root(b));
+                let d = (p[0] - q[0]).hypot(p[1] - q[1]);
+                if (lo..=hi).contains(&d) {
+                    return ((*a).clone(), (*b).clone());
+                }
+            }
+        }
+        panic!("no two trunks {lo} to {hi} mm apart");
+    }
+
+    /// The brace `edited` holds that `before` does not, with its knots.
+    fn new_brace<'a>(
+        before: &DfSupportSession,
+        edited: &'a DfSupportSession,
+    ) -> (
+        &'a support_gen_df::supports::types::Brace,
+        [support_gen_df::three::Vec3; 2],
+    ) {
+        let c = &edited.state.collections;
+        let brace = c
+            .braces
+            .iter()
+            .find(|(id, _)| !before.state.collections.braces.contains_key(*id))
+            .map(|(_, b)| b)
+            .expect("a new brace");
+        (
+            brace,
+            [
+                c.knots[&brace.start_knot_id].pos,
+                c.knots[&brace.end_knot_id].pos,
+            ],
+        )
+    }
+
+    /// #3: a brace laid by hand from one trunk to another starts where the
+    /// first was pointed at, on its axis, and ends on the second at 45° (the
+    /// height asked was flatter), at the run's brace size; it is the
+    /// person's, and the log keeps it. The preview's session is the edit.
+    #[test]
+    fn a_brace_laid_by_hand_joins_two_trunks_at_the_runs_angle() {
+        let session = supported_slab();
+        let (a, b) = trunk_pair(&session, 3.0, 6.0);
+        let from = session
+            .brace_end_near(axis_at(&session, &a, 2.5))
+            .expect("the first trunk");
+        assert_eq!(from.shaft, a);
+        let to = axis_at(&session, &b, 4.0);
+        let (preview, edited) = session.preview_brace(&from, to).expect("a preview");
+        assert!(preview.valid, "{:?}", preview.brace);
+        assert!(!preview.mesh.faces().is_empty());
+        let edited = edited.expect("the session it leaves");
+        let (brace, [p, q]) = new_brace(&session, &edited);
+        assert!(brace.base.generated_by.is_none() && is_hand_id(&brace.base.id));
+        assert!((p.z - 2.5).abs() < 1e-6, "it starts where pointed: {p:?}");
+        let span = (q.x - p.x).hypot(q.y - p.y);
+        assert!(
+            ((q.z - p.z) - span).abs() < 0.05,
+            "45°: rise {} span {span}",
+            q.z - p.z
+        );
+        let settings = &session.settings.supports.auto_bracing;
+        assert_eq!(brace.profile.diameter, settings.brace_diameter_mm);
+        assert!(edited.hand_edited());
+        let log = &edited.hand_log().braces;
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].id, brace.base.id);
+        // The click makes what the preview showed.
+        let mut clicked = session.clone();
+        clicked.add_brace(&from, to).expect("it goes");
+        assert_eq!(clicked.state.collections, edited.state.collections);
+        // Asked steeper than 45°, it ends where asked.
+        let high = axis_at(&session, &b, p.z + span + 1.0);
+        let mut steep = session.clone();
+        steep.add_brace(&from, high).expect("a steeper one goes");
+        let (_, [_, end]) = new_brace(&session, &steep);
+        assert!((end.z - high[2]).abs() < 1e-6, "{end:?} {high:?}");
+    }
+
+    /// #3: a brace by hand is refused, with why and drawn red, between a
+    /// trunk and itself, between trunks farther apart than the settings let
+    /// a brace span, from a point past where the trunk's tip starts, where
+    /// 45° would end above the other trunk, and through the model.
+    #[test]
+    fn a_brace_by_hand_says_why_it_cannot_go() {
+        let session = supported_slab();
+        let refused = |from: &BraceEnd, to: [f64; 3]| {
+            let (preview, edited) = session.preview_brace(from, to).expect("a preview");
+            assert!(!preview.valid && edited.is_none());
+            let mut copy = session.clone();
+            assert_eq!(
+                copy.add_brace(from, to),
+                Err(EditError::CannotBrace(preview.brace.expect("why")))
+            );
+            assert_eq!(copy.state.collections, session.state.collections);
+            preview.brace.unwrap()
+        };
+        let (a, b) = trunk_pair(&session, 3.0, 8.0);
+        let from = session.brace_end_near(axis_at(&session, &a, 4.0)).unwrap();
+        let same = axis_at(&session, &a, 8.0);
+        assert_eq!(refused(&from, same), HandBraceRefusal::SameSupport);
+        let (far_a, far_b) = trunk_pair(&session, 20.0, 60.0);
+        let far = session
+            .brace_end_near(axis_at(&session, &far_a, 3.0))
+            .unwrap();
+        let far_to = axis_at(&session, &far_b, 3.0);
+        assert_eq!(refused(&far, far_to), HandBraceRefusal::TooLong);
+        let to = axis_at(&session, &b, 4.0);
+        let tip = session.support_tip(&a).unwrap().0;
+        let past = session.brace_end_near(tip).unwrap();
+        assert_eq!(refused(&past, to), HandBraceRefusal::OffShaft);
+        let near_top = session
+            .brace_end_near(axis_at(&session, &a, shaft_top(&session, &a) - 0.5))
+            .unwrap();
+        // Level with it on the other trunk: 45° up would end past its top.
+        let level = axis_at(
+            &session,
+            &b,
+            near_top.at[2].min(shaft_top(&session, &b) - 0.2),
+        );
+        assert_eq!(refused(&near_top, level), HandBraceRefusal::TooFlat);
+        // Across the wall hanging from the slab of `slab_with_a_wall`.
+        let mut walled = slab_with_a_wall(crate::DfSupportRequest::default());
+        walled.add_trunk_at([14.0, 5.0, 25.0]).expect("a trunk");
+        let left = walled.brace_end_near([5.0, 5.0, 12.5]).unwrap();
+        let (preview, _) = walled.preview_brace(&left, [14.0, 5.0, 12.5]).unwrap();
+        assert_eq!(preview.brace, Some(HandBraceRefusal::HitsModel));
+        assert!(!preview.mesh.faces().is_empty(), "drawn red");
+        // Nothing to brace to off every support.
+        assert_eq!(
+            session
+                .preview_brace(&from, [25.0, 5.0, 40.0])
+                .map(|(p, _)| p.valid),
+            Err(EditError::NothingThere)
+        );
+    }
+
+    /// #3: a brace laid by hand is removed by a click on it alone, and
+    /// leaves the log; a brace of the run removed by a click is logged by
+    /// its ends; a support removed takes its braces out of the log.
+    #[test]
+    fn a_brace_is_removed_on_its_own_and_the_log_follows() {
+        let mut session = supported_slab();
+        let (a, b) = trunk_pair(&session, 3.0, 8.0);
+        let from = session.brace_end_near(axis_at(&session, &a, 4.0)).unwrap();
+        let before = session.clone();
+        session
+            .add_brace(&from, axis_at(&session, &b, 4.0))
+            .unwrap();
+        let (brace, [p, q]) = new_brace(&before, &session);
+        let id = brace.base.id.clone();
+        let middle = [
+            (p.x + q.x) / 2.0,
+            (p.y + q.y) / 2.0 + 0.4,
+            (p.z + q.z) / 2.0,
+        ];
+        let mut unbraced = session.clone();
+        unbraced.remove_near(middle).expect("the brace");
+        assert_eq!(
+            unbraced.state.collections, before.state.collections,
+            "the brace and its knots alone"
+        );
+        assert!(unbraced.hand_log().braces.is_empty());
+        assert!(unbraced.hand_log().unbraced.is_empty(), "{id} was by hand");
+        // A run's brace: logged by where its ends were.
+        let run = before
+            .state
+            .collections
+            .braces
+            .keys()
+            .find(|id| !is_hand_id(id))
+            .expect("a brace of the run")
+            .clone();
+        let [s, e] = before.brace_ends(&run).unwrap();
+        let mut gone = before.clone();
+        gone.remove_tips(std::slice::from_ref(&run)).unwrap();
+        assert!(!gone.state.collections.braces.contains_key(&run));
+        assert_eq!(
+            gone.state.collections.trunks,
+            before.state.collections.trunks
+        );
+        assert_eq!(gone.hand_log().unbraced.len(), 1);
+        assert_eq!(gone.hand_log().unbraced[0].from, s);
+        assert_eq!(gone.hand_log().unbraced[0].to, e);
+        // A trunk the hand brace joins, removed: the brace goes with it.
+        let mut cut = session.clone();
+        cut.remove_tips(std::slice::from_ref(&a)).unwrap();
+        assert!(!cut.state.collections.braces.contains_key(&id));
+        assert!(cut.hand_log().braces.is_empty());
+    }
+
+    /// #3, #408: braces laid and removed by hand go back on a run made
+    /// again, go into a saved document and come back, and follow the model
+    /// moved in the plate plane.
+    #[test]
+    fn braces_by_hand_are_kept_saved_and_moved() {
+        let mut old = supported_slab();
+        let (a, b) = trunk_pair(&old, 3.0, 8.0);
+        let from = old.brace_end_near(axis_at(&old, &a, 4.0)).unwrap();
+        let before = old.clone();
+        old.add_brace(&from, axis_at(&old, &b, 4.0)).unwrap();
+        let (_, [p, q]) = new_brace(&before, &old);
+        let run = before
+            .state
+            .collections
+            .braces
+            .keys()
+            .find(|id| !is_hand_id(id))
+            .unwrap()
+            .clone();
+        let [s, e] = before.brace_ends(&run).unwrap();
+        old.remove_tips(&[run]).unwrap();
+        let fresh = supported_slab();
+        let (kept, report) = fresh.with_hand_edits_of(&old, &|| false).unwrap();
+        assert_eq!(report.kept, 2, "{report:?}");
+        assert!(report.lost.is_empty(), "{report:?}");
+        let ends: Vec<[[f64; 3]; 2]> = kept
+            .state
+            .collections
+            .braces
+            .keys()
+            .filter_map(|id| kept.brace_ends(id))
+            .collect();
+        let has = |x: [f64; 3], y: [f64; 3]| {
+            ends.iter()
+                .any(|[m, n]| dist(*m, x).max(dist(*n, y)) < 1e-6)
+        };
+        assert!(has([p.x, p.y, p.z], [q.x, q.y, q.z]), "the hand brace");
+        assert!(!has(s, e) && !has(e, s), "the run's brace stays removed");
+        assert_eq!(kept.hand_log().braces.len(), 1);
+        assert_eq!(kept.hand_log().unbraced.len(), 1);
+        // Saved and opened again.
+        let scene = slab_scene(12.0);
+        let bytes = old.to_document().unwrap();
+        let reopened = DfSupportSession::from_document(&scene, 2, &bytes).unwrap();
+        assert_eq!(reopened.hand_log(), old.hand_log());
+        assert_eq!(reopened.state.collections, old.state.collections);
+        // Moved in the plane: the log's ends go along.
+        let moved = old.moved_in_plane(0, [3.0, -2.0]);
+        let log = &moved.hand_log().braces[0];
+        assert!(dist(log.from, [p.x + 3.0, p.y - 2.0, p.z]) < 1e-9);
+        assert!(
+            dist(
+                moved.hand_log().unbraced[0].to,
+                [e[0] + 3.0, e[1] - 2.0, e[2]]
+            ) < 1e-9
+        );
+        // On a model whose supports are gone from there, it is reported.
+        let bare = bare_slab(12.0, crate::DfSupportRequest::default());
+        let (_, report) = bare.with_hand_edits_of(&old, &|| false).unwrap();
+        assert!(
+            report
+                .lost
+                .iter()
+                .any(|l| l.kind == crate::HandEditKind::Braced
+                    && l.why == crate::LostWhy::BraceEndsGone),
+            "{report:?}"
+        );
     }
 
     #[test]

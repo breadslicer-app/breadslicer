@@ -131,7 +131,9 @@ fn support_meshes_of_real_scenes_are_edge_manifold() {
     for (name, soup) in meshes {
         let soup: Vec<f64> = serde_json::from_value(soup.clone()).unwrap();
         let vertices: Vec<Vertex> = soup
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| Vertex::new([p[0] as f32, p[1] as f32, p[2] as f32]))
             .collect();
         let faces: Vec<IndexedTriangle> = (0..vertices.len() as u32 / 3)
@@ -318,7 +320,9 @@ fn manual_edit_on_real_scenes() {
     for (name, soup) in fixture["meshes"].as_object().unwrap() {
         let soup: Vec<f64> = serde_json::from_value(soup.clone()).unwrap();
         let vertices: Vec<Vertex> = soup
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| Vertex::new([p[0] as f32, p[1] as f32, p[2] as f32]))
             .collect();
         let faces: Vec<IndexedTriangle> = (0..vertices.len() as u32 / 3)
@@ -326,7 +330,9 @@ fn manual_edit_on_real_scenes() {
             .collect();
         // Downward faces above the plate: where a click would want support.
         let points: Vec<[f64; 3]> = soup
-            .chunks_exact(9)
+            .as_chunks::<9>()
+            .0
+            .iter()
             .filter_map(|t| {
                 let a = [t[0], t[1], t[2]];
                 let b = [t[3], t[4], t[5]];

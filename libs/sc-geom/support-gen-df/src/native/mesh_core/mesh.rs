@@ -178,7 +178,7 @@ impl IndexedMesh {
 
         // First pass: bbox to derive quantization scale.
         let mut bbox = Aabb::empty();
-        for chunk in positions.chunks_exact(3) {
+        for chunk in positions.as_chunks::<3>().0 {
             bbox.expand(Vec3::new(chunk[0], chunk[1], chunk[2]));
         }
         let diag = bbox.diag().max(1e-6);

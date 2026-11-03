@@ -146,7 +146,7 @@ impl IndexedMesh {
         };
 
         let mut bbox = Aabb::empty();
-        for chunk in positions.chunks_exact(3) {
+        for chunk in positions.as_chunks::<3>().0 {
             bbox.expand(Vec3::new(chunk[0], chunk[1], chunk[2]));
         }
         let diag = bbox.diag().max(1e-6);
@@ -169,7 +169,7 @@ impl IndexedMesh {
             })
         };
 
-        for tri in positions.chunks_exact(9) {
+        for tri in positions.as_chunks::<9>().0 {
             let v0 = Vec3::new(tri[0], tri[1], tri[2]);
             let v1 = Vec3::new(tri[3], tri[4], tri[5]);
             let v2 = Vec3::new(tri[6], tri[7], tri[8]);

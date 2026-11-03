@@ -468,7 +468,9 @@ fn simplify(pos: &[V3], tri: &[[u32; 3]]) -> Option<(Vec<V3>, Vec<[u32; 3]>)> {
     let mut remap = vec![u32::MAX; pos.len()];
     let mut out_pos = Vec::new();
     let out_tri: Vec<[u32; 3]> = kept
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| {
             std::array::from_fn(|k| {
                 let v = c[k] as usize;

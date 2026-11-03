@@ -6251,3 +6251,100 @@ msgstr "Todavía no se puede laminar"
 msgctxt "RepairDialog"
 msgid "Repair couldn't fix everything, so slicing didn't start again. {}"
 msgstr "La reparación no pudo arreglar todo, así que no se volvió a laminar. {}"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "both ends are on the same support"
+msgstr "los dos extremos están en el mismo soporte"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the two supports hold different models"
+msgstr "los dos soportes sostienen modelos distintos"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "a brace joins trunks and branches only"
+msgstr "una riostra une solo troncos y ramas"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "an end is off its support: too near the tip, or too low"
+msgstr "un extremo queda fuera de su soporte: muy cerca de la punta o muy abajo"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the supports are too close to brace"
+msgstr "los soportes están demasiado cerca para arriostrarlos"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "it would be longer than the preset lets a brace be"
+msgstr "quedaría más larga de lo que el preset deja que sea una riostra"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "it would be flatter than 45°: at 45° it ends off the other support"
+msgstr "quedaría más plana que 45°: a 45° termina fuera del otro soporte"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "it would cross the model"
+msgstr "atravesaría el modelo"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Click to lay the brace. Esc drops the first end."
+msgstr "Hacé clic para poner la riostra. Esc cancela el primer extremo."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "Cannot brace them: {}."
+msgstr "No se pueden arriostrar: {}."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Cannot brace them: no brace fits there."
+msgstr "No se pueden arriostrar: ahí no entra ninguna riostra."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Now click the support to brace it to. Esc drops the first end."
+msgstr "Ahora hacé clic en el soporte al que va la riostra. Esc cancela el primer extremo."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "No trunk or branch there to brace from."
+msgstr "Ahí no hay tronco ni rama desde donde arriostrar."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The supports changed since the first end was picked; pick it again."
+msgstr "Los soportes cambiaron desde que elegiste el primer extremo; elegilo de nuevo."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Click another trunk or branch of the same supports to brace it to."
+msgstr "Hacé clic en otro tronco o rama de los mismos soportes para arriostrarlo."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the supports it joined are no longer there"
+msgstr "los soportes que unía ya no están"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "brace from {}: {}"
+msgstr "riostra desde {}: {}"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Brace two supports (click one, then the other)"
+msgstr "Arriostrar dos soportes (clic en uno, después en el otro)"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Click a support where the brace starts, then the support it goes to; it is laid by the preset's bracing rules. Esc or a right click drops the first."
+msgstr "Hacé clic en un soporte donde empieza la riostra y después en el soporte al que va; se arma con las reglas de arriostrado del preset. Esc o clic derecho cancelan el primero."

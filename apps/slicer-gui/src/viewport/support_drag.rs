@@ -80,6 +80,12 @@ pub(crate) trait SupportDragHandler {
     /// The drag ended: released (`commit`), or dropped by Esc or a right
     /// press.
     fn drag_end(&self, commit: bool);
+    /// Esc or a right press with no drag in flight: drops what a tool
+    /// holds between two clicks (the brace tool's first end, #3). Returns
+    /// whether there was something.
+    fn cancel_pending(&self) -> bool {
+        false
+    }
 }
 
 /// Where a press of a Supports tab tool stands.
