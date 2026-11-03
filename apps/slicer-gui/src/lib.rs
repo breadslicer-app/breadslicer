@@ -34,6 +34,7 @@ mod hollow_run;
 mod i18n;
 mod import_notes;
 mod language;
+mod launch_files;
 mod load_progress;
 #[cfg(target_os = "macos")]
 mod macos_open_documents;
@@ -72,6 +73,7 @@ mod scene_export;
 mod scene_loader;
 mod scene_save;
 mod selection;
+mod single_instance;
 mod slice_panel;
 mod slice_projection;
 mod slice_result;
@@ -120,7 +122,6 @@ mod wiring;
 mod workspace_section;
 
 use std::error::Error;
-use std::path::PathBuf;
 
 // The interface Slint generates, compiled in a crate of its own (#361).
 use sc_slicer_gui_ui as slint_ui;
@@ -134,7 +135,6 @@ use sc_slicer_gui_render::{front_label, gizmo, picking, print_file_preview, slic
 
 use crate::app_state::AppState;
 use crate::i18n::ctr;
-use crate::mesh_loader::is_supported_mesh_extension;
 
 /// A release build has no console: a panic would close the window without a
 /// trace. Every panic is appended to `logs/crash.log` in the app's data
@@ -172,14 +172,29 @@ fn install_crash_log() {
 }
 
 /// Starts the GUI for the binary wrapper: builds the shared wgpu stack, wires
-/// it into Slint, spawns 1 window per accepted CLI path (or 1 empty window if
-/// none were supplied) and runs the event loop.
+/// it into Slint, opens the files named on the command line (or 1 empty
+/// window if none were) and runs the event loop. A launch whose files the
+/// running app takes exits at once (#418).
 pub fn run() -> Result<(), Box<dyn Error>> {
     // First statement of the process: taking the token clears it from the
     // environment, which is only safe before wgpu and the drivers below it
     // start threads.
     let startup_token = startup_token::take_from_env();
     startup_timing::mark("main");
+    // The files named on the command line (OS "Open With...", file
+    // associations, other tools) on Linux and Windows; macOS carries them in
+    // an Apple Event, handled by `macos_open_documents`. The app already
+    // running takes them when it can, before this launch starts anything
+    // (#418).
+    let launch_paths = launch_files::from_env();
+    let single_instance::Start::Running {
+        listening,
+        not_taken,
+    } = single_instance::start(&launch_paths, app_state::receive_handoff)
+    else {
+        return Ok(());
+    };
+    startup_timing::mark("single instance");
     // The formats ported from UVtools write through `sc-sla-formats` once
     // installed. No threads start here.
     sc_sla_formats_uvtools::install();
@@ -189,6 +204,12 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     breadcrumbs::start(env!("CARGO_PKG_VERSION"), diagnostics::commit());
     for dir in &migrated {
         breadcrumbs::note(&format!("migrated user data into {}", dir.display()));
+    }
+    if not_taken {
+        breadcrumbs::note("launch: the running app did not take the files in time");
+    }
+    if listening {
+        breadcrumbs::note("launch: takes the files of later launches");
     }
     startup_timing::mark("user folders and event trail");
     // Read while the graphics device starts, which takes longer (#359).
@@ -339,26 +360,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     let app = AppState::new(device_loss.clone(), catalog)?;
 
-    // OS "Open With..." / file-association support on Linux + Windows: every
-    // positional argument that names a supported mesh file gets its own window.
-    // Rejected paths (unsupported extension, missing file) are reported on
-    // stderr without aborting the launch; the user still sees the app come up.
-    // macOS carries the files in an Apple Event, handled by
-    // `macos_open_documents`.
-    let accepted = collect_argv_paths();
-    let empty_window = if accepted.is_empty() {
-        // No paths supplied (or none were supported): the launch shows 1 empty
-        // window.
-        Some(app.spawn_main_window()?)
-    } else {
-        // 1 window per file. The path is parked on each window's `PendingLoad`
-        // slot and dispatched once `RenderingSetup` publishes its GPU device.
-        for path in accepted {
-            let window_id = app.spawn_main_window()?;
-            app.open_path_in_window(window_id, path);
-        }
-        None
-    };
+    // Every model in one window, each project in its own (#418); a file that
+    // cannot be opened is reported there, and the others still open. With
+    // no file, 1 empty window.
+    let empty_window = app.open_launch_files(launch_paths)?;
 
     // Scenes an earlier run left unsaved (#18), then the start dialog (#381)
     // when the launch opened no file.
@@ -445,42 +450,4 @@ fn install_finder_open_documents(app: &std::rc::Rc<AppState>, empty_window: Opti
             app.open_path_in_window(window_id, path);
         }
     });
-}
-
-/// Walks `std::env::args()` and returns the positional paths whose extensions
-/// are recognised by the mesh loader. Anything else (unsupported extensions,
-/// options, missing files) is logged on stderr and skipped. The returned list
-/// preserves argv order so the per-window spawn order is deterministic.
-fn collect_argv_paths() -> Vec<PathBuf> {
-    let mut accepted = Vec::new();
-    // Skip argv[0] (the binary path).
-    for raw in std::env::args_os().skip(1) {
-        let path = PathBuf::from(&raw);
-        // Anything starting with `-` is an unrecognised option. The app parses
-        // no flags, so a leading dash is far more likely a mistake than a real
-        // filename beginning with `-`.
-        if path
-            .to_str()
-            .is_some_and(|s| s.starts_with('-') && s != "-")
-        {
-            eprintln!("Ignoring unrecognised option: {}", path.display());
-            continue;
-        }
-        if !is_supported_mesh_extension(&path) {
-            eprintln!(
-                "Ignoring file with unsupported extension: {}",
-                path.display()
-            );
-            continue;
-        }
-        if !path.is_file() {
-            eprintln!(
-                "Ignoring path that is not a regular file: {}",
-                path.display()
-            );
-            continue;
-        }
-        accepted.push(path);
-    }
-    accepted
 }
