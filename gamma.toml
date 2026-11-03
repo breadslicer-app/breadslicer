@@ -15,7 +15,7 @@ files = [
 include-tests = [
     "sc_mesh_core", "properties",
     "sc_app_paths",
-    "sc_3mf", "official_samples", "package_model_roundtrip",
+    "sc_3mf", "main",
 ]
 
 mutators = ["@default"]

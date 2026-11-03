@@ -14,7 +14,7 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-mod df_analytics;
+use crate::df_analytics;
 
 use support_gen_df::supports::auto_bracing::mesh_clearance::BraceMeshes;
 use support_gen_df::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};

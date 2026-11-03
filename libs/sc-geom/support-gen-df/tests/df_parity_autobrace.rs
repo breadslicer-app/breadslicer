@@ -14,7 +14,7 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-mod df_analytics;
+use crate::df_analytics;
 
 use support_gen_df::supports::auto_bracing::auto_brace::build_auto_braced_snapshot;
 use support_gen_df::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};

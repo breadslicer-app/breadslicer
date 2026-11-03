@@ -11,6 +11,7 @@ description = "Native Rust port of DragonFruit's voxel hollowing engine (cavity,
 categories = ["algorithms"]
 keywords = ["geometry", "hollow", "3d-printing", "SLA", "dragonfruit"]
 repository = "https://codeberg.org/SoulCrafted/Slicer"
+autotests = false
 
 [lints]
 workspace = true
@@ -22,3 +23,9 @@ smallvec = "1.16"
 
 [dev-dependencies]
 serde_json = "1.0.150"
+
+# Every file in `tests/` is a module of this one test binary, so the crate is
+# linked once for its integration tests instead of once per file.
+[[test]]
+name = "main"
+path = "tests/main.rs"

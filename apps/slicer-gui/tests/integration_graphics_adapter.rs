@@ -21,7 +21,6 @@
 //! environment without a software wgpu provider does not block the suite.
 
 use std::fmt::Debug;
-use std::sync::Mutex;
 
 use sc_slicer_gui::graphics_adapter::{
     AdapterFacts, AdapterSelection, rank_adapters, select_adapter_and_device,
@@ -39,9 +38,6 @@ const PLATFORM_BACKENDS: wgpu::Backends = wgpu::Backends::DX12;
 const PLATFORM_BACKENDS: wgpu::Backends = wgpu::Backends::VULKAN;
 #[cfg(target_vendor = "apple")]
 const PLATFORM_BACKENDS: wgpu::Backends = wgpu::Backends::METAL;
-
-/// Grants 1 test at a time the right to call into wgpu.
-static GPU_TURN: Mutex<()> = Mutex::new(());
 
 /// The device profile `run()` asks for. The adapter choice is only meaningful
 /// against the same limits the application requests, since those limits are
@@ -65,7 +61,7 @@ fn with_gpu_turn<T>(body: impl FnOnce(&wgpu::Instance, &[wgpu::Adapter]) -> T) -
     // A panicking test poisons the lock. That failure is already being reported
     // on its own thread and the remaining tests still need their turn, so the
     // poison itself is not interesting here.
-    let _turn = GPU_TURN
+    let _turn = crate::GPU_TURN
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
@@ -972,7 +968,7 @@ fn selection_reports_an_error_when_no_backend_exposes_an_adapter() {
     // Deterministic on every machine, GPU or not: an empty backend set
     // enumerates nothing, and the caller has to be told rather than handed a
     // device that cannot exist.
-    let _turn = GPU_TURN
+    let _turn = crate::GPU_TURN
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 

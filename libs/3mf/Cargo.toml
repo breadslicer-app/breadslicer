@@ -8,6 +8,7 @@ description = "3MF vocabulary crate: the OPC package container plus a typed 3D M
 categories = ["rendering::data-formats"]
 keywords = ["3d", "3mf", "opc", "slice"]
 repository.workspace = true
+autotests = false
 
 [lints]
 workspace = true
@@ -24,3 +25,9 @@ zip.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+
+# Every file in `tests/` is a module of this one test binary, so the crate is
+# linked once for its integration tests instead of once per file.
+[[test]]
+name = "main"
+path = "tests/main.rs"

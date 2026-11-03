@@ -43,3 +43,12 @@ members = [
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+
+# Same debug info as the main workspace when this one is built on its own:
+# line tables for these crates (file and line in panics and backtraces), none
+# for dependencies, so the test executables stay small and link fast.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

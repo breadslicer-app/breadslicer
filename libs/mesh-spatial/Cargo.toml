@@ -8,6 +8,7 @@ description = "Spatial-query acceleration over sc-mesh-core types"
 categories = ["rendering::data-formats"]
 keywords = ["3d", "mesh", "spatial", "aabb"]
 repository.workspace = true
+autotests = false
 
 [lints]
 workspace = true
@@ -20,3 +21,9 @@ sc-scene-edit.workspace = true
 [dev-dependencies]
 float-cmp.workspace = true
 proptest.workspace = true
+
+# Every file in `tests/` is a module of this one test binary, so the crate is
+# linked once for its integration tests instead of once per file.
+[[test]]
+name = "main"
+path = "tests/main.rs"
