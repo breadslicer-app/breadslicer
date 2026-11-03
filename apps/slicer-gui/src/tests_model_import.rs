@@ -172,7 +172,7 @@ fn scene_with_a_box(document: &SceneDocument, size: [f32; 3]) -> NodeId {
 }
 
 /// Every model leaf in row order: its name, world transform and mesh.
-fn rows(document: &SceneDocument) -> Vec<(String, Transform3D, usize)> {
+pub(crate) fn rows(document: &SceneDocument) -> Vec<(String, Transform3D, usize)> {
     document
         .with_scene(|spatial| {
             let names = crate::viewport::object_names(spatial.graph());
@@ -193,7 +193,7 @@ fn rows(document: &SceneDocument) -> Vec<(String, Transform3D, usize)> {
 }
 
 /// The box from above that `leaf` covers: `[min x, min y, max x, max y]`.
-fn footprint(document: &SceneDocument, leaf: NodeId) -> [f32; 4] {
+pub(crate) fn footprint(document: &SceneDocument, leaf: NodeId) -> [f32; 4] {
     document
         .with_scene(|spatial| {
             let world = spatial.leaf(leaf)?.world_transform();
@@ -221,7 +221,7 @@ fn on_plate(f: [f32; 4]) -> bool {
     f[0] >= lo.x && f[1] >= lo.y && f[2] <= hi.x && f[3] <= hi.y
 }
 
-fn leaves(document: &SceneDocument) -> Vec<NodeId> {
+pub(crate) fn leaves(document: &SceneDocument) -> Vec<NodeId> {
     document
         .with_scene(|spatial| (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect())
         .unwrap_or_default()
@@ -514,8 +514,8 @@ fn models_opened_without_a_scene_skip_a_file_that_cannot_be_read() {
         finish_loads(&ctrl);
 
         let names: Vec<String> = rows(&document).into_iter().map(|r| r.0).collect();
-        // The scene opened from the good file is named as any opened file.
-        assert_eq!(names, ["Object 1", "fine"]);
+        // The scene opened from the good file, its model named after it.
+        assert_eq!(names, ["good", "fine"]);
         assert_eq!(document.with_source_path(|p| p.to_path_buf()), Some(good));
         assert!(!document.is_dirty());
 
@@ -675,4 +675,44 @@ fn an_import_brings_the_pick_structure_of_its_meshes_built() {
             assert!(spatial.leaf(base).expect("the base").clusters().is_some());
         })
         .expect("a scene");
+}
+
+/// The distance from above between the boxes `a` and `b` cover, both
+/// `[min x, min y, max x, max y]`: negative when they overlap.
+pub(crate) fn gap_between(a: [f32; 4], b: [f32; 4]) -> f32 {
+    (b[0] - a[2])
+        .max(a[0] - b[2])
+        .max(b[1] - a[3])
+        .max(a[1] - b[3])
+}
+
+/// #420: the model of a file a scene opens from is named after the file,
+/// as an import names it: alone, and first of several opened together.
+#[test]
+fn the_model_a_scene_opens_from_is_named_after_its_file() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    on_fresh_slint_thread(move || {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let archer = write_box(dir.path(), "Aarakocra Archer.stl", [10.0, 10.0, 10.0]);
+        let bard = write_box(dir.path(), "Aarakocra Bard 2.stl", [8.0, 12.0, 6.0]);
+        let names_after = |paths: Vec<PathBuf>| {
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            ctrl.loader()
+                .set_gpu(device.clone(), DeviceToken::next(), queue.clone());
+            ctrl.open_models(paths);
+            finish_loads(&ctrl);
+            rows(&ctrl.document())
+                .into_iter()
+                .map(|r| r.0)
+                .collect::<Vec<String>>()
+        };
+        assert_eq!(names_after(vec![archer.clone()]), ["Aarakocra Archer"]);
+        assert_eq!(
+            names_after(vec![archer, bard]),
+            ["Aarakocra Archer", "Aarakocra Bard 2"]
+        );
+    });
 }

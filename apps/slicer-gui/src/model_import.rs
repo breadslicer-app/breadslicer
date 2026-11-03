@@ -220,7 +220,7 @@ fn prepare_opening(job: OpeningJob, sink: &LoadProgressSink) -> anyhow::Result<O
     let mut failures = Vec::new();
     for (path, loaded) in job.paths.into_iter().zip(read) {
         if base.is_none() {
-            match loaded.and_then(|loaded| opened_scene(loaded, job.build_volume)) {
+            match loaded.and_then(|loaded| opened_scene(loaded, &path, job.build_volume)) {
                 Ok(opened) => base = Some((path, opened)),
                 Err(err) => failures.push((path, format!("{err:#}"))),
             }
@@ -431,8 +431,9 @@ fn imported_file(
         LoadedContent::Project(project) => project.scene,
     };
     place_on_plate(&mut scene, build_volume)?;
+    name_lone_model(&mut scene, path);
     let verdicts = scene_mesh_verdicts(&scene);
-    let leaves = leaves_of(&scene, path);
+    let leaves = leaves_of(&scene);
     Ok(ImportedFile {
         path: path.to_path_buf(),
         leaves,
@@ -443,14 +444,12 @@ fn imported_file(
     })
 }
 
-/// The models of `scene`, each with its world transform. A file of one
-/// model that names nothing names it after the file.
-fn leaves_of(scene: &Scene, path: &Path) -> Vec<ImportedLeaf> {
+/// The models of `scene`, each with its world transform.
+fn leaves_of(scene: &Scene) -> Vec<ImportedLeaf> {
     let ids = scene
         .reachable_leaves(CsgPolicy::Descend, ReferencePolicy::Skip)
         .unwrap_or_default();
-    let mut leaves: Vec<ImportedLeaf> = ids
-        .into_iter()
+    ids.into_iter()
         .filter_map(|id| {
             let mesh = scene.leaf_mesh_arc(id)?.clone();
             if mesh.faces.is_empty() {
@@ -460,16 +459,39 @@ fn leaves_of(scene: &Scene, path: &Path) -> Vec<ImportedLeaf> {
             let meta = scene.node(id).and_then(|node| node.meta.clone());
             Some(ImportedLeaf { mesh, world, meta })
         })
+        .collect()
+}
+
+/// Names the model of `scene`, read from the file at `path`, after the
+/// file, when the file holds one model and names nothing: an imported file
+/// and a file a scene opens from alike (#420).
+pub(crate) fn name_lone_model(scene: &mut Scene, path: &Path) {
+    let models: Vec<NodeId> = scene
+        .reachable_leaves(CsgPolicy::Descend, ReferencePolicy::Skip)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|&id| scene.leaf_mesh_arc(id).is_some_and(|m| !m.faces.is_empty()))
         .collect();
-    if let [leaf] = leaves.as_mut_slice() {
-        let named = leaf.meta.as_ref().is_some_and(|m| m.name.is_some())
-            || leaf.mesh.meta().as_ref().is_some_and(|m| m.name.is_some());
-        if !named && let Some(stem) = path.file_stem() {
-            let meta = leaf.meta.get_or_insert_with(SceneMetadata::default);
-            meta.name = Some(stem.to_string_lossy().into_owned());
-        }
+    let [id] = models.as_slice() else {
+        return;
+    };
+    let Some(node) = scene.node(*id) else {
+        return;
+    };
+    let named = node.meta.as_ref().is_some_and(|m| m.name.is_some())
+        || scene
+            .leaf_mesh_arc(*id)
+            .and_then(|mesh| mesh.meta().as_ref())
+            .is_some_and(|m| m.name.is_some());
+    if named {
+        return;
     }
-    leaves
+    let Some(stem) = path.file_stem() else {
+        return;
+    };
+    let mut meta = node.meta.clone().unwrap_or_default();
+    meta.name = Some(stem.to_string_lossy().into_owned());
+    scene.set_node_meta(*id, Some(meta));
 }
 
 /// The world transform of the leaf `id` of `scene`.
