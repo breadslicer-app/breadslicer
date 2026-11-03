@@ -718,6 +718,30 @@ component RepairControls inherits VerticalLayout {
     }
 }
 
+// One colour of the overhang map, with what it means.
+component OverhangKey inherits HorizontalLayout {
+    in property <brush> tint;
+    in property <string> text;
+
+    spacing: 6px;
+    alignment: start;
+
+    VerticalLayout {
+        alignment: center;
+
+        Rectangle {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            background: root.tint;
+        }
+    }
+    Note {
+        text: root.text;
+        wrap: no-wrap;
+    }
+}
+
 // One row of the SIZE card: the world box and, when `split`, the size along
 // the object's own axes beside it (BS-393).
 component SizeRow inherits HorizontalLayout {
@@ -772,6 +796,10 @@ export component TransformInspector inherits VerticalLayout {
     // Whether the viewport can mark what a run left broken, and does.
     in property <bool> repair-marks-available;
     in property <bool> repair-marks-shown;
+    // The overhang map (#91): its box, and the angle it paints by, as text.
+    in-out property <bool> overhang-map-on;
+    in property <string> overhang-map-limit;
+    callback overhang-map-toggled(bool);
     // The selected object, in world millimetres and degrees (see
     // `viewport/numeric_transform.rs`); `selection-valid` is false with no
     // selection.
@@ -1080,6 +1108,34 @@ export component TransformInspector inherits VerticalLayout {
             clicked => {
                 root.orient-requested();
             }
+        }
+    }
+
+    if root.objects.length > 0: Card {
+        title: @tr("Inspector" => "OVERHANGS");
+        note: root.overhang-map-on ? root.overhang-map-limit : "";
+
+        CheckBox {
+            text: @tr("Inspector" => "Show overhang map");
+            checked <=> root.overhang-map-on;
+            toggled => {
+                root.overhang-map-toggled(self.checked);
+            }
+        }
+        if root.overhang-map-on: HorizontalLayout {
+            spacing: 14px;
+
+            OverhangKey {
+                tint: #ed4d40;
+                text: @tr("Inspector" => "Needs supports");
+            }
+            OverhangKey {
+                tint: #e67a85;
+                text: @tr("Inspector" => "Close to the limit");
+            }
+        }
+        if root.overhang-map-on: Note {
+            text: @tr("Inspector" => "Follows the overhang angle of the Supports tab, measured from the plate.");
         }
     }
 

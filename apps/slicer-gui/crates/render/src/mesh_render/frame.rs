@@ -23,7 +23,9 @@ use crate::camera::OrbitCamera;
 /// fall outside the envelope. `face_breach_mask.x` is a 5-bit field,
 /// one bit per envelope side wall + top, telling the plate shader
 /// which walls' warning stripes to draw; the other lanes are
-/// vec4-alignment padding.
+/// vec4-alignment padding. `overhang` carries the overhang map's terms
+/// ([`super::overhang_map::OverhangMap::uniform`]), read only for the
+/// objects the map paints.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(super) struct Uniforms {
@@ -32,6 +34,7 @@ pub(super) struct Uniforms {
     pub(super) env_min: [f32; 4],
     pub(super) env_max: [f32; 4],
     pub(super) face_breach_mask: [u32; 4],
+    pub(super) overhang: [f32; 4],
 }
 
 /// World-space directional light. The fourth component carries the

@@ -95,6 +95,8 @@ pub struct MockRendererState {
     /// An empty queue (the default) returns `Ok(None)`, the answer
     /// of a renderer with nothing to draw.
     pub next_preview_frames: VecDeque<Result<Option<FramePixels>, RenderError>>,
+    /// What the last `set_overhang_map` asked for.
+    pub overhang_map: Option<super::OverhangMap>,
 }
 
 impl MockRendererState {
@@ -112,6 +114,7 @@ impl MockRendererState {
             preview_calls: Vec::new(),
             next_preview_frames: VecDeque::new(),
             front_label_calls: Vec::new(),
+            overhang_map: None,
         }))
     }
 }
@@ -131,6 +134,10 @@ impl MockRenderer {
 }
 
 impl MeshRenderer for MockRenderer {
+    fn set_overhang_map(&mut self, map: Option<super::OverhangMap>) {
+        self.state.borrow_mut().overhang_map = map;
+    }
+
     fn upload_scene(&mut self, graph: &Scene) -> Result<()> {
         let mut s = self.state.borrow_mut();
         s.upload_calls.push(graph.clone());

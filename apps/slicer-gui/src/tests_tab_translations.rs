@@ -421,6 +421,53 @@ struct SizeTexts {
     scale: &'static str,
 }
 
+/// #91: the OVERHANGS card shows with a model in the scene, its colour key
+/// only while the map is on. `BREADSLICER_OVERHANG_CARD_PNG` names a file for a
+/// picture of the window.
+#[test]
+fn the_overhang_card_shows_in_spanish_and_its_key_follows_the_box() {
+    let shown = |on: bool| {
+        in_spanish(
+            WorkspaceSection::Transform,
+            |window| {
+                let row = slint::StandardListViewItem::from("Lobo");
+                let rows = std::rc::Rc::new(slint::VecModel::from(vec![row]));
+                window.set_object_list(rows.into());
+                window.set_selection_valid(true);
+                window.set_selected_object_count(1);
+                window.set_overhang_map_on(on);
+                window.set_overhang_map_limit("52°".into());
+            },
+            |window| {
+                if let Some(path) = std::env::var_os("BREADSLICER_OVERHANG_CARD_PNG")
+                    && on
+                {
+                    let shot = window
+                        .window()
+                        .take_snapshot()
+                        .expect("the software renderer takes snapshots");
+                    image::RgbaImage::from_raw(
+                        shot.width(),
+                        shot.height(),
+                        shot.as_bytes().to_vec(),
+                    )
+                    .expect("the snapshot is RGBA")
+                    .save(path)
+                    .expect("the picture is written");
+                }
+                (
+                    shows(window, "VOLADIZOS"),
+                    shows(window, "Mostrar mapa de voladizos"),
+                    shows(window, "Lleva soportes"),
+                    shows(window, "Cerca del límite"),
+                )
+            },
+        )
+    };
+    assert_eq!(shown(false), (true, true, false, false));
+    assert_eq!(shown(true), (true, true, true, true));
+}
+
 #[test]
 fn a_tilted_model_shows_world_and_model_sizes_side_by_side() {
     for t in [

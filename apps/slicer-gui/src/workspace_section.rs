@@ -45,6 +45,13 @@ pub(crate) fn allows_repair(section: WorkspaceSection) -> bool {
     matches!(section, WorkspaceSection::Transform)
 }
 
+/// Whether the overhang map shows in `section`: Transform, where the pose is
+/// set. Past it the supports themselves answer the question, and a colour on
+/// the model would fight the marks those tabs draw.
+pub(crate) fn shows_overhang_map(section: WorkspaceSection) -> bool {
+    matches!(section, WorkspaceSection::Transform)
+}
+
 /// The slice-view clip height for `section`, given the selected layer's
 /// top Z. Only the Slice section clips; every other section renders the
 /// whole mesh (`None`). A missing layer top (no held slice, or an index
@@ -79,6 +86,7 @@ mod workspace_section_tests {
             assert_eq!(allows_layout_tools(section), transform, "{section:?}");
             assert_eq!(allows_transform_gizmo(section), transform, "{section:?}");
             assert_eq!(allows_repair(section), transform, "{section:?}");
+            assert_eq!(shows_overhang_map(section), transform, "{section:?}");
         }
     }
 

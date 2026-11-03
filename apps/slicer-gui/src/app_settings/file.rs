@@ -1006,9 +1006,11 @@ gizmo_size = 400
         file.save(&s).unwrap();
         let written = fs::read_to_string(&file.path).unwrap();
         assert!(!written.contains("lift_models_on_plate"), "got:\n{written}");
+        assert!(!written.contains("overhang_map"), "got:\n{written}");
         assert!(!file.load().settings().lift_models_on_plate());
 
         s.set_lift_models_on_plate(true);
+        s.set_overhang_map(true);
         file.save(&s).unwrap();
         let written = fs::read_to_string(&file.path).unwrap();
         assert!(
@@ -1016,6 +1018,7 @@ gizmo_size = 400
             "got:\n{written}"
         );
         assert!(file.load().settings().lift_models_on_plate());
+        assert!(file.load().settings().overhang_map());
     }
 
     #[test]
