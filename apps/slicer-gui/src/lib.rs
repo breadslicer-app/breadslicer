@@ -96,6 +96,8 @@ mod tests_message_cards;
 #[cfg(test)]
 mod tests_model_import;
 #[cfg(test)]
+mod tests_paste_prep;
+#[cfg(test)]
 mod tests_paste_timing;
 #[cfg(test)]
 mod tests_pick_timing;

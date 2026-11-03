@@ -13,22 +13,28 @@
 //! in window A must be pasteable in window B (even one that has loaded an
 //! entirely different scene). The `Arc<IndexedMesh>` inside the fragment keeps
 //! the source mesh alive on its own, so the source scene can be closed and the
-//! clipboard stays valid.
+//! clipboard stays valid. A prepared model's hollow and supports go with it
+//! ([`prep`], #113).
 
 pub(crate) mod placement;
+pub(crate) mod prep;
 
 use sc_mesh_core::Aabb;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::node::{LeafPayload, NodeKind};
+use sc_scene::{NodeId, SceneError};
 use sc_scene_edit::SceneFragment;
 
 use crate::scene_document::SceneDocument;
+use prep::Prep;
 
 /// Clipboard payload and cascade state. The fragment comes from
 /// [`fragment_from_document_selection`], `AppState` wraps it through
 /// [`Clipboard::new`], and the paste path consumes it.
 pub(crate) struct Clipboard {
     fragment: SceneFragment,
+    /// The copied model's hollow and supports (#113).
+    prep: Prep,
     /// [`fragment_world_aabb`] of `fragment`, taken once at copy time: the
     /// fragment never changes, and a walk over the vertices of a heavy mesh
     /// on every paste is time a repeated `Ctrl+V` cannot spare (#353).
@@ -41,10 +47,18 @@ pub(crate) struct Clipboard {
 }
 
 impl Clipboard {
+    /// A clipboard for `fragment` alone, a plain mesh: for tests.
+    #[cfg(test)]
     pub(crate) fn new(fragment: SceneFragment) -> Self {
+        Self::with_prep(fragment, Prep::default())
+    }
+
+    /// A clipboard for `fragment` that pastes with `prep`.
+    pub(crate) fn with_prep(fragment: SceneFragment, prep: Prep) -> Self {
         Self {
-            world_aabb: fragment_world_aabb(&fragment),
+            world_aabb: prep.reach().or_else(|| fragment_world_aabb(&fragment)),
             fragment,
+            prep,
             cascade_count: 0,
         }
     }
@@ -53,7 +67,8 @@ impl Clipboard {
         &self.fragment
     }
 
-    /// The fragment's [`fragment_world_aabb`].
+    /// The fragment's [`fragment_world_aabb`], or with the supports that go
+    /// along, the box they and the model take.
     pub(crate) fn world_aabb(&self) -> Option<Aabb> {
         self.world_aabb
     }
@@ -68,6 +83,45 @@ impl Clipboard {
     pub(crate) fn bump_cascade(&mut self) {
         self.cascade_count = self.cascade_count.saturating_add(1);
     }
+}
+
+/// A clipboard of `doc`'s selected model, with its hollow and supports
+/// (#113); `None` as [`fragment_from_document_selection`] has it.
+pub(crate) fn clipboard_from_document_selection(doc: &SceneDocument) -> Option<Clipboard> {
+    let fragment = fragment_from_document_selection(doc)?;
+    let model = doc.selection_primary_node_id()?;
+    Some(Clipboard::with_prep(fragment, Prep::of(doc, model)))
+}
+
+/// Pastes `clipboard` into `doc`'s scene, centred near `target` (world mm,
+/// on the plate's floor at `floor_z`) and clear of what stands there: on the
+/// plate, or with supports at the copied model's height, which they still
+/// hold. One undo entry, the copy selected. Returns the copy's leaf; `None`
+/// when no scene is loaded or the clipboard holds nothing to paste.
+pub(crate) fn paste(
+    doc: &SceneDocument,
+    clipboard: &Clipboard,
+    target: [f64; 2],
+    floor_z: f64,
+) -> Result<Option<NodeId>, SceneError> {
+    let Some(fragment_aabb) = clipboard.world_aabb() else {
+        return Ok(None);
+    };
+    let Some(obstacles) = doc.with_scene(placement::obstacle_aabbs_for_scene) else {
+        return Ok(None);
+    };
+    let placed = placement::paste_translation_for_fragment(
+        &fragment_aabb,
+        target,
+        floor_z,
+        clipboard.cascade_count(),
+        &obstacles,
+    );
+    let prep = &clipboard.prep;
+    if prep.is_empty() {
+        return doc.paste_fragment(clipboard.fragment(), placed);
+    }
+    prep.paste(doc, clipboard.fragment(), prep.translation(placed))
 }
 
 /// Builds a single-leaf [`SceneFragment`] from `doc`'s current selection, or
@@ -170,10 +224,7 @@ mod clipboard_tests {
     /// Builds a scene with 1 inline leaf under the loader-shape root and
     /// returns the (scene, leaf-id) pair so tests can select the leaf after
     /// install.
-    fn scene_with_inline_leaf(
-        mesh: Arc<IndexedMesh>,
-        leaf_local: Transform3D,
-    ) -> (Scene, sc_scene::NodeId) {
+    fn scene_with_inline_leaf(mesh: Arc<IndexedMesh>, leaf_local: Transform3D) -> (Scene, NodeId) {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).unwrap();

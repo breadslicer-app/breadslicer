@@ -2856,28 +2856,12 @@ impl ViewportController {
             return false;
         };
         drop(camera_slot);
-        let Some(fragment_aabb) = clipboard.world_aabb() else {
-            return false;
-        };
-        let Some(obstacles) = self
-            .session
-            .document()
-            .with_scene(clipboard::placement::obstacle_aabbs_for_scene)
-        else {
-            return false;
-        };
-        let translation = clipboard::placement::paste_translation_for_fragment(
-            &fragment_aabb,
+        match clipboard::paste(
+            self.session.document(),
+            clipboard,
             [world_x as f64, world_y as f64],
             floor_z,
-            clipboard.cascade_count(),
-            &obstacles,
-        );
-        match self
-            .session
-            .document()
-            .paste_fragment(clipboard.fragment(), translation)
-        {
+        ) {
             Ok(Some(_)) => {
                 self.mark_dirty();
                 true

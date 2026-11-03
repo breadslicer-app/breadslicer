@@ -21,7 +21,7 @@ use crate::app_settings::file::{LoadOutcome, SettingsFile};
 use crate::arrange_run::ArrangeRun;
 use crate::autosave::{Autosaver, recovery_line};
 use crate::autosave_store::{AutosaveStore, OrphanRun};
-use crate::clipboard::{Clipboard, fragment_from_document_selection};
+use crate::clipboard::{Clipboard, clipboard_from_document_selection};
 use crate::default_envelope::DefaultEnvelope;
 use crate::df_support_run::DfSupportRun;
 use crate::error_dialog::{ErrorTexts, InfoTexts, RecoveryChoice};
@@ -1095,10 +1095,10 @@ impl AppState {
             return;
         }
         let doc = controller.document();
-        let Some(fragment) = fragment_from_document_selection(&doc) else {
+        let Some(clipboard) = clipboard_from_document_selection(&doc) else {
             return;
         };
-        *self.clipboard.borrow_mut() = Some(Clipboard::new(fragment));
+        *self.clipboard.borrow_mut() = Some(clipboard);
     }
 
     /// Pastes the app-wide clipboard's fragment into the focused window. Silent
