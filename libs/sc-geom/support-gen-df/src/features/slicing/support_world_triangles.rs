@@ -159,7 +159,7 @@ pub fn append_geometry_triangles(sink: &mut TriangleSink, geometry: &BufferGeome
         }
     };
     if let Some(index) = &geometry.index {
-        for t in index.chunks_exact(3) {
+        for t in index.as_chunks::<3>().0 {
             tri(t[0] as usize, t[1] as usize, t[2] as usize);
         }
         sink.end_part();

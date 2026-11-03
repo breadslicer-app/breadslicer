@@ -262,7 +262,7 @@ fn put_table_base(out: &mut Vec<u8>, name: &str, length: u32) {
 /// Packs a preview as RGB565, little-endian.
 fn rgb565_le(image: &PreviewImage) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(image.rgb().len() / 3 * 2);
-    for pixel in image.rgb().chunks_exact(3) {
+    for pixel in image.rgb().as_chunks::<3>().0 {
         let (r, g, b) = (
             u16::from(pixel[0]),
             u16::from(pixel[1]),

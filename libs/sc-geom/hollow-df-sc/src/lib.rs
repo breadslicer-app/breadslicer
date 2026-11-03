@@ -618,7 +618,9 @@ fn run_hollow(
                 .map_err(to_job)?;
             let centers = preview
                 .removed_voxel_centers
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|c| frame.frame_to_local([c[0], c[1], c[2]]))
                 .collect();
             (

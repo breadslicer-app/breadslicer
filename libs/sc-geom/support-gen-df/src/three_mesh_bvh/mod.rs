@@ -79,7 +79,9 @@ impl MeshBvh {
         );
         let roots = build::build_packed_tree(&positions, &mut index, options);
         let triangle_bounds = index
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|t| {
                 let [a, b, c] = [t[0], t[1], t[2]].map(|i| positions[i as usize]);
                 let mut bounds = [a[0], a[1], a[2], a[0], a[1], a[2]];

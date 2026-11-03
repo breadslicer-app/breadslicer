@@ -94,8 +94,10 @@ pub fn encode_mesh(mesh: &IndexedMesh) -> Vec<u8> {
     out.bytes(&encoded_indices);
 
     let rotations: Vec<(usize, u8)> = stored
-        .chunks_exact(3)
-        .zip(indices.chunks_exact(3))
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(indices.as_chunks::<3>().0)
         .enumerate()
         .filter(|(_, (stored, original))| stored != original)
         .map(|(triangle, (stored, original))| {
@@ -166,7 +168,9 @@ fn decode(input: &mut In<'_>) -> Option<Result<IndexedMesh, DecodeMeshError>> {
         meta,
         vertices.into_iter().map(Vertex::new).collect(),
         indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|face| IndexedTriangle::from_raw_indices([face[0], face[1], face[2]]))
             .collect(),
     )))

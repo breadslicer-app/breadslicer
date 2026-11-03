@@ -193,9 +193,9 @@ pub fn read_binary_stl(bytes: &[u8]) -> Option<IndexedMesh> {
     }
     let mut map: ahash::AHashMap<[u32; 3], u32> = ahash::AHashMap::with_capacity(count * 2);
     let mut mesh = IndexedMesh::default();
-    for tri in soup.chunks_exact(9) {
+    for tri in soup.as_chunks::<9>().0 {
         let mut ids = [0u32; 3];
-        for (c, p) in tri.chunks_exact(3).enumerate() {
+        for (c, p) in tri.as_chunks::<3>().0.iter().enumerate() {
             let key = [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()];
             ids[c] = *map.entry(key).or_insert_with(|| {
                 mesh.positions.push(Vec3::new(p[0], p[1], p[2]));

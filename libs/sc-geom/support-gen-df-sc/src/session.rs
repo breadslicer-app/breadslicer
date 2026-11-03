@@ -982,8 +982,12 @@ impl DfSupportSession {
         self.bvhs[i]
             .get_or_init(|| {
                 let soup = world_soup(&self.models[i]);
-                let triples: Vec<[f32; 3]> =
-                    soup.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+                let triples: Vec<[f32; 3]> = soup
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|c| [c[0], c[1], c[2]])
+                    .collect();
                 Arc::new(MeshBvh::new(triples, None))
             })
             .clone()
@@ -2516,9 +2520,9 @@ mod session_tests {
                 continue;
             }
             let first = vertices.len();
-            for tri in piece.chunks_exact(9) {
+            for tri in piece.as_chunks::<9>().0 {
                 let mut ids = [0u32; 3];
-                for (k, p) in tri.chunks_exact(3).enumerate() {
+                for (k, p) in tri.as_chunks::<3>().0.iter().enumerate() {
                     let z = if p[2] <= 0.0 && p[2] > -crate::PLATE_SNAP_MM {
                         0.0
                     } else {

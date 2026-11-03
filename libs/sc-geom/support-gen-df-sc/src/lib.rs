@@ -232,7 +232,7 @@ pub fn model_from_world_mesh(id: String, mesh: &IndexedMesh) -> ModelInput {
         .collect();
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
-    for v in position.chunks_exact(3) {
+    for v in position.as_chunks::<3>().0 {
         for k in 0..3 {
             min[k] = min[k].min(v[k]);
             max[k] = max[k].max(v[k]);
@@ -315,9 +315,9 @@ fn weld_piece(piece: &[f32]) -> (Vec<Vertex>, Vec<[u32; 3]>) {
     let mut vertices = Vec::new();
     let mut faces = Vec::with_capacity(piece.len() / 9);
     let mut welder = Welder::default();
-    for tri in piece.chunks_exact(9) {
+    for tri in piece.as_chunks::<9>().0 {
         let mut ids = [0u32; 3];
-        for (k, p) in tri.chunks_exact(3).enumerate() {
+        for (k, p) in tri.as_chunks::<3>().0.iter().enumerate() {
             let z = if p[2] <= 0.0 && p[2] > -PLATE_SNAP_MM {
                 0.0
             } else {

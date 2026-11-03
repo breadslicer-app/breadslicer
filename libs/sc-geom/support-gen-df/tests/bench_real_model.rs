@@ -55,7 +55,7 @@ fn real_model_timings() {
     let runs: usize = std::env::var("SC_BENCH_RUNS").map_or(2, |s| s.parse().unwrap());
     let mut soup = read_binary_stl(&path);
     let (mut min, mut max) = ([f32::MAX; 3], [f32::MIN; 3]);
-    for p in soup.chunks_exact(3) {
+    for p in soup.as_chunks::<3>().0 {
         for k in 0..3 {
             min[k] = min[k].min(p[k]);
             max[k] = max[k].max(p[k]);
@@ -66,7 +66,7 @@ fn real_model_timings() {
         .ok()
         .filter(|h| !h.is_empty())
         .map_or(1.0, |h| h.parse::<f32>().unwrap() / (max[2] - min[2]));
-    for p in soup.chunks_exact_mut(3) {
+    for p in soup.as_chunks_mut::<3>().0 {
         for k in 0..3 {
             p[k] = (p[k] - centre[k]) * scale;
         }

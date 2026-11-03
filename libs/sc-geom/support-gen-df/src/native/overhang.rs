@@ -1544,7 +1544,9 @@ mod tests {
     fn rotate_x(positions: &[f32], angle_deg: f32) -> Vec<f32> {
         let (s, c) = angle_deg.to_radians().sin_cos();
         positions
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|v| {
                 let (x, y, z) = (v[0], v[1], v[2]);
                 [x, c * y - s * z, s * y + c * z]
@@ -1869,7 +1871,7 @@ mod tests {
         // Two separate rotated cubes far apart → two distinct regions.
         let mut soup = rotate_x(&unit_cube_soup(), 20.0);
         let second = rotate_x(&unit_cube_soup(), 20.0);
-        for v in second.chunks_exact(3) {
+        for v in second.as_chunks::<3>().0 {
             soup.extend_from_slice(&[v[0] + 100.0, v[1], v[2]]);
         }
         let regions = overhang_and_stability_from_soup(&soup, 45.0, 0.25, false).0;
