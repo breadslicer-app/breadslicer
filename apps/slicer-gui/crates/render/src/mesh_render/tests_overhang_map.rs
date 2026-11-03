@@ -396,7 +396,9 @@ fn a_face_past_the_build_volume_stays_amber_under_the_map() {
         &camera,
         Some(OverhangMap::new(45.0)),
     );
-    assert_eq!(centre_pixel(&mapped), centre_pixel(&plain));
+    let [r, g, b] = centre_pixel(&plain);
+    assert!(r > g && g > b, "the warning's amber: {r}, {g}, {b}");
+    assert_eq!(centre_pixel(&mapped), [r, g, b]);
 }
 
 #[test]
@@ -488,9 +490,12 @@ fn percentile(sorted: &[Duration], p: f64) -> f64 {
 }
 
 /// The cost of a frame while a model turns, at 1920×1080, end to end (the
-/// matrix, the draw, the GPU finishing), map off and on in alternating runs.
-/// Manual: set `BREADSLICER_OVERHANG_STL` and run with `--ignored --nocapture`
-/// in the release profile.
+/// matrix, the draw, the GPU finishing). Manual: set
+/// `BREADSLICER_OVERHANG_STL`, `BREADSLICER_OVERHANG_MAP=1` for the map on and
+/// `BREADSLICER_OVERHANG_CLOSE=1` for the model filling the frame, where the
+/// shader has the most pixels to paint, and run with `--ignored --nocapture` in
+/// the release profile; a comparison wants the runs alternated, one process
+/// each.
 #[test]
 #[ignore = "manual timing on a large model"]
 fn frame_cost_while_turning() {
@@ -505,54 +510,45 @@ fn frame_cost_while_turning() {
     println!("triangles: {}", mesh.faces().len());
     let (mut graph, leaves) = scene_of(vec![(mesh, place)]);
     renderer.upload_scene(&graph).expect("upload the model");
-    let camera = framing_camera(&renderer);
-    let (width, height) = (1920, 1080);
-    let selection = [leaves[0]];
+    let mut camera = framing_camera(&renderer);
+    if std::env::var_os("BREADSLICER_OVERHANG_CLOSE").is_some() {
+        camera.distance /= 2.6;
+    }
     let pivot = camera.target;
+    let selection = [leaves[0]];
+    let map = std::env::var_os("BREADSLICER_OVERHANG_MAP").is_some();
+    renderer.set_overhang_map(map.then(|| OverhangMap::new(45.0)));
 
-    let mut run = |map: Option<OverhangMap>, frames: usize| {
-        renderer.set_overhang_map(map);
-        let mut samples = Vec::with_capacity(frames);
-        for frame in 0..frames {
-            let start = Instant::now();
-            graph
-                .set_local_transform(leaves[0], turned(&place, pivot, frame as f64 * 1.5))
-                .expect("turn the model");
-            let scene_render = SceneRender {
-                graph: &graph,
-                selection: &selection,
-                gizmo: None,
-                clip_z: None,
-            };
-            renderer
-                .render(Some(scene_render), BV, &camera, width, height)
-                .expect("the frame is not refused");
-            renderer.wait_for_gpu();
+    let mut samples = Vec::new();
+    for frame in 0..(60 + 960) {
+        let start = Instant::now();
+        graph
+            .set_local_transform(leaves[0], turned(&place, pivot, (frame % 240) as f64 * 1.5))
+            .expect("turn the model");
+        let scene_render = SceneRender {
+            graph: &graph,
+            selection: &selection,
+            gizmo: None,
+            clip_z: None,
+        };
+        renderer
+            .render(Some(scene_render), BV, &camera, 1920, 1080)
+            .expect("the frame is not refused");
+        renderer.wait_for_gpu();
+        if frame >= 60 {
             samples.push(start.elapsed());
         }
-        samples.sort_unstable();
-        samples
-    };
-
-    run(None, 60);
-    let map = Some(OverhangMap::new(45.0));
-    let (mut off, mut on) = (Vec::new(), Vec::new());
-    for _ in 0..4 {
-        off.extend(run(None, 240));
-        on.extend(run(map, 240));
     }
-    off.sort_unstable();
-    on.sort_unstable();
-    for (name, samples) in [("off", &off), ("on", &on)] {
-        let mean = samples.iter().sum::<Duration>().as_secs_f64() * 1000.0 / samples.len() as f64;
-        println!(
-            "{name}: mean {mean:.3} ms, p50 {:.3} ms, p95 {:.3} ms, p99 {:.3} ms ({} frames)",
-            percentile(samples, 0.5),
-            percentile(samples, 0.95),
-            percentile(samples, 0.99),
-            samples.len(),
-        );
-    }
+    samples.sort_unstable();
+    let mean = samples.iter().sum::<Duration>().as_secs_f64() * 1000.0 / samples.len() as f64;
+    println!(
+        "map {}: mean {mean:.3} ms, p50 {:.3} ms, p95 {:.3} ms, p99 {:.3} ms ({} frames)",
+        if map { "on" } else { "off" },
+        percentile(&samples, 0.5),
+        percentile(&samples, 0.95),
+        percentile(&samples, 0.99),
+        samples.len(),
+    );
 }
 
 /// Pictures of a real model under the map, for looking at the colours.
