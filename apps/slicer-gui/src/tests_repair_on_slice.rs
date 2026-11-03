@@ -65,7 +65,14 @@ fn window_with(graph: Scene) -> Window {
         ctrl.clone(),
     );
     let hollow = HollowRun::install(&window, document.clone(), dialogs.clone(), ctrl.clone());
-    let review = ReviewPanel::install(&window, document.clone(), ctrl.clone(), supports, hollow);
+    let review = ReviewPanel::install(
+        &window,
+        bus.clone(),
+        document.clone(),
+        ctrl.clone(),
+        supports,
+        hollow,
+    );
     let slice = SliceRun::install(
         &window,
         bus,

@@ -338,12 +338,8 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
         let body = island.body.as_deref();
         let free = body.is_some_and(|b| !b.attached);
         let ignore = &rules.ignore_small_islands;
-        if ignore.enabled
-            && free
-            && body.is_some_and(|b| {
-                f64::from(b.volume_mm3) < ignore.volume_mm3
-                    && f64::from(b.height_mm) < ignore.height_mm
-            })
+        if free
+            && body.is_some_and(|b| ignore.ignores(f64::from(b.volume_mm3), f64::from(b.height_mm)))
         {
             continue;
         }

@@ -15,6 +15,9 @@
 //! every frontend lists them in the same order.
 
 use std::cmp::Ordering;
+use std::sync::Arc;
+
+use crate::fill::CavityFill;
 
 /// The problem a finding reports. The declaration order is the order
 /// findings of the same layer are listed in.
@@ -232,6 +235,15 @@ pub enum SuggestedFix {
         /// The feature's index among the review's thickenings.
         feature: usize,
     },
+    /// Join an island to the model just below it on the next slice (#235):
+    /// the gap between them, thinner than a support, is cured as
+    /// [`ReviewReport::joins`](crate::runner::ReviewReport::joins)`[join]`.
+    JoinBelow {
+        /// The island's underside, where the camera looks.
+        at: PlatePoint,
+        /// The gap's index among the review's joins.
+        join: usize,
+    },
 }
 
 impl SuggestedFix {
@@ -243,6 +255,7 @@ impl SuggestedFix {
             Self::ClearRaft { lift_to_mm } => (3, PlatePoint::new(0.0, 0.0, lift_to_mm)),
             Self::Erase { at, .. } => (4, at),
             Self::Thicken { at, .. } => (5, at),
+            Self::JoinBelow { at, .. } => (6, at),
         }
     }
 
@@ -255,7 +268,8 @@ impl SuggestedFix {
             .then_with(|| match (self, other) {
                 (Self::Fill { cavity: a, .. }, Self::Fill { cavity: b, .. })
                 | (Self::Erase { speck: a, .. }, Self::Erase { speck: b, .. })
-                | (Self::Thicken { feature: a, .. }, Self::Thicken { feature: b, .. }) => a.cmp(b),
+                | (Self::Thicken { feature: a, .. }, Self::Thicken { feature: b, .. })
+                | (Self::JoinBelow { join: a, .. }, Self::JoinBelow { join: b, .. }) => a.cmp(b),
                 _ => Ordering::Equal,
             })
     }
@@ -288,7 +302,24 @@ pub struct Finding {
     pub detail: String,
     /// A one-click fix, when the check can propose one.
     pub fix: Option<SuggestedFix>,
+    /// The largest section of the part it is about, in mm²: for an island,
+    /// all its pieces on one layer, on the layer where they are largest
+    /// (#163). `None` when the check does not measure one.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub largest_mm2: Option<f64>,
+    /// The pixels it is about, layer by layer, for a frontend to highlight
+    /// (#409): an island's pieces, a thin feature, a speck, a cavity. At
+    /// most [`MAX_FOOTPRINT_LAYERS`] layers from its first; `None` when the
+    /// check keeps no pixels.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub footprint: Option<Arc<CavityFill>>,
 }
+
+/// The most layers a finding's footprint keeps, from its first layer
+/// (#409): 0.05 mm layers cover 3.2 mm, which shows where a part goes
+/// wrong; a part the review follows for hundreds of layers is not drawn
+/// whole.
+pub const MAX_FOOTPRINT_LAYERS: usize = 64;
 
 impl Finding {
     /// A finding on the inclusive layer range `first_layer..=last_layer`,
@@ -319,6 +350,8 @@ impl Finding {
             title: title.into(),
             detail: detail.into(),
             fix: None,
+            largest_mm2: None,
+            footprint: None,
         }
     }
 
@@ -326,6 +359,20 @@ impl Finding {
     #[must_use]
     pub fn with_fix(mut self, fix: SuggestedFix) -> Self {
         self.fix = Some(fix);
+        self
+    }
+
+    /// The same finding with its largest section, in mm².
+    #[must_use]
+    pub fn with_largest_mm2(mut self, largest_mm2: f64) -> Self {
+        self.largest_mm2 = Some(largest_mm2);
+        self
+    }
+
+    /// The same finding with the pixels it is about (#409).
+    #[must_use]
+    pub fn with_footprint(mut self, footprint: Arc<CavityFill>) -> Self {
+        self.footprint = Some(footprint);
         self
     }
 
@@ -346,6 +393,11 @@ impl Finding {
                 (None, Some(_)) => Ordering::Less,
                 (Some(_), None) => Ordering::Greater,
                 (Some(a), Some(b)) => a.total_cmp(b),
+            })
+            .then_with(|| {
+                self.largest_mm2
+                    .unwrap_or(-1.0)
+                    .total_cmp(&other.largest_mm2.unwrap_or(-1.0))
             })
     }
 }

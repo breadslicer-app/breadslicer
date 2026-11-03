@@ -39,6 +39,9 @@ export struct ReviewRow {
     leave: bool,
     // The lift button of fix 4 ("Lift 17 layers").
     lift-label: string,
+    // An island just above the model (#235): 0 no join, 1 offered, 2 marked
+    // to join on the next slice. Its button is the fix.
+    join: int,
     // After Fix All (#156): why it left this finding, else empty.
     remains: string,
 }
@@ -225,6 +228,17 @@ component FindingRow inherits VerticalLayout {
                     root.fix-alt();
                 }
             }
+        }
+        if root.finding.join > 0: ScButton {
+            text: root.finding.join == 2 ? @tr("Review" => "Do not join") : @tr("Review" => "Join to below");
+            icon: root.finding.join == 2 ? "" : Icons.check;
+            clicked => {
+                root.fix();
+            }
+        }
+        if root.finding.join == 2: Note {
+            text: @tr("Review" => "Marked: the next slice joins it to the model below.");
+            color: Theme.success;
         }
         if root.finding.fixed: Note {
             text: root.finding.fix == 1 ? @tr("Review" => "Support added.")
@@ -1825,6 +1839,9 @@ export component SliceInspector inherits VerticalLayout {
     in property <bool> review-fixing;
     in property <float> review-fix-progress;
     in property <string> review-fix-phase;
+    // "Repeat until clean" next to Fix all (#163): a setting.
+    in property <bool> review-fix-repeat;
+    callback review-fix-repeat-toggled(bool);
     callback printer-picked(int);
     callback resin-picked(int);
     callback first-layer-height-edited(string);
@@ -2070,11 +2087,23 @@ export component SliceInspector inherits VerticalLayout {
                         root.review-notes-toggled();
                     }
                 }
-                if root.review-state == 1 && root.review-fix-all > 0 && !root.review-fixing: ScButton {
-                    text: @tr("Review" => "Fix all ({})", root.review-fix-all);
-                    icon: Icons.check;
-                    clicked => {
-                        root.review-fix-all-requested();
+                if root.review-state == 1 && root.review-fix-all > 0 && !root.review-fixing: HorizontalLayout {
+                    spacing: 10px;
+
+                    ScButton {
+                        text: @tr("Review" => "Fix all ({})", root.review-fix-all);
+                        icon: Icons.check;
+                        clicked => {
+                            root.review-fix-all-requested();
+                        }
+                    }
+                    CheckBox {
+                        text: @tr("Review" => "Repeat until clean");
+                        checked: root.review-fix-repeat;
+                        horizontal-stretch: 1;
+                        toggled => {
+                            root.review-fix-repeat-toggled(self.checked);
+                        }
                     }
                 }
                 if root.review-fixing: HorizontalLayout {

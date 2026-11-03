@@ -74,6 +74,22 @@ const REMOVE_REACH_MM: f64 = 3.0;
 const NUDGE_DOWN_MM: [f64; 4] = [0.05, 0.1, 0.2, 0.4];
 /// The directions [`DfSupportSession::add_trunk_near`] moves a point sideways.
 const NUDGE_DIRECTIONS: usize = 8;
+/// How far a nudged tip's face may turn from the aimed tip's and still be
+/// the same underside: 20°, the cosine.
+const NUDGE_SAME_FACE_COS: f64 = 0.94;
+/// How far below the aimed tip a nudged one may land and still be on the
+/// same underside: a layer.
+const NUDGE_SAME_HEIGHT_MM: f64 = 0.05;
+/// How far above the aimed tip a nudged one may land on the same face
+/// (#405): two layers of 0.05 mm, where a growing island is larger than a
+/// tip. The review's island policy aims a support no higher than that.
+const NUDGE_CLIMB_MM: f64 = 0.10;
+/// The heights above the point given that [`DfSupportSession::add_trunk_near`]
+/// climbs to, once nothing at or below its height holds (#405).
+const NUDGE_UP_MM: [f64; 2] = [0.05, 0.10];
+/// How close two contacts are to count as the same tip: a nudge onto a flat
+/// underside lands on the tip it was nudged from.
+const SAME_TIP_MM: f64 = 1e-6;
 
 /// The supports of a run, kept for editing.
 #[derive(Debug, Clone)]
@@ -454,6 +470,42 @@ fn nudges(point: [f64; 3], reach_mm: f64) -> Vec<[f64; 3]> {
             for k in 0..NUDGE_DIRECTIONS {
                 let a = k as f64 * std::f64::consts::TAU / NUDGE_DIRECTIONS as f64;
                 out.push([x + r * a.cos(), y + r * a.sin(), z - dz]);
+            }
+        }
+    }
+    out
+}
+
+/// Whether a nudged tip at `tip`, on a face of normal `normal`, holds what
+/// the tip aimed at (`aimed`, on a face of normal `aimed_normal`) would:
+/// the same underside, within `reach_mm` (#163). A face that looks down
+/// within reach is not enough: a wall a step below the island, or a slope
+/// beside it, takes a tip that holds nothing of the island. The tip has to
+/// stay on a face turned as the aimed one is, at its height or up to
+/// [`NUDGE_CLIMB_MM`] higher on it (#405).
+fn same_underside(aimed: Vec3, aimed_normal: Vec3, tip: Vec3, normal: Vec3, reach_mm: f64) -> bool {
+    let turn = normal.x * aimed_normal.x + normal.y * aimed_normal.y + normal.z * aimed_normal.z;
+    normal.z < 0.0
+        && turn >= NUDGE_SAME_FACE_COS
+        && tip.z - aimed.z >= -NUDGE_SAME_HEIGHT_MM
+        && tip.z - aimed.z <= NUDGE_CLIMB_MM
+        && dist([tip.x, tip.y, tip.z], [aimed.x, aimed.y, aimed.z]) <= reach_mm
+}
+
+/// The points above `point` to try once [`nudges`] found nothing (#405):
+/// the same spot and the rings around it out to `reach_mm`, at each of
+/// [`NUDGE_UP_MM`], lowest first.
+fn climbs(point: [f64; 3], reach_mm: f64) -> Vec<[f64; 3]> {
+    let [x, y, z] = point;
+    let rings = (reach_mm / 0.1 + 1e-9).floor() as usize;
+    let mut out = Vec::new();
+    for dz in NUDGE_UP_MM {
+        out.push([x, y, z + dz]);
+        for ring in 1..=rings {
+            let r = ring as f64 * 0.1;
+            for k in 0..NUDGE_DIRECTIONS {
+                let a = k as f64 * std::f64::consts::TAU / NUDGE_DIRECTIONS as f64;
+                out.push([x + r * a.cos(), y + r * a.sin(), z + dz]);
             }
         }
     }
@@ -1193,12 +1245,17 @@ impl DfSupportSession {
 
     /// Adds a support at `point` (world mm) as [`Self::add_trunk_at`] does
     /// or, when nothing can hold that very point, at the nearest point the
-    /// engine can hold on a face that looks down, whose tip lands within
+    /// engine can hold on the same underside, whose tip lands within
     /// `reach_mm` of the one `point` gives: up to 0.4 mm lower and `reach_mm`
     /// to the side. For a
     /// point a check picked rather than a click (the Review card's islands):
     /// the route from one tip can graze the model where a tip a step away
-    /// clears it. Returns the point used; the error is the one at `point`.
+    /// clears it. A tip on some other face near it (a wall below the island,
+    /// a slope beside it) would hold nothing of what was asked for, and is
+    /// not taken (#163). When nothing at or below that height holds, it
+    /// climbs the same face up to 0.10 mm, two layers, where a growing
+    /// island is larger and its route may clear the model (#405). Returns the
+    /// point used; the error is the one at `point`.
     pub fn add_trunk_near(
         &mut self,
         point: [f64; 3],
@@ -1211,22 +1268,37 @@ impl DfSupportSession {
         // to it are tried.
         let mut first = EditError::NoRoute("the nearest face looks up".to_owned());
         let how = AddOptions::default();
+        // Contacts already tried: a nudge onto one of them places the very
+        // same support, refused the same way.
+        let mut tried: Vec<(Vec3, Vec3)> = Vec::new();
+        let seen = |tried: &[(Vec3, Vec3)], tip: Vec3, n: Vec3| {
+            tried.iter().any(|(t, m)| {
+                dist([t.x, t.y, t.z], [tip.x, tip.y, tip.z]) <= SAME_TIP_MM
+                    && dist([m.x, m.y, m.z], [n.x, n.y, n.z]) <= SAME_TIP_MM
+            })
+        };
         if normal.z < 0.0 {
             match self.place(point, &how) {
                 Ok(_) => return Ok(point),
                 Err((err @ EditError::NoRoute(_), _)) => first = err,
                 Err((other, _)) => return Err(other),
             }
+            tried.push((aimed, normal));
         }
-        // A tip that lands farther than `reach_mm` from the one `point` gives
-        // would hold some other surface than the one asked for.
-        for q in nudges(point, reach_mm) {
-            let holds = self.contact(q).is_some_and(|(_, tip, n)| {
-                n.z < 0.0 && dist([tip.x, tip.y, tip.z], [aimed.x, aimed.y, aimed.z]) <= reach_mm
-            });
-            if holds && self.place(q, &how).is_ok() {
+        for q in nudges(point, reach_mm)
+            .into_iter()
+            .chain(climbs(point, reach_mm))
+        {
+            let Some((_, tip, n)) = self.contact(q) else {
+                continue;
+            };
+            if seen(&tried, tip, n) || !same_underside(aimed, normal, tip, n, reach_mm) {
+                continue;
+            }
+            if self.place(q, &how).is_ok() {
                 return Ok(q);
             }
+            tried.push((tip, n));
         }
         Err(first)
     }
@@ -1979,6 +2051,107 @@ mod session_tests {
         );
         assert!(rings.iter().all(|r| *r <= 0.3 + 1e-9));
         assert!(points.iter().all(|p| p[2] <= 3.0));
+    }
+
+    /// #163: the tips a nudge took for nine islands of Damian's
+    /// FALTATORTUGA scene, whose exact point no trunk could reach: each
+    /// landed on another face within reach (a wall a step below, a slope
+    /// beside the island), so the support held nothing and the island was
+    /// found again. None is the island's underside.
+    #[test]
+    fn a_nudge_holds_the_underside_aimed_at_not_a_face_beside_it() {
+        let v = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
+        // (aimed tip, its normal, nudged tip, its normal)
+        let off = [
+            (
+                v(-43.202, 1.972, 11.066),
+                v(0.066, -0.051, -0.996),
+                v(-43.262, 1.787, 10.858),
+                v(0.301, 0.953, -0.023),
+            ),
+            (
+                v(-35.422, 3.162, 14.188),
+                v(0.091, -0.024, -0.996),
+                v(-35.282, 3.187, 14.248),
+                v(0.735, -0.307, -0.604),
+            ),
+            (
+                v(-46.310, 8.346, 14.569),
+                v(0.012, -0.033, -0.999),
+                v(-46.337, 8.208, 14.664),
+                v(0.178, -0.550, -0.816),
+            ),
+            (
+                v(37.506, 5.498, 32.221),
+                v(0.009, -0.234, -0.972),
+                v(37.479, 5.506, 32.001),
+                v(0.900, -0.435, -0.030),
+            ),
+            (
+                v(-48.996, 1.129, 25.192),
+                v(0.168, 0.015, -0.986),
+                v(-48.885, 1.110, 25.010),
+                v(-0.983, 0.162, -0.084),
+            ),
+            (
+                v(-49.161, 0.263, 25.912),
+                v(-0.424, -0.191, -0.885),
+                v(-49.368, 0.240, 25.880),
+                v(-0.097, -0.713, -0.694),
+            ),
+            (
+                v(-47.517, 0.583, 27.070),
+                v(-0.105, -0.150, -0.983),
+                v(-47.650, 0.818, 26.975),
+                v(-0.981, -0.195, -0.007),
+            ),
+            (
+                v(41.335, 11.988, 37.141),
+                v(-0.186, -0.263, -0.947),
+                v(41.245, 11.964, 36.959),
+                v(0.955, 0.283, -0.092),
+            ),
+            (
+                v(-49.435, -1.303, 28.865),
+                v(0.046, 0.032, -0.998),
+                v(-49.249, -1.191, 28.720),
+                v(-0.206, -0.767, -0.608),
+            ),
+        ];
+        for (k, (aimed, aimed_n, tip, n)) in off.into_iter().enumerate() {
+            assert!(
+                !same_underside(aimed, aimed_n, tip, n, 0.3),
+                "case {k}: {tip:?} is not the underside aimed at"
+            );
+        }
+        // The same underside a step aside, or a little tilted, holds it.
+        let down = v(0.0, 0.0, -1.0);
+        let aimed = v(1.0, 2.0, 3.0);
+        assert!(same_underside(aimed, down, v(1.2, 2.0, 3.0), down, 0.3));
+        let tilted = v(0.17, 0.0, -0.985);
+        assert!(same_underside(aimed, down, v(1.0, 2.2, 3.02), tilted, 0.3));
+        // A parallel face a step below is another surface; one past the
+        // reach, too far.
+        assert!(!same_underside(aimed, down, v(1.1, 2.0, 2.8), down, 0.3));
+        assert!(!same_underside(aimed, down, v(1.4, 2.0, 3.0), down, 0.3));
+        // #405: the same face up to two layers higher holds what grew there;
+        // three layers up, or a layer and a bit below, it is something else.
+        assert!(same_underside(aimed, down, v(1.1, 2.0, 3.08), down, 0.3));
+        assert!(!same_underside(aimed, down, v(1.1, 2.0, 3.12), down, 0.3));
+        assert!(!same_underside(aimed, down, v(1.1, 2.0, 2.94), down, 0.3));
+    }
+
+    #[test]
+    fn climbs_go_up_two_layers_after_the_nudges() {
+        let points = climbs([1.0, 2.0, 3.0], 0.3);
+        // The spot and three rings of eight, at two heights.
+        assert_eq!(points.len(), 2 * (1 + 3 * 8));
+        assert_eq!(points[0], [1.0, 2.0, 3.05]);
+        assert!(points.iter().all(|p| p[2] > 3.0 && p[2] <= 3.1 + 1e-9));
+        assert!(
+            points.windows(2).all(|w| w[0][2] <= w[1][2] + 1e-12),
+            "lowest first"
+        );
     }
 
     #[test]

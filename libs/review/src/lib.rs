@@ -50,7 +50,9 @@ pub mod test_support;
 pub mod union_find;
 
 pub use fill::{CavityFill, FillSlab, PlateRect, erase_stack, fill_stack};
-pub use finding::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
+pub use finding::{
+    CheckKind, Finding, MAX_FOOTPRINT_LAYERS, PlatePoint, RoleScope, Severity, SuggestedFix,
+};
 pub use input::{LayerSpan, ReviewInput, ReviewInputError, ReviewLeaf, Role};
 pub use regions::{
     AIR_CONNECTIVITY, Connectivity, LayerLinks, LayerPixels, LayerRegions, Overlap, PixelBox,

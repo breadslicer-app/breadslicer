@@ -33,6 +33,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         gizmo_size,
         orthographic_view,
         lift_models_on_plate,
+        fix_all_repeat,
         silenced_messages,
         object_list,
         slice_panel,
@@ -85,6 +86,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
             &ours.lift_models_on_plate,
             lift_models_on_plate,
         ),
+        fix_all_repeat: pick(&base.fix_all_repeat, &ours.fix_all_repeat, fix_all_repeat),
         silenced_messages: merge_set(
             &base.silenced_messages,
             &ours.silenced_messages,

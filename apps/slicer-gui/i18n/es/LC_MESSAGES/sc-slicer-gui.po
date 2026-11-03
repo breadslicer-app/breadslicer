@@ -5955,6 +5955,121 @@ msgctxt "DfSupportDialog"
 msgid "Cancelled; nothing was changed."
 msgstr "Cancelado; no cambió nada."
 
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Repeat until clean"
+msgstr "Repetir hasta que quede limpio"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Fix all: pass {} of {}"
+msgstr "Corregir todo: pasada {} de {}"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Pass {} of {}"
+msgstr "Pasada {} de {}"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Pass {} of {}:"
+msgstr "Pasada {} de {}:"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The scene changed while Fix All ran; it stopped. What it did before that is one undo step."
+msgstr "La escena cambió mientras corría Corregir todo; se detuvo. Lo que hizo antes de eso se deshace en un solo paso."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Nothing more changed, so Fix All stopped. Each finding left says why it was left."
+msgstr "No cambió nada más, así que Corregir todo se detuvo. Cada hallazgo que quedó dice por qué quedó."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Slice to check the result."
+msgstr "Laminá para revisar el resultado."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Fix All stopped: the slice did not finish. What it did is one undo step."
+msgstr "Corregir todo se detuvo: el laminado no terminó. Lo que hizo se deshace en un solo paso."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Fix All is done after {} passes, and nothing is left to fix automatically. Each finding left says why it was left."
+msgstr "Corregir todo terminó tras {} pasadas y no queda nada para corregir automáticamente. Cada hallazgo que quedó dice por qué quedó."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Fix All made {} passes, the most it makes in one press. Press Fix all to go on; each finding left says why it was left."
+msgstr "Corregir todo hizo {} pasadas, lo máximo que hace por vez. Tocá Corregir todo para seguir; cada hallazgo que quedó dice por qué quedó."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "No support could be added here: {}. Supports were added since, so Fix All tries it again."
+msgstr "No se pudo agregar un soporte acá: {}. Desde entonces se agregaron soportes, así que Corregir todo lo vuelve a intentar."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Join to below"
+msgstr "Unir abajo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Do not join"
+msgstr "No unir"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Marked: the next slice joins it to the model below."
+msgstr "Marcada: el próximo laminado la une al modelo de abajo."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "No support fits here"
+msgstr "No entra un soporte acá"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "No support reaches it, and it never grows past {} mm²: too small to be worth a support where none fits."
+msgstr "Ningún soporte llega, y nunca pasa de {} mm²: es demasiado chica para que valga un soporte donde no entra ninguno."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The island will be joined to the model below on the next slice."
+msgstr "La isla se va a unir al modelo de abajo en el próximo laminado."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The island will not be joined."
+msgstr "La isla no se va a unir."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One island to join to the model below."
+msgid_plural "{n} islands to join to the model below."
+msgstr[0] "Una isla para unir al modelo de abajo."
+msgstr[1] "{n} islas para unir al modelo de abajo."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: too small for a support; the next layers lift it."
+msgstr "Corregir todo la dejó: es demasiado chica para un soporte; las capas siguientes la levantan."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: the join did not hold it. Close the gap in the model by hand."
+msgstr "Corregir todo la dejó: la unión no la sostuvo. Cerrá el hueco en el modelo a mano."
+
 #: ui/message-layer.slint
 msgctxt "StaleSupportsDialog"
 msgid "Regenerate"

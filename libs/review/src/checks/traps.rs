@@ -145,8 +145,12 @@
 #[path = "traps_air.rs"]
 mod air;
 
-use crate::fill::CavityFill;
-use crate::finding::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
+use std::sync::Arc;
+
+use crate::fill::{CavityFill, FillSlab};
+use crate::finding::{
+    CheckKind, Finding, MAX_FOOTPRINT_LAYERS, PlatePoint, RoleScope, Severity, SuggestedFix,
+};
 use crate::input::ReviewInput;
 use crate::regions::Region;
 use crate::runner::ReviewContext;
@@ -300,7 +304,22 @@ pub fn run_with_fills(
                 Remedy::Drain => SuggestedFix::AddDrain { at, cavity: index },
                 Remedy::Fill => SuggestedFix::Fill { at, cavity: index },
             };
-            cavity.finding(input, Some(fix), options)
+            // The cavity's own pixels, for a frontend to highlight (#409):
+            // its fill's first layers, without the rim.
+            let footprint = CavityFill {
+                slabs: fills[index]
+                    .slabs
+                    .iter()
+                    .take(MAX_FOOTPRINT_LAYERS)
+                    .map(|slab| FillSlab {
+                        rim: Vec::new(),
+                        ..slab.clone()
+                    })
+                    .collect(),
+            };
+            cavity
+                .finding(input, Some(fix), options)
+                .with_footprint(Arc::new(footprint))
         })
         .collect();
     (findings, fills)

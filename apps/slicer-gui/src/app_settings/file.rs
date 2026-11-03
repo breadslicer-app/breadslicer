@@ -978,6 +978,27 @@ gizmo_size = 400
     }
 
     #[test]
+    fn the_repeat_of_fix_all_round_trips_and_is_omitted_while_on() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        let mut s = AppSettings::default();
+        assert!(s.fix_all_repeat(), "on by default (#163)");
+        file.save(&s).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(!written.contains("fix_all_repeat"), "got:\n{written}");
+        assert!(file.load().settings().fix_all_repeat());
+
+        s.set_fix_all_repeat(false);
+        file.save(&s).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            written.contains("fix_all_repeat = false"),
+            "got:\n{written}"
+        );
+        assert!(!file.load().settings().fix_all_repeat());
+    }
+
+    #[test]
     fn the_lift_of_models_on_the_plate_round_trips_and_is_omitted_while_off() {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);

@@ -72,6 +72,9 @@ pub(crate) struct PreferencesSnapshot {
     /// Whether generating supports for a model resting on the plate lifts it
     /// first (#389), the Supports tab's box. Shared by every open window.
     pub lift_models_on_plate: bool,
+    /// Whether a Fix All press repeats until the review is clean (#163), the
+    /// Review card's box. Shared by every open window.
+    pub fix_all_repeat: bool,
     /// Whether the diagnostic log writes the session's events to disk, for
     /// the box in Preferences > Privacy, which starts and stops the log
     /// itself. Not stored in the settings: it stays on until the app closes,
@@ -172,6 +175,7 @@ impl PreferencesSnapshot {
             gizmo_size: DEFAULT_GIZMO_SIZE,
             orthographic_view: false,
             lift_models_on_plate: false,
+            fix_all_repeat: true,
             diagnostic_log: false,
             silenced_messages: BTreeSet::new(),
             object_list_visible: true,
@@ -222,6 +226,8 @@ pub(crate) enum PreferencesChange {
     Projection,
     /// The Supports tab's "Lift … when the model rests on the plate" (#389).
     LiftModelsOnPlate,
+    /// The Review card's "Repeat until clean" (#163).
+    FixAllRepeat,
     DiagnosticLog,
     SilencedMessages,
     ObjectListPanel,

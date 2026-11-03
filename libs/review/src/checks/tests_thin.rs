@@ -122,6 +122,26 @@ fn a_thin_wall_is_one_warning_over_its_layers() {
             .iter()
             .any(|l| l.sample_mm == z)
     );
+    // #409: the highlight holds the wall's pixels, not the block beside it.
+    let footprint = wall.footprint.as_ref().expect("a footprint");
+    assert!(!footprint.slabs.is_empty());
+    let [ax, ay] = fixture.pixel_to_plate([100.0, 20.0]);
+    let [bx, by] = fixture.pixel_to_plate([101.5, 80.0]);
+    let (x0, x1, y0, y1) = (ax.min(bx), ax.max(bx), ay.min(by), ay.max(by));
+    let pixel_mm = 0.1;
+    for slab in &footprint.slabs {
+        assert!(slab.bottom_mm < 12.0 * 0.05, "{slab:?}");
+        assert!(!slab.rects.is_empty());
+        for r in &slab.rects {
+            assert!(
+                r.x0_mm >= x0 - pixel_mm
+                    && r.x1_mm <= x1 + pixel_mm
+                    && r.y0_mm >= y0 - pixel_mm
+                    && r.y1_mm <= y1 + pixel_mm,
+                "{r:?}"
+            );
+        }
+    }
 }
 
 #[test]

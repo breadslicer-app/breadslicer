@@ -701,13 +701,15 @@ impl SceneDocument {
     /// Stores the slice produced for the current scene, marking the present
     /// geometry as its baseline (a fresh eviction window). Slice staleness is
     /// tracked separately from the save-dirty signal, so this does not touch
-    /// [`Self::is_dirty`].
-    pub(crate) fn set_slice_result(&self, result: SliceResult) {
-        *self.slice_result.borrow_mut() = Some(result);
+    /// [`Self::is_dirty`]. Returns the slice it replaced: a Fix All run keeps
+    /// it to put back on Cancel (#163).
+    pub(crate) fn set_slice_result(&self, result: SliceResult) -> Option<SliceResult> {
+        let replaced = self.slice_result.borrow_mut().replace(result);
         self.evicted_since_slice.set(false);
         self.slice_generation
             .set(self.slice_generation.get().wrapping_add(1));
         self.notify(SceneEvent::SliceChanged);
+        replaced
     }
 
     /// Returns the held slice, or `None` when the current scene has not been
@@ -1507,6 +1509,41 @@ impl SceneDocument {
             SceneEdit::Compound(edits)
         };
         Some((compound, new_roots))
+    }
+
+    /// Takes back the newest entry while the scene is still at `revision`,
+    /// as Undo would, but leaves nothing to redo: the edit of a Fix All run
+    /// that was cancelled (#163) never happened. Returns `Ok(false)`,
+    /// changing nothing, when the scene moved on from `revision` or there is
+    /// nothing to take back; the scene's rejection otherwise, the stacks left
+    /// as they were.
+    pub(crate) fn retract_last_edit(&self, revision: SceneRevision) -> Result<bool, SceneError> {
+        if self.scene_revision() != revision || self.pending_edit.borrow().is_some() {
+            return Ok(false);
+        }
+        self.end_live_preview();
+        let was_dirty = self.is_dirty();
+        crate::support_follow::settle(self);
+        if self.scene_revision() != revision {
+            return Ok(false);
+        }
+        let Some(entry) = self.undo_stack.borrow_mut().pop_back() else {
+            return Ok(false);
+        };
+        match self.apply_edit_unfollowed(entry.edit.inverse()) {
+            Ok(()) => {}
+            Err(reason) => {
+                self.undo_stack.borrow_mut().push_back(entry);
+                return match reason {
+                    EditNotApplied::NoSceneLoaded => Ok(false),
+                    EditNotApplied::Rejected(error) => Err(error),
+                };
+            }
+        }
+        crate::breadcrumbs::note(&format!("edit: retract {}", edit_label(&entry.edit)));
+        self.notify(SceneEvent::UndoStackChanged);
+        self.notify_dirty_change(was_dirty);
+        Ok(true)
     }
 
     pub(crate) fn can_undo(&self) -> bool {

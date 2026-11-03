@@ -53,11 +53,19 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
 // the same material as the shell it closes.
 const CAP_COLOR: vec3<f32> = vec3<f32>(0.75, 0.78, 0.85);
 
+// The highlight of a review finding's pixels (#409), the panel's
+// HIGHLIGHT_RGB (230, 60, 170).
+const HIGHLIGHT_COLOR: vec3<f32> = vec3<f32>(0.902, 0.235, 0.667);
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let coverage = textureSample(cap_tex, cap_samp, in.uv).r;
-    if (coverage < 0.5) {
+    // Red: coverage. Green: the highlight.
+    let texel = textureSample(cap_tex, cap_samp, in.uv);
+    if (texel.r < 0.5) {
         discard;
+    }
+    if (texel.g >= 0.5) {
+        return vec4<f32>(HIGHLIGHT_COLOR, 1.0);
     }
     return vec4<f32>(CAP_COLOR, 1.0);
 }

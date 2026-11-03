@@ -331,6 +331,173 @@ fn a_model_inside_the_raft_offers_its_lift_and_no_raft() {
     assert_eq!(rows[0].fix, FixKind::None as i32);
 }
 
+/// #402: a minimal island is a note with no button, Fix All leaves it,
+/// and its row says why.
+#[test]
+fn a_minimal_island_is_a_note_fix_all_leaves() {
+    let minimal = finding(CheckKind::Island, Severity::Info, 10, 10, "Minimal island");
+    let findings = vec![minimal];
+    let rows = review_rows(&findings, &[None], &BTreeSet::new(), true, true);
+    assert_eq!(rows[0].fix, FixKind::None as i32);
+    assert_eq!(rows[0].severity, 2);
+    assert!(
+        rows[0].remains.contains("too small for a support"),
+        "{}",
+        rows[0].remains
+    );
+    let plan = plan_fix_all(&findings, &FixPixels::default(), |_| false);
+    assert!(plan.is_empty());
+}
+
+/// #235: an island whose support the engine refused on the scene as it
+/// stands reads "No support fits here", as a warning, not an error.
+#[test]
+fn a_refused_island_reads_no_support_fits_here_as_a_warning() {
+    let at = PlatePoint::new(1.0, 2.0, 0.5);
+    let island = |layer: usize| {
+        finding(
+            CheckKind::Island,
+            Severity::Error,
+            layer,
+            layer,
+            "Unsupported island",
+        )
+        .with_fix(SuggestedFix::AddSupport { at })
+    };
+    let findings = vec![island(10), island(20)];
+    let now = SceneRevision::from_top_edit_id(Some(3));
+    let mut marks: ReviewMarks<i32> = ReviewMarks::default();
+    marks.refuse(FindingKey::of(&findings[0]), "no route", now, &7);
+    let shown = no_support_fits(
+        &findings,
+        &RowMarks::of(&findings, &marks, true, false, now),
+    );
+    assert_eq!(shown[0].title, "No support fits here");
+    assert_eq!(shown[0].severity, Severity::Warning);
+    assert_eq!(shown[1].title, "Unsupported island");
+    assert_eq!(shown[1].severity, Severity::Error);
+    // Once supports went in since, it is offered again, as an island.
+    let later = SceneRevision::from_top_edit_id(Some(4));
+    let shown = no_support_fits(
+        &findings,
+        &RowMarks::of(&findings, &marks, true, false, later),
+    );
+    assert_eq!(shown[0].severity, Severity::Error);
+}
+
+/// #163: an island no support reaches that never grows past a square
+/// millimetre is a note saying why, not a warning; a larger one stays a
+/// warning.
+#[test]
+fn a_refused_island_no_larger_than_a_tip_is_a_note() {
+    let at = PlatePoint::new(1.0, 2.0, 0.5);
+    let island = |layer: usize, largest_mm2: f64| {
+        finding(
+            CheckKind::Island,
+            Severity::Error,
+            layer,
+            layer + 2,
+            "Unsupported island",
+        )
+        .with_fix(SuggestedFix::AddSupport { at })
+        .with_largest_mm2(largest_mm2)
+    };
+    let limit = island_policy::NO_SUPPORT_NOTE_MM2;
+    let findings = vec![island(10, 0.0296), island(20, limit), island(30, 1.2)];
+    let now = SceneRevision::from_top_edit_id(Some(3));
+    let mut marks: ReviewMarks<i32> = ReviewMarks::default();
+    for finding in &findings {
+        marks.refuse(FindingKey::of(finding), "no route", now, &7);
+    }
+    let row_marks = RowMarks::of(&findings, &marks, true, true, now);
+    let shown = no_support_fits(&findings, &row_marks);
+    let severities: Vec<Severity> = shown.iter().map(|f| f.severity).collect();
+    assert_eq!(
+        severities,
+        [Severity::Info, Severity::Info, Severity::Warning]
+    );
+    assert!(shown.iter().all(|f| f.title == "No support fits here"));
+    let rows = mark_rows(
+        review_rows(&shown, &[None; 3], &BTreeSet::new(), true, false),
+        &shown,
+        &row_marks,
+    );
+    let remains = |id: i32| {
+        rows.iter()
+            .find(|row| row.id == id)
+            .map(|row| row.remains.to_string())
+            .expect("listed")
+    };
+    assert!(remains(0).contains("0.030 mm²"), "{}", remains(0));
+    assert!(remains(0).contains("too small"), "{}", remains(0));
+    assert!(remains(1).contains("1.000 mm²"), "{}", remains(1));
+    assert!(remains(2).contains("no route"), "{}", remains(2));
+    // Folded notes leave the warning alone on the card.
+    let folded = RowMarks::of(&findings, &marks, true, false, now);
+    let shown = no_support_fits(&findings, &folded);
+    let rows = mark_rows(
+        review_rows(&shown, &[None; 3], &BTreeSet::new(), true, false),
+        &shown,
+        &folded,
+    );
+    assert_eq!(rows.iter().map(|row| row.id).collect::<Vec<_>>(), [2]);
+}
+
+/// #163: a row offers "Add support here" exactly when Fix All would add
+/// that support. Before, a row kept the button where Fix All held the
+/// support back (it went in and did not hold, or the engine refused it),
+/// and the button placed the very support that had not held.
+#[test]
+fn a_row_offers_a_support_exactly_when_fix_all_takes_it() {
+    let island = |layer: usize, x: f64| {
+        Finding::new(
+            CheckKind::Island,
+            Severity::Error,
+            layer,
+            layer,
+            PlatePoint::new(x, 2.0, 0.05 * layer as f64),
+            RoleScope::Model,
+            "Island",
+            "Detail.",
+        )
+        .with_fix(SuggestedFix::AddSupport {
+            at: PlatePoint::new(x, 2.0, 0.05 * layer as f64),
+        })
+    };
+    // Never tried, refused, placed and found again.
+    let findings = vec![island(10, 1.0), island(20, 2.0), island(30, 3.0)];
+    let (refused_on, later) = (
+        SceneRevision::from_top_edit_id(Some(4)),
+        SceneRevision::from_top_edit_id(Some(5)),
+    );
+    let mut marks: ReviewMarks<i32> = ReviewMarks::default();
+    marks.refuse(FindingKey::of(&findings[1]), "no way there", refused_on, &7);
+    marks.supported(FindingKey::of(&findings[2]), &7);
+    let hollows = [None; 3];
+    let offered = |now: SceneRevision| {
+        let rows = mark_rows(
+            review_rows(&findings, &hollows, &BTreeSet::new(), true, true),
+            &findings,
+            &RowMarks::of(&findings, &marks, true, false, now),
+        );
+        let by_rows: Vec<usize> = rows
+            .iter()
+            .filter(|row| row.fix == FixKind::AddSupport as i32)
+            .map(|row| row.id as usize)
+            .collect();
+        let plan = plan_fix_all(&findings, &FixPixels::default(), |i| {
+            support_held_back(&findings[i], &marks, now)
+        });
+        let by_fix_all: Vec<usize> = plan.supports.iter().map(|(i, _)| *i).collect();
+        (by_rows, by_fix_all)
+    };
+    // On the scene it was refused on, only the support never tried.
+    assert_eq!(offered(refused_on), (vec![0], vec![0]));
+    // Once the scene changed (supports went in), the refused one again;
+    // never the one that went in and did not hold.
+    assert_eq!(offered(later), (vec![0, 1], vec![0, 1]));
+}
+
 mod model_poses {
     use std::sync::Arc;
 
@@ -476,10 +643,28 @@ mod fix_all {
         (findings, fills, erasures, thickenings)
     }
 
+    /// The pixels of a review without joins.
+    fn fix_pixels<'a>(
+        fills: &'a [CavityFill],
+        erasures: &'a [CavityFill],
+        thickenings: &'a [CavityFill],
+    ) -> FixPixels<'a> {
+        FixPixels {
+            fills,
+            erasures,
+            thickenings,
+            joins: &[],
+        }
+    }
+
     #[test]
     fn fix_all_plans_supports_small_traps_specks_and_thin_model_features() {
         let (findings, fills, erasures, thickenings) = review();
-        let plan = plan_fix_all(&findings, &fills, &erasures, &thickenings, |_| false);
+        let plan = plan_fix_all(
+            &findings,
+            &fix_pixels(&fills, &erasures, &thickenings),
+            |_| false,
+        );
         let supported: Vec<usize> = plan.supports.iter().map(|s| s.0).collect();
         assert_eq!(supported, [0, 1]);
         // The island and its floating part share one support.
@@ -498,7 +683,11 @@ mod fix_all {
         );
         assert_eq!(plan.len(), 6);
         // Findings fixed, marked or left alone already are skipped.
-        let rest = plan_fix_all(&findings, &fills, &erasures, &thickenings, |i| i != 2);
+        let rest = plan_fix_all(
+            &findings,
+            &fix_pixels(&fills, &erasures, &thickenings),
+            |i| i != 2,
+        );
         assert_eq!(rest.len(), 1);
     }
 
@@ -512,10 +701,18 @@ mod fix_all {
             at: PlatePoint::new(5.5, 0.5, 0.02),
         });
         erasures[0] = pixels(5.0, 6.0);
-        let plan = plan_fix_all(&findings, &fills, &erasures, &thickenings, |_| false);
+        let plan = plan_fix_all(
+            &findings,
+            &fix_pixels(&fills, &erasures, &thickenings),
+            |_| false,
+        );
         assert!(plan.patches.iter().all(|p| p.1 != PatchKind::Erase));
         // With the island skipped (its support did not hold), the speck goes.
-        let plan = plan_fix_all(&findings, &fills, &erasures, &thickenings, |i| i == 0);
+        let plan = plan_fix_all(
+            &findings,
+            &fix_pixels(&fills, &erasures, &thickenings),
+            |i| i == 0,
+        );
         assert!(plan.patches.iter().any(|p| p.1 == PatchKind::Erase));
     }
 
@@ -622,16 +819,27 @@ mod fix_all {
 
     /// Slices the document's scene with what the panel marked, as the Slice
     /// driver does, stores the slice and shows its review.
-    fn slice(document: &SceneDocument, panel: &ReviewPanel, by_fix_all: bool) {
+    fn slice(document: &SceneDocument, panel: &Rc<ReviewPanel>, by_fix_all: bool) {
         slice_with(document, panel, by_fix_all, &profile());
     }
 
     /// [`slice`] with `profile`.
     fn slice_with(
         document: &SceneDocument,
-        panel: &ReviewPanel,
+        panel: &Rc<ReviewPanel>,
         by_fix_all: bool,
         profile: &SliceProfile,
+    ) {
+        slice_with_extra(document, panel, by_fix_all, profile, &[]);
+    }
+
+    /// [`slice_with`], the review given `extra` findings too.
+    fn slice_with_extra(
+        document: &SceneDocument,
+        panel: &Rc<ReviewPanel>,
+        by_fix_all: bool,
+        profile: &SliceProfile,
+        extra: &[Finding],
     ) {
         let scene = document
             .with_scene(|spatial| spatial.graph().clone())
@@ -646,7 +854,10 @@ mod fix_all {
             patches.erasures.iter().map(|e| &**e),
             profile.layer_schedule(),
         );
-        let outcome = review_slices(&leaves, filled.as_ref(), erased.as_ref(), profile, None);
+        let mut outcome = review_slices(&leaves, filled.as_ref(), erased.as_ref(), profile, None);
+        if let ReviewOutcome::Reviewed { findings, .. } = &mut outcome {
+            findings.extend_from_slice(extra);
+        }
         let stack = merge_stacks(
             leaves
                 .iter()
@@ -656,7 +867,7 @@ mod fix_all {
                 .collect(),
         )
         .expect("one schedule");
-        document.set_slice_result(SliceResult {
+        let replaced = document.set_slice_result(SliceResult {
             contours: PlateContours::new(stack, *profile.layer_schedule()).expect("one schedule"),
             token: "fix-all".to_owned(),
             params: SliceParams {
@@ -668,8 +879,203 @@ mod fix_all {
             },
             layers: None,
         });
+        panel.slice_replaced(replaced);
         panel.fills_landed(patches.ids);
         panel.show(outcome);
+    }
+
+    /// The texels of a cap a footprint's rectangles reach on layer `z_mm`,
+    /// worked out apart from [`crate::slice_cap::highlight_cap`]: those a
+    /// rectangle overlaps, or the one it lies in when smaller than a texel.
+    fn reached_texels(
+        footprint: &CavityFill,
+        z_mm: f64,
+        raster: &crate::slice_cap::CapRaster,
+        build_volume: &crate::build_volume::BuildVolume,
+    ) -> BTreeSet<(u32, u32)> {
+        let (lo, hi) = (
+            build_volume.envelope_min_mm(),
+            build_volume.envelope_max_mm(),
+        );
+        let (x_mm, y_mm) = (f64::from(hi.x - lo.x), f64::from(hi.y - lo.y));
+        let texel = [
+            x_mm / f64::from(raster.width),
+            y_mm / f64::from(raster.height),
+        ];
+        let mut out = BTreeSet::new();
+        for slab in footprint
+            .slabs
+            .iter()
+            .filter(|slab| slab.bottom_mm <= z_mm && z_mm < slab.top_mm)
+        {
+            for r in &slab.rects {
+                for row in 0..raster.height {
+                    let (b0, b1) = (
+                        f64::from(row) * texel[1] - y_mm / 2.0,
+                        f64::from(row + 1) * texel[1] - y_mm / 2.0,
+                    );
+                    if r.y1_mm.min(b1) - r.y0_mm.max(b0) <= 1e-9 {
+                        continue;
+                    }
+                    for col in 0..raster.width {
+                        let (a0, a1) = (
+                            f64::from(col) * texel[0] - x_mm / 2.0,
+                            f64::from(col + 1) * texel[0] - x_mm / 2.0,
+                        );
+                        if r.x1_mm.min(a1) - r.x0_mm.max(a0) > 1e-9 {
+                            out.insert((col, row));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// #409: clicking a finding highlights its pixels, and only them, on
+    /// the cut of each layer it spans; another click moves the highlight,
+    /// and a new review or another tab clears it.
+    #[test]
+    fn a_clicked_finding_highlights_exactly_its_pixels() {
+        let checked = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            document.install_graph(plate(), PathBuf::from("plate.bread"));
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
+            let hollow =
+                HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
+            panel.set_reslice(|| true);
+            panel.notes_open.set(true);
+            ctrl.set_section(WorkspaceSection::Slice);
+            slice(&document, &panel, false);
+            let findings = {
+                let held = panel.held.borrow();
+                let Some(ReviewOutcome::Reviewed { findings, .. }) =
+                    held.as_ref().map(|h| &h.outcome)
+                else {
+                    panic!("reviewed")
+                };
+                findings.clone()
+            };
+            let build_volume = ctrl.build_volume();
+            let mut checked = Vec::new();
+            let mut on_cut = 0;
+            for (id, finding) in findings.iter().enumerate() {
+                let Some(footprint) = finding.footprint.clone() else {
+                    continue;
+                };
+                window.invoke_review_finding_clicked(id as i32);
+                let held = ctrl.review_highlight().expect("highlighted");
+                assert!(Arc::ptr_eq(&held, &footprint), "{}", finding.title);
+                for layer in finding.first_layer..=finding.last_layer.min(finding.first_layer + 3) {
+                    let layer = layer as u32;
+                    let z_mm = document
+                        .with_slice_layer(layer, |l| l.z_mm())
+                        .expect("a sliced layer");
+                    let plain = document
+                        .with_slice_layer(layer, |l| {
+                            crate::slice_cap::build_cap_raster(l, &build_volume)
+                        })
+                        .flatten()
+                        .expect("a cap");
+                    let lit = ctrl.cap_raster(layer, &build_volume).expect("a cap");
+                    let marked: BTreeSet<(u32, u32)> = (0..lit.height)
+                        .flat_map(|row| (0..lit.width).map(move |col| (col, row)))
+                        .filter(|&(col, row)| lit.is_highlighted(col, row))
+                        .collect();
+                    let reached = reached_texels(&footprint, z_mm, &lit, &build_volume);
+                    assert_eq!(marked, reached, "{} on layer {layer}", finding.title);
+                    // The highlight sits on the piece: a texel whose centre
+                    // its pixels cover is the cut's, or one beside it is (a
+                    // piece smaller than a texel may light none). A trap's
+                    // pixels are the resin it holds, inside the cut.
+                    let solid =
+                        !matches!(finding.check, CheckKind::ResinTrap | CheckKind::SuctionCup);
+                    let (lo, hi) = (
+                        build_volume.envelope_min_mm(),
+                        build_volume.envelope_max_mm(),
+                    );
+                    let (x_mm, y_mm) = (f64::from(hi.x - lo.x), f64::from(hi.y - lo.y));
+                    let centre = |col: u32, row: u32| {
+                        (
+                            (f64::from(col) + 0.5) * x_mm / f64::from(lit.width) - x_mm / 2.0,
+                            (f64::from(row) + 0.5) * y_mm / f64::from(lit.height) - y_mm / 2.0,
+                        )
+                    };
+                    let inside = |(x, y): (f64, f64)| {
+                        footprint
+                            .slabs
+                            .iter()
+                            .filter(|slab| slab.bottom_mm <= z_mm && z_mm < slab.top_mm)
+                            .flat_map(|slab| &slab.rects)
+                            .any(|r| r.x0_mm <= x && x < r.x1_mm && r.y0_mm <= y && y < r.y1_mm)
+                    };
+                    for &(col, row) in marked.iter().filter(|_| solid) {
+                        if !inside(centre(col, row)) {
+                            continue;
+                        }
+                        let near = (col.saturating_sub(1)..=col + 1).any(|c| {
+                            (row.saturating_sub(1)..=row + 1).any(|r| {
+                                c < plain.width
+                                    && r < plain.height
+                                    && plain.coverage[(r * plain.width + c) as usize] > 0
+                            })
+                        });
+                        assert!(near, "{} off the cut at {col}, {row}", finding.title);
+                        on_cut += 1;
+                    }
+                    // Every texel the highlight leaves is as the cut had it.
+                    for (i, (&a, &b)) in plain.coverage.iter().zip(&lit.coverage).enumerate() {
+                        let at = (i as u32 % lit.width, i as u32 / lit.width);
+                        if !marked.contains(&at) {
+                            assert_eq!(a, b, "{} at {at:?}", finding.title);
+                        }
+                    }
+                    if !reached.is_empty() {
+                        checked.push((finding.title.clone(), layer, marked.len()));
+                    }
+                }
+                // Off its layers, the cut is plain.
+                if finding.first_layer > 0 {
+                    let below = finding.first_layer as u32 - 1;
+                    if let Some(cap) = ctrl.cap_raster(below, &build_volume) {
+                        assert!(cap.highlight.iter().all(|&h| h == 0), "{}", finding.title);
+                    }
+                }
+            }
+            // A new review, and another tab, clear it.
+            slice(&document, &panel, false);
+            assert!(ctrl.review_highlight().is_none());
+            let id = findings
+                .iter()
+                .position(|f| f.footprint.is_some())
+                .expect("a finding with pixels");
+            window.invoke_review_finding_clicked(id as i32);
+            assert!(ctrl.review_highlight().is_some());
+            ctrl.set_section(WorkspaceSection::Supports);
+            assert!(ctrl.review_highlight().is_none());
+            assert!(on_cut > 0, "a highlight lands on the cut");
+            checked
+        });
+        let titles: BTreeSet<&str> = checked.iter().map(|(t, ..)| t.as_str()).collect();
+        assert!(titles.len() >= 2, "{checked:?}");
+        assert!(checked.iter().all(|&(_, _, n)| n > 0), "{checked:?}");
     }
 
     /// The rows of the card: each title, and why Fix All left it.
@@ -687,6 +1093,115 @@ mod fix_all {
         titles
     }
 
+    /// A 2 x 2 mm block on the plate up to 1.0 mm, and the same block from
+    /// 1.10 mm up: an island over a 0.10 mm gap (two layers), too thin for
+    /// a support (#235).
+    fn gap_plate() -> Scene {
+        let mut scene = Scene::new();
+        add(
+            &mut scene,
+            unit_cube_mesh(),
+            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 0.0, 0.5],
+        );
+        add(
+            &mut scene,
+            unit_cube_mesh(),
+            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 0.9]],
+            [0.0, 0.0, 1.55],
+        );
+        scene
+    }
+
+    /// The island findings of the panel's review, by title.
+    fn island_titles(panel: &ReviewPanel) -> Vec<String> {
+        held_findings(panel)
+            .into_iter()
+            .filter(|(title, ..)| title.contains("island") || title.contains("Island"))
+            .map(|(title, ..)| title)
+            .collect()
+    }
+
+    /// #235: an island just above the model offers "Join to below"; marked
+    /// from its row, the next slice cures the gap and the island is gone.
+    /// Fix All joins it as well.
+    #[test]
+    fn join_to_below_cures_the_gap_and_the_island_goes() {
+        let (offered, join_row, marked_row, message, after, by_fix_all, fix_all) =
+            on_fresh_slint_thread(|| {
+                let window =
+                    MainWindow::new().expect("the headless platform creates a main window");
+                let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+                let ctrl = Rc::new(ViewportController::new_for_test());
+                let document = ctrl.document();
+                document.install_graph(gap_plate(), PathBuf::from("gap.bread"));
+                let supports = DfSupportRun::install(
+                    &window,
+                    bus.clone(),
+                    document.clone(),
+                    ctrl.dialogs(),
+                    ctrl.clone(),
+                );
+                let hollow =
+                    HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+                let panel = ReviewPanel::install(
+                    &window,
+                    bus.clone(),
+                    document.clone(),
+                    ctrl.clone(),
+                    supports,
+                    hollow,
+                );
+                panel.set_reslice(|| true);
+                slice(&document, &panel, false);
+                let offered = island_titles(&panel);
+                let join_id = {
+                    let held = panel.held.borrow();
+                    let Some(ReviewOutcome::Reviewed { findings, .. }) =
+                        held.as_ref().map(|h| &h.outcome)
+                    else {
+                        panic!("reviewed")
+                    };
+                    findings
+                        .iter()
+                        .position(|f| matches!(f.fix, Some(SuggestedFix::JoinBelow { .. })))
+                        .expect("a join") as i32
+                };
+                let row_of = |window: &MainWindow| {
+                    let rows = window.get_review_rows();
+                    (0..rows.row_count())
+                        .filter_map(|i| rows.row_data(i))
+                        .find(|row| row.id == join_id)
+                        .map(|row| (row.fix, row.join))
+                };
+                let join_row = row_of(&window);
+                let fix_all = window.get_review_fix_all();
+                window.invoke_review_fix_requested(join_id);
+                let marked_row = row_of(&window);
+                let message = window.get_review_message().to_string();
+                slice(&document, &panel, false);
+                let after = island_titles(&panel);
+
+                // The same plate, by Fix All.
+                let document = ctrl.document();
+                document.install_graph(gap_plate(), PathBuf::from("gap.bread"));
+                slice(&document, &panel, false);
+                window.invoke_review_fix_all_requested();
+                slice(&document, &panel, true);
+                let by_fix_all = island_titles(&panel);
+                (
+                    offered, join_row, marked_row, message, after, by_fix_all, fix_all,
+                )
+            });
+        assert_eq!(offered, ["Unsupported island"], "{offered:?}");
+        assert_eq!(join_row, Some((FixKind::JoinBelow as i32, 1)));
+        assert_eq!(marked_row, Some((FixKind::JoinBelow as i32, 2)));
+        assert!(message.contains("joined"), "{message}");
+        assert!(after.is_empty(), "{after:?}");
+        assert!(fix_all >= 1, "Fix All takes the join");
+        assert!(by_fix_all.is_empty(), "{by_fix_all:?}");
+    }
+
     /// Fix All on a plate with an island, a speck and a small trap: the
     /// trap is filled and the speck erased on the slice it asks for; with no
     /// supports to edit, the island and its floating part stay, each saying
@@ -699,16 +1214,30 @@ mod fix_all {
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
             document.install_graph(plate(), PathBuf::from("plate.bread"));
-            let supports =
-                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
             let hollow =
                 HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
-            let panel =
-                ReviewPanel::install(&window, document.clone(), ctrl.clone(), supports, hollow);
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
             let resliced = Rc::new(Cell::new(0));
             panel.set_reslice({
                 let resliced = resliced.clone();
-                move || resliced.set(resliced.get() + 1)
+                move || {
+                    resliced.set(resliced.get() + 1);
+                    true
+                }
             });
             panel.notes_open.set(true);
             slice(&document, &panel, false);
@@ -773,7 +1302,7 @@ mod fix_all {
     /// project's printer and resin, and shows the review.
     fn slice_project(
         document: &SceneDocument,
-        panel: &ReviewPanel,
+        panel: &Rc<ReviewPanel>,
         printer: &PrinterId,
         resin: &MaterialId,
         by_fix_all: bool,
@@ -821,8 +1350,8 @@ mod fix_all {
             .merge_with(filled.into_iter().chain(erased))
             .expect("one schedule");
         // What the Slice driver does on the UI thread once a slice is in.
-        let landing = std::time::Instant::now();
-        document.set_slice_result(SliceResult {
+        let landing = Instant::now();
+        let replaced = document.set_slice_result(SliceResult {
             contours,
             token: "hueco".to_owned(),
             params: SliceParams {
@@ -834,6 +1363,7 @@ mod fix_all {
             },
             layers: crate::slice_result::LayerValues::resolve(&printer_profile, &material, None),
         });
+        panel.slice_replaced(replaced);
         panel.fills_landed(patches.ids);
         panel.show(outcome);
         eprintln!("slice landing on the UI thread: {:?}", landing.elapsed());
@@ -868,13 +1398,24 @@ mod fix_all {
             let document = ctrl.document();
             document.install_graph(project.scene, path.clone());
             crate::support_persist::install_sets(&document, restored.sets);
-            let supports =
-                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
             let hollow =
                 HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
-            let panel =
-                ReviewPanel::install(&window, document.clone(), ctrl.clone(), supports, hollow);
-            panel.set_reslice(|| {});
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
+            panel.set_reslice(|| true);
             panel.notes_open.set(true);
             slice_project(&document, &panel, &printer, &resin, false);
             let before = held_findings(&panel);
@@ -918,6 +1459,13 @@ mod fix_all {
     /// The models of a plate of `paths`, each lifted 5 mm and set side by
     /// side along X, with their supports generated: Damian's case of #390.
     fn minis_plate(paths: &[PathBuf]) -> Scene {
+        minis_plate_at(paths, 5.0, None)
+    }
+
+    /// [`minis_plate`], the models `lift` mm above the plate, each file
+    /// scaled to `height` mm tall when given. Every object a file opens as
+    /// keeps its place among the others.
+    fn minis_plate_at(paths: &[PathBuf], lift: f64, height: Option<f64>) -> Scene {
         let mut scene = Scene::new();
         let spacing = 45.0;
         let first = -spacing * (paths.len() as f64 - 1.0) / 2.0;
@@ -925,32 +1473,44 @@ mod fix_all {
             let loaded =
                 sc_mesh_formats::load_mesh_from_path(path, None, None).expect("the mini loads");
             let graph = loaded.graph;
-            let leaf = *graph.roots().first().expect("a root");
-            let mesh = graph.leaf_mesh_arc(leaf).expect("a mesh").clone();
+            let meshes: Vec<(Arc<IndexedMesh>, Transform3D)> = graph
+                .roots()
+                .iter()
+                .filter_map(|&leaf| {
+                    Some((
+                        graph.leaf_mesh_arc(leaf)?.clone(),
+                        graph.world_transform_of(leaf).ok()?,
+                    ))
+                })
+                .collect();
             let mut lo = [f64::MAX; 3];
             let mut hi = [f64::MIN; 3];
-            for v in &mesh.vertices {
-                let c = v.coords();
-                for k in 0..3 {
-                    lo[k] = lo[k].min(f64::from(c[k]));
-                    hi[k] = hi[k].max(f64::from(c[k]));
+            for (mesh, world) in &meshes {
+                for v in &mesh.vertices {
+                    let c = world.apply_to_vertex(*v).coords();
+                    for k in 0..3 {
+                        lo[k] = lo[k].min(f64::from(c[k]));
+                        hi[k] = hi[k].max(f64::from(c[k]));
+                    }
                 }
             }
-            let at = [
-                first + spacing * i as f64 - (lo[0] + hi[0]) / 2.0,
-                -(lo[1] + hi[1]) / 2.0,
-                5.0 - lo[2],
+            let k = height.map_or(1.0, |h| h / (hi[2] - lo[2]));
+            let shift = [
+                first + spacing * i as f64 - k * (lo[0] + hi[0]) / 2.0,
+                -k * (lo[1] + hi[1]) / 2.0,
+                lift - k * lo[2],
             ];
-            let leaf = scene
-                .add_leaf(
-                    None,
-                    Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
-                        IDENTITY, at,
-                    )),
-                    LeafPayload::Mesh(mesh),
-                )
-                .expect("inline-mesh leaf");
-            scene.add_root(leaf).expect("a fresh root");
+            let linear = IDENTITY.map(|row| row.map(|c| c * k));
+            for (mesh, world) in meshes {
+                let placed = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+                    linear, shift,
+                ))
+                .compose(&world);
+                let leaf = scene
+                    .add_leaf(None, placed, LeafPayload::Mesh(mesh))
+                    .expect("inline-mesh leaf");
+                scene.add_root(leaf).expect("a fresh root");
+            }
         }
         scene
     }
@@ -1026,7 +1586,7 @@ mod fix_all {
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
-            let t = std::time::Instant::now();
+            let t = Instant::now();
             let (printer, resin, supports) = match &bread {
                 Some(path) => {
                     let loaded =
@@ -1046,7 +1606,7 @@ mod fix_all {
                     crate::support_persist::install_sets(&document, restored.sets);
                     let supports = DfSupportRun::install(
                         &window,
-                        bus,
+                        bus.clone(),
                         document.clone(),
                         ctrl.dialogs(),
                         ctrl.clone(),
@@ -1057,7 +1617,7 @@ mod fix_all {
                     document.install_graph(minis_plate(&paths), PathBuf::from("minis.bread"));
                     let supports = DfSupportRun::install(
                         &window,
-                        bus,
+                        bus.clone(),
                         document.clone(),
                         ctrl.dialogs(),
                         ctrl.clone(),
@@ -1075,25 +1635,26 @@ mod fix_all {
                 HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
             let panel = ReviewPanel::install(
                 &window,
+                bus.clone(),
                 document.clone(),
                 ctrl.clone(),
                 supports.clone(),
                 hollow,
             );
-            panel.set_reslice(|| {});
-            let t = std::time::Instant::now();
+            panel.set_reslice(|| true);
+            let t = Instant::now();
             slice_project(&document, &panel, &printer, &resin, false);
             eprintln!("slice + review: {:?}", t.elapsed());
             let before = held_findings(&panel);
             let offered = window.get_review_fix_all();
-            let t = std::time::Instant::now();
+            let t = Instant::now();
             window.invoke_review_fix_all_requested();
             let blocked = t.elapsed();
             let landing = wait_fix_all(&panel);
             let total = t.elapsed();
             let message = window.get_review_message().to_string();
             let fingerprint = fix_all_fingerprint(&document, &panel, &message);
-            let t = std::time::Instant::now();
+            let t = Instant::now();
             let _ = panel.fills_for_slice();
             let patches_time = t.elapsed();
             slice_project(&document, &panel, &printer, &resin, true);
@@ -1180,23 +1741,46 @@ mod fix_all {
     }
 
     fn island_window() -> IslandWindow {
+        island_window_repeating(false)
+    }
+
+    /// [`island_window`], Fix All repeating until clean or not (#163).
+    fn island_window_repeating(repeat: bool) -> IslandWindow {
         let window = MainWindow::new().expect("the headless platform creates a main window");
-        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let bus = PreferencesBus::new(PreferencesSnapshot {
+            fix_all_repeat: repeat,
+            ..PreferencesSnapshot::for_tests()
+        });
         let ctrl = Rc::new(ViewportController::new_for_test());
         let document = ctrl.document();
         document.install_graph(island_plate(), PathBuf::from("island.bread"));
-        let supports =
-            DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let supports = DfSupportRun::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.dialogs(),
+            ctrl.clone(),
+        );
         supports.generate_now(sc_geom::df_supports::DfSupportOptions {
             min_island_area_mm2: 1.0,
             ..Default::default()
         });
         let hollow = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
-        let panel = ReviewPanel::install(&window, document.clone(), ctrl.clone(), supports, hollow);
+        let panel = ReviewPanel::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.clone(),
+            supports,
+            hollow,
+        );
         let resliced = Rc::new(Cell::new(0));
         panel.set_reslice({
             let resliced = resliced.clone();
-            move || resliced.set(resliced.get() + 1)
+            move || {
+                resliced.set(resliced.get() + 1);
+                true
+            }
         });
         slice_with(&document, &panel, false, &island_profile());
         IslandWindow {
@@ -1243,7 +1827,9 @@ mod fix_all {
                 w.resliced.get(),
             );
             let _ = wait_fix_all(&w.panel);
-            assert!(!w.window.get_review_fixing(), "the card shows the run over");
+            // The supports are in; the run waits for the slice it asked for.
+            assert!(w.panel.placing.borrow().is_none(), "the supports are in");
+            assert!(w.window.get_review_fixing(), "the run waits for its slice");
             let background = island_state(&w);
             assert!(w.document.undo().expect("one undo"), "an undo step");
             let undone = fix_all_fingerprint(&w.document, &w.panel, "")
@@ -1355,5 +1941,444 @@ mod fix_all {
                 .collect()
         };
         assert_eq!(unchanged(&before), unchanged(&after));
+    }
+
+    /// A support finding on the underside of the left model's big cube of
+    /// [`island_plate`]: where a support goes in, and Fix All has one more
+    /// support to add in its second pass (#163).
+    fn underside_island() -> Finding {
+        let at = PlatePoint::new(-4.6, 0.6, 3.0);
+        Finding::new(
+            CheckKind::Island,
+            Severity::Error,
+            60,
+            60,
+            at,
+            RoleScope::Model,
+            "Unsupported island",
+            "Injected for the second pass.",
+        )
+        .with_fix(SuggestedFix::AddSupport { at })
+    }
+
+    /// The models' meshes of a window: what Cancel puts back.
+    fn leaves(w: &IslandWindow) -> Vec<String> {
+        fix_all_fingerprint(&w.document, &w.panel, "")
+            .lines()
+            .filter(|l| l.starts_with("leaf"))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// A Fix All press on [`island_window_repeating`] carried to the point
+    /// where its second pass places its supports: the first pass's supports
+    /// are in and sliced, and the review of that slice has one more support
+    /// to add.
+    fn into_second_pass(w: &IslandWindow) {
+        w.window.invoke_review_fix_all_requested();
+        let _ = wait_fix_all(&w.panel);
+        assert_eq!(w.resliced.get(), 1, "the first pass slices");
+        assert_eq!(
+            w.window.get_slice_fix_pass().as_str(),
+            "Fix all: pass 1 of 3"
+        );
+        slice_with_extra(
+            &w.document,
+            &w.panel,
+            true,
+            &island_profile(),
+            &[underside_island()],
+        );
+        assert!(w.panel.placing.borrow().is_some(), "the second pass places");
+        assert!(
+            w.window.get_review_fix_phase().starts_with("Pass 2 of 3"),
+            "{}",
+            w.window.get_review_fix_phase()
+        );
+    }
+
+    /// #163: with "Repeat until clean", a press goes on while the review
+    /// has something Fix All fixes: here a second pass adds one support and
+    /// slices again; the third has nothing to fix, so the run ends. Both
+    /// passes' supports are one undo step.
+    #[test]
+    fn fix_all_repeats_while_the_review_has_something_to_fix() {
+        let (before, after_one_undo, resliced, fixing, message, undo_left) =
+            on_fresh_slint_thread(|| {
+                let w = island_window_repeating(true);
+                let before = leaves(&w);
+                let undo_before = w.document.can_undo();
+                into_second_pass(&w);
+                let _ = wait_fix_all(&w.panel);
+                assert_eq!(w.resliced.get(), 2, "the second pass slices");
+                slice_with(&w.document, &w.panel, true, &island_profile());
+                let fixing = w.panel.fixing() || w.window.get_review_fixing();
+                let message = w.window.get_review_message().to_string();
+                let resliced = w.resliced.get();
+                assert!(w.document.undo().expect("one undo"));
+                (
+                    before,
+                    leaves(&w),
+                    resliced,
+                    fixing,
+                    message,
+                    w.document.can_undo() == undo_before,
+                )
+            });
+        assert_eq!(resliced, 2, "two passes, two slices");
+        assert!(!fixing, "the run is over");
+        assert!(
+            message.is_empty() || message.contains("after 2 passes"),
+            "{message}"
+        );
+        assert_eq!(before, after_one_undo, "one undo takes both passes back");
+        assert!(undo_left, "and leaves the history as it was");
+    }
+
+    /// The state Cancel or Undo must put back: the models' meshes, the
+    /// marks, the review held and the history.
+    fn before_the_press(w: &IslandWindow) -> String {
+        format!(
+            "{}\nfindings: {:?}\nundo: {} redo: {}",
+            leaves(w).join("\n"),
+            held_findings(&w.panel),
+            w.document.can_undo(),
+            w.document.can_redo(),
+        )
+    }
+
+    /// #163: Cancel while the second pass places its supports ends the run
+    /// and puts everything back as before the press: the first pass's
+    /// supports and marks, the slice and its review; nothing to redo.
+    #[test]
+    fn cancel_in_a_later_pass_puts_everything_back() {
+        let (before, after, message, fixing, slice_back) = on_fresh_slint_thread(|| {
+            let w = island_window_repeating(true);
+            let before = before_the_press(&w);
+            let generation_layers = w.document.slice_layer_count();
+            into_second_pass(&w);
+            w.window.invoke_review_fix_all_cancel();
+            let fixing = w.panel.fixing() || w.window.get_review_fixing();
+            std::thread::sleep(Duration::from_millis(300));
+            let _ = w.panel.supports.settle_edit();
+            let message = w.window.get_review_message().to_string();
+            let slice_back = w.document.slice_layer_count() == generation_layers
+                && !w.panel.is_stale()
+                && w.window.get_slice_fix_pass().is_empty();
+            (before, before_the_press(&w), message, fixing, slice_back)
+        });
+        assert!(!fixing, "Cancel ends the run at once");
+        assert!(message.contains("cancelled"), "{message}");
+        assert_eq!(before, after);
+        assert!(slice_back, "the slice of before the press is back, current");
+    }
+
+    /// #163: Undo while a later pass places its supports undoes the whole
+    /// run, as one step.
+    #[test]
+    fn undo_in_a_later_pass_undoes_the_whole_run() {
+        let (before, after, message) = on_fresh_slint_thread(|| {
+            let w = island_window_repeating(true);
+            let before = before_the_press(&w);
+            into_second_pass(&w);
+            assert!(w.document.undo().expect("the undo"));
+            let _ = w.panel.supports.settle_edit();
+            let message = w.window.get_review_message().to_string();
+            (before, before_the_press(&w), message)
+        });
+        assert!(message.contains("undone"), "{message}");
+        assert_eq!(before, after);
+    }
+
+    /// #163: Cancel on the slice a pass asked for cancels Fix All with it,
+    /// as Cancel on the card does.
+    #[test]
+    fn a_cancelled_slice_cancels_fix_all() {
+        let (before, after, message) = on_fresh_slint_thread(|| {
+            let w = island_window_repeating(true);
+            let before = before_the_press(&w);
+            w.window.invoke_review_fix_all_requested();
+            let _ = wait_fix_all(&w.panel);
+            assert_eq!(w.resliced.get(), 1);
+            // What the Slice driver does when its Cancel ends the slice.
+            w.panel.slice_ended_without_result(true);
+            let message = w.window.get_review_message().to_string();
+            (before, before_the_press(&w), message)
+        });
+        assert!(message.contains("cancelled"), "{message}");
+        assert_eq!(before, after);
+    }
+
+    /// #163 on a real project (`BREADSLICER_FIX_ALL_BREAD`: its printer,
+    /// resin and supports), or on a model (`BREADSLICER_FIX_ALL_MODEL`, a
+    /// mesh: set on the plate centred, `BREADSLICER_FIX_ALL_LIFT` mm up, 0
+    /// by default, scaled to `BREADSLICER_FIX_ALL_HEIGHT` mm tall when set,
+    /// its supports generated with the default options, the
+    /// printer and resin `BREADSLICER_FIX_ALL_PRINTER` and
+    /// `BREADSLICER_FIX_ALL_RESIN`, by default an M7 Pro and ABS-Like Pro at
+    /// 50 µm): one Fix All press with "Repeat until clean"
+    /// (`BREADSLICER_FIX_ALL_REPEAT=0` for one pass), each pass timed, the
+    /// slices made as the Slice driver makes them. Every support the run
+    /// says it added holds its island (none is found again), a row offers a
+    /// support exactly when Fix All would, and one undo takes the whole run
+    /// back. Prints the findings before and after, and what each pass did.
+    #[test]
+    #[ignore = "needs BREADSLICER_FIX_ALL_BREAD or BREADSLICER_FIX_ALL_MODEL"]
+    fn real_project_fix_all_until_clean() {
+        let env = |name: &str| std::env::var(name).ok();
+        let (path, is_model) = match (
+            env("BREADSLICER_FIX_ALL_BREAD"),
+            env("BREADSLICER_FIX_ALL_MODEL"),
+        ) {
+            (Some(bread), _) => (PathBuf::from(bread), false),
+            (None, Some(model)) => (PathBuf::from(model), true),
+            (None, None) => {
+                eprintln!("skipping: neither BREADSLICER_FIX_ALL_BREAD nor _MODEL is set");
+                return;
+            }
+        };
+        let lift: f64 = env("BREADSLICER_FIX_ALL_LIFT").map_or(0.0, |v| v.parse().expect("mm"));
+        let height: Option<f64> = env("BREADSLICER_FIX_ALL_HEIGHT").map(|v| v.parse().expect("mm"));
+        let printer_id = env("BREADSLICER_FIX_ALL_PRINTER")
+            .unwrap_or_else(|| "anycubic-photon-mono-m7-pro".to_owned());
+        let resin_id = env("BREADSLICER_FIX_ALL_RESIN")
+            .unwrap_or_else(|| "anycubic-abs-like-resin-pro-50um".to_owned());
+        let repeat = std::env::var("BREADSLICER_FIX_ALL_REPEAT").map_or(true, |v| v != "0");
+        let report = on_fresh_slint_thread(move || {
+            let (scene, sets, printer, resin) = if is_model {
+                (
+                    minis_plate_at(std::slice::from_ref(&path), lift, height),
+                    None,
+                    PrinterId::new(&printer_id).expect("valid id"),
+                    MaterialId::new(&resin_id).expect("valid id"),
+                )
+            } else {
+                let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("it opens");
+                let sc_project_formats::LoadedContent::Project(mut project) = loaded.content else {
+                    panic!("a .bread is a project")
+                };
+                let restored =
+                    crate::support_persist::restore_supports(&mut project.scene, project.supports);
+                assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+                let printer = project.payload.printer.clone().expect("a printer");
+                let resin = project.payload.resin.clone().expect("a resin");
+                (project.scene, Some(restored.sets), printer, resin)
+            };
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot {
+                fix_all_repeat: repeat,
+                ..PreferencesSnapshot::for_tests()
+            });
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            document.install_graph(scene, path.clone());
+            if let Some(sets) = sets {
+                crate::support_persist::install_sets(&document, sets);
+            }
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
+            if is_model {
+                // `BREADSLICER_FIX_ALL_RAFT=off` generates them without a raft.
+                let raft_off = std::env::var("BREADSLICER_FIX_ALL_RAFT").is_ok_and(|v| v == "off");
+                supports.generate_now(sc_geom::df_supports::DfSupportOptions {
+                    raft: if raft_off {
+                        sc_geom::df_supports::RaftMode::Off
+                    } else {
+                        Default::default()
+                    },
+                    ..Default::default()
+                });
+            }
+            let hollow =
+                HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
+            let resliced = Rc::new(Cell::new(0));
+            panel.set_reslice({
+                let resliced = resliced.clone();
+                move || {
+                    resliced.set(resliced.get() + 1);
+                    true
+                }
+            });
+            panel.notes_open.set(true);
+            slice_project(&document, &panel, &printer, &resin, false);
+            let leaves_before: Vec<String> = fix_all_fingerprint(&document, &panel, "")
+                .lines()
+                .filter(|l| l.starts_with("leaf"))
+                .map(str::to_owned)
+                .collect();
+            let mut lines = vec![format!(
+                "before: {} findings, Fix All offers {}",
+                held_findings(&panel).len(),
+                window.get_review_fix_all()
+            )];
+            for f in held_findings(&panel) {
+                lines.push(format!("  {f:?}"));
+            }
+            let revision_before = document.scene_revision();
+            let press = Instant::now();
+            window.invoke_review_fix_all_requested();
+            let mut pass = 0;
+            while panel.fixing() {
+                pass += 1;
+                let placing = Instant::now();
+                if panel.placing.borrow().is_some() {
+                    let _ = wait_fix_all(&panel);
+                }
+                let placed = placing.elapsed();
+                let message = window.get_review_message().to_string();
+                if !panel.fixing() {
+                    lines.push(format!("pass {pass}: supports {placed:?}; {message}"));
+                    break;
+                }
+                assert_eq!(resliced.get(), pass, "the pass asked for its slice");
+                let slicing = Instant::now();
+                slice_project(&document, &panel, &printer, &resin, true);
+                lines.push(format!(
+                    "pass {pass}: supports {placed:?}, slice and review {:?}; {message}",
+                    slicing.elapsed()
+                ));
+            }
+            lines.push(format!(
+                "press to clean: {:?}, {} slices; {}",
+                press.elapsed(),
+                resliced.get(),
+                window.get_review_message()
+            ));
+            let findings: Vec<Finding> = {
+                let held = panel.held.borrow();
+                let Some(ReviewOutcome::Reviewed { findings, .. }) =
+                    held.as_ref().map(|h| &h.outcome)
+                else {
+                    panic!("reviewed")
+                };
+                findings.clone()
+            };
+            lines.push(format!(
+                "after: {} findings, Fix All offers {}",
+                findings.len(),
+                window.get_review_fix_all()
+            ));
+            let mut unheld = 0;
+            {
+                let marks = panel.marks.borrow();
+                for f in &findings {
+                    let key = FindingKey::of(f);
+                    let state = if let Some(why) = marks.refusal(&key) {
+                        format!("refused ({why})")
+                    } else if marks.was_supported(&key) {
+                        unheld += 1;
+                        "SUPPORTED AND FOUND AGAIN".to_owned()
+                    } else {
+                        String::new()
+                    };
+                    lines.push(format!(
+                        "  {} {} {}-{} largest {:?} mm2 {state}",
+                        f.severity.as_str(),
+                        f.title,
+                        f.first_layer + 1,
+                        f.last_layer + 1,
+                        f.largest_mm2
+                    ));
+                }
+            }
+            // As the card shows them.
+            lines.push(format!("card: {}", window.get_review_summary()));
+            let shown = window.get_review_rows();
+            for row in (0..shown.row_count()).filter_map(|i| shown.row_data(i)) {
+                if row.title.as_str() == "No support fits here" {
+                    lines.push(format!(
+                        "  card {} {} {}: {}",
+                        ["error", "warning", "note"][row.severity as usize],
+                        row.title,
+                        row.layers,
+                        row.remains
+                    ));
+                }
+            }
+            // #409: what a click on a finding costs, with its highlight on
+            // the cut and in the slice view, against the plain cap.
+            let build_volume = ctrl.build_volume();
+            let mut clicks = Vec::new();
+            let mut lit_caps = Vec::new();
+            let mut plain_caps = Vec::new();
+            for (id, finding) in findings.iter().enumerate().take(40) {
+                if finding.footprint.is_none() {
+                    continue;
+                }
+                let layer = finding.first_layer as u32;
+                let click = Instant::now();
+                window.invoke_review_finding_clicked(id as i32);
+                clicks.push(click.elapsed());
+                let lit = Instant::now();
+                let raster = ctrl.cap_raster(layer, &build_volume).expect("a cap");
+                let _image = crate::slice_cap::cap_raster_to_rgba(&raster);
+                lit_caps.push(lit.elapsed());
+                let plain = Instant::now();
+                let raster = document
+                    .with_slice_layer(layer, |l| {
+                        crate::slice_cap::build_cap_raster(l, &build_volume)
+                    })
+                    .flatten()
+                    .expect("a cap");
+                let _image = crate::slice_cap::cap_raster_to_rgba(&raster);
+                plain_caps.push(plain.elapsed());
+            }
+            let spread = |mut times: Vec<Duration>| {
+                times.sort_unstable();
+                match (times.first(), times.get(times.len() / 2), times.last()) {
+                    (Some(a), Some(m), Some(b)) => format!("{a:?} / {m:?} / {b:?}"),
+                    _ => "-".to_owned(),
+                }
+            };
+            lines.push(format!(
+                "highlight over {} clicks (min / median / max): click {}; cap and panel image with highlight {}; plain {}",
+                clicks.len(),
+                spread(clicks),
+                spread(lit_caps),
+                spread(plain_caps)
+            ));
+            // The card's rows offering a support, and Fix All's supports.
+            let rows = window.get_review_rows();
+            let mut by_rows: Vec<i32> = (0..rows.row_count())
+                .filter_map(|i| rows.row_data(i))
+                .filter(|row| row.fix == FixKind::AddSupport as i32)
+                .map(|row| row.id)
+                .collect();
+            by_rows.sort_unstable();
+            let mut by_fix_all: Vec<i32> = panel
+                .fix_all_plan()
+                .supports
+                .iter()
+                .map(|(i, _)| *i as i32)
+                .collect();
+            by_fix_all.sort_unstable();
+            // A run that added no support (marks only) leaves no undo step.
+            let undone = document.scene_revision() == revision_before
+                || document.undo().expect("one undo")
+                    && document.scene_revision() == revision_before
+                    && fix_all_fingerprint(&document, &panel, "")
+                        .lines()
+                        .filter(|l| l.starts_with("leaf"))
+                        .eq(leaves_before.iter().map(String::as_str));
+            (lines.join("\n"), unheld, by_rows, by_fix_all, undone)
+        });
+        let (report, unheld, by_rows, by_fix_all, undone) = report;
+        eprintln!("{report}");
+        assert_eq!(unheld, 0, "every support the run added holds its island");
+        assert_eq!(by_rows, by_fix_all, "a row offers what Fix All takes");
+        assert!(undone, "one undo takes the whole run back");
     }
 }

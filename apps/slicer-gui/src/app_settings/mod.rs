@@ -368,6 +368,16 @@ fn is_default_prescan_supports(on: &bool) -> bool {
     !*on
 }
 
+/// Fix All repeats until the review is clean by default (#163): one press
+/// finishes the job.
+fn default_fix_all_repeat() -> bool {
+    true
+}
+
+fn is_default_fix_all_repeat(on: &bool) -> bool {
+    *on
+}
+
 /// Models keep their facets by default; supports always shade smooth.
 fn default_smooth_models() -> bool {
     false
@@ -479,6 +489,14 @@ pub(crate) struct AppSettings {
     /// Omitted in TOML while off (the default).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     lift_models_on_plate: bool,
+    /// Whether a Fix All press repeats its passes until the review is clean
+    /// (#163), the Review card's box. Omitted in TOML while on (the
+    /// default).
+    #[serde(
+        default = "default_fix_all_repeat",
+        skip_serializing_if = "is_default_fix_all_repeat"
+    )]
+    fix_all_repeat: bool,
     /// The app messages the user silenced with "Don't show again", by key
     /// (see `error_dialog::MessageKey`). Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -531,6 +549,7 @@ impl Default for AppSettings {
             gizmo_size: DEFAULT_GIZMO_SIZE,
             orthographic_view: false,
             lift_models_on_plate: false,
+            fix_all_repeat: default_fix_all_repeat(),
             silenced_messages: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
@@ -692,6 +711,14 @@ impl AppSettings {
 
     pub(crate) fn set_lift_models_on_plate(&mut self, on: bool) {
         self.lift_models_on_plate = on;
+    }
+
+    pub(crate) fn fix_all_repeat(&self) -> bool {
+        self.fix_all_repeat
+    }
+
+    pub(crate) fn set_fix_all_repeat(&mut self, on: bool) {
+        self.fix_all_repeat = on;
     }
 
     pub(crate) fn silenced_messages(&self) -> BTreeSet<String> {

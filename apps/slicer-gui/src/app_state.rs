@@ -348,6 +348,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_gizmo_size(snap.gizmo_size);
     settings.set_orthographic_view(snap.orthographic_view);
     settings.set_lift_models_on_plate(snap.lift_models_on_plate);
+    settings.set_fix_all_repeat(snap.fix_all_repeat);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
@@ -503,6 +504,7 @@ impl AppState {
             gizmo_size: settings.gizmo_size(),
             orthographic_view: settings.orthographic_view(),
             lift_models_on_plate: settings.lift_models_on_plate(),
+            fix_all_repeat: settings.fix_all_repeat(),
             // Never stored: the log runs until the app closes and every launch
             // starts with it off (#74).
             diagnostic_log: false,
@@ -745,6 +747,7 @@ impl AppState {
         // drivers, and the Slice driver hands it each slice's findings.
         let review_panel = ReviewPanel::install(
             ui,
+            self.prefs.clone(),
             ctrl.document(),
             ctrl.clone(),
             df_support_run.clone(),
@@ -2223,6 +2226,15 @@ mod settings_saver_tests {
     }
 
     #[test]
+    fn saver_mapping_carries_the_repeat_of_fix_all() {
+        let mut settings = AppSettings::default();
+        let mut snap = snapshot_with(ThemePreference::System);
+        snap.fix_all_repeat = false;
+        apply_snapshot_to_settings(&mut settings, &snap);
+        assert!(!settings.fix_all_repeat());
+    }
+
+    #[test]
     fn saver_mapping_carries_the_lift_of_models_on_the_plate() {
         let mut settings = AppSettings::default();
         let mut snap = snapshot_with(ThemePreference::System);
@@ -2521,6 +2533,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::Gizmo,
             PreferencesChange::Projection,
             PreferencesChange::LiftModelsOnPlate,
+            PreferencesChange::FixAllRepeat,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,

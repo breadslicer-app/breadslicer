@@ -19,6 +19,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use sc_mesh_core::transform::Transform3D;
 use slint::ComponentHandle;
@@ -88,6 +89,11 @@ pub(crate) struct ViewportController {
     /// an empty image. Shares the cap key space with the 3D cut so the 2 stay
     /// in lockstep.
     slice_view_key: Cell<Option<u64>>,
+    /// The pixels of the review finding last clicked (#409), highlighted on
+    /// the cut and in the slice-view panel, and a count of its changes for
+    /// the cap key.
+    review_highlight: RefCell<Option<Arc<sc_review::CavityFill>>>,
+    highlight_generation: Cell<u64>,
     /// The name of the printer whose plate the viewport shows, drawn under
     /// the word on the plate's front tab; `None` for the placeholder plate.
     plate_printer_name: RefCell<Option<String>>,
@@ -175,6 +181,8 @@ impl ViewportController {
             render: RenderHost::new(ui),
             input,
             slice_view_key: Cell::new(None),
+            review_highlight: RefCell::new(None),
+            highlight_generation: Cell::new(0),
             plate_printer_name: RefCell::new(None),
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
@@ -219,6 +227,8 @@ impl ViewportController {
             render: RenderHost::new_for_test(),
             input: InputDispatch::new(),
             slice_view_key: Cell::new(None),
+            review_highlight: RefCell::new(None),
+            highlight_generation: Cell::new(0),
             plate_printer_name: RefCell::new(None),
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
@@ -826,6 +836,10 @@ impl ViewportController {
             return;
         }
         crate::breadcrumbs::note(&format!("tab: {section:?}"));
+        // The Review card is the Slice tab's: its highlight goes with it.
+        if section != WorkspaceSection::Slice {
+            self.set_review_highlight(None);
+        }
         if !self.allows_transform_gizmo() {
             self.cancel_transform_gestures();
         }
@@ -897,13 +911,13 @@ impl ViewportController {
         self.overlay
             .borrow()
             .as_ref()
-            .is_some_and(|shown| std::sync::Arc::ptr_eq(shown, pieces))
+            .is_some_and(|shown| Arc::ptr_eq(shown, pieces))
     }
 
     /// Shows `pieces` over the scene until replaced (`None` clears them).
     pub(crate) fn set_preview_overlay(&self, pieces: Option<crate::mesh_render::Overlay>) {
         let changed = match (&*self.overlay.borrow(), &pieces) {
-            (Some(a), Some(b)) => !std::sync::Arc::ptr_eq(a, b),
+            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
             (None, None) => false,
             _ => true,
         };
@@ -926,6 +940,61 @@ impl ViewportController {
     /// value.
     pub(crate) fn on_selected_layer_changed(&self) {
         self.mark_dirty();
+    }
+
+    /// Highlights the pixels of a review finding (#409) on the cut and in
+    /// the slice-view panel, on whichever of its layers the slider shows,
+    /// until replaced (`None` clears it). Only the selected layer's cap is
+    /// made again; the scene is not uploaded again.
+    pub(crate) fn set_review_highlight(&self, footprint: Option<Arc<sc_review::CavityFill>>) {
+        let changed = match (&*self.review_highlight.borrow(), &footprint) {
+            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
+            (None, None) => false,
+            _ => true,
+        };
+        if changed {
+            *self.review_highlight.borrow_mut() = footprint;
+            self.highlight_generation
+                .set(self.highlight_generation.get().wrapping_add(1));
+            self.mark_dirty();
+        }
+    }
+
+    /// The pixels highlighted now (#409).
+    #[cfg(test)]
+    pub(crate) fn review_highlight(&self) -> Option<Arc<sc_review::CavityFill>> {
+        self.review_highlight.borrow().clone()
+    }
+
+    /// The cap of layer `layer` of the held slice, with the highlighted
+    /// finding's pixels on that layer marked (#409).
+    pub(crate) fn cap_raster(
+        &self,
+        layer: u32,
+        build_volume: &BuildVolume,
+    ) -> Option<crate::slice_cap::CapRaster> {
+        let document = self.session.document();
+        let (mut raster, z_mm) = document
+            .with_slice_layer(layer, |l| {
+                crate::slice_cap::build_cap_raster(l, build_volume).map(|r| (r, l.z_mm()))
+            })
+            .flatten()?;
+        if let Some(footprint) = self.review_highlight.borrow().as_ref() {
+            let rects: Vec<[f64; 4]> = footprint
+                .slabs
+                .iter()
+                .filter(|slab| slab.bottom_mm <= z_mm && z_mm < slab.top_mm)
+                .flat_map(|slab| {
+                    slab.rects
+                        .iter()
+                        .map(|r| [r.x0_mm, r.y0_mm, r.x1_mm, r.y1_mm])
+                })
+                .collect();
+            if !rects.is_empty() {
+                crate::slice_cap::highlight_cap(&mut raster, &rects, build_volume);
+            }
+        }
+        Some(raster)
     }
 
     pub(crate) fn on_viewport_resized(&self, w: f32, h: f32) {
@@ -3274,12 +3343,7 @@ impl ViewportController {
         }
         let image = match cap_key {
             Some(_) => self
-                .session
-                .document()
-                .with_slice_layer(layer, |l| {
-                    crate::slice_cap::build_cap_raster(l, build_volume)
-                })
-                .flatten()
+                .cap_raster(layer, build_volume)
                 .map(|raster| {
                     slint::Image::from_rgba8(crate::slice_cap::cap_raster_to_rgba(&raster))
                 })
@@ -3348,17 +3412,19 @@ impl ViewportController {
         // reads solid. Keyed on the slice generation plus the layer, so a
         // camera orbit reuses the texture and a re-slice rebuilds it; `None`
         // (nothing clipped) clears the cap.
+        // The highlighted finding (#409) rides in the key: a click rebuilds
+        // the selected layer's cap, and only that.
         let cap_key = clip_z.map(|_| {
-            (self.session.document().slice_generation() << 20) ^ u64::from(selected_layer)
+            let mut key = DefaultHasher::new();
+            (
+                self.session.document().slice_generation(),
+                selected_layer,
+                self.highlight_generation.get(),
+            )
+                .hash(&mut key);
+            key.finish()
         });
-        let mut build_cap = || {
-            self.session
-                .document()
-                .with_slice_layer(selected_layer, |layer| {
-                    crate::slice_cap::build_cap_raster(layer, &build_volume)
-                })
-                .flatten()
-        };
+        let mut build_cap = || self.cap_raster(selected_layer, &build_volume);
         match renderer.update_cap(cap_key, &mut build_cap) {
             Ok(()) | Err(RenderError::DeviceLost) => {}
             Err(err) => self.session.loader().note_render_failure(&err),
