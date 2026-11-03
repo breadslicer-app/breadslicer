@@ -203,6 +203,7 @@ fn renderer_calls_return_device_lost_once_the_flag_is_set() {
             coverage: vec![255u8; 16],
             width: 4,
             height: 4,
+            highlight: Vec::new(),
         })
     };
     assert!(matches!(
@@ -663,6 +664,7 @@ fn render_with_a_cap_produces_a_texture() {
             coverage: vec![255u8; 4 * 4],
             width: 4,
             height: 4,
+            highlight: Vec::new(),
         })
     };
     renderer
@@ -1581,6 +1583,7 @@ fn update_cap_reports_a_refused_texture_and_leaves_the_cap_off() {
             coverage: vec![255u8; (side * side) as usize],
             width: side,
             height: side,
+            highlight: Vec::new(),
         })
     };
 

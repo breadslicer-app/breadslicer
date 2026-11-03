@@ -15,6 +15,9 @@
 //! every frontend lists them in the same order.
 
 use std::cmp::Ordering;
+use std::sync::Arc;
+
+use crate::fill::CavityFill;
 
 /// The problem a finding reports. The declaration order is the order
 /// findings of the same layer are listed in.
@@ -299,7 +302,24 @@ pub struct Finding {
     pub detail: String,
     /// A one-click fix, when the check can propose one.
     pub fix: Option<SuggestedFix>,
+    /// The largest section of the part it is about, in mm²: for an island,
+    /// all its pieces on one layer, on the layer where they are largest
+    /// (#163). `None` when the check does not measure one.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub largest_mm2: Option<f64>,
+    /// The pixels it is about, layer by layer, for a frontend to highlight
+    /// (#409): an island's pieces, a thin feature, a speck, a cavity. At
+    /// most [`MAX_FOOTPRINT_LAYERS`] layers from its first; `None` when the
+    /// check keeps no pixels.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub footprint: Option<Arc<CavityFill>>,
 }
+
+/// The most layers a finding's footprint keeps, from its first layer
+/// (#409): 0.05 mm layers cover 3.2 mm, which shows where a part goes
+/// wrong; a part the review follows for hundreds of layers is not drawn
+/// whole.
+pub const MAX_FOOTPRINT_LAYERS: usize = 64;
 
 impl Finding {
     /// A finding on the inclusive layer range `first_layer..=last_layer`,
@@ -330,6 +350,8 @@ impl Finding {
             title: title.into(),
             detail: detail.into(),
             fix: None,
+            largest_mm2: None,
+            footprint: None,
         }
     }
 
@@ -337,6 +359,20 @@ impl Finding {
     #[must_use]
     pub fn with_fix(mut self, fix: SuggestedFix) -> Self {
         self.fix = Some(fix);
+        self
+    }
+
+    /// The same finding with its largest section, in mm².
+    #[must_use]
+    pub fn with_largest_mm2(mut self, largest_mm2: f64) -> Self {
+        self.largest_mm2 = Some(largest_mm2);
+        self
+    }
+
+    /// The same finding with the pixels it is about (#409).
+    #[must_use]
+    pub fn with_footprint(mut self, footprint: Arc<CavityFill>) -> Self {
+        self.footprint = Some(footprint);
         self
     }
 
@@ -357,6 +393,11 @@ impl Finding {
                 (None, Some(_)) => Ordering::Less,
                 (Some(_), None) => Ordering::Greater,
                 (Some(a), Some(b)) => a.total_cmp(b),
+            })
+            .then_with(|| {
+                self.largest_mm2
+                    .unwrap_or(-1.0)
+                    .total_cmp(&other.largest_mm2.unwrap_or(-1.0))
             })
     }
 }

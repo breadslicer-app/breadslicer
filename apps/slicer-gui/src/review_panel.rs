@@ -81,6 +81,7 @@ use std::time::{Duration, Instant};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::SceneSpatial;
+use sc_review::checks::islands::island_policy;
 use sc_review::{CavityFill, CheckKind, Finding, Severity, SuggestedFix};
 use sc_scene::NodeId;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -1166,6 +1167,7 @@ impl ReviewPanel {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_review_selected(-1);
         }
+        self.ctrl.set_review_highlight(None);
         self.push(None);
     }
 
@@ -1215,6 +1217,8 @@ impl ReviewPanel {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_review_selected(-1);
         }
+        // A new review: no finding is selected, nothing is highlighted.
+        self.ctrl.set_review_highlight(None);
         let passes = if after_fix_all {
             match self.after_pass_slice() {
                 AfterPass::Done(passes) => passes,
@@ -1272,6 +1276,7 @@ impl ReviewPanel {
                         .as_ref()
                         .is_some_and(|held| held.generation != current);
                 if gone {
+                    self.ctrl.set_review_highlight(None);
                     let dropped = self.held.borrow_mut().take();
                     // The review of before a Fix All press, put back with its
                     // slice on Cancel (#163).
@@ -1445,8 +1450,10 @@ impl ReviewPanel {
         findings.get(usize::try_from(id).ok()?).cloned()
     }
 
-    /// Moves the layer slider to the finding's first layer and centres the
-    /// camera on its focus point.
+    /// Moves the layer slider to the finding's first layer, centres the
+    /// camera on its focus point and highlights its pixels on the cut and in
+    /// the slice view (#409), on every layer it spans, until another finding
+    /// is clicked or the card goes.
     fn jump_to(&self, id: i32) {
         let (Some(ui), Some(finding)) = (self.ui.upgrade(), self.finding(id)) else {
             return;
@@ -1455,6 +1462,7 @@ impl ReviewPanel {
         let layer = finding.first_layer.min(layers.saturating_sub(1));
         ui.set_selected_layer_index(layer as f32);
         self.ctrl.on_selected_layer_changed();
+        self.ctrl.set_review_highlight(finding.footprint.clone());
         let at = world(finding.focus);
         self.ctrl
             .centre_camera_on(glam::Vec3::from(at), JUMP_RADIUS_MM);
@@ -1970,7 +1978,9 @@ fn fix_all_leaves(finding: &Finding, drains: Option<usize>) -> SharedString {
 /// `findings` as the card shows them: an island whose support the engine
 /// refused on the scene as it stands reads "No support fits here", and it
 /// is a warning, not an error (#235): nothing more can be done for it from
-/// the review, and the row says why.
+/// the review, and the row says why. One that never grows larger than
+/// [`island_policy::NO_SUPPORT_NOTE_MM2`] is a note (#163): too small to be
+/// worth a support where none fits.
 fn no_support_fits(findings: &[Finding], marks: &RowMarks) -> Vec<Finding> {
     findings
         .iter()
@@ -1979,9 +1989,11 @@ fn no_support_fits(findings: &[Finding], marks: &RowMarks) -> Vec<Finding> {
             let mut finding = finding.clone();
             if marks.held_back.contains(&i) && marks.refused.contains_key(&i) {
                 finding.title = ctr!("Review", "No support fits here").to_string();
-                if finding.severity == Severity::Error {
-                    finding.severity = Severity::Warning;
-                }
+                finding.severity = if marks.too_small.contains(&i) {
+                    Severity::Info
+                } else {
+                    finding.severity.max(Severity::Warning)
+                };
             }
             finding
         })
@@ -2021,6 +2033,9 @@ struct RowMarks {
     held_back: BTreeSet<usize>,
     /// Findings whose gap to the model below is marked to join (#235).
     joined: BTreeSet<usize>,
+    /// Islands no support reaches that never grow larger than
+    /// [`island_policy::NO_SUPPORT_NOTE_MM2`]: notes, not warnings (#163).
+    too_small: BTreeSet<usize>,
     /// Whether fills can be marked: the models stand as sliced.
     fixable: bool,
     /// Whether the notes are unfolded.
@@ -2058,6 +2073,14 @@ impl RowMarks {
             }
             if marks.has(PatchKind::Join, &key) {
                 row_marks.joined.insert(i);
+            }
+            if row_marks.held_back.contains(&i)
+                && row_marks.refused.contains_key(&i)
+                && finding
+                    .largest_mm2
+                    .is_some_and(|mm2| mm2 <= island_policy::NO_SUPPORT_NOTE_MM2 + 1e-12)
+            {
+                row_marks.too_small.insert(i);
             }
         }
         row_marks
@@ -2103,7 +2126,13 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
                     0
                 };
             }
-            if let Some(why) = marks.refused.get(&i) {
+            if let (true, Some(mm2)) = (marks.too_small.contains(&i), finding.largest_mm2) {
+                row.remains = ctr!(
+                    "Review",
+                    "No support reaches it, and it never grows past {} mm²: too small to be worth a support where none fits.",
+                    format!("{mm2:.3}")
+                );
+            } else if let Some(why) = marks.refused.get(&i) {
                 row.remains = if marks.held_back.contains(&i) {
                     ctr!(
                         "Review",

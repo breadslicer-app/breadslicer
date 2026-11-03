@@ -1029,6 +1029,11 @@ fn a_floating_speck_is_a_warning_to_erase() {
         })
     );
     assert_focus(&fixture, finding, [120, 20], 4);
+    // #409: the highlight is the speck's one pixel on its one layer.
+    let footprint = finding.footprint.as_ref().expect("a footprint");
+    assert_eq!(footprint.slabs.len(), 1);
+    let area: f64 = footprint.slabs[0].rects.iter().map(|r| r.area_mm2()).sum();
+    assert!((area - 0.01).abs() < 1e-9, "{footprint:?}");
 }
 
 /// The output findings of `fixture` with the erasures they offer.

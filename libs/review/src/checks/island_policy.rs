@@ -88,6 +88,17 @@ pub const JOIN_MIN_FRACTION: f64 = super::MIN_SUPPORTED_FRACTION;
 /// below it is then a minimal island.
 pub const SUPPORT_CLIMB_MM: f64 = 0.10;
 
+/// The largest island the review leaves as a note once the support engine
+/// found no way to it, in mm² of its largest section (#163): 1.0, a square
+/// millimetre. This applies only after the engine tried and failed: where a
+/// support fits, the island gets one. Where none fits, an island never
+/// larger than this is too small to be worth a warning: the engine found no
+/// valid, convenient spot for a tip, and nothing more can be done for it
+/// from the review. A larger one stays a warning: something that size
+/// hangs with nothing under it. On a 46 mm pre-supported mini, the islands
+/// no support reached grew to 0.003 to 0.80 mm².
+pub const NO_SUPPORT_NOTE_MM2: f64 = 1.0;
+
 /// Slack on the height comparisons, in mm: layer heights summed in floating
 /// point.
 pub const HEIGHT_TOLERANCE_MM: f64 = 1e-6;

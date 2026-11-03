@@ -13,6 +13,7 @@
 use sc_print_primitives::Mirror;
 
 use super::*;
+use crate::fill::CavityFill;
 use crate::finding::PlatePoint;
 use crate::test_support::{Fixture, FixtureBuilder, HEIGHT_PX, LAYER_HEIGHT_MM, Shape, WIDTH_PX};
 
@@ -552,6 +553,87 @@ fn a_growing_tip_is_one_island_over_its_layers() {
             at: fixture.input().underside(3, plain.focus)
         })
     );
+}
+
+/// The pixels of layer `layer` whose centres a footprint's slab for that
+/// layer covers, as `[x, y]`, sorted.
+fn footprint_pixels(fixture: &Fixture, footprint: &CavityFill, layer: usize) -> Vec<[u32; 2]> {
+    let input = fixture.input();
+    let z = input.layers()[layer].sample_mm;
+    let rects: Vec<_> = footprint
+        .slabs
+        .iter()
+        .filter(|slab| slab.bottom_mm <= z && z < slab.top_mm)
+        .flat_map(|slab| slab.rects.iter().copied())
+        .collect();
+    let mut out = Vec::new();
+    for y in 0..HEIGHT_PX {
+        for x in 0..WIDTH_PX {
+            let [px, py] = input.pixel_to_plate([f64::from(x) + 0.5, f64::from(y) + 0.5]);
+            if rects
+                .iter()
+                .any(|r| r.x0_mm <= px && px < r.x1_mm && r.y0_mm <= py && py < r.y1_mm)
+            {
+                out.push([x, y]);
+            }
+        }
+    }
+    out
+}
+
+/// The solid pixels of layer `layer`, as `[x, y]`, sorted.
+fn solid_pixels(fixture: &Fixture, layer: usize) -> Vec<[u32; 2]> {
+    let mut out: Vec<[u32; 2]> = fixture
+        .layer_pixels(layer)
+        .solid
+        .iter()
+        .flat_map(|run| (run.x0..run.x1).map(move |x| [x, run.row]))
+        .collect();
+    out.sort_by_key(|&[x, y]| (y, x));
+    out
+}
+
+/// #409: an island's footprint is its pixels, on every layer it spans and
+/// on no other, and the finding knows its largest section.
+#[test]
+fn an_island_keeps_exactly_its_pixels_for_the_highlight() {
+    // The upside-down pyramid of `a_growing_tip_is_one_island_over_its_layers`,
+    // beside a wall on the plate the island never touches.
+    let fixture = FixtureBuilder::new(8)
+        .model(.., Shape::rect(10.0, 10.0, 20.0, 100.0))
+        .model(3..4, square(99, 59, 2))
+        .model(4..5, square(97, 57, 6))
+        .model(5.., square(95, 55, 10))
+        .build();
+    let finding = only(&islands(&fixture)).clone();
+    let footprint = finding.footprint.clone().expect("a footprint");
+    assert_eq!(footprint.slabs.len(), 5, "layers 3 to 7");
+    let island = |layer: usize| -> Vec<[u32; 2]> {
+        let (x, y, side) = match layer {
+            3 => (99, 59, 2),
+            4 => (97, 57, 6),
+            _ => (95, 55, 10),
+        };
+        let mut out: Vec<[u32; 2]> = (y..y + side)
+            .flat_map(|py| (x..x + side).map(move |px| [px, py]))
+            .collect();
+        out.sort_by_key(|&[x, y]| (y, x));
+        out
+    };
+    for layer in 3..8 {
+        let mut got = footprint_pixels(&fixture, &footprint, layer);
+        got.sort_by_key(|&[x, y]| (y, x));
+        assert_eq!(got, island(layer), "layer {layer}");
+        // The wall beside it is not the island's.
+        assert!(solid_pixels(&fixture, layer).len() > got.len());
+    }
+    assert!(footprint_pixels(&fixture, &footprint, 2).is_empty());
+    assert!((finding.largest_mm2.expect("measured") - 1.0).abs() < 1e-9);
+    // A minimal island keeps its pixels too.
+    let minimal = speck_under_a_ledge(4, 2);
+    let finding = only(&islands(&minimal)).clone();
+    let footprint = finding.footprint.expect("a footprint");
+    assert_eq!(footprint_pixels(&minimal, &footprint, 3).len(), 4);
 }
 
 /// #405: a first layer as large as a tip's contact keeps its support.

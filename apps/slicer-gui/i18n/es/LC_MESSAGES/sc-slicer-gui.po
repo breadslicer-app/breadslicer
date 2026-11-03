@@ -6037,6 +6037,12 @@ msgid "No support fits here"
 msgstr "No entra un soporte acá"
 
 #: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "No support reaches it, and it never grows past {} mm²: too small to be worth a support where none fits."
+msgstr "Ningún soporte llega, y nunca pasa de {} mm²: es demasiado chica para que valga un soporte donde no entra ninguno."
+
+#: src/review_panel.rs
 msgctxt "Review"
 msgid "The island will be joined to the model below on the next slice."
 msgstr "La isla se va a unir al modelo de abajo en el próximo laminado."

@@ -660,14 +660,15 @@ impl Renderer {
         }
     }
 
-    /// Upload a coverage raster as an R8 texture and build the cap's group-1
-    /// bind group.
+    /// Upload a coverage raster as an RG8 texture (coverage, highlight) and
+    /// build the cap's group-1 bind group.
     fn upload_cap_texture(&self, raster: &CapRaster) -> Result<wgpu::BindGroup, RenderError> {
+        let bytes = raster.texture_bytes();
         scoped(&self.core.device, || {
             self.coverage_bind_group(
                 "cap",
-                wgpu::TextureFormat::R8Unorm,
-                &raster.coverage,
+                wgpu::TextureFormat::Rg8Unorm,
+                &bytes,
                 raster.width,
                 raster.height,
                 &self.pipelines.cap.texture_bind_group_layout,

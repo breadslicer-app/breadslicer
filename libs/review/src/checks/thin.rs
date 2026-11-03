@@ -132,12 +132,13 @@
 //!   third of a pixel across, by default) is not seen.
 
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use sc_sl1cer::contour::ContourLayer;
 
 use crate::fill::CavityFill;
-use crate::finding::{CheckKind, Finding, RoleScope, Severity, SuggestedFix};
+use crate::finding::{CheckKind, Finding, MAX_FOOTPRINT_LAYERS, RoleScope, Severity, SuggestedFix};
 use crate::input::{ReviewInput, Role};
 use crate::regions::{Connectivity, label_runs, measure_runs};
 use crate::runner::ReviewContext;
@@ -1093,10 +1094,20 @@ fn report(
             focus_layer: focus.layer,
             focus: piece(focus),
         };
-        let finding = feature.finding(input, grid, pass, rules);
+        let pixels = feature_pixels(members, piece);
+        // The feature's own pixels, for a frontend to highlight (#409).
+        let footprint: Vec<(usize, Vec<Run>)> = pixels
+            .iter()
+            .filter(|(layer, _)| *layer < feature.first + MAX_FOOTPRINT_LAYERS)
+            .cloned()
+            .collect();
+        let mut finding = feature.finding(input, grid, pass, rules);
+        if footprint.iter().any(|(_, runs)| !runs.is_empty()) {
+            finding = finding.with_footprint(Arc::new(CavityFill::from_runs(input, footprint)));
+        }
         findings.push(if pass.role == Role::Model {
             let at = finding.focus;
-            thickenings.push(thickening(input, members, piece));
+            thickenings.push(CavityFill::grown_from_runs(input, pixels, THICKEN_PX));
             finding.with_fix(SuggestedFix::Thicken {
                 at,
                 feature: thickenings.len() - 1,
@@ -1108,13 +1119,12 @@ fn report(
     findings
 }
 
-/// The pixels that thicken a feature: those of every piece of it, grown
-/// [`THICKEN_PX`] on every side, layer by layer.
-fn thickening<'p>(
-    input: &ReviewInput<'_>,
+/// The pixels of a feature, layer by layer: those of every piece of it. A
+/// thickening grows them [`THICKEN_PX`] on every side.
+fn feature_pixels<'p>(
     members: &[RegionRef],
     piece: impl Fn(&RegionRef) -> &'p Piece,
-) -> CavityFill {
+) -> Vec<(usize, Vec<Run>)> {
     let mut by_layer: Vec<(usize, Vec<Run>)> = Vec::new();
     for member in members {
         let pixels = &piece(member).pixels;
@@ -1124,7 +1134,7 @@ fn thickening<'p>(
         }
     }
     by_layer.sort_by_key(|(layer, _)| *layer);
-    CavityFill::grown_from_runs(input, by_layer, THICKEN_PX)
+    by_layer
 }
 
 /// A feature waiting for its samples to be measured.

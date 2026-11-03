@@ -76,6 +76,7 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::iter;
 use std::ops::Range;
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use sc_sl1cer::contour::{ClosedRing, Polygon};
@@ -84,7 +85,9 @@ use sc_sl1cer::raster::pixel_map::PixelMap;
 
 use crate::checks::thin;
 use crate::fill::CavityFill;
-use crate::finding::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
+use crate::finding::{
+    CheckKind, Finding, MAX_FOOTPRINT_LAYERS, PlatePoint, RoleScope, Severity, SuggestedFix,
+};
 use crate::input::{ReviewInput, Role};
 use crate::regions::{LayerPixels, PlateRegions, Region};
 use crate::runner::ReviewContext;
@@ -1186,6 +1189,8 @@ fn floating_parts(
     let pixel_mm2 = input.pixel_area_mm2();
     let mut findings = Vec::new();
     let mut specks: Vec<&[RegionRef]> = Vec::new();
+    // The body of each finding, for its footprint (#409).
+    let mut found: Vec<&[RegionRef]> = Vec::new();
     for (members, &held_past) in bodies.iter().zip(held_past) {
         let bottom = members[0].layer;
         if bottom < PLATE_LAYERS || regions.layer(bottom - 1).is_empty() || held_past {
@@ -1223,6 +1228,7 @@ fn floating_parts(
                 ),
             ).with_fix(SuggestedFix::Erase { at: focus, speck: specks.len() }));
             specks.push(members);
+            found.push(members);
             continue;
         }
         let finding = Finding::new(
@@ -1245,9 +1251,61 @@ fn floating_parts(
         } else {
             finding
         });
+        found.push(members);
     }
     let erasures = speck_erasures(input, &specks);
+    let findings = findings
+        .into_iter()
+        .zip(body_footprints(input, &found))
+        .map(|(finding, footprint)| finding.with_footprint(Arc::new(footprint)))
+        .collect();
     (findings, erasures)
+}
+
+/// The pixels of each body of `bodies` (its member regions), on at most
+/// [`MAX_FOOTPRINT_LAYERS`] layers from its first: what its finding
+/// highlights (#409). Each layer is rasterised once, in parallel.
+fn body_footprints(input: &ReviewInput<'_>, bodies: &[&[RegionRef]]) -> Vec<CavityFill> {
+    let mut wanted: Vec<(usize, usize, u32)> = bodies
+        .iter()
+        .enumerate()
+        .flat_map(|(body, members)| {
+            let first = members.first().map_or(0, |m| m.layer);
+            members
+                .iter()
+                .filter(move |m| m.layer < first + MAX_FOOTPRINT_LAYERS)
+                .map(move |m| (m.layer, body, m.index))
+        })
+        .collect();
+    wanted.sort_unstable();
+    let by_layer: Vec<&[(usize, usize, u32)]> = wanted.chunk_by(|a, b| a.0 == b.0).collect();
+    let found: Vec<Vec<(usize, usize, Vec<Run>)>> = by_layer
+        .par_iter()
+        .map(|members| {
+            let layer = members[0].0;
+            let pixels = LayerPixels::compute(input, layer);
+            members
+                .chunk_by(|a, b| a.1 == b.1)
+                .map(|regions| {
+                    let own: Vec<Run> = pixels
+                        .solid
+                        .iter()
+                        .zip(&pixels.solid_labels)
+                        .filter(|(_, label)| regions.iter().any(|r| r.2 == **label))
+                        .map(|(run, _)| *run)
+                        .collect();
+                    (layer, regions[0].1, own)
+                })
+                .collect()
+        })
+        .collect();
+    let mut out: Vec<Vec<(usize, Vec<Run>)>> = vec![Vec::new(); bodies.len()];
+    for (layer, body, runs) in found.into_iter().flatten() {
+        out[body].push((layer, runs));
+    }
+    out.into_iter()
+        .map(|layers| CavityFill::from_runs(input, layers))
+        .collect()
 }
 
 /// The pixels that erase each speck of `specks` (its member regions): its

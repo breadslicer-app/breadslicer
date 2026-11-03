@@ -117,8 +117,10 @@
 
 use rayon::prelude::*;
 
+use std::sync::Arc;
+
 use crate::fill::CavityFill;
-use crate::finding::{CheckKind, Finding, RoleScope, Severity, SuggestedFix};
+use crate::finding::{CheckKind, Finding, MAX_FOOTPRINT_LAYERS, RoleScope, Severity, SuggestedFix};
 use crate::regions::LayerPixels;
 use crate::runner::ReviewContext;
 use crate::runs::{self, Run};
@@ -530,11 +532,16 @@ struct Reported {
     largest_px: u64,
     /// Whether something sound rests on its island.
     held_from_above: bool,
-    /// Its island, when minimal (#402).
-    minimal: Option<IslandSize>,
+    /// How large its island grows.
+    size: IslandSize,
+    /// Whether its island is minimal (#402).
+    minimal: bool,
     /// Its island's pieces from its layer up to where a support may aim
     /// (#405), with the island's section on each of those layers in pixels.
     climb: Vec<(RegionRef, u64)>,
+    /// Its island's pieces from its layer up, on at most
+    /// [`MAX_FOOTPRINT_LAYERS`] layers: what the finding highlights (#409).
+    footprint: Vec<RegionRef>,
 }
 
 /// How large an island grows before something sound holds it.
@@ -642,7 +649,7 @@ fn report(
         let last_layer = members[members.len() - 1].layer;
         let held = held_from_above[group];
         let size = island_size(ctx, scan, members);
-        let minimal = (held && options.is_minimal(&size)).then_some(size);
+        let minimal = held && options.is_minimal(&size);
         for start in chosen {
             let largest_px = members
                 .iter()
@@ -652,35 +659,43 @@ fn report(
                 .unwrap_or(0);
             // The layers a support may climb to, and the island's pieces
             // on them (#405).
-            let climb: Vec<(RegionRef, u64)> =
-                if minimal.is_none() && options.support_climb_mm > 0.0 {
-                    let bottom = spans[start.at.layer].bottom_mm;
-                    members
-                        .iter()
-                        .filter(|m| {
-                            m.layer > start.at.layer
-                                && spans[m.layer].bottom_mm - bottom
-                                    <= options.support_climb_mm + island_policy::HEIGHT_TOLERANCE_MM
-                        })
-                        .map(|&m| {
-                            let section = members
-                                .iter()
-                                .filter(|o| o.layer == m.layer)
-                                .map(|&o| piece(o).area_px)
-                                .sum();
-                            (m, section)
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                };
+            let climb: Vec<(RegionRef, u64)> = if !minimal && options.support_climb_mm > 0.0 {
+                let bottom = spans[start.at.layer].bottom_mm;
+                members
+                    .iter()
+                    .filter(|m| {
+                        m.layer > start.at.layer
+                            && spans[m.layer].bottom_mm - bottom
+                                <= options.support_climb_mm + island_policy::HEIGHT_TOLERANCE_MM
+                    })
+                    .map(|&m| {
+                        let section = members
+                            .iter()
+                            .filter(|o| o.layer == m.layer)
+                            .map(|&o| piece(o).area_px)
+                            .sum();
+                        (m, section)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let footprint = members
+                .iter()
+                .filter(|m| {
+                    m.layer >= start.at.layer && m.layer < start.at.layer + MAX_FOOTPRINT_LAYERS
+                })
+                .copied()
+                .collect();
             reported.push(Reported {
                 start,
                 last_layer,
                 largest_px,
                 held_from_above: held,
+                size,
                 minimal,
                 climb,
+                footprint,
             });
         }
     }
@@ -688,25 +703,33 @@ fn report(
     let mut layers: Vec<usize> = reported.iter().map(|r| r.start.at.layer).collect();
     layers.sort_unstable();
     layers.dedup();
-    let described: Vec<(Finding, Option<CavityFill>)> = layers
+    let described: Vec<(usize, Finding, Option<CavityFill>)> = layers
         .par_iter()
         .flat_map_iter(|&layer| {
             let cut = LayerPieces::compute(ctx.input, layer, keep_px);
             let below = Below::read(ctx, options, layer);
             reported
                 .iter()
-                .filter(move |r| r.start.at.layer == layer)
-                .map(|r| {
-                    island_finding(ctx, options, r, piece(r.start.at), &cut, &below, pixel_mm2)
+                .enumerate()
+                .filter(move |(_, r)| r.start.at.layer == layer)
+                .map(|(i, r)| {
+                    let (finding, join) =
+                        island_finding(ctx, options, r, piece(r.start.at), &cut, &below, pixel_mm2);
+                    (i, finding, join)
                 })
                 .collect::<Vec<_>>()
         })
         .collect();
+    let mut footprints = footprints(ctx, keep_px, &reported);
     // The joins, numbered in the order of the findings.
     let mut joins = Vec::new();
     let findings = described
         .into_iter()
-        .map(|(mut finding, join)| {
+        .map(|(i, finding, join)| {
+            let mut finding = finding.with_largest_mm2(reported[i].size.section_mm2);
+            if let Some(footprint) = footprints[i].take() {
+                finding = finding.with_footprint(Arc::new(footprint));
+            }
             if let Some(join) = join {
                 if let Some(SuggestedFix::JoinBelow { join: index, .. }) = &mut finding.fix {
                     *index = joins.len();
@@ -717,6 +740,47 @@ fn report(
         })
         .collect();
     (findings, joins)
+}
+
+/// The pixels of each reported island's footprint (#409), by its index in
+/// `reported`: its pieces, layer by layer. Each layer is rasterised once,
+/// in parallel.
+fn footprints(
+    ctx: &ReviewContext<'_>,
+    keep_px: u64,
+    reported: &[Reported],
+) -> Vec<Option<CavityFill>> {
+    let mut wanted: Vec<(usize, usize, u32)> = reported
+        .iter()
+        .enumerate()
+        .flat_map(|(r, island)| island.footprint.iter().map(move |m| (m.layer, r, m.index)))
+        .collect();
+    wanted.sort_unstable();
+    let by_layer: Vec<&[(usize, usize, u32)]> = wanted.chunk_by(|a, b| a.0 == b.0).collect();
+    let found: Vec<Vec<(usize, usize, Vec<Run>)>> = by_layer
+        .par_iter()
+        .map(|pieces| {
+            let layer = pieces[0].0;
+            let cut = LayerPieces::compute(ctx.input, layer, keep_px);
+            pieces
+                .chunk_by(|a, b| a.1 == b.1)
+                .map(|island| {
+                    let runs = island.iter().fold(Vec::new(), |runs, &(_, _, index)| {
+                        runs::union(&runs, &cut.runs_of(index))
+                    });
+                    (layer, island[0].1, runs)
+                })
+                .collect()
+        })
+        .collect();
+    let mut layers: Vec<Vec<(usize, Vec<Run>)>> = vec![Vec::new(); reported.len()];
+    for (layer, r, runs) in found.into_iter().flatten() {
+        layers[r].push((layer, runs));
+    }
+    layers
+        .into_iter()
+        .map(|layers| (!layers.is_empty()).then(|| CavityFill::from_runs(ctx.input, layers)))
+        .collect()
 }
 
 /// What lies below one layer, as the islands starting on it need it: the
@@ -862,7 +926,8 @@ fn island_finding(
     } else {
         RoleScope::Support
     };
-    if let Some(size) = reported.minimal {
+    if reported.minimal {
+        let size = reported.size;
         let title = if is_model {
             "Minimal island"
         } else {
