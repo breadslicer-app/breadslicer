@@ -15,6 +15,11 @@
 //! keeps it. A document an older build wrote has no log: its hand-added
 //! supports are known by their ids, its removals and moves not at all
 //! ([`HandLog::unrecorded`]).
+//!
+//! A brace the person laid between two supports is kept by its two ends,
+//! and a brace of the run they removed by where its ends were: a set made
+//! again lays the one between the supports there now, and takes the run's
+//! brace at those ends away.
 
 use serde::{Deserialize, Serialize};
 use support_gen_df::three::Vec3;
@@ -54,6 +59,29 @@ pub(crate) struct HandRemoved {
     pub(crate) tip: [f64; 3],
 }
 
+/// A brace the person laid between two supports (#3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HandBraced {
+    /// The brace's id in the state.
+    pub(crate) id: String,
+    /// The model its supports hold, by its id in the state.
+    pub(crate) model: String,
+    /// Where it starts, on the axis of the support clicked first (world
+    /// mm), and where it ends on the other's.
+    pub(crate) from: [f64; 3],
+    pub(crate) to: [f64; 3],
+}
+
+/// A brace of the run the person removed, by where its ends were.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HandUnbraced {
+    pub(crate) model: String,
+    pub(crate) from: [f64; 3],
+    pub(crate) to: [f64; 3],
+}
+
 /// Every hand edit a session carries, in the order they were made.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +90,12 @@ pub(crate) struct HandLog {
     pub(crate) placed: Vec<HandPlaced>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) removed: Vec<HandRemoved>,
+    /// Braces laid by hand (#3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) braces: Vec<HandBraced>,
+    /// Braces of the run removed by hand (#3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) unbraced: Vec<HandUnbraced>,
     /// Edits were made before the log was kept (a set an older build
     /// saved): its hand-added supports are known by their ids alone, its
     /// removals and moves not at all.
@@ -73,7 +107,11 @@ impl HandLog {
     /// Whether the log says nothing: a document then leaves it out, as one
     /// written before the log was.
     pub(crate) fn is_empty(&self) -> bool {
-        self.placed.is_empty() && self.removed.is_empty() && !self.unrecorded
+        self.placed.is_empty()
+            && self.removed.is_empty()
+            && self.braces.is_empty()
+            && self.unbraced.is_empty()
+            && !self.unrecorded
     }
 
     /// The log of the edits on model `model` alone.
@@ -89,6 +127,18 @@ impl HandLog {
                 .removed
                 .iter()
                 .filter(|r| r.model == model)
+                .cloned()
+                .collect(),
+            braces: self
+                .braces
+                .iter()
+                .filter(|b| b.model == model)
+                .cloned()
+                .collect(),
+            unbraced: self
+                .unbraced
+                .iter()
+                .filter(|b| b.model == model)
                 .cloned()
                 .collect(),
             unrecorded: self.unrecorded,
@@ -114,6 +164,14 @@ impl HandLog {
         for r in log.removed.iter_mut().filter(|r| r.model == model) {
             r.tip = point(r.tip);
         }
+        for b in log.braces.iter_mut().filter(|b| b.model == model) {
+            b.from = point(b.from);
+            b.to = point(b.to);
+        }
+        for b in log.unbraced.iter_mut().filter(|b| b.model == model) {
+            b.from = point(b.from);
+            b.to = point(b.to);
+        }
         log
     }
 }
@@ -125,6 +183,8 @@ pub enum HandEditKind {
     Added,
     /// A support of the run moved by its tip.
     Moved,
+    /// A brace laid between two supports.
+    Braced,
 }
 
 /// Why a hand edit could not be put back on a set made again.
@@ -139,6 +199,11 @@ pub enum LostWhy {
     CannotAttach,
     /// Other supports of the new run hang from the one it moved.
     CarriesOthers,
+    /// A brace's supports are no longer both where its ends were.
+    BraceEndsGone,
+    /// The brace no longer fits between the supports there, for this
+    /// reason.
+    BraceRefused(support_gen_df::supports::auto_bracing::auto_brace::HandBraceRefusal),
 }
 
 /// A hand edit a set made again could not keep.

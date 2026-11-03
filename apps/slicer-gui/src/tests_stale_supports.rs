@@ -536,3 +536,162 @@ fn a_repaired_pre_supported_mini_puts_its_supports_out_of_date() {
         assert_eq!(card.text, "The edit made by hand was put back.");
     });
 }
+
+/// Every brace of `session` by its two ends, rounded to a micron, each
+/// pair and the list sorted: what two sets braced alike share whatever
+/// their ids.
+fn brace_places(session: &DfSupportSession) -> Vec<[[i64; 3]; 2]> {
+    let c = &session.state().collections;
+    let at = |knot: &str| {
+        let p = c.knots[knot].pos;
+        [p.x, p.y, p.z].map(|v| (v * 1000.0).round() as i64)
+    };
+    let mut places: Vec<[[i64; 3]; 2]> = c
+        .braces
+        .values()
+        .map(|b| {
+            let mut ends = [at(&b.start_knot_id), at(&b.end_knot_id)];
+            ends.sort_unstable();
+            ends
+        })
+        .collect();
+    places.sort_unstable();
+    places
+}
+
+/// #3: a brace laid by hand and a brace of the run removed by hand follow
+/// the model moved in the plate plane, save and reopen, and go back on the
+/// set made again by "Recalculate, keeping my edits".
+#[test]
+fn braces_by_hand_follow_a_move_a_save_and_a_recalculation() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (document, run) = supported_slab(&window);
+        run.dialogs.attach(&window);
+        close_messages(&window);
+        let generated = in_force_session(&run).expect("editable");
+        // Two trunks 3 to 8 mm apart, low on their shafts, that a brace
+        // joins, by the engine's own say.
+        let c = &generated.state().collections;
+        let root = |id: &String| c.roots[&c.trunks[id].root_id].transform.pos;
+        let axis = |id: &String, z: f64| {
+            let (_, path) = generated
+                .support_paths()
+                .into_iter()
+                .find(|(k, _)| k == id)
+                .unwrap();
+            path.windows(2)
+                .find(|w| (w[1][2]..=w[0][2]).contains(&z))
+                .map(|w| {
+                    let t = (w[0][2] - z) / (w[0][2] - w[1][2]);
+                    std::array::from_fn(|k| (w[0][k] + (w[1][k] - w[0][k]) * t) as f32)
+                })
+                .unwrap()
+        };
+        let (from, to) = c
+            .trunks
+            .keys()
+            .flat_map(|a| c.trunks.keys().map(move |b| (a, b)))
+            .filter(|(a, b)| {
+                let (p, q) = (root(a), root(b));
+                a != b && (3.0..=8.0).contains(&(p.x - q.x).hypot(p.y - q.y))
+            })
+            .map(|(a, b)| (axis(a, 2.0), axis(b, 2.0)))
+            .find(|(f, t)| {
+                generated
+                    .brace_end_near(f.map(f64::from))
+                    .and_then(|e| generated.preview_brace(&e, t.map(f64::from)).ok())
+                    .is_some_and(|(p, _)| p.valid)
+            })
+            .expect("two trunks to brace");
+        window.set_support_tool(4);
+        run.brace_click(&window, from);
+        run.brace_click(&window, to);
+        settle_click(&run);
+        let braced = in_force_session(&run).expect("editable");
+        assert_eq!(
+            braced.state().collections.braces.len(),
+            c.braces.len() + 1,
+            "{}",
+            window.get_supports_last_run()
+        );
+        // A brace of the run, removed by a click on its middle.
+        let run_brace = c.braces.values().next().expect("a brace of the run");
+        let (p, q) = (
+            c.knots[&run_brace.start_knot_id].pos,
+            c.knots[&run_brace.end_knot_id].pos,
+        );
+        window.set_support_tool(2);
+        run.on_tool_click([
+            ((p.x + q.x) / 2.0) as f32,
+            ((p.y + q.y) / 2.0) as f32,
+            ((p.z + q.z) / 2.0) as f32,
+        ]);
+        let edited = in_force_session(&run).expect("editable");
+        assert_eq!(
+            edited.state().collections.braces.len(),
+            c.braces.len(),
+            "{}",
+            window.get_supports_last_run()
+        );
+        assert_eq!(edited.tips(), braced.tips(), "the brace alone went");
+
+        // Moved in the plate plane: the braces go along; Undo brings them
+        // back.
+        let model = slab_model(&document);
+        let (at, there) = ([10.0, 20.0, 9.0], [13.0, 18.0, 9.0]);
+        move_live(&document, model, at, there);
+        commit_move(&document, model, at, there);
+        let moved = in_force_session(&run).expect("editable");
+        let shifted: Vec<[[i64; 3]; 2]> = brace_places(&edited)
+            .into_iter()
+            .map(|ends| ends.map(|[x, y, z]| [x + 3000, y - 2000, z]))
+            .collect();
+        let mut now = brace_places(&moved);
+        now.iter_mut().for_each(|e| e.sort_unstable());
+        now.sort_unstable();
+        let mut want = shifted;
+        want.sort_unstable();
+        assert_eq!(now.len(), want.len());
+        for (a, b) in now.iter().zip(&want) {
+            for k in 0..2 {
+                for i in 0..3 {
+                    assert!((a[k][i] - b[k][i]).abs() <= 1, "{a:?} {b:?}");
+                }
+            }
+        }
+        assert!(document.undo().unwrap());
+        assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &edited)));
+
+        // Saved and reopened: the same braces.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("slab.bread");
+        crate::scene_save::save_project_to(&document, &target, &PrintDefaults::default())
+            .expect("the project saves");
+        let loaded = sc_project_formats::load_scene(&target, None, |_| {}).unwrap();
+        let sc_project_formats::LoadedContent::Project(project) = loaded.content else {
+            panic!("a .bread opens as a project");
+        };
+        let mut scene = project.scene;
+        let restored = crate::support_persist::restore_supports(&mut scene, project.supports);
+        assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+        document.install_project_graph(scene, target.clone(), project.payload);
+        crate::support_persist::install_sets(&document, restored.sets);
+        let reopened = in_force_session(&run).expect("editable");
+        assert_eq!(brace_places(&reopened), brace_places(&edited));
+
+        // Out of date, then made again keeping the edits: the brace laid by
+        // hand is back, the run's removed stays removed.
+        remesh(&document, slab_model(&document), same_shape);
+        card_on_click(&window, &run, true);
+        window.invoke_message_answered(MessageAnswer::KeepEdits);
+        until_generated(&window, &run);
+        let kept = in_force_session(&run).expect("in force again");
+        assert_eq!(brace_places(&kept), brace_places(&edited));
+        assert_eq!(
+            window.get_message().text,
+            "All 2 edits made by hand were put back."
+        );
+        close_messages(&window);
+    });
+}

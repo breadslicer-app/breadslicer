@@ -41,8 +41,9 @@ pub mod zone_presets;
 pub use document::{DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, RestoreError, RestoredSet};
 pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
-pub use session::{AddNote, AddOptions, DfSupportSession, EditError, EditPreview};
+pub use session::{AddNote, AddOptions, BraceEnd, DfSupportSession, EditError, EditPreview};
 pub use support_gen_df::pipeline::ScanCache;
+pub use support_gen_df::supports::auto_bracing::auto_brace::HandBraceRefusal;
 
 /// The name the generated support mesh carries.
 pub const DF_SUPPORT_MESH_NAME: &str = "Supports";

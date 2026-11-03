@@ -46,9 +46,9 @@ use sc_geom::JobError;
 use sc_geom::JobHandle;
 use sc_geom::df_supports::zone_presets::{ZonePreset, figures_70, minis_30};
 use sc_geom::df_supports::{
-    AddNote, AddOptions, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
-    DfSupportSession, EditError, EditPreview, HandEditKind, KeptEdits, LostEdit, LostWhy, RaftMode,
-    ScanCache, start_df_prescan, start_df_supports,
+    AddNote, AddOptions, BraceEnd, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
+    DfSupportSession, EditError, EditPreview, HandBraceRefusal, HandEditKind, KeptEdits, LostEdit,
+    LostWhy, RaftMode, ScanCache, start_df_prescan, start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
@@ -208,6 +208,9 @@ pub(crate) struct DfSupportRun {
     /// A drag of a Supports tab tool in flight (#3), and the timer that
     /// sends a box's owed rays between the moves.
     drag: RefCell<Option<DragState>>,
+    /// The brace tool's first end (#3), with the set it is on: the next
+    /// click on a support lays the brace.
+    brace_from: RefCell<Option<(DrawnSet, BraceEnd)>>,
     box_poll: slint::Timer,
     /// This driver, for what a drag starts from the viewport's side.
     me: RefCell<std::rc::Weak<DfSupportRun>>,
@@ -402,10 +405,75 @@ fn move_line(preview: &EditPreview) -> (slint::SharedString, bool) {
     }
 }
 
+/// Why a brace laid by hand cannot go there, in the person's words (#3).
+fn brace_text(why: HandBraceRefusal) -> slint::SharedString {
+    match why {
+        HandBraceRefusal::SameSupport => {
+            ctr!("DfSupportDialog", "both ends are on the same support")
+        }
+        HandBraceRefusal::OtherModel => {
+            ctr!("DfSupportDialog", "the two supports hold different models")
+        }
+        HandBraceRefusal::NotAShaft => {
+            ctr!("DfSupportDialog", "a brace joins trunks and branches only")
+        }
+        HandBraceRefusal::OffShaft => ctr!(
+            "DfSupportDialog",
+            "an end is off its support: too near the tip, or too low"
+        ),
+        HandBraceRefusal::TooClose => {
+            ctr!("DfSupportDialog", "the supports are too close to brace")
+        }
+        HandBraceRefusal::TooLong => ctr!(
+            "DfSupportDialog",
+            "it would be longer than the preset lets a brace be"
+        ),
+        HandBraceRefusal::TooFlat => ctr!(
+            "DfSupportDialog",
+            "it would be flatter than 45°: at 45° it ends off the other support"
+        ),
+        HandBraceRefusal::HitsModel => ctr!("DfSupportDialog", "it would cross the model"),
+    }
+}
+
+/// The brace tool's line for a preview of the second support (#3): what a
+/// click there lays, or why it cannot, and whether that warns.
+fn brace_line(preview: &EditPreview) -> (slint::SharedString, bool) {
+    match (preview.valid, preview.brace) {
+        (true, _) => (
+            ctr!(
+                "DfSupportDialog",
+                "Click to lay the brace. Esc drops the first end."
+            ),
+            false,
+        ),
+        (false, Some(why)) => (
+            ctr!("DfSupportDialog", "Cannot brace them: {}.", brace_text(why)),
+            true,
+        ),
+        (false, None) => (
+            ctr!("DfSupportDialog", "Cannot brace them: no brace fits there."),
+            true,
+        ),
+    }
+}
+
+/// The brace tool's line once its first end is picked (#3).
+fn brace_first_line() -> (slint::SharedString, bool) {
+    (
+        ctr!(
+            "DfSupportDialog",
+            "Now click the support to brace it to. Esc drops the first end."
+        ),
+        false,
+    )
+}
+
 /// Why the engine refused an edit, in the person's words.
 fn refusal(err: &EditError) -> slint::SharedString {
     match err {
         EditError::CannotAttach(note) => note_text(*note),
+        EditError::CannotBrace(why) => brace_text(*why),
         EditError::NothingThere => ctr!(
             "DfSupportDialog",
             "there is no model or support within reach of that point"
@@ -457,6 +525,8 @@ enum EditOp {
     RemoveTips(Vec<String>),
     /// Moves this support's tip to this point (#3).
     MoveTip(String, [f32; 3]),
+    /// Lays a brace from this end to the support at this point (#3).
+    Brace(BraceEnd, [f32; 3]),
 }
 
 /// One set's share of a hand edit: where it starts and what it does.
@@ -541,7 +611,7 @@ fn compute_edit(
 ) -> Computed {
     let points = |job: &EditJob| match &job.op {
         EditOp::Points(points) => points.len(),
-        EditOp::RemoveTips(_) | EditOp::MoveTip(..) => 0,
+        EditOp::RemoveTips(_) | EditOp::MoveTip(..) | EditOp::Brace(..) => 0,
     };
     watch
         .total
@@ -656,6 +726,9 @@ fn compute_job(
             }
             (EditOp::MoveTip(tip, to), false) => {
                 took = one(edited.move_tip(tip, to.map(f64::from), how));
+            }
+            (EditOp::Brace(from, to), false) => {
+                took = one(edited.add_brace(from, to.map(f64::from)));
             }
         }
         if let (EditOp::Points(points), false) = (&op, from_preview) {
@@ -934,6 +1007,8 @@ struct HoverAsk {
     tips: Arc<[String]>,
     /// For a warm-up (`tool` 0): the other sets' sessions, warmed with it.
     others: Vec<Arc<DfSupportSession>>,
+    /// For the brace tool's second support (`tool` 7): the first end.
+    brace_from: Option<BraceEnd>,
 }
 
 /// What tells a drawing's session apart for the hover preview: its leaf
@@ -950,7 +1025,11 @@ struct HoverAnswer {
     tool: i32,
     how: AddOptions,
     tip: Option<String>,
+    brace_from: Option<BraceEnd>,
     preview: Option<EditPreview>,
+    /// The preview shows only what the tool holds (the brace tool's first
+    /// support, the cursor off any other): drawn as pending.
+    pending: bool,
     /// For an Add that goes through: the session the click leaves.
     edited: Option<DfSupportSession>,
 }
@@ -987,8 +1066,31 @@ impl HoverWorker {
                         continue;
                     }
                     let p = ask.point.map(f64::from);
+                    let mut pending = matches!(ask.tool, 4 | 6);
                     let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         match (ask.tool, &ask.tip) {
+                            // The brace tool (#3): the support a first click
+                            // takes, then the brace to the one under the
+                            // cursor; off any, the first one still.
+                            (6, _) => ask.base.preview_brace_end(p).map(|(v, _)| (v, None)),
+                            (7, _) => match &ask.brace_from {
+                                // Off any support, or still on the first:
+                                // the first, as picked.
+                                Some(from) => match ask.base.preview_brace(from, p) {
+                                    Err(EditError::NothingThere) => {
+                                        pending = true;
+                                        ask.base.preview_brace_end(from.at).map(|(v, _)| (v, None))
+                                    }
+                                    Ok((v, _))
+                                        if v.brace == Some(HandBraceRefusal::SameSupport) =>
+                                    {
+                                        pending = true;
+                                        ask.base.preview_brace_end(from.at).map(|(v, _)| (v, None))
+                                    }
+                                    other => other,
+                                },
+                                None => Err(EditError::NothingThere),
+                            },
                             (1, _) => ask.base.preview_add_with(p, &ask.how),
                             (3, Some(tip)) => ask.base.preview_move_tip(tip, p, &ask.how),
                             // Move tip's hover: what a press there grabs.
@@ -1013,7 +1115,9 @@ impl HoverWorker {
                         tool: ask.tool,
                         how: ask.how,
                         tip: ask.tip,
+                        brace_from: ask.brace_from,
                         preview,
+                        pending,
                         edited,
                     };
                     // An answer never drawn is let go of after the lock: the
@@ -1248,6 +1352,7 @@ impl DfSupportRun {
             hover_at: Cell::new(None),
             pending_click: RefCell::new(None),
             drag: RefCell::new(None),
+            brace_from: RefCell::new(None),
             box_poll: slint::Timer::default(),
             me: RefCell::new(std::rc::Weak::new()),
             queued_clicks: RefCell::new(std::collections::VecDeque::new()),
@@ -2318,43 +2423,17 @@ impl DfSupportRun {
         self.hover_at.set(point.map(|p| (p, shift)));
         let generation = self.hover_generation.get() + 1;
         self.hover_generation.set(generation);
-        let ask = point.and_then(|point| {
-            let ui = self.ui.upgrade()?;
-            let tool = ui.get_support_tool();
-            if tool == 0 || self.handle.borrow().is_some() || self.drag.borrow().is_some() {
-                return None;
-            }
-            if tool == 3 {
-                let drawn = self.set_of_tip(point)?;
-                return Some(HoverAsk {
-                    generation,
-                    base: drawn.session.clone(),
-                    from: session_key(&drawn),
-                    point,
-                    tool: 4,
-                    how: AddOptions::default(),
-                    tip: None,
-                    tips: Arc::from([]),
-                    others: Vec::new(),
-                });
-            }
-            let (hand, how) = self.click_tool(&ui, tool, shift);
-            let drawn = self.set_at(point, hand)?;
-            if hand == HandTool::Add {
-                self.refresh_tip_label(&ui, Some(&drawn.session));
-            }
-            Some(HoverAsk {
-                generation,
-                base: drawn.session.clone(),
-                from: session_key(&drawn),
-                point,
-                tool,
-                how,
-                tip: None,
-                tips: Arc::from([]),
-                others: Vec::new(),
-            })
-        });
+        let bracing = self
+            .ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_support_tool() == 4)
+            && self.handle.borrow().is_none()
+            && self.drag.borrow().is_none();
+        let ask = if bracing {
+            self.brace_ask(generation, point)
+        } else {
+            self.tool_ask(generation, point, shift)
+        };
         let Some(ask) = ask else {
             self.hover_poll.stop();
             self.hover_shown.set(generation);
@@ -2381,6 +2460,79 @@ impl DfSupportRun {
             });
     }
 
+    /// The brace tool's preview at `point` (#3): before the first click, the
+    /// support it takes; after, the brace to the support under the cursor,
+    /// or the first support alone with the cursor off any.
+    fn brace_ask(&self, generation: u64, point: Option<[f32; 3]>) -> Option<HoverAsk> {
+        let first = self.brace_from.borrow().clone();
+        let (drawn, tool, at, brace_from) = match first {
+            Some((drawn, from)) => {
+                let at = point.unwrap_or(from.at.map(|c| c as f32));
+                let tool = if point.is_some() { 7 } else { 6 };
+                (drawn, tool, at, Some(from))
+            }
+            None => {
+                let point = point?;
+                (self.set_of_brace(point)?, 6, point, None)
+            }
+        };
+        Some(HoverAsk {
+            generation,
+            base: drawn.session.clone(),
+            from: session_key(&drawn),
+            point: at,
+            tool,
+            how: AddOptions::default(),
+            tip: None,
+            tips: Arc::from([]),
+            others: Vec::new(),
+            brace_from,
+        })
+    }
+
+    /// The preview of the other tools at `point`.
+    fn tool_ask(&self, generation: u64, point: Option<[f32; 3]>, shift: bool) -> Option<HoverAsk> {
+        point.and_then(|point| {
+            let ui = self.ui.upgrade()?;
+            let tool = ui.get_support_tool();
+            if tool == 0 || self.handle.borrow().is_some() || self.drag.borrow().is_some() {
+                return None;
+            }
+            if tool == 3 {
+                let drawn = self.set_of_tip(point)?;
+                return Some(HoverAsk {
+                    generation,
+                    base: drawn.session.clone(),
+                    from: session_key(&drawn),
+                    point,
+                    tool: 4,
+                    how: AddOptions::default(),
+                    tip: None,
+                    tips: Arc::from([]),
+                    others: Vec::new(),
+                    brace_from: None,
+                });
+            }
+            let (hand, how) = self.click_tool(&ui, tool, shift);
+            let drawn = self.set_at(point, hand)?;
+            if hand == HandTool::Add {
+                self.refresh_tip_label(&ui, Some(&drawn.session));
+            }
+            Some(HoverAsk {
+                generation,
+                base: drawn.session.clone(),
+                from: session_key(&drawn),
+                point,
+                tool,
+                how,
+                tip: None,
+                tips: Arc::from([]),
+                others: Vec::new(),
+                brace_from: None,
+            })
+        })
+    }
+
     /// The tool a click of the Supports tab's tool code `tool` is, and how
     /// an Add makes its support: hung from the nearest one with `shift`, at
     /// the tip size picked.
@@ -2400,6 +2552,7 @@ impl DfSupportRun {
     /// preview again, and the Add card says which tip it places.
     fn on_tool_changed(&self) {
         self.hover_at.set(None);
+        self.brace_from.borrow_mut().take();
         self.show_add_note(Default::default());
         if let Some(ui) = self.ui.upgrade() {
             self.refresh_tip_label(&ui, None);
@@ -2478,7 +2631,8 @@ impl DfSupportRun {
         let mut pieces = Vec::new();
         if let Some(preview) = &answer.preview {
             let tint = match answer.tool {
-                4 => OverlayTint::Pending,
+                _ if answer.pending => OverlayTint::Pending,
+                4 | 6 => OverlayTint::Pending,
                 _ if preview.valid => OverlayTint::Valid,
                 _ => OverlayTint::Invalid,
             };
@@ -2490,6 +2644,10 @@ impl DfSupportRun {
         match (&answer.preview, answer.tool) {
             (Some(preview), 1) => self.show_add_note(preview_line(preview, answer.how.attach)),
             (Some(preview), 3) => self.show_add_note(move_line(preview)),
+            (Some(preview), 7) if !answer.pending => self.show_add_note(brace_line(preview)),
+            (_, 6 | 7) if self.brace_from.borrow().is_some() => {
+                self.show_add_note(brace_first_line());
+            }
             // A box's or a brush's line says how many go, as they pick.
             (_, 5) => {}
             _ => self.show_add_note(Default::default()),
@@ -2528,6 +2686,7 @@ impl DfSupportRun {
             tip: None,
             tips: Arc::from([]),
             others: sets.map(|drawn| drawn.session).collect(),
+            brace_from: None,
         });
     }
 
@@ -2563,6 +2722,10 @@ impl DfSupportRun {
         if tool == 0 {
             return;
         }
+        if tool == 4 {
+            self.brace_click(&ui, point);
+            return;
+        }
         let (tool, how) = self.click_tool(&ui, tool, forced);
         if self.pending_click.borrow().is_some() {
             self.queued_clicks
@@ -2571,6 +2734,126 @@ impl DfSupportRun {
             return;
         }
         self.start_click(&ui, tool, point, how);
+    }
+
+    /// The set in force whose trunk or branch the brace tool takes at
+    /// `point` (world mm, on the supports): the nearest. Sets whose
+    /// supports' box is out of reach are not asked, so a hover asks one set
+    /// at most, as a rule, and with one in reach the worker's preview finds
+    /// whether a support is there.
+    fn set_of_brace(&self, point: [f32; 3]) -> Option<DrawnSet> {
+        let p = point.map(f64::from);
+        let mut near: Vec<DrawnSet> = self
+            .document
+            .with_scene(|spatial| {
+                sets_in_force(spatial, &self.sessions)
+                    .into_iter()
+                    .filter(|drawn| {
+                        spatial
+                            .leaf(drawn.leaf)
+                            .and_then(|q| q.transformed_aabb(q.world_transform()))
+                            .is_some_and(|aabb| box_distance(&aabb, p) <= SET_REACH_MM)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if near.len() <= 1 {
+            return near.pop();
+        }
+        near.into_iter()
+            .filter_map(|drawn| {
+                let end = drawn.session.brace_end_near(p)?;
+                let d = (0..3).map(|k| (end.at[k] - p[k]).powi(2)).sum::<f64>();
+                Some((d, drawn))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, drawn)| drawn)
+    }
+
+    /// A click of the brace tool at `point` (#3): the first picks the
+    /// support the brace starts from, there; the second lays the brace to
+    /// the support clicked, made off the UI thread as one undoable edit. A
+    /// second click its preview showed red says why and keeps the first.
+    fn brace_click(self: &Rc<Self>, ui: &MainWindow, point: [f32; 3]) {
+        let p = point.map(f64::from);
+        let first = self.brace_from.borrow().clone();
+        let Some((drawn, from)) = first else {
+            let end = self
+                .set_of_brace(point)
+                .and_then(|drawn| Some((drawn.session.brace_end_near(p)?, drawn)));
+            let Some((end, drawn)) = end else {
+                ui.set_supports_last_run(ctr!(
+                    "DfSupportDialog",
+                    "No trunk or branch there to brace from."
+                ));
+                return;
+            };
+            crate::breadcrumbs::note("supports: brace started");
+            *self.brace_from.borrow_mut() = Some((drawn, end));
+            self.show_add_note(brace_first_line());
+            self.on_tool_hover_with(Some(point), false);
+            return;
+        };
+        let in_force = self
+            .sets_in_force()
+            .into_iter()
+            .any(|d| session_key(&d) == session_key(&drawn));
+        if !in_force {
+            self.drop_brace();
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "The supports changed since the first end was picked; pick it again."
+            ));
+            return;
+        }
+        // Off any support, or on the first again: the first end stays.
+        let to = drawn.session.brace_end_near(p);
+        if to.as_ref().is_none_or(|to| to.shaft == from.shaft) {
+            self.show_add_note((
+                ctr!(
+                    "DfSupportDialog",
+                    "Click another trunk or branch of the same supports to brace it to."
+                ),
+                true,
+            ));
+            return;
+        }
+        // The preview of this very point: red says why, and the first end
+        // stays; green is the brace already laid.
+        let previewed = self.last_preview.borrow_mut().take().filter(|answer| {
+            answer.tool == 7
+                && !answer.pending
+                && answer.point == point
+                && answer.from == session_key(&drawn)
+                && answer.brace_from.as_ref() == Some(&from)
+        });
+        if let Some(answer) = &previewed
+            && let Some(preview) = &answer.preview
+            && !preview.valid
+        {
+            let line = brace_line(preview);
+            ui.set_supports_last_run(line.0.clone());
+            self.show_add_note(line);
+            return;
+        }
+        self.brace_from.borrow_mut().take();
+        self.show_add_note(Default::default());
+        let edited = previewed.and_then(|answer| answer.edited);
+        self.start_gesture(ui, drawn, EditOp::Brace(from, point), edited);
+    }
+
+    /// Drops the brace tool's first end, and what shows it: returns whether
+    /// there was one.
+    fn drop_brace(&self) -> bool {
+        if self.brace_from.borrow_mut().take().is_none() {
+            return false;
+        }
+        crate::breadcrumbs::note("supports: brace dropped");
+        self.end_previews();
+        self.last_ghost.borrow_mut().clear();
+        self.ctrl.set_preview_overlay(None);
+        self.show_add_note(Default::default());
+        true
     }
 
     /// Starts the edit of a click on a worker thread; [`Self::poll_click`]
@@ -3950,6 +4233,7 @@ impl DfSupportRun {
             tip: None,
             tips,
             others: Vec::new(),
+            brace_from: None,
         });
     }
 
@@ -4176,7 +4460,10 @@ impl SupportDragHandler for DfSupportRun {
                     ));
                     return false;
                 };
-                let tips = along_supports(drawn.session.support_paths());
+                // A brace is taken as a support is, by its line (#3).
+                let mut paths = drawn.session.support_paths();
+                paths.extend(drawn.session.brace_paths());
+                let tips = along_supports(paths);
                 let locate = SupportLocator::new(drawn.leaf, &tips);
                 let seen_from = SeenFrom::new(&tips, project);
                 let mut looked = HashMap::new();
@@ -4259,6 +4546,7 @@ impl SupportDragHandler for DfSupportRun {
                     tip,
                     tips: Arc::from([]),
                     others: Vec::new(),
+                    brace_from: None,
                 });
             }
             Some(DragState::Remove {
@@ -4323,6 +4611,10 @@ impl SupportDragHandler for DfSupportRun {
             }
             None => {}
         }
+    }
+
+    fn cancel_pending(&self) -> bool {
+        self.drop_brace()
     }
 
     fn drag_end(&self, commit: bool) {
@@ -4459,6 +4751,11 @@ fn lost_line(edit: &LostEdit) -> slint::SharedString {
         LostWhy::SurfaceChanged => ctr!("DfSupportDialog", "the model surface there changed"),
         LostWhy::NoRoute => ctr!("DfSupportDialog", "no support can reach that point now"),
         LostWhy::CannotAttach => ctr!("DfSupportDialog", "no support to hang it from there now"),
+        LostWhy::BraceEndsGone => ctr!(
+            "DfSupportDialog",
+            "the supports it joined are no longer there"
+        ),
+        LostWhy::BraceRefused(why) => brace_text(why),
         LostWhy::CarriesOthers => ctr!(
             "DfSupportDialog",
             "other supports of the new run hang from the one there"
@@ -4467,6 +4764,7 @@ fn lost_line(edit: &LostEdit) -> slint::SharedString {
     match edit.kind {
         HandEditKind::Added => ctr!("DfSupportDialog", "support added at {}: {}", at, why),
         HandEditKind::Moved => ctr!("DfSupportDialog", "support moved to {}: {}", at, why),
+        HandEditKind::Braced => ctr!("DfSupportDialog", "brace from {}: {}", at, why),
     }
 }
 
@@ -6986,6 +7284,7 @@ mod hand_edit_tests {
     fn the_hover_line_says_why_a_support_stands_on_its_own() {
         on_fresh_slint_thread(|| {
             let preview = |valid, attached, note| EditPreview {
+                brace: None,
                 mesh: sc_mesh_core::IndexedMesh::new(None, Vec::new(), Vec::new()),
                 valid,
                 attached,
@@ -8559,4 +8858,8 @@ mod hand_edit_tests {
     // The card of supports out of date (#408), with the helpers above.
     #[path = "../../tests_stale_supports.rs"]
     mod stale_supports;
+
+    // Braces laid by hand (#3), through the viewport.
+    #[path = "../../tests_hand_braces.rs"]
+    mod hand_braces;
 }

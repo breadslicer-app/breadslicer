@@ -270,7 +270,8 @@ export component MainWindow inherits Window {
     callback support-raft-off-requested();
     callback support-raft-ignore-requested();
     // The Supports tab manual tool: 0 none, 1 add a support where the model
-    // is clicked, 2 remove the support clicked.
+    // is clicked, 2 remove the support clicked, 3 move a tip, 4 brace two
+    // supports (#3).
     in-out property <int> support-tool: 0;
     // A click of the tool at a world point; with Shift, Add hangs the
     // support from the nearest one or places nothing.
@@ -1299,6 +1300,16 @@ export component MainWindow inherits Window {
                         }
                     }
                     if root.workspace-section == WorkspaceSection.Supports: ToolButton {
+                        icon: Icons.brace-supports;
+                        label: @tr("Inspector" => "Brace two supports (click one, then the other)");
+                        shortcut: "C";
+                        active: root.support-tool == 4;
+                        enabled: root.has-scene && !root.support-gen-in-progress;
+                        clicked => {
+                            root.support-tool = root.support-tool == 4 ? 0 : 4;
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Supports: ToolButton {
                         icon: Icons.remove-support;
                         label: @tr("Inspector" => "Remove support (click it)");
                         shortcut: "X";
@@ -1398,6 +1409,10 @@ export component MainWindow inherits Window {
                             }
                             if key == "m" || key == "M" {
                                 root.support-tool = root.support-tool == 3 ? 0 : 3;
+                                return true;
+                            }
+                            if key == "c" || key == "C" {
+                                root.support-tool = root.support-tool == 4 ? 0 : 4;
                                 return true;
                             }
                             // Remove: B a box or a brush; [ and ] the brush.
@@ -2075,6 +2090,7 @@ export component MainWindow inherits Window {
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 && root.support-remove-mode == 1 ? @tr("Workspace" => "Click a support to remove it, or paint over supports to remove them; [ ] or the wheel size the brush, B a box. Esc drops it.")
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 ? @tr("Workspace" => "Click a support to remove it, or drag a box over supports to remove them; B a brush. Esc drops it.")
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 3 ? @tr("Workspace" => "Drag a support by its tip over the model; it is routed again where you let go. Esc or a right click drops it.")
+                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 4 ? @tr("Workspace" => "Click a support where the brace starts, then the support it goes to; it is laid by the preset's bracing rules. Esc or a right click drops the first.")
                         : root.workspace-section == WorkspaceSection.Supports ? @tr("Workspace" => "Generate supports for every model on the plate.")
                         : root.workspace-section == WorkspaceSection.Slice ? @tr("Workspace" => "Drag the layer slider to inspect the slice.")
                         : @tr("Workspace" => "The printer file uses the printer and resin in force.");
