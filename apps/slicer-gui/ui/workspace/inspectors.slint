@@ -1147,13 +1147,24 @@ export component TransformInspector inherits VerticalLayout {
                 root.numeric-edit(14, v);
             }
         }
-        NumberField {
-            label: @tr("Inspector" => "Scale");
-            unit: "%";
-            decimals: 1;
-            value: root.scale;
-            committed(v) => {
-                root.numeric-edit(6, v);
+        // With two columns, Scale spans from the middle of World to the
+        // middle of Model, centred under both (BS-393).
+        HorizontalLayout {
+            spacing: 0px;
+
+            NumberField {
+                horizontal-stretch: 1;
+                label: @tr("Inspector" => "Scale");
+                unit: "%";
+                decimals: 1;
+                field-width: root.tilted ? 88px + 10px : 112px;
+                value: root.scale;
+                committed(v) => {
+                    root.numeric-edit(6, v);
+                }
+            }
+            if root.tilted: Rectangle {
+                width: 88px / 2;
             }
         }
         Note {

@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use i_slint_backend_testing::ElementHandle;
+use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use sc_message_catalog::bundle::Language;
 use sc_message_catalog::scan::scan_source;
 use slint::ComponentHandle;
@@ -295,9 +295,19 @@ fn in_spanish<R: Send>(
     setup: impl FnOnce(&MainWindow) + Send,
     check: impl FnOnce(&MainWindow) -> R + Send,
 ) -> R {
+    in_language("es", section, setup, check)
+}
+
+/// [`in_spanish`] in `language`.
+fn in_language<R: Send>(
+    language: &str,
+    section: WorkspaceSection,
+    setup: impl FnOnce(&MainWindow) + Send,
+    check: impl FnOnce(&MainWindow) -> R + Send,
+) -> R {
     on_fresh_slint_thread(|| {
         let window = MainWindow::new().expect("the headless platform creates a main window");
-        slint::select_bundled_translation("es").expect("bundled language");
+        slint::select_bundled_translation(language).expect("bundled language");
         window
             .show()
             .expect("the headless platform shows the window");
@@ -387,53 +397,105 @@ fn tab_labels(
     )
 }
 
-/// The left and right edges of the widest visible element labelled `label`.
-fn edges(window: &MainWindow, label: &str) -> Option<(f32, f32)> {
-    ElementHandle::find_by_accessible_label(window, label)
-        .filter(|e| e.size().height > 0.0)
-        .map(|e| {
-            (
-                e.absolute_position().x,
-                e.absolute_position().x + e.size().width,
-            )
+/// The left and right edges of the box of the number field whose input is
+/// labelled `label`.
+fn field(window: &MainWindow, label: &str) -> Option<(f32, f32)> {
+    let input = ElementHandle::find_by_accessible_label(window, label).find(|e| {
+        e.size().height > 0.0 && e.accessible_role() == Some(AccessibleRole::TextInput)
+    })?;
+    let at = input.absolute_position();
+    ElementHandle::find_by_element_id(window, "NumberField::box")
+        .map(|b| (b.absolute_position(), b.size()))
+        .find(|(p, s)| {
+            p.x <= at.x && at.x <= p.x + s.width && p.y <= at.y && at.y <= p.y + s.height
         })
-        .max_by(|a, b| (a.1 - a.0).total_cmp(&(b.1 - b.0)))
+        .map(|(p, s)| (p.x, p.x + s.width))
+}
+
+/// The SIZE card's texts in one language.
+struct SizeTexts {
+    language: &'static str,
+    headers: [&'static str; 2],
+    world: &'static str,
+    model: &'static str,
+    scale: &'static str,
 }
 
 #[test]
 fn a_tilted_model_shows_world_and_model_sizes_side_by_side() {
-    let shown = |tilted: bool| {
-        in_spanish(
-            WorkspaceSection::Transform,
-            |window| {
-                window.set_selection_valid(true);
-                window.set_selection_tilted(tilted);
-                window.set_selection_size_z(28.28);
-                window.set_selection_model_z(20.0);
-            },
-            |window| {
-                (
-                    shows(window, "Mundo") && shows(window, "Modelo"),
-                    edges(window, "Alto (Z)"),
-                    edges(window, "Alto del modelo (Z)"),
-                )
-            },
-        )
-    };
-    // 45° about X: two columns, the model's own size on the right, inside
-    // the inspector.
-    let (headers, world, model) = shown(true);
-    assert!(headers, "the World and Model headers show");
-    let (world, model) = (world.expect("world field"), model.expect("model field"));
-    assert!(world.1 < model.0, "world {world:?} left of model {model:?}");
-    assert!(
-        model.1 <= 1400.0,
-        "model field inside the window: {model:?}"
-    );
-    // No tilt: the card as before, one column.
-    let (headers, world, model) = shown(false);
-    assert!(!headers, "no column headers without a tilt");
-    assert!(world.is_some() && model.is_none(), "one column");
+    for t in [
+        SizeTexts {
+            language: "es",
+            headers: ["Mundo", "Modelo"],
+            world: "Alto (Z)",
+            model: "Alto del modelo (Z)",
+            scale: "Escala",
+        },
+        SizeTexts {
+            language: "en",
+            headers: ["World", "Model"],
+            world: "Height (Z)",
+            model: "Model height (Z)",
+            scale: "Scale",
+        },
+    ] {
+        let shown = |tilted: bool| {
+            in_language(
+                t.language,
+                WorkspaceSection::Transform,
+                |window| {
+                    window.set_selection_valid(true);
+                    window.set_selection_tilted(tilted);
+                    window.set_selection_size_z(28.28);
+                    window.set_selection_model_z(20.0);
+                    window.set_selection_scale(100.0);
+                },
+                |window| {
+                    (
+                        t.headers.iter().all(|h| shows(window, h)),
+                        field(window, t.world),
+                        field(window, t.model),
+                        field(window, t.scale),
+                    )
+                },
+            )
+        };
+        let lang = t.language;
+        // 45° about X: two columns, the model's own size on the right,
+        // inside the inspector; Scale from the middle of World to the
+        // middle of Model, centred under both.
+        let (headers, world, model, scale) = shown(true);
+        assert!(headers, "{lang}: the World and Model headers show");
+        let world = world.expect("world field");
+        let model = model.expect("model field");
+        let scale = scale.expect("scale field");
+        assert!(
+            world.1 < model.0,
+            "{lang}: world {world:?} left of model {model:?}"
+        );
+        assert!(
+            model.1 <= 1400.0,
+            "{lang}: model field inside the window: {model:?}"
+        );
+        let mid = |f: (f32, f32)| (f.0 + f.1) / 2.0;
+        assert!(
+            (mid(scale) - (world.0 + model.1) / 2.0).abs() <= 1.0,
+            "{lang}: scale {scale:?} centred under world {world:?} and model {model:?}"
+        );
+        assert!(
+            (scale.0 - mid(world)).abs() <= 1.0 && (scale.1 - mid(model)).abs() <= 1.0,
+            "{lang}: scale {scale:?} spans the middle of world {world:?} to the middle of model {model:?}"
+        );
+        // No tilt: the card as before, one column, Scale under it.
+        let (headers, world, model, scale) = shown(false);
+        assert!(!headers, "{lang}: no column headers without a tilt");
+        assert!(model.is_none(), "{lang}: one column");
+        let (world, scale) = (world.expect("world field"), scale.expect("scale field"));
+        assert!(
+            (world.0 - scale.0).abs() <= 1.0 && (world.1 - scale.1).abs() <= 1.0,
+            "{lang}: scale {scale:?} lines up with the size {world:?}"
+        );
+    }
 }
 
 #[test]
