@@ -46,6 +46,7 @@ use crate::error_dialog::ErrorTexts;
 use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision, leaf_mesh_swap};
+use crate::support_follow::moved_set;
 use crate::support_persist::{in_force, record};
 
 /// A mesh that goes along with its model as it is: where it stands and
@@ -473,21 +474,20 @@ fn make(
 /// mesh along as it is.
 fn copied_set(source: &Source, placement: &Placement) -> Option<CopiedSet> {
     let (session, _) = source.set.as_ref()?;
+    if placement.angle == 0.0 {
+        return moved_set(session, placement.translation);
+    }
     if session.model_count() != 1 || !session.supports_only_on(0) {
         return None;
     }
     // The port is DragonFruit's code: a panic in it leaves the copy with
     // its supports as they are drawn, not a failed fill.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let moved = if placement.angle == 0.0 {
-            session.moved_in_plane(0, placement.translation)
-        } else {
-            // The session gets the turned model as a run makes it.
-            let world = Transform3D::Affine(placement.motion().compose(&source.model.world));
-            let baked = sc_scene::bake_mesh_to_world(&source.model.mesh, &world).ok()?;
-            let now = model_from_world_mesh(String::new(), &baked);
-            session.turned_in_plane(0, now, placement.angle, placement.translation)
-        };
+        // The session gets the turned model as a run makes it.
+        let world = Transform3D::Affine(placement.motion().compose(&source.model.world));
+        let baked = sc_scene::bake_mesh_to_world(&source.model.mesh, &world).ok()?;
+        let now = model_from_world_mesh(String::new(), &baked);
+        let moved = session.turned_in_plane(0, now, placement.angle, placement.translation);
         let mesh = moved.mesh().ok()??;
         Some((Arc::new(moved), Arc::new(mesh)))
     }))

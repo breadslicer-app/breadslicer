@@ -308,18 +308,42 @@ pub(crate) struct SceneDocument {
 /// The edit that swaps the mesh a leaf shows for `after`, whichever way the
 /// leaf holds it: inline (an imported model) or through a mesh resource (a
 /// pasted fragment, such as the support mesh). `None` when `leaf` holds no
-/// mesh. A shared resource changes for every leaf that uses it.
+/// mesh. Only `leaf` changes: a resource other leaves show too (pasted
+/// copies, Fill bed's, #113) stays theirs, and the leaf comes back, under
+/// its id and where it stood, showing `after` inline.
 pub(crate) fn leaf_mesh_swap(
     scene: &Scene,
     leaf: NodeId,
     after: Arc<sc_mesh_core::IndexedMesh>,
 ) -> Option<SceneEdit> {
-    match &scene.node(leaf)?.kind {
+    let node = scene.node(leaf)?;
+    match &node.kind {
         NodeKind::Leaf(LeafPayload::Mesh(before)) => Some(SceneEdit::ReplaceLeafMesh {
             node_id: leaf,
             before: before.clone(),
             after,
         }),
+        NodeKind::Leaf(LeafPayload::MeshResource(rid))
+            if scene.other_leaf_references_resource(*rid, leaf) =>
+        {
+            let attachment = scene.attachment_of(leaf)?;
+            Some(SceneEdit::Compound(vec![
+                SceneEdit::RemoveLeaf {
+                    node_id: leaf,
+                    attachment,
+                    payload: LeafPayload::MeshResource(*rid),
+                    local_transform: node.local_transform,
+                    meta: node.meta.clone(),
+                },
+                SceneEdit::AddLeaf {
+                    node_id: leaf,
+                    attachment,
+                    payload: LeafPayload::Mesh(after),
+                    local_transform: node.local_transform,
+                    meta: node.meta.clone(),
+                },
+            ]))
+        }
         NodeKind::Leaf(LeafPayload::MeshResource(rid)) => {
             let rid = *rid;
             Some(SceneEdit::ReplaceMeshResource {
@@ -1300,6 +1324,58 @@ impl SceneDocument {
         self.paste_fragment_replacing(fragment, placement_translation, &[])
     }
 
+    /// [`Self::paste_fragment`] with the leaves `extra` added after the
+    /// pasted one, each at the root with its payload, transform and name, in
+    /// the same undo entry: a prepared model's supports pasted with it
+    /// (#113). Returns the pasted leaf and the added ones, in order; `None`
+    /// as [`Self::paste_fragment`] has it. The pasted leaf is selected.
+    pub(crate) fn paste_fragment_with(
+        &self,
+        fragment: &SceneFragment,
+        placement_translation: [f64; 3],
+        extra: Vec<(LeafPayload, Transform3D, Option<sc_scene::SceneMetadata>)>,
+    ) -> Result<Option<(NodeId, Vec<NodeId>)>, SceneError> {
+        let Some((paste, roots)) = self.paste_fragment_compound(fragment, placement_translation)
+        else {
+            return Ok(None);
+        };
+        let (ids, _) = self.allocate_ids(extra.len(), 0);
+        let Some(after) = self.with_scene(|spatial| spatial.graph().roots().len() + roots.len())
+        else {
+            return Ok(None);
+        };
+        if ids.len() != extra.len() {
+            return Ok(None);
+        }
+        let mut edits = match paste {
+            SceneEdit::Compound(edits) => edits,
+            one => vec![one],
+        };
+        for (k, ((payload, local_transform, meta), &node_id)) in
+            extra.into_iter().zip(&ids).enumerate()
+        {
+            edits.push(SceneEdit::AddLeaf {
+                node_id,
+                attachment: LeafAttachment::Root {
+                    position: after + k,
+                },
+                payload,
+                local_transform,
+                meta,
+            });
+        }
+        let edit = SceneEdit::Compound(edits);
+        match self.apply_edit(edit.clone()) {
+            Ok(()) => {
+                self.push_edit(edit);
+                self.set_selection(Selection::One(crate::selection::LeafId(roots[0])));
+                Ok(Some((roots[0], ids)))
+            }
+            Err(EditNotApplied::NoSceneLoaded) => Ok(None),
+            Err(EditNotApplied::Rejected(error)) => Err(error),
+        }
+    }
+
     /// [`Self::paste_fragment`] that also removes the leaves `replaced` (and
     /// the mesh resources only they used), all as 1 undo entry: a fresh
     /// support set taking the old one's place (#152). Ids that are not live
@@ -1750,8 +1826,10 @@ fn selected_leaves_removed_by(edit: &SceneEdit, selection: &SelectionState) -> V
                     collect(e, selection, out);
                 }
             }
+            // A leaf put back later in the same edit is still there: a
+            // leaf that stops sharing its mesh ([`leaf_mesh_swap`]).
+            SceneEdit::AddLeaf { node_id, .. } => out.retain(|id| id != node_id),
             SceneEdit::SetLocalTransform { .. }
-            | SceneEdit::AddLeaf { .. }
             | SceneEdit::AddMeshResource { .. }
             | SceneEdit::RemoveMeshResource { .. }
             | SceneEdit::ReplaceMeshResource { .. }

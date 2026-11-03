@@ -756,6 +756,50 @@ impl HollowRun {
         }
     }
 
+    /// Hollows the selected model with a `wall_mm` wall and a drain at
+    /// each of `drains` (a world point and the surface normal there), then
+    /// and there, as the tab's buttons and the poll do: for other modules'
+    /// tests.
+    #[cfg(test)]
+    pub(crate) fn hollow_now(self: &Rc<Self>, wall_mm: f32, drains: &[([f32; 3], [f32; 3])]) {
+        self.on_option(0, wall_mm);
+        for &(point, normal) in drains {
+            self.on_drain_click(point, normal);
+            self.land_now();
+        }
+        self.on_apply();
+        self.land_now();
+    }
+
+    /// Makes the selected hollow solid again, as the tab's button does: for
+    /// other modules' tests.
+    #[cfg(test)]
+    pub(crate) fn restore_now(&self) {
+        self.on_restore();
+    }
+
+    /// Waits for the job in flight, if any, and lands it as the poll would.
+    #[cfg(test)]
+    fn land_now(self: &Rc<Self>) {
+        let waited = std::time::Instant::now();
+        loop {
+            if self.job.borrow().is_none() {
+                return;
+            }
+            let outcome = self.job.borrow().as_ref().and_then(|j| j.handle.try_poll());
+            if let Some(outcome) = outcome {
+                let job = self.job.borrow_mut().take().expect("the job");
+                self.finish(job, outcome);
+                return;
+            }
+            assert!(
+                waited.elapsed() < Duration::from_secs(120),
+                "the hollow ends"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     /// The selected model's longest side in the world (its bounding box at
     /// the current pose).
     fn longest_side_mm(&self, mesh: &Arc<IndexedMesh>, world: &Transform3D) -> f32 {
@@ -1385,9 +1429,18 @@ impl HollowRun {
                 let swap = leaf_mesh_swap(scene, leaf, after)?;
                 let leaves: Vec<NodeId> =
                     (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect();
+                // Copies of the model (pasted, Fill bed's) that still show
+                // `before` keep its drains, so they keep its plugs (#113).
+                let shared = leaves.iter().any(|&id| {
+                    id != leaf
+                        && scene
+                            .leaf_mesh_arc(id)
+                            .is_some_and(|m| Arc::ptr_eq(m, &before))
+                });
                 // The old plugs still in the scene, and the drain each was for.
                 let gone: Vec<(NodeId, LocalDrain)> = leaves
                     .iter()
+                    .filter(|_| !shared)
                     .filter_map(|&id| {
                         let mesh = scene.leaf_mesh_arc(id)?;
                         old.iter()
@@ -2776,5 +2829,73 @@ mod tests {
         );
         assert_eq!(by("solid").len(), 1, "solid again: no plugs");
         assert_eq!(by("hollow again").len(), 3, "undo brings them back");
+    }
+
+    /// #113: a pasted copy of a hollow with a plug shows the same hollow.
+    /// Hollowing the copy again stands plugs of its own beside it and
+    /// leaves the model's plug, which the model still needs.
+    #[test]
+    fn hollowing_a_copy_again_leaves_the_model_its_plug() {
+        use crate::selection::{LeafId, Selection};
+        let (before, after) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut cube = sc_mesh_fixtures::unit_cube_mesh();
+            for v in &mut cube.vertices {
+                *v = Vertex::new(v.as_array().map(|c| c * 30.0));
+            }
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([50.0, 50.0, 15.0])),
+                    LeafPayload::Mesh(Arc::new(cube)),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, std::path::PathBuf::from("cube.stl"));
+            document.set_selection(Selection::One(LeafId(leaf)));
+            window.set_workspace_section(WorkspaceSection::Hollow);
+            let run = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            run.on_option(0, 2.0);
+            run.on_option(9, 1.0);
+            run.on_option(10, 1.0);
+            run.on_option(11, 1.0);
+            run.on_drain_click([47.3, 52.1, 30.0], [0.0, 0.0, 1.0]);
+            run.on_apply();
+            land_job(&run);
+            let plugs = |document: &SceneDocument| {
+                leaves_of(document)
+                    .into_iter()
+                    .filter_map(|l| l.3)
+                    .filter(|name| name.starts_with("Drain plug"))
+                    .count()
+            };
+            let before = plugs(&document);
+            let mut clipboard = crate::clipboard::clipboard_from_document_selection(&document)
+                .expect("the hollow copies");
+            let copy = crate::clipboard::paste(&document, &clipboard, [150.0, 50.0], 0.0)
+                .unwrap()
+                .expect("pasted");
+            clipboard.bump_cascade();
+            document.set_selection(Selection::One(LeafId(copy)));
+            let at = match document
+                .with_scene(|s| s.leaf(copy).map(|q| q.world_transform()))
+                .flatten()
+                .unwrap()
+            {
+                Transform3D::Affine(a) => *a.translation(),
+                Transform3D::Identity => [0.0; 3],
+            };
+            run.on_drain_click(
+                [at[0] as f32 + 5.1, at[1] as f32 - 5.8, 30.0],
+                [0.0, 0.0, 1.0],
+            );
+            land_job(&run);
+            (before, plugs(&document))
+        });
+        assert_eq!(before, 1, "the model's plug");
+        assert_eq!(after, 3, "the model's, and the copy's two");
     }
 }

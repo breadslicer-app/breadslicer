@@ -255,6 +255,30 @@ fn set_supports_transform(doc: &SceneDocument, supports: NodeId, target: Transfo
     }
 }
 
+/// The set of `session`, made on one model and standing on it alone, taken
+/// along by a move of that model `delta` (mm along X and Y) in the plate
+/// plane and drawn there (#119): the set a copy of the model gets, standing
+/// where the copy does (Fill bed, #356; paste, #113). Nothing is placed
+/// again, so hand edits stay. `None` when it cannot be: a session of
+/// several models, supports standing on another, or the engine failing.
+pub(crate) fn moved_set(
+    session: &DfSupportSession,
+    delta: [f64; 2],
+) -> Option<(Arc<DfSupportSession>, Arc<sc_mesh_core::IndexedMesh>)> {
+    if session.model_count() != 1 || !session.supports_only_on(0) {
+        return None;
+    }
+    // The port is DragonFruit's code: a panic in it leaves the copy without
+    // a set drawn for it, not a failed copy.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let moved = session.moved_in_plane(0, delta);
+        let mesh = moved.mesh().ok()??;
+        Some((Arc::new(moved), Arc::new(mesh)))
+    }))
+    .ok()
+    .flatten()
+}
+
 /// The support set a committed move redrew, once the edit is recorded: its
 /// leaf, its model and the session that drew it.
 pub(crate) struct MovedSet {
