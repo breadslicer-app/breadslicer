@@ -3800,4 +3800,113 @@ mod window_wiring_tests {
         assert_eq!(joined, 3);
         assert_eq!(undone, 2, "each handover is its own undo step");
     }
+
+    /// The smallest distance from above between any two of `leaves` of
+    /// `controller`'s scene, and the arrange gap they must keep.
+    fn closest_and_gap(controller: &ViewportController, leaves: &[sc_scene::NodeId]) -> (f32, f32) {
+        use crate::tests_model_import::{footprint, gap_between};
+        let document = controller.document();
+        let boxes: Vec<[f32; 4]> = leaves.iter().map(|&l| footprint(&document, l)).collect();
+        let mut closest = f32::MAX;
+        for (i, a) in boxes.iter().enumerate() {
+            for b in &boxes[i + 1..] {
+                closest = closest.min(gap_between(*a, *b));
+            }
+        }
+        (
+            closest,
+            crate::arrange_run::ArrangeOptions::default().gap_mm,
+        )
+    }
+
+    /// #420: `breadslicer a.stl b.stl c.stl` into a new window lists the
+    /// three models by file name and leaves them apart with the arrange
+    /// gap, as the scene's opening: nothing to undo, nothing unsaved.
+    #[test]
+    fn models_launched_into_a_new_window_are_named_and_spread() {
+        let Some((device, queue)) = crate::test_support::gpu_devices::shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let (names, (closest, gap), undo, dirty) = on_fresh_slint_thread(move || {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let box_of = |name: &str| {
+                crate::tests_model_import::write_box(dir.path(), name, [20.0, 15.0, 10.0])
+            };
+            let paths = [
+                box_of("Aarakocra Archer.stl"),
+                box_of("b.stl"),
+                box_of("c.stl"),
+            ];
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let controller = controller_of(&app, id);
+            controller
+                .loader()
+                .set_gpu(device, crate::mesh_render::DeviceToken::next(), queue);
+            app.open_paths_in_window(id, command_line(&paths.each_ref().map(|p| p.as_path())));
+            crate::tests_model_import::finish_loads(&controller);
+            let document = controller.document();
+            let names: Vec<String> = crate::tests_model_import::rows(&document)
+                .into_iter()
+                .map(|r| r.0)
+                .collect();
+            let leaves = crate::tests_model_import::leaves(&document);
+            (
+                names,
+                closest_and_gap(&controller, &leaves),
+                document.can_undo(),
+                document.is_dirty(),
+            )
+        });
+        assert_eq!(names, ["Aarakocra Archer", "b", "c"]);
+        assert!(
+            closest >= gap,
+            "{closest} mm apart, less than the {gap} mm gap"
+        );
+        assert!(!undo, "the opening is not an undo step");
+        assert!(!dirty);
+    }
+
+    /// #420: files handed to the open window are named after their files and
+    /// spread with the arrange gap, clear of what stood on the plate, which
+    /// keeps its exact place; one Undo restores the scene as it was.
+    #[test]
+    fn models_handed_over_are_spread_without_moving_the_plate() {
+        let (names, (closest, gap), kept, restored) = on_fresh_slint_thread(|| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let box_of = |name: &str| {
+                crate::tests_model_import::write_box(dir.path(), name, [20.0, 15.0, 10.0])
+            };
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let controller = controller_of(&app, id);
+            let document = controller.document();
+            load_cube(&controller);
+            app.receive_handoff(command_line(&[&box_of("first.stl")]));
+            crate::tests_model_import::finish_loads(&controller);
+            let before = crate::tests_model_import::rows(&document);
+            assert_eq!(before.len(), 2);
+
+            let later = [box_of("x.stl"), box_of("y.stl"), box_of("z.stl")];
+            app.receive_handoff(command_line(&later.each_ref().map(|p| p.as_path())));
+            crate::tests_model_import::finish_loads(&controller);
+
+            let after = crate::tests_model_import::rows(&document);
+            let names: Vec<String> = after.iter().map(|r| r.0.clone()).collect();
+            let leaves = crate::tests_model_import::leaves(&document);
+            let spread = closest_and_gap(&controller, &leaves);
+            let kept = after[..2] == before[..];
+            controller.on_undo_requested();
+            let restored = crate::tests_model_import::rows(&document) == before;
+            (names, spread, kept, restored)
+        });
+        assert_eq!(names[1..], ["first", "x", "y", "z"]);
+        assert!(
+            closest >= gap,
+            "{closest} mm apart, less than the {gap} mm gap"
+        );
+        assert!(kept, "what stood on the plate keeps its exact place");
+        assert!(restored, "one Undo restores the scene");
+    }
 }

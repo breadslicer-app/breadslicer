@@ -231,7 +231,7 @@ fn prepare_scene(
     device_token: crate::mesh_render::DeviceToken,
     device_loss: &DeviceLoss,
 ) -> anyhow::Result<PreparedScene> {
-    let opened = opened_scene(parse_source(path, sink)?, build_volume)?;
+    let opened = opened_scene(parse_source(path, sink)?, path, build_volume)?;
     finish_scene(opened, path, sink, device, device_token, device_loss)
 }
 
@@ -250,10 +250,12 @@ pub(crate) struct OpenedScene {
 
 /// Turns what was read from a file into the scene a window opens on. A file
 /// without readable project data is dropped onto the plate of
-/// `build_volume`; a project keeps its placement and its supports and
-/// hollows are restored.
+/// `build_volume`, its lone model named after `path` when the file names
+/// none; a project keeps its placement and its supports and hollows are
+/// restored.
 pub(crate) fn opened_scene(
     loaded: LoadedScene,
+    path: &Path,
     build_volume: sc_print_primitives::BuildVolume,
 ) -> anyhow::Result<OpenedScene> {
     let LoadedScene {
@@ -269,6 +271,8 @@ pub(crate) fn opened_scene(
             // cache priming run on it, so both observe the placed world
             // coordinates.
             place_on_plate(&mut scene, &build_volume)?;
+            // Its model is named after the file, as an import names it.
+            crate::model_import::name_lone_model(&mut scene, path);
             (scene, None, Vec::new(), None)
         }
         LoadedContent::Project(ProjectContent {

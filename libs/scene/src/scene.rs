@@ -115,6 +115,18 @@ impl Scene {
         self.nodes.get(id.index())?.as_ref()
     }
 
+    /// Replaces the metadata (the name among it) of node `id`. `false` for a
+    /// dangling or tombstoned id, which is left as it was.
+    pub fn set_node_meta(&mut self, id: NodeId, meta: Option<SceneMetadata>) -> bool {
+        match self.nodes.get_mut(id.index()).and_then(Option::as_mut) {
+            Some(node) => {
+                node.meta = meta;
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn mesh_resource(&self, id: MeshResourceId) -> Option<&IndexedMesh> {
         self.mesh_resources.get(id.index())?.as_deref()
     }
