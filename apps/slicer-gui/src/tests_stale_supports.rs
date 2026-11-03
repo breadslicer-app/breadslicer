@@ -432,12 +432,9 @@ fn a_repaired_pre_supported_mini_puts_its_supports_out_of_date() {
         let bytes = std::fs::read(path).unwrap();
         let (loaded, _) = sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).unwrap();
         let mesh = (**loaded.leaf_mesh_arc(loaded.roots()[0]).unwrap()).clone();
-        let mut lo = [f32::MAX; 3];
-        for v in mesh.vertices() {
-            for k in 0..3 {
-                lo[k] = lo[k].min(v.as_array()[k]);
-            }
-        }
+        let lo = mesh.vertices().iter().fold([f32::MAX; 3], |lo, v| {
+            std::array::from_fn(|k| lo[k].min(v.as_array()[k]))
+        });
         let window = MainWindow::new().expect("the headless platform creates a main window");
         let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
         let ctrl = Rc::new(ViewportController::new_for_test());
