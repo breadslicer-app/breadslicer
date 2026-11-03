@@ -45,6 +45,12 @@ rust-version = "1.98.1"
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
 
+# Dependencies carry no debug info in dev and test builds. Our own crates keep
+# line tables, so a panic or a backtrace still names our file and line; every
+# test executable and its debug symbols get smaller and link faster.
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 codegen-units = 1
 lto = "thin"
