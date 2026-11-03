@@ -32,12 +32,14 @@ use support_gen_df::three::buffer_geometry::BufferGeometry;
 
 mod compare;
 mod document;
+mod hand_log;
 mod options;
 mod session;
 mod shift;
 pub mod zone_presets;
 
 pub use document::{DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, RestoreError, RestoredSet};
+pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{AddNote, AddOptions, DfSupportSession, EditError, EditPreview};
 pub use support_gen_df::pipeline::ScanCache;
@@ -84,6 +86,11 @@ pub struct DfSupportRequest {
     /// The models to support, by leaf, in any order; `None` for every model
     /// of the scene. Leaves that are not models are skipped.
     pub models: Option<Vec<NodeId>>,
+    /// Models whose supports are made again keeping the hand edits of their
+    /// set (#408): by leaf, the session of the set before. Each such model's
+    /// new set gets those edits put back where they still fit, and says how
+    /// it went ([`DfSupportSet::kept`]).
+    pub keep_edits: Vec<(NodeId, DfSupportSession)>,
 }
 
 impl Default for DfSupportRequest {
@@ -95,6 +102,7 @@ impl Default for DfSupportRequest {
             options: DfSupportOptions::default(),
             settings: None,
             models: None,
+            keep_edits: Vec::new(),
         }
     }
 }
@@ -109,6 +117,9 @@ pub struct DfSupportSet {
     pub mesh: Option<IndexedMesh>,
     /// Its supports, kept for editing by hand.
     pub session: DfSupportSession,
+    /// For a model of [`DfSupportRequest::keep_edits`]: which hand edits of
+    /// its old set were put back.
+    pub kept: Option<KeptEdits>,
 }
 
 /// What a finished run hands back.
@@ -633,6 +644,23 @@ fn run_df_supports(
             total,
         });
         completed += 1;
+        // The hand edits of the model's old set go back on (#408), before
+        // the set is drawn: a model the run found nothing on may still
+        // carry supports added by hand.
+        let (session, kept) = match request.keep_edits.iter().find(|(m, _)| m == model) {
+            Some((_, old)) => {
+                worker.report_progress(JobProgress {
+                    phase: format!("Putting back the edits made by hand ({}/{n})", i + 1),
+                    completed,
+                    total,
+                });
+                let (session, kept) = session
+                    .with_hand_edits_of(old, &|| worker.is_cancelled())
+                    .ok_or(JobError::Cancelled)?;
+                (session, Some(kept))
+            }
+            None => (session, None),
+        };
         let mesh = if session.is_empty() {
             None
         } else {
@@ -644,6 +672,7 @@ fn run_df_supports(
             model: *model,
             mesh,
             session,
+            kept,
         });
     }
     // The sets are part of the run's time, as the pipeline's own drawing was.

@@ -151,6 +151,50 @@ pub(crate) fn in_force_at(
         .cloned()
 }
 
+/// Why the latest drawing of a support set is no longer in force (#408).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StaleWhy {
+    /// The model's mesh is another one now: a repair or a hollow.
+    ModelMesh,
+    /// The supports' own mesh is another one now: a repair.
+    SupportsMesh,
+    /// The model stands elsewhere.
+    ModelPose,
+}
+
+impl DrawnSet {
+    /// Why this drawing is not the one the scene of `spatial` shows; `None`
+    /// when it is, or its model is gone.
+    pub(crate) fn stale_why(&self, spatial: &SceneSpatial) -> Option<StaleWhy> {
+        let (mesh, world) = model_state(spatial, self.model)?;
+        if !Arc::ptr_eq(&mesh, &self.model_mesh) {
+            return Some(StaleWhy::ModelMesh);
+        }
+        let shows = spatial
+            .graph()
+            .leaf_mesh_arc(self.leaf)
+            .is_some_and(|shown| Arc::ptr_eq(shown, &self.mesh));
+        if !shows {
+            return Some(StaleWhy::SupportsMesh);
+        }
+        (world != self.model_world).then_some(StaleWhy::ModelPose)
+    }
+}
+
+/// The latest drawing of the support leaf `leaf`, in force or not: for a
+/// set out of date, the session it was last edited in (#408).
+pub(crate) fn latest_drawing(
+    sessions: &RefCell<SupportSessions>,
+    leaf: NodeId,
+) -> Option<DrawnSet> {
+    sessions
+        .borrow()
+        .iter()
+        .rev()
+        .find(|d| d.leaf == leaf)
+        .cloned()
+}
+
 /// The model the support leaf `leaf` belongs to, whether or not its
 /// session is still in force; `None` for supports no session drew.
 pub(crate) fn model_of(sessions: &RefCell<SupportSessions>, leaf: NodeId) -> Option<NodeId> {

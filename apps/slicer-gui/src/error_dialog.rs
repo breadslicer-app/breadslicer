@@ -53,6 +53,17 @@ pub(crate) enum RecoveryChoice {
     Later,
 }
 
+/// The answer to "supports out of date" (#408).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StaleSupportsChoice {
+    /// Make the model's supports again with the current settings.
+    Regenerate,
+    /// Make them again, then put back the edits made by hand.
+    KeepEdits,
+    /// Close, Escape or a click outside: leave them as they are.
+    Leave,
+}
+
 /// Which "keep your work" buttons the "replace current scene?" dialog offers,
 /// decided from the document's dirty state and from whether it is backed by a
 /// project file.
@@ -175,6 +186,13 @@ enum Entry {
         build_texts: Box<dyn Fn() -> InfoTexts>,
         key: Option<MessageKey>,
     },
+    /// A model's supports are out of date (#408): a notice whose rows make
+    /// them again, keeping the edits made by hand when there are some.
+    StaleSupports {
+        build_texts: Box<dyn Fn() -> InfoTexts>,
+        hand_edited: bool,
+        on_choice: Box<dyn FnOnce(StaleSupportsChoice)>,
+    },
     SceneChange {
         source_name: SharedString,
         offer: KeepChangesOffer,
@@ -202,7 +220,10 @@ impl Entry {
         match self {
             // Asked for from the menu and changes nothing: a click outside
             // only closes it.
-            Self::Info { .. } | Self::Diagnostics { .. } => MessageClass::Notice,
+            // Stale supports change nothing until a row is picked.
+            Self::Info { .. } | Self::Diagnostics { .. } | Self::StaleSupports { .. } => {
+                MessageClass::Notice
+            }
             Self::Error { .. }
             | Self::SceneChange { .. }
             | Self::SliceOverwrite { .. }
@@ -232,6 +253,7 @@ impl Entry {
             has_unsaved_changes: false,
             save_as_mode: false,
             has_scene: false,
+            hand_edited: false,
             action: SharedString::new(),
         };
         match self {
@@ -255,6 +277,18 @@ impl Entry {
                 message.heading = texts.heading;
                 message.text = texts.message;
                 message.details = texts.details;
+            }
+            Self::StaleSupports {
+                build_texts,
+                hand_edited,
+                ..
+            } => {
+                let texts = build_texts();
+                message.kind = MessageKind::StaleSupports;
+                message.heading = texts.heading;
+                message.text = texts.message;
+                message.details = texts.details;
+                message.hand_edited = *hand_edited;
             }
             Self::SceneChange {
                 source_name,
@@ -307,6 +341,16 @@ impl Entry {
                 // Anything else keeps the scene: never discard it without an
                 // explicit Discard.
                 _ => ReplaceSceneChoice::Cancel,
+            }),
+            Self::StaleSupports {
+                hand_edited,
+                on_choice,
+                ..
+            } => on_choice(match answer {
+                MessageAnswer::Regenerate => StaleSupportsChoice::Regenerate,
+                // Offered only for a set with edits made by hand.
+                MessageAnswer::KeepEdits if hand_edited => StaleSupportsChoice::KeepEdits,
+                _ => StaleSupportsChoice::Leave,
             }),
             Self::SliceOverwrite { on_confirm } => {
                 // Only an explicit Re-slice replaces the held slice.
@@ -544,6 +588,37 @@ impl DialogManager {
         });
     }
 
+    /// Says that a model's supports are out of date, with the texts
+    /// `build_texts` gives, and offers to make them again (#408): with the
+    /// current settings, or, when `hand_edited`, keeping the edits made by
+    /// hand. Calls `on_choice` once with the answer; Close, Escape and a
+    /// click outside leave the supports alone. Must run on the Slint UI
+    /// thread.
+    pub(crate) fn show_stale_supports(
+        self: &Rc<Self>,
+        hand_edited: bool,
+        build_texts: impl Fn() -> InfoTexts + 'static,
+        on_choice: impl FnOnce(StaleSupportsChoice) + 'static,
+    ) {
+        let asking = self
+            .queue
+            .borrow()
+            .iter()
+            .any(|e| matches!(e, Entry::StaleSupports { .. }));
+        if asking {
+            // One card at a time: a second click on stale supports while it
+            // is up leaves them alone.
+            on_choice(StaleSupportsChoice::Leave);
+            return;
+        }
+        crate::breadcrumbs::note(&format!("message: {}", build_texts().heading));
+        self.enqueue(Entry::StaleSupports {
+            build_texts: Box::new(build_texts),
+            hand_edited,
+            on_choice: Box::new(on_choice),
+        });
+    }
+
     /// Queues `show_error` on the next iteration of the Slint event loop.
     ///
     /// Use this when the caller runs inside a Slint hook where changing the
@@ -692,7 +767,7 @@ impl DialogManager {
         self.queue
             .borrow()
             .iter()
-            .filter(|e| matches!(e, Entry::Info { .. }))
+            .filter(|e| matches!(e, Entry::Info { .. } | Entry::StaleSupports { .. }))
             .map(|e| e.message().heading.to_string())
             .collect()
     }

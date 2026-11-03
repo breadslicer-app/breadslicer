@@ -303,6 +303,31 @@ fn diagnostic_log(shown: &Shown) {
     shown.ui.set_message_open(true);
 }
 
+/// The card of supports out of date (#408), for a set edited by hand
+/// (both rows) or not (Regenerate alone).
+fn stale_supports(shown: &Shown, hand_edited: bool) {
+    shown.manager.show_stale_supports(
+        hand_edited,
+        || InfoTexts {
+            heading: ctr!("DfSupportDialog", "Supports out of date"),
+            message: ctr!(
+                "DfSupportDialog",
+                "This model's mesh changed since its supports were made (Repair and Hollow change it), so they can no longer be edited by hand."
+            ),
+            details: Default::default(),
+        },
+        |_| {},
+    );
+}
+
+fn stale_supports_edited(shown: &Shown) {
+    stale_supports(shown, true);
+}
+
+fn stale_supports_plain(shown: &Shown) {
+    stale_supports(shown, false);
+}
+
 const CASES: &[Case] = &[
     Case {
         name: "aviso",
@@ -368,6 +393,16 @@ const CASES: &[Case] = &[
         name: "registro-de-diagnostico",
         show: diagnostic_log,
         primary: true,
+    },
+    Case {
+        name: "soportes-desactualizados-editados",
+        show: stale_supports_edited,
+        primary: false,
+    },
+    Case {
+        name: "soportes-desactualizados",
+        show: stale_supports_plain,
+        primary: false,
     },
 ];
 

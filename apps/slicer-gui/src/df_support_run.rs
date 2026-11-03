@@ -47,8 +47,8 @@ use sc_geom::JobHandle;
 use sc_geom::df_supports::zone_presets::{ZonePreset, figures_70, minis_30};
 use sc_geom::df_supports::{
     AddNote, AddOptions, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
-    DfSupportSession, EditError, EditPreview, RaftMode, ScanCache, start_df_prescan,
-    start_df_supports,
+    DfSupportSession, EditError, EditPreview, HandEditKind, KeptEdits, LostEdit, LostWhy, RaftMode,
+    ScanCache, start_df_prescan, start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
@@ -56,7 +56,7 @@ use sc_scene::NodeId;
 use sc_scene_edit::SceneFragment;
 use slint::ComponentHandle;
 
-use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey};
+use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey, StaleSupportsChoice};
 use crate::i18n::ctr;
 use crate::mesh_render::{OverlayMesh, OverlayTint};
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
@@ -71,8 +71,8 @@ use crate::scene_document::{
 };
 use crate::slice_projection::load_selected_profiles;
 use crate::support_persist::{
-    DrawnSet, SupportSessions, in_force, model_of, record, sets_in_force, sets_of_model,
-    support_leaf, support_leaves,
+    DrawnSet, StaleWhy, SupportSessions, in_force, latest_drawing, model_of, record, sets_in_force,
+    sets_of_model, support_leaf, support_leaves,
 };
 use crate::viewport::ViewportController;
 #[cfg(test)]
@@ -229,6 +229,30 @@ pub(crate) struct DfSupportRun {
     generated_raft_top: Cell<Option<Option<f64>>>,
     /// Clears the status bar's note of the last run.
     status_timer: slint::Timer,
+    /// A row picked on the card of supports out of date (#408): the set the
+    /// next run makes again. Taken by the run it starts; a Generate press
+    /// drops it.
+    redo: RefCell<Option<Redo>>,
+}
+
+/// The supports of one model made again from the card of supports out of
+/// date (#408), as a Generate press makes them for it.
+struct Redo {
+    model: NodeId,
+    /// "Recalculate, keeping my edits": the session whose hand edits go
+    /// back on the new set. `None` for "Regenerate".
+    keep: Option<Arc<DfSupportSession>>,
+}
+
+/// Why no set in force takes a hand tool at a point.
+enum NoSet {
+    /// A notice: its "Don't show again" key, heading and text.
+    Notice(Option<MessageKey>, slint::SharedString, slint::SharedString),
+    /// The supports there are out of date, by their leaf: the card offers
+    /// to make them again (#408).
+    OutOfDate(NodeId),
+    /// Why the edit failed, for the last-run line.
+    Failed(slint::SharedString),
 }
 
 /// How long the status bar keeps the note of a run that replaced supports.
@@ -1231,6 +1255,7 @@ impl DfSupportRun {
             raft_checked_at: Cell::new(Instant::now()),
             generated_raft_top: Cell::new(None),
             status_timer: slint::Timer::default(),
+            redo: RefCell::new(None),
         });
         {
             let weak = Rc::downgrade(&run);
@@ -1301,7 +1326,12 @@ impl DfSupportRun {
         }
         {
             let run = run.clone();
-            ui.on_df_support_requested(move || run.start());
+            ui.on_df_support_requested(move || {
+                // A Generate press supports what it supports: a card's row
+                // left waiting (#408) is dropped.
+                run.redo.borrow_mut().take();
+                run.start();
+            });
         }
         {
             let weak = Rc::downgrade(&run);
@@ -1399,7 +1429,9 @@ impl DfSupportRun {
         if !self.raft_ignored.get() && self.raft_clash().is_some() {
             return;
         }
-        if self.take_ahead(&ui) {
+        // Supports made ahead are for the selection, without hand edits to
+        // put back: a set made again from its card (#408) runs.
+        if self.redo.borrow().is_none() && self.take_ahead(&ui) {
             return;
         }
         {
@@ -1429,7 +1461,16 @@ impl DfSupportRun {
     /// Starts the run of a Generate press: every model it supports (#388),
     /// those resting on the plate lifted first when the box says so (#389).
     fn launch_generate(self: &Rc<Self>, ui: &MainWindow) {
-        let request = self.request_for_selection();
+        let mut request = self.request_for_selection();
+        // A set made again from its card (#408): that model alone, its hand
+        // edits put back when asked.
+        if let Some(redo) = self.redo.borrow_mut().take() {
+            request.models = Some(vec![redo.model]);
+            request.keep_edits = redo
+                .keep
+                .map(|session| vec![(redo.model, (*session).clone())])
+                .unwrap_or_default();
+        }
         let lift = self.plate_lift(&request);
         self.launch(ui, request, lift);
     }
@@ -1816,6 +1857,15 @@ impl DfSupportRun {
             .flatten()
     }
 
+    /// The models the press waiting to run supports: the one whose set its
+    /// card makes again (#408), else [`Self::target_models`].
+    fn press_targets(&self) -> Option<Vec<NodeId>> {
+        match self.redo.borrow().as_ref() {
+            Some(redo) => Some(vec![redo.model]),
+            None => self.target_models(),
+        }
+    }
+
     /// The layer height and pixel pitch of the printer and resin in force.
     fn request_for_printer(&self) -> DfSupportRequest {
         let snapshot = self.bus.snapshot();
@@ -1904,7 +1954,7 @@ impl DfSupportRun {
     /// Generate press. Models resting on the plate count as lifted when the
     /// Supports tab's box lifts them on Generate (#389).
     fn raft_clash(&self) -> Option<RaftClash> {
-        let targets = self.target_models();
+        let targets = self.press_targets();
         let lifted_to = self.lift_on_plate_mm();
         let lowest = self
             .document
@@ -1959,7 +2009,7 @@ impl DfSupportRun {
             && self.lift_models(
                 clash.raft_top_mm,
                 clash.lift_to_mm,
-                self.target_models().as_deref(),
+                self.press_targets().as_deref(),
             )
         {
             self.start();
@@ -2937,13 +2987,16 @@ impl DfSupportRun {
             }
         }
         if groups.is_empty() {
-            let (key, heading, message) = self.no_set_notice(tool, points[0]);
-            return Err(match heading {
-                Some(heading) => {
+            return Err(match self.no_set_notice(tool, points[0]) {
+                NoSet::Notice(key, heading, message) => {
                     notice(key, heading, message.to_string());
                     HandEdit::Notified
                 }
-                None => failed(message),
+                NoSet::OutOfDate(leaf) => {
+                    self.show_out_of_date(leaf);
+                    HandEdit::Notified
+                }
+                NoSet::Failed(message) => failed(message),
             });
         }
         for i in unset {
@@ -3084,20 +3137,11 @@ impl DfSupportRun {
         }
     }
 
-    /// Why no support set in force takes a hand tool at `point`, as a
-    /// notice (its "Don't show again" key and heading) or, with no heading,
-    /// as the reason the edit failed: the supports there are not the ones
-    /// selected (Remove), the model's supports are out of date, the model has
-    /// none, or the supports there came in as a mesh.
-    fn no_set_notice(
-        &self,
-        tool: HandTool,
-        point: [f32; 3],
-    ) -> (
-        Option<MessageKey>,
-        Option<slint::SharedString>,
-        slint::SharedString,
-    ) {
+    /// Why no support set in force takes a hand tool at `point`: the
+    /// supports there are not the ones selected (Remove), the model's
+    /// supports are out of date, the model has none, or the supports there
+    /// came in as a mesh.
+    fn no_set_notice(&self, tool: HandTool, point: [f32; 3]) -> NoSet {
         let p = point.map(f64::from);
         let near = |spatial: &sc_mesh_spatial::SceneSpatial, id: NodeId| {
             spatial
@@ -3135,20 +3179,10 @@ impl DfSupportRun {
                 (model, supports)
             })
             .unwrap_or_default();
-        let out_of_date = || {
-            (
-                None,
-                Some(ctr!("DfSupportDialog", "Supports out of date")),
-                ctr!(
-                    "DfSupportDialog",
-                    "The scene changed since the supports were made; generate them again to edit them."
-                ),
-            )
-        };
         let no_supports = || {
-            (
+            NoSet::Notice(
                 Some(MessageKey::SupportsEditNeedsSupports),
-                Some(ctr!("DfSupportDialog", "No supports to edit")),
+                ctr!("DfSupportDialog", "No supports to edit"),
                 ctr!(
                     "DfSupportDialog",
                     "Generate supports first; then add or remove them by hand."
@@ -3163,23 +3197,21 @@ impl DfSupportRun {
         let selected = || self.selected_set() == supports;
         match supports {
             // Another set than the one selected: Remove leaves it alone.
-            Some(leaf) if tool == HandTool::Remove && editable(leaf) && !selected() => (
-                None,
-                None,
-                ctr!(
+            Some(leaf) if tool == HandTool::Remove && editable(leaf) && !selected() => {
+                NoSet::Failed(ctr!(
                     "DfSupportDialog",
                     "Select these supports, or their model, to remove them."
-                ),
-            ),
+                ))
+            }
             // In force, only out of reach of the point.
-            Some(leaf) if editable(leaf) => (None, None, refusal(&EditError::NothingThere)),
-            Some(leaf) if model_of(&self.sessions, leaf).is_some() => out_of_date(),
+            Some(leaf) if editable(leaf) => NoSet::Failed(refusal(&EditError::NothingThere)),
+            Some(leaf) if model_of(&self.sessions, leaf).is_some() => NoSet::OutOfDate(leaf),
             // Supports in the scene with no session came in as a mesh: from
             // a 3MF, or a project that could not keep them as data. That says
             // something the person needs to know, so it is never silenced.
-            Some(_) => (
+            Some(_) => NoSet::Notice(
                 None,
-                Some(ctr!("DfSupportDialog", "No supports to edit")),
+                ctr!("DfSupportDialog", "No supports to edit"),
                 ctr!(
                     "DfSupportDialog",
                     "These supports were opened as a mesh, so they cannot be edited by hand. Generate supports again to edit them."
@@ -3187,8 +3219,96 @@ impl DfSupportRun {
             ),
             None if model.is_some() => no_supports(),
             None if self.support_leaf().is_none() => no_supports(),
-            None => (None, None, refusal(&EditError::NothingThere)),
+            None => NoSet::Failed(refusal(&EditError::NothingThere)),
         }
+    }
+
+    /// The card of the supports out of date in the leaf `leaf` (#408): why
+    /// they are, and the ways to make them again: "Regenerate", and, for a
+    /// set with edits made by hand, "Recalculate, keeping my edits". Close
+    /// leaves them as they are.
+    fn show_out_of_date(&self, leaf: NodeId) {
+        let Some((drawn, why)) = self
+            .document
+            .with_scene(|spatial| {
+                let drawn = latest_drawing(&self.sessions, leaf)?;
+                let why = drawn.stale_why(spatial);
+                Some((drawn, why))
+            })
+            .flatten()
+        else {
+            return;
+        };
+        crate::breadcrumbs::note(&format!("supports: out of date ({why:?})"));
+        let model = drawn.model;
+        let session = drawn.session;
+        let me = self.me.borrow().clone();
+        self.dialogs.show_stale_supports(
+            session.hand_edited(),
+            move || InfoTexts {
+                heading: ctr!("DfSupportDialog", "Supports out of date"),
+                message: match why {
+                    Some(StaleWhy::ModelMesh) => ctr!(
+                        "DfSupportDialog",
+                        "This model's mesh changed since its supports were made (Repair and Hollow change it), so they can no longer be edited by hand."
+                    ),
+                    Some(StaleWhy::SupportsMesh) => ctr!(
+                        "DfSupportDialog",
+                        "The supports' mesh changed since they were made (Repair changes it), so they can no longer be edited by hand."
+                    ),
+                    Some(StaleWhy::ModelPose) | None => ctr!(
+                        "DfSupportDialog",
+                        "The scene changed since the supports were made; generate them again to edit them."
+                    ),
+                },
+                details: Default::default(),
+            },
+            move |choice| {
+                let Some(run) = me.upgrade() else {
+                    return;
+                };
+                match choice {
+                    StaleSupportsChoice::Regenerate => run.make_set_again(model, None),
+                    StaleSupportsChoice::KeepEdits => run.make_set_again(model, Some(session)),
+                    StaleSupportsChoice::Leave => {}
+                }
+            },
+        );
+    }
+
+    /// A row of the card of supports out of date (#408): the supports of
+    /// `model` made again as a Generate press makes them for it alone
+    /// (progress, Cancel, one undo step, its own set), with the edits made by
+    /// hand in `keep` put back where they still fit when given. A model gone
+    /// since is left alone; with a run in flight, the press is refused.
+    fn make_set_again(self: &Rc<Self>, model: NodeId, keep: Option<Arc<DfSupportSession>>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let there = self
+            .document
+            .with_scene(|spatial| {
+                crate::raft_clash::model_bottoms(spatial)
+                    .iter()
+                    .any(|(id, _)| *id == model)
+            })
+            .unwrap_or(false);
+        if !there {
+            return;
+        }
+        if ui.get_loading() || ui.get_support_gen_in_progress() || self.handle.borrow().is_some() {
+            self.show_status(ctr!(
+                "DfSupportDialog",
+                "Supports are being generated; try again when they are done."
+            ));
+            return;
+        }
+        crate::breadcrumbs::note(&format!(
+            "supports: made again from the card, keeping edits {}",
+            keep.is_some()
+        ));
+        *self.redo.borrow_mut() = Some(Redo { model, keep });
+        self.start();
     }
 
     fn start_poll(self: &Rc<Self>) {
@@ -3291,6 +3411,13 @@ impl DfSupportRun {
             details.push_str(&format!("\n\nFull timings: {}", path.display()));
         }
         let covered: Vec<NodeId> = outcome.sets.iter().map(|set| set.model).collect();
+        // What became of the hand edits a set made again from its card was
+        // to keep (#408).
+        let kept: Vec<KeptEdits> = outcome
+            .sets
+            .iter()
+            .filter_map(|set| set.kept.clone())
+            .collect();
         // One set per model it placed supports on (#197).
         let sets: Vec<(NodeId, Arc<sc_mesh_core::IndexedMesh>, DfSupportSession)> = outcome
             .sets
@@ -3399,6 +3526,10 @@ impl DfSupportRun {
             )),
             None => {}
         }
+        if !kept.is_empty() {
+            self.show_kept_edits(kept, details);
+            return;
+        }
         self.dialogs
             .show_notice(MessageKey::SupportsGenerated, move || InfoTexts {
                 heading: ctr!("DfSupportDialog", "Supports generated"),
@@ -3472,6 +3603,87 @@ impl DfSupportRun {
                 })
             })
             .unwrap_or(false)
+    }
+
+    /// The card that ends "Recalculate, keeping my edits" (#408): the hand
+    /// edits put back, and each one that could not be kept, with where it
+    /// was and why. `details` are the run's.
+    fn show_kept_edits(&self, kept: Vec<KeptEdits>, details: String) {
+        let total: usize = kept.iter().map(KeptEdits::total).sum();
+        let lost: Vec<LostEdit> = kept.iter().flat_map(|k| k.lost.clone()).collect();
+        let unrecorded = kept.iter().any(|k| k.unrecorded);
+        crate::breadcrumbs::note(&format!(
+            "supports: recalculated keeping edits, {} of {total} lost",
+            lost.len()
+        ));
+        self.dialogs.show_info(move || {
+            let mut lines: Vec<String> = Vec::new();
+            if lost.is_empty() {
+                lines.push(
+                    ctr!(
+                        "DfSupportDialog",
+                        "The edit made by hand was put back.",
+                        "All {n} edits made by hand were put back.",
+                        total
+                    )
+                    .to_string(),
+                );
+            } else {
+                lines.push(if total == 1 {
+                    ctr!(
+                        "DfSupportDialog",
+                        "The edit made by hand could not be kept:"
+                    )
+                    .to_string()
+                } else {
+                    ctr!(
+                        "DfSupportDialog",
+                        "{n} of your {} edits made by hand could not be kept:",
+                        "{n} of your {} edits made by hand could not be kept:",
+                        lost.len(),
+                        total
+                    )
+                    .to_string()
+                });
+                for edit in lost.iter().take(KEPT_LINES_MAX) {
+                    lines.push(format!("• {}", lost_line(edit)));
+                }
+                if lost.len() > KEPT_LINES_MAX {
+                    lines.push(
+                        ctr!(
+                            "DfSupportDialog",
+                            "…and {n} more.",
+                            "…and {n} more.",
+                            lost.len() - KEPT_LINES_MAX
+                        )
+                        .to_string(),
+                    );
+                }
+            }
+            if unrecorded {
+                lines.push(
+                    ctr!(
+                        "DfSupportDialog",
+                        "These supports were saved by an older version, which did not record the supports removed or moved by hand: those are back where the run places them."
+                    )
+                    .to_string(),
+                );
+            }
+            if !lost.is_empty() || unrecorded {
+                lines.push(
+                    ctr!(
+                        "DfSupportDialog",
+                        "Undo brings back the supports as they were."
+                    )
+                    .to_string(),
+                );
+            }
+            InfoTexts {
+                heading: ctr!("DfSupportDialog", "Supports recalculated"),
+                message: lines.join("\n").into(),
+                details: details.as_str().into(),
+            }
+        });
     }
 
     /// Shows `text` in the status bar in place of its hint for a few
@@ -4194,6 +4406,30 @@ fn lift_on_plate_label(lift_to_mm: f64) -> slint::SharedString {
 fn mm_text(mm: f64) -> String {
     let text = format!("{mm:.2}");
     text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+/// How many hand edits that could not be kept the card names one by one
+/// (#408); the rest are counted.
+const KEPT_LINES_MAX: usize = 8;
+
+/// One hand edit a set made again could not keep (#408): what it was,
+/// where, and why, for the card's list.
+fn lost_line(edit: &LostEdit) -> slint::SharedString {
+    let [x, y, z] = edit.at;
+    let at = format!("X {x:.1}, Y {y:.1}, Z {z:.1} mm");
+    let why = match edit.why {
+        LostWhy::SurfaceChanged => ctr!("DfSupportDialog", "the model surface there changed"),
+        LostWhy::NoRoute => ctr!("DfSupportDialog", "no support can reach that point now"),
+        LostWhy::CannotAttach => ctr!("DfSupportDialog", "no support to hang it from there now"),
+        LostWhy::CarriesOthers => ctr!(
+            "DfSupportDialog",
+            "other supports of the new run hang from the one there"
+        ),
+    };
+    match edit.kind {
+        HandEditKind::Added => ctr!("DfSupportDialog", "support added at {}: {}", at, why),
+        HandEditKind::Moved => ctr!("DfSupportDialog", "support moved to {}: {}", at, why),
+    }
 }
 
 /// One line: models, islands, roots and triangles.
@@ -8281,4 +8517,8 @@ mod hand_edit_tests {
         assert_eq!((*sets, *hollows), (1, 1));
         assert_eq!(reopened, saved, "everything comes back as it was saved");
     }
+
+    // The card of supports out of date (#408), with the helpers above.
+    #[path = "../../tests_stale_supports.rs"]
+    mod stale_supports;
 }

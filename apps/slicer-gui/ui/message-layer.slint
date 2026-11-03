@@ -22,12 +22,15 @@ import { ButtonKind, DisclosureChevron, ScButton } from "kit/controls.slint";
 import { ActionRow, DialogHead, DialogRule } from "kit/dialog.slint";
 
 // `diagnostics` is Help > Export Diagnostics (#74); `diagnostic-log` asks
-// before the diagnostic log starts (Preferences > Privacy).
-export enum MessageKind { info, error, scene-change, slice-overwrite, recovery, diagnostics, diagnostic-log }
+// before the diagnostic log starts (Preferences > Privacy); `stale-supports`
+// is a notice that a model's supports are out of date, with the ways to make
+// them again (#408).
+export enum MessageKind { info, error, scene-change, slice-overwrite, recovery, diagnostics, diagnostic-log, stale-supports }
 
 // What the person did with the message. `cancel` is also Escape and Enter;
 // Rust reads it as "close" for a message with nothing to decide.
-export enum MessageAnswer { close, discard, save, export, confirm, cancel }
+// `regenerate` and `keep-edits` are the stale supports' rows (#408).
+export enum MessageAnswer { close, discard, save, export, confirm, cancel, regenerate, keep-edits }
 
 export struct AppMessage {
     kind: MessageKind,
@@ -49,6 +52,9 @@ export struct AppMessage {
     save-as-mode: bool,
     // Diagnostics only: there is a scene, so its models can go in.
     has-scene: bool,
+    // Stale supports only: the set has edits made by hand, so the card
+    // offers to make it again keeping them (#408).
+    hand-edited: bool,
     // Error only: the text of a button that does something about the error
     // (#407), such as Repair; it answers `confirm`. Empty shows none.
     action: string,
@@ -90,7 +96,8 @@ export component MessageLayer inherits Rectangle {
     // The details were copied since they were last shown.
     property <bool> copied: false;
     property <MessageKind> kind: root.message.kind;
-    property <bool> notice: root.kind == MessageKind.info || root.kind == MessageKind.error;
+    // Stale supports (#408) are a notice with ways to go on under its text.
+    property <bool> notice: root.kind == MessageKind.info || root.kind == MessageKind.error || root.kind == MessageKind.stale-supports;
     // A scene change with changes to keep: its ways to go on are rows.
     property <bool> scene-rows: root.kind == MessageKind.scene-change && root.message.has-unsaved-changes;
     // A notice of a heading alone has no body.
@@ -192,6 +199,7 @@ export component MessageLayer inherits Rectangle {
                 DialogHead {
                     icon: root.kind == MessageKind.error ? Icons.error
                         : root.kind == MessageKind.info ? Icons.info
+                        : root.kind == MessageKind.stale-supports ? Icons.supports
                         : root.kind == MessageKind.scene-change ? (root.message.has-unsaved-changes ? Icons.save : Icons.file)
                         : root.kind == MessageKind.slice-overwrite ? Icons.warning
                         : root.kind == MessageKind.recovery ? Icons.history
@@ -355,6 +363,39 @@ export component MessageLayer inherits Rectangle {
                                 border-bottom-right-radius: Theme.radius - 1px;
                                 background: @linear-gradient(0deg, root.well-color 0%, root.well-color.transparentize(100%) 100%);
                             }
+                        }
+                    }
+                }
+
+                // Supports out of date (#408): 1 row per way to make them
+                // again; Close leaves them as they are.
+                if root.kind == MessageKind.stale-supports: VerticalLayout {
+                    padding: 12px;
+                    padding-top: 0px;
+                    spacing: 4px;
+
+                    // With edits made by hand, keeping them comes first.
+                    if root.message.hand-edited: ActionRow {
+                        lead: true;
+                        icon: Icons.add-support;
+                        title: @tr("StaleSupportsDialog" => "Recalculate, keeping my edits");
+                        detail: @tr("StaleSupportsDialog" => "Make them again; put back what was added, moved or removed by hand");
+                        clicked => {
+                            root.answered(MessageAnswer.keep-edits);
+                        }
+                    }
+                    if root.message.hand-edited: Rectangle {
+                        height: 6px;
+                    }
+                    ActionRow {
+                        lead: !root.message.hand-edited;
+                        icon: Icons.supports;
+                        title: @tr("StaleSupportsDialog" => "Regenerate");
+                        detail: root.message.hand-edited
+                            ? @tr("StaleSupportsDialog" => "Make them again with the current settings; the hand edits are lost")
+                            : @tr("StaleSupportsDialog" => "Make this model's supports again with the current settings");
+                        clicked => {
+                            root.answered(MessageAnswer.regenerate);
                         }
                     }
                 }
@@ -593,10 +634,11 @@ export component MessageLayer inherits Rectangle {
                         horizontal-stretch: 1;
                     }
 
-                    // With an action beside it, Close steps back: no accent.
+                    // With an action beside it, or rows to pick from
+                    // (#408), Close steps back: no accent.
                     if root.notice: ScButton {
                         text: root.kind == MessageKind.error ? @tr("ErrorDialog" => "Close") : @tr("InfoDialog" => "Close");
-                        kind: root.has-action ? ButtonKind.normal : ButtonKind.primary;
+                        kind: root.has-action || root.kind == MessageKind.stale-supports ? ButtonKind.normal : ButtonKind.primary;
                         ring: root.keyboard && !root.has-action;
                         clicked => {
                             root.answered(MessageAnswer.close);
