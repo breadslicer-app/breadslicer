@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use support_gen_df::pipeline::ModelInput;
 use support_gen_df::supports::types::SupportState;
 
+use crate::hand_log::HandLog;
 use crate::{DfSupportSession, SettingsRecipe, scene_model_leaves, scene_models};
 
 /// The generator name a project file stores these documents under.
@@ -45,6 +46,10 @@ struct Document {
     /// before #3 leave it out and tell only additions, by their ids.
     #[serde(default)]
     hand_edited: Option<bool>,
+    /// The hand edits as places on the model (#408). Documents written
+    /// before it leave it out, as do sets with no hand edits.
+    #[serde(default)]
+    hand_log: Option<HandLog>,
     models: Vec<ModelPrint>,
     state: SupportState,
 }
@@ -58,8 +63,15 @@ struct DocumentView<'a> {
     id_prefix: &'a str,
     next_id: u64,
     hand_edited: bool,
+    #[serde(skip_serializing_if = "no_hand_log")]
+    hand_log: &'a HandLog,
     models: Vec<ModelPrint>,
     state: &'a SupportState,
+}
+
+/// Whether a document leaves the hand log out: it says nothing.
+fn no_hand_log(log: &&HandLog) -> bool {
+    log.is_empty()
 }
 
 /// What tells a model apart: its id in the state, its size and its world
@@ -209,6 +221,7 @@ impl DfSupportSession {
             id_prefix,
             next_id,
             hand_edited: self.hand_edited(),
+            hand_log: self.hand_log(),
             models: self.model_prints(),
             state: self.state(),
         })
@@ -270,6 +283,11 @@ impl DfSupportSession {
         let hand_edited = document
             .hand_edited
             .unwrap_or(document.next_id > crate::session::HAND_IDS_FROM);
+        // A set an older build saved with hand edits recorded none of them.
+        let hand_log = document.hand_log.unwrap_or(HandLog {
+            unrecorded: hand_edited,
+            ..HandLog::default()
+        });
         let session = DfSupportSession::restored(
             models,
             settings,
@@ -278,6 +296,7 @@ impl DfSupportSession {
             document.id_prefix,
             document.next_id,
             hand_edited,
+            hand_log,
         );
         Ok((session, ids))
     }

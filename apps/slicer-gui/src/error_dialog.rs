@@ -53,6 +53,17 @@ pub(crate) enum RecoveryChoice {
     Later,
 }
 
+/// The answer to "supports out of date" (#408).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StaleSupportsChoice {
+    /// Make the model's supports again with the current settings.
+    Regenerate,
+    /// Make them again, then put back the edits made by hand.
+    KeepEdits,
+    /// Close, Escape or a click outside: leave them as they are.
+    Leave,
+}
+
 /// Which "keep your work" buttons the "replace current scene?" dialog offers,
 /// decided from the document's dirty state and from whether it is backed by a
 /// project file.
@@ -157,12 +168,30 @@ pub(crate) fn show_all_messages_again(bus: &PreferencesBus) {
     });
 }
 
+/// What an error offers to do about itself, besides Close (#407).
+struct ErrorAction {
+    /// The button's text, in the language in force.
+    label: Box<dyn Fn() -> SharedString>,
+    /// Runs once, when the button is pressed.
+    run: Box<dyn FnOnce()>,
+}
+
 /// One message waiting in the queue, or on show.
 enum Entry {
-    Error(Box<dyn Fn() -> ErrorTexts>),
+    Error {
+        build_texts: Box<dyn Fn() -> ErrorTexts>,
+        action: Option<ErrorAction>,
+    },
     Info {
         build_texts: Box<dyn Fn() -> InfoTexts>,
         key: Option<MessageKey>,
+    },
+    /// A model's supports are out of date (#408): a notice whose rows make
+    /// them again, keeping the edits made by hand when there are some.
+    StaleSupports {
+        build_texts: Box<dyn Fn() -> InfoTexts>,
+        hand_edited: bool,
+        on_choice: Box<dyn FnOnce(StaleSupportsChoice)>,
     },
     SceneChange {
         source_name: SharedString,
@@ -191,8 +220,11 @@ impl Entry {
         match self {
             // Asked for from the menu and changes nothing: a click outside
             // only closes it.
-            Self::Info { .. } | Self::Diagnostics { .. } => MessageClass::Notice,
-            Self::Error(_)
+            // Stale supports change nothing until a row is picked.
+            Self::Info { .. } | Self::Diagnostics { .. } | Self::StaleSupports { .. } => {
+                MessageClass::Notice
+            }
+            Self::Error { .. }
             | Self::SceneChange { .. }
             | Self::SliceOverwrite { .. }
             | Self::Recovery { .. } => MessageClass::MustAnswer,
@@ -221,10 +253,19 @@ impl Entry {
             has_unsaved_changes: false,
             save_as_mode: false,
             has_scene: false,
+            hand_edited: false,
+            action: SharedString::new(),
         };
         match self {
-            Self::Error(build_texts) => {
+            Self::Error {
+                build_texts,
+                action,
+            } => {
                 let texts = build_texts();
+                message.action = action
+                    .as_ref()
+                    .map(|action| (action.label)())
+                    .unwrap_or_default();
                 message.kind = MessageKind::Error;
                 message.heading = texts.heading;
                 message.context = texts.context.unwrap_or_default();
@@ -236,6 +277,18 @@ impl Entry {
                 message.heading = texts.heading;
                 message.text = texts.message;
                 message.details = texts.details;
+            }
+            Self::StaleSupports {
+                build_texts,
+                hand_edited,
+                ..
+            } => {
+                let texts = build_texts();
+                message.kind = MessageKind::StaleSupports;
+                message.heading = texts.heading;
+                message.text = texts.message;
+                message.details = texts.details;
+                message.hand_edited = *hand_edited;
             }
             Self::SceneChange {
                 source_name,
@@ -271,7 +324,16 @@ impl Entry {
     /// a notice or an error. `include_models` is the diagnostics' tick.
     fn settle(self, answer: MessageAnswer, include_models: bool) {
         match self {
-            Self::Error(_) | Self::Info { .. } => {}
+            Self::Error { action, .. } => {
+                // Only the action's own button runs it: Escape, Close and a
+                // click outside leave things as they are.
+                if answer == MessageAnswer::Confirm
+                    && let Some(action) = action
+                {
+                    (action.run)();
+                }
+            }
+            Self::Info { .. } => {}
             Self::SceneChange { on_choice, .. } => on_choice(match answer {
                 MessageAnswer::Discard => ReplaceSceneChoice::Discard,
                 MessageAnswer::Save => ReplaceSceneChoice::Save,
@@ -279,6 +341,16 @@ impl Entry {
                 // Anything else keeps the scene: never discard it without an
                 // explicit Discard.
                 _ => ReplaceSceneChoice::Cancel,
+            }),
+            Self::StaleSupports {
+                hand_edited,
+                on_choice,
+                ..
+            } => on_choice(match answer {
+                MessageAnswer::Regenerate => StaleSupportsChoice::Regenerate,
+                // Offered only for a set with edits made by hand.
+                MessageAnswer::KeepEdits if hand_edited => StaleSupportsChoice::KeepEdits,
+                _ => StaleSupportsChoice::Leave,
             }),
             Self::SliceOverwrite { on_confirm } => {
                 // Only an explicit Re-slice replaces the held slice.
@@ -441,6 +513,33 @@ impl DialogManager {
     /// texts that `build_texts` gives in the language in force, now and after
     /// each language change. Must run on the Slint UI thread.
     pub(crate) fn show_error(self: &Rc<Self>, build_texts: impl Fn() -> ErrorTexts + 'static) {
+        self.queue_error(Box::new(build_texts), None);
+    }
+
+    /// [`show_error`](Self::show_error) with a button beside Close, labelled
+    /// `label` in the language in force, that runs `on_action` once (#407).
+    /// Close, Escape and a click outside run nothing. Must run on the Slint UI
+    /// thread.
+    pub(crate) fn show_error_with_action(
+        self: &Rc<Self>,
+        build_texts: impl Fn() -> ErrorTexts + 'static,
+        label: impl Fn() -> SharedString + 'static,
+        on_action: impl FnOnce() + 'static,
+    ) {
+        self.queue_error(
+            Box::new(build_texts),
+            Some(ErrorAction {
+                label: Box::new(label),
+                run: Box::new(on_action),
+            }),
+        );
+    }
+
+    fn queue_error(
+        self: &Rc<Self>,
+        build_texts: Box<dyn Fn() -> ErrorTexts>,
+        action: Option<ErrorAction>,
+    ) {
         let texts = build_texts();
         eprintln!(
             "[error] {}: {}\n{}",
@@ -450,7 +549,10 @@ impl DialogManager {
             "message: error: {}: {} {}",
             texts.heading, texts.message, texts.details
         ));
-        self.enqueue(Entry::Error(Box::new(build_texts)));
+        self.enqueue(Entry::Error {
+            build_texts,
+            action,
+        });
     }
 
     /// Shows a neutral notice that a click outside closes and that offers no
@@ -483,6 +585,37 @@ impl DialogManager {
         self.enqueue(Entry::Info {
             build_texts: Box::new(build_texts),
             key: Some(key),
+        });
+    }
+
+    /// Says that a model's supports are out of date, with the texts
+    /// `build_texts` gives, and offers to make them again (#408): with the
+    /// current settings, or, when `hand_edited`, keeping the edits made by
+    /// hand. Calls `on_choice` once with the answer; Close, Escape and a
+    /// click outside leave the supports alone. Must run on the Slint UI
+    /// thread.
+    pub(crate) fn show_stale_supports(
+        self: &Rc<Self>,
+        hand_edited: bool,
+        build_texts: impl Fn() -> InfoTexts + 'static,
+        on_choice: impl FnOnce(StaleSupportsChoice) + 'static,
+    ) {
+        let asking = self
+            .queue
+            .borrow()
+            .iter()
+            .any(|e| matches!(e, Entry::StaleSupports { .. }));
+        if asking {
+            // One card at a time: a second click on stale supports while it
+            // is up leaves them alone.
+            on_choice(StaleSupportsChoice::Leave);
+            return;
+        }
+        crate::breadcrumbs::note(&format!("message: {}", build_texts().heading));
+        self.enqueue(Entry::StaleSupports {
+            build_texts: Box::new(build_texts),
+            hand_edited,
+            on_choice: Box::new(on_choice),
         });
     }
 
@@ -623,7 +756,7 @@ impl DialogManager {
         self.queue
             .borrow()
             .iter()
-            .filter(|e| matches!(e, Entry::Error(_)))
+            .filter(|e| matches!(e, Entry::Error { .. }))
             .map(|e| e.message().heading.to_string())
             .collect()
     }
@@ -634,7 +767,7 @@ impl DialogManager {
         self.queue
             .borrow()
             .iter()
-            .filter(|e| matches!(e, Entry::Info { .. }))
+            .filter(|e| matches!(e, Entry::Info { .. } | Entry::StaleSupports { .. }))
             .map(|e| e.message().heading.to_string())
             .collect()
     }

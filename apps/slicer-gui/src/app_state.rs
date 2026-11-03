@@ -759,6 +759,7 @@ impl AppState {
             ctrl.document(),
             ctrl.dialogs(),
             review_panel.clone(),
+            repair_run.clone(),
         );
         let split_bodies = SplitBodies::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         WindowDrivers {

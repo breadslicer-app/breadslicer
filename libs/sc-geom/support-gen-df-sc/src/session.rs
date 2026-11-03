@@ -48,6 +48,9 @@ use support_gen_df::three::{Matrix4, Vec3};
 use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
 
 use crate::document::ModelPrint;
+use crate::hand_log::{
+    HandEditKind, HandLog, HandPlaced, HandRemoved, KeptEdits, LostEdit, LostWhy,
+};
 use crate::shift::{PlaneMotion, bases, model_collections, move_model_supports};
 use crate::{DF_SUPPORT_MESH_NAME, SettingsRecipe, weld_parts};
 
@@ -117,10 +120,45 @@ pub struct DfSupportSession {
     next_id: u64,
     /// Whether a hand edit added or removed supports since the run.
     hand_edited: bool,
+    /// The hand edits as places on the model, to put back on a run made
+    /// again (#408).
+    hand_log: HandLog,
 }
 
 /// The first hand-placed id is the one after this.
 pub(crate) const HAND_IDS_FROM: u64 = 1_000_000;
+
+/// How far the model surface may lie from where a hand-placed tip touched
+/// it, for a set made again to put the tip back there (#408).
+const KEEP_SURFACE_MM: f64 = 0.05;
+/// How far the surface's normal there may have turned.
+const KEEP_NORMAL_DEG: f64 = 15.0;
+/// How far off the surface, along the normal it had, a set made again aims
+/// at a hand-placed tip: a tip on an edge then lands on the face it touched,
+/// not on the wall beside it.
+const KEEP_AIM_MM: f64 = 0.02;
+/// How far from where a support of the old run had its tip a support of
+/// the new run may have its own and be taken for it: the one a removal or
+/// a move by hand acted on (#408).
+const MATCH_TIP_MM: f64 = 1.0;
+
+/// Where a set made again aims to put back a tip that touched the model at
+/// `tip`, facing `normal`: [`KEEP_AIM_MM`] off the surface along it.
+fn aim_at(tip: [f64; 3], normal: [f64; 3]) -> [f64; 3] {
+    let len = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+    if len <= 1e-12 {
+        return tip;
+    }
+    std::array::from_fn(|k| tip[k] + normal[k] / len * KEEP_AIM_MM)
+}
+
+/// Whether `id` names an entity placed by hand: the `-m` ids
+/// [`DfSupportSession::id_source`] gives.
+fn is_hand_id(id: &str) -> bool {
+    id.rsplit_once("-m")
+        .and_then(|(_, n)| n.parse::<u64>().ok())
+        .is_some_and(|n| n > HAND_IDS_FROM)
+}
 
 /// The supports as a removal reads them: each entity's id, the points it
 /// passes through, the ids of its parts, and who names whom.
@@ -274,6 +312,14 @@ pub struct EditPreview {
     pub note: Option<AddNote>,
     /// For a move: the pieces it takes away from where the support was.
     pub taken: Option<IndexedMesh>,
+}
+
+/// Where a support is placed: at the model surface nearest a point, or on
+/// a contact known already (the model, the point, the outward normal).
+#[derive(Clone, Copy)]
+enum At {
+    Point([f64; 3]),
+    Contact(usize, Vec3, Vec3),
 }
 
 /// What [`DfSupportSession::place`] added.
@@ -651,11 +697,13 @@ impl DfSupportSession {
             id_prefix,
             HAND_IDS_FROM,
             false,
+            HandLog::default(),
         )
     }
 
     /// A session from its parts, with the next hand-placed id counting on
     /// from `next_id`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn restored(
         models: Vec<ModelInput>,
         settings: PipelineSettings,
@@ -664,6 +712,7 @@ impl DfSupportSession {
         id_prefix: String,
         next_id: u64,
         hand_edited: bool,
+        hand_log: HandLog,
     ) -> Self {
         let bvhs = (0..models.len()).map(|_| OnceLock::new()).collect();
         let prints = (0..models.len()).map(|_| OnceLock::new()).collect();
@@ -680,6 +729,7 @@ impl DfSupportSession {
             id_prefix,
             next_id,
             hand_edited,
+            hand_log,
         }
     }
 
@@ -718,6 +768,11 @@ impl DfSupportSession {
     /// made again would not keep those edits.
     pub fn hand_edited(&self) -> bool {
         self.hand_edited
+    }
+
+    /// The hand edits as places on the model (#408).
+    pub(crate) fn hand_log(&self) -> &HandLog {
+        &self.hand_log
     }
 
     /// The zone size (#360) a support added by hand takes when no size is
@@ -782,6 +837,7 @@ impl DfSupportSession {
     fn taken_along(&self, index: usize, model: ModelInput, motion: &PlaneMotion) -> Self {
         let mut state = self.state.clone();
         move_model_supports(&mut state.collections, &model.id, motion);
+        let hand_log = self.hand_log.moved(&model.id, motion);
         let mut models = self.models.to_vec();
         models[index] = model;
         let bvhs = self
@@ -827,6 +883,7 @@ impl DfSupportSession {
             id_prefix: self.id_prefix.clone(),
             next_id: self.next_id,
             hand_edited: self.hand_edited,
+            hand_log,
         }
     }
 
@@ -844,6 +901,7 @@ impl DfSupportSession {
             .map(|i| {
                 let model = self.models[i].clone();
                 let collections = model_collections(&self.state.collections, &model.id);
+                let hand_log = self.hand_log.of_model(&model.id);
                 let bvh = self.bvhs[i]
                     .get()
                     .map_or_else(OnceLock::new, |bvh| OnceLock::from(bvh.clone()));
@@ -866,6 +924,7 @@ impl DfSupportSession {
                     id_prefix: format!("{}.{i}", self.id_prefix),
                     next_id: self.next_id,
                     hand_edited: self.hand_edited,
+                    hand_log,
                 }
             })
             .collect()
@@ -970,8 +1029,24 @@ impl DfSupportSession {
         point: [f64; 3],
         how: &AddOptions,
     ) -> Result<Placed, (EditError, Option<AddNote>)> {
-        let Some((i, tip, normal)) = self.contact(point) else {
-            return Err((EditError::NothingThere, None));
+        self.place_at(At::Point(point), how)
+    }
+
+    /// [`Self::place`], at a point to find the surface under, or on a
+    /// contact known already: a hand edit put back on a run made again
+    /// (#408) touches the model where and how it did, as a tip on an edge
+    /// between two faces would land on either.
+    fn place_at(
+        &mut self,
+        at: At,
+        how: &AddOptions,
+    ) -> Result<Placed, (EditError, Option<AddNote>)> {
+        let (i, tip, normal) = match at {
+            At::Point(point) => match self.contact(point) {
+                Some(contact) => contact,
+                None => return Err((EditError::NothingThere, None)),
+            },
+            At::Contact(i, tip, normal) => (i, tip, normal),
         };
         // The tip goes exactly where the person points (#3): a face that
         // looks up is no place for one, and says so, rather than the tip
@@ -1132,6 +1207,23 @@ impl DfSupportSession {
                     .filter(|id| !before.contains(id))
                     .collect();
             }
+        }
+        // The log keeps the support as a place on the model (#408).
+        if let Some(id) = added
+            .iter()
+            .filter(|id| self.support_tip(id).is_some())
+            .min()
+            .cloned()
+        {
+            self.hand_log.placed.push(HandPlaced {
+                id,
+                model: self.models[i].id.clone(),
+                tip: [tip.x, tip.y, tip.z],
+                normal: [normal.x, normal.y, normal.z],
+                attach: how.attach,
+                size: how.size.clone(),
+                moved_from: None,
+            });
         }
         Ok(Placed {
             added,
@@ -1473,6 +1565,206 @@ impl DfSupportSession {
             .map(|(_, id)| id)
     }
 
+    /// Where support `id`'s tip touches the model, and the model it stands
+    /// on (its id in the state): a trunk's, a branch's or a leaf's; `None`
+    /// for anything else.
+    fn support_tip(&self, id: &str) -> Option<([f64; 3], &str)> {
+        let c = &self.state.collections;
+        let at = |p: Vec3| [p.x, p.y, p.z];
+        if let Some(t) = c.trunks.get(id) {
+            return t
+                .contact_cone
+                .as_ref()
+                .map(|k| (at(k.pos), t.base.model_id.as_str()));
+        }
+        if let Some(b) = c.branches.get(id) {
+            return b
+                .contact_cone
+                .as_ref()
+                .map(|k| (at(k.pos), b.base.model_id.as_str()));
+        }
+        c.leaves
+            .get(id)
+            .map(|l| (at(l.contact_cone.pos), l.base.model_id.as_str()))
+    }
+
+    /// Notes in the log a removal of the supports `picked` that takes the
+    /// entities `gone` with it (#408): a support of the run picked is
+    /// logged as removed, by where its tip was; what hangs from it goes with
+    /// it again when the removal is made on a run made again. A support
+    /// placed by hand that goes leaves the log; one of the run moved by hand
+    /// leaves its old place removed.
+    fn log_removal(&mut self, picked: &[String], gone: &HashSet<String>) {
+        let mut ids: Vec<&String> = gone.iter().collect();
+        ids.sort();
+        for id in ids {
+            if let Some(k) = self.hand_log.placed.iter().position(|p| p.id == *id) {
+                let placed = self.hand_log.placed.remove(k);
+                if let Some(tip) = placed.moved_from {
+                    self.hand_log.removed.push(HandRemoved {
+                        model: placed.model,
+                        tip,
+                    });
+                }
+            }
+        }
+        for id in picked {
+            if !gone.contains(id) || is_hand_id(id) {
+                continue;
+            }
+            if let Some((tip, model)) = self.support_tip(id) {
+                let model = model.to_owned();
+                self.hand_log.removed.push(HandRemoved { model, tip });
+            }
+        }
+    }
+
+    /// The support of the run (not one placed by hand) whose tip is
+    /// nearest `point`, within [`MATCH_TIP_MM`].
+    fn run_tip_near(&self, point: [f64; 3]) -> Option<String> {
+        self.tips()
+            .into_iter()
+            .filter(|(id, _)| !is_hand_id(id))
+            .map(|(id, tip)| (dist(point, tip), id))
+            .filter(|(d, _)| *d <= MATCH_TIP_MM)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, id)| id)
+    }
+
+    /// The model whose surface still lies where a tip touched it, at
+    /// `tip`, facing the way it did (`normal`), as a click at `aim` finds
+    /// it; `None` when the surface there moved or turned.
+    fn surface_holds(&self, aim: [f64; 3], tip: [f64; 3], normal: [f64; 3]) -> Option<usize> {
+        let (model, at, n) = self.contact(aim)?;
+        let was = Vec3::new(normal[0], normal[1], normal[2]);
+        let len = was.length();
+        (len > 1e-12
+            && dist([at.x, at.y, at.z], tip) <= KEEP_SURFACE_MM
+            && n.dot(was) / len >= KEEP_NORMAL_DEG.to_radians().cos())
+        .then_some(model)
+    }
+
+    /// The hand edits to put back on a run made again (#408). A set an
+    /// older build saved recorded none: its supports placed by hand, known
+    /// by their ids, are taken as added where their tips touch the model.
+    fn log_to_keep(&self) -> HandLog {
+        let mut log = self.hand_log.clone();
+        if !log.unrecorded {
+            return log;
+        }
+        let logged: HashSet<&str> = log.placed.iter().map(|p| p.id.as_str()).collect();
+        let mut found = Vec::new();
+        let mut tips = self.tips();
+        tips.sort_by(|a, b| a.0.cmp(&b.0));
+        for (id, tip) in tips {
+            if !is_hand_id(&id) || logged.contains(id.as_str()) {
+                continue;
+            }
+            let (Some((_, at, n)), Some((_, model))) = (self.contact(tip), self.support_tip(&id))
+            else {
+                continue;
+            };
+            found.push(HandPlaced {
+                model: model.to_owned(),
+                tip: [at.x, at.y, at.z],
+                normal: [n.x, n.y, n.z],
+                attach: false,
+                size: self.size_of(&id),
+                moved_from: None,
+                id,
+            });
+        }
+        log.placed.splice(0..0, found);
+        log
+    }
+
+    /// This session, a run made again on the model `old`'s supports stood
+    /// on, with `old`'s hand edits (#3) put back where they still fit
+    /// (#408): each support of the old run removed by hand takes the new
+    /// run's support at that place with it, if there is one; each support
+    /// added by hand is added again, by the same rules as a click, where the
+    /// model surface still lies and faces as it did; each support of the
+    /// old run moved by hand has the new run's support at that place moved
+    /// the same way. The edits that no longer fit are reported, the others
+    /// counted. `None` when `cancelled` says so, between two edits.
+    pub fn with_hand_edits_of(
+        &self,
+        old: &DfSupportSession,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<(Self, KeptEdits)> {
+        let mut session = self.clone();
+        let log = old.log_to_keep();
+        let mut report = KeptEdits {
+            unrecorded: log.unrecorded,
+            ..KeptEdits::default()
+        };
+        for removed in &log.removed {
+            if cancelled() {
+                return None;
+            }
+            // With no support of the new run there, nothing is to remove.
+            if let Some(id) = session.run_tip_near(removed.tip) {
+                let _ = session.remove_tips(&[id]);
+            }
+            report.kept += 1;
+        }
+        for placed in &log.placed {
+            if cancelled() {
+                return None;
+            }
+            let kind = if placed.moved_from.is_some() {
+                HandEditKind::Moved
+            } else {
+                HandEditKind::Added
+            };
+            let lost = |why| LostEdit {
+                kind,
+                at: placed.tip,
+                why,
+            };
+            let aim = aim_at(placed.tip, placed.normal);
+            let Some(model) = session.surface_holds(aim, placed.tip, placed.normal) else {
+                report.lost.push(lost(LostWhy::SurfaceChanged));
+                continue;
+            };
+            let [x, y, z] = placed.tip;
+            let [nx, ny, nz] = placed.normal;
+            let contact = At::Contact(model, Vec3::new(x, y, z), Vec3::new(nx, ny, nz).normalize());
+            let how = AddOptions {
+                attach: placed.attach,
+                size: placed.size.clone(),
+            };
+            // A move takes the new run's support where the old one stood;
+            // with none there, the support is added where it was moved to.
+            let done = match placed
+                .moved_from
+                .and_then(|from| session.run_tip_near(from))
+            {
+                Some(id) => {
+                    let mut moved = session.clone();
+                    moved
+                        .move_in_place(&id, contact, &how)
+                        .map(|_| session = moved)
+                }
+                None => {
+                    let mut added = session.clone();
+                    added.place_at(contact, &how).map(|_| session = added)
+                }
+            }
+            .map_err(|(err, _)| err);
+            match done {
+                Ok(()) => report.kept += 1,
+                Err(err) => report.lost.push(lost(match err {
+                    EditError::CannotAttach(AddNote::CarriesOthers) => LostWhy::CarriesOthers,
+                    EditError::CannotAttach(_) => LostWhy::CannotAttach,
+                    EditError::NothingThere => LostWhy::SurfaceChanged,
+                    EditError::NoRoute(_) | EditError::Tessellation(_) => LostWhy::NoRoute,
+                })),
+            }
+        }
+        Some((session, report))
+    }
+
     /// The tip diameter of support `id`, when it has one.
     fn tip_diameter(&self, id: &str) -> Option<f64> {
         let c = &self.state.collections;
@@ -1525,6 +1817,7 @@ impl DfSupportSession {
     /// Returns how many entities went.
     pub fn remove_tips(&mut self, ids: &[String]) -> Result<usize, EditError> {
         let gone = self.removal_of(ids)?;
+        self.log_removal(ids, &gone);
         self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
         self.removal_index = Arc::default();
         self.hand_edited = true;
@@ -1551,7 +1844,7 @@ impl DfSupportSession {
     fn move_in_place(
         &mut self,
         tip: &str,
-        to: [f64; 3],
+        to: At,
         how: &AddOptions,
     ) -> Result<(Placed, HashSet<String>), (EditError, Option<AddNote>)> {
         let gone = self
@@ -1577,9 +1870,21 @@ impl DfSupportSession {
             attach: how.attach,
             size: how.size.clone().or_else(|| self.size_of(tip)),
         };
+        // The log (#408): a support of the run keeps where the run had it,
+        // one placed by hand where it first came from.
+        let moved_from = match self.hand_log.placed.iter().position(|p| p.id == tip) {
+            Some(k) => self.hand_log.placed.remove(k).moved_from,
+            None if is_hand_id(tip) => None,
+            None => self.support_tip(tip).map(|(at, _)| at),
+        };
         self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
         self.removal_index = Arc::default();
-        let placed = self.place(to, &how)?;
+        let placed = self.place_at(to, &how)?;
+        if let Some(last) = self.hand_log.placed.last_mut()
+            && placed.added.contains(&last.id)
+        {
+            last.moved_from = moved_from;
+        }
         Ok((placed, gone))
     }
 
@@ -1588,7 +1893,9 @@ impl DfSupportSession {
     /// (#3). On a refusal the session is as it was.
     pub fn move_tip(&mut self, tip: &str, to: [f64; 3], how: &AddOptions) -> Result<(), EditError> {
         let mut moved = self.clone();
-        moved.move_in_place(tip, to, how).map_err(|(err, _)| err)?;
+        moved
+            .move_in_place(tip, At::Point(to), how)
+            .map_err(|(err, _)| err)?;
         *self = moved;
         Ok(())
     }
@@ -1604,7 +1911,7 @@ impl DfSupportSession {
         how: &AddOptions,
     ) -> Result<(EditPreview, Option<Self>), EditError> {
         let mut copy = self.clone();
-        match copy.move_in_place(tip, to, how) {
+        match copy.move_in_place(tip, At::Point(to), how) {
             Ok((placed, gone)) => {
                 let preview = EditPreview {
                     mesh: copy.mesh_of(|id| placed.added.contains(id))?,
@@ -1650,6 +1957,12 @@ impl DfSupportSession {
     /// hangs from it. Returns how many entities went.
     pub fn remove_near(&mut self, point: [f64; 3]) -> Result<usize, EditError> {
         let gone = self.removal(point)?;
+        let picked: Vec<String> = self
+            .nearest_support(point)
+            .map(|(_, k)| self.removal_index().ids[k].clone())
+            .into_iter()
+            .collect();
+        self.log_removal(&picked, &gone);
         self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
         self.removal_index = Arc::default();
         self.hand_edited = true;
@@ -2506,6 +2819,155 @@ mod session_tests {
             Some(AddNote::SteepSurface)
         );
         assert_eq!(AddNote::of_rejection(RejectReason::Exception), None);
+    }
+
+    /// Every tip of `session`, rounded to a micron and sorted: what two sets
+    /// made the same way share whatever their ids.
+    fn tip_places(session: &DfSupportSession) -> Vec<[i64; 3]> {
+        let mut places: Vec<[i64; 3]> = session
+            .tips()
+            .into_iter()
+            .map(|(_, p)| p.map(|c| (c * 1000.0).round() as i64))
+            .collect();
+        places.sort_unstable();
+        places
+    }
+
+    /// The slab's supports with a run support removed, another moved by its
+    /// tip and one added by hand, in that order.
+    fn edited_slab() -> (DfSupportSession, [f64; 3], [f64; 3], [f64; 3]) {
+        let mut session = supported_slab();
+        let mut tips = session.tips();
+        tips.sort_by(|a, b| a.1[0].total_cmp(&b.1[0]));
+        let (removed_id, removed) = tips[1].clone();
+        let (moved_id, moved_from) = tips[tips.len() - 2].clone();
+        session.remove_tips(&[removed_id]).expect("it goes");
+        let to = [moved_from[0] - 1.5, moved_from[1] + 1.0, 12.0];
+        session
+            .move_tip(&moved_id, to, &AddOptions::default())
+            .expect("it moves");
+        let added = [25.4, 2.6, 12.0];
+        session
+            .add_at(
+                added,
+                &AddOptions {
+                    attach: false,
+                    size: Some("large".to_owned()),
+                },
+            )
+            .expect("it is added");
+        (session, removed, to, added)
+    }
+
+    /// #408: the hand edits of a set go back on the same model's supports
+    /// made again: the support removed is removed, the one moved is moved,
+    /// the one added is added with its size, and the result holds the tips
+    /// the edited set held.
+    #[test]
+    fn hand_edits_go_back_on_a_run_made_again() {
+        let (old, removed, to, added) = edited_slab();
+        let log = old.hand_log();
+        assert_eq!(log.removed.len(), 1, "{log:?}");
+        assert_eq!(log.placed.len(), 2, "{log:?}");
+        assert!(dist(log.removed[0].tip, removed) < 1e-9);
+        assert!(log.placed[0].moved_from.is_some() && dist(log.placed[0].tip, to) < 0.05);
+        assert_eq!(log.placed[1].size.as_deref(), Some("large"));
+        let fresh = supported_slab();
+        assert!(!fresh.hand_edited() && fresh.hand_log().is_empty());
+        let (kept, report) = fresh
+            .with_hand_edits_of(&old, &|| false)
+            .expect("not cancelled");
+        assert_eq!(report.kept, 3, "{report:?}");
+        assert!(report.lost.is_empty() && !report.unrecorded, "{report:?}");
+        assert_eq!(tip_places(&kept), tip_places(&old));
+        assert!(kept.hand_edited());
+        let id = kept.tip_near(added, 0.05).expect("the added support");
+        assert_eq!(kept.size_of(&id).as_deref(), Some("large"));
+        // Its log is the old one's: a later recalculation keeps them again.
+        assert_eq!(kept.hand_log().removed.len(), 1);
+        assert_eq!(kept.hand_log().placed.len(), 2);
+        // Cancelled between two edits: nothing comes back.
+        assert!(fresh.with_hand_edits_of(&old, &|| true).is_none());
+    }
+
+    /// #408: on a model whose surface moved, a support added there no
+    /// longer fits and is reported with where it was; a removal with no
+    /// support of the new run near its place counts as kept.
+    #[test]
+    fn an_edit_off_the_new_surface_is_reported() {
+        let (old, _, _, added) = edited_slab();
+        let fresh = crate::start_df_supports(&slab_scene(14.0), crate::DfSupportRequest::default())
+            .unwrap()
+            .join()
+            .unwrap()
+            .sets
+            .remove(0)
+            .session;
+        let (kept, report) = fresh.with_hand_edits_of(&old, &|| false).unwrap();
+        assert_eq!(report.lost.len(), 2, "{report:?}");
+        assert_eq!(report.kept, 1, "the removal: {report:?}");
+        assert!(
+            report
+                .lost
+                .iter()
+                .all(|l| l.why == crate::LostWhy::SurfaceChanged)
+        );
+        assert_eq!(report.lost[1].kind, crate::HandEditKind::Added);
+        assert!(dist(report.lost[1].at, added) < 0.05);
+        assert_eq!(report.lost[0].kind, crate::HandEditKind::Moved);
+        assert_eq!(tip_places(&kept), tip_places(&fresh), "nothing changed");
+    }
+
+    /// #408: removing a support placed by hand takes it out of the log, and
+    /// removing one of the run moved by hand logs its old place removed.
+    #[test]
+    fn removals_of_hand_placed_supports_keep_the_log_right() {
+        let (mut session, _, to, added) = edited_slab();
+        session
+            .remove_near([added[0], added[1], added[2] - 0.05])
+            .unwrap();
+        assert_eq!(session.hand_log().placed.len(), 1);
+        assert_eq!(session.hand_log().removed.len(), 1);
+        let moved = session.tip_near(to, 0.1).expect("the moved support");
+        let from = session.hand_log().placed[0].moved_from.unwrap();
+        session.remove_tips(&[moved]).unwrap();
+        assert!(session.hand_log().placed.is_empty());
+        assert_eq!(session.hand_log().removed.len(), 2);
+        assert!(dist(session.hand_log().removed[1].tip, from) < 1e-9);
+    }
+
+    /// #408: the log goes into a saved document and comes back, follows a
+    /// move of the model in the plate plane, and a document of an older
+    /// build, which kept none, reads as unrecorded: its supports placed by
+    /// hand, known by their ids, are put back.
+    #[test]
+    fn the_log_is_saved_moves_with_the_model_and_an_older_set_still_keeps_its_additions() {
+        let (old, _, _, added) = edited_slab();
+        let scene = slab_scene(12.0);
+        let bytes = old.to_document().expect("a document");
+        let reopened = DfSupportSession::from_document(&scene, 2, &bytes).unwrap();
+        assert_eq!(reopened.hand_log(), old.hand_log());
+        let moved = old.moved_in_plane(0, [3.0, -2.0]);
+        let shifted = moved.hand_log().placed[1].tip;
+        assert!(dist(shifted, [added[0] + 3.0, added[1] - 2.0, added[2]]) < 1e-9);
+        // An older build's document: no log.
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value.as_object_mut().unwrap().remove("handLog");
+        let older = serde_json::to_vec(&value).unwrap();
+        let legacy = DfSupportSession::from_document(&scene, 2, &older).unwrap();
+        assert!(legacy.hand_log().unrecorded && legacy.hand_log().placed.is_empty());
+        let (kept, report) = supported_slab()
+            .with_hand_edits_of(&legacy, &|| false)
+            .unwrap();
+        assert!(report.unrecorded);
+        assert_eq!(
+            report.kept, 2,
+            "the two supports placed by hand: {report:?}"
+        );
+        assert!(kept.tip_near(added, 0.05).is_some());
+        // A set with no hand edits writes no log, as before.
+        let plain = supported_slab().to_document().unwrap();
+        assert!(!String::from_utf8(plain).unwrap().contains("handLog"));
     }
 
     #[test]

@@ -6069,3 +6069,155 @@ msgstr "Corregir todo la dejó: es demasiado chica para un soporte; las capas si
 msgctxt "Review"
 msgid "Left by Fix All: the join did not hold it. Close the gap in the model by hand."
 msgstr "Corregir todo la dejó: la unión no la sostuvo. Cerrá el hueco en el modelo a mano."
+
+#: ui/message-layer.slint
+msgctxt "StaleSupportsDialog"
+msgid "Regenerate"
+msgstr "Regenerar"
+
+#: ui/message-layer.slint
+msgctxt "StaleSupportsDialog"
+msgid "Make this model's supports again with the current settings"
+msgstr "Rehace los soportes de este modelo con los ajustes actuales"
+
+#: ui/message-layer.slint
+msgctxt "StaleSupportsDialog"
+msgid "Make them again with the current settings; the hand edits are lost"
+msgstr "Los rehace con los ajustes actuales; se pierden las ediciones a mano"
+
+#: ui/message-layer.slint
+msgctxt "StaleSupportsDialog"
+msgid "Recalculate, keeping my edits"
+msgstr "Recalcular, conservando mis ediciones"
+
+#: ui/message-layer.slint
+msgctxt "StaleSupportsDialog"
+msgid "Make them again; put back what was added, moved or removed by hand"
+msgstr "Los rehace y repone lo agregado, movido o quitado a mano"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid ""
+"This model's mesh changed since its supports were made (Repair and Hollow "
+"change it), so they can no longer be edited by hand."
+msgstr ""
+"La malla de este modelo cambió desde que se hicieron sus soportes (Reparar y "
+"Ahuecar la cambian), así que ya no se pueden editar a mano."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid ""
+"The supports' mesh changed since they were made (Repair changes it), so they "
+"can no longer be edited by hand."
+msgstr ""
+"La malla de los soportes cambió desde que se hicieron (Reparar la cambia), así "
+"que ya no se pueden editar a mano."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Supports recalculated"
+msgstr "Soportes recalculados"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "The edit made by hand was put back."
+msgid_plural "All {n} edits made by hand were put back."
+msgstr[0] "Se volvió a aplicar la edición hecha a mano."
+msgstr[1] "Se volvieron a aplicar las {n} ediciones hechas a mano."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The edit made by hand could not be kept:"
+msgstr "No se pudo conservar la edición hecha a mano:"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "{n} of your {} edits made by hand could not be kept:"
+msgid_plural "{n} of your {} edits made by hand could not be kept:"
+msgstr[0] "No se pudo conservar {n} de tus {} ediciones hechas a mano:"
+msgstr[1] "No se pudieron conservar {n} de tus {} ediciones hechas a mano:"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "…and {n} more."
+msgid_plural "…and {n} more."
+msgstr[0] "…y {n} más."
+msgstr[1] "…y {n} más."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid ""
+"These supports were saved by an older version, which did not record the "
+"supports removed or moved by hand: those are back where the run places them."
+msgstr ""
+"Estos soportes se guardaron con una versión anterior, que no registraba los "
+"soportes quitados o movidos a mano: esos volvieron a donde los pone la "
+"generación."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Undo brings back the supports as they were."
+msgstr "Deshacer trae de vuelta los soportes como estaban."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the model surface there changed"
+msgstr "la superficie del modelo cambió ahí"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "no support can reach that point now"
+msgstr "ahora ningún soporte llega a ese punto"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "no support to hang it from there now"
+msgstr "ahora no hay ahí un soporte del que colgarlo"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "other supports of the new run hang from the one there"
+msgstr "otros soportes de la nueva generación cuelgan del que está ahí"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "support added at {}: {}"
+msgstr "soporte agregado en {}: {}"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "support moved to {}: {}"
+msgstr "soporte movido a {}: {}"
+
+#: src/slice_run.rs
+msgctxt "ErrorDialog"
+msgid "Repair"
+msgstr "Reparar"
+
+#: src/slice_run.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "“{}” is not a closed mesh: it has holes, cracks or faces that don't line up. Press Repair to fix it and slice again."
+msgstr "“{}” no es una malla cerrada: tiene agujeros, grietas o caras que no encajan. Tocá Reparar para arreglarla y volver a laminar."
+
+#: src/slice_run.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "These objects are not closed meshes: {}. Press Repair to fix them and slice again."
+msgstr "Estos objetos no son mallas cerradas: {}. Tocá Reparar para arreglarlos y volver a laminar."
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Still can't slice"
+msgstr "Todavía no se puede laminar"
+
+#: src/repair_run.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Repair couldn't fix everything, so slicing didn't start again. {}"
+msgstr "La reparación no pudo arreglar todo, así que no se volvió a laminar. {}"

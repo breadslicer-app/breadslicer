@@ -31,8 +31,14 @@
 //! thicken, cured the same way, and specks to erase: their stack is cut from
 //! the model leaves and the fills and merged with them, which removes the
 //! specks from all three.
+//!
+//! A slice the slicer refuses for meshes that are not closed offers Repair on
+//! its card (#407): the Repair driver repairs those objects only and, once they
+//! slice, starts the slice again without asking to overwrite, since the
+//! person already asked for it. A slice started that way that is refused
+//! again offers no Repair, so nothing loops.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -56,6 +62,7 @@ use crate::mesh_loader::panic_message;
 use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
 use crate::repair_report::object_names_by_leaf;
+use crate::repair_run::RepairRun;
 use crate::review::{ReviewOutcome, erased_stack, review_slices};
 use crate::review_panel::ReviewPanel;
 use crate::scene_document::SceneDocument;
@@ -115,6 +122,25 @@ enum SliceRunOutcome {
 
 type SliceSlot = Arc<Mutex<Option<Result<SliceRunOutcome, SliceFailure>>>>;
 
+/// What asked for a slice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SliceTrigger {
+    /// The Slice button.
+    Button,
+    /// The Review card's Fix All, which promised a new slice (#156).
+    FixAll,
+    /// A Repair asked for from the card of a refused slice (#407).
+    Repair,
+}
+
+impl SliceTrigger {
+    /// Whether the person already asked for this slice, so a held one is
+    /// replaced without asking.
+    fn asked_for(self) -> bool {
+        matches!(self, Self::FixAll | Self::Repair)
+    }
+}
+
 pub(crate) struct SliceRun {
     ui: slint::Weak<MainWindow>,
     bus: Rc<PreferencesBus>,
@@ -122,6 +148,10 @@ pub(crate) struct SliceRun {
     dialogs: Rc<DialogManager>,
     // The Review card, which receives each completed slice's findings.
     review: Rc<ReviewPanel>,
+    // Repairs the objects a refused slice names (#407).
+    repair: Rc<RepairRun>,
+    // What asked for the slice in flight.
+    trigger: Cell<SliceTrigger>,
     progress: Arc<SliceProgressCell>,
     slot: SliceSlot,
     // The current run's cancel token, so the modal's Cancel can trip it. `None`
@@ -152,6 +182,7 @@ impl SliceRun {
         document: Rc<SceneDocument>,
         dialogs: Rc<DialogManager>,
         review: Rc<ReviewPanel>,
+        repair: Rc<RepairRun>,
     ) -> Rc<Self> {
         let run = Rc::new(Self {
             ui: ui.as_weak(),
@@ -159,6 +190,8 @@ impl SliceRun {
             document,
             dialogs,
             review,
+            repair,
+            trigger: Cell::new(SliceTrigger::Button),
             progress: Arc::new(SliceProgressCell::default()),
             slot: Arc::new(Mutex::new(None)),
             cancel: RefCell::new(None),
@@ -174,8 +207,10 @@ impl SliceRun {
         {
             // Fix All (#156) slices again on its own: no overwrite to confirm.
             let weak = Rc::downgrade(&run);
-            run.review
-                .set_reslice(move || weak.upgrade().is_some_and(|run| run.start_with(true)));
+            run.review.set_reslice(move || {
+                weak.upgrade()
+                    .is_some_and(|run| run.start_with(SliceTrigger::FixAll))
+            });
         }
         {
             let run = run.clone();
@@ -195,20 +230,21 @@ impl SliceRun {
     /// when no printer or no resin is in force (the button gates both, but the
     /// checks keep the path safe).
     fn start(self: &Rc<Self>) {
-        self.start_with(false);
+        self.start_with(SliceTrigger::Button);
     }
 
-    /// [`start`](Self::start), for the Slice button (`by_fix_all` false) or
-    /// for the Review card's Fix All, which promised a new slice: a changed
-    /// input then launches without asking to overwrite the held slice.
+    /// [`start`](Self::start), for what `trigger` says: a slice the person
+    /// already asked for (Fix All, or a Repair from a refused slice's card)
+    /// launches on a changed input without asking to overwrite the held one.
     /// Returns whether a slice started.
-    fn start_with(self: &Rc<Self>, by_fix_all: bool) -> bool {
+    fn start_with(self: &Rc<Self>, trigger: SliceTrigger) -> bool {
         let Some(ui) = self.ui.upgrade() else {
             return false;
         };
-        // While Fix All runs, the Slice button waits: the slices of its
-        // passes come from the run itself (#390, #163).
-        if ui.get_slicing_in_progress() || (!by_fix_all && self.review.fixing()) {
+        // While Fix All runs, the Slice button and a Repair wait: the slices
+        // of its passes come from the run itself (#390, #163).
+        if ui.get_slicing_in_progress() || (trigger != SliceTrigger::FixAll && self.review.fixing())
+        {
             return false;
         }
         let snapshot = self.bus.snapshot();
@@ -236,10 +272,10 @@ impl SliceRun {
                 current_layer_values(&current),
             );
         match decide_re_slice(held.as_ref(), &current, geometry_changed, layers_changed) {
-            ReSliceDecision::FirstSlice => self.launch(current, by_fix_all),
+            ReSliceDecision::FirstSlice => self.launch(current, trigger),
             // Fills to add or drop: the scene is the same, the slice is not.
             ReSliceDecision::Unchanged if self.review.fills_pending() => {
-                self.launch(current, by_fix_all)
+                self.launch(current, trigger)
             }
             ReSliceDecision::Unchanged => {
                 // The held slice already matches the inputs; nothing to
@@ -247,11 +283,11 @@ impl SliceRun {
                 self.show_up_to_date_hint();
                 false
             }
-            ReSliceDecision::Changed if by_fix_all => self.launch(current, true),
+            ReSliceDecision::Changed if trigger.asked_for() => self.launch(current, trigger),
             ReSliceDecision::Changed => {
                 let this = self.clone();
                 self.dialogs.show_slice_overwrite_confirm(move || {
-                    this.launch(current, false);
+                    this.launch(current, trigger);
                 });
                 false
             }
@@ -264,7 +300,7 @@ impl SliceRun {
     /// are taken together here so the marker recorded with the result matches
     /// the geometry actually sliced.
     /// Returns whether the slice started.
-    fn launch(self: &Rc<Self>, mut current: SliceParams, by_fix_all: bool) -> bool {
+    fn launch(self: &Rc<Self>, mut current: SliceParams, trigger: SliceTrigger) -> bool {
         let Some(ui) = self.ui.upgrade() else {
             return false;
         };
@@ -293,7 +329,8 @@ impl SliceRun {
         let cancel = CancelToken::new();
         *self.cancel.borrow_mut() = Some(cancel.clone());
         *self.pending_params.borrow_mut() = Some(current.clone());
-        self.review.slice_started(by_fix_all);
+        self.trigger.set(trigger);
+        self.review.slice_started(trigger == SliceTrigger::FixAll);
         let patches = self.review.fills_for_slice();
         *self.pending_fills.borrow_mut() = patches.ids;
 
@@ -412,7 +449,7 @@ impl SliceRun {
     /// Drains the deposited result on the UI thread: closes the modal, and
     /// either reports a completed slice, silently discards a cancelled one, or
     /// surfaces the failure.
-    fn finish(&self) {
+    fn finish(self: &Rc<Self>) {
         let taken = self
             .slot
             .lock()
@@ -475,11 +512,55 @@ impl SliceRun {
                     .document
                     .with_scene(|spatial| object_names_by_leaf(spatial.graph()))
                     .unwrap_or_default();
-                self.dialogs
-                    .show_error(move || slice_failure_texts(&err, &names));
+                // A slice that a Repair started offers no Repair again.
+                let to_repair =
+                    repairable_leaves(&err).filter(|_| self.trigger.get() != SliceTrigger::Repair);
+                match to_repair {
+                    Some(leaves) => {
+                        let weak = Rc::downgrade(self);
+                        self.dialogs.show_error_with_action(
+                            move || slice_failure_texts(&err, &names, true),
+                            || ctr!("ErrorDialog", "Repair"),
+                            move || {
+                                if let Some(run) = weak.upgrade() {
+                                    run.repair_and_slice(&leaves);
+                                }
+                            },
+                        );
+                    }
+                    None => self
+                        .dialogs
+                        .show_error(move || slice_failure_texts(&err, &names, false)),
+                }
             }
         }
     }
+}
+
+impl SliceRun {
+    /// The card's Repair (#407): repairs `leaves` and, once they slice,
+    /// slices again.
+    fn repair_and_slice(self: &Rc<Self>, leaves: &[NodeId]) {
+        let weak = Rc::downgrade(self);
+        self.repair.repair_for_slice(leaves, move || {
+            if let Some(run) = weak.upgrade() {
+                run.start_with(SliceTrigger::Repair);
+            }
+        });
+    }
+}
+
+/// The objects that Repair may make sliceable, when `failure` is the slicer
+/// refusing meshes: every object it refused, unless all have vertices that
+/// are not numbers, which Repair can't fix. `None` for any other failure.
+fn repairable_leaves(failure: &SliceFailure) -> Option<Vec<NodeId>> {
+    let SliceFailure::Slice(SliceSceneError::LeavesValidationFailed(failures)) = failure else {
+        return None;
+    };
+    failures
+        .iter()
+        .any(|f| !matches!(f.geometry, InvalidLeafGeometry::Vertices(_)))
+        .then(|| failures.iter().map(|f| f.leaf).collect())
 }
 
 /// The texts of the dialog that refuses a slice with no printer or no resin.
@@ -496,12 +577,17 @@ fn missing_selection_texts() -> ErrorTexts {
 }
 
 /// The texts of the dialog that reports a failed slice run. `names` holds the
-/// object-list name of each object, for a failure that names objects.
-fn slice_failure_texts(failure: &SliceFailure, names: &HashMap<NodeId, String>) -> ErrorTexts {
+/// object-list name of each object, for a failure that names objects;
+/// `offers_repair`, whether the card has a Repair button (#407).
+fn slice_failure_texts(
+    failure: &SliceFailure,
+    names: &HashMap<NodeId, String>,
+    offers_repair: bool,
+) -> ErrorTexts {
     if let SliceFailure::Slice(SliceSceneError::LeavesValidationFailed(failures)) = failure
         && !failures.is_empty()
     {
-        return invalid_objects_texts(failures, names, failure);
+        return invalid_objects_texts(failures, names, failure, offers_repair);
     }
     ErrorTexts {
         heading: ctr!("ErrorDialog", "Slicing failed"),
@@ -517,6 +603,7 @@ fn invalid_objects_texts(
     failures: &[LeafValidationFailure],
     names: &HashMap<NodeId, String>,
     failure: &SliceFailure,
+    offers_repair: bool,
 ) -> ErrorTexts {
     let name = |f: &LeafValidationFailure| {
         names
@@ -538,6 +625,14 @@ fn invalid_objects_texts(
                 name(only)
             ),
         ),
+        [only] if offers_repair => (
+            ctr!("ErrorDialog", "Can't slice “{}”", name(only)),
+            ctr!(
+                "ErrorDialog",
+                "“{}” is not a closed mesh: it has holes, cracks or faces that don't line up. Press Repair to fix it and slice again.",
+                name(only)
+            ),
+        ),
         [only] => (
             ctr!("ErrorDialog", "Can't slice “{}”", name(only)),
             ctr!(
@@ -552,6 +647,12 @@ fn invalid_objects_texts(
                 ctr!(
                     "ErrorDialog",
                     "These objects have vertices whose coordinates are not numbers: {}. Repair can't fix that: export them again from their 3D app.",
+                    listed.join(", ")
+                )
+            } else if offers_repair {
+                ctr!(
+                    "ErrorDialog",
+                    "These objects are not closed meshes: {}. Press Repair to fix them and slice again.",
                     listed.join(", ")
                 )
             } else {
@@ -826,7 +927,7 @@ mod dialog_text_tests {
 
     #[test]
     fn a_failed_run_shows_its_failure() {
-        let texts = slice_failure_texts(&SliceFailure::EmptySceneGeometry, &HashMap::new());
+        let texts = slice_failure_texts(&SliceFailure::EmptySceneGeometry, &HashMap::new(), false);
         assert_eq!(texts.heading, "Slicing failed");
         assert_eq!(texts.context, None);
         assert_eq!(texts.message, "The scene has no geometry to slice.");
@@ -876,7 +977,7 @@ mod dialog_text_tests {
     #[test]
     fn a_refused_object_is_named_with_what_to_do() {
         let (graph, failure) = open_object("Wolf");
-        let texts = slice_failure_texts(&failure, &object_names_by_leaf(&graph));
+        let texts = slice_failure_texts(&failure, &object_names_by_leaf(&graph), false);
         assert_eq!(texts.heading, "Can't slice “Wolf”");
         assert_eq!(
             texts.message,
@@ -904,7 +1005,7 @@ mod dialog_text_tests {
             geometry: InvalidLeafGeometry::Vertices(Vec::new()),
         });
         let failure = SliceFailure::Slice(SliceSceneError::LeavesValidationFailed(failures));
-        let texts = slice_failure_texts(&failure, &object_names_by_leaf(&graph));
+        let texts = slice_failure_texts(&failure, &object_names_by_leaf(&graph), false);
         assert_eq!(texts.heading, "Can't slice 2 objects");
         assert_eq!(
             texts.message,
@@ -1006,3 +1107,7 @@ mod progress_tests {
         assert_eq!(cell.completed.load(Ordering::Relaxed), 700);
     }
 }
+
+#[cfg(test)]
+#[path = "tests_repair_on_slice.rs"]
+mod tests_repair_on_slice;

@@ -100,6 +100,24 @@ fn error(shown: &Shown) {
     });
 }
 
+/// A slice the slicer refused, whose card offers Repair (#407).
+fn slice_refused(shown: &Shown) {
+    shown.manager.show_error_with_action(
+        || ErrorTexts {
+            heading: ctr!("ErrorDialog", "Can't slice “{}”", "Dragón rojo pose final v3"),
+            context: None,
+            message: ctr!(
+                "ErrorDialog",
+                "“{}” is not a closed mesh: it has holes, cracks or faces that don't line up. Press Repair to fix it and slice again.",
+                "Dragón rojo pose final v3"
+            ),
+            details: "mesh validation failed for 1 of the scene's leaves:\nleaf #1: mesh manifold validation failed: 14 error(s)\n  11x InconsistentWindingOrder\n  2x BoundaryEdge\n  1x NonManifoldEdge".into(),
+        },
+        || ctr!("ErrorDialog", "Repair"),
+        || {},
+    );
+}
+
 /// The details of a Repair run over `objects` objects, as the app writes
 /// them (`repair_report`): 1 block per object, then the total time.
 fn repair_details(objects: usize) -> String {
@@ -285,6 +303,31 @@ fn diagnostic_log(shown: &Shown) {
     shown.ui.set_message_open(true);
 }
 
+/// The card of supports out of date (#408), for a set edited by hand
+/// (both rows) or not (Regenerate alone).
+fn stale_supports(shown: &Shown, hand_edited: bool) {
+    shown.manager.show_stale_supports(
+        hand_edited,
+        || InfoTexts {
+            heading: ctr!("DfSupportDialog", "Supports out of date"),
+            message: ctr!(
+                "DfSupportDialog",
+                "This model's mesh changed since its supports were made (Repair and Hollow change it), so they can no longer be edited by hand."
+            ),
+            details: Default::default(),
+        },
+        |_| {},
+    );
+}
+
+fn stale_supports_edited(shown: &Shown) {
+    stale_supports(shown, true);
+}
+
+fn stale_supports_plain(shown: &Shown) {
+    stale_supports(shown, false);
+}
+
 const CASES: &[Case] = &[
     Case {
         name: "aviso",
@@ -294,6 +337,11 @@ const CASES: &[Case] = &[
     Case {
         name: "error",
         show: error,
+        primary: true,
+    },
+    Case {
+        name: "laminado-rechazado-reparar",
+        show: slice_refused,
         primary: true,
     },
     Case {
@@ -345,6 +393,16 @@ const CASES: &[Case] = &[
         name: "registro-de-diagnostico",
         show: diagnostic_log,
         primary: true,
+    },
+    Case {
+        name: "soportes-desactualizados-editados",
+        show: stale_supports_edited,
+        primary: false,
+    },
+    Case {
+        name: "soportes-desactualizados",
+        show: stale_supports_plain,
+        primary: false,
     },
 ];
 
@@ -561,9 +619,10 @@ fn keyboard_answers(case: Show) -> Vec<MessageAnswer> {
 fn the_keyboard_answers_as_before() {
     use MessageAnswer::{Cancel, Confirm, Export};
     // Per message: Enter's answer, then Escape's.
-    let expected: [(&str, Show); 7] = [
+    let expected: [(&str, Show); 8] = [
         ("notice", notice),
         ("error", error),
+        ("slice refused, Repair", slice_refused),
         ("scene change", close_scene_unsaved),
         ("slice overwrite", slice_overwrite),
         ("recovery", recovery),
@@ -573,6 +632,7 @@ fn the_keyboard_answers_as_before() {
     let answers = [
         [Cancel, Cancel],
         [Cancel, Cancel],
+        [Confirm, Cancel],
         [Cancel, Cancel],
         [Cancel, Cancel],
         [Cancel, Cancel],

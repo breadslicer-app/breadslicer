@@ -30,6 +30,12 @@
 //! What a run leaves broken is marked on the model (`repair_marks`), for the
 //! meshes the scene still holds, while the Transform tab shows and the card's
 //! "Show what is left on the model" is on.
+//!
+//! The card of a slice that the slicer refused offers Repair (#407): the same
+//! run, on the refused objects only, from the Transform tab, so its progress,
+//! Cancel and report are the ones above. When it changed them and they all
+//! slice now, the run goes back to the tab the slice came from and slices
+//! again; otherwise its report says what is left, and nothing slices.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -50,6 +56,7 @@ use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
 use crate::MainWindow;
+use crate::WorkspaceSection;
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey};
 use crate::i18n::ctr;
 use crate::mesh_check::{show_card, target_arc};
@@ -140,6 +147,16 @@ struct Job {
     revision: SceneRevision,
     /// The object-list name of each target, in run order, for the card.
     names: Vec<String>,
+    /// Set when a refused slice asked for the run (#407).
+    for_slice: Option<ForSlice>,
+}
+
+/// What follows a run that a refused slice asked for (#407).
+struct ForSlice {
+    /// The tab the slice came from, to go back to before slicing again.
+    back_to: WorkspaceSection,
+    /// Slices again; run only once every repaired object slices.
+    reslice: Box<dyn FnOnce()>,
 }
 
 /// What `settle` did with a deposited result.
@@ -232,18 +249,76 @@ impl RepairRun {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        if ui.get_loading() || ui.get_slicing_in_progress() || ui.get_repairing_in_progress() {
+        if busy(&ui) || !allows_repair(ui.get_workspace_section()) {
             return;
         }
-        if !allows_repair(ui.get_workspace_section()) {
-            return;
-        }
-        let Some((scene, names)) = self.document.with_scene(|spatial| {
+        let Some((scene, targets, names)) = self.document.with_scene(|spatial| {
             let graph = spatial.graph();
-            (graph.clone(), names_in_run_order(graph))
+            let targets = graph.mesh_targets();
+            let names = names_in_run_order(graph, &targets);
+            (graph.clone(), targets, names)
         }) else {
             return;
         };
+        self.launch(&ui, scene, targets, names, None);
+    }
+
+    /// Repairs the meshes of `leaves`, the objects a slice refused (#407),
+    /// from the Transform tab, as the Repair button does. `reslice` runs once
+    /// the run changed them and every one slices, back in the tab the slice
+    /// came from. Returns false, starting nothing, while something else runs
+    /// or when the scene holds none of them any more.
+    pub(crate) fn repair_for_slice(
+        self: &Rc<Self>,
+        leaves: &[NodeId],
+        reslice: impl FnOnce() + 'static,
+    ) -> bool {
+        let Some(ui) = self.ui.upgrade() else {
+            return false;
+        };
+        if busy(&ui) {
+            return false;
+        }
+        let Some((scene, targets, names)) = self.document.with_scene(|spatial| {
+            let graph = spatial.graph();
+            let asked: Vec<MeshTarget> = leaves
+                .iter()
+                .filter_map(|&leaf| graph.leaf_mesh_target(leaf))
+                .collect();
+            // In the order of a full run, each once, live ones only.
+            let targets: Vec<MeshTarget> = graph
+                .mesh_targets()
+                .into_iter()
+                .filter(|target| asked.contains(target))
+                .collect();
+            let names = names_in_run_order(graph, &targets);
+            (graph.clone(), targets, names)
+        }) else {
+            return false;
+        };
+        if targets.is_empty() {
+            return false;
+        }
+        let back_to = ui.get_workspace_section();
+        // The run's progress and Cancel are on the Transform tab's card.
+        self.ctrl.set_section(WorkspaceSection::Transform);
+        let for_slice = ForSlice {
+            back_to,
+            reslice: Box::new(reslice),
+        };
+        self.launch(&ui, scene, targets, names, Some(for_slice));
+        true
+    }
+
+    /// Captures the run and spawns its worker over `targets` of `scene`.
+    fn launch(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        scene: Scene,
+        targets: Vec<MeshTarget>,
+        names: Vec<String>,
+        for_slice: Option<ForSlice>,
+    ) {
         let slot: RepairSlot = Arc::new(Mutex::new(None));
         let watch = Arc::new(RunWatch::default());
         *self.job.borrow_mut() = Some(Job {
@@ -251,6 +326,7 @@ impl RepairRun {
             watch: watch.clone(),
             revision: self.document.scene_revision(),
             names,
+            for_slice,
         });
         ui.set_repair_progress(0.0);
         ui.set_repair_phase(Default::default());
@@ -261,7 +337,7 @@ impl RepairRun {
         let ui_weak = self.ui.clone();
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_repair_watched(scene, watch.as_ref())
+                run_repair_watched(scene, &targets, watch.as_ref())
             }))
             .map_err(|payload| panic_message(&payload));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
@@ -390,7 +466,8 @@ impl RepairRun {
                 check.remember_marks(&replacement.after, marks_of(replacement.target));
             }
         }
-        match settle(&self.document, &completed, job.revision) {
+        let settlement = settle(&self.document, &completed, job.revision);
+        match settlement {
             RepairSettlement::DiscardedStale => {
                 self.dialogs.show_info(|| InfoTexts {
                     heading: ctr!("RepairDialog", "Repair discarded"),
@@ -431,17 +508,40 @@ impl RepairRun {
                 // A new run shows what it left.
                 self.marks_shown.set(true);
                 self.refresh_marks(true);
+                let applied = settlement == RepairSettlement::Applied;
                 let CompletedRepair {
                     outcomes, elapsed, ..
                 } = completed;
-                self.dialogs
-                    .show_notice(MessageKey::MeshRepairSummary, move || InfoTexts {
-                        heading: ctr!("RepairDialog", "Mesh repair"),
-                        message: summary_message(&outcomes, &names).into(),
-                        details: details_text(&outcomes, &names, elapsed).into(),
-                    });
+                match job.for_slice {
+                    // A run that changed nothing would only slice into the
+                    // same refusal again.
+                    Some(_) if !(applied && outcomes.iter().all(slices_now)) => {
+                        self.dialogs.show_info(move || InfoTexts {
+                            heading: ctr!("RepairDialog", "Still can't slice"),
+                            message: ctr!(
+                                "RepairDialog",
+                                "Repair couldn't fix everything, so slicing didn't start again. {}",
+                                summary_message(&outcomes, &names)
+                            ),
+                            details: details_text(&outcomes, &names, elapsed).into(),
+                        });
+                    }
+                    for_slice => {
+                        self.dialogs
+                            .show_notice(MessageKey::MeshRepairSummary, move || InfoTexts {
+                                heading: ctr!("RepairDialog", "Mesh repair"),
+                                message: summary_message(&outcomes, &names).into(),
+                                details: details_text(&outcomes, &names, elapsed).into(),
+                            });
+                        if let Some(ForSlice { back_to, reslice }) = for_slice {
+                            self.ctrl.set_section(back_to);
+                            reslice();
+                        }
+                    }
+                }
             }
             RepairSettlement::Rejected(error) => {
+                let error = error.to_string();
                 self.dialogs.show_error(move || ErrorTexts {
                     heading: ctr!("RepairDialog", "Repair failed"),
                     context: None,
@@ -449,7 +549,7 @@ impl RepairRun {
                         "RepairDialog",
                         "The scene rejected the repair edit; nothing was changed."
                     ),
-                    details: error.to_string().into(),
+                    details: error.as_str().into(),
                 });
             }
         }
@@ -599,13 +699,18 @@ fn step_text(step: RepairStep) -> String {
     .to_string()
 }
 
-/// The object-list name of each target of `graph`, in the order a repair
-/// run walks them.
-fn names_in_run_order(graph: &Scene) -> Vec<String> {
+/// Whether a load, a slice or a repair is going: no run starts then.
+fn busy(ui: &MainWindow) -> bool {
+    ui.get_loading() || ui.get_slicing_in_progress() || ui.get_repairing_in_progress()
+}
+
+/// The object-list name of each of `targets` of `graph`, in the order a
+/// repair run walks them.
+fn names_in_run_order(graph: &Scene, targets: &[MeshTarget]) -> Vec<String> {
     let by_leaf = object_names_by_leaf(graph);
-    graph
-        .mesh_targets()
-        .into_iter()
+    targets
+        .iter()
+        .copied()
         .enumerate()
         .map(|(i, target)| {
             graph
@@ -623,7 +728,8 @@ fn names_in_run_order(graph: &Scene) -> Vec<String> {
 /// mesh needs no replacing.
 #[cfg(test)]
 fn run_repair(scene: Scene) -> CompletedRepair {
-    match run_repair_watched(scene, &NoWatch) {
+    let targets = scene.mesh_targets();
+    match run_repair_watched(scene, &targets, &NoWatch) {
         Ok(completed) => completed,
         Err(RepairCancelled) => unreachable!("an unwatched repair was cancelled"),
     }
@@ -642,18 +748,19 @@ impl SceneRepairWatch for NoWatch {
     }
 }
 
-/// [`run_repair`] told to `watch`; a cancelled run returns nothing.
+/// [`run_repair`] over `targets` only, told to `watch`; a cancelled run
+/// returns nothing.
 fn run_repair_watched(
     mut scene: Scene,
+    targets: &[MeshTarget],
     watch: &dyn SceneRepairWatch,
 ) -> Result<CompletedRepair, RepairCancelled> {
     let start = Instant::now();
-    let before: Vec<(MeshTarget, Arc<IndexedMesh>)> = scene
-        .mesh_targets()
-        .into_iter()
-        .filter_map(|target| Some((target, target_arc(&scene, target)?)))
+    let before: Vec<(MeshTarget, Arc<IndexedMesh>)> = targets
+        .iter()
+        .filter_map(|&target| Some((target, target_arc(&scene, target)?)))
         .collect();
-    let outcomes = scene.repair_meshes_watched(RepairPasses::default_repair(), watch)?;
+    let outcomes = scene.repair_targets_watched(targets, RepairPasses::default_repair(), watch)?;
     let replacements = before
         .into_iter()
         .filter_map(|(target, before_arc)| {
@@ -689,6 +796,12 @@ fn run_repair_watched(
         marks,
         elapsed: start.elapsed(),
     })
+}
+
+/// Whether the slicer takes the mesh an outcome ends with: unlike for the
+/// MESH CHECK card, a mesh left without faces does not count.
+fn slices_now(outcome: &SceneRepairOutcome) -> bool {
+    outcome.details.after.sliceable
 }
 
 /// Whether the mesh an outcome ends with slices, as the MESH CHECK card
@@ -1046,7 +1159,7 @@ mod repair_run_tests {
         let ctrl = Rc::new(ViewportController::new_for_test());
         let document = ctrl.document();
         document.install_graph(graph, PathBuf::from("/tmp/repair-run-window.obj"));
-        window.set_workspace_section(crate::WorkspaceSection::Transform);
+        window.set_workspace_section(WorkspaceSection::Transform);
         let run = RepairRun::install(&window, document.clone(), ctrl.dialogs(), ctrl);
         Window {
             window,
@@ -1162,7 +1275,8 @@ mod repair_run_tests {
         let scene = broken_trio_scene();
         let watch = RunWatch::default();
         watch.cancel.store(true, Ordering::Relaxed);
-        assert!(run_repair_watched(scene.clone(), &watch).is_err());
+        let targets = scene.mesh_targets();
+        assert!(run_repair_watched(scene.clone(), &targets, &watch).is_err());
         assert!(
             watch.progress.lock().unwrap().is_none(),
             "a stopped run tells no step"
