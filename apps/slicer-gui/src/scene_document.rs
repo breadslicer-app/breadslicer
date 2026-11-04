@@ -28,7 +28,9 @@ use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, Pri
 use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload};
 use sc_scene::Scene;
 use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind};
-use sc_scene::{MeshResourceId, NodeId, SceneError};
+use sc_scene::{
+    CarriedTags, MeshResourceId, NodeId, PaintKind, SceneError, SurfaceTags, carry_tags,
+};
 use sc_scene_edit::SceneFragment;
 use sc_sl1cer::contour::ContourLayer;
 use sc_sl1cer::profile::LayerSchedule;
@@ -46,13 +48,14 @@ use crate::support_persist::SupportSessions;
 /// state, taken by [`SceneDocument::scene_revision`] and compared by
 /// [`SceneDocument::slice_geometry_changed`] to tell whether the geometry
 /// changed between 2 moments (producing a slice and a later Slice press). Equal
-/// markers prove the committed geometry matches.
+/// markers prove the committed geometry matches. Paint is no geometry: strokes
+/// leave the marker where it was (#183).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SceneRevision {
     /// Which installed scene. 2 freshly loaded scenes both sit at an empty undo
     /// stack, so the edit head alone cannot tell them apart.
     scene: u64,
-    /// Committed-edit head, the identity the save point also tracks.
+    /// The newest committed edit that is not only paint.
     top_edit: Option<u64>,
 }
 
@@ -128,6 +131,10 @@ pub(crate) enum SceneEvent {
     /// revalidated slices landed. The scene itself is untouched; listeners that
     /// mirror slice state to the UI react here.
     SliceChanged,
+    /// A model's paint changed (#183): a dab of a stroke, or an undone one.
+    /// Nothing made from the geometry is touched, so listeners that mirror it
+    /// have nothing to do; the viewport shows the new paint.
+    Painted,
     /// The undo or redo stack changed (push, undo, redo, or install/clear when
     /// the stacks were non-empty).
     UndoStackChanged,
@@ -151,6 +158,8 @@ struct HistoryEntry {
     /// The models left waiting for new supports by this edit or one before
     /// it (#153).
     wants: Option<SupportsWanted>,
+    /// The edit changes paint and nothing else (#183).
+    paint_only: bool,
 }
 
 /// Models whose supports a move in Z, a tilt or a scale took away, and
@@ -261,6 +270,9 @@ pub(crate) struct SceneDocument {
     /// the scene with no way to undo them, so after an eviction the
     /// empty-vs-empty comparison must read dirty.
     evicted_since_save: Cell<bool>,
+    /// The newest edit the cap evicted that was more than paint: with no
+    /// other left below the strokes, it is still the scene's latest change.
+    evicted_head: Cell<Option<u64>>,
     /// Save-dirty contribution from project-level state that does not live on
     /// the undo stack: the scene's own print choices. Set by
     /// [`Self::mark_project_state_unsaved`], OR'd into [`Self::is_dirty`], and
@@ -303,6 +315,48 @@ pub(crate) struct SceneDocument {
     /// Whether each stored mesh slices, for the Transform tab's MESH CHECK
     /// card.
     mesh_check: MeshCheck,
+    /// What the last edit that changed a painted mesh did to the paint
+    /// (#183), until [`Self::take_paint_report`] takes it.
+    paint_report: RefCell<Vec<PaintCarried>>,
+}
+
+/// The paint of a leaf worked out on the mesh that replaces its own, ahead of
+/// the edit, by the worker that made that mesh.
+#[derive(Clone, Debug)]
+pub(crate) struct CarriedPaint {
+    leaf: NodeId,
+    kind: PaintKind,
+    before: SurfaceTags,
+    carried: CarriedTags,
+}
+
+/// The paint `scene` left behind on meshes its leaves no longer show, on the
+/// meshes they show now: for a worker that swapped them in a copy of the scene.
+pub(crate) fn carried_paint(scene: &Scene) -> Vec<CarriedPaint> {
+    scene
+        .stale_surface_tags()
+        .into_iter()
+        .filter_map(|(leaf, kind, before)| {
+            let mesh = scene.leaf_mesh_arc(leaf)?;
+            let carried = carry_tags(&before, mesh);
+            Some(CarriedPaint {
+                leaf,
+                kind,
+                before,
+                carried,
+            })
+        })
+        .collect()
+}
+
+/// What a mesh change did to one model's paint.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PaintCarried {
+    pub(crate) leaf: NodeId,
+    pub(crate) kind: PaintKind,
+    /// The painted area before and on the new mesh, in real mm².
+    pub(crate) area_before: f64,
+    pub(crate) area_after: f64,
 }
 
 /// The edit that swaps the mesh a leaf shows for `after`, whichever way the
@@ -373,6 +427,7 @@ impl SceneDocument {
             next_edit_id: Cell::new(1),
             save_point: Cell::new(None),
             evicted_since_save: Cell::new(false),
+            evicted_head: Cell::new(None),
             unsaved_project_state: Cell::new(false),
             slice_result: RefCell::new(None),
             evicted_since_slice: Cell::new(false),
@@ -384,6 +439,7 @@ impl SceneDocument {
             hollows: Rc::default(),
             live_preview: RefCell::new(None),
             mesh_check: MeshCheck::default(),
+            paint_report: RefCell::new(Vec::new()),
         })
     }
 
@@ -484,6 +540,7 @@ impl SceneDocument {
         // A freshly installed scene matches its source by definition.
         self.save_point.set(None);
         self.evicted_since_save.set(false);
+        self.evicted_head.set(None);
         self.unsaved_project_state.set(false);
         // A new scene invalidates any slice produced for the old one.
         *self.slice_result.borrow_mut() = None;
@@ -508,6 +565,7 @@ impl SceneDocument {
         let stacks_changed = self.clear_history();
         self.save_point.set(None);
         self.evicted_since_save.set(false);
+        self.evicted_head.set(None);
         self.unsaved_project_state.set(false);
         *self.slice_result.borrow_mut() = None;
         self.evicted_since_slice.set(false);
@@ -703,7 +761,7 @@ impl SceneDocument {
     pub(crate) fn scene_revision(&self) -> SceneRevision {
         SceneRevision {
             scene: self.scene_generation.get(),
-            top_edit: self.top_edit_id(),
+            top_edit: self.head_edit_id(),
         }
     }
 
@@ -831,6 +889,27 @@ impl SceneDocument {
 
     fn top_edit_id(&self) -> Option<u64> {
         self.undo_stack.borrow().back().map(|entry| entry.id)
+    }
+
+    /// The newest committed edit that is more than paint: the marker of the
+    /// geometry, as [`Self::top_edit_id`] is of everything a file holds.
+    fn head_edit_id(&self) -> Option<u64> {
+        self.undo_stack
+            .borrow()
+            .iter()
+            .rev()
+            .find(|entry| !entry.paint_only)
+            .map(|entry| entry.id)
+            .or(self.evicted_head.get())
+    }
+
+    /// Takes `entry`, the oldest, off the stack for good: it stays applied.
+    fn note_evicted(&self, entry: &HistoryEntry) {
+        self.evicted_since_save.set(true);
+        self.evicted_since_slice.set(true);
+        if !entry.paint_only {
+            self.evicted_head.set(Some(entry.id));
+        }
     }
 
     /// Fires [`SceneEvent::DirtyChanged`] when the dirty value no longer
@@ -979,6 +1058,8 @@ impl SceneDocument {
         let removed = selected_leaves_removed_by(&edit, &self.selection);
         let event = if edit.is_structural() {
             SceneEvent::Restructured
+        } else if edit.is_paint_only() {
+            SceneEvent::Painted
         } else {
             SceneEvent::Mutated
         };
@@ -1019,12 +1100,16 @@ impl SceneDocument {
     /// or scaled loses them in the entry, and waits for new ones
     /// ([`Self::supports_wanted`]); models the entry before still waited for
     /// wait on.
+    ///
+    /// Paint left on a mesh the edit replaced goes to the new mesh in the same
+    /// entry ([`Self::with_paint_carried`]).
     pub(crate) fn push_edit(&self, edit: SceneEdit) {
         let committed = crate::support_follow::commit(self, edit);
         let (edit, moved) = (committed.edit, committed.moved);
         if edit.is_noop() {
             return;
         }
+        let edit = self.with_paint_carried(edit);
         crate::breadcrumbs::note(&format!("edit: {}", edit_label(&edit)));
         let carried = self
             .undo_stack
@@ -1037,12 +1122,18 @@ impl SceneDocument {
         self.next_edit_id.set(id + 1);
         {
             let mut undo = self.undo_stack.borrow_mut();
-            if undo.len() == UNDO_STACK_CAP {
-                undo.pop_front();
-                self.evicted_since_save.set(true);
-                self.evicted_since_slice.set(true);
+            if undo.len() == UNDO_STACK_CAP
+                && let Some(gone) = undo.pop_front()
+            {
+                self.note_evicted(&gone);
             }
-            undo.push_back(HistoryEntry { id, edit, wants });
+            let paint_only = edit.is_paint_only();
+            undo.push_back(HistoryEntry {
+                id,
+                edit,
+                wants,
+                paint_only,
+            });
         }
         self.redo_stack.borrow_mut().clear();
         for moved in moved {
@@ -1058,6 +1149,106 @@ impl SceneDocument {
         }
         self.notify(SceneEvent::UndoStackChanged);
         self.notify_dirty_change(was_dirty);
+    }
+
+    /// `edit`, just applied, with the paint it left behind carried to the
+    /// meshes the leaves show now (#183), as one entry: Undo brings the mesh
+    /// and the paint back together. Repair, Hollow and whatever else swaps a
+    /// painted mesh all pass here, so no paint is lost unseen: what did not
+    /// reach the new mesh goes to [`Self::take_paint_report`] and the events.
+    fn with_paint_carried(&self, edit: SceneEdit) -> SceneEdit {
+        if !edit.is_structural() {
+            return edit;
+        }
+        let stale: Vec<_> = self
+            .with_scene(|spatial| {
+                let graph = spatial.graph();
+                graph
+                    .stale_surface_tags()
+                    .into_iter()
+                    .filter_map(|(leaf, kind, tags)| {
+                        let mesh = graph.leaf_mesh_arc(leaf)?.clone();
+                        Some((leaf, kind, tags, mesh))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if stale.is_empty() {
+            return edit;
+        }
+        let mut edits = vec![edit];
+        for (leaf, kind, tags, mesh) in stale {
+            let carried = carry_tags(&tags, &mesh);
+            self.note_paint_carried(leaf, kind, &carried);
+            let set = SceneEdit::SetSurfaceTags {
+                node_id: leaf,
+                kind,
+                before: Some(tags),
+                after: carried.tags,
+            };
+            if self.apply_edit_unfollowed(set.clone()).is_ok() {
+                edits.push(set);
+            }
+        }
+        SceneEdit::Compound(edits)
+    }
+
+    /// The edits that put `paint`, worked out by a worker, on the new meshes,
+    /// to go in the edit that swaps them. Paint that changed since is left
+    /// out: [`Self::with_paint_carried`] takes it as it stands by then.
+    pub(crate) fn paint_edits(&self, paint: &[CarriedPaint]) -> Vec<SceneEdit> {
+        paint
+            .iter()
+            .filter(|p| {
+                self.with_scene(|spatial| {
+                    spatial
+                        .graph()
+                        .stored_surface_tags(p.leaf, p.kind)
+                        .is_some_and(|tags| tags.same_values(&p.before))
+                })
+                .unwrap_or(false)
+            })
+            .map(|p| {
+                self.note_paint_carried(p.leaf, p.kind, &p.carried);
+                SceneEdit::SetSurfaceTags {
+                    node_id: p.leaf,
+                    kind: p.kind,
+                    before: Some(p.before.clone()),
+                    after: p.carried.tags.clone(),
+                }
+            })
+            .collect()
+    }
+
+    /// Adds what became of `leaf`'s paint to the report, in real mm².
+    fn note_paint_carried(&self, leaf: NodeId, kind: PaintKind, carried: &CarriedTags) {
+        let scale = self
+            .with_scene(|spatial| spatial.leaf(leaf).map(|q| area_scale(&q.world_transform())))
+            .flatten()
+            .unwrap_or(1.0);
+        let (area_before, area_after) = (carried.area_before * scale, carried.area_after * scale);
+        crate::breadcrumbs::note(&format!(
+            "paint: {area_after:.1} of {area_before:.1} mm2 carried to the new mesh of {kind:?} paint"
+        ));
+        self.paint_report.borrow_mut().push(PaintCarried {
+            leaf,
+            kind,
+            area_before,
+            area_after,
+        });
+    }
+
+    /// What the last edit that replaced a painted mesh did to its paint; each
+    /// report is given once.
+    pub(crate) fn take_paint_report(&self) -> Vec<PaintCarried> {
+        std::mem::take(&mut *self.paint_report.borrow_mut())
+    }
+
+    /// The paint of `kind` on `leaf`, as the scene holds it now: a share of
+    /// it, not a copy.
+    pub(crate) fn surface_tags(&self, leaf: NodeId, kind: PaintKind) -> Option<SurfaceTags> {
+        self.with_scene(|spatial| spatial.graph().surface_tags(leaf, kind).cloned())
+            .flatten()
     }
 
     /// The models waiting for supports once an edit is applied: those the
@@ -1110,13 +1301,16 @@ impl SceneDocument {
             return;
         }
         let mut undo = self.undo_stack.borrow_mut();
-        let Some(entry) = undo.back_mut() else {
-            return;
-        };
-        if let Some(wants) = &mut entry.wants {
-            wants.models.retain(|(id, _)| !models.contains(id));
-            if wants.models.is_empty() {
-                entry.wants = None;
+        // Strokes since then carry what that entry left waiting.
+        for entry in undo.iter_mut().rev() {
+            if let Some(wants) = &mut entry.wants {
+                wants.models.retain(|(id, _)| !models.contains(id));
+                if wants.models.is_empty() {
+                    entry.wants = None;
+                }
+            }
+            if !entry.paint_only {
+                break;
             }
         }
     }
@@ -1125,9 +1319,10 @@ impl SceneDocument {
     /// both together, and takes `settled` off the models it left waiting:
     /// the new supports of a model a move in Z, a tilt or a scale took
     /// them from (#153). The entry gets a new id, so the scene revision moves
-    /// on (a save or a slice before it no longer matches). Returns
-    /// `Ok(false)`, applying nothing, when the scene is no longer at
-    /// `revision` or something is left to redo.
+    /// on (a save or a slice before it no longer matches). Strokes made since
+    /// stay entries of their own, on top. Returns `Ok(false)`, applying
+    /// nothing, when the scene is no longer at `revision` or something is
+    /// left to redo.
     pub(crate) fn complete_last_edit(
         &self,
         revision: SceneRevision,
@@ -1137,6 +1332,14 @@ impl SceneDocument {
         if self.scene_revision() != revision || !self.redo_stack.borrow().is_empty() {
             return Ok(false);
         }
+        let Some(head) = self
+            .undo_stack
+            .borrow()
+            .iter()
+            .rposition(|entry| !entry.paint_only)
+        else {
+            return Ok(false);
+        };
         let was_dirty = self.is_dirty();
         match self.apply_edit_unfollowed(edit.clone()) {
             Ok(()) => {}
@@ -1144,14 +1347,18 @@ impl SceneDocument {
             Err(EditNotApplied::Rejected(error)) => return Err(error),
         }
         self.settle_supports_wanted(revision, settled);
-        let id = self.next_edit_id.get();
-        self.next_edit_id.set(id + 1);
         {
             let mut undo = self.undo_stack.borrow_mut();
-            let entry = undo.back_mut().expect("the revision names an entry");
+            let entry = &mut undo[head];
             let first = std::mem::replace(&mut entry.edit, SceneEdit::Compound(Vec::new()));
             entry.edit = SceneEdit::Compound(vec![first, edit]);
-            entry.id = id;
+            // New ids from the entry up, so neither a slice nor a save point
+            // sitting on the strokes above it reads as current.
+            for entry in undo.iter_mut().skip(head) {
+                let id = self.next_edit_id.get();
+                self.next_edit_id.set(id + 1);
+                entry.id = id;
+            }
         }
         self.notify(SceneEvent::UndoStackChanged);
         self.notify_dirty_change(was_dirty);
@@ -1543,6 +1750,8 @@ impl SceneDocument {
         // Step 2: walk the fragment's roots, allocate target node ids, emit
         // AddLeaf for each mesh-resource leaf root.
         let mut new_roots: Vec<NodeId> = Vec::new();
+        // The paint a root takes with it, added once every leaf is in.
+        let mut paint: Vec<SceneEdit> = Vec::new();
         // Pasted leaves land after the roots already there, one after another,
         // and none of the edits before them adds a root.
         let mut position = spatial.graph().roots().len();
@@ -1573,12 +1782,23 @@ impl SceneDocument {
                 local_transform: final_xform,
                 meta: None,
             });
+            for (leaf, kind, tags) in frag_scene.surface_tags_iter() {
+                if leaf == frag_root {
+                    paint.push(SceneEdit::SetSurfaceTags {
+                        node_id: target_node_id,
+                        kind,
+                        before: None,
+                        after: Some(tags.clone()),
+                    });
+                }
+            }
             position += 1;
         }
 
         if new_roots.is_empty() {
             return None;
         }
+        edits.extend(paint);
         let compound = if edits.len() == 1 {
             edits.into_iter().next().expect("len == 1")
         } else {
@@ -1600,7 +1820,13 @@ impl SceneDocument {
         self.end_live_preview();
         let was_dirty = self.is_dirty();
         crate::support_follow::settle(self);
-        if self.scene_revision() != revision {
+        // A stroke made since sits on top: the entry is no longer the newest.
+        let stroked = self
+            .undo_stack
+            .borrow()
+            .back()
+            .is_some_and(|entry| entry.paint_only);
+        if self.scene_revision() != revision || stroked {
             return Ok(false);
         }
         let Some(entry) = self.undo_stack.borrow_mut().pop_back() else {
@@ -1703,10 +1929,10 @@ impl SceneDocument {
         }
         crate::breadcrumbs::note(&format!("edit: redo {}", edit_label(&entry.edit)));
         let mut undo = self.undo_stack.borrow_mut();
-        if undo.len() == UNDO_STACK_CAP {
-            undo.pop_front();
-            self.evicted_since_save.set(true);
-            self.evicted_since_slice.set(true);
+        if undo.len() == UNDO_STACK_CAP
+            && let Some(gone) = undo.pop_front()
+        {
+            self.note_evicted(&gone);
         }
         undo.push_back(entry);
         drop(undo);
@@ -1784,6 +2010,20 @@ impl SceneDocument {
     }
 }
 
+/// What an area in a leaf's frame is multiplied by in the world.
+fn area_scale(transform: &Transform3D) -> f64 {
+    match transform {
+        Transform3D::Identity => 1.0,
+        Transform3D::Affine(a) => {
+            let m = a.linear();
+            let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+                - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+                + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+            det.abs().powf(2.0 / 3.0)
+        }
+    }
+}
+
 /// Returns `xform` with its translation component replaced by `translation`,
 /// preserving the linear (rotation + scale) part.
 fn substitute_translation(xform: Transform3D, translation: [f64; 3]) -> Transform3D {
@@ -1833,7 +2073,9 @@ fn selected_leaves_removed_by(edit: &SceneEdit, selection: &SelectionState) -> V
             | SceneEdit::AddMeshResource { .. }
             | SceneEdit::RemoveMeshResource { .. }
             | SceneEdit::ReplaceMeshResource { .. }
-            | SceneEdit::ReplaceLeafMesh { .. } => {}
+            | SceneEdit::ReplaceLeafMesh { .. }
+            | SceneEdit::PaintSurface { .. }
+            | SceneEdit::SetSurfaceTags { .. } => {}
         }
     }
     let mut out = Vec::new();
@@ -1854,6 +2096,10 @@ fn edit_label(edit: &SceneEdit) -> String {
         SceneEdit::RemoveMeshResource { .. } => "remove mesh".to_owned(),
         SceneEdit::ReplaceMeshResource { .. } => "replace mesh".to_owned(),
         SceneEdit::ReplaceLeafMesh { .. } => "replace object mesh".to_owned(),
+        SceneEdit::PaintSurface { changes, .. } => {
+            format!("paint {} face(s)", changes.face_count())
+        }
+        SceneEdit::SetSurfaceTags { .. } => "set paint".to_owned(),
         SceneEdit::Compound(edits) => {
             let mut kinds: Vec<String> = edits.iter().map(edit_label).collect();
             kinds.dedup();

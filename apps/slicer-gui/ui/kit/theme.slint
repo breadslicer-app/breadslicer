@@ -40,6 +40,10 @@ export global Theme {
     out property <brush> success: #65bc92;
     out property <brush> warning: #d7a75a;
     out property <brush> danger: #ed7777;
+    // Painted faces in the 3D view, and what stands for them in the panels
+    // (#183). Provisional, Damian picks it: it must not read as the amber of
+    // warnings or as the selection. Its alpha is how much it covers the model.
+    out property <color> surface-paint: #22c3d6d9;
 
     // Shape.
     out property <length> radius-sm: 4px;

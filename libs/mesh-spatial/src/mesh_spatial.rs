@@ -18,12 +18,16 @@ use std::sync::{Mutex, OnceLock};
 use sc_mesh_core::{Aabb, IndexedMesh, Vertex};
 
 use crate::clusters::TriangleClusters;
+use crate::face_adjacency::FaceAdjacency;
 
 #[derive(Default)]
 pub(crate) struct MeshSpatial {
     local_aabb: OnceLock<Aabb>,
     vertex_blocks: OnceLock<Vec<Aabb>>,
     clusters: OnceLock<TriangleClusters>,
+    /// Built when a brush first needs it, not by [`Self::prime`]: most
+    /// meshes are never painted.
+    adjacency: OnceLock<FaceAdjacency>,
     /// Cache for the AABB of the mesh's vertices under a fixed
     /// linear transform (translation excluded). One slot, keyed by
     /// bit-equal match on the linear part: hit when the next query
@@ -69,6 +73,12 @@ impl MeshSpatial {
         let built = TriangleClusters::for_mesh(mesh)?;
         let _ = self.clusters.set(built);
         self.clusters.get()
+    }
+
+    /// Which faces of `mesh` share an edge. Cached on first call; a caller
+    /// that reaches it while a worker builds it waits for that worker.
+    pub(crate) fn face_adjacency(&self, mesh: &IndexedMesh) -> &FaceAdjacency {
+        self.adjacency.get_or_init(|| FaceAdjacency::new(mesh))
     }
 
     /// AABB of `mesh.vertices` after applying `linear` (no

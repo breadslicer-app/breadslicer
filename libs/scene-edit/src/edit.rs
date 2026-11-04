@@ -19,7 +19,7 @@ use sc_mesh_core::transform::Transform3D;
 use sc_scene::node::{
     LeafAttachment, LeafPayload, MeshResourceId, NodeId, NodeKind, SceneMetadata,
 };
-use sc_scene::{Scene, SceneError};
+use sc_scene::{PaintChanges, PaintKind, Scene, SceneError, SurfaceTags};
 
 /// Typed scene mutation. The shared edit shape across the workspace: the GUI's
 /// undo/redo stack, the headless apply paths, and any cache layer's
@@ -102,6 +102,24 @@ pub enum SceneEdit {
         before: Arc<IndexedMesh>,
         after: Arc<IndexedMesh>,
     },
+    /// Changes the paint of `kind` on the leaf at `node_id` (#183): one stroke
+    /// of a brush. Held as runs of faces with their old and new values, never
+    /// as a snapshot of the mask, so a long history of strokes stays small.
+    /// The geometry does not change, so nothing made from it goes stale.
+    PaintSurface {
+        node_id: NodeId,
+        kind: PaintKind,
+        changes: PaintChanges,
+    },
+    /// Replaces the whole mask of `kind` on the leaf at `node_id`: the paint
+    /// carried to a new mesh, in the same entry as the mesh swap, or a copy's
+    /// paint. `None` is no mask.
+    SetSurfaceTags {
+        node_id: NodeId,
+        kind: PaintKind,
+        before: Option<SurfaceTags>,
+        after: Option<SurfaceTags>,
+    },
     /// Applies a sequence of edits as a single undo/redo unit. The inverse is
     /// the reversed sequence of inverses, so for example a paste that emits
     /// `Compound([AddMeshResource, AddLeaf])` undoes as
@@ -121,6 +139,8 @@ impl SceneEdit {
             // swapping in a content-equal but distinct `Arc` is a change.
             Self::ReplaceMeshResource { before, after, .. }
             | Self::ReplaceLeafMesh { before, after, .. } => Arc::ptr_eq(before, after),
+            Self::PaintSurface { changes, .. } => changes.is_empty(),
+            Self::SetSurfaceTags { before, after, .. } => before == after,
             Self::AddLeaf { .. }
             | Self::RemoveLeaf { .. }
             | Self::AddMeshResource { .. }
@@ -141,7 +161,9 @@ impl SceneEdit {
     /// decide whether they need a re-upload after the edit lands.
     pub fn is_structural(&self) -> bool {
         match self {
-            Self::SetLocalTransform { .. } => false,
+            Self::SetLocalTransform { .. }
+            | Self::PaintSurface { .. }
+            | Self::SetSurfaceTags { .. } => false,
             Self::AddLeaf { .. }
             | Self::RemoveLeaf { .. }
             | Self::AddMeshResource { .. }
@@ -149,6 +171,17 @@ impl SceneEdit {
             | Self::ReplaceMeshResource { .. }
             | Self::ReplaceLeafMesh { .. } => true,
             Self::Compound(edits) => edits.iter().any(Self::is_structural),
+        }
+    }
+
+    /// Returns true when this edit changes paint and nothing else: no geometry,
+    /// no placement. What was made from the scene (slices, a support prescan)
+    /// stays good across it.
+    pub fn is_paint_only(&self) -> bool {
+        match self {
+            Self::PaintSurface { .. } | Self::SetSurfaceTags { .. } => true,
+            Self::Compound(edits) => edits.iter().all(Self::is_paint_only),
+            _ => false,
         }
     }
 
@@ -213,6 +246,26 @@ impl SceneEdit {
                 before: Arc::clone(after),
                 after: Arc::clone(before),
             },
+            Self::PaintSurface {
+                node_id,
+                kind,
+                changes,
+            } => Self::PaintSurface {
+                node_id: *node_id,
+                kind: *kind,
+                changes: changes.inverse(),
+            },
+            Self::SetSurfaceTags {
+                node_id,
+                kind,
+                before,
+                after,
+            } => Self::SetSurfaceTags {
+                node_id: *node_id,
+                kind: *kind,
+                before: after.clone(),
+                after: before.clone(),
+            },
             Self::Compound(edits) => {
                 Self::Compound(edits.iter().rev().map(Self::inverse).collect())
             }
@@ -256,6 +309,17 @@ impl SceneEdit {
                 before,
                 after,
             } => graph.replace_inline_leaf_mesh(*node_id, before, Arc::clone(after)),
+            Self::PaintSurface {
+                node_id,
+                kind,
+                changes,
+            } => graph.paint_surface(*node_id, *kind, changes),
+            Self::SetSurfaceTags {
+                node_id,
+                kind,
+                after,
+                ..
+            } => graph.set_surface_tags(*node_id, *kind, after.clone()),
             Self::Compound(edits) => {
                 for (applied, edit) in edits.iter().enumerate() {
                     if let Err(error) = edit.apply_to_scene(graph) {

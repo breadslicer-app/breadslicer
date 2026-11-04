@@ -16,6 +16,7 @@ use crate::node::{
     CsgOp, LeafAttachment, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneMetadata,
     SubtreeResourceId,
 };
+use crate::surface::SurfaceTable;
 use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
 
@@ -51,6 +52,8 @@ pub struct Scene {
     next_node: NonZeroU32,
     next_mesh_resource: NonZeroU32,
     next_subtree_resource: NonZeroU32,
+    /// The paint on the leaves' faces (#183).
+    pub(crate) surface: SurfaceTable,
 }
 
 impl Default for Scene {
@@ -82,6 +85,7 @@ impl Scene {
             next_node: NonZeroU32::new(1).unwrap(),
             next_mesh_resource: NonZeroU32::new(1).unwrap(),
             next_subtree_resource: NonZeroU32::new(1).unwrap(),
+            surface: SurfaceTable::new(),
         }
     }
 

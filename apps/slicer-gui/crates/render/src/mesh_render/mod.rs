@@ -28,6 +28,7 @@ mod hull_points;
 pub mod mock;
 mod overlay;
 mod smooth_shading;
+mod surface_paint;
 pub use smooth_shading::set_smooth_models;
 mod pipelines;
 mod prepared;
@@ -64,6 +65,7 @@ use pipelines::label::LabelPipeline;
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 use pipelines::plate::{FrontTab, PlateBindGroup, PlateBuffers, PlatePipeline};
+use pipelines::surface_paint::SurfacePaintPipeline;
 pub use prepared::prepare_pipelines;
 pub use readback::FramePixels;
 use render_size::clamp_render_size;
@@ -73,6 +75,7 @@ use scene_upload::{
     MODEL_ENTRY_SIZE, WorldBoxes, build_envelope_warning_mask, build_model_entries,
     renderable_leaf_count,
 };
+pub use surface_paint::{BrushRing, PaintLayer};
 use targets::{MsaaTargets, TargetPool};
 
 /// Scene-dependent inputs to [`Renderer::render`]. The selection drives the
@@ -189,6 +192,8 @@ struct Pipelines {
     /// The plate-label pipeline, immutable after construction.
     label: LabelPipeline,
     label_state: LabelState,
+    /// The paint and brush-ring pipelines, immutable after construction.
+    surface_paint: SurfacePaintPipeline,
     /// Cached plate geometry for the current `BuildVolume`. `None` until the
     /// first render call; rebuilt when the per-frame `BuildVolume` differs from
     /// the cached one.
@@ -208,6 +213,8 @@ impl Pipelines {
         let plate = PlatePipeline::create(device, &mesh).map_err(at(RendererStage::Plate))?;
         let cap = CapPipeline::create(device, &mesh).map_err(at(RendererStage::Cap))?;
         let label = LabelPipeline::create(device, &mesh).map_err(at(RendererStage::Label))?;
+        let surface_paint =
+            SurfacePaintPipeline::create(device, &mesh).map_err(at(RendererStage::SurfacePaint))?;
         Ok(Self {
             mesh,
             outline,
@@ -218,6 +225,7 @@ impl Pipelines {
             cap_state: CapState::Off,
             label,
             label_state: LabelState::Off,
+            surface_paint,
             plate_buffers: None,
         })
     }
@@ -298,6 +306,7 @@ pub struct Renderer {
     /// the window's thread.
     adopted: scene_upload::UploadedMeshes,
     overlay: overlay::OverlaySlot,
+    surface_paint: surface_paint::PaintSlot,
     target_manager: TargetManager,
 }
 
@@ -379,6 +388,7 @@ impl Renderer {
             world_boxes: WorldBoxes::default(),
             adopted: scene_upload::UploadedMeshes::default(),
             overlay: overlay::OverlaySlot::default(),
+            surface_paint: surface_paint::PaintSlot::default(),
             target_manager: TargetManager {
                 msaa: None,
                 targets: None,
@@ -862,6 +872,24 @@ impl Renderer {
         readback::read_target_rgba(&self.core.device, &self.core.queue, &texture).map(Some)
     }
 
+    /// Draws a workspace frame and copies it off the GPU, for a test that
+    /// looks at what the viewport shows.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn workspace_pixels_for_test(
+        &mut self,
+        scene_render: SceneRender<'_>,
+        build_volume: BuildVolume,
+        camera: &OrbitCamera,
+        width: u32,
+        height: u32,
+    ) -> Result<Option<FramePixels>, RenderError> {
+        let Some(texture) = self.render(Some(scene_render), build_volume, camera, width, height)?
+        else {
+            return Ok(None);
+        };
+        readback::read_target_rgba(&self.core.device, &self.core.queue, &texture).map(Some)
+    }
+
     fn render_frame(
         &mut self,
         scene_render: Option<SceneRender<'_>>,
@@ -1031,6 +1059,10 @@ impl Renderer {
 
             if scene_for_draws && let Some(inst) = installed {
                 self.record_mesh_objects(&mut pass, inst, selection);
+                if contents == FrameContents::Workspace {
+                    self.surface_paint
+                        .record(&mut pass, &self.pipelines.surface_paint, inst);
+                }
             }
             if contents == FrameContents::Workspace {
                 self.overlay.record(

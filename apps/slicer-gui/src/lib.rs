@@ -85,6 +85,7 @@ mod startup_token;
 mod support_follow;
 mod support_gen_run;
 mod support_persist;
+mod surface_brush;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
@@ -99,6 +100,8 @@ mod tests_message_cards;
 mod tests_model_import;
 #[cfg(test)]
 mod tests_paste_prep;
+#[cfg(test)]
+mod tests_surface_paint;
 #[cfg(test)]
 mod tests_paste_timing;
 #[cfg(test)]

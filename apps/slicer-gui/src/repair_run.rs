@@ -67,8 +67,10 @@ use crate::repair_report::{
     details_text, left_reason, object_names_by_leaf, summary_message, target_names,
 };
 use crate::scene_document::{
-    EditNotApplied, SceneDocument, SceneEvent, SceneRevision, SceneSubscription,
+    CarriedPaint, EditNotApplied, SceneDocument, SceneEvent, SceneRevision, SceneSubscription,
+    carried_paint,
 };
+use crate::surface_brush::lost_paint_note;
 use crate::viewport::ViewportController;
 use crate::workspace_section::allows_repair;
 
@@ -109,6 +111,9 @@ struct CompletedRepair {
     /// built on the worker, so the first click after the repair builds
     /// nothing on the window's thread (#395).
     primed: Vec<PrimedMesh>,
+    /// The paint on the meshes it replaced, worked out on their new meshes
+    /// here: a large model takes a moment the window's thread does not have.
+    paint: Vec<CarriedPaint>,
     /// What each target that still does not slice has left, to mark on the
     /// model.
     marks: Vec<(MeshTarget, Arc<RepairMarks>)>,
@@ -467,6 +472,7 @@ impl RepairRun {
             }
         }
         let settlement = settle(&self.document, &completed, job.revision);
+        let lost_paint = lost_paint_note(&self.document.take_paint_report());
         match settlement {
             RepairSettlement::DiscardedStale => {
                 self.dialogs.show_info(|| InfoTexts {
@@ -512,6 +518,14 @@ impl RepairRun {
                 let CompletedRepair {
                     outcomes, elapsed, ..
                 } = completed;
+                // Never behind a notice someone may have turned off.
+                if let Some(note) = lost_paint.clone() {
+                    self.dialogs.show_info(move || InfoTexts {
+                        heading: ctr!("RepairDialog", "Painted detail"),
+                        message: note.clone(),
+                        details: Default::default(),
+                    });
+                }
                 match job.for_slice {
                     // A run that changed nothing would only slice into the
                     // same refusal again.
@@ -586,7 +600,10 @@ impl RepairRun {
             }
             // A new scene gets its card from the load worker's verdicts.
             SceneEvent::Installed => self.refresh_marks(false),
-            SceneEvent::SelectionChanged | SceneEvent::SliceChanged | SceneEvent::DirtyChanged => {}
+            SceneEvent::SelectionChanged
+            | SceneEvent::SliceChanged
+            | SceneEvent::DirtyChanged
+            | SceneEvent::Painted => {}
         }
     }
 
@@ -780,6 +797,7 @@ fn run_repair_watched(
         .iter()
         .map(|replacement| PrimedMesh::new(Arc::clone(&replacement.after)))
         .collect();
+    let paint = carried_paint(&scene);
     let marks = outcomes
         .iter()
         .filter_map(|outcome| {
@@ -793,6 +811,7 @@ fn run_repair_watched(
         outcomes,
         replacements,
         primed,
+        paint,
         marks,
         elapsed: start.elapsed(),
     })
@@ -824,13 +843,13 @@ fn settle(
     if completed.replacements.is_empty() {
         return RepairSettlement::NothingApplied;
     }
-    let edit = SceneEdit::Compound(
-        completed
-            .replacements
-            .iter()
-            .map(MeshReplacement::as_edit)
-            .collect(),
-    );
+    let mut edits: Vec<SceneEdit> = completed
+        .replacements
+        .iter()
+        .map(MeshReplacement::as_edit)
+        .collect();
+    edits.extend(document.paint_edits(&completed.paint));
+    let edit = SceneEdit::Compound(edits);
     match document.apply_edit_primed(edit.clone(), &completed.primed) {
         Ok(()) => {
             document.push_edit(edit);
@@ -849,12 +868,14 @@ mod repair_run_tests {
 
     use sc_mesh_core::indexed_mesh::repair::MeshStateAfterRepair;
     use sc_mesh_core::indexed_mesh::{MeshFix, MeshRepairReport};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::{
         cuboid_with_y_tunnel_and_flipped_faces, cuboid_with_z_tunnel_and_flipped_faces,
         unit_cube_mesh, unit_cube_with_collinear_faces, unit_cube_with_flipped_faces,
     };
     use sc_scene::node::LeafPayload;
+    use sc_scene::{PAINTED, PaintKind, SurfaceTags, UNPAINTED};
 
     use super::*;
     use crate::mesh_health::scene_slices;
@@ -982,6 +1003,161 @@ mod repair_run_tests {
             details.contains("\n• Removed 2 zero-area slivers\n"),
             "{details}"
         );
+    }
+
+    /// A box of `n` x `n` quads a side and 1 mm quads, as a badly exported
+    /// file has it: no vertex shared, a face turned inside out every so
+    /// often, and a hole in its bottom.
+    fn broken_box(n: u32) -> IndexedMesh {
+        let s = n as f32;
+        let mut vertices = Vec::new();
+        let mut faces = Vec::new();
+        let sides: [([f32; 3], [f32; 3], [f32; 3]); 6] = [
+            ([0.0, 0.0, s], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+            ([0.0, s, 0.0], [1.0, 0.0, 0.0], [0.0, -1.0, 0.0]),
+            ([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+            ([s, s, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+            ([s, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
+            ([0.0, s, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]),
+        ];
+        let mut count = 0u32;
+        for (side, (o, u, v)) in sides.iter().enumerate() {
+            for j in 0..n {
+                for i in 0..n {
+                    // The hole: the middle of the bottom.
+                    if side == 1 && i.abs_diff(n / 2) < 2 && j.abs_diff(n / 2) < 2 {
+                        continue;
+                    }
+                    let at = |a: u32, b: u32| {
+                        Vertex::new(std::array::from_fn(|k| {
+                            o[k] + u[k] * a as f32 + v[k] * b as f32
+                        }))
+                    };
+                    for t in [
+                        [at(i, j), at(i + 1, j), at(i + 1, j + 1)],
+                        [at(i, j), at(i + 1, j + 1), at(i, j + 1)],
+                    ] {
+                        let base = vertices.len() as u32;
+                        vertices.extend(t);
+                        count += 1;
+                        let flip = count.is_multiple_of(37);
+                        faces.push(IndexedTriangle::from_raw_indices(if flip {
+                            [base, base + 2, base + 1]
+                        } else {
+                            [base, base + 1, base + 2]
+                        }));
+                    }
+                }
+            }
+        }
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        }
+    }
+
+    /// Repair rewrites this mesh: most faces get new corners, some turn over
+    /// and a hole is filled. The paint follows the surface, the run says what
+    /// it kept, and one Undo brings all of it back.
+    #[test]
+    fn the_paint_survives_a_real_repair_and_says_what_it_kept() {
+        on_fresh_slint_thread(|| {
+            let mesh = Arc::new(broken_box(24));
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::clone(&mesh)),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            let doc = SceneDocument::new();
+            doc.install_graph(graph, PathBuf::from("/tmp/broken-box.stl"));
+            // The top and the part of one wall near it.
+            let values: Vec<u8> = mesh
+                .faces()
+                .iter()
+                .map(|f| {
+                    let low = f
+                        .vertices
+                        .iter()
+                        .map(|&v| mesh.vertices()[usize::from(v)].coords()[2])
+                        .fold(f32::INFINITY, f32::min);
+                    if low >= 20.0 { PAINTED } else { UNPAINTED }
+                })
+                .collect();
+            let paint = SurfaceTags::new(mesh.clone(), values).unwrap();
+            let painted_area = paint.painted_area();
+            let set = SceneEdit::SetSurfaceTags {
+                node_id: leaf,
+                kind: PaintKind::Detail,
+                before: None,
+                after: Some(paint),
+            };
+            doc.apply_edit(set.clone()).unwrap();
+            doc.push_edit(set);
+
+            let captured = doc.scene_revision();
+            let completed = doc
+                .with_scene(|spatial| run_repair(spatial.graph().clone()))
+                .unwrap();
+            let replacement = &completed.replacements[0];
+            let repaired = Arc::clone(&replacement.after);
+            let rewritten = repaired
+                .faces()
+                .iter()
+                .zip(mesh.faces())
+                .filter(|(a, b)| a.vertices != b.vertices)
+                .count();
+            assert!(
+                rewritten > mesh.faces().len() / 2,
+                "{rewritten} faces changed"
+            );
+            assert!(
+                repaired.faces().len() > mesh.faces().len(),
+                "the hole filled"
+            );
+            assert_eq!(
+                settle(&doc, &completed, captured),
+                RepairSettlement::Applied
+            );
+
+            // Worked out on the run's worker, not in the push.
+            assert_eq!(completed.paint.len(), 1);
+            let report = doc.take_paint_report();
+            assert_eq!(report.len(), 1);
+            let carried = doc
+                .surface_tags(leaf, PaintKind::Detail)
+                .expect("the paint came along");
+            assert!(Arc::ptr_eq(carried.mesh(), &repaired));
+            assert!(
+                (carried.painted_area() - painted_area).abs() < painted_area * 0.005,
+                "{} of {painted_area}",
+                carried.painted_area()
+            );
+            assert!((report[0].area_before - painted_area).abs() < 1e-6);
+            assert!((report[0].area_after - carried.painted_area()).abs() < 1e-6);
+            assert!(lost_paint_note(&report).is_none());
+            // On the same surface: nothing below where it was painted.
+            for (face, value) in repaired.faces().iter().zip(carried.values()) {
+                let high = face
+                    .vertices
+                    .iter()
+                    .map(|&v| repaired.vertices()[usize::from(v)].coords()[2])
+                    .fold(f32::NEG_INFINITY, f32::max);
+                assert!(*value == UNPAINTED || high >= 20.0, "paint at z {high}");
+            }
+            // One step back: the mesh and its paint.
+            doc.undo().unwrap();
+            let back = doc.surface_tags(leaf, PaintKind::Detail).expect("back");
+            assert!(Arc::ptr_eq(back.mesh(), &mesh));
+            assert!((back.painted_area() - painted_area).abs() < 1e-9);
+            doc.redo().unwrap();
+            let again = doc.surface_tags(leaf, PaintKind::Detail).expect("again");
+            assert!(Arc::ptr_eq(again.mesh(), &repaired));
+        });
     }
 
     #[test]
@@ -1216,10 +1392,10 @@ mod repair_run_tests {
             [0.0, 10.0, 0.0],
             [10.0, 10.0, 0.0],
         ]
-        .map(sc_mesh_core::primitives::Vertex::new)
+        .map(Vertex::new)
         .to_vec();
         let faces = [[0, 1, 2], [2, 1, 3]]
-            .map(sc_mesh_core::primitives::IndexedTriangle::from_raw_indices)
+            .map(IndexedTriangle::from_raw_indices)
             .to_vec();
         IndexedMesh::new(None, vertices, faces)
     }

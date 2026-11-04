@@ -74,6 +74,7 @@ use crate::scene_document::{EditNotApplied, SceneDocument, SceneEvent};
 use crate::scene_loader::{Finished, LoadTicket, PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
 use crate::support_persist::install_sets;
+use crate::surface_brush::{BrushAim, SurfaceBrush, View, aim};
 use sc_scene::SceneError;
 use sc_sla_formats::{PrintPreviews, PrinterFileFormat};
 
@@ -132,6 +133,17 @@ pub(crate) struct ViewportController {
     /// The drag tool armed, for tests that run without a window.
     #[cfg(test)]
     drag_tool_for_test: Cell<Option<SupportDragKind>>,
+    /// The brush that paints faces (#183), once a tool installs it.
+    surface_brush: RefCell<Option<Rc<SurfaceBrush>>>,
+    /// Whether the paint shows, and that what the renderer holds is old.
+    paint_shown: Cell<bool>,
+    paint_owed: Cell<bool>,
+    /// A press of the brush that a stroke, a fill or nothing took: until
+    /// the release, the press is the brush's.
+    brush_press: Cell<bool>,
+    /// A press off the model: the stroke starts where the drag reaches it,
+    /// erasing or not.
+    brush_waiting: Cell<Option<bool>>,
 }
 
 /// A tool of a workspace tab that acts where the model is clicked.
@@ -200,6 +212,11 @@ impl ViewportController {
             on_emptied: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
+            surface_brush: RefCell::new(None),
+            paint_shown: Cell::new(false),
+            paint_owed: Cell::new(false),
+            brush_press: Cell::new(false),
+            brush_waiting: Cell::new(None),
         }
     }
 
@@ -246,6 +263,11 @@ impl ViewportController {
             on_emptied: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
+            surface_brush: RefCell::new(None),
+            paint_shown: Cell::new(false),
+            paint_owed: Cell::new(false),
+            brush_press: Cell::new(false),
+            brush_waiting: Cell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -477,12 +499,25 @@ impl ViewportController {
     /// of the document listener: other code drives the document and lets the
     /// listener react.
     fn handle_scene_event(&self, event: SceneEvent) {
-        if !matches!(event, SceneEvent::SliceChanged | SceneEvent::DirtyChanged) {
+        if !matches!(
+            event,
+            SceneEvent::SliceChanged | SceneEvent::DirtyChanged | SceneEvent::Painted
+        ) {
             self.readout_owed.set(true);
+        }
+        if matches!(
+            event,
+            SceneEvent::Installed
+                | SceneEvent::Cleared
+                | SceneEvent::Restructured
+                | SceneEvent::Painted
+        ) {
+            self.paint_owed.set(true);
         }
         match event {
             SceneEvent::Installed => self.on_scene_installed(),
             SceneEvent::Cleared => self.on_scene_cleared(),
+            SceneEvent::Painted => self.mark_dirty(),
             SceneEvent::SelectionChanged => {
                 self.on_modal_transform_finish(false);
                 self.mirror_selection_to_ui();
@@ -880,6 +915,7 @@ impl ViewportController {
     /// is under way: the scene then shows a pose no edit has committed yet.
     pub(crate) fn is_mid_gesture(&self) -> bool {
         self.session.document().has_live_preview()
+            || self.brush_press.get()
             || self.input.modal.get().is_some()
             || matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. })
     }
@@ -2251,6 +2287,9 @@ impl ViewportController {
     }
 
     pub(crate) fn on_pointer_down(&self, cursor: ScreenPoint, mut modifiers: PointerModifiers) {
+        if self.brush_down(cursor, &modifiers) {
+            return;
+        }
         // Shift+click with Add armed hangs the support from the nearest one
         // (#3): the press is the tool's, not the start of a selection box.
         if modifiers.shift && self.add_support_armed() {
@@ -2283,6 +2322,9 @@ impl ViewportController {
         // Track the cursor in every section so a later paste anchors on it; the
         // gizmo drag and hover run in Prepare and Transform.
         self.input.note_hover_cursor(cursor);
+        if self.brush_move(cursor, &modifiers) {
+            return;
+        }
         if self.support_drag_move(cursor) {
             return;
         }
@@ -2309,6 +2351,9 @@ impl ViewportController {
     /// Shift, the object joins the selection or leaves it, #13), or selects
     /// what a Shift drag's box touches, on top of the selection.
     pub(crate) fn on_pointer_up(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
+        if self.brush_up() {
+            return;
+        }
         if let Some(ui) = self.ui.upgrade() {
             ui.set_box_select_armed(false);
         }
@@ -2638,15 +2683,16 @@ impl ViewportController {
                 // Remove and Move tip take only a support in sight (#3): the
                 // nearest hit among every leaf, model or supports, is one.
                 // Add and the drain look through the supports to the model.
-                let (id, t) = if on_supports {
-                    picking::pick_object_where(&ray, spatial, |_| true)
-                        .filter(|(id, _)| shows_supports(spatial, *id))?
+                let hit = if on_supports {
+                    picking::pick_face_where(&ray, spatial, |_| true)
+                        .filter(|hit| shows_supports(spatial, hit.leaf))?
                 } else {
-                    picking::pick_object_where(&ray, spatial, |id| !shows_supports(spatial, id))?
+                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id))?
                 };
-                let normal = picking::ray_hit_normal(&ray, &spatial.leaf(id)?)
-                    .map_or(glam::Vec3::Z, |(_, n)| n);
-                Some((id, ray.origin + ray.direction * t, normal))
+                let normal =
+                    picking::face_normal_towards(&ray, &spatial.leaf(hit.leaf)?, hit.face as usize)
+                        .unwrap_or(glam::Vec3::Z);
+                Some((hit.leaf, ray.origin + ray.direction * hit.t, normal))
             })
             .flatten()
     }
@@ -2707,6 +2753,135 @@ impl ViewportController {
         }
     }
 
+    /// Installs the brush that paints faces (#183).
+    pub(crate) fn set_surface_brush(&self, brush: Rc<SurfaceBrush>) {
+        *self.surface_brush.borrow_mut() = Some(brush);
+    }
+
+    /// Shows the paint on the models, or hides it. The ring goes with it.
+    pub(crate) fn show_paint(&self, on: bool) {
+        if self.paint_shown.replace(on) != on {
+            self.paint_owed.set(true);
+            self.mark_dirty();
+        }
+    }
+
+    fn armed_brush(&self) -> Option<Rc<SurfaceBrush>> {
+        self.surface_brush
+            .borrow()
+            .as_ref()
+            .filter(|brush| brush.armed())
+            .cloned()
+    }
+
+    /// Whether the brush is on: it takes the left button, and the gizmo goes.
+    pub(crate) fn brush_on(&self) -> bool {
+        self.armed_brush().is_some()
+    }
+
+    /// Where the pixel `at` lands on the model the brush works on.
+    fn brush_aim(&self, at: [f32; 2]) -> Option<BrushAim> {
+        let vp = self.render.viewport()?;
+        let target = self.session.document().selection_primary_node_id()?;
+        let (ray, view) = {
+            let camera_slot = self.camera.camera_cell().borrow();
+            let camera = camera_slot.as_ref()?;
+            let ray = picking::ray_from_pixel(
+                camera,
+                crate::mesh_render::default_fov_y(),
+                vp.width(),
+                vp.height(),
+                at[0],
+                at[1],
+            );
+            let view = View {
+                eye: camera.eye().to_array(),
+                direction: ray.direction.to_array(),
+                orthographic: camera.orthographic,
+            };
+            (ray, view)
+        };
+        self.session
+            .document()
+            .with_scene(|spatial| {
+                aim(spatial, &ray, &view, target, |id| {
+                    !shows_supports(spatial, id)
+                })
+            })
+            .flatten()
+    }
+
+    /// A left press with the brush on: starts a stroke where it lands on the
+    /// model, or fills with Shift. The press is the brush's anywhere in the
+    /// view: it selects nothing and moves nothing.
+    fn brush_down(&self, cursor: ScreenPoint, modifiers: &PointerModifiers) -> bool {
+        let Some(brush) = self.armed_brush() else {
+            return false;
+        };
+        self.brush_press.set(true);
+        let at = [cursor.x, cursor.y];
+        let erase = brush.erasing() != modifiers.alt;
+        match self.brush_aim(at) {
+            Some(aim) => {
+                if modifiers.shift {
+                    brush.fill(&aim, erase);
+                } else {
+                    brush.begin(&aim, at, erase);
+                }
+                self.mark_dirty();
+            }
+            None if !modifiers.shift => self.brush_waiting.set(Some(erase)),
+            None => {}
+        }
+        true
+    }
+
+    /// A move with the brush on: a stroke goes on, and the ring follows the
+    /// surface. False when the brush is off, or the move is another
+    /// gesture's: only then does the move go further.
+    fn brush_move(&self, cursor: ScreenPoint, modifiers: &PointerModifiers) -> bool {
+        let Some(brush) = self.armed_brush() else {
+            return false;
+        };
+        let at = [cursor.x, cursor.y];
+        let aim = self.brush_aim(at);
+        brush.hover(aim.as_ref(), brush.erasing() != modifiers.alt);
+        if brush.stroking() {
+            brush.extend(at, &|pixel| self.brush_aim(pixel));
+        } else if let (Some(erase), Some(aim)) = (self.brush_waiting.get(), aim) {
+            self.brush_waiting.set(None);
+            brush.begin(&aim, at, erase);
+        }
+        self.mark_dirty();
+        self.brush_press.get()
+    }
+
+    /// The left release that ends a brush press.
+    fn brush_up(&self) -> bool {
+        if !self.brush_press.replace(false) {
+            return false;
+        }
+        self.brush_waiting.set(None);
+        if let Some(brush) = self.surface_brush.borrow().as_ref() {
+            brush.end(true);
+        }
+        self.mark_dirty();
+        true
+    }
+
+    /// Drops a stroke in flight: Esc or a right press. Whether there was one.
+    pub(crate) fn cancel_brush_stroke(&self) -> bool {
+        let Some(brush) = self.surface_brush.borrow().clone() else {
+            return false;
+        };
+        if !brush.stroking() {
+            return false;
+        }
+        brush.end(false);
+        self.mark_dirty();
+        true
+    }
+
     /// The armed tab tool changed (or the tab did): a preview of the old tool
     /// no longer applies.
     pub(crate) fn on_tab_tools_changed(&self) {
@@ -2724,6 +2899,10 @@ impl ViewportController {
     /// Clears the dispatcher's cached hover cursor when the cursor leaves the
     /// viewport, so the paste path falls back to the viewport-centre placement.
     pub(crate) fn on_pointer_leave(&self) {
+        if let Some(brush) = self.armed_brush() {
+            brush.hover(None, false);
+            self.mark_dirty();
+        }
         self.input.on_pointer_leave();
         self.set_preview_overlay(None);
         if let Some(ui) = self.ui.upgrade() {
@@ -2735,8 +2914,9 @@ impl ViewportController {
     /// gesture as click (context menu) or drag (camera orbit) by comparing
     /// displacement against the click threshold.
     pub(crate) fn on_right_pointer_down(&self, x: f32, y: f32) {
-        // A right press drops a Supports drag in flight, and is no more.
-        if self.cancel_support_drag() {
+        // A right press drops a stroke or a Supports drag in flight, and is
+        // no more.
+        if self.cancel_brush_stroke() || self.cancel_support_drag() {
             self.right_dropped_drag.set(true);
             return;
         }
@@ -3143,6 +3323,7 @@ impl ViewportController {
     }
 
     pub(crate) fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
+        self.paint_owed.set(true);
         crate::breadcrumbs::note("window: graphics ready");
         // Mint a fresh token for this setup. Both the loader snapshot (consumed
         // by the worker-side `GpuScene::build`) and the renderer (built below)
@@ -3379,6 +3560,16 @@ impl ViewportController {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
+        if self.paint_owed.replace(false) {
+            let layers = self.paint_layers();
+            renderer.set_surface_paint(&layers, surface_paint_tint(&ui));
+        }
+        let ring = self
+            .armed_brush()
+            .filter(|_| self.paint_shown.get())
+            .and_then(|brush| brush.ring());
+        renderer.set_brush_ring(ring);
+
         let Some(vp) = self.render.viewport() else {
             return;
         };
@@ -3476,7 +3667,7 @@ impl ViewportController {
                 // tool, so its handles compose in Prepare and Transform:
                 // only the selection handed to the composer is gated, and the
                 // object tint keeps the full selection.
-                let gizmo_selection = if self.allows_transform_gizmo() {
+                let gizmo_selection = if self.allows_transform_gizmo() && !self.brush_on() {
                     selection_node_id
                 } else {
                     None
@@ -3538,6 +3729,27 @@ impl ViewportController {
         }
     }
 
+    /// The paint to show now: every model's detail, while it shows.
+    fn paint_layers(&self) -> Vec<crate::mesh_render::PaintLayer> {
+        if !self.paint_shown.get() {
+            return Vec::new();
+        }
+        self.session
+            .document()
+            .with_scene(|spatial| {
+                spatial
+                    .graph()
+                    .surface_tags_iter()
+                    .filter(|(_, kind, _)| *kind == sc_scene::PaintKind::Detail)
+                    .map(|(leaf, _, tags)| crate::mesh_render::PaintLayer {
+                        leaf,
+                        tags: tags.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub(crate) fn handle_before_rendering(&self) {
         if self.probe.borrow().is_some() {
             return;
@@ -3548,6 +3760,18 @@ impl ViewportController {
         }
         self.on_paint();
     }
+}
+
+/// The colour of painted faces, from the theme; its alpha is how much it
+/// covers the model.
+fn surface_paint_tint(ui: &MainWindow) -> [f32; 4] {
+    let color = ui.global::<crate::Theme>().get_surface_paint();
+    [
+        f32::from(color.red()) / 255.0,
+        f32::from(color.green()) / 255.0,
+        f32::from(color.blue()) / 255.0,
+        f32::from(color.alpha()) / 255.0,
+    ]
 }
 
 /// Which rows of the object list are selected, in row order: what the list

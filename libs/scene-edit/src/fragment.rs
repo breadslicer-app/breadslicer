@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
-use sc_scene::Scene;
 use sc_scene::node::LeafPayload;
+use sc_scene::{PaintKind, Scene, SurfaceTags};
 
 /// Self-contained scene subgraph. The newtype around [`Scene`] makes the role
 /// explicit at API boundaries (a paste primitive that takes `&SceneFragment`
@@ -52,6 +52,18 @@ impl SceneFragment {
             .add_root(leaf)
             .expect("freshly allocated leaf has no parent and is not a root");
         Self { inner }
+    }
+
+    /// This fragment with `paint` on its first root: a copy keeps the paint of
+    /// its model (#183). Paint of another mesh is left out.
+    #[must_use]
+    pub fn with_paint(mut self, paint: Vec<(PaintKind, SurfaceTags)>) -> Self {
+        if let Some(&root) = self.inner.roots().first() {
+            for (kind, tags) in paint {
+                let _ = self.inner.set_surface_tags(root, kind, Some(tags));
+            }
+        }
+        self
     }
 
     /// Builds a fragment of one root leaf per entry of `leaves`, in order,

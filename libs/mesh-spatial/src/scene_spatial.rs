@@ -25,6 +25,7 @@ use sc_scene::{
 use sc_scene_edit::SceneEdit;
 
 use crate::clusters::TriangleClusters;
+use crate::face_adjacency::FaceAdjacency;
 use crate::mesh_spatial::MeshSpatial;
 use crate::primed::PrimedMesh;
 
@@ -78,6 +79,12 @@ pub struct SceneSpatial {
     /// mesh shared by two slots cannot change, so the copy starts
     /// with everything the original already computed.
     mesh_resources: Vec<Arc<MeshSpatial>>,
+    /// The leaves in pre-order, the rows of the object list: what
+    /// [`Self::leaf_id_at_index`] answers from. Walking the graph for each
+    /// row made every loop over the leaves quadratic, and picking runs one
+    /// at 60 Hz under a brush. Only the edits that add or remove a leaf
+    /// change it.
+    rows: Vec<NodeId>,
 }
 
 impl std::fmt::Debug for SceneSpatial {
@@ -190,6 +197,27 @@ impl SceneSpatial {
         })
     }
 
+    /// What builds the face adjacency of the leaf `id` off the UI thread,
+    /// ahead of a brush; `None` when `id` shows no mesh. The result lands in
+    /// the leaf's cache, so [`ObjectQuery::face_adjacency`] finds it.
+    pub fn adjacency_job(&self, id: NodeId) -> Option<AdjacencyJob> {
+        let node = self.graph.node(id)?;
+        let NodeKind::Leaf(payload) = &node.kind else {
+            return None;
+        };
+        let (mesh, cache) = match payload {
+            LeafPayload::Mesh(mesh) => (mesh, self.leaves.get(id.index())?.as_ref()?),
+            LeafPayload::MeshResource(rid) => (
+                self.graph.mesh_resource_arc(*rid)?,
+                self.mesh_resources.get(rid.index())?,
+            ),
+        };
+        Some(AdjacencyJob {
+            mesh: Arc::clone(mesh),
+            cache: Arc::clone(cache),
+        })
+    }
+
     /// Apply a typed scene edit through
     /// [`SceneEdit::apply_to_scene`] (Compound atomicity included)
     /// and, on success, clear the cached state the edit made stale.
@@ -210,6 +238,9 @@ impl SceneSpatial {
         primed: &[PrimedMesh],
     ) -> Result<(), SceneError> {
         edit.apply_to_scene(&mut self.graph)?;
+        if edit.is_structural() {
+            self.rows = Self::row_leaves(&self.graph);
+        }
         self.invalidate_for(&edit);
         self.share_for(&edit);
         if !primed.is_empty() {
@@ -253,7 +284,9 @@ impl SceneSpatial {
             }
             SceneEdit::SetLocalTransform { .. }
             | SceneEdit::RemoveLeaf { .. }
-            | SceneEdit::RemoveMeshResource { .. } => {}
+            | SceneEdit::RemoveMeshResource { .. }
+            | SceneEdit::PaintSurface { .. }
+            | SceneEdit::SetSurfaceTags { .. } => {}
         }
     }
 
@@ -277,7 +310,9 @@ impl SceneSpatial {
             | SceneEdit::RemoveLeaf { .. }
             | SceneEdit::RemoveMeshResource { .. }
             | SceneEdit::ReplaceMeshResource { .. }
-            | SceneEdit::ReplaceLeafMesh { .. } => {}
+            | SceneEdit::ReplaceLeafMesh { .. }
+            | SceneEdit::PaintSurface { .. }
+            | SceneEdit::SetSurfaceTags { .. } => {}
         }
     }
 
@@ -364,7 +399,9 @@ impl SceneSpatial {
             | SceneEdit::AddLeaf { .. }
             | SceneEdit::RemoveLeaf { .. }
             | SceneEdit::AddMeshResource { .. }
-            | SceneEdit::RemoveMeshResource { .. } => {}
+            | SceneEdit::RemoveMeshResource { .. }
+            | SceneEdit::PaintSurface { .. }
+            | SceneEdit::SetSurfaceTags { .. } => {}
         }
     }
 
@@ -405,20 +442,25 @@ impl SceneSpatial {
     /// (`Descend`, `Skip`): CSG operand leaves have rows, and
     /// references cannot occur here (construction contract).
     pub fn leaf_id_at_index(&self, target: usize) -> Option<NodeId> {
-        self.row_leaves().get(target).copied()
+        self.rows.get(target).copied()
+    }
+
+    /// The reachable leaves in the order of [`Self::leaf_id_at_index`].
+    pub fn leaf_ids(&self) -> &[NodeId] {
+        &self.rows
     }
 
     /// Resolve a reachable leaf's [`NodeId`] back to its pre-order
     /// leaf index; `None` when `target` is not a reachable leaf.
     /// Inverse of [`Self::leaf_id_at_index`].
     pub fn leaf_index_of(&self, target: NodeId) -> Option<usize> {
-        self.row_leaves().iter().position(|&id| id == target)
+        self.rows.iter().position(|&id| id == target)
     }
 
     /// Collect the (Descend, Skip) structural leaf order both row
     /// queries resolve against.
-    fn row_leaves(&self) -> Vec<NodeId> {
-        self.graph
+    fn row_leaves(graph: &Scene) -> Vec<NodeId> {
+        graph
             .reachable_leaves(CsgPolicy::Descend, ReferencePolicy::Skip)
             .expect("a (Descend, Skip) structural walk has no error source")
     }
@@ -433,10 +475,12 @@ impl SceneSpatial {
             .map(|_| Arc::default())
             .collect();
         Self::allocate_inline_cache_slots(&graph, &mut leaves);
+        let rows = Self::row_leaves(&graph);
         Self {
             graph,
             leaves,
             mesh_resources,
+            rows,
         }
     }
 
@@ -522,6 +566,28 @@ impl SceneSpatial {
                 _ => {}
             });
         total
+    }
+}
+
+/// A mesh's face adjacency to build on another thread. `Send`, and it holds
+/// what it needs: the scene can move on while it runs.
+pub struct AdjacencyJob {
+    mesh: Arc<IndexedMesh>,
+    cache: Arc<MeshSpatial>,
+}
+
+impl std::fmt::Debug for AdjacencyJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdjacencyJob")
+            .field("faces", &self.mesh.faces.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl AdjacencyJob {
+    /// Builds it, unless it already is.
+    pub fn run(&self) {
+        self.cache.face_adjacency(&self.mesh);
     }
 }
 
@@ -622,6 +688,14 @@ impl<'a> ObjectQuery<'a> {
     /// has no faces or has corrupt face indices.
     pub fn clusters(&self) -> Option<&'a TriangleClusters> {
         self.cache.clusters(self.mesh)
+    }
+
+    /// Which faces of [`Self::mesh`] share an edge, cached on first call.
+    /// For a large mesh the first call takes a visible moment:
+    /// [`SceneSpatial::adjacency_job`] builds it off the UI thread ahead of
+    /// a brush.
+    pub fn face_adjacency(&self) -> &'a FaceAdjacency {
+        self.cache.face_adjacency(self.mesh)
     }
 }
 

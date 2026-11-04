@@ -369,7 +369,8 @@ impl PanelUpdate {
             }
             SceneEvent::SelectionChanged
             | SceneEvent::UndoStackChanged
-            | SceneEvent::DirtyChanged => None,
+            | SceneEvent::DirtyChanged
+            | SceneEvent::Painted => None,
         }
     }
 

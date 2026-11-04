@@ -76,6 +76,7 @@ fn supports_are_stored_as_data_and_their_mesh_left_out() {
         settings: None,
         supports: vec![document(leaf)],
         hollows: Vec::new(),
+        surface_notes: Vec::new(),
     };
     let bytes = write_project(&project, Vec::new()).unwrap();
     assert!(
@@ -120,6 +121,7 @@ fn supports_of_a_part_outside_the_scene_are_refused() {
         settings: None,
         supports: vec![document(loose)],
         hollows: Vec::new(),
+        surface_notes: Vec::new(),
     };
     assert!(matches!(
         write_project(&project, Vec::new()),
@@ -149,6 +151,7 @@ fn a_damaged_supports_chunk_is_reported() {
         settings: None,
         supports: vec![document(leaf)],
         hollows: Vec::new(),
+        surface_notes: Vec::new(),
     };
     let bytes = write_project(&project, Vec::new()).unwrap();
     let cut = rewrite(&bytes, |tag, version, mut payload| {

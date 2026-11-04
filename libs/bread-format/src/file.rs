@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! A whole `.bread` file: the scene chunk, the project settings, the supports
-//! and the hollows when there are any, then one mesh chunk per mesh the scene
-//! names, in its order.
+//! A whole `.bread` file: the scene chunk, the project settings, the supports,
+//! the hollows and the paint when there are any, then one mesh chunk per mesh
+//! the scene names, in its order.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -28,6 +28,7 @@ use crate::supports::{
     DecodeSupportsError, SUPPORTS_TAG, SUPPORTS_VERSION, SupportDocument, decode_supports,
     encode_supports,
 };
+use crate::surface::{SURFACE_TAG, SURFACE_VERSION, SurfaceNote, decode_surface, encode_surface};
 
 /// The tag of the project settings chunk.
 pub const SETTINGS_TAG: ChunkTag = ChunkTag(*b"PROJ");
@@ -67,6 +68,9 @@ pub struct BreadProject {
     pub supports: Vec<SupportDocument>,
     /// How hollowed models were made (#161); their leaves keep the hollow.
     pub hollows: Vec<HollowDocument>,
+    /// Paint the file holds that did not make it into `scene` (#183); empty
+    /// when writing. The paint itself rides in `scene`.
+    pub surface_notes: Vec<SurfaceNote>,
 }
 
 /// Why a project could not be written.
@@ -159,6 +163,13 @@ pub fn write_project<W: Write>(project: &BreadProject, out: W) -> Result<W, Writ
         .ok_or(WriteBreadError::SupportLeafMissing)?;
     let hollows = encode_hollows(&project.hollows, |leaf| encoded.nodes.get(&leaf).copied())
         .ok_or(WriteBreadError::HollowLeafMissing)?;
+    let surface = encode_surface(&project.scene, |leaf| {
+        encoded
+            .nodes
+            .get(&leaf)
+            .copied()
+            .filter(|_| !emptied.contains(&leaf))
+    });
 
     let mut writer = BreadWriter::new(out)?;
     writer.chunk(SCENE_TAG, SCENE_VERSION, &encoded.payload)?;
@@ -170,6 +181,9 @@ pub fn write_project<W: Write>(project: &BreadProject, out: W) -> Result<W, Writ
     }
     if !project.hollows.is_empty() {
         writer.chunk(HOLLOWS_TAG, HOLLOWS_VERSION, &hollows)?;
+    }
+    if let Some(surface) = &surface {
+        writer.chunk(SURFACE_TAG, SURFACE_VERSION, surface)?;
     }
     for mesh in &encoded.meshes {
         writer.chunk(MESH_TAG, MESH_VERSION, &encode_mesh(mesh))?;
@@ -183,8 +197,21 @@ pub fn read_project<R: Read>(input: R) -> Result<BreadProject, ReadProjectError>
     let mut reader = BreadReader::new(input)?;
     let (mut scenes, mut settings, mut supports) = (Vec::new(), Vec::new(), Vec::new());
     let mut hollows = Vec::new();
+    let mut surfaces = Vec::new();
+    let mut surface_notes = Vec::new();
     let mut meshes = Vec::new();
     while let Some(chunk) = reader.next_chunk()? {
+        // Paint is never worth refusing a file for.
+        if chunk.tag == SURFACE_TAG {
+            if chunk.version > SURFACE_VERSION {
+                surface_notes.push(SurfaceNote::NewerChunk {
+                    version: chunk.version,
+                });
+            } else {
+                surfaces.push(chunk.payload);
+            }
+            continue;
+        }
         let supported = match chunk.tag {
             SCENE_TAG => SCENE_VERSION,
             SETTINGS_TAG => SETTINGS_VERSION,
@@ -217,7 +244,10 @@ pub fn read_project<R: Read>(input: R) -> Result<BreadProject, ReadProjectError>
     let supports = single(SUPPORTS_TAG, supports)?;
     let hollows = single(HOLLOWS_TAG, hollows)?;
 
-    let decoded = decode_scene(&scene, meshes).map_err(ReadProjectError::Scene)?;
+    let mut decoded = decode_scene(&scene, meshes).map_err(ReadProjectError::Scene)?;
+    for payload in &surfaces {
+        surface_notes.extend(decode_surface(payload, &decoded.nodes, &mut decoded.scene));
+    }
     let is_leaf = |id| {
         matches!(
             decoded.scene.node(id).map(|node| &node.kind),
@@ -240,6 +270,7 @@ pub fn read_project<R: Read>(input: R) -> Result<BreadProject, ReadProjectError>
         settings,
         supports,
         hollows,
+        surface_notes,
     })
 }
 

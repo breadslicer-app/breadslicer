@@ -15,6 +15,7 @@ use crate::i18n::ctr;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RendererStage {
     Mesh,
+    SurfacePaint,
     Outline,
     GizmoBuffers,
     Gizmo,
@@ -48,6 +49,11 @@ impl fmt::Display for StageRefusal {
             RendererStage::Mesh => ctr!(
                 "ErrorDialog",
                 "The 3D view could not build its mesh pipeline: {}",
+                cause
+            ),
+            RendererStage::SurfacePaint => ctr!(
+                "ErrorDialog",
+                "The 3D view could not build its surface paint pipeline: {}",
                 cause
             ),
             RendererStage::Outline => ctr!(
@@ -279,6 +285,10 @@ mod error_display_tests {
         assert_eq!(
             sentence(RendererStage::Mesh),
             "The 3D view could not build its mesh pipeline: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RendererStage::SurfacePaint),
+            "The 3D view could not build its surface paint pipeline: Validation Error: x"
         );
         assert_eq!(
             sentence(RendererStage::Outline),

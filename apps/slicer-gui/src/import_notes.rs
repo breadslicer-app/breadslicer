@@ -151,6 +151,10 @@ impl Notes {
                 "ImportNotes",
                 "Ignored an unknown part among the profiles the file carries."
             ),
+            ReadProjectWarning::SurfacePaintDropped { .. } => ctr!(
+                "ImportNotes",
+                "Some painted detail could not be read and was left out. The models opened without it."
+            ),
             ReadProjectWarning::ForeignProjectData { dialect } => ctr!(
                 "ImportNotes",
                 "The file carries project settings from {}; only the models were loaded.",

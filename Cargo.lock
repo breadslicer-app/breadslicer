@@ -5075,6 +5075,7 @@ version = "0.2.0"
 dependencies = [
  "float-cmp 0.10.0",
  "proptest",
+ "rayon",
  "sc-mesh-core",
  "sc-scene",
  "sc-scene-edit",

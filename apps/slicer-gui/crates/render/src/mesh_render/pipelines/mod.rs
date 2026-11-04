@@ -15,3 +15,4 @@ pub(super) mod label;
 pub(super) mod mesh;
 pub(super) mod outline;
 pub(super) mod plate;
+pub(super) mod surface_paint;

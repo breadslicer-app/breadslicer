@@ -38,7 +38,7 @@ use sc_geom::df_supports::{DfSupportSession, model_from_world_mesh};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::node::{LeafAttachment, LeafPayload, SceneMetadata};
-use sc_scene::{MeshResourceId, NodeId};
+use sc_scene::{MeshResourceId, NodeId, PaintKind, SurfaceTags};
 use sc_scene_edit::SceneEdit;
 
 use super::{ArrangeRun, affine, gather};
@@ -558,6 +558,8 @@ fn add_copies(document: &SceneDocument, sources: &[Source], made: Made) -> Resul
     }
     let mut ids = ids.into_iter();
     let mut position = position;
+    // Each copy keeps the paint of its model.
+    let mut painted_copies: Vec<(usize, NodeId)> = Vec::new();
     let mut add = |payload: LeafPayload, world: AffineTransform3D, meta: Option<SceneMetadata>| {
         let node_id = ids.next().expect("one id per leaf");
         edits.push(SceneEdit::AddLeaf {
@@ -586,6 +588,7 @@ fn add_copies(document: &SceneDocument, sources: &[Source], made: Made) -> Resul
             moved(&source.model),
             source.model.meta.clone(),
         );
+        painted_copies.push((k, model));
         for piece in &source.rigid {
             add(
                 LeafPayload::Mesh(piece.mesh.clone()),
@@ -614,6 +617,28 @@ fn add_copies(document: &SceneDocument, sources: &[Source], made: Made) -> Resul
                 }
             }
         }
+    }
+    for (k, copy) in painted_copies {
+        let paint: Vec<(PaintKind, SurfaceTags)> = document
+            .with_scene(|spatial| {
+                spatial
+                    .graph()
+                    .surface_tags_iter()
+                    .filter(|(leaf, _, _)| *leaf == sources[k].model.leaf)
+                    .map(|(_, kind, tags)| (kind, tags.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        edits.extend(
+            paint
+                .into_iter()
+                .map(|(kind, tags)| SceneEdit::SetSurfaceTags {
+                    node_id: copy,
+                    kind,
+                    before: None,
+                    after: Some(tags),
+                }),
+        );
     }
     let edit = SceneEdit::Compound(edits);
     match document.apply_edit(edit.clone()) {

@@ -11,7 +11,7 @@ use std::sync::atomic::AtomicBool;
 use sc_arrange::Plate;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_scene::{LeafPayload, NodeId, Scene};
+use sc_scene::{LeafPayload, NodeId, PAINTED, PaintChanges, PaintKind, Scene, UNPAINTED};
 
 use super::{Landed, Pending, Progress, fill_now, gather_fill, land, make};
 use crate::arrange_run::ArrangeOptions;
@@ -226,6 +226,41 @@ fn a_fill_takes_at_most_the_copies_asked_for() {
         .0;
     assert!(none.copies.is_empty());
     assert_eq!(models(&document).len(), 4, "nothing added");
+}
+
+/// #183: each copy keeps the paint of its model, on its own mask, and the
+/// one Undo of the fill takes the copies and their paint.
+#[test]
+fn a_filled_copy_keeps_the_paint_of_its_model() {
+    let (document, leaves) = cubes(&[[10.0, 10.0]]);
+    let edit = SceneEdit::PaintSurface {
+        node_id: leaves[0],
+        kind: PaintKind::Detail,
+        changes: PaintChanges::from_faces(vec![(0, UNPAINTED, PAINTED), (1, UNPAINTED, PAINTED)]),
+    };
+    document.apply_edit(edit.clone()).unwrap();
+    document.push_edit(edit);
+    select(&document, &leaves);
+    let options = ArrangeOptions {
+        max_copies: 2,
+        ..ArrangeOptions::default()
+    };
+    fill_now(&document, &plate(), options).expect("filled");
+    let all = models(&document);
+    assert_eq!(all.len(), 3);
+    for (id, _, _) in &all {
+        let tags = document
+            .surface_tags(*id, PaintKind::Detail)
+            .expect("painted");
+        assert_eq!(tags.painted_faces(), 2);
+    }
+    document.undo().unwrap();
+    assert_eq!(models(&document).len(), 1);
+    assert!(
+        document
+            .surface_tags(leaves[0], PaintKind::Detail)
+            .is_some()
+    );
 }
 
 /// #356: a cancelled fill makes nothing, and a result worked out for a

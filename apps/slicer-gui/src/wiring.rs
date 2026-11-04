@@ -774,6 +774,7 @@ async fn save_to_target(
     };
 
     let supports_as_mesh = bundle.supports_as_mesh();
+    let paint_left_out = bundle.leaves_paint_out();
     crate::breadcrumbs::started("save");
     crate::breadcrumbs::note(&format!(
         "save: a {} file",
@@ -818,6 +819,9 @@ async fn save_to_target(
             crate::recent_files::note(target);
             if let Some(why) = supports_as_mesh {
                 dialogs.show_info(move || scene_save::supports_as_mesh_texts(why));
+            }
+            if paint_left_out {
+                dialogs.show_info(scene_save::paint_left_out_texts);
             }
             SaveOutcome::from_recorded(doc.record_project_save_for(
                 payload,

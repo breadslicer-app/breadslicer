@@ -36,7 +36,7 @@ use sc_geom::df_supports::is_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::shells::{Bodies, BodyKind};
 use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind, SceneMetadata};
-use sc_scene::{MeshResourceId, NodeId, Scene};
+use sc_scene::{MeshResourceId, NodeId, PaintKind, Scene, SurfaceTags, carry_tags};
 use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
@@ -55,8 +55,8 @@ const STATUS_NOTICE_DURATION: Duration = Duration::from_secs(6);
 /// The edit that replaces the leaf `leaf` of `graph` with one leaf per
 /// body, in `bodies`' order, where `leaf` stood: each with its mesh as a
 /// resource of its own, the leaf's transform and the given metadata, at the
-/// ids `slots` reserved. `None` when `leaf` is not a leaf of `graph` or the
-/// counts differ.
+/// ids `slots` reserved, and the leaf's paint on the body it lies on. `None`
+/// when `leaf` is not a leaf of `graph` or the counts differ.
 pub(crate) fn split_edit(
     graph: &Scene,
     leaf: NodeId,
@@ -69,12 +69,26 @@ pub(crate) fn split_edit(
     let local_transform = graph.node(leaf)?.local_transform;
     let attachment = graph.attachment_of(leaf)?;
     let remove = SceneEdit::remove_leaf_with_gc(graph, leaf)?;
+    let paint: Vec<(PaintKind, SurfaceTags)> = graph
+        .surface_tags_iter()
+        .filter(|(id, _, _)| *id == leaf)
+        .map(|(_, kind, tags)| (kind, tags.clone()))
+        .collect();
     let mut edits = vec![remove];
+    let mut carried = Vec::new();
     for (k, ((mesh, meta), &(node_id, rid))) in bodies.into_iter().zip(slots).enumerate() {
-        edits.push(SceneEdit::AddMeshResource {
-            rid,
-            mesh: Arc::new(mesh),
-        });
+        let mesh = Arc::new(mesh);
+        for (kind, tags) in &paint {
+            if let Some(tags) = carry_tags(tags, &mesh).tags {
+                carried.push(SceneEdit::SetSurfaceTags {
+                    node_id,
+                    kind: *kind,
+                    before: None,
+                    after: Some(tags),
+                });
+            }
+        }
+        edits.push(SceneEdit::AddMeshResource { rid, mesh });
         edits.push(SceneEdit::AddLeaf {
             node_id,
             attachment: shifted(attachment, k),
@@ -83,6 +97,7 @@ pub(crate) fn split_edit(
             meta,
         });
     }
+    edits.extend(carried);
     Some(SceneEdit::Compound(edits))
 }
 

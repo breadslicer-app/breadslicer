@@ -182,6 +182,7 @@ pub fn write_bread_project_with_progress<W: Write>(
         settings: Some(serialize_settings(payload, embed)?.into_bytes()),
         supports: supports.to_vec(),
         hollows: hollows.to_vec(),
+        surface_notes: Vec::new(),
     };
     progress(WriteProgress::Serialize { done: 1, total: 1 });
     sc_bread_format::write_project(&project, writer).map_err(WriteBreadProjectError::Container)?;
@@ -198,8 +199,14 @@ pub fn read_bread_project<R: Read>(reader: R) -> Result<LoadedProject, ReadBread
         settings,
         supports,
         hollows,
+        surface_notes,
     } = sc_bread_format::read_project(reader).map_err(ReadBreadProjectError::Container)?;
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<ReadProjectWarning> = surface_notes
+        .iter()
+        .map(|note| ReadProjectWarning::SurfacePaintDropped {
+            reason: note.to_string(),
+        })
+        .collect();
     let payload = match settings {
         Some(bytes) => parse_settings(&bytes, &mut warnings)?.unwrap_or_default(),
         None => ProjectPayload::default(),
