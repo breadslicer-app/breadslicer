@@ -5736,6 +5736,16 @@ msgstr "Vista de capas"
 
 #: ui/main-window.slint
 msgctxt "LayerView"
+msgid "Layer view: the layer's image beside the 3D view"
+msgstr "Vista de capas: la imagen de la capa al lado de la vista 3D"
+
+#: ui/main-window.slint
+msgctxt "LayerView"
+msgid "Layer view: slice first to see each layer's image"
+msgstr "Vista de capas: lamina primero para ver la imagen de cada capa"
+
+#: ui/main-window.slint
+msgctxt "LayerView"
 msgid "Layer {} of {}"
 msgstr "Capa {} de {}"
 
@@ -5743,6 +5753,11 @@ msgstr "Capa {} de {}"
 msgctxt "LayerView"
 msgid "Fit"
 msgstr "Ajustar"
+
+#: ui/workspace/layer-view.slint
+msgctxt "LayerView"
+msgid "Close the layer view"
+msgstr "Cerrar la vista de capas"
 
 
 #: ui/main-window.slint

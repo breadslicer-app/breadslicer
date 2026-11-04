@@ -3552,7 +3552,7 @@ impl ViewportController {
     /// frames do not re-upload the image. The image is kept current while the
     /// Slice section shows a held slice, so the View-menu toggle shows it at
     /// once without a refresh of its own.
-    fn reconcile_slice_view_image(
+    pub(crate) fn reconcile_slice_view_image(
         &self,
         ui: &MainWindow,
         cap_key: Option<u64>,
