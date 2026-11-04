@@ -178,7 +178,11 @@ fn wire_viewport_resized(ui: &MainWindow, ctrl: Rc<ViewportController>) {
 
 /// Installs the camera and selection callbacks of the viewport. A projection
 /// switch is stored in `prefs`, so later windows and launches start with it.
-fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
+pub(crate) fn wire_viewport_input(
+    ui: &MainWindow,
+    ctrl: Rc<ViewportController>,
+    prefs: Rc<PreferencesBus>,
+) {
     {
         let ctrl = ctrl.clone();
         ui.on_rotate_drag(move |dx, dy| ctrl.on_rotate(ScreenDelta::new(dx, dy)));

@@ -2388,6 +2388,29 @@ impl DfSupportRun {
             .unwrap_or_default()
     }
 
+    /// Makes supports for every model of `graph`, the scene on show.
+    #[cfg(test)]
+    pub(crate) fn make_supports_for_test(&self, graph: &sc_scene::Scene) {
+        let outcome = start_df_supports(graph, DfSupportRequest::default())
+            .expect("the job starts")
+            .join();
+        *self.started_on.borrow_mut() = Some(self.document.scene_revision());
+        self.finish(outcome);
+    }
+
+    /// The tips of every set in force, each set's sorted by id.
+    #[cfg(test)]
+    pub(crate) fn tips_for_test(&self) -> Vec<Vec<(String, [f64; 3])>> {
+        self.sets_in_force()
+            .iter()
+            .map(|drawn| {
+                let mut tips = drawn.session.tips();
+                tips.sort_by(|a, b| a.0.cmp(&b.0));
+                tips
+            })
+            .collect()
+    }
+
     /// The support set Remove may take from: the selected supports, or the
     /// selected model's. A safeguard: another model's supports are never
     /// taken by a click meant for these. `None` with neither selected.

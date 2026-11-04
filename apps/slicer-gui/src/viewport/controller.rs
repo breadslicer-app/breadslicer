@@ -420,7 +420,7 @@ impl ViewportController {
     }
 
     #[cfg(test)]
-    pub(super) fn camera_for_test(&self) -> Option<crate::camera::OrbitCamera> {
+    pub(crate) fn camera_for_test(&self) -> Option<crate::camera::OrbitCamera> {
         self.camera.camera_cell().borrow().clone()
     }
 
@@ -2007,6 +2007,15 @@ impl ViewportController {
                     pivot,
                 )?;
                 let inverse_view = camera.view_matrix().inverse();
+                let view = inverse_view.transform_vector3(glam::Vec3::Z).normalize();
+                // From an aligned view, G and R without an axis match it
+                // exactly: G keeps the depth axis (#424), R turns about the
+                // world axis at the camera (#351).
+                let (right, up) = super::modal_transform::snap_view_plane(
+                    inverse_view.transform_vector3(glam::Vec3::X).normalize(),
+                    inverse_view.transform_vector3(glam::Vec3::Y).normalize(),
+                    view,
+                );
                 Some(ModalGesture {
                     node_id,
                     original: query.local_transform(),
@@ -2015,13 +2024,9 @@ impl ViewportController {
                     start: [x, y],
                     cursor: [x, y],
                     screen_pivot: [screen.0, screen.1],
-                    right: inverse_view.transform_vector3(glam::Vec3::X).normalize(),
-                    up: inverse_view.transform_vector3(glam::Vec3::Y).normalize(),
-                    // From an axis-aligned view, R without an axis turns
-                    // about that exact world axis (#351).
-                    view_axis: super::modal_transform::snap_view_axis(
-                        inverse_view.transform_vector3(glam::Vec3::Z).normalize(),
-                    ),
+                    right,
+                    up,
+                    view_axis: super::modal_transform::snap_view_axis(view),
                     world_per_pixel: camera.world_per_pixel_at(pivot, fov, viewport.height())?,
                     op,
                     axis: None,
