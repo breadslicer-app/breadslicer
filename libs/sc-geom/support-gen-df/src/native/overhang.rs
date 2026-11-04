@@ -172,6 +172,22 @@ pub fn overhang_and_stability(
     (regions, report)
 }
 
+/// The world normal Z under which a face is an overhang, for a self-support
+/// angle from horizontal: a down-facing surface at angle θ has normal.z =
+/// -cos(θ), so overhang iff θ < threshold ⟺ normal.z < -cos(threshold).
+///
+/// The viewport's overhang map (#91) reads this same limit, so what it paints
+/// and what [`classify_overhangs`] finds cannot drift apart.
+pub fn overhang_normal_z_limit(self_support_angle_deg: f32) -> f32 {
+    -self_support_angle_deg.to_radians().cos()
+}
+
+/// Whether a face with unit world normal Z `normal_z` is an overhang under
+/// `limit`, from [`overhang_normal_z_limit`].
+pub fn is_overhang_normal_z(normal_z: f32, limit: f32) -> bool {
+    normal_z < limit
+}
+
 /// Classify overhang regions on an already-welded mesh.
 pub fn classify_overhangs(
     mesh: &IndexedMesh,
@@ -183,16 +199,14 @@ pub fn classify_overhangs(
         return Vec::new();
     }
 
-    // A down-facing surface at angle θ from horizontal has normal.z = -cos(θ).
-    // Overhang iff θ < threshold ⟺ normal.z < -cos(threshold).
-    let threshold = -self_support_angle_deg.to_radians().cos();
+    let threshold = overhang_normal_z_limit(self_support_angle_deg);
 
     let _p = crate::perf::scope("ovh:normals");
     let pairs: Vec<(Vec3, bool)> = (0..tri_count)
         .into_par_iter()
         .map(|fi| {
             let n = mesh.tri_normal(fi as u32);
-            (n, n.z < threshold)
+            (n, is_overhang_normal_z(n.z, threshold))
         })
         .collect();
     let mut normal = Vec::with_capacity(tri_count);

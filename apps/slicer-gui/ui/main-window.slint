@@ -443,6 +443,9 @@ export component MainWindow inherits Window {
     in property <float> repair-progress;
     in property <bool> repair-marks-available;
     in property <bool> repair-marks-shown;
+    // The overhang map (#91): its box, and the angle it paints by, as text.
+    in-out property <bool> overhang-map-on;
+    in property <string> overhang-map-limit;
 
     // support-generatoin run state (Menu: Tools > Generate Support (trivial for test)):
     // set when the job is submitted and cleared on
@@ -600,6 +603,7 @@ export component MainWindow inherits Window {
     callback repair-finished();
     callback repair-cancel();
     callback repair-marks-toggled(bool);
+    callback overhang-map-toggled(bool);
     // Arrange (#180), the Transform tab's Arrange card: a run in flight, what
     // the last one did, and the card's settings (Rust keeps them).
     in property <bool> arranging: false;
@@ -1885,6 +1889,11 @@ export component MainWindow inherits Window {
                             repair-progress: root.repair-progress;
                             repair-marks-available: root.repair-marks-available;
                             repair-marks-shown: root.repair-marks-shown;
+                            overhang-map-on <=> root.overhang-map-on;
+                            overhang-map-limit: root.overhang-map-limit;
+                            overhang-map-toggled(on) => {
+                                root.overhang-map-toggled(on);
+                            }
                             repair-cancel => {
                                 root.repair-cancel();
                             }

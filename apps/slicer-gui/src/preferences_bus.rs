@@ -72,6 +72,9 @@ pub(crate) struct PreferencesSnapshot {
     /// Whether generating supports for a model resting on the plate lifts it
     /// first (#389), the Supports tab's box. Shared by every open window.
     pub lift_models_on_plate: bool,
+    /// Whether the Transform tab paints the models by overhang (#91), the
+    /// OVERHANGS card's box. Shared by every open window.
+    pub overhang_map: bool,
     /// Whether a Fix All press repeats until the review is clean (#163), the
     /// Review card's box. Shared by every open window.
     pub fix_all_repeat: bool,
@@ -175,6 +178,7 @@ impl PreferencesSnapshot {
             gizmo_size: DEFAULT_GIZMO_SIZE,
             orthographic_view: false,
             lift_models_on_plate: false,
+            overhang_map: false,
             fix_all_repeat: true,
             diagnostic_log: false,
             silenced_messages: BTreeSet::new(),
@@ -226,6 +230,8 @@ pub(crate) enum PreferencesChange {
     Projection,
     /// The Supports tab's "Lift … when the model rests on the plate" (#389).
     LiftModelsOnPlate,
+    /// The Transform tab's "Show overhang map" (#91).
+    OverhangMap,
     /// The Review card's "Repeat until clean" (#163).
     FixAllRepeat,
     DiagnosticLog,

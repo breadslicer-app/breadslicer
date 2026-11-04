@@ -489,6 +489,10 @@ pub(crate) struct AppSettings {
     /// Omitted in TOML while off (the default).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     lift_models_on_plate: bool,
+    /// Whether the Transform tab paints the models by overhang (#91). Omitted
+    /// in TOML while off (the default).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    overhang_map: bool,
     /// Whether a Fix All press repeats its passes until the review is clean
     /// (#163), the Review card's box. Omitted in TOML while on (the
     /// default).
@@ -549,6 +553,7 @@ impl Default for AppSettings {
             gizmo_size: DEFAULT_GIZMO_SIZE,
             orthographic_view: false,
             lift_models_on_plate: false,
+            overhang_map: false,
             fix_all_repeat: default_fix_all_repeat(),
             silenced_messages: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
@@ -711,6 +716,14 @@ impl AppSettings {
 
     pub(crate) fn set_lift_models_on_plate(&mut self, on: bool) {
         self.lift_models_on_plate = on;
+    }
+
+    pub(crate) fn overhang_map(&self) -> bool {
+        self.overhang_map
+    }
+
+    pub(crate) fn set_overhang_map(&mut self, on: bool) {
+        self.overhang_map = on;
     }
 
     pub(crate) fn fix_all_repeat(&self) -> bool {

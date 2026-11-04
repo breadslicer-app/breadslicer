@@ -15,6 +15,11 @@ struct Uniforms {
     // Declared here so this WGSL struct matches the host Rust
     // `Uniforms` layout (the buffer is shared with the plate pipeline).
     face_breach_mask: vec4<u32>,
+    // The overhang map's terms, read only for an object whose flags.z asks
+    // for it: x = the world normal Z under which the support engine calls a
+    // face an overhang, y = its self-support angle in radians from horizontal,
+    // z = the world height up to which a face rests on the plate.
+    overhang: vec4<f32>,
 };
 
 struct ModelEntry {
@@ -25,9 +30,10 @@ struct ModelEntry {
     //             falls outside the build envelope; drives the mild
     //             interior wash so the object reads as "offending"
     //             even on fragments that are still inside)
-    //   flags.z = overlay tint (0 = a scene object; 1 valid preview,
-    //             2 invalid preview, 3 hollow cavity, 4 drain, 5 preview
-    //             not known yet), read by `fs_overlay` only
+    //   flags.z = what the object is drawn as: 0 a scene object, 6 a scene
+    //             object under the overhang map (read by `fs_main`); overlay
+    //             tints, read by `fs_overlay`: 1 valid preview, 2 invalid
+    //             preview, 3 hollow cavity, 4 drain, 5 preview not known yet
     // Remaining lanes are free for later phases (hover, gizmo focus, ...).
     flags: vec4<u32>,
 };
@@ -82,6 +88,47 @@ const WARNING_WASH: vec3<f32> = vec3<f32>(0.92, 0.78, 0.55);
 const WARNING_OUTSIDE: vec3<f32> = vec3<f32>(0.843, 0.655, 0.353);
 const WARNING_WASH_STRENGTH: f32 = 0.55;
 
+// The overhang map (#91). `MODEL_OVERHANG_MAP` is `flags.z` of an object it
+// paints. A face past the engine's limit jumps straight to the coral, so the
+// edge of the red is the limit itself, and sinks to the crimson as it nears a
+// flat ceiling; the rose fades in over the last degrees on the safe side, to
+// show what a little more tilt would tip over. Neither is the amber of the
+// selection and the out-of-volume warning.
+const MODEL_OVERHANG_MAP: u32 = 6u;
+const OVERHANG_EDGE: vec3<f32> = vec3<f32>(0.93, 0.30, 0.25);
+const OVERHANG_CEILING: vec3<f32> = vec3<f32>(0.60, 0.06, 0.13);
+const OVERHANG_STRENGTH: f32 = 0.92;
+const OVERHANG_NEAR: vec3<f32> = vec3<f32>(0.90, 0.48, 0.52);
+const OVERHANG_NEAR_STRENGTH: f32 = 0.60;
+const OVERHANG_NEAR_BAND_RAD: f32 = 0.17453292; // 10°
+// How much of the selection's amber stays on a mapped object: its outline
+// still marks it, and a full amber fill would swallow the map's warm colours.
+const OVERHANG_SELECTED_TINT: f32 = 0.30;
+
+// `base` with the overhang map over it. `face_n` is the true face normal, the
+// one the support engine classifies: the smooth shading normal rounds a facet
+// off and would disagree with it, and the screen derivatives it comes from
+// hold under any model matrix, a non-uniform scale included. A face resting on
+// the plate is left alone: the plate holds it, and the engine's supports could
+// not go under it anyway. A degenerate face has a NaN normal, and every
+// comparison below is false for it.
+fn overhang_paint(base: vec3<f32>, face_n: vec3<f32>, world_z: f32) -> vec3<f32> {
+    if (world_z <= u.overhang.z) {
+        return base;
+    }
+    let limit = u.overhang.y;
+    let from_horizontal = acos(clamp(-face_n.z, -1.0, 1.0));
+    if (face_n.z < u.overhang.x) {
+        let ceiling = saturate(1.0 - from_horizontal / limit);
+        return mix(base, mix(OVERHANG_EDGE, OVERHANG_CEILING, ceiling), OVERHANG_STRENGTH);
+    }
+    let near = 1.0 - (from_horizontal - limit) / OVERHANG_NEAR_BAND_RAD;
+    if (near > 0.0) {
+        return mix(base, OVERHANG_NEAR, near * near * OVERHANG_NEAR_STRENGTH);
+    }
+    return base;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Slice clip: drop fragments above the selected layer's top Z. The
@@ -101,8 +148,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let intensity = ambient + (1.0 - ambient) * lambert;
     let unselected = vec3<f32>(0.75, 0.78, 0.85);
     let highlighted = vec3<f32>(1.00, 0.78, 0.42);
-    let base_color = mix(unselected, highlighted, f32(in.selected));
-    let washed = mix(base_color, WARNING_WASH, f32(in.breaches) * WARNING_WASH_STRENGTH);
+    let mapped = in.tint == MODEL_OVERHANG_MAP;
+    let selection_tint = select(1.0, OVERHANG_SELECTED_TINT, mapped);
+    let base_color = mix(unselected, highlighted, f32(in.selected) * selection_tint);
+    var washed = mix(base_color, WARNING_WASH, f32(in.breaches) * WARNING_WASH_STRENGTH);
+    if (mapped) {
+        // `flat_n` runs right-to-down across the screen, into it: the face
+        // normal, seen from its front, is the opposite way.
+        washed = overhang_paint(washed, -flat_n, in.world_pos.z);
+    }
     // Componentwise envelope test: a fragment outside on any axis
     // is painted in the full warning amber instead of the wash.
     let p = in.world_pos;

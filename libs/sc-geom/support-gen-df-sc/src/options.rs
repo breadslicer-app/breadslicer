@@ -12,7 +12,7 @@ use support_gen_df::native::islands::body::IslandBodyScan;
 use support_gen_df::pipeline::PipelineSettings;
 use support_gen_df::supports::auto_support::auto_place::helpers::apply_zone_size;
 use support_gen_df::supports::auto_support::settings::{SizingPreset, auto_support_constraints};
-use support_gen_df::supports::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG;
+use support_gen_df::supports::auto_support::zone_rules::{STABILIZATION_MAX_ANGLE_DEG, ZoneRules};
 use support_gen_df::supports::rafts::crenelated::geometry::compute_raft_footprint::raft_band_top_mm;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
 
@@ -151,6 +151,17 @@ impl DfSupportOptions {
             .map_or(DEFAULT_SUPPORT_LIFT_MM, |z| z.auto_lift_mm)
     }
 
+    /// The self-support angle these options classify overhangs by, degrees
+    /// from horizontal (0° = flat ceiling): faces flatter than it need
+    /// support. A zone preset's rule reads from vertical; this is that angle
+    /// turned around, the number [`Self::apply`] hands the scans.
+    pub fn self_support_angle_deg(&self) -> f64 {
+        let o = self.clamped();
+        o.zones.as_ref().map_or(o.overhang_angle_deg, |z| {
+            zone_self_support_angle_deg(&z.rules)
+        })
+    }
+
     /// Writes these options into `settings`.
     pub fn apply(&self, settings: &mut PipelineSettings) {
         let o = self.clamped();
@@ -195,6 +206,15 @@ impl DfSupportOptions {
     }
 }
 
+/// The self-support angle a zone preset's rules classify by, degrees from
+/// horizontal, inside the bounds the scans accept.
+fn zone_self_support_angle_deg(rules: &ZoneRules) -> f64 {
+    rules.self_support_angle_deg().clamp(
+        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.min,
+        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.max,
+    )
+}
+
 /// Writes a zone preset into `settings` (#360): its rules, the overhang
 /// angle the scans classify by, its default size for supports placed by
 /// hand, the scans its zones read, its bracing and its sizes drawn exactly.
@@ -202,10 +222,7 @@ fn apply_zones(zones: &ZonePreset, settings: &mut PipelineSettings) {
     let rules = zones.rules.clamped();
     let supports = &mut settings.supports;
     let auto = &mut supports.auto_support;
-    auto.overhang_self_support_angle_deg = rules.self_support_angle_deg().clamp(
-        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.min,
-        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.max,
-    );
+    auto.overhang_self_support_angle_deg = zone_self_support_angle_deg(&rules);
     // The sizes are drawn as written: no model scaling.
     auto.model_scale_enabled = false;
     auto.size_scale = 1.0;
@@ -272,6 +289,48 @@ mod options_tests {
             "the defaults are DragonFruit's"
         );
         assert_eq!(applied.rafts.global, base.rafts.global);
+    }
+
+    #[test]
+    fn the_self_support_angle_is_the_one_the_scans_get() {
+        let cases = [
+            DfSupportOptions::default(),
+            DfSupportOptions {
+                overhang_angle_deg: 30.0,
+                ..Default::default()
+            },
+            // Past the bounds: both read the clamped value.
+            DfSupportOptions {
+                overhang_angle_deg: 89.0,
+                ..Default::default()
+            },
+            // A zone preset's rule reads from vertical: 38° is 52° here.
+            DfSupportOptions {
+                zones: Some(crate::zone_presets::minis_30()),
+                ..Default::default()
+            },
+            DfSupportOptions {
+                zones: Some(crate::zone_presets::figures_70()),
+                ..Default::default()
+            },
+        ];
+        for options in cases {
+            let mut settings = PipelineSettings::defaults(0.05);
+            options.apply(&mut settings);
+            assert_eq!(
+                options.self_support_angle_deg(),
+                settings
+                    .supports
+                    .auto_support
+                    .overhang_self_support_angle_deg,
+                "{options:?}"
+            );
+        }
+        let minis = DfSupportOptions {
+            zones: Some(crate::zone_presets::minis_30()),
+            ..Default::default()
+        };
+        assert_eq!(minis.self_support_angle_deg(), 52.0);
     }
 
     #[test]

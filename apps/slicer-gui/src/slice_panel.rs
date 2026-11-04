@@ -403,6 +403,7 @@ impl PanelUpdate {
             | PreferencesChange::Gizmo
             | PreferencesChange::Projection
             | PreferencesChange::LiftModelsOnPlate
+            | PreferencesChange::OverhangMap
             | PreferencesChange::FixAllRepeat
             | PreferencesChange::DiagnosticLog
             | PreferencesChange::SilencedMessages => None,
@@ -472,6 +473,7 @@ mod panel_update_tests {
             (PreferencesChange::Gizmo, None),
             (PreferencesChange::Projection, None),
             (PreferencesChange::LiftModelsOnPlate, None),
+            (PreferencesChange::OverhangMap, None),
             (PreferencesChange::FixAllRepeat, None),
             (PreferencesChange::DiagnosticLog, None),
             (PreferencesChange::SilencedMessages, None),

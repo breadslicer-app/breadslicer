@@ -94,6 +94,10 @@ pub trait MeshRenderer {
     /// Shows the brush's ring on its model (`None` hides it).
     fn set_brush_ring(&mut self, _ring: Option<super::BrushRing>) {}
 
+    /// Paints the models of the workspace frames to come by overhang (`None`
+    /// turns the map off).
+    fn set_overhang_map(&mut self, _map: Option<super::OverhangMap>) {}
+
     /// Blocks until the GPU has finished the work submitted so far, so a
     /// caller can time a frame end to end (the performance test).
     fn wait_for_gpu(&self) {}
@@ -184,6 +188,10 @@ impl MeshRenderer for Renderer {
 
     fn set_brush_ring(&mut self, ring: Option<super::BrushRing>) {
         Renderer::set_brush_ring(self, ring);
+    }
+
+    fn set_overhang_map(&mut self, map: Option<super::OverhangMap>) {
+        Renderer::set_overhang_map(self, map);
     }
 
     fn wait_for_gpu(&self) {
