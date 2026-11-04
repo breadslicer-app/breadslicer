@@ -99,9 +99,9 @@ mod tests_message_cards;
 #[cfg(test)]
 mod tests_model_import;
 #[cfg(test)]
-mod tests_paste_prep;
+mod tests_paint_timing;
 #[cfg(test)]
-mod tests_surface_paint;
+mod tests_paste_prep;
 #[cfg(test)]
 mod tests_paste_timing;
 #[cfg(test)]
@@ -114,6 +114,8 @@ mod tests_scene_loader;
 mod tests_slice_result;
 #[cfg(test)]
 mod tests_start_dialog;
+#[cfg(test)]
+mod tests_surface_paint;
 #[cfg(test)]
 mod tests_tab_translations;
 mod ui_language;

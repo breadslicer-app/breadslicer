@@ -16,7 +16,7 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, Vertex};
 use sc_orient::SearchMode;
 use sc_scene::node::LeafPayload;
-use sc_scene::{NodeId, Scene};
+use sc_scene::{NodeId, PAINTED, PaintChanges, Scene, UNPAINTED};
 use sc_scene_edit::SceneEdit;
 use slint::Model;
 
@@ -327,6 +327,7 @@ fn a_cancelled_search_moves_nothing() {
         world: AffineTransform3D::identity(),
         parent_inverse: Transform3D::Identity,
         revision: SceneRevision::from_top_edit_id(None),
+        detail: None,
         plate: None,
     };
     let worked = work(
@@ -482,6 +483,7 @@ fn orient_timing() {
         world: AffineTransform3D::identity(),
         parent_inverse: Transform3D::Identity,
         revision: SceneRevision::from_top_edit_id(None),
+        detail: None,
         plate: None,
     };
     let cancel = AtomicBool::new(false);
@@ -810,5 +812,198 @@ fn the_card_holds_its_last_row_with_advanced_open_and_three_options() {
             );
         }
         assert!(objects_top >= card_bottom, "the next card overlaps");
+    });
+}
+
+/// Paints every face of the model whose outward normal passes `keep`, as one
+/// stroke would.
+fn paint_faces(f: &Fixture, keep: impl Fn([f32; 3]) -> bool) {
+    let changes = f
+        .document
+        .with_scene(|spatial| {
+            let mesh = spatial.leaf(f.leaf).expect("the leaf").mesh();
+            mesh.faces()
+                .iter()
+                .enumerate()
+                .filter(|(_, face)| {
+                    let [a, b, c] = face
+                        .vertices
+                        .map(|v| mesh.vertices()[usize::from(v)].coords());
+                    let (u, w) = (
+                        [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+                        [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+                    );
+                    keep([
+                        u[1] * w[2] - u[2] * w[1],
+                        u[2] * w[0] - u[0] * w[2],
+                        u[0] * w[1] - u[1] * w[0],
+                    ])
+                })
+                .map(|(i, _)| (i as u32, UNPAINTED, PAINTED))
+                .collect::<Vec<_>>()
+        })
+        .expect("a scene");
+    let edit = SceneEdit::PaintSurface {
+        node_id: f.leaf,
+        kind: PaintKind::Detail,
+        changes: PaintChanges::from_faces(changes),
+    };
+    f.document.apply_edit(edit.clone()).expect("the paint");
+    f.document.push_edit(edit);
+}
+
+#[test]
+fn each_option_says_how_many_tips_land_on_the_detail() {
+    on_fresh_slint_thread(|| {
+        let f = fixture();
+        // Nothing painted: the cards say nothing of it.
+        searched(&f, SearchMode::Quick);
+        assert!((0..options(&f)).all(|i| {
+            f.window
+                .get_orient_options()
+                .row_data(i)
+                .unwrap()
+                .detail
+                .is_empty()
+        }));
+        paint_faces(&f, |n| n[2] > 0.0);
+        render_frames();
+        f.run.on_scene_changed();
+        searched(&f, SearchMode::Quick);
+        assert!(options(&f) > 0);
+        for i in 0..options(&f) {
+            let row = f.window.get_orient_options().row_data(i).unwrap();
+            assert_eq!(row.detail, "0 on detail", "option {i}");
+            assert!(row.detail_clear);
+        }
+        assert!(f.window.get_orient_current().contains("on detail"));
+    });
+}
+
+#[test]
+fn painting_after_a_search_drops_its_options() {
+    on_fresh_slint_thread(|| {
+        let f = fixture();
+        searched(&f, SearchMode::Quick);
+        assert!(options(&f) > 0);
+        let pose = local(&f);
+        f.run.hover(0, true);
+        assert_ne!(local(&f), pose);
+        paint_faces(&f, |n| n[2] > 0.0);
+        f.run.on_scene_changed();
+        assert_eq!(options(&f), 0);
+        assert_eq!(local(&f), pose, "the option shown went back");
+        assert!(!f.document.has_live_preview());
+        assert!(f.window.get_orient_status().contains("Search again"));
+        assert!(!f.run.apply(), "nothing left to apply");
+    });
+}
+
+#[test]
+fn a_search_that_paint_overtook_is_dropped() {
+    on_fresh_slint_thread(|| {
+        let f = fixture();
+        searched(&f, SearchMode::Quick);
+        f.run.search(SearchMode::Quick);
+        paint_faces(&f, |n| n[2] > 0.0);
+        land(&f.run);
+        assert_eq!(options(&f), 0);
+        assert!(f.window.get_orient_status().contains("changed"));
+    });
+}
+
+#[test]
+fn when_no_pose_keeps_the_detail_clear_the_card_says_so() {
+    on_fresh_slint_thread(|| {
+        let f = fixture();
+        // All of it: some face always looks down.
+        paint_faces(&f, |_| true);
+        searched(&f, SearchMode::Quick);
+        assert!(options(&f) > 0);
+        let row = f.window.get_orient_options().row_data(0).unwrap();
+        assert!(!row.detail_clear, "{}", row.detail);
+        let warning = f.window.get_orient_warning();
+        assert!(warning.contains("no orientation avoids"), "{warning}");
+    });
+}
+
+#[test]
+fn the_brush_lives_and_ends_with_the_tool() {
+    on_fresh_slint_thread(|| {
+        let f = fixture();
+        // B does nothing with the tool closed.
+        f.run.toggle_brush();
+        assert!(!f.window.get_orient_brush_on());
+        f.run.toggle();
+        land(&f.run);
+        f.run.toggle_brush();
+        assert!(f.window.get_orient_brush_on());
+        assert!(f.ctrl.brush_on());
+        // Esc leaves the brush first, the tool after.
+        assert!(f.run.brush_escape());
+        assert!(!f.window.get_orient_brush_on());
+        assert!(!f.run.brush_escape());
+        assert!(f.window.get_orient_open());
+        f.run.toggle_brush();
+        f.run.close();
+        assert!(!f.window.get_orient_brush_on());
+        assert!(!f.ctrl.brush_on());
+    });
+}
+
+#[test]
+fn the_brush_size_stays_in_range_in_real_millimetres() {
+    on_fresh_slint_thread(|| {
+        let f = fixture();
+        f.run.toggle();
+        land(&f.run);
+        assert_eq!(f.window.get_orient_brush_size(), 3.0);
+        f.run.set_brush_size(100.0);
+        assert_eq!(f.window.get_orient_brush_size(), 15.0);
+        f.run.set_brush_size(0.0);
+        assert_eq!(f.window.get_orient_brush_size(), 0.5);
+        f.run.step_brush_size(true);
+        assert!(f.window.get_orient_brush_size() > 0.5);
+    });
+}
+
+#[test]
+fn the_card_says_how_much_is_painted() {
+    on_fresh_slint_thread(|| {
+        let f = fixture();
+        f.run.toggle();
+        land(&f.run);
+        assert_eq!(f.window.get_orient_painted(), "");
+        paint_faces(&f, |n| n[2] > 0.0);
+        f.run.on_scene_changed();
+        // The 20 mm cube's top, of six sides.
+        assert_eq!(f.window.get_orient_painted(), "Painted: 400 mm² (17 %)");
+        f.document.undo().unwrap();
+        f.run.on_scene_changed();
+        assert_eq!(f.window.get_orient_painted(), "");
+    });
+}
+
+#[test]
+fn without_paint_the_tool_finds_what_it_always_found() {
+    on_fresh_slint_thread(|| {
+        let f = fixture();
+        let target = Target::selected(&f.document).expect("the model");
+        assert!(target.detail.is_none());
+        let ctx = OrientContext::new(Preset::Balanced);
+        let worked = work(
+            &target,
+            None,
+            Some(ctx),
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        let found = worked.found.expect("searched").expect("not cancelled");
+        let direct =
+            OrientAnalysis::new(&target.mesh, &target.world, None, &AtomicBool::new(false))
+                .expect("not cancelled")
+                .search(&ctx, &AtomicBool::new(false), &mut |_, _| {})
+                .expect("not cancelled");
+        assert_eq!(found.outcome.options, direct.options);
     });
 }

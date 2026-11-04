@@ -17,6 +17,12 @@
 //! change of objective reuse it. A result worked out for a scene that has
 //! changed since is dropped.
 //!
+//! The tool holds the protect-detail brush (#184): painting the part of the
+//! model that matters most is an optional first step. Paint is a constraint,
+//! not a weight: the options keep tips off it whenever a pose can
+//! ([`sc_orient`]), each says how many it leaves, and options found before the
+//! paint changed are dropped, as they no longer answer what was asked.
+//!
 //! Hovering an option shows it on the model, uncommitted, like a gizmo drag
 //! ([`SceneDocument::set_live_preview`]: Undo, Redo and a save put the pose
 //! back first, and autosave waits). Apply records one transform edit, so one
@@ -38,7 +44,7 @@ use sc_orient::{
     Cancelled, Candidate, Note, OrientAnalysis, OrientContext, Preset, SearchMode, SearchOutcome,
     Stage, kept_on_plate, turned_about_footprint,
 };
-use sc_scene::NodeId;
+use sc_scene::{NodeId, PaintKind, SurfaceTags, surface_area};
 use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
@@ -49,8 +55,12 @@ use crate::mesh_loader::panic_message;
 use crate::scene_document::{
     EditNotApplied, SceneDocument, SceneEvent, SceneRevision, SceneSubscription,
 };
+use crate::surface_brush::SurfaceBrush;
 use crate::viewport::ViewportController;
 use crate::{MainWindow, OrientOption};
+
+/// How often the painted area is worked out again during a stroke.
+const PAINTED_AREA_INTERVAL: Duration = Duration::from_millis(120);
 
 /// What the tool's settings set, beside the mode of each search.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,6 +136,8 @@ pub(crate) struct Target {
     world: AffineTransform3D,
     parent_inverse: Transform3D,
     revision: SceneRevision,
+    /// The detail painted on the model when the search started.
+    detail: Option<SurfaceTags>,
     /// The plate, its corners in world X/Y: an option that would reach past
     /// an edge is shifted back onto it.
     plate: Option<([f64; 2], [f64; 2])>,
@@ -150,6 +162,10 @@ impl Target {
                     world: affine(&query.world_transform()),
                     parent_inverse: query.parent_world().inverse().ok()?,
                     revision,
+                    detail: spatial
+                        .graph()
+                        .surface_tags(leaf, PaintKind::Detail)
+                        .cloned(),
                     plate: None,
                 })
             })
@@ -162,6 +178,11 @@ impl Target {
             mesh: self.mesh.clone(),
             linear: *self.world.linear(),
         }
+    }
+
+    /// What says which paint the search saw: changes with the paint.
+    fn detail_revision(&self) -> Option<u64> {
+        self.detail.as_ref().map(SurfaceTags::revision)
     }
 
     /// The leaf's local transform that puts the model at `world`.
@@ -216,9 +237,10 @@ pub(crate) enum Step {
     Judging,
 }
 
-/// A worker's job: builds the analysis unless `cached` has it, then
-/// searches with `ctx` (when given) and works out each option's pose: turned
-/// about the centre of its footprint, the lift kept, and kept on the plate.
+/// A worker's job: builds the analysis of the geometry unless `cached` has
+/// it, then searches with `ctx` (when given) on it and the model's paint, and
+/// works out each option's pose: turned about the centre of its footprint, the
+/// lift kept, and kept on the plate.
 pub(crate) fn work(
     target: &Target,
     cached: Option<Arc<OrientAnalysis>>,
@@ -238,6 +260,7 @@ pub(crate) fn work(
             progress(Step::Searching);
             Some(
                 analysis
+                    .with_detail(target.detail.as_ref().map(SurfaceTags::values))
                     .search(&ctx, cancel, &mut |stage, _| {
                         progress(match stage {
                             Stage::Coarse => Step::Refining,
@@ -288,12 +311,17 @@ type Slot = Arc<Mutex<Option<(u64, Result<Worked, String>)>>>;
 struct Shown {
     leaf: NodeId,
     revision: SceneRevision,
+    /// The paint the search saw.
+    detail: Option<u64>,
     /// The model's local transform when the search started: what Apply
     /// records as `before`, and where a preview goes back to.
     before: Transform3D,
     /// Per option, the local transform that takes the model there.
     afters: Vec<Transform3D>,
 }
+
+/// A mesh, the linear part of a pose, and the mesh's area under it, mm².
+type SurfaceArea = (Arc<IndexedMesh>, [[f64; 3]; 3], f64);
 
 pub(crate) struct OrientRun {
     me: Weak<Self>,
@@ -318,6 +346,12 @@ pub(crate) struct OrientRun {
     selected: Cell<i32>,
     /// The option shown on the model now.
     previewing: Cell<Option<usize>>,
+    /// The protect-detail brush (#184).
+    brush: Rc<SurfaceBrush>,
+    /// Works out the painted area once a stroke gives it a moment.
+    painted_timer: slint::Timer,
+    /// The whole surface of a mesh under a scale, as last worked out.
+    surface: RefCell<Option<SurfaceArea>>,
     _scene_events: SceneSubscription,
 }
 
@@ -331,9 +365,17 @@ impl OrientRun {
         ctrl: Rc<ViewportController>,
         supports: Rc<DfSupportRun>,
     ) -> Rc<Self> {
+        let brush = SurfaceBrush::new(document.clone(), PaintKind::Detail);
+        ctrl.set_surface_brush(brush.clone());
         let run = Rc::new_cyclic(|me: &Weak<Self>| {
             let weak = me.clone();
             let scene_events = document.subscribe(move |event| {
+                if event == SceneEvent::Painted {
+                    if let Some(run) = weak.upgrade() {
+                        run.schedule_painted_area();
+                    }
+                    return;
+                }
                 if matches!(
                     event,
                     SceneEvent::Installed
@@ -370,10 +412,18 @@ impl OrientRun {
                 shown: RefCell::new(None),
                 selected: Cell::new(-1),
                 previewing: Cell::new(None),
+                brush,
+                painted_timer: slint::Timer::default(),
+                surface: RefCell::new(None),
                 _scene_events: scene_events,
             }
         });
         run.push_settings(ui);
+        let me = Rc::downgrade(&run);
+        run.brush.set_allowed(Rc::new(move || {
+            me.upgrade().is_some_and(|run| run.editable())
+        }));
+        run.push_brush();
         macro_rules! wire {
             ($on:ident, |$run:ident $(, $arg:ident)*| $body:expr) => {{
                 let $run = run.clone();
@@ -396,7 +446,145 @@ impl OrientRun {
         wire!(on_orient_apply, |r| {
             r.apply();
         });
+        wire!(on_orient_brush_toggled, |r| r.toggle_brush());
+        wire!(on_orient_brush_size_changed, |r, mm| r.set_brush_size(mm));
+        wire!(on_orient_brush_step, |r, bigger| r.step_brush_size(bigger));
+        wire!(on_orient_brush_erase_toggled, |r| r.toggle_erase());
+        wire!(on_orient_brush_visible_changed, |r, on| r
+            .set_visible_only(on));
+        wire!(on_orient_brush_op, |r, code| r.brush_op(code));
+        wire!(on_orient_brush_escape, |r| r.brush_escape());
         run
+    }
+
+    /// B and the card's button: the brush on or off, for the selected model.
+    pub(crate) fn toggle_brush(&self) {
+        if !self.open.get() {
+            return;
+        }
+        let on = !self.brush.armed();
+        if on {
+            self.end_preview();
+        }
+        self.brush
+            .set_armed(on, self.document.selection_primary_node_id());
+        self.push_brush();
+    }
+
+    fn set_brush_size(&self, mm: f32) {
+        self.brush.set_radius_mm(mm);
+        self.push_brush();
+    }
+
+    fn step_brush_size(&self, bigger: bool) {
+        self.brush.step_radius(bigger);
+        self.push_brush();
+    }
+
+    fn toggle_erase(&self) {
+        self.brush.set_erasing(!self.brush.erasing());
+        self.push_brush();
+    }
+
+    fn set_visible_only(&self, on: bool) {
+        self.brush.set_visible_only(on);
+        self.push_brush();
+    }
+
+    /// The card's buttons: 0 grow, 1 shrink, 2 invert, 3 clear all.
+    fn brush_op(&self, code: i32) {
+        let Some(leaf) = self.document.selection_primary_node_id() else {
+            return;
+        };
+        match code {
+            0 => self.brush.step_edge(leaf, true),
+            1 => self.brush.step_edge(leaf, false),
+            2 => self.brush.invert(leaf),
+            3 => self.brush.clear(leaf),
+            _ => false,
+        };
+    }
+
+    /// Esc in the view: drops a stroke in flight, else leaves the brush.
+    /// Whether it had something to do.
+    fn brush_escape(&self) -> bool {
+        if self.ctrl.cancel_brush_stroke() {
+            return true;
+        }
+        if self.brush.armed() {
+            self.toggle_brush();
+            return true;
+        }
+        false
+    }
+
+    fn push_brush(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_orient_brush_on(self.brush.armed());
+            ui.set_orient_brush_size(self.brush.radius_mm());
+            ui.set_orient_brush_erase(self.brush.erasing());
+            ui.set_orient_brush_visible_only(self.brush.visible_only());
+        }
+    }
+
+    /// The painted area goes on the card soon: not after every dab.
+    fn schedule_painted_area(&self) {
+        if self.painted_timer.running() || !self.open.get() {
+            return;
+        }
+        let me = self.me.clone();
+        self.painted_timer.start(
+            slint::TimerMode::SingleShot,
+            PAINTED_AREA_INTERVAL,
+            move || {
+                if let Some(run) = me.upgrade() {
+                    run.show_painted_area();
+                }
+            },
+        );
+    }
+
+    /// "Painted: 312 mm² (8 %)" for the selected model, in real millimetres;
+    /// empty with nothing painted.
+    fn show_painted_area(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let Some(target) = Target::selected(&self.document) else {
+            ui.set_orient_painted("".into());
+            return;
+        };
+        let Some(tags) = &target.detail else {
+            ui.set_orient_painted("".into());
+            return;
+        };
+        let linear = *target.world.linear();
+        let painted = tags.painted_area_under(&linear);
+        let total = self.surface_of(&target.mesh, &linear);
+        let share = if total > 0.0 {
+            (painted / total * 100.0).clamp(0.0, 100.0)
+        } else {
+            0.0
+        };
+        let area = format!("{painted:.0}");
+        let share = if share > 0.0 && share < 1.0 {
+            "< 1".to_owned()
+        } else {
+            format!("{share:.0}")
+        };
+        ui.set_orient_painted(ctr!("Inspector", "Painted: {} mm² ({} %)", area, share));
+    }
+
+    fn surface_of(&self, mesh: &Arc<IndexedMesh>, linear: &[[f64; 3]; 3]) -> f64 {
+        if let Some((held, under, area)) = self.surface.borrow().as_ref()
+            && Arc::ptr_eq(held, mesh)
+            && under == linear
+        {
+            return *area;
+        }
+        let area = surface_area(mesh, linear);
+        *self.surface.borrow_mut() = Some((mesh.clone(), *linear, area));
+        area
     }
 
     fn push_settings(&self, ui: &MainWindow) {
@@ -454,8 +642,10 @@ impl OrientRun {
         };
         self.open.set(true);
         ui.set_orient_open(true);
+        self.ctrl.show_paint(true);
         self.set_status(String::new());
         ui.set_orient_offer_arrange(false);
+        self.show_painted_area();
         self.refresh_warning();
         // The analysis is built now, while the person reads the card: the
         // first search then only searches.
@@ -472,6 +662,9 @@ impl OrientRun {
             return;
         }
         self.open.set(false);
+        self.brush.set_armed(false, None);
+        self.push_brush();
+        self.ctrl.show_paint(false);
         self.cancel();
         self.queued.set(None);
         self.clear_shown();
@@ -502,6 +695,8 @@ impl OrientRun {
     /// Quick or Full on the selected model.
     pub(crate) fn search(&self, mode: SearchMode) {
         self.end_preview();
+        // A stroke in flight is part of what is asked.
+        self.brush.end(true);
         if !self.open.get() || !self.editable() {
             return;
         }
@@ -695,7 +890,8 @@ impl OrientRun {
     fn land(&self, target: Target, mode: SearchMode, found: Found, seconds: f64) {
         let still = self.document.scene_revision() == target.revision
             && self.document.selection_primary_node_id() == Some(target.leaf)
-            && self.local_of(target.leaf).as_ref() == Some(&target.local);
+            && self.local_of(target.leaf).as_ref() == Some(&target.local)
+            && self.detail_revision(target.leaf) == target.detail_revision();
         if !still || !self.open.get() {
             self.set_status(
                 ctr!(
@@ -711,6 +907,7 @@ impl OrientRun {
         *self.shown.borrow_mut() = Some(Shown {
             leaf: target.leaf,
             revision: target.revision,
+            detail: target.detail_revision(),
             before: target.local,
             afters,
         });
@@ -746,6 +943,14 @@ impl OrientRun {
             .flatten()
     }
 
+    /// What says which detail `leaf` holds now.
+    fn detail_revision(&self, leaf: NodeId) -> Option<u64> {
+        self.document
+            .surface_tags(leaf, PaintKind::Detail)
+            .as_ref()
+            .map(SurfaceTags::revision)
+    }
+
     fn show_idle(&self) {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_orient_running(false);
@@ -774,6 +979,7 @@ impl OrientRun {
         self.shown.borrow().as_ref().is_some_and(|shown| {
             self.document.scene_revision() == shown.revision
                 && self.document.selection_primary_node_id() == Some(shown.leaf)
+                && self.detail_revision(shown.leaf) == shown.detail
         })
     }
 
@@ -1005,18 +1211,40 @@ impl OrientRun {
             self.cancel();
         }
         if self.shown.borrow().is_some() && !self.shown_is_current() {
-            // Not put back: the scene the preview stood on is gone.
-            self.previewing.set(None);
-            self.document.set_live_preview(None);
-            self.clear_shown();
-            self.set_status(String::new());
+            let repainted = self.shown.borrow().as_ref().is_some_and(|shown| {
+                self.document.scene_revision() == shown.revision
+                    && self.document.selection_primary_node_id() == Some(shown.leaf)
+            });
+            if repainted {
+                // The model stands where it stood: only the options go.
+                self.end_preview();
+                self.clear_shown();
+                self.set_status(
+                    ctr!(
+                        "Inspector",
+                        "The painted detail changed. Search again to take it into account."
+                    )
+                    .to_string(),
+                );
+            } else {
+                // Not put back: the scene the preview stood on is gone.
+                self.previewing.set(None);
+                self.document.set_live_preview(None);
+                self.clear_shown();
+                self.set_status(String::new());
+            }
         }
         if self.open.get() && Target::selected(&self.document).is_none() {
             self.close();
             return;
         }
         if self.open.get() {
+            self.show_painted_area();
             self.refresh_warning();
+            if self.brush.armed() {
+                // Another model takes the brush: its adjacency goes ahead.
+                self.brush.set_armed(true, selected);
+            }
         }
     }
 
@@ -1067,6 +1295,19 @@ impl OrientRun {
             );
         }
         if let Some(outcome) = outcome {
+            for note in &outcome.notes {
+                if let Note::DetailTips { tips } = note {
+                    lines.push(
+                        ctr!(
+                            "Inspector",
+                            "1 tip on detail: no orientation avoids it.",
+                            "{n} tips on detail: no orientation avoids them.",
+                            *tips
+                        )
+                        .to_string(),
+                    );
+                }
+            }
             if outcome.notes.contains(&Note::OpenMesh) {
                 lines.push(
                     ctr!(
@@ -1145,9 +1386,19 @@ fn option_rows(outcome: &SearchOutcome, mode: SearchMode) -> Vec<OrientOption> {
                 ),
                 tilt: tilt_text(c),
                 fits: c.cost.fit.ok(),
+                detail: detail_text(c),
+                detail_clear: c.cost.detail.is_some_and(|d| d.whole_tips() == 0),
             }
         })
         .collect()
+}
+
+/// "2 on detail", or empty with nothing painted.
+fn detail_text(c: &Candidate) -> slint::SharedString {
+    match c.cost.detail {
+        Some(d) => ctr!("Inspector", "{} on detail", d.whole_tips()),
+        None => Default::default(),
+    }
 }
 
 fn peak_text(c: &Candidate) -> slint::SharedString {
@@ -1181,7 +1432,7 @@ fn tilt_text(c: &Candidate) -> slint::SharedString {
 fn current_row(c: &Candidate) -> String {
     let tips = format!("{:.0}", c.cost.estimated_tips());
     let height = format!("{:.0}", c.cost.height_mm);
-    if c.cost.peel_measured {
+    let row = if c.cost.peel_measured {
         ctr!(
             "Inspector",
             "Now: ≈ {} tips · peak {} N · {} mm tall",
@@ -1192,6 +1443,10 @@ fn current_row(c: &Candidate) -> String {
         .to_string()
     } else {
         ctr!("Inspector", "Now: ≈ {} tips · {} mm tall", tips, height).to_string()
+    };
+    match c.cost.detail {
+        Some(_) => format!("{row} · {}", detail_text(c)),
+        None => row,
     }
 }
 

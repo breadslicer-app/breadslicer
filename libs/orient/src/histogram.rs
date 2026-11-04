@@ -23,10 +23,6 @@ pub(crate) struct Bin {
     /// `Σ area · centroid`: its dot with the up direction is the summed
     /// area-weighted height.
     pub(crate) moment: V3,
-    /// The same three, for the painted faces only.
-    pub(crate) detail_area: f64,
-    pub(crate) detail_normal: V3,
-    pub(crate) detail_moment: V3,
 }
 
 fn bin_of(n: V3) -> usize {
@@ -47,14 +43,13 @@ fn bin_of(n: V3) -> usize {
 const BLOCK: usize = 1 << 17;
 
 /// The histogram of the faces, with the empty bins left out.
-pub(crate) fn histogram(pos: &[V3], tri: &[[u32; 3]], detail: Option<&[bool]>) -> Vec<Bin> {
+pub(crate) fn histogram(pos: &[V3], tri: &[[u32; 3]]) -> Vec<Bin> {
     let empty = || vec![Bin::default(); 6 * R * R];
     let parts: Vec<Vec<Bin>> = tri
         .par_chunks(BLOCK)
-        .enumerate()
-        .map(|(block, faces)| {
+        .map(|faces| {
             let mut acc = empty();
-            for (k, t) in faces.iter().enumerate() {
+            for t in faces {
                 let [a, b, c] = t.map(|i| pos[i as usize]);
                 let n2 = crate::vec::cross(crate::vec::sub(b, a), crate::vec::sub(c, a));
                 let Some(n) = unit(n2) else { continue };
@@ -64,11 +59,6 @@ pub(crate) fn histogram(pos: &[V3], tri: &[[u32; 3]], detail: Option<&[bool]>) -
                 bin.area += area;
                 bin.normal = add(bin.normal, scale(n, area));
                 bin.moment = add(bin.moment, scale(centroid, area));
-                if detail.is_some_and(|d| d[block * BLOCK + k]) {
-                    bin.detail_area += area;
-                    bin.detail_normal = add(bin.detail_normal, scale(n, area));
-                    bin.detail_moment = add(bin.detail_moment, scale(centroid, area));
-                }
             }
             acc
         })
@@ -79,14 +69,10 @@ pub(crate) fn histogram(pos: &[V3], tri: &[[u32; 3]], detail: Option<&[bool]>) -
             b.area += p.area;
             b.normal = add(b.normal, p.normal);
             b.moment = add(b.moment, p.moment);
-            b.detail_area += p.detail_area;
-            b.detail_normal = add(b.detail_normal, p.detail_normal);
-            b.detail_moment = add(b.detail_moment, p.detail_moment);
         }
     }
     for b in &mut bins {
         b.normal = unit(b.normal).unwrap_or_default();
-        b.detail_normal = unit(b.detail_normal).unwrap_or_default();
     }
     bins.retain(|b| b.area > 0.0);
     bins
@@ -112,7 +98,6 @@ pub(crate) struct OverhangSums {
     pub(crate) area: f64,
     /// `Σ area · w · (height above the lowest point)`, mm³.
     pub(crate) moment: f64,
-    pub(crate) detail_area: f64,
 }
 
 pub(crate) fn overhang(bins: &[Bin], up: V3, c0: f64, z0: f64) -> OverhangSums {
@@ -122,10 +107,6 @@ pub(crate) fn overhang(bins: &[Bin], up: V3, c0: f64, z0: f64) -> OverhangSums {
         if w > 0.0 {
             s.area += b.area * w;
             s.moment += w * (dot(b.moment, up) - b.area * z0);
-        }
-        if b.detail_area > 0.0 {
-            let w = overhang_weight(-dot(b.detail_normal, up), c0);
-            s.detail_area += b.detail_area * w;
         }
     }
     s

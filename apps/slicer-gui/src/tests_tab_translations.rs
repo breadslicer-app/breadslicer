@@ -17,7 +17,7 @@ use sc_message_catalog::scan::scan_source;
 use slint::ComponentHandle;
 
 use crate::test_support::slint_thread::{on_fresh_slint_thread, render_frames};
-use crate::{MainWindow, WorkspaceSection};
+use crate::{MainWindow, OrientOption, WorkspaceSection};
 
 const SPANISH: &str = include_str!("../i18n/es/LC_MESSAGES/sc-slicer-gui.po");
 const INSPECTORS: &str = include_str!("../ui/workspace/inspectors.slint");
@@ -31,6 +31,7 @@ const RECENT_FILES: &str = include_str!("recent_files.rs");
 /// their cards' notes, the review's rows and the dialogs the tabs open.
 const PANEL_SOURCES: &[(&str, &str)] = &[
     ("orient_run.rs", include_str!("orient_run.rs")),
+    ("surface_brush.rs", include_str!("surface_brush.rs")),
     ("arrange_run.rs", include_str!("arrange_run.rs")),
     ("arrange_run/fill.rs", include_str!("arrange_run/fill.rs")),
     ("mesh_check.rs", include_str!("mesh_check.rs")),
@@ -598,4 +599,74 @@ fn every_text_of_importing_models_has_spanish() {
         untranslated.push("ErrorDialog => {n} file could not be opened.".to_owned());
     }
     assert!(untranslated.is_empty(), "no Spanish for {untranslated:#?}");
+}
+
+/// The Orient card with the brush on, some paint and two options.
+fn painting_card(window: &MainWindow) {
+    window.set_orient_open(true);
+    window.set_orient_brush_on(true);
+    window.set_orient_brush_size(3.0);
+    window.set_orient_painted("Painted: 312 mm² (8 %)".into());
+    let option = |letter: &str, detail: &str, clear: bool| OrientOption {
+        letter: letter.into(),
+        mode: "Quick".into(),
+        tips: "≈ 51 tips".into(),
+        change: "−78 %".into(),
+        better: true,
+        peak: "Peak 7.8 N".into(),
+        height: "96 mm tall".into(),
+        tilt: "Tilts 35°".into(),
+        fits: true,
+        detail: detail.into(),
+        detail_clear: clear,
+    };
+    window.set_orient_options(slint::ModelRc::new(slint::VecModel::from(vec![
+        option("A", "0 on detail", true),
+        option("B", "2 on detail", false),
+    ])));
+}
+
+#[test]
+fn the_protect_detail_section_speaks_spanish() {
+    let labels = [
+        "Pintando",
+        "Borrar",
+        "Agrandar",
+        "Achicar",
+        "Invertir",
+        "Borrar todo",
+    ];
+    let shown = in_spanish(WorkspaceSection::Transform, painting_card, |window| {
+        labels.map(|label| shows(window, label))
+    });
+    assert_eq!(shown, [true; 6], "{labels:?}");
+}
+
+/// The card as it looks, in both languages, for a person to judge. With
+/// `BREADSLICER_ORIENT_SHOTS` naming a folder.
+#[test]
+fn the_orient_card_pictures_are_written_when_asked() {
+    let Some(dir) = std::env::var_os("BREADSLICER_ORIENT_SHOTS").map(std::path::PathBuf::from)
+    else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("the folder is made");
+    for language in ["en", "es"] {
+        let path = dir.join(format!("tarjeta-orientar-{language}.png"));
+        in_language(
+            language,
+            WorkspaceSection::Transform,
+            painting_card,
+            |window| {
+                let shot = window
+                    .window()
+                    .take_snapshot()
+                    .expect("the software renderer takes snapshots");
+                image::RgbaImage::from_raw(shot.width(), shot.height(), shot.as_bytes().to_vec())
+                    .expect("the snapshot is RGBA")
+                    .save(&path)
+                    .expect("the picture is written");
+            },
+        );
+    }
 }

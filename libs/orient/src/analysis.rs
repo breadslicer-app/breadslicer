@@ -6,6 +6,8 @@
 //! Everything the search needs from a model, built once, and the cost of one
 //! pose.
 
+use std::ops::Deref;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -21,7 +23,7 @@ use crate::hull::{
 use crate::islands::{ISLAND_CLUSTER_MM, Neighbours, Ring, count_clustered, local_minima_many};
 use crate::peel::{LayerProfile, layer_profile, summarize};
 use crate::pose::{axis_angle, matmul, rotation_between};
-use crate::vec::{V3, add, cross, dot, mul, scale, sub, unit};
+use crate::vec::{V3, add, basis, cross, dot, mul, scale, sub, unit};
 use crate::{Cancelled, Candidate, CostBreakdown, DetailCost, Fit, OrientContext};
 
 /// Above this many triangles the search ranks the peel on a simplified copy;
@@ -30,11 +32,42 @@ const SIMPLIFIED_TRIANGLES: usize = 100_000;
 /// Points closer than this to the lowest one rest on the plate, mm.
 const PLATE_BAND_MM: f64 = 0.05;
 
-/// The model, prepared for the search.
-#[derive(Debug)]
+/// How much a painted minimum must face down to be an island, as the cosine
+/// against the up direction: 30° below horizontal. A nose tip faces straight
+/// down; a dimple in a surface looking up, or a bump in a wall, does not start
+/// anything: it prints on what lies under it or beside it, whatever its height
+/// against its neighbours says.
+const ISLAND_FACING: f64 = -0.5;
+/// The directions of the cones around the painted mean normal that join the
+/// seeds: the half-angles, degrees, and the seeds on each.
+const DETAIL_CONES_DEG: [f64; 4] = [15.0, 30.0, 45.0, 60.0];
+const DETAIL_CONE_SEEDS: usize = 8;
+
+/// The model, prepared for the search. Cloning shares the geometry.
+#[derive(Debug, Clone)]
 pub struct OrientAnalysis {
+    geometry: Arc<ModelGeometry>,
+    detail: Option<Arc<Detail>>,
+}
+
+impl Deref for OrientAnalysis {
+    type Target = ModelGeometry;
+
+    fn deref(&self) -> &ModelGeometry {
+        &self.geometry
+    }
+}
+
+/// What the search needs from the geometry alone: the part of an analysis
+/// that survives a change of the paint.
+#[derive(Debug)]
+pub struct ModelGeometry {
     pub(crate) pos: Vec<V3>,
     pub(crate) tri: Vec<[u32; 3]>,
+    /// The mesh face of each of `tri`, when some were left out as degenerate.
+    faces_kept: Option<Vec<u32>>,
+    /// The mesh's face count.
+    faces: usize,
     nbrs: Neighbours,
     closed: bool,
     pub(crate) bins: Vec<Bin>,
@@ -43,15 +76,32 @@ pub struct OrientAnalysis {
     simple: Option<(Vec<V3>, Vec<[u32; 3]>)>,
     pub(crate) hull: Hull,
     voxels: Voxels,
-    detail: Option<Detail>,
     pub(crate) prepare_ms: f64,
 }
 
+/// The painted detail, prepared for the search.
 #[derive(Debug)]
 struct Detail {
-    vertex: Vec<bool>,
-    /// Area-weighted mean normal of the painted faces.
-    mean_normal: Option<V3>,
+    /// Each painted face: its unit normal and area, for the exact painted
+    /// overhang (D1).
+    faces: Vec<([f32; 3], f32)>,
+    /// The painted faces' histogram, for stage 1.
+    bins: Vec<Bin>,
+    /// The painted vertices that can be a minimum, with what it takes to be
+    /// an island (D2).
+    minima: Vec<PaintedVertex>,
+    /// `Σ a·n / Σ a` over the painted faces: its dot with the up direction is
+    /// what is left of D4. Not unit: a mask that faces every way has none.
+    mean: V3,
+}
+
+#[derive(Debug)]
+struct PaintedVertex {
+    vertex: u32,
+    /// Unit, the area-weighted normal of all the faces around the vertex.
+    normal: [f32; 3],
+    /// The directions in which it can be a minimum at all.
+    cap: ([f32; 3], f32),
 }
 
 /// How carefully a pose is scored.
@@ -67,8 +117,8 @@ impl OrientAnalysis {
     /// Prepares `mesh` for the search. Its vertices are taken through the
     /// linear part of `frame` (the model's world rotation and scale; the
     /// translation does not matter), so lengths are real millimetres and the
-    /// current up is +Z. `detail` holds one value per face, nonzero for the
-    /// painted ones (#184); a mask of the wrong length is ignored.
+    /// current up is +Z. `detail` holds one value per face of `mesh`, nonzero
+    /// for the painted ones (#184); see [`Self::with_detail`].
     pub fn new(
         mesh: &IndexedMesh,
         frame: &AffineTransform3D,
@@ -83,13 +133,26 @@ impl OrientAnalysis {
             .with_min_len(1 << 14)
             .map(|v| mul(&linear, v.coords().map(f64::from)))
             .collect();
+        let usable = |t: &[u32; 3]| {
+            t[0] != t[1]
+                && t[1] != t[2]
+                && t[0] != t[2]
+                && t.iter().all(|&v| (v as usize) < pos.len())
+        };
         let tri: Vec<[u32; 3]> = mesh
             .faces()
             .iter()
             .map(|f| f.vertices.map(|v| v.get()))
-            .filter(|t| t[0] != t[1] && t[1] != t[2] && t[0] != t[2])
-            .filter(|t| t.iter().all(|&v| (v as usize) < pos.len()))
+            .filter(usable)
             .collect();
+        let faces_kept = (tri.len() != mesh.faces().len()).then(|| {
+            mesh.faces()
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| usable(&f.vertices.map(|v| v.get())))
+                .map(|(i, _)| i as u32)
+                .collect()
+        });
         let check = || {
             if cancel.load(Ordering::Relaxed) {
                 Err(Cancelled)
@@ -97,19 +160,10 @@ impl OrientAnalysis {
                 Ok(())
             }
         };
-        let detail_faces: Option<Vec<bool>> = detail
-            .filter(|d| d.len() == mesh.faces().len() && tri.len() == mesh.faces().len())
-            .map(|d| d.iter().map(|&x| x != 0).collect())
-            .filter(|d: &Vec<bool>| d.iter().any(|&x| x));
         check()?;
 
         let ((bins, hull), (ring, simple)) = rayon::join(
-            || {
-                rayon::join(
-                    || histogram(&pos, &tri, detail_faces.as_deref()),
-                    || convex_hull(&pos),
-                )
-            },
+            || rayon::join(|| histogram(&pos, &tri), || convex_hull(&pos)),
             || rayon::join(|| Ring::new(pos.len(), &tri), || simplify(&pos, &tri)),
         );
         check()?;
@@ -129,42 +183,159 @@ impl OrientAnalysis {
                 Voxels::new(&pos, &tri, lo, hi)
             },
         );
-        let detail = detail_faces.map(|faces| {
-            let mut vertex = vec![false; pos.len()];
-            let mut sum = [0.0; 3];
-            for (t, &painted) in tri.iter().zip(&faces) {
-                if painted {
-                    for &v in t {
-                        vertex[v as usize] = true;
-                    }
-                    let [a, b, c] = t.map(|i| pos[i as usize]);
-                    sum = add(sum, cross(sub(b, a), sub(c, a)));
+        check()?;
+        let analysis = OrientAnalysis {
+            geometry: Arc::new(ModelGeometry {
+                pos,
+                tri,
+                faces_kept,
+                faces: mesh.faces().len(),
+                nbrs,
+                closed,
+                bins,
+                simple,
+                hull,
+                voxels,
+                prepare_ms: start.elapsed().as_secs_f64() * 1e3,
+            }),
+            detail: None,
+        };
+        Ok(analysis.with_detail(detail))
+    }
+
+    /// This analysis for the paint `detail`: one value per face of the mesh,
+    /// nonzero for the painted ones (#184). `None`, a mask with nothing
+    /// painted or one of another length search without paint. The geometry is
+    /// shared, so only the painted faces cost anything.
+    #[must_use]
+    pub fn with_detail(&self, detail: Option<&[u8]>) -> Self {
+        let detail = detail
+            .filter(|d| d.len() == self.faces)
+            .and_then(|mask| self.prepare_detail(mask))
+            .map(Arc::new);
+        Self {
+            geometry: self.geometry.clone(),
+            detail,
+        }
+    }
+
+    /// Whether this analysis searches with painted detail.
+    pub fn has_detail(&self) -> bool {
+        self.detail.is_some()
+    }
+
+    fn prepare_detail(&self, mask: &[u8]) -> Option<Detail> {
+        let painted = |i: usize| {
+            let face = self.faces_kept.as_ref().map_or(i, |kept| kept[i] as usize);
+            mask[face] != 0
+        };
+        let mut tri: Vec<[u32; 3]> = Vec::new();
+        let mut faces = Vec::new();
+        let mut vertex = vec![false; self.pos.len()];
+        let mut sum = [0.0; 3];
+        let mut area = 0.0;
+        for (i, t) in self.tri.iter().enumerate().filter(|(i, _)| painted(*i)) {
+            let [a, b, c] = t.map(|v| self.pos[v as usize]);
+            let n2 = cross(sub(b, a), sub(c, a));
+            let Some(n) = unit(n2) else { continue };
+            let half = dot(n2, n) / 2.0;
+            for &v in t {
+                vertex[v as usize] = true;
+            }
+            tri.push(self.tri[i]);
+            faces.push((n.map(|x| x as f32), half as f32));
+            sum = add(sum, scale(n2, 0.5));
+            area += half;
+        }
+        if faces.is_empty() {
+            return None;
+        }
+        // The normal at each painted vertex, from every face around it.
+        let mut around: Vec<V3> = vec![[0.0; 3]; self.pos.len()];
+        for t in &self.tri {
+            if t.iter().any(|&v| vertex[v as usize]) {
+                let [a, b, c] = t.map(|v| self.pos[v as usize]);
+                let n2 = cross(sub(b, a), sub(c, a));
+                for &v in t {
+                    around[v as usize] = add(around[v as usize], n2);
                 }
             }
-            Detail {
-                vertex,
-                mean_normal: unit(sum),
-            }
-        });
-        check()?;
-        Ok(OrientAnalysis {
-            pos,
-            tri,
-            nbrs,
-            closed,
-            bins,
-            simple,
-            hull,
-            voxels,
-            detail,
-            prepare_ms: start.elapsed().as_secs_f64() * 1e3,
+        }
+        let minima = self
+            .nbrs
+            .candidates()
+            .filter(|(v, _)| vertex[*v as usize])
+            .filter_map(|(v, cap)| {
+                Some(PaintedVertex {
+                    vertex: v,
+                    normal: unit(around[v as usize])?.map(|x| x as f32),
+                    cap,
+                })
+            })
+            .collect();
+        Some(Detail {
+            faces,
+            bins: histogram(&self.pos, &tri),
+            minima,
+            mean: scale(sum, 1.0 / area),
         })
+    }
+
+    /// The painted minima that are islands with `u` on top, clustered as
+    /// every island is.
+    fn painted_islands(&self, d: &Detail, u: V3) -> usize {
+        let u32_: [f32; 3] = u.map(|x| x as f32);
+        let mut found: Vec<(f64, V3)> = Vec::new();
+        for p in &d.minima {
+            let n = p.normal;
+            let facing = n[0] * u32_[0] + n[1] * u32_[1] + n[2] * u32_[2];
+            if f64::from(facing) > ISLAND_FACING {
+                continue;
+            }
+            let (axis, cos) = p.cap;
+            if axis[0] * u32_[0] + axis[1] * u32_[1] + axis[2] * u32_[2] < cos {
+                continue;
+            }
+            let at = self.pos[p.vertex as usize];
+            if self
+                .nbrs
+                .of(p.vertex as usize)
+                .iter()
+                .all(|&j| dot(sub(self.pos[j as usize], at), u) > 0.0)
+            {
+                found.push((dot(at, u), at));
+            }
+        }
+        found.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let points: Vec<V3> = found.into_iter().map(|f| f.1).collect();
+        count_clustered(&points, ISLAND_CLUSTER_MM).len()
     }
 
     /// Whether the mesh is closed and consistently oriented. An open mesh
     /// has no cross-section, so the peel term (T3) is left out.
     pub fn is_closed(&self) -> bool {
         self.closed
+    }
+
+    /// The directions that join the seeds for a painted model: the painted
+    /// mean normal on top, and cones around it. None without paint, or when
+    /// the paint looks every way.
+    pub(crate) fn detail_seeds(&self) -> Vec<V3> {
+        let Some(m) = self.detail.as_ref().and_then(|d| unit(d.mean)) else {
+            return Vec::new();
+        };
+        let (e1, e2) = basis(m);
+        let mut seeds = vec![m];
+        for half_angle in DETAIL_CONES_DEG {
+            let (sin, cos) = half_angle.to_radians().sin_cos();
+            for k in 0..DETAIL_CONE_SEEDS {
+                let (s, c) =
+                    (k as f64 * std::f64::consts::TAU / DETAIL_CONE_SEEDS as f64).sin_cos();
+                let side = add(scale(e1, c), scale(e2, s));
+                seeds.push(add(scale(m, cos), scale(side, sin)));
+            }
+        }
+        seeds
     }
 
     /// Triangles of the mesh, and of the copy the search ranks the peel on.
@@ -236,7 +407,7 @@ impl OrientAnalysis {
         let (z0, z1) = self.hull.extent(u);
         let height = z1 - z0;
 
-        // T1, T5 and D1 on the histogram.
+        // T1 and T5 on the histogram.
         let sums = overhang(&self.bins, u, c0, z0);
         let (mut over_area, mut over_moment) = (sums.area, sums.moment);
         // What rests on the plate needs no support.
@@ -314,13 +485,23 @@ impl OrientAnalysis {
             }
         }
 
-        let detail = self.detail.as_ref().map(|d| DetailCost {
-            tips: sums.detail_area / ctx.area_per_tip_mm2,
-            islands: kept
+        // The detail, on its own faces, exact: a tip more or less on it
+        // decides the pose. Nothing painted rests on the plate for free.
+        let detail = self.detail.as_ref().map(|d| {
+            let area: f64 = d
+                .faces
                 .iter()
-                .filter(|&&i| d.vertex[minima[i] as usize])
-                .count(),
-            facing_up: d.mean_normal.map_or(1.0, |m| (1.0 + dot(m, u)) / 2.0),
+                .map(|(n, a)| {
+                    let up =
+                        f64::from(n[0]) * u[0] + f64::from(n[1]) * u[1] + f64::from(n[2]) * u[2];
+                    f64::from(*a) * overhang_weight(-up, c0)
+                })
+                .sum();
+            DetailCost {
+                tips: area / ctx.area_per_tip_mm2,
+                islands: self.painted_islands(d, u),
+                facing_up: (1.0 + dot(d.mean, u)) / 2.0,
+            }
         });
 
         let total = w.tip * tips
@@ -362,7 +543,8 @@ impl OrientAnalysis {
         }
     }
 
-    /// Stage 1: the cost on the histogram and the hull alone, with its rank.
+    /// Stage 1: the cost on the histogram and the hull alone, with its rank:
+    /// too tall, whole tips on the detail, cost.
     pub(crate) fn coarse(&self, u: V3, ctx: &OrientContext) -> (u8, i64, f64) {
         let w = &ctx.weights;
         let c0 = ctx.overhang_angle_deg.to_radians().cos();
@@ -375,15 +557,18 @@ impl OrientAnalysis {
         let detail_up = self
             .detail
             .as_ref()
-            .and_then(|d| d.mean_normal)
-            .map_or(0.0, |m| w.detail_up * (1.0 - (1.0 + dot(m, u)) / 2.0));
+            .map_or(0.0, |d| w.detail_up * (1.0 - dot(d.mean, u)) / 2.0);
         let tall = ctx
             .build_volume_mm
             .is_some_and(|[_, _, z]| height + lift > z + 1e-6);
-        let detail = self
-            .detail
-            .as_ref()
-            .map_or(0, |_| (s.detail_area / ctx.area_per_tip_mm2).round() as i64);
+        let detail = self.detail.as_ref().map_or(0, |d| {
+            DetailCost {
+                tips: overhang(&d.bins, u, c0, z0).area / ctx.area_per_tip_mm2,
+                islands: self.painted_islands(d, u),
+                facing_up: 0.0,
+            }
+            .whole_tips() as i64
+        });
         (
             u8::from(tall),
             detail,
@@ -413,9 +598,6 @@ impl OrientAnalysis {
         for (_, n) in bins.iter().take(16) {
             normals.push(*n);
             normals.push(scale(*n, -1.0));
-        }
-        if let Some(m) = self.detail.as_ref().and_then(|d| d.mean_normal) {
-            normals.push(m);
         }
         (hull_seeds, normals)
     }

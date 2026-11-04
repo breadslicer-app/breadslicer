@@ -27,6 +27,15 @@ const STAGE2_KEEP_FULL: usize = 512;
 const STAGE2_SPREAD: usize = 160;
 /// How far apart the stage 2 poses are, degrees.
 const STAGE2_APART_DEG: f64 = 8.0;
+/// How far apart the stage 2 poses picked for the detail are, degrees: a
+/// valley that keeps the paint clear can be narrow.
+const STAGE2_DETAIL_APART_DEG: f64 = 4.0;
+/// With paint, options as good on the detail as the best may stand this close
+/// when no others do, degrees: fewer tips on the detail come before variety.
+const DETAIL_DIVERSE_DEG: f64 = 12.0;
+/// With paint, poses of stage 2 as good on the detail as the best that join
+/// the verdict beside the refined ones.
+const DETAIL_EXTRA_FINALISTS: usize = 6;
 /// Options offered.
 const OPTIONS: usize = 3;
 /// Refinement steps, degrees: from the first down to the last, halving.
@@ -97,6 +106,7 @@ impl OrientAnalysis {
         seeds.extend(fibonacci(directions));
         seeds.extend(hull_seeds.iter().copied());
         seeds.extend(normal_seeds);
+        seeds.extend(self.detail_seeds());
         let seeds: Vec<V3> = seeds.into_iter().filter_map(unit).filter(allowed).collect();
         let mut ranked: Vec<(usize, (u8, i64, f64))> = seeds
             .par_iter()
@@ -114,14 +124,41 @@ impl OrientAnalysis {
             }
         }
         let reserved = stage2.len();
+        // With paint, the first half goes to the poses with the fewest tips
+        // on it, the rest to the best overall: neither crowds the other out.
+        if self.has_detail() {
+            for (i, _) in &ranked {
+                if stage2.len() >= keep / 2 + reserved {
+                    break;
+                }
+                let u = seeds[*i];
+                if stage2[reserved..]
+                    .iter()
+                    .all(|s| angle_deg(*s, u) >= STAGE2_DETAIL_APART_DEG)
+                    && stage2[..reserved].iter().all(|s| angle_deg(*s, u) >= 1.0)
+                {
+                    stage2.push(u);
+                }
+            }
+            ranked.sort_by(|a, b| {
+                (a.1.0, a.1.2)
+                    .partial_cmp(&(b.1.0, b.1.2))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(a.0.cmp(&b.0))
+            });
+        }
+        let picked_for_detail = stage2.len();
         for (i, _) in &ranked {
             if stage2.len() >= keep + reserved {
                 break;
             }
             let u = seeds[*i];
-            if stage2[reserved..]
+            if stage2[reserved..picked_for_detail]
                 .iter()
-                .all(|s| angle_deg(*s, u) >= STAGE2_APART_DEG)
+                .all(|s| angle_deg(*s, u) >= 1.0)
+                && stage2[picked_for_detail..]
+                    .iter()
+                    .all(|s| angle_deg(*s, u) >= STAGE2_APART_DEG)
                 && stage2[..reserved].iter().all(|s| angle_deg(*s, u) >= 1.0)
             {
                 stage2.push(u);
@@ -202,6 +239,24 @@ impl OrientAnalysis {
         // Final verdict on the full mesh, the current pose with them.
         let t = Instant::now();
         let mut finals: Vec<V3> = refined.iter().map(|c| c.up).collect();
+        if self.has_detail() {
+            // A pose as good on the detail as the best, if the refined ones
+            // left fewer options than that allows.
+            let best = refined.first().map(|c| c.cost.rank());
+            let mut extra = 0;
+            for c in scored.iter().filter(|c| Some(c.cost.rank()) <= best) {
+                if extra == DETAIL_EXTRA_FINALISTS {
+                    break;
+                }
+                if finals
+                    .iter()
+                    .all(|u| angle_deg(*u, c.up) >= DETAIL_DIVERSE_DEG)
+                {
+                    finals.push(c.up);
+                    extra += 1;
+                }
+            }
+        }
         finals.push(current_up);
         let mut verdict: Vec<Candidate> = self.score_many(&finals, ctx, Quality::Verdict);
         let mut current = verdict.pop().expect("the current pose is scored");
@@ -210,7 +265,18 @@ impl OrientAnalysis {
         verdict.sort_by(|a, b| cmp_key(&a.cost.key(), &b.cost.key()));
         // A Full search judges many finalists: the options are the best of
         // them, apart from each other.
-        let shown = diverse(&verdict, &[], OPTIONS);
+        let shown = if self.has_detail() {
+            // No option puts more on the detail than another has to.
+            let best = verdict.first().map(|c| c.cost.rank());
+            verdict.retain(|c| Some(c.cost.rank()) == best);
+            let mut shown = diverse(&verdict, &[], OPTIONS);
+            if shown.len() < OPTIONS {
+                shown = diverse_at(&verdict, &[], OPTIONS, DETAIL_DIVERSE_DEG);
+            }
+            shown
+        } else {
+            diverse(&verdict, &[], OPTIONS)
+        };
         let mut verdict: Vec<Candidate> = shown.iter().map(|&i| verdict[i]).collect();
         for c in &mut verdict {
             c.is_current = crate::vec::dot(c.up, current_up) > 1.0 - 1e-12;
@@ -224,6 +290,13 @@ impl OrientAnalysis {
         let mut notes = Vec::new();
         if !self.is_closed() {
             notes.push(Note::OpenMesh);
+        }
+        let on_detail = verdict
+            .first()
+            .and_then(|c| c.cost.detail)
+            .map_or(0, |d| d.whole_tips());
+        if on_detail > 0 {
+            notes.push(Note::DetailTips { tips: on_detail });
         }
         Ok(SearchOutcome {
             options: verdict,
@@ -316,6 +389,11 @@ fn within_tilt(ctx: &OrientContext, u: V3) -> bool {
 /// The indices of up to `n` of `sorted` (best first), each at least
 /// [`DIVERSE_DEG`] from the others and from `taken`.
 fn diverse(sorted: &[Candidate], taken: &[Candidate], n: usize) -> Vec<usize> {
+    diverse_at(sorted, taken, n, DIVERSE_DEG)
+}
+
+/// [`diverse`], at least `apart_deg` apart.
+fn diverse_at(sorted: &[Candidate], taken: &[Candidate], n: usize, apart_deg: f64) -> Vec<usize> {
     let mut out: Vec<usize> = Vec::new();
     for (i, c) in sorted.iter().enumerate() {
         if out.len() >= n {
@@ -325,7 +403,7 @@ fn diverse(sorted: &[Candidate], taken: &[Candidate], n: usize) -> Vec<usize> {
             .iter()
             .map(|&k| &sorted[k])
             .chain(taken)
-            .all(|o| angle_deg(o.up, c.up) >= DIVERSE_DEG)
+            .all(|o| angle_deg(o.up, c.up) >= apart_deg)
         {
             out.push(i);
         }

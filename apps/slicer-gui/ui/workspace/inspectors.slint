@@ -307,6 +307,10 @@ export struct OrientOption {
     tilt: string,
     // It fits the printer's build volume.
     fits: bool,
+    // "0 on detail" with detail painted, or empty.
+    detail: string,
+    // No tips on the painted detail.
+    detail-clear: bool,
 }
 
 // One option card: hovering it shows the pose on the model, a click picks it
@@ -385,6 +389,11 @@ component OrientOptionCard inherits Rectangle {
                 horizontal-alignment: right;
             }
         }
+        if root.option.detail != "": Text {
+            text: root.option.detail;
+            font-size: Theme.font-sm;
+            color: root.option.detail-clear ? Theme.success : Theme.warning;
+        }
         if !root.option.fits: Text {
             text: @tr("Inspector" => "Does not fit the printer");
             font-size: Theme.font-sm;
@@ -427,6 +436,19 @@ export component OrientCard inherits Card {
     in property <string> warning;
     // After Apply, with more than one model: offer Arrange all.
     in property <bool> offer-arrange;
+    // The protect-detail brush (#184): whether it is on, its radius in mm,
+    // whether it erases, and "Painted: 312 mm² (8 %)" with paint on the model.
+    in property <bool> brush-on;
+    in property <float> brush-size;
+    in property <bool> brush-erase;
+    in property <bool> brush-visible-only;
+    in property <string> painted;
+    callback brush-toggled();
+    callback brush-size-changed(float);
+    callback brush-erase-toggled();
+    callback brush-visible-changed(bool);
+    // 0 grow, 1 shrink, 2 invert, 3 clear all.
+    callback brush-op(int);
     // 0 Quick, 1 Full.
     callback search(int);
     callback cancel();
@@ -447,6 +469,119 @@ export component OrientCard inherits Card {
 
     Note {
         text: @tr("Inspector" => "Finds the best way up for printing: fewer supports, less peel force, less height. Hover an option to see it on the model.");
+    }
+    Text {
+        text: @tr("Inspector" => "PROTECT DETAIL");
+        font-size: Theme.font-xs;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        color: Theme.text-muted;
+    }
+    if !root.brush-on && root.painted == "": Note {
+        text: @tr("Inspector" => "Optional: paint what matters most, like the face. The search keeps supports off it and turns it up.");
+    }
+    HorizontalLayout {
+        spacing: 8px;
+
+        ScButton {
+            text: root.brush-on ? @tr("Inspector" => "Painting") : @tr("Inspector" => "Paint detail");
+            icon: Icons.brush;
+            kind: root.brush-on ? ButtonKind.primary : ButtonKind.normal;
+            horizontal-stretch: 1;
+            enabled: root.enabled && !root.running;
+            clicked => {
+                root.brush-toggled();
+            }
+        }
+        if root.brush-on: ScButton {
+            text: @tr("Inspector" => "Erase");
+            kind: root.brush-erase ? ButtonKind.primary : ButtonKind.normal;
+            horizontal-stretch: 1;
+            enabled: root.enabled && !root.running;
+            clicked => {
+                root.brush-erase-toggled();
+            }
+        }
+    }
+    if root.brush-on: NumberField {
+        label: @tr("Inspector" => "Brush size");
+        unit: "mm";
+        decimals: 1;
+        value: root.brush-size;
+        committed(v) => {
+            root.brush-size-changed(v);
+        }
+    }
+    if root.brush-on: CheckBox {
+        text: @tr("Inspector" => "Only what the camera sees");
+        checked: root.brush-visible-only;
+        toggled => {
+            root.brush-visible-changed(self.checked);
+        }
+    }
+    if root.brush-on: Note {
+        text: @tr("Inspector" => "Drag paints, Alt + drag erases, Shift + click fills a region. [ and ] size the brush, B turns it off.");
+    }
+    if root.painted != "": HorizontalLayout {
+        spacing: 7px;
+
+        Rectangle {
+            width: 10px;
+            height: 10px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 5px;
+            background: Theme.surface-paint;
+        }
+        Text {
+            text: root.painted;
+            font-size: Theme.font-sm;
+            color: Theme.text-soft;
+            horizontal-stretch: 1;
+        }
+    }
+    if root.painted != "": GridLayout {
+        spacing: 8px;
+
+        Row {
+            ScButton {
+                text: @tr("Inspector" => "Grow");
+                button-height: 26px;
+                horizontal-stretch: 1;
+                enabled: root.enabled && !root.running;
+                clicked => {
+                    root.brush-op(0);
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Shrink");
+                button-height: 26px;
+                horizontal-stretch: 1;
+                enabled: root.enabled && !root.running;
+                clicked => {
+                    root.brush-op(1);
+                }
+            }
+        }
+        Row {
+            ScButton {
+                text: @tr("Inspector" => "Invert");
+                button-height: 26px;
+                horizontal-stretch: 1;
+                enabled: root.enabled && !root.running;
+                clicked => {
+                    root.brush-op(2);
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Clear all");
+                button-height: 26px;
+                horizontal-stretch: 1;
+                enabled: root.enabled && !root.running;
+                clicked => {
+                    root.brush-op(3);
+                }
+            }
+        }
     }
     Field {
         label: @tr("Inspector" => "Objective");
