@@ -2302,6 +2302,16 @@ impl DfSupportRun {
         }
     }
 
+    /// Every contact tip of the sets in force, in world millimetres (#427).
+    #[cfg(test)]
+    pub(crate) fn tips_for_measure(&self) -> Vec<[f64; 3]> {
+        self.sets_in_force()
+            .iter()
+            .flat_map(|drawn| drawn.session.tips())
+            .map(|(_, at)| at)
+            .collect()
+    }
+
     /// Waits for the hand edit being made off the UI thread, and settles it
     /// as the UI's poll does. Returns the longest the UI thread was held by
     /// one poll: what landing the edit costs it.

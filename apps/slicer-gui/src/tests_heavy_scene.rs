@@ -18,6 +18,9 @@
 //! ```
 //!
 //! `BREADSLICER_HEAVY_PRESET` also takes `figures70`.
+//! `BREADSLICER_HEAVY_NO_CUP_FILL=1` takes the fix off every suction cup, as
+//! if Fix All left them. `BREADSLICER_HEAVY_ABLATE=1` runs the review in
+//! each [`ReviewVariant`] after the first slice and after pass 1, and stops.
 //! `BREADSLICER_HEAVY_PRINTER` slices for another printer than the project's.
 //! `BREADSLICER_HEAVY_MEM_GB` and `BREADSLICER_HEAVY_SECONDS` end the run,
 //! writing where it stood, once the process holds that much memory, the
@@ -42,7 +45,7 @@ use sc_geom::df_supports::DfSupportOptions;
 use sc_mesh_core::IndexedTriangle;
 use sc_print_glue::{SliceRun, SlicingParams, slice_input_fingerprint, slice_plate};
 use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
-use sc_review::{ReviewTimings, fill_stack};
+use sc_review::{ReviewTimings, RoleScope, fill_stack};
 use sc_sl1cer::CancelToken;
 use sc_sla_formats::PrinterFileFormat;
 
@@ -50,7 +53,9 @@ use super::*;
 use crate::mesh_render::{DeviceLoss, DeviceToken, Renderer};
 use crate::preferences_bus::PreferencesSnapshot;
 use crate::print_selection::PrintDefaults;
-use crate::review::{erased_stack, review_procedures_alone, review_slices_measured};
+use crate::review::{
+    ReviewVariant, erased_stack, review_procedures_alone, review_slices_measured, review_variant,
+};
 use crate::save_progress::SavePhase;
 use crate::scene_save::{prepare_save_for_target, write_bundle};
 use crate::slice_projection::load_selected_profiles;
@@ -241,7 +246,7 @@ impl Probe {
                             timeline.clear();
                         }
                     }
-                    let free = if tick % 20 == 0 {
+                    let free = if tick.is_multiple_of(20) {
                         process::available_physical()
                     } else {
                         u64::MAX
@@ -595,6 +600,9 @@ fn describe_stack(
     (polygons, points)
 }
 
+/// A slice's layers, and its findings by what they are and where.
+type LastSlice = (LayerHashes, Vec<(String, usize, usize)>);
+
 struct Run<'a> {
     probe: &'a Probe,
     document: Rc<SceneDocument>,
@@ -602,7 +610,99 @@ struct Run<'a> {
     printer: PrinterId,
     resin: MaterialId,
     /// The layers and findings of the last slice.
-    last: RefCell<Option<(LayerHashes, Vec<(String, usize, usize)>)>>,
+    last: RefCell<Option<LastSlice>>,
+}
+
+/// Which findings a variant lost and which it added.
+fn compare_findings(
+    facts: &mut Facts,
+    variant: ReviewVariant,
+    full: &[Finding],
+    other: &[Finding],
+) {
+    let key = |f: &Finding| {
+        format!(
+            "{:?} {:?} {} layers {}-{}",
+            f.check,
+            f.scope,
+            f.title,
+            f.first_layer + 1,
+            f.last_layer + 1
+        )
+    };
+    let theirs: Vec<String> = other.iter().map(key).collect();
+    let ours: Vec<String> = full.iter().map(key).collect();
+    let lost: Vec<&String> = ours.iter().filter(|k| !theirs.contains(k)).collect();
+    let added: Vec<&String> = theirs.iter().filter(|k| !ours.contains(k)).collect();
+    facts.line(format!(
+        "   {variant:?}: {} findings; lost {}, added {}",
+        other.len(),
+        lost.len(),
+        added.len()
+    ));
+    for line in lost.iter().take(40) {
+        facts.line(format!("     lost: {line}"));
+    }
+    let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+    for finding in other.iter().filter(|f| !ours.contains(&key(f))) {
+        *kinds
+            .entry(format!("{:?}/{:?}", finding.check, finding.scope))
+            .or_default() += 1;
+    }
+    facts.line(format!("     added by kind: {kinds:?}"));
+}
+
+/// Islands of the model alone, taking those a support tip touches as held:
+/// what a review with the contacts as data, and no support polygons, would
+/// keep, against the model islands of the full review.
+fn islands_by_contact(facts: &mut Facts, full: &[Finding], alone: &[Finding], tips: &[[f64; 3]]) {
+    const MARGIN_MM: f64 = 0.6;
+    let touched = |finding: &Finding| {
+        let Some(footprint) = &finding.footprint else {
+            return false;
+        };
+        footprint.slabs.iter().any(|slab| {
+            slab.rects.iter().any(|rect| {
+                tips.iter().any(|tip| {
+                    tip[2] >= slab.bottom_mm - MARGIN_MM
+                        && tip[2] <= slab.top_mm + MARGIN_MM
+                        && tip[0] >= rect.x0_mm - MARGIN_MM
+                        && tip[0] <= rect.x1_mm + MARGIN_MM
+                        && tip[1] >= rect.y0_mm - MARGIN_MM
+                        && tip[1] <= rect.y1_mm + MARGIN_MM
+                })
+            })
+        })
+    };
+    let islands: Vec<&Finding> = alone
+        .iter()
+        .filter(|f| f.check == CheckKind::Island)
+        .collect();
+    let left: Vec<&&Finding> = islands.iter().filter(|f| !touched(f)).collect();
+    let real: Vec<&Finding> = full
+        .iter()
+        .filter(|f| f.check == CheckKind::Island && f.scope == RoleScope::Model)
+        .collect();
+    let same = |a: &Finding, b: &Finding| {
+        a.first_layer.abs_diff(b.first_layer) <= 3
+            && (a.focus.x_mm - b.focus.x_mm).abs() <= 3.0
+            && (a.focus.y_mm - b.focus.y_mm).abs() <= 3.0
+    };
+    let lost = real
+        .iter()
+        .filter(|r| !left.iter().any(|l| same(r, l)))
+        .count();
+    let extra = left
+        .iter()
+        .filter(|l| !real.iter().any(|r| same(r, l)))
+        .count();
+    facts.line(format!(
+        "   islands by contact: model alone {}, held by a tip {}, left {}; full review has {} model islands: {lost} not found, {extra} more than it",
+        islands.len(),
+        islands.len() - left.len(),
+        left.len(),
+        real.len(),
+    ));
 }
 
 /// Runs each procedure alone as a step, and writes what the clock read.
@@ -646,6 +746,60 @@ fn review_lines(probe: &Probe, label: &str, timings: &ReviewTimings) {
 }
 
 impl Run<'_> {
+    /// The review in every variant, against the app's.
+    #[allow(clippy::too_many_arguments)]
+    fn variants(
+        &self,
+        label: &str,
+        leaves: &[sc_sl1cer::LeafSlices],
+        filled: Option<&sc_sl1cer::contour::ContourStack>,
+        erased: Option<&sc_sl1cer::contour::ContourStack>,
+        profile: &sc_sl1cer::profile::SliceProfile,
+        raft: Option<f64>,
+        facts: &mut Facts,
+    ) {
+        let p = self.probe;
+        let tips = self.panel.supports.tips_for_measure();
+        facts.line(format!("-- {label} variants: {} tips", tips.len()));
+        let run = |variant: ReviewVariant, facts: &mut Facts| {
+            let name = format!("{label}.var.{variant:?}");
+            let (report, mismatches, points) = p.step(&name, On::Worker, || {
+                review_variant(variant, leaves, filled, erased, profile, raft)
+            });
+            review_lines(p, &name, &report.timings);
+            if variant == ReviewVariant::TracedFill {
+                facts.line(format!(
+                    "   traced fill: {points} points, {mismatches} sampled layers differ"
+                ));
+            }
+            report
+        };
+        let full = run(ReviewVariant::Full, facts);
+        let scopes = full.findings.iter().fold(BTreeMap::new(), |mut map, f| {
+            *map.entry(format!("{:?}/{:?}", f.check, f.scope))
+                .or_insert(0usize) += 1;
+            map
+        });
+        facts.line(format!("   full findings by scope: {scopes:?}"));
+        for variant in [
+            ReviewVariant::ThinModelOnly,
+            ReviewVariant::ModelAndRaft,
+            ReviewVariant::ModelOnly,
+        ] {
+            let report = run(variant, facts);
+            compare_findings(facts, variant, &full.findings, &report.findings);
+            if variant == ReviewVariant::ModelOnly {
+                islands_by_contact(facts, &full.findings, &report.findings, &tips);
+            }
+        }
+        if filled.is_some() {
+            for variant in [ReviewVariant::TracedFill, ReviewVariant::NoFill] {
+                let report = run(variant, facts);
+                compare_findings(facts, variant, &full.findings, &report.findings);
+            }
+        }
+    }
+
     /// Every procedure of the review alone, with what the stage clock read
     /// during it: `<tag>.clock.tsv`.
     #[allow(clippy::too_many_arguments)]
@@ -751,6 +905,17 @@ impl Run<'_> {
                 facts,
             );
         }
+        if env("BREADSLICER_HEAVY_ABLATE").is_some_and(|v| v == "1") {
+            self.variants(
+                label,
+                plate.leaves(),
+                filled.as_ref(),
+                erased.as_ref(),
+                plate.profile(),
+                raft,
+                facts,
+            );
+        }
         let hashes = p.step(&step("extra_layer_hash"), On::Worker, || {
             LayerHashes::of(plate.leaves(), filled.as_ref(), erased.as_ref())
         });
@@ -796,6 +961,16 @@ impl Run<'_> {
         });
         panel.slice_replaced(replaced);
         panel.fills_landed(patches.ids);
+        let mut outcome = outcome;
+        if env("BREADSLICER_HEAVY_NO_CUP_FILL").is_some_and(|v| v == "1")
+            && let ReviewOutcome::Reviewed { findings, .. } = &mut outcome
+        {
+            for finding in findings {
+                if finding.check == CheckKind::SuctionCup {
+                    finding.fix = None;
+                }
+            }
+        }
         p.step(&step("land_show"), On::Ui, || panel.show(outcome));
         self.compare_with_the_last_slice(label, hashes, facts);
     }
@@ -1163,6 +1338,10 @@ fn heavy_scene_timing() {
                 assert_eq!(resliced.get(), pass, "the pass asked for its slice");
                 run.slice(&name, true, alone, &mut facts);
                 describe_findings(&panel, &mut facts, &format!("after pass {pass}"));
+                if env("BREADSLICER_HEAVY_ABLATE").is_some_and(|v| v == "1") {
+                    p.write_profile(&facts_file.with_extension("profile.txt"));
+                    std::process::exit(0);
+                }
             }
             p.note("fix.total", On::Worker, press.elapsed());
             facts.line(format!(
@@ -1271,7 +1450,7 @@ fn simplify_mesh(mesh: &IndexedMesh, ratio: f64) -> IndexedMesh {
     let mut remap = vec![u32::MAX; positions.len()];
     let mut vertices = Vec::new();
     let mut faces = Vec::with_capacity(kept.len() / 3);
-    for triangle in kept.chunks_exact(3) {
+    for triangle in kept.as_chunks::<3>().0 {
         let mut ids = [0u32; 3];
         for (k, &index) in triangle.iter().enumerate() {
             if remap[index as usize] == u32::MAX {
@@ -1328,6 +1507,20 @@ fn decimate_project(path: &Path, ratio: f64, out: &Path) {
     let mut scene = project.scene;
     let drop_supports = env("BREADSLICER_HEAVY_DROP_SUPPORTS").is_some_and(|v| v == "1");
     let mut supports = project.supports;
+    if env("BREADSLICER_HEAVY_MERGE").is_some_and(|v| v == "1") {
+        let restored =
+            crate::support_persist::restore_supports(&mut scene, std::mem::take(&mut supports));
+        assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+        let merged = scene.merge_meshes().expect("it merges").expect("a mesh");
+        let mut one = sc_scene::Scene::new();
+        one.add_leaf(
+            None,
+            Transform3D::Identity,
+            sc_scene::LeafPayload::Mesh(Arc::new(merged)),
+        )
+        .expect("the leaf goes in");
+        scene = one;
+    }
     if drop_supports {
         for document in supports.drain(..) {
             scene

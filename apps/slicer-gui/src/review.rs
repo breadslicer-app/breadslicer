@@ -201,6 +201,225 @@ pub(crate) fn review_procedures_alone(
     step("raft", &mut || drop(raft::clashes(&ctx, &options.raft)));
 }
 
+/// A way to run a review, to see what it needs (#427).
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReviewVariant {
+    /// As the app runs it.
+    Full,
+    /// With the thin check on the models only.
+    ThinModelOnly,
+    /// Without the supports at all.
+    ModelOnly,
+    /// With the supports' raft and nothing else of them.
+    ModelAndRaft,
+    /// With the fills as traced outlines instead of rectangles.
+    TracedFill,
+    /// Without the fills.
+    NoFill,
+}
+
+/// The review of `variant`, with the rings of a traced fill and how many of
+/// its sampled layers rasterise differently from the rectangles.
+#[cfg(test)]
+pub(crate) fn review_variant(
+    variant: ReviewVariant,
+    leaves: &[LeafSlices],
+    filled: Option<&ContourStack>,
+    erased: Option<&ContourStack>,
+    profile: &SliceProfile,
+    raft_top_mm: Option<f64>,
+) -> (sc_review::ReviewReport, usize, usize) {
+    use sc_sl1cer::contour::ContourLayer;
+    let pixel_map =
+        *measured_input(measured_leaves(leaves, None, None), profile, raft_top_mm).pixel_map();
+    let (traced, mismatches, points) = match (variant, filled) {
+        (ReviewVariant::TracedFill, Some(stack)) => {
+            let (traced, mismatches, points) = traced_stack(stack, &pixel_map);
+            (Some(traced), mismatches, points)
+        }
+        _ => (None, 0, 0),
+    };
+    let filled = match variant {
+        ReviewVariant::NoFill => None,
+        ReviewVariant::TracedFill => traced.as_ref().or(filled),
+        _ => filled,
+    };
+    // The supports below the raft's top, and no others.
+    let raft_only: Vec<ContourStack> = leaves
+        .iter()
+        .filter(|leaf| role_of(leaf.leaf_name()) == Role::Support)
+        .map(|leaf| {
+            let top = raft_top_mm.unwrap_or(0.0);
+            ContourStack::new_unchecked(
+                leaf.stack()
+                    .layers()
+                    .iter()
+                    .map(|layer| {
+                        if layer.z_mm() <= top {
+                            layer.clone()
+                        } else {
+                            ContourLayer::new(layer.z_mm(), Vec::new())
+                        }
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    let mut list = measured_leaves(leaves, filled, erased);
+    match variant {
+        ReviewVariant::ModelOnly => list.retain(|leaf| leaf.role == Role::Model),
+        ReviewVariant::ModelAndRaft => {
+            list.retain(|leaf| leaf.role == Role::Model);
+            list.extend(
+                raft_only
+                    .iter()
+                    .map(|stack| ReviewLeaf::new(Some("Raft"), Role::Support, stack)),
+            );
+        }
+        _ => {}
+    }
+    let input = measured_input(list, profile, raft_top_mm);
+    let mut options = ReviewOptions::default();
+    if variant == ReviewVariant::ThinModelOnly {
+        options.thin.support_width_px = 0.0;
+    }
+    (review_with(&input, &options), mismatches, points)
+}
+
+/// `stack` with each layer's pixels as outlines: a ring per boundary, a hole
+/// wound against its outer ring, instead of a polygon per rectangle. Returns
+/// it, how many layers of a sample rasterise differently, and its points.
+#[cfg(test)]
+fn traced_stack(
+    stack: &ContourStack,
+    pixel_map: &sc_sl1cer::raster::pixel_map::PixelMap,
+) -> (ContourStack, usize, usize) {
+    use sc_review::runs::runs_from_raster;
+    use sc_sl1cer::contour::ContourLayer;
+    use sc_sl1cer::raster::scanline::rasterize_layer_binary;
+    let (mut mismatches, mut points) = (0, 0);
+    let layers: Vec<ContourLayer> = stack
+        .layers()
+        .iter()
+        .enumerate()
+        .map(|(index, layer)| {
+            if layer.polygons().is_empty() {
+                return ContourLayer::new(layer.z_mm(), Vec::new());
+            }
+            let runs = runs_from_raster(&rasterize_layer_binary(layer, pixel_map));
+            let polygons = traced_rings(&runs, pixel_map);
+            points += polygons.iter().map(|p| p.outer().len()).sum::<usize>();
+            let traced = ContourLayer::new(layer.z_mm(), polygons);
+            if index % 50 == 0
+                && runs_from_raster(&rasterize_layer_binary(&traced, pixel_map)) != runs
+            {
+                mismatches += 1;
+            }
+            traced
+        })
+        .collect();
+    (ContourStack::new_unchecked(layers), mismatches, points)
+}
+
+/// The boundary of `runs`, sorted by row, as closed rings of pixel corners.
+#[cfg(test)]
+fn traced_rings(
+    runs: &[sc_review::Run],
+    pixel_map: &sc_sl1cer::raster::pixel_map::PixelMap,
+) -> Vec<sc_sl1cer::contour::Polygon> {
+    use std::collections::HashMap;
+
+    use sc_review::input::pixel_to_plate;
+    use sc_sl1cer::contour::{ClosedRing, Polygon};
+    use sc_sl1cer::geom2d::Point2D;
+
+    /// The parts of `spans` that `cover` leaves out.
+    fn uncovered(spans: &[sc_review::Run], cover: &[sc_review::Run]) -> Vec<(u32, u32)> {
+        let mut out = Vec::new();
+        for span in spans {
+            let mut from = span.x0;
+            for other in cover {
+                if other.x1 <= from {
+                    continue;
+                }
+                if other.x0 >= span.x1 {
+                    break;
+                }
+                if other.x0 > from {
+                    out.push((from, other.x0));
+                }
+                from = from.max(other.x1);
+            }
+            if from < span.x1 {
+                out.push((from, span.x1));
+            }
+        }
+        out
+    }
+
+    let rows: Vec<&[sc_review::Run]> = runs.chunk_by(|a, b| a.row == b.row).collect();
+    let mut next: HashMap<(u32, u32), Vec<(u32, u32)>> = HashMap::new();
+    let mut edge = |from: (u32, u32), to: (u32, u32)| next.entry(from).or_default().push(to);
+    for (i, row) in rows.iter().enumerate() {
+        let y = row[0].row;
+        let above: &[sc_review::Run] = match i.checked_sub(1).map(|k| rows[k]) {
+            Some(r) if r[0].row + 1 == y => r,
+            _ => &[],
+        };
+        let below: &[sc_review::Run] = match rows.get(i + 1) {
+            Some(r) if r[0].row == y + 1 => r,
+            _ => &[],
+        };
+        for run in *row {
+            edge((run.x0, y + 1), (run.x0, y));
+            edge((run.x1, y), (run.x1, y + 1));
+        }
+        for (a, b) in uncovered(row, above) {
+            edge((a, y), (b, y));
+        }
+        for (a, b) in uncovered(row, below) {
+            edge((b, y + 1), (a, y + 1));
+        }
+    }
+    let mut polygons = Vec::new();
+    while let Some(&start) = next.keys().next() {
+        let mut ring = vec![start];
+        let mut at = start;
+        loop {
+            let outgoing = next.get_mut(&at).expect("a boundary closes");
+            let to = outgoing.pop().expect("a boundary closes");
+            if outgoing.is_empty() {
+                next.remove(&at);
+            }
+            at = to;
+            if at == start {
+                break;
+            }
+            ring.push(at);
+        }
+        // Only the corners.
+        let count = ring.len();
+        let corners: Vec<Point2D> = (0..count)
+            .filter(|&i| {
+                let (a, b, c) = (
+                    ring[(i + count - 1) % count],
+                    ring[i],
+                    ring[(i + 1) % count],
+                );
+                !((a.0 == b.0 && b.0 == c.0) || (a.1 == b.1 && b.1 == c.1))
+            })
+            .map(|i| {
+                let [x, y] =
+                    pixel_to_plate(pixel_map, [f64::from(ring[i].0), f64::from(ring[i].1)]);
+                Point2D::new(x, y)
+            })
+            .collect();
+        polygons.push(Polygon::new_unchecked(ClosedRing::new(corners), Vec::new()));
+    }
+    polygons
+}
+
 #[cfg(test)]
 fn measured_leaves<'a>(
     leaves: &'a [LeafSlices],

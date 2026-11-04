@@ -114,6 +114,9 @@ unsafe extern "system" {
 struct Sample {
     step: u32,
     ui: bool,
+    /// Milliseconds from the start, and which round of the threads it is.
+    ms: u32,
+    tick: u32,
     depth: u32,
     frames: [u64; DEPTH],
 }
@@ -231,9 +234,12 @@ impl Profiler {
             // SAFETY: no arguments.
             let own = unsafe { GetCurrentThreadId() };
             let mut samples: Vec<Sample> = Vec::with_capacity(1 << 20);
+            let started = std::time::Instant::now();
             let mut sample = Sample {
                 step: 0,
                 ui: false,
+                ms: 0,
+                tick: 0,
                 depth: 0,
                 frames: [0; DEPTH],
             };
@@ -241,9 +247,11 @@ impl Profiler {
             let mut ids = thread_ids(own);
             while !stop_in.load(Ordering::Relaxed) {
                 ticks += 1;
-                if ticks % 32 == 0 {
+                if ticks.is_multiple_of(32) {
                     ids = thread_ids(own);
                 }
+                sample.ms = started.elapsed().as_millis() as u32;
+                sample.tick = ticks;
                 for &id in &ids {
                     sample.step = step_in.load(Ordering::Relaxed) as u32;
                     sample.ui = id == ui;
@@ -351,14 +359,76 @@ impl Profiler {
             ui_active: u64,
             selfs: BTreeMap<Arc<str>, u64>,
             inclusive: BTreeMap<Arc<str>, u64>,
+            heap_wait: u64,
+            pool_idle: u64,
+            other_wait: u64,
+            other_waits: BTreeMap<Arc<str>, u64>,
         }
+        /// Threads by what they do, in a stretch of a step.
+        #[derive(Default)]
+        struct Stretch {
+            first_tick: u32,
+            last_tick: u32,
+            counts: [u64; 8],
+        }
+        const LANES: [&str; 8] = [
+            "thin",
+            "traps",
+            "islands",
+            "output",
+            "regions",
+            "other",
+            "heap_wait",
+            "pool_idle",
+        ];
+        const STRETCH_MS: u32 = 5000;
+        let mut stretches: BTreeMap<(u32, u32), Stretch> = BTreeMap::new();
         let mut steps: BTreeMap<u32, Step> = BTreeMap::new();
         for sample in &samples {
             let frames = &sample.frames[..sample.depth as usize];
             let leaf = name_of(frames[0]);
+            let names: Vec<Arc<str>> = frames.iter().map(|&pc| name_of(pc)).collect();
+            let has = |needle: &str| names.iter().any(|name| name.contains(needle));
+            let stretch = stretches
+                .entry((sample.step, sample.ms / STRETCH_MS))
+                .or_insert_with(|| Stretch {
+                    first_tick: sample.tick,
+                    ..Default::default()
+                });
+            stretch.last_tick = sample.tick;
             if waiting(&leaf) {
+                let step = steps.entry(sample.step).or_default();
+                if has("RtlAllocateHeap") || has("RtlFreeHeap") || has("RtlReAllocateHeap") {
+                    step.heap_wait += 1;
+                    stretch.counts[6] += 1;
+                } else if has("rayon_core::sleep") {
+                    step.pool_idle += 1;
+                    stretch.counts[7] += 1;
+                } else {
+                    step.other_wait += 1;
+                    let caller = names
+                        .iter()
+                        .find(|name| !waiting(name) && !name.starts_with("Rtl"))
+                        .cloned()
+                        .unwrap_or_else(|| leaf.clone());
+                    *step.other_waits.entry(caller).or_default() += 1;
+                }
                 continue;
             }
+            let lane = if has("checks::thin") {
+                0
+            } else if has("checks::traps") {
+                1
+            } else if has("checks::island") {
+                2
+            } else if has("checks::output") {
+                3
+            } else if has("sc_review::regions") {
+                4
+            } else {
+                5
+            };
+            stretch.counts[lane] += 1;
             let step = steps.entry(sample.step).or_default();
             step.active += 1;
             if sample.ui {
@@ -383,6 +453,11 @@ impl Profiler {
                 "\n=== {name}: {} active samples, {} on the window's thread",
                 step.active, step.ui_active
             );
+            let _ = writeln!(
+                out,
+                "waits: heap lock {}, pool idle {}, other {}",
+                step.heap_wait, step.pool_idle, step.other_wait
+            );
             let ranked = |map: &BTreeMap<Arc<str>, u64>| {
                 let mut list: Vec<(Arc<str>, u64)> =
                     map.iter().map(|(k, v)| (k.clone(), *v)).collect();
@@ -390,6 +465,9 @@ impl Profiler {
                 list.truncate(top);
                 list
             };
+            for (name, n) in ranked(&step.other_waits).into_iter().take(6) {
+                let _ = writeln!(out, "   waiting in {n:>7}  {name}");
+            }
             let _ = writeln!(out, "-- self");
             for (name, n) in ranked(&step.selfs) {
                 let share = n as f64 * 100.0 / step.active as f64;
@@ -400,6 +478,29 @@ impl Profiler {
                 let share = n as f64 * 100.0 / step.active as f64;
                 let _ = writeln!(out, "{n:>8} {share:>5.1}%  {name}");
             }
+        }
+        let _ = writeln!(
+            out,
+            "\n=== threads over time, average per sampling round\nstep\tseconds\t{}",
+            LANES.join("\t")
+        );
+        for ((id, at), stretch) in &stretches {
+            if stretch.counts.iter().sum::<u64>() < 100 {
+                continue;
+            }
+            let rounds = f64::from(stretch.last_tick - stretch.first_tick + 1);
+            let name = names.get(*id as usize).map_or("?", String::as_str);
+            let lanes: Vec<String> = stretch
+                .counts
+                .iter()
+                .map(|n| format!("{:.1}", *n as f64 / rounds))
+                .collect();
+            let _ = writeln!(
+                out,
+                "{name}\t{}\t{}",
+                at * STRETCH_MS / 1000,
+                lanes.join("\t")
+            );
         }
         out
     }
