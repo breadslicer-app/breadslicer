@@ -39,7 +39,7 @@ use super::*;
 use crate::mesh_render::{DeviceLoss, DeviceToken, Renderer};
 use crate::preferences_bus::PreferencesSnapshot;
 use crate::print_selection::PrintDefaults;
-use crate::review::{erased_stack, review_slices_measured};
+use crate::review::{erased_stack, review_checks_alone, review_slices_measured};
 use crate::save_progress::SavePhase;
 use crate::scene_save::{prepare_save_for_target, write_bundle};
 use crate::slice_projection::load_selected_profiles;
@@ -321,6 +321,42 @@ fn mesh_key(mesh: &IndexedMesh) -> (Vec<[u32; 3]>, Vec<[u32; 3]>) {
     )
 }
 
+/// The hollows the project keeps: what the model was before, and its drains.
+fn describe_hollows(path: &Path, facts: &mut Facts) {
+    let loaded = sc_project_formats::load_scene(path, None, |_| {}).expect("it opens");
+    let sc_project_formats::LoadedContent::Project(project) = loaded.content else {
+        return;
+    };
+    facts.line(format!(
+        "project: {} support documents ({} bytes), {} hollow documents",
+        project.supports.len(),
+        project
+            .supports
+            .iter()
+            .map(|d| d.document.len())
+            .sum::<usize>(),
+        project.hollows.len()
+    ));
+    let restored = crate::hollow_persist::restore_hollows(&project.scene, project.hollows);
+    for why in &restored.failures {
+        facts.line(format!("hollow not restored: {why}"));
+    }
+    for hollow in &restored.hollows {
+        let (original, shown) = (&hollow.original, &hollow.hollow);
+        facts.line(format!(
+            "hollow: original {} faces, {} vertices, bodies {:?}; hollowed {} faces; so the cavity adds about {} faces; {} drains, {} plugs; {:?}",
+            original.faces.len(),
+            original.vertices.len(),
+            &body_triangles(original)[..body_triangles(original).len().min(4)],
+            shown.faces.len(),
+            shown.faces.len() as i64 - original.faces.len() as i64,
+            hollow.drains.len(),
+            hollow.plugs.len(),
+            hollow.options,
+        ));
+    }
+}
+
 /// The held review's findings, counted by check, severity and fix.
 fn describe_findings(panel: &ReviewPanel, facts: &mut Facts, heading: &str) {
     let held = panel.held.borrow();
@@ -473,19 +509,29 @@ impl Run<'_> {
             )
         });
         let raft = raft_top_mm.map(|top| plate.compensated_height_mm(top));
-        let (outcome, timings, alone) = p.step(&step("review"), On::Worker, || {
+        let (outcome, timings) = p.step(&step("review"), On::Worker, || {
             review_slices_measured(
                 plate.leaves(),
                 filled.as_ref(),
                 erased.as_ref(),
                 plate.profile(),
                 raft,
-                solo,
             )
         });
         review_lines(p, label, &timings);
-        for (name, wall) in alone {
-            p.note(&format!("{label}.alone.{name}"), On::Worker, wall);
+        if solo {
+            let alone = p.step(&step("extra_checks_alone"), On::Worker, || {
+                review_checks_alone(
+                    plate.leaves(),
+                    filled.as_ref(),
+                    erased.as_ref(),
+                    plate.profile(),
+                    raft,
+                )
+            });
+            for (name, wall) in alone {
+                p.note(&format!("{label}.alone.{name}"), On::Worker, wall);
+            }
         }
         if !by_fix_all {
             for leaf in plate.leaves() {
@@ -584,6 +630,9 @@ fn heavy_scene_timing() {
             std::thread::available_parallelism().map_or(0, usize::from),
             path.display()
         ));
+
+        sc_sla_formats_uvtools::install();
+        describe_hollows(&path, &mut facts);
 
         // Open, as the window does: a worker reads and prepares, the window's
         // thread installs.
@@ -859,11 +908,23 @@ fn decimate_project(path: &Path, ratio: f64, out: &Path) {
         panic!("a .bread is a project")
     };
     let mut scene = project.scene;
+    let drop_supports = env("BREADSLICER_HEAVY_DROP_SUPPORTS").is_some_and(|v| v == "1");
+    let mut supports = project.supports;
+    if drop_supports {
+        for document in supports.drain(..) {
+            scene
+                .remove_leaf(document.leaf)
+                .expect("the support leaf goes");
+        }
+    }
     for target in scene.mesh_targets() {
         let Some(mesh) = scene.target_mesh(target).cloned() else {
             continue;
         };
         if mesh.faces.is_empty() || sc_geom::df_supports::is_support_mesh(&mesh) {
+            continue;
+        }
+        if ratio >= 1.0 {
             continue;
         }
         let before = body_triangles(&mesh);
@@ -883,7 +944,7 @@ fn decimate_project(path: &Path, ratio: f64, out: &Path) {
         &scene,
         &project.payload,
         sc_project_formats::EmbedProfiles::Yes,
-        &project.supports,
+        &supports,
         &project.hollows,
         &mut bytes,
         |_| {},
