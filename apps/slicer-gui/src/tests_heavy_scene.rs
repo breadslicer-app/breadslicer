@@ -508,6 +508,12 @@ impl Run<'_> {
                 plate.schedule(),
             )
         });
+        if let Some(stack) = &filled {
+            describe_stack(facts, &format!("{label} filled stack"), stack);
+        }
+        if let Some(stack) = &erased {
+            describe_stack(facts, &format!("{label} erased stack"), stack);
+        }
         let raft = raft_top_mm.map(|top| plate.compensated_height_mm(top));
         let (outcome, timings) = p.step(&step("review"), On::Worker, || {
             review_slices_measured(
@@ -567,6 +573,44 @@ impl Run<'_> {
         panel.fills_landed(patches.ids);
         p.step(&step("land_show"), On::Ui, || panel.show(outcome));
     }
+}
+
+/// Saves the project to `target`, as the window does, phase by phase, and
+/// removes the file.
+fn save_project(
+    p: &Probe,
+    facts: &mut Facts,
+    document: &SceneDocument,
+    name: &str,
+    target: PathBuf,
+    defaults: &PrintDefaults,
+) {
+    let (bundle, _, _) = p.step(&format!("{name}.prepare"), On::Ui, || {
+        prepare_save_for_target(document, target.clone(), defaults).expect("a scene to save")
+    });
+    let phases: RefCell<Vec<(SavePhase, Instant)>> = RefCell::new(Vec::new());
+    p.step(&format!("{name}.write"), On::Worker, || {
+        write_bundle(&bundle, |phase, _, _| {
+            let mut phases = phases.borrow_mut();
+            if phases.last().is_none_or(|(last, _)| *last != phase) {
+                phases.push((phase, Instant::now()));
+            }
+        })
+        .expect("the project writes");
+    });
+    let ended = Instant::now();
+    let phases = phases.into_inner();
+    for (i, (phase, from)) in phases.iter().enumerate() {
+        let to = phases.get(i + 1).map_or(ended, |(_, next)| *next);
+        p.note(
+            &format!("{name}.phase_{phase:?}"),
+            On::Worker,
+            to.duration_since(*from),
+        );
+    }
+    let size = fs::metadata(&target).expect("the file").len();
+    facts.line(format!("{name}: {:.1} MB", size as f64 / 1048576.0));
+    let _ = fs::remove_file(&target);
 }
 
 fn env(name: &str) -> Option<String> {
@@ -712,7 +756,8 @@ fn heavy_scene_timing() {
             printer: printer.clone(),
             resin: resin.clone(),
         };
-        run.slice("slice", false, true, &mut facts);
+        // Each check alone only when Fix All does not follow: it takes minutes.
+        run.slice("slice", false, !fix_all, &mut facts);
         describe_findings(&panel, &mut facts, "after the slice");
         let held = document.held_slice().expect("a slice");
         describe_stack(&mut facts, "plate", held.contours.stack());
@@ -769,41 +814,7 @@ fn heavy_scene_timing() {
                 printer: Some(printer.clone()),
                 resin: Some(resin.clone()),
             };
-            for (name, target) in [
-                ("save_bread", target),
-                ("save_3mf", dir.join(format!("{tag}.3mf"))),
-            ] {
-                let (bundle, _, _) = p.step(&format!("{name}.prepare"), On::Ui, || {
-                    prepare_save_for_target(&document, target.clone(), &defaults)
-                        .expect("a scene to save")
-                });
-                let phases: RefCell<Vec<(SavePhase, Instant)>> = RefCell::new(Vec::new());
-                let started = Instant::now();
-                p.step(&format!("{name}.write"), On::Worker, || {
-                    write_bundle(&bundle, |phase, _, _| {
-                        let mut phases = phases.borrow_mut();
-                        if phases.last().is_none_or(|(last, _)| *last != phase) {
-                            phases.push((phase, Instant::now()));
-                        }
-                    })
-                    .expect("the project writes");
-                });
-                let ended = Instant::now();
-                let phases = phases.into_inner();
-                let mut at = started;
-                for (i, (phase, from)) in phases.iter().enumerate() {
-                    at = at.max(*from);
-                    let to = phases.get(i + 1).map_or(ended, |(_, next)| *next);
-                    p.note(
-                        &format!("{name}.phase_{phase:?}"),
-                        On::Worker,
-                        to.duration_since(*from),
-                    );
-                }
-                let size = fs::metadata(&target).expect("the file").len();
-                facts.line(format!("{name}: {:.1} MB", size as f64 / 1048576.0));
-                let _ = fs::remove_file(&target);
-            }
+            save_project(p, &mut facts, &document, "save_bread", target, &defaults);
 
             let (printer_profile, _) =
                 load_selected_profiles(&printer, &resin).expect("the profiles");
@@ -833,6 +844,8 @@ fn heavy_scene_timing() {
             let _ = fs::remove_file(&target);
         }
 
+        let target_3mf = dir.join(format!("{tag}.3mf"));
+
         // Whether two runs give the same thing, outside the timed steps.
         let held = document.held_slice().expect("a slice");
         let contours = hash_of(format!("{:?}", held.contours.stack().layers()));
@@ -840,6 +853,16 @@ fn heavy_scene_timing() {
         describe_scene(&document, &mut facts, "at the end");
         fs::write(&facts_file, facts.0.as_bytes()).expect("the facts are written");
         p.write_profile(&facts_file.with_extension("profile.txt"));
+
+        // Last: on a big slice this can end the process (#427).
+        if write_files {
+            let defaults = PrintDefaults {
+                printer: Some(printer.clone()),
+                resin: Some(resin.clone()),
+            };
+            save_project(p, &mut facts, &document, "save_3mf", target_3mf, &defaults);
+            fs::write(&facts_file, facts.0.as_bytes()).expect("the facts are written");
+        }
     });
 }
 
