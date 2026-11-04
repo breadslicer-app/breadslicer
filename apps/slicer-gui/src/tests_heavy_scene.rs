@@ -427,8 +427,21 @@ fn describe_scene(document: &SceneDocument, facts: &mut Facts, heading: &str) {
                 }
             }
             let sizes = body_triangles(mesh);
+            let volume: f64 = baked.as_ref().map_or(0.0, |mesh| {
+                mesh.faces()
+                    .iter()
+                    .map(|face| {
+                        let [a, b, c] = face
+                            .vertices
+                            .map(|v| mesh.vertices()[u32::from(v) as usize].as_array().map(f64::from));
+                        (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                            + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                            / 6.0
+                    })
+                    .sum()
+            });
             facts.line(format!(
-                "leaf {}: {} faces, {} vertices, {} bodies (largest {:?}), bounds {min:?} to {max:?}, mesh {:016x}",
+                "leaf {}: {} faces, {} vertices, {} bodies (largest {:?}), {volume:.0} mm3, bounds {min:?} to {max:?}, mesh {:016x}",
                 leaf.get(),
                 mesh.faces.len(),
                 mesh.vertices.len(),
@@ -542,10 +555,16 @@ fn describe_findings(panel: &ReviewPanel, facts: &mut Facts, heading: &str) {
         if let Some(SuggestedFix::Fill { cavity, .. }) = &finding.fix {
             let fill = &fills[*cavity];
             let rects: usize = fill.slabs.iter().map(|s| s.rects.len() + s.rim.len()).sum();
+            let (mut low, mut high) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+            for rect in fill.slabs.iter().flat_map(|s| &s.rects) {
+                low = [low[0].min(rect.x0_mm), low[1].min(rect.y0_mm)];
+                high = [high[0].max(rect.x1_mm), high[1].max(rect.y1_mm)];
+            }
             facts.line(format!(
-                "   fill: {} {} layers {}-{}, {:.1} mm3, {} slabs, {rects} rectangles",
+                "   fill: {} {} {:?} layers {}-{}, {:.1} mm3, {} slabs, {rects} rectangles, box {low:.1?} to {high:.1?}",
                 finding.severity.as_str(),
                 finding.title,
+                finding.check,
                 finding.first_layer + 1,
                 finding.last_layer + 1,
                 fill.volume_mm3(),
@@ -582,6 +601,8 @@ struct Run<'a> {
     panel: Rc<ReviewPanel>,
     printer: PrinterId,
     resin: MaterialId,
+    /// The layers and findings of the last slice.
+    last: RefCell<Option<(LayerHashes, Vec<(String, usize, usize)>)>>,
 }
 
 /// Runs each procedure alone as a step, and writes what the clock read.
@@ -719,16 +740,6 @@ impl Run<'_> {
             describe_stack(facts, &format!("{label} erased stack"), stack);
         }
         let raft = raft_top_mm.map(|top| plate.compensated_height_mm(top));
-        let (outcome, timings) = p.step(&step("review"), On::Worker, || {
-            review_slices_measured(
-                plate.leaves(),
-                filled.as_ref(),
-                erased.as_ref(),
-                plate.profile(),
-                raft,
-            )
-        });
-        review_lines(p, label, &timings);
         if solo {
             self.review_alone(
                 label,
@@ -740,6 +751,19 @@ impl Run<'_> {
                 facts,
             );
         }
+        let hashes = p.step(&step("extra_layer_hash"), On::Worker, || {
+            LayerHashes::of(plate.leaves(), filled.as_ref(), erased.as_ref())
+        });
+        let (outcome, timings) = p.step(&step("review"), On::Worker, || {
+            review_slices_measured(
+                plate.leaves(),
+                filled.as_ref(),
+                erased.as_ref(),
+                plate.profile(),
+                raft,
+            )
+        });
+        review_lines(p, label, &timings);
         if !by_fix_all {
             for leaf in plate.leaves() {
                 describe_stack(facts, &format!("leaf {:?}", leaf.leaf_name()), leaf.stack());
@@ -773,6 +797,137 @@ impl Run<'_> {
         panel.slice_replaced(replaced);
         panel.fills_landed(patches.ids);
         p.step(&step("land_show"), On::Ui, || panel.show(outcome));
+        self.compare_with_the_last_slice(label, hashes, facts);
+    }
+
+    /// What this slice changed from the last one, layer by layer, and which
+    /// findings came and went, with how far from a changed layer: what a
+    /// review of the touched layers alone would have to catch.
+    fn compare_with_the_last_slice(&self, label: &str, hashes: LayerHashes, facts: &mut Facts) {
+        let rows: Vec<(String, usize, usize)> = {
+            let held = self.panel.held.borrow();
+            match held.as_ref().map(|h| &h.outcome) {
+                Some(ReviewOutcome::Reviewed { findings, .. }) => findings
+                    .iter()
+                    .map(|f| {
+                        (
+                            format!("{:?} {} {:?}", f.check, f.title, f.scope),
+                            f.first_layer,
+                            f.last_layer,
+                        )
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        let last = self.last.replace(Some((hashes.clone(), rows.clone())));
+        let Some((before, before_rows)) = last else {
+            return;
+        };
+        let changed: Vec<usize> = (0..hashes.all.len())
+            .filter(|&i| hashes.all[i] != before.all[i])
+            .collect();
+        let count = |a: &[u64], b: &[u64]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+        facts.line(format!(
+            "-- {label} changed from the last slice: {} of {} layers ({}..{}); model {}, supports {}, patches {}",
+            changed.len(),
+            hashes.all.len(),
+            changed.first().map_or(0, |l| l + 1),
+            changed.last().map_or(0, |l| l + 1),
+            count(&hashes.models, &before.models),
+            count(&hashes.supports, &before.supports),
+            count(&hashes.patches, &before.patches),
+        ));
+        let distance = |first: usize, last: usize| {
+            changed
+                .iter()
+                .map(|&l| {
+                    if l < first {
+                        first - l
+                    } else {
+                        l.saturating_sub(last)
+                    }
+                })
+                .min()
+                .unwrap_or(usize::MAX)
+        };
+        for row in rows.iter().filter(|row| !before_rows.contains(row)) {
+            facts.line(format!(
+                "   new: {} layers {}-{}, {} layers from a change",
+                row.0,
+                row.1 + 1,
+                row.2 + 1,
+                distance(row.1, row.2)
+            ));
+        }
+        for row in before_rows.iter().filter(|row| !rows.contains(row)) {
+            facts.line(format!(
+                "   gone: {} layers {}-{}, {} layers from a change",
+                row.0,
+                row.1 + 1,
+                row.2 + 1,
+                distance(row.1, row.2)
+            ));
+        }
+    }
+}
+
+/// A hash of every layer of a slice, whole and by what it holds.
+#[derive(Clone)]
+struct LayerHashes {
+    all: Vec<u64>,
+    models: Vec<u64>,
+    supports: Vec<u64>,
+    patches: Vec<u64>,
+}
+
+impl LayerHashes {
+    fn of(
+        leaves: &[sc_sl1cer::LeafSlices],
+        filled: Option<&sc_sl1cer::contour::ContourStack>,
+        erased: Option<&sc_sl1cer::contour::ContourStack>,
+    ) -> Self {
+        fn layer_hash(hash: &mut u64, layer: &sc_sl1cer::contour::ContourLayer) {
+            let mut mix = |value: u64| {
+                *hash = (*hash ^ value).wrapping_mul(0x100000001b3);
+            };
+            for polygon in layer.polygons() {
+                for ring in std::iter::once(polygon.outer()).chain(polygon.holes()) {
+                    for point in ring.vertices() {
+                        mix(point.x.to_bits());
+                        mix(point.y.to_bits());
+                    }
+                    mix(1);
+                }
+            }
+        }
+        let count = leaves.first().map_or(0, |leaf| leaf.stack().layers().len());
+        let start = vec![0xcbf29ce484222325u64; count];
+        let (mut models, mut supports, mut patches) = (start.clone(), start.clone(), start);
+        for leaf in leaves {
+            let target = if crate::review::role_of(leaf.leaf_name()) == sc_review::Role::Support {
+                &mut supports
+            } else {
+                &mut models
+            };
+            for (hash, layer) in target.iter_mut().zip(leaf.stack().layers()) {
+                layer_hash(hash, layer);
+            }
+        }
+        for stack in [filled, erased].into_iter().flatten() {
+            for (hash, layer) in patches.iter_mut().zip(stack.layers()) {
+                layer_hash(hash, layer);
+            }
+        }
+        let all = (0..count)
+            .map(|i| models[i] ^ supports[i].rotate_left(21) ^ patches[i].rotate_left(42))
+            .collect();
+        Self {
+            all,
+            models,
+            supports,
+            patches,
+        }
     }
 }
 
@@ -964,6 +1119,7 @@ fn heavy_scene_timing() {
             panel: panel.clone(),
             printer: printer.clone(),
             resin: resin.clone(),
+            last: RefCell::new(None),
         };
         // Each check alone only when Fix All does not follow: it takes minutes.
         run.slice("slice", false, !fix_all || alone, &mut facts);
