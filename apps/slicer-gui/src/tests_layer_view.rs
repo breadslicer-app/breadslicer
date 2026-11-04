@@ -42,7 +42,7 @@ fn checkered_image(width: u32, height: u32) -> Image {
     let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
     let row = width as usize;
     for (at, pixel) in pixels.make_mut_slice().iter_mut().enumerate() {
-        let on = (at % row + at / row) % 2 == 0;
+        let on = (at % row + at / row).is_multiple_of(2);
         let shade = if on { 255 } else { 0 };
         *pixel = Rgba8Pixel::new(shade, shade, shade, 255);
     }
