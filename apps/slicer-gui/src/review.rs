@@ -448,6 +448,520 @@ fn measured_input<'a>(
         .with_support_lift_mm(Some(recommended_lift_mm(None)))
 }
 
+/// An island of the prototype in [`islands_by_anchors`].
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct AnchorIsland {
+    pub first: usize,
+    pub last: usize,
+    pub how: &'static str,
+    pub area_mm2: f64,
+    pub tips: usize,
+    pub need: usize,
+    pub at: [u32; 2],
+    /// The distance in mm from the island's start to the nearest support
+    /// shaft at that height, from the supports' lines, not their geometry.
+    pub shaft_mm: f64,
+    /// The gap in mm from the layer below's nearest support disc to the
+    /// pixels the island starts with: at or under 0, a support is under them.
+    pub gap_mm: f64,
+    pub start_mm2: f64,
+    /// What the island's start does going up, layer by layer.
+    pub rise: String,
+}
+
+/// The islands of the model with the support tips as anchors, and no support
+/// geometry: a region is held by a tip on it or by a held region below; an
+/// island is a group of regions with no tip until it joins a held one.
+#[cfg(test)]
+pub(crate) fn islands_by_anchors(
+    leaves: &[LeafSlices],
+    profile: &SliceProfile,
+    raft_top_mm: Option<f64>,
+    tips: &[[f64; 3]],
+    paths: &[Vec<[f64; 3]>],
+    discs: &[Vec<[f64; 4]>],
+) -> (Vec<AnchorIsland>, Duration, Duration, usize) {
+    use sc_review::PlateRegions;
+    use sc_review::regions::LayerPixels;
+    use sc_sl1cer::geom2d::Point2D;
+    use std::time::Instant;
+    const JOIN_MM2: f64 = 0.05;
+    const TOLERANCE_MM: f64 = 0.15;
+    const LAYERS_BELOW: usize = 2;
+    const LAYERS_ABOVE: usize = 8;
+    const LATE_LAYERS: usize = 1;
+    const MM2_PER_TIP: f64 = 10.0;
+
+    #[derive(Clone, Copy)]
+    struct Group {
+        first: usize,
+        tips: usize,
+        tip_layer: Option<usize>,
+        area_px: u64,
+        at: [u32; 2],
+    }
+    fn root(parents: &mut [u32], mut at: u32) -> u32 {
+        while parents[at as usize] != at {
+            parents[at as usize] = parents[parents[at as usize] as usize];
+            at = parents[at as usize];
+        }
+        at
+    }
+
+    let mut list = measured_leaves(leaves, None, None);
+    list.retain(|leaf| leaf.role == Role::Model);
+    let input = measured_input(list, profile, raft_top_mm);
+    let started = Instant::now();
+    let regions = PlateRegions::compute(&input);
+    let regions_time = started.elapsed();
+    let started = Instant::now();
+
+    let count = input.layer_count();
+    let pixel_mm2 = input.pixel_area_mm2();
+    let [size_x, size_y] = input.pixel_size_mm();
+    let reach_x = (TOLERANCE_MM / size_x).ceil() as i64;
+    let reach_y = (TOLERANCE_MM / size_y).ceil() as i64;
+    let spans = input.layers();
+    // Each tip's raster point and the layers it may land on.
+    let mut by_layer: Vec<Vec<(usize, i64, i64)>> = vec![Vec::new(); count];
+    for (index, tip) in tips.iter().enumerate() {
+        let at = spans
+            .partition_point(|span| span.top_mm < tip[2])
+            .min(count - 1);
+        let (x, y) = input.pixel_map().mm_to_pixel(Point2D::new(tip[0], tip[1]));
+        for layer in at.saturating_sub(LAYERS_BELOW)..=(at + LAYERS_ABOVE).min(count - 1) {
+            by_layer[layer].push((index, x as i64, y as i64));
+        }
+    }
+    let busy: Vec<usize> = (0..count).filter(|l| !by_layer[*l].is_empty()).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let found = std::sync::Mutex::new(Vec::<(usize, usize, u32)>::new());
+    std::thread::scope(|scope| {
+        for _ in 0..16 {
+            scope.spawn(|| {
+                let mut local = Vec::new();
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(&layer) = busy.get(i) else { break };
+                    let pixels = LayerPixels::compute(&input, layer);
+                    for &(tip, x, y) in &by_layer[layer] {
+                        let hit = pixels
+                            .solid
+                            .iter()
+                            .zip(&pixels.solid_labels)
+                            .find(|(run, _)| {
+                                let row = i64::from(run.row);
+                                row >= y - reach_y
+                                    && row <= y + reach_y
+                                    && i64::from(run.x0) <= x + reach_x
+                                    && i64::from(run.x1) >= x - reach_x
+                            });
+                        if let Some((_, label)) = hit {
+                            local.push((tip, layer, *label));
+                        }
+                    }
+                }
+                found.lock().expect("no panics").extend(local);
+            });
+        }
+    });
+    let mut found = found.into_inner().expect("no panics");
+    found.sort_unstable();
+    found.dedup_by_key(|hit| hit.0);
+    let placed = found.len();
+
+    let mut offsets = Vec::with_capacity(count + 1);
+    let mut total = 0usize;
+    for layer in regions.layers() {
+        offsets.push(total);
+        total += layer.solid.len();
+    }
+    if let Ok(path) = std::env::var("BREADSLICER_HEAVY_ANCHOR_DEBUG") {
+        use std::fmt::Write as _;
+        let mut text = String::new();
+        for &(tip, layer, label) in &found {
+            let t = tips[tip];
+            if (t[0] - 12.0).abs() < 9.0
+                && (t[1] + 12.6).abs() < 9.0
+                && t[2] > spans[925].bottom_mm
+                && t[2] < spans[965].top_mm
+            {
+                let region = &regions.layers()[layer].solid[label as usize];
+                let (x, y) = input.pixel_map().mm_to_pixel(Point2D::new(t[0], t[1]));
+                let _ = writeln!(
+                    text,
+                    "tip {tip} at ({:.2}, {:.2}, {:.2}) px ({x:.0}, {y:.0}) tip layer {} hit layer {layer} label {label} region area {:.3} mm2 inside {:?}",
+                    t[0],
+                    t[1],
+                    t[2],
+                    spans.partition_point(|s| s.top_mm < t[2]),
+                    region.area_px as f64 * pixel_mm2,
+                    region.inside_px,
+                );
+            }
+        }
+        for layer in [941usize, 945, 950, 955] {
+            let _ = writeln!(text, "layer {} regions:", layer + 1);
+            for (index, region) in regions.layers()[layer].solid.iter().enumerate() {
+                let _ = writeln!(
+                    text,
+                    "  {index}: {:.3} mm2 bbox {:?} inside {:?}",
+                    region.area_px as f64 * pixel_mm2,
+                    region.bbox,
+                    region.inside_px,
+                );
+            }
+        }
+        std::fs::write(&path, text).expect("written");
+        // Surface that appears with nothing under it, per region and layer.
+        let mut jumps = Vec::new();
+        let mut totals = Vec::with_capacity(count);
+        for layer in 0..count {
+            let solid = &regions.layers()[layer].solid;
+            let total_px: f64 = solid.iter().map(|r| r.area_px as f64).sum();
+            totals.push(total_px * pixel_mm2);
+            if layer == 0 {
+                continue;
+            }
+            let mut held = vec![0f64; solid.len()];
+            for link in regions.solid_links(layer) {
+                held[link.upper as usize] += link.pixels as f64;
+            }
+            for (index, region) in solid.iter().enumerate() {
+                let new = (region.area_px as f64 - held[index]) * pixel_mm2;
+                jumps.push((new, layer, index));
+            }
+        }
+        jumps.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let mut out = String::from("biggest new surface in one layer, per region\n");
+        for &(new, layer, index) in jumps.iter().take(40) {
+            let region = &regions.layers()[layer].solid[index];
+            let b = region.bbox;
+            let near = found
+                .iter()
+                .filter(|&&(tip, at, _)| {
+                    let t = tips[tip];
+                    let (x, y) = input.pixel_map().mm_to_pixel(Point2D::new(t[0], t[1]));
+                    at + 3 >= layer
+                        && at <= layer + 3
+                        && x >= f64::from(b.x0)
+                        && x <= f64::from(b.x1)
+                        && y >= f64::from(b.y0)
+                        && y <= f64::from(b.y1)
+                })
+                .count();
+            let _ = writeln!(
+                out,
+                "layer {}: new {new:.2} mm2, region {:.2} mm2, {near} tips within 3 layers, at {:?}",
+                layer + 1,
+                region.area_px as f64 * pixel_mm2,
+                region.inside_px,
+            );
+        }
+        let mut steps: Vec<(f64, usize)> = (1..count)
+            .map(|l| (totals[l] - totals[l - 1], l))
+            .collect();
+        steps.sort_by(|a, b| b.0.total_cmp(&a.0));
+        out.push_str("biggest growth of the whole lit area in one layer\n");
+        for &(step, layer) in steps.iter().take(15) {
+            let _ = writeln!(
+                out,
+                "layer {}: +{step:.2} mm2, from {:.2} to {:.2} mm2",
+                layer + 1,
+                totals[layer - 1],
+                totals[layer],
+            );
+        }
+        let top = totals.iter().copied().fold(0.0, f64::max);
+        let _ = writeln!(out, "largest lit area {top:.2} mm2");
+        std::fs::write(format!("{path}.jumps.txt"), out).expect("written");
+        // How many times each region grew over what stood under it.
+        let mut out = String::from(
+            "layer, from mm2, to mm2, times, lasts below in layers, follows a x10, tips within 3 layers, at\n",
+        );
+        let (mut tens, mut fives, mut chained) = (0usize, 0usize, 0usize);
+        let mut before: Vec<f64> = Vec::new();
+        for layer in 1..count {
+            let solid = &regions.layers()[layer].solid;
+            let lower = &regions.layers()[layer - 1].solid;
+            let mut under: Vec<Vec<u32>> = vec![Vec::new(); solid.len()];
+            for link in regions.solid_links(layer) {
+                under[link.upper as usize].push(link.lower);
+            }
+            let mut ratios = vec![0f64; solid.len()];
+            for (index, region) in solid.iter().enumerate() {
+                let labels = &mut under[index];
+                labels.sort_unstable();
+                labels.dedup();
+                if labels.is_empty() {
+                    continue;
+                }
+                let from: f64 = labels.iter().map(|&l| lower[l as usize].area_px as f64).sum();
+                let times = region.area_px as f64 / from;
+                ratios[index] = times;
+                if times < 5.0 {
+                    continue;
+                }
+                let follows = labels
+                    .iter()
+                    .any(|&l| before.get(l as usize).is_some_and(|r| *r >= 10.0));
+                if times >= 10.0 {
+                    tens += 1;
+                } else {
+                    fives += 1;
+                }
+                if follows {
+                    chained += 1;
+                }
+                let b = region.bbox;
+                let near = found
+                    .iter()
+                    .filter(|&&(tip, at, _)| {
+                        let t = tips[tip];
+                        let (x, y) = input.pixel_map().mm_to_pixel(Point2D::new(t[0], t[1]));
+                        at + 3 >= layer
+                            && at <= layer + 3
+                            && x >= f64::from(b.x0)
+                            && x <= f64::from(b.x1)
+                            && y >= f64::from(b.y0)
+                            && y <= f64::from(b.y1)
+                    })
+                    .count();
+                let _ = writeln!(
+                    out,
+                    "{}, {:.4}, {:.4}, {times:.1}, {}, {follows}, {near}, {:?}",
+                    layer + 1,
+                    from * pixel_mm2,
+                    region.area_px as f64 * pixel_mm2,
+                    labels.len(),
+                    region.inside_px,
+                );
+            }
+            before = ratios;
+        }
+        let _ = writeln!(out, "x10 or more: {tens}; x5 to x10: {fives}; following a x10: {chained}");
+        std::fs::write(format!("{path}.ratios.txt"), out).expect("written");
+    }
+    let mut tips_on = vec![0u32; total];
+    for &(_, layer, label) in &found {
+        tips_on[offsets[layer] + label as usize] += 1;
+    }
+
+    let mut parents: Vec<u32> = (0..total as u32).collect();
+    let mut groups: Vec<Group> = Vec::with_capacity(total);
+    for (layer, regions_here) in regions.layers().iter().enumerate() {
+        for (index, region) in regions_here.solid.iter().enumerate() {
+            let tips_here = tips_on[offsets[layer] + index] as usize;
+            groups.push(Group {
+                first: layer,
+                tips: tips_here,
+                tip_layer: (tips_here > 0).then_some(layer),
+                area_px: region.area_px,
+                at: region.inside_px,
+            });
+        }
+    }
+    let mut islands = Vec::new();
+    let close = |group: &Group, last: usize, how: &'static str, islands: &mut Vec<AnchorIsland>| {
+        let area_mm2 = group.area_px as f64 * pixel_mm2;
+        let need = ((area_mm2 / MM2_PER_TIP).ceil() as usize).max(1);
+        let late = group
+            .tip_layer
+            .is_some_and(|l| l > group.first + LATE_LAYERS);
+        if group.tips == 0 || late {
+            islands.push(AnchorIsland {
+                first: group.first,
+                last,
+                how: if group.tips == 0 {
+                    how
+                } else if late {
+                    "tip late"
+                } else {
+                    "short of tips"
+                },
+                area_mm2,
+                tips: group.tips,
+                need,
+                at: group.at,
+                shaft_mm: f64::INFINITY,
+                gap_mm: f64::INFINITY,
+                start_mm2: 0.0,
+                rise: String::new(),
+            });
+        }
+    };
+    for layer in 1..count {
+        let upper = &regions.layers()[layer].solid;
+        // The groups each region of this layer stands on, judged before any
+        // of them takes the region's area: a small part that meets a big one
+        // keeps its own size.
+        let mut below: Vec<Vec<u32>> = vec![Vec::new(); upper.len()];
+        for link in regions.solid_links(layer) {
+            let strong = link.pixels as f64 * pixel_mm2 >= JOIN_MM2
+                || link.pixels * 2 >= upper[link.upper as usize].area_px;
+            if strong {
+                let lower = root(
+                    &mut parents,
+                    (offsets[layer - 1] + link.lower as usize) as u32,
+                );
+                below[link.upper as usize].push(lower);
+            }
+        }
+        for (index, lowers) in below.iter_mut().enumerate() {
+            let at = (offsets[layer] + index) as u32;
+            for lower in lowers.iter_mut() {
+                *lower = root(&mut parents, *lower);
+            }
+            lowers.sort_unstable();
+            lowers.dedup();
+            if lowers.is_empty() {
+                continue;
+            }
+            // The biggest group goes on; the others end here.
+            let keep = *lowers
+                .iter()
+                .max_by_key(|g| (groups[**g as usize].tips > 0, groups[**g as usize].area_px))
+                .expect("not empty");
+            let own = groups[at as usize];
+            let mut merged = groups[keep as usize];
+            for &other in lowers.iter().filter(|g| **g != keep) {
+                let group = groups[other as usize];
+                close(&group, layer, "joined with no tip", &mut islands);
+                merged.tips += group.tips;
+                merged.first = merged.first.min(group.first);
+                parents[other as usize] = keep;
+            }
+            merged.tips += own.tips;
+            merged.tip_layer = match (merged.tip_layer, own.tip_layer) {
+                (Some(x), Some(y)) => Some(x.min(y)),
+                (x, y) => x.or(y),
+            };
+            merged.area_px = merged.area_px.max(own.area_px);
+            parents[at as usize] = keep;
+            groups[keep as usize] = merged;
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for index in 0..total as u32 {
+        let top = root(&mut parents, index);
+        if seen.insert(top) {
+            close(&groups[top as usize], count - 1, "never held", &mut islands);
+        }
+    }
+    let centre_x = input.pixel_map().plate_x().value() / 2.0;
+    let centre_y = input.pixel_map().plate_y().value() / 2.0;
+    let _ = (centre_x, centre_y);
+    for island in &mut islands {
+        let z = spans[island.first].sample_mm;
+        for path in paths {
+            for pair in path.windows(2) {
+                let (high, low) = (pair[0], pair[1]);
+                if z > high[2] + 0.1 || z < low[2] - 0.1 {
+                    continue;
+                }
+                let span = (high[2] - low[2]).max(1e-6);
+                let t = ((z - low[2]) / span).clamp(0.0, 1.0);
+                let x = low[0] + (high[0] - low[0]) * t;
+                let y = low[1] + (high[1] - low[1]) * t;
+                let (px, py) = input.pixel_map().mm_to_pixel(Point2D::new(x, y));
+                let dx = (px - f64::from(island.at[0])) * size_x;
+                let dy = (py - f64::from(island.at[1])) * size_y;
+                island.shaft_mm = island.shaft_mm.min(dx.hypot(dy));
+            }
+        }
+    }
+    for island in &mut islands {
+        let below = island.first.saturating_sub(1);
+        let z = spans[below].sample_mm;
+        let Some(start) = regions.layers()[island.first]
+            .solid
+            .iter()
+            .find(|r| r.inside_px == island.at)
+            .or_else(|| regions.layers()[island.first].solid.first())
+        else {
+            continue;
+        };
+        island.start_mm2 = start.area_px as f64 * pixel_mm2;
+        // Follows the start's pixels up until they end or meet something
+        // that did not grow out of them.
+        let at_label = regions.layers()[island.first]
+            .solid
+            .iter()
+            .position(|r| r.inside_px == island.at);
+        if let Some(label) = at_label {
+            let mut front: Vec<u32> = vec![label as u32];
+            let mut biggest = start.area_px;
+            let mut layer = island.first;
+            island.rise = loop {
+                if layer + 1 >= count {
+                    break format!("reaches the top, {} layers", layer - island.first + 1);
+                }
+                layer += 1;
+                let links: Vec<_> = regions.solid_links(layer).iter().collect();
+                let mut next: Vec<u32> = links
+                    .iter()
+                    .filter(|l| front.contains(&l.lower))
+                    .map(|l| l.upper)
+                    .collect();
+                next.sort_unstable();
+                next.dedup();
+                if next.is_empty() {
+                    break format!(
+                        "ends alone after {} layers, largest {:.4} mm2",
+                        layer - island.first,
+                        biggest as f64 * pixel_mm2
+                    );
+                }
+                // Another part under the same region: it has met the model.
+                let met = links
+                    .iter()
+                    .find(|l| next.contains(&l.upper) && !front.contains(&l.lower));
+                if let Some(met) = met {
+                    let shared: u64 = links
+                        .iter()
+                        .filter(|l| l.upper == met.upper && front.contains(&l.lower))
+                        .map(|l| l.pixels as u64)
+                        .sum();
+                    let upper = &regions.layers()[layer].solid[met.upper as usize];
+                    break format!(
+                        "joins after {} layers, by {} px, into {:.3} mm2, own largest {:.4} mm2",
+                        layer - island.first,
+                        shared,
+                        upper.area_px as f64 * pixel_mm2,
+                        biggest as f64 * pixel_mm2
+                    );
+                }
+                for &label in &next {
+                    biggest = biggest.max(regions.layers()[layer].solid[label as usize].area_px);
+                }
+                front = next;
+            };
+        } else {
+            island.rise = "start not found".to_owned();
+        }
+        let b = start.bbox;
+        for points in discs {
+            for pair in points.windows(2) {
+                let (high, low) = (pair[0], pair[1]);
+                // A tip goes on into the model past its contact point.
+                if z > high[2] + 0.25 || z < low[2] {
+                    continue;
+                }
+                let t = ((z - low[2]) / (high[2] - low[2]).max(1e-6)).clamp(0.0, 1.0);
+                let x = low[0] + (high[0] - low[0]) * t;
+                let y = low[1] + (high[1] - low[1]) * t;
+                let r = low[3] + (high[3] - low[3]) * t;
+                let (px, py) = input.pixel_map().mm_to_pixel(Point2D::new(x, y));
+                let dx = (f64::from(b.x0) - px).max(px - f64::from(b.x1)).max(0.0) * size_x;
+                let dy = (f64::from(b.y0) - py).max(py - f64::from(b.y1)).max(0.0) * size_y;
+                island.gap_mm = island.gap_mm.min(dx.hypot(dy) - r);
+            }
+        }
+    }
+    (islands, regions_time, started.elapsed(), placed)
+}
+
 /// The name of the filled cavities' leaf in the review.
 const FILLED_LEAF: &str = "Filled cavities";
 

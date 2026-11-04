@@ -1548,6 +1548,113 @@ impl DfSupportSession {
             .collect()
     }
 
+    /// Every shaft of the graph as points with a radius, x, y, z and r in
+    /// mm, from its top down (#427 measure). Tips count as `TIP_R`.
+    pub fn discs_for_measure(&self) -> Vec<Vec<[f64; 4]>> {
+        const TIP_R: f64 = 0.15;
+        let c = &self.state.collections;
+        let tip = |p: Vec3| [p.x, p.y, p.z, TIP_R];
+        let joints = |segments: &[support_gen_df::supports::types::Segment]| {
+            let mut out = Vec::new();
+            for s in segments {
+                for j in [s.top_joint.as_ref(), s.bottom_joint.as_ref()].into_iter().flatten() {
+                    out.push([j.pos.x, j.pos.y, j.pos.z, j.diameter.max(s.diameter) / 2.0]);
+                }
+            }
+            out
+        };
+        let widest = |points: &[[f64; 4]]| points.iter().map(|p| p[3]).fold(TIP_R, f64::max);
+        let sorted = |mut points: Vec<[f64; 4]>| {
+            points.sort_by(|a, b| b[2].total_cmp(&a[2]));
+            points
+        };
+        let mut out = Vec::new();
+        for t in c.trunks.values() {
+            let mut points = joints(&t.segments);
+            let r = widest(&points);
+            points.extend(t.contact_cone.as_ref().map(|k| tip(k.pos)));
+            if let Some(root) = c.roots.get(&t.root_id) {
+                let p = root.transform.pos;
+                points.push([p.x, p.y, p.z, r]);
+            }
+            out.push(sorted(points));
+        }
+        for b in c.branches.values() {
+            let mut points = joints(&b.segments);
+            let r = widest(&points);
+            points.extend(b.contact_cone.as_ref().map(|k| tip(k.pos)));
+            if let Some(k) = c.knots.get(&b.parent_knot_id) {
+                points.push([k.pos.x, k.pos.y, k.pos.z, r]);
+            }
+            out.push(sorted(points));
+        }
+        for l in c.leaves.values() {
+            let mut points = vec![tip(l.contact_cone.pos)];
+            if let Some(k) = c.knots.get(&l.parent_knot_id) {
+                points.push([k.pos.x, k.pos.y, k.pos.z, TIP_R]);
+            }
+            out.push(sorted(points));
+        }
+        for s in c.sticks.values() {
+            let mut points = joints(&s.segments);
+            points.push(tip(s.contact_cone_a.pos));
+            points.push(tip(s.contact_cone_b.pos));
+            out.push(sorted(points));
+        }
+        for t in c.twigs.values() {
+            let mut points = joints(&t.segments);
+            points.push(tip(t.contact_disk_a.pos));
+            points.push(tip(t.contact_disk_b.pos));
+            out.push(sorted(points));
+        }
+        out
+    }
+
+    /// The graph's size, and the supports `support_paths` leaves out: stumps,
+    /// which stand on the model, and sticks and twigs, which join two parts
+    /// of it (#427 measure). Each line runs from its top down.
+    pub fn other_parts_for_measure(&self) -> (String, Vec<(String, Vec<[f64; 3]>)>) {
+        let c = &self.state.collections;
+        let at = |p: Vec3| [p.x, p.y, p.z];
+        let counts = format!(
+            "roots {} trunks {} branches {} leaves {} twigs {} sticks {} braces {} stumps {} kickstands {} knots {}",
+            c.roots.len(),
+            c.trunks.len(),
+            c.branches.len(),
+            c.leaves.len(),
+            c.twigs.len(),
+            c.sticks.len(),
+            c.braces.len(),
+            c.stumps.len(),
+            c.kickstands.len(),
+            c.knots.len(),
+        );
+        let sorted = |mut points: Vec<[f64; 3]>| {
+            points.sort_by(|a, b| b[2].total_cmp(&a[2]));
+            points
+        };
+        let mut out = Vec::new();
+        for (id, s) in &c.stumps {
+            out.push((
+                format!("stump {id}"),
+                sorted(vec![at(s.contact_cone.pos), at(s.root_pos)]),
+            ));
+        }
+        for (id, s) in &c.sticks {
+            out.push((
+                format!("stick {id}"),
+                sorted(vec![at(s.contact_cone_a.pos), at(s.contact_cone_b.pos)]),
+            ));
+        }
+        for (id, t) in &c.twigs {
+            out.push((
+                format!("twig {id}"),
+                sorted(vec![at(t.contact_disk_a.pos), at(t.contact_disk_b.pos)]),
+            ));
+        }
+        (counts, out)
+    }
+
     /// Every support the person sees as one, with its id and the line it
     /// runs along (world mm), from its tip down: its joints, then the root it
     /// stands on or the knot it hangs from. What a box or a brush removes by

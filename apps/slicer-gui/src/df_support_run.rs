@@ -2304,6 +2304,29 @@ impl DfSupportRun {
 
     /// Every contact tip of the sets in force, in world millimetres (#427).
     #[cfg(test)]
+    pub(crate) fn paths_for_measure(&self) -> Vec<(String, Vec<[f64; 3]>)> {
+        self.sets_in_force()
+            .iter()
+            .flat_map(|drawn| drawn.session.support_paths())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn other_parts_for_measure(&self) -> Vec<(String, Vec<(String, Vec<[f64; 3]>)>)> {
+        self.sets_in_force()
+            .iter()
+            .map(|drawn| drawn.session.other_parts_for_measure())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn discs_for_measure(&self) -> Vec<Vec<[f64; 4]>> {
+        self.sets_in_force()
+            .iter()
+            .flat_map(|drawn| drawn.session.discs_for_measure())
+            .collect()
+    }
+
     pub(crate) fn tips_for_measure(&self) -> Vec<[f64; 3]> {
         self.sets_in_force()
             .iter()

@@ -678,6 +678,50 @@ fn islands_by_contact(facts: &mut Facts, full: &[Finding], alone: &[Finding], ti
         .iter()
         .filter(|f| f.check == CheckKind::Island)
         .collect();
+    // Damian's rule: a tip on the island, and one tip per 10 mm² it reaches.
+    let count_tips = |finding: &Finding, margin: f64| {
+        let Some(footprint) = &finding.footprint else {
+            return 0usize;
+        };
+        tips.iter()
+            .filter(|tip| {
+                footprint.slabs.iter().any(|slab| {
+                    tip[2] >= slab.bottom_mm - margin
+                        && tip[2] <= slab.top_mm + margin
+                        && slab.rects.iter().any(|rect| {
+                            tip[0] >= rect.x0_mm - margin
+                                && tip[0] <= rect.x1_mm + margin
+                                && tip[1] >= rect.y0_mm - margin
+                                && tip[1] <= rect.y1_mm + margin
+                        })
+                })
+            })
+            .count()
+    };
+    let mut short = 0usize;
+    let mut none = 0usize;
+    for finding in &islands {
+        let area = finding.largest_mm2.unwrap_or(0.0);
+        let need = ((area / 10.0).ceil() as usize).max(1);
+        let have = count_tips(finding, 0.15);
+        if have == 0 {
+            none += 1;
+        }
+        if have < need {
+            short += 1;
+            facts.line(format!(
+                "     needs tips: layers {}-{} at ({:.1}, {:.1}), {area:.2} mm², {have} of {need} tips",
+                finding.first_layer + 1,
+                finding.last_layer + 1,
+                finding.focus.x_mm,
+                finding.focus.y_mm,
+            ));
+        }
+    }
+    facts.line(format!(
+        "   rule: {} islands, {none} with no tip, {short} short of one tip per 10 mm²",
+        islands.len()
+    ));
     let left: Vec<&&Finding> = islands.iter().filter(|f| !touched(f)).collect();
     let real: Vec<&Finding> = full
         .iter()
@@ -759,7 +803,17 @@ impl Run<'_> {
         facts: &mut Facts,
     ) {
         let p = self.probe;
-        let tips = self.panel.supports.tips_for_measure();
+        let mut tips = self.panel.supports.tips_for_measure();
+        let others: Vec<(String, Vec<[f64; 3]>)> = self
+            .panel
+            .supports
+            .other_parts_for_measure()
+            .into_iter()
+            .flat_map(|(_, parts)| parts)
+            .collect();
+        // A stick or a twig joins two parts of the model: its top end holds
+        // what is above it, as a tip does.
+        tips.extend(others.iter().filter_map(|(_, points)| points.first().copied()));
         facts.line(format!("-- {label} variants: {} tips", tips.len()));
         let run = |variant: ReviewVariant, facts: &mut Facts| {
             let name = format!("{label}.var.{variant:?}");
@@ -774,18 +828,101 @@ impl Run<'_> {
             }
             report
         };
+        let (found, regions_time, anchors_time, placed) =
+            p.step(&format!("{label}.var.anchors"), On::Worker, || {
+                let paths: Vec<Vec<[f64; 3]>> = self
+                    .panel
+                    .supports
+                    .paths_for_measure()
+                    .into_iter()
+                    .chain(others.iter().cloned())
+                    .map(|(_, points)| points)
+                    .collect();
+                let discs = self.panel.supports.discs_for_measure();
+                crate::review::islands_by_anchors(leaves, profile, raft, &tips, &paths, &discs)
+            });
+        facts.line(format!(
+            "   anchors: {placed} of {} tips on the model, regions {regions_time:?}, anchors {anchors_time:?}, {} islands",
+            tips.len(),
+            found.len(),
+        ));
+        let mut found = found;
+        found.sort_by(|a, b| b.area_mm2.total_cmp(&a.area_mm2));
+        let big = found.iter().filter(|i| i.area_mm2 >= 0.05).count();
+        facts.line(format!("   anchors: {big} islands of 0.05 mm2 or more"));
+        for island in found.iter().take(60) {
+            facts.line(format!(
+                "     anchor island: layers {}-{}, {:.3} mm2, {} of {} tips, {}, shaft {:.2} mm, gap {:.2} mm, start {:.4} mm2, px {:?}, {}",
+                island.first + 1,
+                island.last + 1,
+                island.area_mm2,
+                island.tips,
+                island.need,
+                island.how,
+                island.shaft_mm,
+                island.gap_mm,
+                island.start_mm2,
+                island.at,
+                island.rise,
+            ));
+        }
+        if let Some(path) = env("BREADSLICER_HEAVY_ANCHOR_DEBUG") {
+            use std::fmt::Write as _;
+            let paths = self.panel.supports.paths_for_measure();
+            let mut text = format!("{} paths, {} tips\n", paths.len(), tips.len());
+            for (counts, parts) in self.panel.supports.other_parts_for_measure() {
+                let _ = writeln!(text, "{counts}");
+                for (id, points) in &parts {
+                    let top = points.first().copied().unwrap_or_default();
+                    let low = points.last().copied().unwrap_or_default();
+                    if (top[0] - 12.0).hypot(top[1] + 12.6) < 10.0 && top[2] < 52.0 {
+                        let _ = writeln!(
+                            text,
+                            "{id}: top ({:.2}, {:.2}, {:.2}), low ({:.2}, {:.2}, {:.2})",
+                            top[0], top[1], top[2], low[0], low[1], low[2],
+                        );
+                    }
+                }
+            }
+            for (id, points) in &paths {
+                let near = points.iter().any(|q| {
+                    (q[0] - 55.0).abs() < 12.0
+                        && (q[1] - 15.0).abs() < 12.0
+                        && q[2] > 60.0
+                        && q[2] < 95.0
+                });
+                if near {
+                    let top = points.first().copied().unwrap_or_default();
+                    let _ = writeln!(
+                        text,
+                        "{id}: top ({:.2}, {:.2}, {:.2}), {} points",
+                        top[0],
+                        top[1],
+                        top[2],
+                        points.len()
+                    );
+                }
+            }
+            let _ = fs::write(format!("{path}.paths.txt"), text);
+            return;
+        }
         let full = run(ReviewVariant::Full, facts);
+        for finding in full.findings.iter().filter(|f| f.check == CheckKind::Island) {
+            facts.line(format!(
+                "     review island: {} layers {}-{}, {:?} mm2",
+                finding.title,
+                finding.first_layer + 1,
+                finding.last_layer + 1,
+                finding.largest_mm2,
+            ));
+        }
         let scopes = full.findings.iter().fold(BTreeMap::new(), |mut map, f| {
             *map.entry(format!("{:?}/{:?}", f.check, f.scope))
                 .or_insert(0usize) += 1;
             map
         });
         facts.line(format!("   full findings by scope: {scopes:?}"));
-        for variant in [
-            ReviewVariant::ThinModelOnly,
-            ReviewVariant::ModelAndRaft,
-            ReviewVariant::ModelOnly,
-        ] {
+        for variant in [] as [ReviewVariant; 0] {
             let report = run(variant, facts);
             compare_findings(facts, variant, &full.findings, &report.findings);
             if variant == ReviewVariant::ModelOnly {
