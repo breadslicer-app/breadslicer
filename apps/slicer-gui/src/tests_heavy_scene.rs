@@ -17,9 +17,20 @@
 //!   cargo test -p sc-slicer-gui --release --lib heavy_scene_timing -- --ignored --nocapture
 //! ```
 //!
+//! `BREADSLICER_HEAVY_PRESET` also takes `figures70`.
+//! `BREADSLICER_HEAVY_PRINTER` slices for another printer than the project's.
+//! `BREADSLICER_HEAVY_MEM_GB` and `BREADSLICER_HEAVY_SECONDS` end the run,
+//! writing where it stood, once the process holds that much memory, the
+//! machine has under 1.5 GB free, or that much time went by: a scene too big
+//! must not take the machine down with it.
+//!
 //! `heavy_scene_decimate` writes a copy of the project with its models
 //! decimated to `BREADSLICER_HEAVY_RATIO` of their triangles, to
 //! `BREADSLICER_HEAVY_OUT`, to tell the cost of the mesh from the rest.
+//! `BREADSLICER_HEAVY_DROP_SUPPORTS=1` leaves its supports out, and
+//! `BREADSLICER_HEAVY_SCALE` scales the model about the plate's centre,
+//! keeping its lift: the same triangles on a bigger model, to see how each
+//! step grows with the size.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -69,9 +80,24 @@ mod process {
         private: usize,
     }
 
+    #[repr(C)]
+    #[derive(Default)]
+    struct MemoryStatus {
+        length: u32,
+        load: u32,
+        total_physical: u64,
+        available_physical: u64,
+        total_page_file: u64,
+        available_page_file: u64,
+        total_virtual: u64,
+        available_virtual: u64,
+        available_extended_virtual: u64,
+    }
+
     unsafe extern "system" {
         fn GetCurrentProcess() -> isize;
         fn K32GetProcessMemoryInfo(process: isize, counters: *mut Counters, cb: u32) -> i32;
+        fn GlobalMemoryStatusEx(status: *mut MemoryStatus) -> i32;
         fn GetProcessTimes(
             process: isize,
             creation: *mut u64,
@@ -92,6 +118,19 @@ mod process {
             K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb);
         }
         (counters.private as u64, counters.working_set as u64)
+    }
+
+    /// The physical memory the machine has free.
+    pub(super) fn available_physical() -> u64 {
+        let mut status = MemoryStatus {
+            length: size_of::<MemoryStatus>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: the pointer is to a live struct with its length set.
+        unsafe {
+            GlobalMemoryStatusEx(&mut status);
+        }
+        status.available_physical
     }
 
     /// The CPU time the process used so far, all its threads, in seconds.
@@ -128,6 +167,8 @@ struct Probe {
     peak_working: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
     profiler: RefCell<Option<profiler::Profiler>>,
+    /// The step running, for the line a limit leaves.
+    current: Arc<std::sync::Mutex<String>>,
 }
 
 impl Probe {
@@ -135,14 +176,45 @@ impl Probe {
         let peak_private = Arc::new(AtomicU64::new(0));
         let peak_working = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
+        let current = Arc::new(std::sync::Mutex::new("start".to_owned()));
         {
             let (peak_private, peak_working, stop) =
                 (peak_private.clone(), peak_working.clone(), stop.clone());
+            let current = current.clone();
+            let limit_file = file.with_extension("limit.txt");
+            let memory_limit = env("BREADSLICER_HEAVY_MEM_GB")
+                .map(|gb| (gb.parse::<f64>().expect("gigabytes") * 1073741824.0) as u64);
+            let time_limit = env("BREADSLICER_HEAVY_SECONDS")
+                .map(|s| Duration::from_secs(s.parse().expect("seconds")));
+            let started = Instant::now();
             std::thread::spawn(move || {
+                let mut tick = 0u32;
                 while !stop.load(Ordering::Relaxed) {
                     let (private, working) = process::memory();
                     peak_private.fetch_max(private, Ordering::Relaxed);
                     peak_working.fetch_max(working, Ordering::Relaxed);
+                    tick += 1;
+                    let free = if tick % 20 == 0 {
+                        process::available_physical()
+                    } else {
+                        u64::MAX
+                    };
+                    let over = memory_limit.is_some_and(|limit| private > limit)
+                        || (memory_limit.is_some() && free < 1_500_000_000);
+                    let late = time_limit.is_some_and(|limit| started.elapsed() > limit);
+                    if over || late {
+                        let why = if over { "memory" } else { "time" };
+                        let line = format!(
+                            "limit: {why}, in step {}, after {:.0} s, private {:.1} GB, working set {:.1} GB\n",
+                            current.lock().expect("no panic holds it"),
+                            started.elapsed().as_secs_f64(),
+                            private as f64 / 1073741824.0,
+                            working as f64 / 1073741824.0,
+                        );
+                        eprint!("{line}");
+                        fs::write(&limit_file, line).expect("the limit is written");
+                        std::process::exit(86);
+                    }
                     std::thread::sleep(Duration::from_millis(5));
                 }
             });
@@ -157,6 +229,7 @@ impl Probe {
             peak_working,
             stop,
             profiler: RefCell::new(None),
+            current,
         }
     }
 
@@ -181,6 +254,7 @@ impl Probe {
         self.peak_private.store(private, Ordering::Relaxed);
         self.peak_working.store(working, Ordering::Relaxed);
         let cpu = process::cpu_seconds();
+        name.clone_into(&mut self.current.lock().expect("no panic holds it"));
         if let Some(profiler) = &*self.profiler.borrow() {
             profiler.enter(name);
         }
@@ -225,14 +299,14 @@ impl Drop for Probe {
 }
 
 /// What the report says about the run besides the steps.
-#[derive(Default)]
-struct Facts(String);
+struct Facts(String, PathBuf);
 
 impl Facts {
     fn line(&mut self, text: impl AsRef<str>) {
         eprintln!("{}", text.as_ref());
         self.0.push_str(text.as_ref());
         self.0.push('\n');
+        fs::write(&self.1, self.0.as_bytes()).expect("the facts are written");
     }
 }
 
@@ -403,6 +477,22 @@ fn describe_findings(panel: &ReviewPanel, facts: &mut Facts, heading: &str) {
     ));
     for (kind, count) in kinds {
         facts.line(format!("   {count:>6}  {kind}"));
+    }
+    // What each fill would cure.
+    for finding in findings {
+        if let Some(SuggestedFix::Fill { cavity, .. }) = &finding.fix {
+            let fill = &fills[*cavity];
+            let rects: usize = fill.slabs.iter().map(|s| s.rects.len() + s.rim.len()).sum();
+            facts.line(format!(
+                "   fill: {} {} layers {}-{}, {:.1} mm3, {} slabs, {rects} rectangles",
+                finding.severity.as_str(),
+                finding.title,
+                finding.first_layer + 1,
+                finding.last_layer + 1,
+                fill.volume_mm3(),
+                fill.slabs.len(),
+            ));
+        }
     }
 }
 
@@ -643,6 +733,10 @@ fn preset(name: &str) -> Option<DfSupportOptions> {
             zones: Some(sc_geom::df_supports::zone_presets::minis_30()),
             ..Default::default()
         }),
+        "figures70" => Some(DfSupportOptions {
+            zones: Some(sc_geom::df_supports::zone_presets::figures_70()),
+            ..Default::default()
+        }),
         other => panic!("no preset {other}"),
     }
 }
@@ -663,7 +757,7 @@ fn heavy_scene_timing() {
     let probe = Probe::new(dir.join(format!("{tag}.steps.tsv")));
     let facts_file = dir.join(format!("{tag}.facts.txt"));
     on_fresh_slint_thread(move || {
-        let mut facts = Facts::default();
+        let mut facts = Facts(String::new(), facts_file.clone());
         let p = &probe;
         if let Some(period) = env("BREADSLICER_HEAVY_PROFILE") {
             let period = period.parse().expect("milliseconds");
@@ -701,6 +795,9 @@ fn heavy_scene_timing() {
         });
         describe_scene(&document, &mut facts, "as opened");
 
+        if let Some(id) = env("BREADSLICER_HEAVY_PRINTER") {
+            document.set_selected_printer(Some(PrinterId::new(&id).expect("a valid id")));
+        }
         let defaults = PrintDefaults::default();
         let selection = document.print_selection().in_force(&defaults);
         let printer = selection.printer().in_force().cloned().expect("a printer");
@@ -925,6 +1022,36 @@ fn simplify_mesh(mesh: &IndexedMesh, ratio: f64) -> IndexedMesh {
     IndexedMesh::new(mesh.meta().clone(), vertices, faces)
 }
 
+/// A scene of the first model of `scene` alone, as it stands in the world,
+/// scaled by `factor` about the plate's centre, its lift kept.
+fn scaled_scene(scene: &sc_scene::Scene, factor: f32) -> sc_scene::Scene {
+    let leaf = scene.first_leaf_id().expect("a model");
+    let baked = sc_scene::bake::bake_leaf_to_world(scene, leaf).expect("it bakes");
+    let bottom = baked
+        .vertices()
+        .iter()
+        .map(|v| v.as_array()[2])
+        .fold(f32::INFINITY, f32::min);
+    let vertices: Vec<sc_mesh_core::Vertex> = baked
+        .vertices()
+        .iter()
+        .map(|v| {
+            let [x, y, z] = *v.as_array();
+            sc_mesh_core::Vertex::new([x * factor, y * factor, bottom + (z - bottom) * factor])
+        })
+        .collect();
+    let mesh = IndexedMesh::new(baked.meta().clone(), vertices, baked.faces().to_vec());
+    let mut scaled = sc_scene::Scene::new();
+    scaled
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            sc_scene::LeafPayload::Mesh(Arc::new(mesh)),
+        )
+        .expect("the leaf goes in");
+    scaled
+}
+
 fn decimate_project(path: &Path, ratio: f64, out: &Path) {
     let loaded = sc_project_formats::load_scene(path, None, |_| {}).expect("it opens");
     let sc_project_formats::LoadedContent::Project(project) = loaded.content else {
@@ -961,6 +1088,10 @@ fn decimate_project(path: &Path, ratio: f64, out: &Path) {
             &after[..after.len().min(6)]
         );
         *scene.target_mesh_mut(target).expect("a mesh") = simplified;
+    }
+    if let Some(factor) = env("BREADSLICER_HEAVY_SCALE") {
+        let factor: f32 = factor.parse().expect("a factor");
+        scene = scaled_scene(&scene, factor);
     }
     let mut bytes = Vec::new();
     sc_project_formats::write_bread_project_with_progress(
