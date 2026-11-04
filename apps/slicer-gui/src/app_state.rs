@@ -3912,4 +3912,451 @@ mod window_wiring_tests {
         assert!(kept, "what stood on the plate keeps its exact place");
         assert!(restored, "one Undo restores the scene");
     }
+
+    /// A window with every viewport callback wired, showing supported cubes
+    /// that are selected: what G and R from an aligned view are tried on
+    /// (#424).
+    struct SupportedCubes {
+        _app: Rc<AppState>,
+        window: MainWindow,
+        controller: Rc<ViewportController>,
+        run: Rc<DfSupportRun>,
+        leaves: Vec<sc_scene::NodeId>,
+    }
+
+    /// Where the tests hold the cursor: well inside the viewport.
+    const VIEW_MIDDLE: (f32, f32) = (640.0, 400.0);
+
+    /// One of the 6 aligned views, and the ways to reach it.
+    #[derive(Clone, Copy, Debug)]
+    struct AlignedView {
+        name: &'static str,
+        /// The digit, and whether it goes with Ctrl.
+        shortcut: (&'static str, bool),
+        /// Its place on the view wheel, from the wheel's middle.
+        wheel: (f32, f32),
+        /// The world axis it looks along.
+        depth: usize,
+    }
+
+    const ALIGNED_VIEWS: [AlignedView; 6] = [
+        AlignedView {
+            name: "Top",
+            shortcut: ("7", false),
+            wheel: (0.0, -112.0),
+            depth: 2,
+        },
+        AlignedView {
+            name: "Bottom",
+            shortcut: ("7", true),
+            wheel: (0.0, 112.0),
+            depth: 2,
+        },
+        AlignedView {
+            name: "Front",
+            shortcut: ("1", false),
+            wheel: (-100.0, -77.0),
+            depth: 1,
+        },
+        AlignedView {
+            name: "Back",
+            shortcut: ("1", true),
+            wheel: (100.0, -77.0),
+            depth: 1,
+        },
+        AlignedView {
+            name: "Right",
+            shortcut: ("3", false),
+            wheel: (120.0, 0.0),
+            depth: 0,
+        },
+        AlignedView {
+            name: "Left",
+            shortcut: ("3", true),
+            wheel: (-120.0, 0.0),
+            depth: 0,
+        },
+    ];
+
+    /// How a test reaches a view.
+    #[derive(Clone, Copy, Debug)]
+    enum ViewEntry {
+        Shortcut,
+        /// Holding the view key and swiping.
+        WheelSwipe,
+        /// Tapping the view key and clicking.
+        WheelClick,
+    }
+
+    const VIEW_ENTRIES: [ViewEntry; 3] = [
+        ViewEntry::Shortcut,
+        ViewEntry::WheelSwipe,
+        ViewEntry::WheelClick,
+    ];
+
+    impl SupportedCubes {
+        fn new(cubes: &[[f64; 3]], orthographic: bool) -> Self {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            crate::wiring::wire_viewport_input(&window, controller.clone(), app.prefs.clone());
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(1280.0, 800.0));
+            window.show().expect("the headless platform shows it");
+            crate::test_support::slint_thread::render_frames();
+
+            let mut graph = sc_scene::Scene::new();
+            let mut leaves = Vec::new();
+            for &at in cubes {
+                let leaf = graph
+                    .add_leaf(
+                        None,
+                        Transform3D::Affine(
+                            sc_mesh_core::transform::AffineTransform3D::from_translation(at),
+                        ),
+                        sc_scene::LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+                    )
+                    .expect("an inline-mesh leaf");
+                graph.add_root(leaf).expect("a fresh root");
+                leaves.push(leaf);
+            }
+            let document = controller.document();
+            document.install_graph(graph.clone(), PathBuf::from("cubes.stl"));
+            let run = app.main_windows.borrow()[&id]
+                ._drivers
+                ._df_support_run
+                .clone();
+            run.make_supports_for_test(&graph);
+            controller.set_section(WorkspaceSection::Transform);
+            controller.set_viewport_for_test(800.0, 600.0);
+            controller.frame_camera_for_test();
+            let shown = Self {
+                _app: app,
+                window,
+                controller,
+                run,
+                leaves,
+            };
+            // The report of the supports stands over the viewport.
+            let enter: slint::SharedString = slint::platform::Key::Return.into();
+            shown.key(&enter);
+            assert!(!shown.window.get_message_open(), "the report closed");
+            // A click gives the viewport the keyboard. It may also change the
+            // selection, so that comes after it.
+            shown.click(VIEW_MIDDLE);
+            shown.select_all();
+            if orthographic {
+                shown.key("5");
+                assert!(shown.window.get_orthographic_view());
+            }
+            shown
+        }
+
+        fn select_all(&self) {
+            self.controller
+                .document()
+                .set_selection(Selection::of(self.leaves.iter().map(|&l| LeafId(l))));
+        }
+
+        fn event(&self, event: WindowEvent) {
+            self.window.window().dispatch_event(event);
+            crate::test_support::slint_thread::render_frames();
+        }
+
+        fn cursor_to(&self, (x, y): (f32, f32)) {
+            self.event(WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(x, y),
+            });
+        }
+
+        fn click(&self, at: (f32, f32)) {
+            self.cursor_to(at);
+            let position = slint::LogicalPosition::new(at.0, at.1);
+            let button = slint::platform::PointerEventButton::Left;
+            self.event(WindowEvent::PointerPressed { position, button });
+            self.event(WindowEvent::PointerReleased { position, button });
+        }
+
+        fn key_down(&self, text: &str) {
+            self.event(WindowEvent::KeyPressed { text: text.into() });
+        }
+
+        fn key_up(&self, text: &str) {
+            self.event(WindowEvent::KeyReleased { text: text.into() });
+        }
+
+        fn key(&self, text: &str) {
+            self.key_down(text);
+            self.key_up(text);
+        }
+
+        /// Goes to `view` the way `entry` says, starting from a free view so
+        /// that the entry is what puts the camera there.
+        fn enter(&self, view: AlignedView, entry: ViewEntry) {
+            let mut camera = self.controller.camera_for_test().expect("a camera");
+            camera.yaw = -0.7;
+            camera.pitch = 0.6;
+            self.controller.set_camera_for_test(camera);
+            self.cursor_to(VIEW_MIDDLE);
+            let aim = (VIEW_MIDDLE.0 + view.wheel.0, VIEW_MIDDLE.1 + view.wheel.1);
+            match entry {
+                ViewEntry::Shortcut => {
+                    let ctrl: slint::SharedString = slint::platform::Key::Control.into();
+                    let (digit, with_ctrl) = view.shortcut;
+                    if with_ctrl {
+                        self.key_down(&ctrl);
+                    }
+                    self.key(digit);
+                    if with_ctrl {
+                        self.key_up(&ctrl);
+                    }
+                }
+                ViewEntry::WheelSwipe => {
+                    self.key_down("º");
+                    self.cursor_to(aim);
+                    self.key_up("º");
+                }
+                ViewEntry::WheelClick => {
+                    self.key("º");
+                    self.click(aim);
+                }
+            }
+            let camera = self.controller.camera_for_test().expect("a camera");
+            assert!(
+                camera.pitch.abs() < 1e-6 || camera.pitch.abs() > 1.5,
+                "{view:?} by {entry:?}: the camera went there"
+            );
+            self.select_all();
+        }
+
+        /// The world transform of every cube.
+        fn worlds(&self) -> Vec<Transform3D> {
+            let document = self.controller.document();
+            self.leaves
+                .iter()
+                .map(|&leaf| {
+                    document
+                        .with_scene(|s| s.leaf(leaf).map(|q| q.world_transform()))
+                        .flatten()
+                        .expect("the cube")
+                })
+                .collect()
+        }
+
+        /// The world position of every cube.
+        fn places(&self) -> Vec<[f64; 3]> {
+            self.worlds()
+                .into_iter()
+                .map(|world| match world {
+                    Transform3D::Affine(a) => *a.translation(),
+                    Transform3D::Identity => [0.0; 3],
+                })
+                .collect()
+        }
+
+        /// The rotation values of every cube, as the inspector shows them.
+        fn rotations(&self) -> Vec<[f64; 3]> {
+            self.worlds()
+                .into_iter()
+                .map(|w| crate::viewport::numeric_transform::cheap_readout(w).rotation_deg)
+                .collect()
+        }
+
+        /// The key of a gesture, the cursor `drag` pixels away, Enter.
+        fn gesture(&self, key: &str, drag: (f32, f32)) {
+            self.cursor_to(VIEW_MIDDLE);
+            self.key(key);
+            assert!(self.window.get_modal_transform_active(), "{key} took");
+            self.cursor_to((VIEW_MIDDLE.0 + drag.0, VIEW_MIDDLE.1 + drag.1));
+            let enter: slint::SharedString = slint::platform::Key::Return.into();
+            self.key(&enter);
+            assert!(!self.window.get_modal_transform_active(), "Enter confirmed");
+        }
+
+        fn undo(&self) {
+            assert!(self.controller.document().undo().expect("undo"));
+            self.select_all();
+        }
+
+        /// Asserts that every set stayed through a move of `moved` in the
+        /// plate plane: the same tips, gone as far, at the same height.
+        fn assert_sets_followed(&self, tips: &[Vec<(String, [f64; 3])>], moved: [f64; 3]) {
+            assert!(
+                self.controller.document().supports_wanted().is_none(),
+                "nothing to make again"
+            );
+            let now = self.run.tips_for_test();
+            assert_eq!(now.len(), tips.len(), "the same sets");
+            for (set, old) in now.iter().zip(tips) {
+                assert_eq!(set.len(), old.len(), "the same tips");
+                for ((id, at), (old_id, was)) in set.iter().zip(old) {
+                    assert_eq!(id, old_id, "the same tips");
+                    assert!((at[0] - was[0] - moved[0]).abs() < 1e-6, "{at:?} {was:?}");
+                    assert!((at[1] - was[1] - moved[1]).abs() < 1e-6, "{at:?} {was:?}");
+                    assert_eq!(at[2].to_bits(), was[2].to_bits(), "{at:?} {was:?}");
+                }
+            }
+        }
+
+        /// Where `point` is on screen.
+        fn on_screen(&self, point: [f64; 3]) -> (f32, f32) {
+            let camera = self.controller.camera_for_test().expect("a camera");
+            let (w, h) = self.controller.viewport_for_test().expect("a viewport");
+            crate::picking::project_world_to_screen(
+                &camera,
+                crate::mesh_render::default_fov_y(),
+                w,
+                h,
+                glam::Vec3::from_array(point.map(|c| c as f32)),
+            )
+            .expect("in front of the camera")
+        }
+    }
+
+    /// The drags tried from each view, in pixels: both ways along each screen
+    /// axis, a slant both ways, and a long one like the one reported.
+    const DRAGS: [(f32, f32); 7] = [
+        (0.0, -150.0),
+        (0.0, 150.0),
+        (150.0, 0.0),
+        (-150.0, 0.0),
+        (37.0, -91.0),
+        (-37.0, 91.0),
+        (5.0, -290.0),
+    ];
+
+    /// Asserts that G from the view on show changes nothing along its depth
+    /// axis, bit for bit, while the cubes do move. From above or below the
+    /// sets must follow as well, and the cube must stay under the cursor.
+    fn assert_g_keeps_depth(shown: &SupportedCubes, view: AlignedView, how: &str) {
+        let depth = view.depth;
+        for drag in DRAGS {
+            let tips = shown.run.tips_for_test();
+            let before = shown.places();
+            let screen_before = shown.on_screen(before[0]);
+            shown.gesture("g", drag);
+            let after = shown.places();
+            for (b, a) in before.iter().zip(&after) {
+                assert_eq!(
+                    a[depth].to_bits(),
+                    b[depth].to_bits(),
+                    "{how}, drag {drag:?}: {b:?} went to {a:?}"
+                );
+                let moved: f64 = (0..3).map(|k| (a[k] - b[k]).powi(2)).sum();
+                assert!(moved > 1e-6, "{how}, drag {drag:?}: it moved");
+            }
+            if depth == 2 {
+                let moved = [0, 1, 2].map(|k| after[0][k] - before[0][k]);
+                shown.assert_sets_followed(&tips, moved);
+                let screen_after = shown.on_screen(after[0]);
+                let went = (
+                    screen_after.0 - screen_before.0,
+                    screen_after.1 - screen_before.1,
+                );
+                // A fifth of a pixel: the Top preset stands a thousandth off
+                // vertical, so in perspective a long drag ends a hair nearer.
+                assert!(
+                    (went.0 - drag.0).abs() < 0.2 && (went.1 - drag.1).abs() < 0.2,
+                    "{how}: a drag of {drag:?} took the cube {went:?} on screen"
+                );
+            }
+            shown.undo();
+            assert_eq!(shown.places(), before, "{how}: one Undo takes it back");
+        }
+    }
+
+    /// #424: `G` with no axis from each aligned view, reached by the shortcut
+    /// and by the view wheel, in both projections: the depth axis stays bit
+    /// for bit, and from above or below the supports follow without being
+    /// made again (#119, #153). All through the window, from the key presses.
+    #[test]
+    fn g_from_an_aligned_view_never_touches_the_depth_axis() {
+        on_fresh_slint_thread(|| {
+            for orthographic in [false, true] {
+                for view in ALIGNED_VIEWS {
+                    for entry in VIEW_ENTRIES {
+                        let shown = SupportedCubes::new(&[[20.0, 20.0, 8.3]], orthographic);
+                        shown.enter(view, entry);
+                        let how = format!("{view:?} by {entry:?}, ortho {orthographic}");
+                        assert_g_keeps_depth(&shown, view, &how);
+                    }
+                }
+            }
+        });
+    }
+
+    /// #424: several objects selected move as one keeps its depth, too.
+    #[test]
+    fn g_with_several_selected_from_an_aligned_view_keeps_the_depth_axis() {
+        on_fresh_slint_thread(|| {
+            for view in ALIGNED_VIEWS {
+                let shown = SupportedCubes::new(&[[20.0, 20.0, 8.3], [50.0, 20.7, 8.3]], false);
+                shown.enter(view, ViewEntry::Shortcut);
+                assert_g_keeps_depth(&shown, view, view.name);
+            }
+        });
+    }
+
+    /// #424, #351: `R` with no axis from each aligned view turns about the
+    /// world axis at the camera alone: only that rotation value changes, the
+    /// other two stay bit for bit, through a second turn as well.
+    #[test]
+    fn r_from_an_aligned_view_turns_about_the_axis_at_the_camera_alone() {
+        on_fresh_slint_thread(|| {
+            for orthographic in [false, true] {
+                for view in ALIGNED_VIEWS {
+                    for entry in VIEW_ENTRIES {
+                        let how = format!("{view:?} by {entry:?}, ortho {orthographic}");
+                        let shown = SupportedCubes::new(&[[20.0, 20.0, 8.3]], orthographic);
+                        shown.enter(view, entry);
+                        let start = shown.rotations();
+                        for drag in [(60.0, 40.0), (-30.0, 50.0)] {
+                            let before = shown.rotations();
+                            shown.gesture("r", drag);
+                            let after = shown.rotations();
+                            assert!(
+                                (after[0][view.depth] - before[0][view.depth]).abs() > 0.1,
+                                "{how}: it turned: {after:?}"
+                            );
+                            for k in (0..3).filter(|&k| k != view.depth) {
+                                assert_eq!(
+                                    after[0][k].to_bits(),
+                                    before[0][k].to_bits(),
+                                    "{how}, drag {drag:?}: {before:?} went to {after:?}"
+                                );
+                            }
+                        }
+                        shown.undo();
+                        shown.undo();
+                        assert_eq!(shown.rotations(), start, "{how}");
+                    }
+                }
+            }
+        });
+    }
+
+    /// #424: a free view keeps today's G, in the plane of the camera, and
+    /// today's R, about the line of sight.
+    #[test]
+    fn g_and_r_from_a_free_view_follow_the_camera_plane() {
+        on_fresh_slint_thread(|| {
+            let shown = SupportedCubes::new(&[[20.0, 20.0, 8.3]], false);
+            let mut camera = shown.controller.camera_for_test().expect("a camera");
+            camera.yaw = -0.7;
+            camera.pitch = 0.6;
+            shown.controller.set_camera_for_test(camera);
+            let before = shown.places();
+            shown.gesture("g", (0.0, -150.0));
+            let after = shown.places();
+            for k in 0..3 {
+                assert!((after[0][k] - before[0][k]).abs() > 0.01, "{after:?}");
+            }
+            shown.undo();
+            shown.gesture("r", (60.0, 40.0));
+            let turned = shown.rotations();
+            assert!(turned[0].iter().all(|v| v.abs() > 0.01), "{turned:?}");
+        });
+    }
 }

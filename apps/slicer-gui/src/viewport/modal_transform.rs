@@ -126,16 +126,19 @@ impl ModalGesture {
         }
     }
 
+    /// `local` moved `delta` in the world. The shift is added in the parent's
+    /// frame: going through the parent and back would round what `delta`
+    /// leaves alone, and a height that changes at all costs the supports
+    /// (#424, #153).
     pub(super) fn world_translation(&self, local: Transform3D, delta: Vec3) -> Option<Transform3D> {
-        let shift = Transform3D::Affine(AffineTransform3D::from_translation(
-            delta.to_array().map(f64::from),
-        ));
-        Some(
-            self.parent
-                .inverse()
-                .ok()?
-                .compose(&shift.compose(&self.parent.compose(&local))),
-        )
+        let delta = delta.to_array().map(f64::from);
+        let shift = match self.parent.inverse().ok()? {
+            Transform3D::Identity => delta,
+            Transform3D::Affine(inverse) => inverse
+                .linear()
+                .map(|row| row[0] * delta[0] + row[1] * delta[1] + row[2] * delta[2]),
+        };
+        Some(Transform3D::Affine(AffineTransform3D::from_translation(shift)).compose(&local))
     }
     fn about_pivot(&self, delta: AffineTransform3D) -> Option<Transform3D> {
         let to = Transform3D::Affine(AffineTransform3D::from_translation(
@@ -239,13 +242,28 @@ impl ModalGesture {
 /// supports of a turn about Z follow it (#351, #153). Any other view is
 /// returned as it is.
 pub(super) fn snap_view_axis(view: Vec3) -> Vec3 {
-    for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+    aligned_world_axis(view).unwrap_or(view)
+}
+
+/// The camera's `right` and `up`, laid onto the plane of the world axis the
+/// view is aligned with, so that a G without an axis keeps that axis exactly:
+/// the Top preset's `up` leans a thousandth into Z, which a long drag turned
+/// into a lift and new supports (#424, #153). The view's own turn in that
+/// plane stays. Any other view gets them back as they are.
+pub(super) fn snap_view_plane(right: Vec3, up: Vec3, view: Vec3) -> (Vec3, Vec3) {
+    let Some(axis) = aligned_world_axis(view) else {
+        return (right, up);
+    };
+    let flat = |v: Vec3| (v - axis * v.dot(axis)).normalize();
+    (flat(right), flat(up))
+}
+
+/// The signed world axis `view` is within `VIEW_AXIS_SNAP_COS` of, if any.
+fn aligned_world_axis(view: Vec3) -> Option<Vec3> {
+    [Vec3::X, Vec3::Y, Vec3::Z].into_iter().find_map(|axis| {
         let along = view.dot(axis);
-        if along.abs() >= VIEW_AXIS_SNAP_COS {
-            return axis * along.signum();
-        }
-    }
-    view
+        (along.abs() >= VIEW_AXIS_SNAP_COS).then(|| axis * along.signum())
+    })
 }
 
 /// `cos(0.5°)`: a view within half a degree of a world axis is that axis.
@@ -461,6 +479,73 @@ mod tests {
         let a = 1f32.to_radians();
         let off = Vec3::new(0.0, a.sin(), a.cos());
         assert_eq!(snap_view_axis(off), off);
+    }
+
+    /// The right, up and toward-the-eye vectors of `camera`, as a gesture
+    /// reads them.
+    fn basis(camera: &crate::camera::OrbitCamera) -> (Vec3, Vec3, Vec3) {
+        let inverse = camera.view_matrix().inverse();
+        (
+            inverse.transform_vector3(Vec3::X).normalize(),
+            inverse.transform_vector3(Vec3::Y).normalize(),
+            inverse.transform_vector3(Vec3::Z).normalize(),
+        )
+    }
+
+    #[test]
+    fn each_aligned_view_lays_its_plane_exactly_on_the_world_axes() {
+        use crate::camera::{AxisView, OrbitCamera};
+        for (view, depth, toward) in [
+            (AxisView::Top, 2, 1.0),
+            (AxisView::Bottom, 2, -1.0),
+            (AxisView::Front, 1, -1.0),
+            (AxisView::Back, 1, 1.0),
+            (AxisView::Right, 0, 1.0),
+            (AxisView::Left, 0, -1.0),
+        ] {
+            let mut camera = OrbitCamera::new(Vec3::new(61.3, -17.9, 40.7), 233.0);
+            camera.set_axis_view(view);
+            let (right, up, eye) = basis(&camera);
+            assert_eq!(
+                snap_view_axis(eye),
+                axis_vector(depth) * toward,
+                "R turns about the axis at the camera: {view:?}"
+            );
+            let (right, up) = snap_view_plane(right, up, eye);
+            assert_eq!(right[depth], 0.0, "{view:?}");
+            assert_eq!(up[depth], 0.0, "{view:?}");
+            assert!((right.length() - 1.0).abs() < 1e-6, "{view:?}");
+            assert!((up.length() - 1.0).abs() < 1e-6, "{view:?}");
+            assert!(right.dot(up).abs() < 1e-6, "{view:?}");
+        }
+    }
+
+    #[test]
+    fn a_free_view_keeps_the_camera_plane_as_it_is() {
+        let mut camera = crate::camera::OrbitCamera::new(Vec3::ZERO, 100.0);
+        camera.yaw = -0.7;
+        camera.pitch = 0.6;
+        let (right, up, eye) = basis(&camera);
+        assert_eq!(snap_view_plane(right, up, eye), (right, up));
+        // One degree off a preset is free as well.
+        camera.set_axis_view(crate::camera::AxisView::Front);
+        camera.pitch = 1f32.to_radians();
+        let (right, up, eye) = basis(&camera);
+        assert_eq!(snap_view_plane(right, up, eye), (right, up));
+    }
+
+    #[test]
+    fn a_move_keeps_what_it_leaves_alone_under_a_moved_parent_bit_for_bit() {
+        let mut g = gesture(ModalOp::Move);
+        // These would not survive the way there and back through the parent.
+        g.parent = Transform3D::Affine(AffineTransform3D::from_translation([0.1, 0.2, 0.3]));
+        g.original = Transform3D::Affine(AffineTransform3D::from_translation([0.7, 1.1, 8.3]));
+        let moved = g.world_translation(g.original, Vec3::new(12.5, -3.0, 0.0));
+        let Some(Transform3D::Affine(moved)) = moved else {
+            panic!("a move");
+        };
+        assert_eq!(moved.translation()[2].to_bits(), 8.3f64.to_bits());
+        assert_eq!(moved.translation()[0], 0.7 + 12.5);
     }
 
     #[test]
