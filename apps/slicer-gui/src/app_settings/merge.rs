@@ -33,6 +33,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         gizmo_size,
         orthographic_view,
         lift_models_on_plate,
+        overhang_map,
         fix_all_repeat,
         silenced_messages,
         object_list,
@@ -86,6 +87,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
             &ours.lift_models_on_plate,
             lift_models_on_plate,
         ),
+        overhang_map: pick(&base.overhang_map, &ours.overhang_map, overhang_map),
         fix_all_repeat: pick(&base.fix_all_repeat, &ours.fix_all_repeat, fix_all_repeat),
         silenced_messages: merge_set(
             &base.silenced_messages,

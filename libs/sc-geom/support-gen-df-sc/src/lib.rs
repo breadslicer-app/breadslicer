@@ -42,6 +42,9 @@ pub use document::{DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, RestoreErr
 pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{AddNote, AddOptions, BraceEnd, DfSupportSession, EditError, EditPreview};
+pub use support_gen_df::native::overhang::{
+    is_overhang_normal_z, overhang_and_stability_from_soup, overhang_normal_z_limit,
+};
 pub use support_gen_df::pipeline::ScanCache;
 pub use support_gen_df::supports::auto_bracing::auto_brace::HandBraceRefusal;
 

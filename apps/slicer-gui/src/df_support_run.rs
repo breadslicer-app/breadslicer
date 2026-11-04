@@ -162,6 +162,7 @@ pub(crate) struct DfSupportRun {
     /// Keeps the Supports tab's "Lift ... when the model rests on the plate"
     /// box (#389) in step with the settings, shared by every window.
     lift_pref: RefCell<Option<Subscription>>,
+    overhang_pref: RefCell<Option<Subscription>>,
     /// For the run in flight that regenerates supports (#153): the scene
     /// revision that left its models waiting, and the models.
     regenerating: RefCell<Option<(SceneRevision, SupportsWanted)>>,
@@ -1332,6 +1333,7 @@ impl DfSupportRun {
             plate_lift: RefCell::new(None),
             cancelled: Cell::new(false),
             lift_pref: RefCell::new(None),
+            overhang_pref: RefCell::new(None),
             regenerating: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
@@ -1509,7 +1511,37 @@ impl DfSupportRun {
             *run.lift_pref.borrow_mut() = Some(subscription);
         }
         ui.set_support_lift_on_plate(run.bus.snapshot().lift_models_on_plate);
+        {
+            let bus = run.bus.clone();
+            ui.on_overhang_map_toggled(move |on| {
+                bus.update(move |snap| {
+                    snap.overhang_map = on;
+                    PreferencesChange::OverhangMap
+                });
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            let subscription = run.bus.subscribe(move |snap, change| {
+                if matches!(change, PreferencesChange::OverhangMap)
+                    && let Some(run) = weak.upgrade()
+                {
+                    run.show_overhang_map(snap.overhang_map);
+                }
+            });
+            *run.overhang_pref.borrow_mut() = Some(subscription);
+        }
+        run.show_overhang_map(run.bus.snapshot().overhang_map);
+        run.push_overhang_limit(ui);
         run
+    }
+
+    /// Turns the overhang map on or off in this window (#91).
+    fn show_overhang_map(&self, on: bool) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_overhang_map_on(on);
+        }
+        self.ctrl.set_overhang_map(on);
     }
 
     fn start(self: &Rc<Self>) {
@@ -2021,6 +2053,7 @@ impl DfSupportRun {
         });
         ui.set_support_density(o.area_per_support_mm2 as f32);
         ui.set_support_angle(o.overhang_angle_deg as f32);
+        self.push_overhang_limit(ui);
         ui.set_support_size_scale(o.size_scale as f32);
         ui.set_support_min_island(o.min_island_area_mm2 as f32);
         ui.set_support_coverage(o.coverage_percent as f32);
@@ -2055,6 +2088,13 @@ impl DfSupportRun {
             self.push_options(&ui);
         }
         self.refresh_raft_warning();
+    }
+
+    /// Hands the overhang map the angle these options classify by (#91).
+    fn push_overhang_limit(&self, ui: &MainWindow) {
+        let degrees = self.options.borrow().self_support_angle_deg();
+        self.ctrl.set_overhang_angle(degrees as f32);
+        ui.set_overhang_map_limit(format!("{}°", mm_text(degrees)).into());
     }
 
     /// Whether the raft of the options in force would take the models'
@@ -6840,6 +6880,55 @@ mod hand_edit_tests {
             assert!(document.redo().unwrap());
             assert_eq!(supported_models(&document, &run), picked);
             assert_eq!(run.sets_in_force().len(), 3);
+        });
+    }
+
+    /// #91: the box is a setting shared with every window, and the map paints
+    /// by the angle the engine is set to, a zone preset's read from vertical
+    /// turned around; only the Transform tab shows it.
+    #[test]
+    fn the_overhang_map_follows_its_box_the_active_preset_and_the_tab() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run, bus, _leaves) = cubes_on(&window, &[[20.0, 20.0, 0.5]]);
+            let shown = || {
+                run.ctrl
+                    .overhang_map_for_test()
+                    .map(|map| map.self_support_angle_deg())
+            };
+            run.ctrl.set_section(WorkspaceSection::Transform);
+            assert_eq!(shown(), None);
+
+            window.invoke_overhang_map_toggled(true);
+            assert!(bus.snapshot().overhang_map);
+            assert!(window.get_overhang_map_on());
+            assert_eq!(shown(), Some(45.0));
+            assert_eq!(window.get_overhang_map_limit(), "45°");
+
+            run.on_option(2, 30.0);
+            assert_eq!(shown(), Some(30.0));
+
+            run.set_options(DfSupportOptions {
+                zones: Some(minis_30()),
+                ..Default::default()
+            });
+            assert_eq!(shown(), Some(52.0));
+            assert_eq!(window.get_overhang_map_limit(), "52°");
+            run.set_options(DfSupportOptions {
+                zones: Some(figures_70()),
+                ..Default::default()
+            });
+            assert_eq!(shown(), Some(55.0));
+
+            run.ctrl.set_section(WorkspaceSection::Supports);
+            assert_eq!(shown(), None);
+            run.ctrl.set_section(WorkspaceSection::Transform);
+            assert_eq!(shown(), Some(55.0));
+
+            window.invoke_overhang_map_toggled(false);
+            assert!(!bus.snapshot().overhang_map);
+            assert!(!window.get_overhang_map_on());
+            assert_eq!(shown(), None);
         });
     }
 

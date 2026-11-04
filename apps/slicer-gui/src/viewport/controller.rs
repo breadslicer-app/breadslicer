@@ -110,6 +110,9 @@ pub(crate) struct ViewportController {
     overlay: RefCell<Option<crate::mesh_render::Overlay>>,
     /// What a Repair run left broken, marked over the scene (#253).
     repair_marks: crate::repair_marks::MarksLayer,
+    /// The overhang map's box, and the self-support angle it paints by.
+    overhang_map_on: Cell<bool>,
+    overhang_angle_deg: Cell<f32>,
     /// The performance test while it runs. It owns the renderer's scene
     /// meanwhile, so the frame pass waits until it ends.
     probe: RefCell<Option<ProbeRun>>,
@@ -190,6 +193,8 @@ impl ViewportController {
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
             repair_marks: Default::default(),
+            overhang_map_on: Cell::new(false),
+            overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
             orbit_marker_timer: slint::Timer::default(),
@@ -236,6 +241,8 @@ impl ViewportController {
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
             repair_marks: Default::default(),
+            overhang_map_on: Cell::new(false),
+            overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
             orbit_marker_timer: slint::Timer::default(),
@@ -334,6 +341,11 @@ impl ViewportController {
         self.session
             .document()
             .install_graph(graph, PathBuf::from("<test>"));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn overhang_map_for_test(&self) -> Option<crate::mesh_render::OverhangMap> {
+        self.overhang_map()
     }
 
     #[cfg(test)]
@@ -935,6 +947,28 @@ impl ViewportController {
         if self.repair_marks.set(marks) {
             self.mark_dirty();
         }
+    }
+
+    /// Turns the overhang map on or off (#91).
+    pub(crate) fn set_overhang_map(&self, on: bool) {
+        if self.overhang_map_on.replace(on) != on {
+            self.mark_dirty();
+        }
+    }
+
+    /// The self-support angle the overhang map paints by, degrees from
+    /// horizontal: the one the support engine is set to.
+    pub(crate) fn set_overhang_angle(&self, degrees: f32) {
+        if self.overhang_angle_deg.replace(degrees) != degrees {
+            self.mark_dirty();
+        }
+    }
+
+    /// What the overhang map shows in the current section, if anything.
+    fn overhang_map(&self) -> Option<crate::mesh_render::OverhangMap> {
+        (self.overhang_map_on.get()
+            && crate::workspace_section::shows_overhang_map(self.session.section()))
+        .then(|| crate::mesh_render::OverhangMap::new(self.overhang_angle_deg.get()))
     }
 
     /// Repaints after the slice height slider moved, so the mesh clip follows
@@ -3375,6 +3409,7 @@ impl ViewportController {
             .repair_marks
             .over(self.overlay.borrow().as_ref(), marks_shown);
         renderer.set_overlay(overlay.as_ref());
+        renderer.set_overhang_map(self.overhang_map());
 
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -3548,6 +3583,11 @@ impl ViewportController {
         }
         self.on_paint();
     }
+}
+
+/// The engine's self-support angle before a window's options reach it.
+fn default_overhang_angle_deg() -> f32 {
+    sc_geom::df_supports::DfSupportOptions::default().self_support_angle_deg() as f32
 }
 
 /// Which rows of the object list are selected, in row order: what the list

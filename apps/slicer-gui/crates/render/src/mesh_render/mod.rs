@@ -26,6 +26,7 @@ mod gizmo_entries;
 mod hull_points;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
+mod overhang_map;
 mod overlay;
 mod smooth_shading;
 pub use smooth_shading::set_smooth_models;
@@ -38,6 +39,8 @@ pub mod scene_upload;
 mod targets;
 #[cfg(test)]
 mod tests_gpu;
+#[cfg(test)]
+mod tests_overhang_map;
 
 pub use device_loss::DeviceLoss;
 use device_ops::scoped;
@@ -57,6 +60,7 @@ pub use gizmo_entries::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility
 pub fn gizmo_draw_count_for_test(frame: &GizmoFrame) -> usize {
     build_gizmo_draws(frame).len()
 }
+pub use overhang_map::OverhangMap;
 pub use overlay::{Overlay, OverlayMesh, OverlayTint};
 use pipelines::cap::CapPipeline;
 use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
@@ -103,6 +107,14 @@ enum FrameContents {
     Workspace,
     /// The models by themselves.
     ModelsOnly,
+}
+
+/// How a frame is dressed: what goes around the models, and whether the
+/// overhang map goes over them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FrameLook {
+    contents: FrameContents,
+    overhang_map: Option<OverhangMap>,
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -298,6 +310,8 @@ pub struct Renderer {
     /// the window's thread.
     adopted: scene_upload::UploadedMeshes,
     overlay: overlay::OverlaySlot,
+    /// The overhang map over the models of a workspace frame, when on.
+    overhang_map: Option<OverhangMap>,
     target_manager: TargetManager,
 }
 
@@ -332,7 +346,8 @@ impl Renderer {
         if from_scratch {
             self.world_boxes.clear();
         }
-        build_model_entries(graph, &[], build_volume, &mut self.world_boxes).expect("entries");
+        build_model_entries(graph, &[], build_volume, &mut self.world_boxes, false)
+            .expect("entries");
         if warnings {
             build_envelope_warning_mask(graph, build_volume, &mut self.world_boxes).expect("mask");
         }
@@ -379,6 +394,7 @@ impl Renderer {
             world_boxes: WorldBoxes::default(),
             adopted: scene_upload::UploadedMeshes::default(),
             overlay: overlay::OverlaySlot::default(),
+            overhang_map: None,
             target_manager: TargetManager {
                 msaa: None,
                 targets: None,
@@ -797,8 +813,18 @@ impl Renderer {
             camera,
             width,
             height,
-            FrameContents::Workspace,
+            FrameLook {
+                contents: FrameContents::Workspace,
+                overhang_map: self.overhang_map,
+            },
         )
+    }
+
+    /// Paints the models of the frames to come by overhang (`None` turns the
+    /// map off). A picture of the print ([`Self::render_preview`]) never
+    /// carries it.
+    pub fn set_overhang_map(&mut self, map: Option<OverhangMap>) {
+        self.overhang_map = map;
     }
 
     /// Blocks until the GPU has finished the work submitted so far. A poll
@@ -834,7 +860,10 @@ impl Renderer {
             camera,
             width,
             height,
-            FrameContents::ModelsOnly,
+            FrameLook {
+                contents: FrameContents::ModelsOnly,
+                overhang_map: None,
+            },
         )
     }
 
@@ -869,8 +898,12 @@ impl Renderer {
         camera: &OrbitCamera,
         width: u32,
         height: u32,
-        contents: FrameContents,
+        look: FrameLook,
     ) -> Result<Option<wgpu::Texture>, RenderError> {
+        let FrameLook {
+            contents,
+            overhang_map,
+        } = look;
         if self.core.device_loss.is_lost() {
             return Err(RenderError::DeviceLost);
         }
@@ -906,7 +939,13 @@ impl Renderer {
         // slots holding stale matrices that the draw loop would render against
         // the current frame's geometry.
         let scene_for_draws = if let (Some(inst), Some(graph_data)) = (installed, graph) {
-            match build_model_entries(graph_data, selection, build_volume, &mut self.world_boxes) {
+            match build_model_entries(
+                graph_data,
+                selection,
+                build_volume,
+                &mut self.world_boxes,
+                overhang_map.is_some(),
+            ) {
                 Ok(entries) if entries.len() == inst.gpu.object_count() => {
                     // Each entry lives at `i * model_stride`. The stride is at
                     // least `MODEL_ENTRY_SIZE` and a multiple of the device's
@@ -968,6 +1007,7 @@ impl Renderer {
             env_min: [env_min.x, env_min.y, env_min.z, 0.0],
             env_max: [env_max.x, env_max.y, env_max.z, 0.0],
             face_breach_mask: [face_breach_mask, 0, 0, 0],
+            overhang: overhang_map.map_or([0.0; 4], |map| map.uniform(env_min.z)),
         };
         self.core.queue.write_buffer(
             &self.pipelines.mesh.uniform_buffer,

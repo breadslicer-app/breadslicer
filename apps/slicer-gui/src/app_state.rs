@@ -359,6 +359,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_gizmo_size(snap.gizmo_size);
     settings.set_orthographic_view(snap.orthographic_view);
     settings.set_lift_models_on_plate(snap.lift_models_on_plate);
+    settings.set_overhang_map(snap.overhang_map);
     settings.set_fix_all_repeat(snap.fix_all_repeat);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
@@ -515,6 +516,7 @@ impl AppState {
             gizmo_size: settings.gizmo_size(),
             orthographic_view: settings.orthographic_view(),
             lift_models_on_plate: settings.lift_models_on_plate(),
+            overhang_map: settings.overhang_map(),
             fix_all_repeat: settings.fix_all_repeat(),
             // Never stored: the log runs until the app closes and every launch
             // starts with it off (#74).
@@ -2554,6 +2556,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::Gizmo,
             PreferencesChange::Projection,
             PreferencesChange::LiftModelsOnPlate,
+            PreferencesChange::OverhangMap,
             PreferencesChange::FixAllRepeat,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,

@@ -5402,6 +5402,31 @@ msgstr "Ángulo de voladizo"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
+msgid "OVERHANGS"
+msgstr "VOLADIZOS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Show overhang map"
+msgstr "Mostrar mapa de voladizos"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Needs supports"
+msgstr "Lleva soportes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Close to the limit"
+msgstr "Cerca del límite"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Follows the overhang angle of the Supports tab, measured from the plate."
+msgstr "Sigue el ángulo de voladizo de la pestaña Soportes, medido desde la plataforma."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
 msgid "Size scale"
 msgstr "Escala de tamaño"
 
