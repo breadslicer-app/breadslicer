@@ -74,6 +74,14 @@ const PANEL_MAIN_WINDOW_TEXTS: &[(&str, &str)] = &[
     ("Inspector", "Remove support (click it)"),
     ("SlicePanel", "Slice"),
     ("LayerView", "Layer view"),
+    (
+        "LayerView",
+        "Layer view: the layer's image beside the 3D view",
+    ),
+    (
+        "LayerView",
+        "Layer view: slice first to see each layer's image",
+    ),
     ("LayerView", "Layer {} of {}"),
     ("Workspace", "Open or drop a model to start."),
     (

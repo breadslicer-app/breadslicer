@@ -8,7 +8,7 @@ import { AboutWindow } from "about-window.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
-import { Icon, SupportLink, ToolButton, WorkflowTab } from "./kit/controls.slint";
+import { Icon, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
 import { ExportInspector, HollowInspector, OrientCard, OrientOption, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
@@ -314,6 +314,9 @@ export component MainWindow inherits Window {
         root.tab-tools-changed();
     }
     changed workspace-section => {
+        // The change takes away the button under the pointer, and with it
+        // the end of its hover.
+        ToolTipState.text = "";
         root.tab-tools-changed();
         if root.orient-open && root.workspace-section != WorkspaceSection.Transform {
             root.orient-close-requested();
@@ -406,6 +409,12 @@ export component MainWindow inherits Window {
     callback review-raft-off-requested(int);
     // The Slice tab shows the layer image beside the 3D view (BS-72).
     in-out property <bool> slice-split: false;
+    // The L key opens and closes the pane: on the Slice tab with layers to
+    // show, unless a field is taking the letter or something modal is up.
+    property <bool> layer-key-on: root.has-scene && root.workspace-section == WorkspaceSection.Slice
+        && root.slice-layer-count > 0 && !TextInputInterface.text-input-focused
+        && !root.message-open && !start-layer.visible && !root.loading
+        && !root.slicing-in-progress && !root.saving-in-progress && !root.modal-transform-active;
     callback support-preset-picked(int);
     callback support-preset-save(string);
     callback support-preset-delete();
@@ -925,6 +934,20 @@ export component MainWindow inherits Window {
         Menu {
             title: @tr("MenuBar" => "View");
 
+            // The L key's home: a shortcut of the window works wherever the
+            // focus is, and is off while a field takes the letter.
+            MenuItem {
+                title: @tr("LayerView" => "Layer view");
+                checkable: true;
+                checked: root.slice-split;
+                enabled: root.layer-key-on;
+                shortcut: @keys(L);
+                activated => {
+                    root.slice-split = !root.slice-split;
+                }
+            }
+
+            MenuSeparator { }
 
             // Switches between the top menu bar and the compact corner
             // menu button. Title flips like the object-list toggle above.
@@ -1351,9 +1374,11 @@ export component MainWindow inherits Window {
                     }
                     if root.workspace-section == WorkspaceSection.Slice: ToolButton {
                         icon: Icons.layers;
-                        label: @tr("LayerView" => "Layer view");
+                        label: root.slice-layer-count > 0
+                            ? @tr("LayerView" => "Layer view: the layer's image beside the 3D view")
+                            : @tr("LayerView" => "Layer view: slice first to see each layer's image");
                         shortcut: "L";
-                        active: root.slice-split;
+                        active: root.slice-split && root.slice-layer-count > 0;
                         enabled: root.slice-layer-count > 0;
                         clicked => {
                             root.slice-split = !root.slice-split;
@@ -1476,11 +1501,6 @@ export component MainWindow inherits Window {
                             root.arrange-requested(false);
                             return true;
                         }
-                        if root.workspace-section == WorkspaceSection.Slice && root.slice-layer-count > 0
-                            && (key == "l" || key == "L") {
-                            root.slice-split = !root.slice-split;
-                            return true;
-                        }
                         return false;
                     }
                     modal-transform-axis(axis,x,y) => { root.modal-transform-axis(axis,x,y); }
@@ -1585,6 +1605,8 @@ export component MainWindow inherits Window {
                     if root.has-scene && root.workspace-section == WorkspaceSection.Slice
                         && root.slice-split && root.slice-layer-count > 0: LayerView {
                         horizontal-stretch: 1;
+                        // The layer slider sits over the pane's right edge.
+                        right-gutter: 48px;
                         source: root.slice-view-image;
                         caption: @tr("LayerView" => "Layer {} of {}", Math.round(root.selected-layer-index) + 1, root.slice-layer-count);
                         close-requested => {
@@ -2372,6 +2394,17 @@ export component MainWindow inherits Window {
             Menu {
                 title: @tr("MenuBar" => "View");
 
+                MenuItem {
+                    title: @tr("LayerView" => "Layer view");
+                    checkable: true;
+                    checked: root.slice-split;
+                    enabled: root.layer-key-on;
+                    activated => {
+                        root.slice-split = !root.slice-split;
+                    }
+                }
+
+                MenuSeparator { }
 
                 MenuItem {
                     title: root.menu-layout == MenuLayout.Compact
@@ -2717,6 +2750,10 @@ export component MainWindow inherits Window {
         if (!root.start-open) {
             mv.focus-viewport();
         }
+    }
+
+    ToolTip {
+        window-width: root.width;
     }
 
     // App messages (#133): last, so they sit over everything else.

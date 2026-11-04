@@ -4,27 +4,53 @@
  */
 
 // The Slice tab's layer pane (BS-72): the selected layer's image beside the
-// 3D view, zoomable (Ctrl + wheel or the buttons) and pannable (drag or the
-// wheel), the way DragonFruit's Printing mode shows a layer.
+// 3D view, zoomable (Ctrl + wheel at the cursor, or the buttons at the middle)
+// and pannable (drag or the wheel), the way DragonFruit's Printing mode shows
+// a layer.
 
 import { Theme } from "../kit/theme.slint";
+import { Icons } from "../kit/icons.slint";
 import { ScButton } from "../kit/controls.slint";
 
 export component LayerView inherits Rectangle {
     in property <image> source;
     in property <string> caption;
+    // Room on the right for what the window draws over the pane.
+    in property <length> right-gutter: 12px;
     callback close-requested();
 
     property <float> zoom: 1;
     // Image size at zoom 1: the image fitted into the pane.
     property <float> fit: Math.min(
-        (self.width - 24px) / max(1px, self.source.width * 1px),
+        (self.width - 12px - self.right-gutter) / max(1px, self.source.width * 1px),
         (self.height - 72px) / max(1px, self.source.height * 1px));
     property <length> shown-width: self.source.width * 1px * self.fit * self.zoom;
     property <length> shown-height: self.source.height * 1px * self.fit * self.zoom;
 
+    // Zooms by `factor`, holding still the point of the image at (`x`, `y`)
+    // of the content.
+    function zoom-at(factor: float, x: length, y: length) {
+        let new-zoom = clamp(root.zoom * factor, 1, 32);
+        let scale = new-zoom / root.zoom;
+        let new-width = root.shown-width * scale;
+        let new-height = root.shown-height * scale;
+        let new-content-width = max(flick.width, new-width);
+        let new-content-height = max(flick.height, new-height);
+        // Where the point lands in the new content.
+        let new-x = (x - (flick.content-width - root.shown-width) / 2) * scale
+            + (new-content-width - new-width) / 2;
+        let new-y = (y - (flick.content-height - root.shown-height) / 2) * scale
+            + (new-content-height - new-height) / 2;
+        let on-screen-x = x + flick.content-x;
+        let on-screen-y = y + flick.content-y;
+        root.zoom = new-zoom;
+        flick.content-x = clamp(on-screen-x - new-x, flick.width - new-content-width, 0px);
+        flick.content-y = clamp(on-screen-y - new-y, flick.height - new-content-height, 0px);
+    }
+
+    // Zooms by `factor` at the middle of what is on show.
     function zoom-by(factor: float) {
-        root.zoom = clamp(root.zoom * factor, 1, 32);
+        root.zoom-at(factor, flick.width / 2 - flick.content-x, flick.height / 2 - flick.content-y);
     }
 
     background: #0e0f10;
@@ -33,12 +59,12 @@ export component LayerView inherits Rectangle {
     flick := Flickable {
         x: 12px;
         y: 48px;
-        width: parent.width - 24px;
+        width: parent.width - 12px - root.right-gutter;
         height: parent.height - 60px;
         content-width: max(self.width, root.shown-width);
         content-height: max(self.height, root.shown-height);
 
-        Image {
+        picture := Image {
             x: (parent.content-width - self.width) / 2;
             y: (parent.content-height - self.height) / 2;
             width: root.shown-width;
@@ -50,7 +76,7 @@ export component LayerView inherits Rectangle {
         TouchArea {
             scroll-event(event) => {
                 if event.modifiers.control {
-                    root.zoom-by(event.delta-y > 0 ? 1.25 : 0.8);
+                    root.zoom-at(event.delta-y > 0 ? 1.25 : 0.8, self.mouse-x, self.mouse-y);
                     return accept;
                 }
                 return reject;
@@ -68,15 +94,17 @@ export component LayerView inherits Rectangle {
             padding-right: 8px;
             spacing: 6px;
 
-            Text {
+            caption-text := Text {
                 text: root.caption;
                 font-family: Theme.mono;
                 font-size: Theme.font-sm;
                 color: Theme.text-soft;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
+                overflow: elide;
             }
-            Text {
+            // A narrow pane keeps its room for the layer's number.
+            if root.width >= 360px: Text {
                 text: Math.round(root.zoom * 100) + " %";
                 font-family: Theme.mono;
                 font-size: Theme.font-xs;
@@ -96,7 +124,7 @@ export component LayerView inherits Rectangle {
                 button-height: 28px;
                 y: 6px;
                 clicked => {
-                    root.zoom = 1;
+                    root.zoom-by(1 / root.zoom);
                 }
             }
             ScButton {
@@ -108,7 +136,8 @@ export component LayerView inherits Rectangle {
                 }
             }
             ScButton {
-                text: "✕";
+                icon: Icons.close;
+                accessible-label: @tr("LayerView" => "Close the layer view");
                 button-height: 28px;
                 y: 6px;
                 clicked => {

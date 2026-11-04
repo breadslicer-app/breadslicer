@@ -92,7 +92,7 @@ export component ScButton inherits Rectangle {
             y: (parent.height - self.height) / 2;
             color: root.kind == ButtonKind.primary ? Theme.on-accent : Theme.text-soft;
         }
-        Text {
+        if root.text != "": Text {
             text: root.text;
             vertical-alignment: center;
             font-size: Theme.font;
@@ -176,6 +176,44 @@ export component WorkflowTab inherits Rectangle {
     }
 }
 
+// The tool button under the pointer: what `ToolTip` says, and the edges of
+// the button it sits beside, in the window's coordinates.
+export global ToolTipState {
+    in-out property <string> text;
+    in-out property <length> button-right;
+    in-out property <length> button-top;
+    in-out property <length> button-height;
+}
+
+// What the tool button under the pointer does. 1 in the window, over all
+// that the tool buttons sit beside: a tooltip inside a button would draw
+// under the view next to it.
+export component ToolTip inherits Rectangle {
+    in property <length> window-width;
+    property <length> gap: 6px;
+    property <bool> fits-beside: ToolTipState.button-right + root.gap + root.width + 4px <= root.window-width;
+
+    visible: ToolTipState.text != "";
+    x: root.fits-beside ? ToolTipState.button-right + root.gap : root.window-width - root.width - 4px;
+    y: root.fits-beside
+        ? ToolTipState.button-top + (ToolTipState.button-height - root.height) / 2
+        : ToolTipState.button-top + ToolTipState.button-height + root.gap;
+    width: tip-text.preferred-width + 16px;
+    height: 26px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+    background: Theme.chrome;
+
+    tip-text := Text {
+        text: ToolTipState.text;
+        font-size: Theme.font-sm;
+        color: Theme.text;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+}
+
 // A tool of the left rail: an icon, its shortcut in the corner, the
 // accent when it is the active tool.
 export component ToolButton inherits Rectangle {
@@ -215,11 +253,24 @@ export component ToolButton inherits Rectangle {
         color: Theme.text-faint;
     }
 
+    // A button that is off still says what it does, so the area stays on
+    // and only the click looks at `enabled`.
     touch := TouchArea {
-        enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
         clicked => {
-            root.clicked();
+            if root.enabled {
+                root.clicked();
+            }
+        }
+        changed has-hover => {
+            if self.has-hover {
+                ToolTipState.text = root.shortcut != "" ? root.label + " (" + root.shortcut + ")" : root.label;
+                ToolTipState.button-right = root.absolute-position.x + root.width;
+                ToolTipState.button-top = root.absolute-position.y;
+                ToolTipState.button-height = root.height;
+            } else {
+                ToolTipState.text = "";
+            }
         }
     }
 }
