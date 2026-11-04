@@ -448,10 +448,17 @@ fn the_paint_colours_on_a_heavy_model() {
         let top = mesh
             .vertices()
             .iter()
-            .map(|v| v.coords())
-            .max_by(|a, b| a[2].total_cmp(&b[2]))
+            .copied()
+            .max_by(|a, b| a.coords()[2].total_cmp(&b.coords()[2]))
             .expect("vertices");
-        let mut close = OrbitCamera::new(Vec3::from(top) - Vec3::Z * 18.0, radius * 0.22);
+        // The ring and the camera are in the world, the mesh is not.
+        let top = document
+            .with_scene(|s| s.leaf(model).map(|q| q.world_transform()))
+            .flatten()
+            .expect("the leaf")
+            .apply_to_vertex(top)
+            .coords();
+        let mut close = OrbitCamera::new(Vec3::from(top) - Vec3::Z * 5.0, radius * 0.16);
         close.yaw += 0.5;
         let whole = OrbitCamera::new(centre, radius * 0.75);
         std::fs::create_dir_all(&folder).expect("the folder");
