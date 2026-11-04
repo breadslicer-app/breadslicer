@@ -222,18 +222,6 @@ impl AirPixels {
         }
     }
 
-    /// The region of the opened air at pixel `(x, row)`, if it is opened
-    /// air.
-    fn region_at(&self, row: u32, x: u32) -> Option<u32> {
-        let at = self
-            .air
-            .partition_point(|run| (run.row, run.x1) <= (row, x));
-        self.air
-            .get(at)
-            .filter(|run| run.row == row && run.x0 <= x)
-            .map(|_| self.labels[at])
-    }
-
     /// The regions and the walls of the enclosed ones.
     fn layer(&self, input: &ReviewInput<'_>) -> AirLayer {
         let (width_px, height_px) = (input.width_px(), input.height_px());
@@ -414,50 +402,6 @@ fn solid_beyond(air: &AirPixels, other: &LayerPixels) -> Vec<Roles> {
     roles
 }
 
-/// What one pixel of a layer is, for a drain going through it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Pixel {
-    /// Model (possibly support too).
-    Model,
-    /// Support alone.
-    Support,
-    /// Air: drained when it is opened air of a drained region, closed when
-    /// it is a hairline or a pocket closed toward the plate.
-    Air {
-        /// Whether resin flows freely there.
-        drained: bool,
-    },
-}
-
-/// The pixels `(x, row)` of layers `layers`, classified with the drained
-/// flags of the air map's regions. Layers are rasterised in parallel.
-pub(super) fn classify(
-    input: &ReviewInput<'_>,
-    width: u32,
-    drained: &[Vec<bool>],
-    layers: &[usize],
-    [x, row]: [u32; 2],
-) -> Vec<Pixel> {
-    layers
-        .par_iter()
-        .map(|&layer| {
-            let pixels = LayerPixels::compute(input, layer);
-            if covers(&pixels.model, row, x) {
-                return Pixel::Model;
-            }
-            if covers(&pixels.support, row, x) {
-                return Pixel::Support;
-            }
-            let air = AirPixels::from_pixels(pixels, width, input);
-            Pixel::Air {
-                drained: air
-                    .region_at(row, x)
-                    .is_some_and(|region| drained[layer][region as usize]),
-            }
-        })
-        .collect()
-}
-
 /// The opened air runs of each cavity in `cavities` (its member regions),
 /// layer by layer from the plate up, with the model runs of their rim: the
 /// pixels a fill cures (see [`crate::fill`]). Each layer any cavity touches
@@ -510,11 +454,6 @@ pub(super) fn cavity_runs(
         out[cavity].push(layer);
     }
     out
-}
-
-/// Whether the run list `runs` holds pixel `(x, row)`.
-fn covers(runs: &[Run], row: u32, x: u32) -> bool {
-    coverage(runs, row, x, x + 1) > 0
 }
 
 /// The morphological opening of the run list `runs` by a `width` x `width`

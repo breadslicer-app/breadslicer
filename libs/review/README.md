@@ -22,11 +22,12 @@ short title and a sentence with the measured numbers, and optionally a
 one-click fix (add a support, add a drain, fill the cavity).
 
 Resin traps are tiered by volume: tiny ones are information, medium ones
-warnings, large ones errors. Tiny and medium traps, and small suction cups
-no drain helps, are offered a fill instead of a drain: the report carries the
-cavity's pixels in plate millimetres, and `fill_stack` turns the fills a
-frontend kept into one more model stack for the next slice of the same
-scene, which cures them in the review, the preview and the printer file.
+warnings, large ones errors. A cavity may be a hollow, so only a sealed trap
+under 1 ml is offered a fill: the report carries its pixels in plate
+millimetres, and `fill_stack` turns the fills a frontend kept into one more
+model stack for the next slice of the same scene, which cures them in the
+review, the preview and the printer file. Suction cups and larger traps are
+reported with a drain to add, and no pixels to fill.
 
 ## How it works
 
