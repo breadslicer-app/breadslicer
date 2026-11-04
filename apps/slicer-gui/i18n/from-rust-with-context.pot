@@ -2352,9 +2352,8 @@ msgstr ""
 #: src/review_panel.rs:1193
 msgctxt "Review"
 msgid ""
-"Left by Fix All: it holds too much resin to fill without asking. Fill it "
-"from this row if the cavity is part of the model, or hollow the model in the "
-"Hollow tab and drill drain holes."
+"This model was not hollowed here: the drain tool only reaches a cavity made "
+"in the Hollow tab, so it may not open this one."
 msgstr ""
 
 #: src/review_panel.rs:1198

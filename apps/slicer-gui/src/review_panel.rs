@@ -191,8 +191,8 @@ struct HeldReview {
     /// while the scene's models still match.
     models: Option<Vec<ModelPose>>,
     outcome: ReviewOutcome,
-    /// For each finding's drain, by index: the drain holes of the hollow made
-    /// here that holds its cavity, or `None` when no hollow made here does.
+    /// For each finding's cavity, by index: the drain holes of the hollow made
+    /// here that holds it, or `None` when no hollow made here does.
     hollows: Vec<Option<usize>>,
     /// Findings whose fix was applied since the slice.
     fixed: BTreeSet<usize>,
