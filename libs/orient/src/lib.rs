@@ -36,8 +36,14 @@
 //! - **T8, slenderness:** height over the shadow's narrowest width: how
 //!   easily the peel tips the part over its supports.
 //! - **Detail (#184):** painted faces are a constraint, not a weight: the
-//!   pose with fewer tips on the painted detail always wins; among equals the
-//!   physical cost decides, plus a push for the detail to face up.
+//!   pose with fewer tips on the painted detail always wins, whatever else it
+//!   costs, and no option offered puts more on it than another. Among equals
+//!   the physical cost decides, plus a push for the detail to face up.
+//!   - **D1, painted overhang:** T1 over the painted faces, exact per face.
+//!   - **D2, painted islands:** painted minima that face down: a low nose
+//!     needs a tip whatever its average normal says; a dimple does not.
+//!   - **D4, face up:** `Σ a·(1 − n·u)/2 / Σ a` over the painted faces, one
+//!     dot product with their mean normal.
 //!
 //! Fitting the build volume (with the best turn about the vertical) comes
 //! before everything else.
@@ -45,11 +51,14 @@
 //! # The search
 //!
 //! 1. **Seeds:** the current pose (always), 4200 Fibonacci directions, the
-//!    large convex-hull faces resting on the plate, the dominant normals.
+//!    large convex-hull faces resting on the plate, the dominant normals, and
+//!    for a painted model its mean normal with cones around it.
 //! 2. **Stage 1:** overhang, support length and height on the normal
 //!    histogram; its cost does not depend on the mesh size.
 //! 3. **Stage 2:** the best 256, at least 8° apart, get the full cost (peel
-//!    on a simplified mesh).
+//!    on a simplified mesh). For a painted model half of them are the poses
+//!    with the fewest tips on the detail, so the cheap stages never throw
+//!    away what keeps the paint clear.
 //! 4. **Refinement:** pattern search in the tangent plane, 6° down to 0.5°,
 //!    on the best 3 at least 25° apart.
 //! 5. **Final verdict:** the options and the current pose are scored again
@@ -77,9 +86,11 @@ mod vec;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_detail;
+#[cfg(test)]
 mod tests_shapes;
 
-pub use analysis::OrientAnalysis;
+pub use analysis::{ModelGeometry, OrientAnalysis};
 pub use islands::{ISLAND_CLUSTER_MM, count_clustered};
 pub use peel::{LayerProfile, PeelModel, PeelSummary};
 pub use pose::{kept_on_plate, rotation_between, rotation_to_up, turned_about_footprint};
@@ -314,10 +325,21 @@ pub struct DetailCost {
     pub facing_up: f64,
 }
 
+/// Painted overhang below this many tips is too little to take a tip: a
+/// sliver of a face just past the overhang angle.
+const DETAIL_TIP_SLACK: f64 = 0.05;
+
 impl DetailCost {
-    /// The tips the detail gets: what the search minimizes first.
+    /// The tips the detail gets, as the overhang and the islands add up.
     pub fn total_tips(&self) -> f64 {
         self.tips + self.islands as f64
+    }
+
+    /// The whole tips the detail gets, what the search minimizes first: any
+    /// overhang worth a tip counts as one, so a pose is never excused for
+    /// putting less than a tip's worth on the detail.
+    pub fn whole_tips(&self) -> usize {
+        (self.tips - DETAIL_TIP_SLACK).max(0.0).ceil() as usize + self.islands
     }
 }
 
@@ -373,8 +395,8 @@ impl CostBreakdown {
 
     /// The lexicographic part of the ranking: fit first, then whole tips on
     /// the painted detail.
-    fn rank(&self) -> (u8, i64) {
-        let detail = self.detail.map_or(0, |d| d.total_tips().round() as i64);
+    pub(crate) fn rank(&self) -> (u8, i64) {
+        let detail = self.detail.map_or(0, |d| d.whole_tips() as i64);
         (u8::from(!self.fit.ok()), detail)
     }
 
@@ -408,6 +430,9 @@ pub struct Candidate {
 pub enum Note {
     /// The mesh is not closed: the per-layer peel (T3) was left out.
     OpenMesh,
+    /// Every pose the search found puts at least this many tips on the
+    /// painted detail: the options have that many, and none has fewer.
+    DetailTips { tips: usize },
 }
 
 /// The search's steps, as partial results come in.

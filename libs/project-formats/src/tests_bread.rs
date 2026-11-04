@@ -222,6 +222,7 @@ fn settings_of_a_newer_version_open_the_scene_as_a_project_without_them() {
         settings: Some(b"version = 99\nfuture = true\n".to_vec()),
         supports: Vec::new(),
         hollows: Vec::new(),
+        surface_notes: Vec::new(),
     };
     let bytes = sc_bread_format::write_project(&project, Vec::new()).unwrap();
     let loaded = read_bread_project(Cursor::new(bytes)).unwrap();

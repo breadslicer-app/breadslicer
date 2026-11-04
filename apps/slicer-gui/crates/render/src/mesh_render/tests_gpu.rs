@@ -31,6 +31,7 @@ use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
+use sc_scene::SurfaceTags;
 use sc_scene::node::LeafPayload;
 
 /// Builds an empty graph shaped as the loader builds it: an identity group root
@@ -2699,4 +2700,176 @@ fn gizmo_frame_cost() {
         let p95 = s[s.len() * 95 / 100];
         println!("{name}: media {mean:.3} ms, mediana {median:.3} ms, p95 {p95:.3} ms");
     }
+}
+
+/// A flat square of `n` x `n` quads over the plate, each 4 mm, looking up.
+fn paint_sheet(n: u32) -> IndexedMesh {
+    let side = n as f32 * 4.0;
+    let mut vertices = Vec::new();
+    for y in 0..=n {
+        for x in 0..=n {
+            vertices.push(Vertex::new([
+                x as f32 * 4.0 - side / 2.0,
+                y as f32 * 4.0 - side / 2.0,
+                5.0,
+            ]));
+        }
+    }
+    let at = |x: u32, y: u32| y * (n + 1) + x;
+    let mut faces = Vec::new();
+    for y in 0..n {
+        for x in 0..n {
+            let (a, b, c, d) = (at(x, y), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1));
+            faces.push(IndexedTriangle::from_raw_indices([a, b, c]));
+            faces.push(IndexedTriangle::from_raw_indices([a, c, d]));
+        }
+    }
+    IndexedMesh {
+        meta: None,
+        vertices,
+        faces,
+    }
+}
+
+/// A renderer over the sheet, the camera straight above it, with the sheet
+/// painted on the faces `painted` picks: the sheet's left half, say.
+fn painted_sheet() -> Option<(Renderer, Scene, NodeId, OrbitCamera, SurfaceTags)> {
+    let (device, queue) = shared_test_device()?;
+    let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
+        .expect("Renderer::new under the test device");
+    let mesh = Arc::new(paint_sheet(8));
+    let mut scene = Scene::new();
+    let leaf = scene
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::clone(&mesh)),
+        )
+        .unwrap();
+    scene.add_root(leaf).unwrap();
+    renderer.upload_scene(&scene).expect("upload");
+    let mut camera = OrbitCamera::new(Vec3::new(0.0, 0.0, 5.0), 20.0);
+    camera.set_axis_view(crate::camera::AxisView::Top);
+    // Left half of the sheet: the first four columns of quads, in each row.
+    let values = (0..mesh.faces().len())
+        .map(|f| if (f / 2) % 8 < 4 { 255 } else { 0 })
+        .collect();
+    let tags = SurfaceTags::new(mesh, values).unwrap();
+    Some((renderer, scene, leaf, camera, tags))
+}
+
+fn frame(renderer: &mut Renderer, scene: &Scene, camera: &OrbitCamera) -> FramePixels {
+    renderer
+        .workspace_pixels_for_test(
+            SceneRender {
+                graph: scene,
+                selection: &[],
+                gizmo: None,
+                clip_z: None,
+            },
+            TEST_BV,
+            camera,
+            128,
+            128,
+        )
+        .expect("render is not refused")
+        .expect("a frame")
+}
+
+fn pixel(frame: &FramePixels, x: u32, y: u32) -> [u8; 3] {
+    let at = ((y * frame.width + x) * 4) as usize;
+    [frame.rgba[at], frame.rgba[at + 1], frame.rgba[at + 2]]
+}
+
+/// The tint of the tests: red, which nothing else in the frame is.
+const TEST_TINT: [f32; 4] = [1.0, 0.0, 0.0, 0.9];
+
+#[test]
+fn paint_tints_the_painted_faces_and_only_those() {
+    let Some((mut renderer, scene, leaf, camera, tags)) = painted_sheet() else {
+        return;
+    };
+    let bare = frame(&mut renderer, &scene, &camera);
+    renderer.set_surface_paint(&[PaintLayer { leaf, tags }], TEST_TINT);
+    let painted = frame(&mut renderer, &scene, &camera);
+    // Left of the middle is painted, right of it is as it was.
+    let left = pixel(&painted, 48, 64);
+    let right = pixel(&painted, 80, 64);
+    assert!(left[0] > left[1].saturating_add(40), "{left:?}");
+    assert_eq!(right, pixel(&bare, 80, 64));
+    // Gone again with the layers.
+    renderer.set_surface_paint(&[], TEST_TINT);
+    assert_eq!(frame(&mut renderer, &scene, &camera).rgba, bare.rgba);
+}
+
+#[test]
+fn paint_uses_the_objects_vertices_and_one_buffer_per_object() {
+    let Some((mut renderer, _scene, leaf, _camera, tags)) = painted_sheet() else {
+        return;
+    };
+    let faces = tags.painted_faces() as u32;
+    let layer = PaintLayer {
+        leaf,
+        tags: tags.clone(),
+    };
+    renderer.set_surface_paint(std::slice::from_ref(&layer), TEST_TINT);
+    assert_eq!(renderer.surface_paint.layer_count(), 1);
+    assert_eq!(renderer.surface_paint.index_count(leaf), Some(faces * 3));
+    // The same paint again uploads nothing new, and blank paint draws none.
+    renderer.set_surface_paint(std::slice::from_ref(&layer), TEST_TINT);
+    assert_eq!(renderer.surface_paint.layer_count(), 1);
+    let blank = SurfaceTags::blank(tags.mesh().clone());
+    renderer.set_surface_paint(&[PaintLayer { leaf, tags: blank }], TEST_TINT);
+    assert_eq!(renderer.surface_paint.layer_count(), 0);
+}
+
+#[test]
+fn paint_stays_out_of_a_picture_of_the_print() {
+    let Some((mut renderer, scene, leaf, camera, tags)) = painted_sheet() else {
+        return;
+    };
+    let clean = renderer
+        .preview_pixels(&scene, TEST_BV, &camera, 96, 96)
+        .expect("drawn")
+        .expect("a frame");
+    renderer.set_surface_paint(&[PaintLayer { leaf, tags }], TEST_TINT);
+    let with_paint = renderer
+        .preview_pixels(&scene, TEST_BV, &camera, 96, 96)
+        .expect("drawn")
+        .expect("a frame");
+    assert_eq!(clean.rgba, with_paint.rgba);
+}
+
+#[test]
+fn the_ring_lies_on_the_surface_at_its_radius() {
+    let Some((mut renderer, scene, leaf, camera, _)) = painted_sheet() else {
+        return;
+    };
+    let bare = frame(&mut renderer, &scene, &camera);
+    renderer.set_surface_paint(&[], TEST_TINT);
+    renderer.set_brush_ring(Some(BrushRing {
+        leaf,
+        center: [0.0, 0.0, 5.0],
+        radius_mm: 6.0,
+        color: [1.0, 0.0, 0.0, 1.0],
+    }));
+    let ringed = frame(&mut renderer, &scene, &camera);
+    let changed: Vec<(u32, u32)> = (0..128)
+        .flat_map(|y| (0..128).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let (a, b) = (pixel(&ringed, x, y), pixel(&bare, x, y));
+            i32::from(a[0]) - i32::from(b[0]) > 60
+        })
+        .collect();
+    assert!(!changed.is_empty(), "the ring shows");
+    // A circle about the middle: every marked pixel at about the same
+    // distance from it.
+    let distance =
+        |p: &(u32, u32)| (f32::from(p.0 as u16) - 63.5).hypot(f32::from(p.1 as u16) - 63.5);
+    let (lo, hi) = changed.iter().fold((f32::MAX, 0.0f32), |(lo, hi), p| {
+        (lo.min(distance(p)), hi.max(distance(p)))
+    });
+    assert!(hi - lo < 4.0, "{lo} {hi}");
+    renderer.set_brush_ring(None);
+    assert_eq!(frame(&mut renderer, &scene, &camera).rgba, bare.rgba);
 }

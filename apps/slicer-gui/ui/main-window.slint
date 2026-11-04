@@ -25,7 +25,7 @@ import { ProfileViewDialog } from "profile-view-dialog.slint";
 // thread the first time any text is laid out (e.g. opening a menu).
 import "../assets/fonts/NotoSans-Variable.ttf";
 
-export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, ProfileViewDialog, RecentFileRow, StartOpen, ThemePreference }
+export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, ProfileViewDialog, RecentFileRow, StartOpen, Theme, ThemePreference }
 
 // Load-pipeline phase shown by the floating progress panel. Values
 // mirror the Rust-side worker phases; the Rust poll maps between the
@@ -643,6 +643,22 @@ export component MainWindow inherits Window {
     in property <string> orient-status;
     in property <string> orient-warning;
     in property <bool> orient-offer-arrange: false;
+    // The protect-detail brush (#184).
+    in property <bool> orient-brush-on: false;
+    in property <float> orient-brush-size: 3;
+    in property <bool> orient-brush-erase: false;
+    in property <bool> orient-brush-visible-only: true;
+    in property <string> orient-painted;
+    callback orient-brush-toggled();
+    callback orient-brush-size-changed(float);
+    // [ and ]: true for a bigger brush.
+    callback orient-brush-step(bool);
+    callback orient-brush-erase-toggled();
+    callback orient-brush-visible-changed(bool);
+    // 0 grow, 1 shrink, 2 invert, 3 clear all.
+    callback orient-brush-op(int);
+    // Esc: drops a stroke, else leaves the brush. Whether it did anything.
+    callback orient-brush-escape() -> bool;
     // Opens the tool, or closes it when open (the rail button, O, Auto-orient).
     callback orient-toggle-requested();
     // Closes the tool, putting back a pose an option shows.
@@ -1385,8 +1401,12 @@ export component MainWindow inherits Window {
                     brush-wheel(up) => {
                         root.support-brush-radius = clamp(root.support-brush-radius + (up ? 4 : -4), 4, 200);
                     }
+                    paint-brush-on: root.orient-open && root.orient-brush-on;
                     tool-escape => {
                         if root.support-drag-cancel() {
+                            return true;
+                        }
+                        if root.orient-open && root.orient-brush-escape() {
                             return true;
                         }
                         if root.orient-open {
@@ -1434,6 +1454,16 @@ export component MainWindow inherits Window {
                                 root.support-tip-size = key.to-float();
                                 return true;
                             }
+                        }
+                        if root.workspace-section == WorkspaceSection.Transform && root.orient-open
+                            && root.selection-valid && (key == "b" || key == "B") {
+                            root.orient-brush-toggled();
+                            return true;
+                        }
+                        if root.workspace-section == WorkspaceSection.Transform && root.orient-open
+                            && root.orient-brush-on && (key == "[" || key == "]") {
+                            root.orient-brush-step(key == "]");
+                            return true;
                         }
                         if root.workspace-section == WorkspaceSection.Transform && root.has-scene
                             && root.selection-valid && (key == "o" || key == "O") {
@@ -1800,6 +1830,26 @@ export component MainWindow inherits Window {
                             status: root.orient-status;
                             warning: root.orient-warning;
                             offer-arrange: root.orient-offer-arrange;
+                            brush-on: root.orient-brush-on;
+                            brush-size: root.orient-brush-size;
+                            brush-erase: root.orient-brush-erase;
+                            brush-visible-only: root.orient-brush-visible-only;
+                            painted: root.orient-painted;
+                            brush-toggled => {
+                                root.orient-brush-toggled();
+                            }
+                            brush-size-changed(mm) => {
+                                root.orient-brush-size-changed(mm);
+                            }
+                            brush-erase-toggled => {
+                                root.orient-brush-erase-toggled();
+                            }
+                            brush-visible-changed(on) => {
+                                root.orient-brush-visible-changed(on);
+                            }
+                            brush-op(code) => {
+                                root.orient-brush-op(code);
+                            }
                             search(mode) => {
                                 root.orient-search(mode);
                             }

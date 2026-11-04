@@ -71,6 +71,7 @@ use crate::mesh_render::{Overlay, OverlayMesh, OverlayTint};
 use crate::scene_document::{
     SceneDocument, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
 };
+use crate::surface_brush::lost_paint_note;
 use crate::viewport::ViewportController;
 use crate::{MainWindow, WorkspaceSection};
 
@@ -1546,6 +1547,13 @@ impl HollowRun {
         match self.document.apply_edit(edit.clone()) {
             Ok(_) => {
                 self.document.push_edit(edit);
+                if let Some(note) = lost_paint_note(&self.document.take_paint_report()) {
+                    self.dialogs.show_info(move || InfoTexts {
+                        heading: ctr!("HollowRun", "Painted detail"),
+                        message: note.clone(),
+                        details: Default::default(),
+                    });
+                }
                 Some(links)
             }
             Err(err) => {

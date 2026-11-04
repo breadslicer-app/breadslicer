@@ -14,11 +14,11 @@
 //! The file holds the scene, not what is computed from it: slices, previews
 //! and other caches are rebuilt after opening, and supports are kept as data
 //! from which their mesh is rebuilt. A hollowed model keeps, besides its
-//! hollow, how it was made (#161). [`container`] reads and writes chunks
-//! without knowing what they hold; [`scene`], [`mesh`], [`supports`] and
-//! [`hollows`] are the codecs of the scene graph, its meshes, its supports
-//! and its hollows, and [`file`] puts them together with the project
-//! settings.
+//! hollow, how it was made (#161), and a painted model its paint (#183).
+//! [`container`] reads and writes chunks without knowing what they hold;
+//! [`scene`], [`mesh`], [`supports`], [`hollows`] and [`surface`] are the
+//! codecs of the scene graph, its meshes, its supports, its hollows and its
+//! paint, and [`file`] puts them together with the project settings.
 
 mod bytes;
 pub mod container;
@@ -27,6 +27,7 @@ pub mod hollows;
 pub mod mesh;
 pub mod scene;
 pub mod supports;
+pub mod surface;
 
 #[cfg(test)]
 mod tests_container;
@@ -40,6 +41,8 @@ mod tests_mesh;
 mod tests_scene;
 #[cfg(test)]
 mod tests_supports;
+#[cfg(test)]
+mod tests_surface;
 
 pub use container::{BreadReader, BreadWriter, Chunk, ChunkTag, ReadBreadError};
 pub use file::{
@@ -53,3 +56,4 @@ pub use scene::{
     decode_scene, encode_scene, encode_scene_emptying,
 };
 pub use supports::{DecodeSupportsError, SUPPORTS_TAG, SUPPORTS_VERSION, SupportDocument};
+pub use surface::{SURFACE_DOCUMENT_VERSION, SURFACE_TAG, SURFACE_VERSION, SurfaceNote};

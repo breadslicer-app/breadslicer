@@ -163,8 +163,16 @@ impl Neighbours {
     }
 
     #[inline]
-    fn of(&self, v: usize) -> &[u32] {
+    pub(crate) fn of(&self, v: usize) -> &[u32] {
         &self.adj[self.start[v] as usize..self.start[v + 1] as usize]
+    }
+
+    /// The vertices that can be a minimum, each with its cap.
+    pub(crate) fn candidates(&self) -> impl Iterator<Item = (u32, Cap)> + '_ {
+        self.candidates
+            .iter()
+            .copied()
+            .zip(self.caps.iter().copied())
     }
 }
 

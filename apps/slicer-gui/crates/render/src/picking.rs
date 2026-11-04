@@ -165,10 +165,26 @@ pub fn pick_object_where(
     spatial: &SceneSpatial,
     keep: impl Fn(NodeId) -> bool,
 ) -> Option<(NodeId, f32)> {
-    let mut best: Option<(NodeId, f32)> = None;
-    let mut idx = 0usize;
-    while let Some(node_id) = spatial.leaf_id_at_index(idx) {
-        idx += 1;
+    pick_face_where(ray, spatial, keep).map(|hit| (hit.leaf, hit.t))
+}
+
+/// What a ray meets first: the leaf, the ray parameter and the face.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FaceHit {
+    pub leaf: NodeId,
+    pub t: f32,
+    pub face: u32,
+}
+
+/// [`pick_object_where`] with the face hit, in one walk of the leaf's
+/// clusters: what a brush asks 60 times a second.
+pub fn pick_face_where(
+    ray: &Ray,
+    spatial: &SceneSpatial,
+    keep: impl Fn(NodeId) -> bool,
+) -> Option<FaceHit> {
+    let mut best: Option<FaceHit> = None;
+    for &node_id in spatial.leaf_ids() {
         if !keep(node_id) {
             continue;
         }
@@ -182,10 +198,16 @@ pub fn pick_object_where(
         if !ray_hits_aabb(ray, min, max) {
             continue;
         }
-        if let Some(t) = ray_hits_object_query(ray, &query) {
+        if let Some((t, face)) = ray_hit_face(ray, &query) {
             match best {
-                Some((_, prev_t)) if prev_t <= t => {}
-                _ => best = Some((node_id, t)),
+                Some(prev) if prev.t <= t => {}
+                _ => {
+                    best = Some(FaceHit {
+                        leaf: node_id,
+                        t,
+                        face: face as u32,
+                    });
+                }
             }
         }
     }
@@ -271,6 +293,7 @@ pub(crate) fn ray_hits_triangle_oriented(
 /// objects (singular linear part on the object's transform, empty mesh, or
 /// out-of-range face vertex indices) also give `None`: the picker treats them
 /// as a miss and reports no error.
+#[cfg(test)]
 pub(crate) fn ray_hits_object_query(ray: &Ray, query: &ObjectQuery<'_>) -> Option<f32> {
     ray_hit_face(ray, query).map(|(t, _)| t)
 }
@@ -279,6 +302,11 @@ pub(crate) fn ray_hits_object_query(ray: &Ray, query: &ObjectQuery<'_>) -> Optio
 /// face the ray (out of the surface it hits), with the hit's `t`.
 pub fn ray_hit_normal(ray: &Ray, query: &ObjectQuery<'_>) -> Option<(f32, Vec3)> {
     let (t, face) = ray_hit_face(ray, query)?;
+    Some((t, face_normal_towards(ray, query, face)?))
+}
+
+/// The world normal of face `face` of `query`, turned to face the ray.
+pub fn face_normal_towards(ray: &Ray, query: &ObjectQuery<'_>, face: usize) -> Option<Vec3> {
     let mesh = query.mesh();
     let world = query.world_transform();
     let [a, b, c] = mesh.faces().get(face)?.vertices.map(|v| {
@@ -291,7 +319,7 @@ pub fn ray_hit_normal(ray: &Ray, query: &ObjectQuery<'_>) -> Option<(f32, Vec3)>
     if n == Vec3::ZERO {
         return None;
     }
-    Some((t, if n.dot(ray.direction) > 0.0 { -n } else { n }))
+    Some(if n.dot(ray.direction) > 0.0 { -n } else { n })
 }
 
 /// [`ray_hits_object_query`] with the index of the face hit.

@@ -16,13 +16,17 @@
 //! the connection model.
 
 pub mod clusters;
+pub mod face_adjacency;
 mod mesh_spatial;
 mod primed;
 mod scene_spatial;
 
 pub use clusters::TriangleClusters;
+pub use face_adjacency::{
+    Dab, FaceAdjacency, Facing, WalkMarks, dab_faces, fill_faces, ring_faces,
+};
 pub use primed::PrimedMesh;
-pub use scene_spatial::{ObjectQuery, PrimingProgress, SceneSpatial};
+pub use scene_spatial::{AdjacencyJob, ObjectQuery, PrimingProgress, SceneSpatial};
 
 use sc_mesh_core::Aabb;
 use sc_mesh_core::transform::Transform3D;

@@ -256,6 +256,24 @@ impl SaveBundle {
     pub(crate) fn supports_as_mesh(&self) -> Option<SupportsAsMesh> {
         self.supports_as_mesh
     }
+
+    /// Whether the scene has paint this file will not hold (#183).
+    pub(crate) fn leaves_paint_out(&self) -> bool {
+        matches!(self.format, ProjectFormat::ThreeMf)
+            && self.scene.surface_tags_iter().next().is_some()
+    }
+}
+
+/// What the person hears when a save does not keep the paint.
+pub(crate) fn paint_left_out_texts() -> InfoTexts {
+    InfoTexts {
+        heading: ctr!("SaveDialog", "Painted detail not saved"),
+        message: ctr!(
+            "SaveDialog",
+            "A 3MF file does not hold painted detail, so this file was saved without it. Save as .bread to keep it."
+        ),
+        details: Default::default(),
+    }
 }
 
 /// The notice for a save whose supports went in as a mesh.

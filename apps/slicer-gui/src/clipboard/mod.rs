@@ -22,7 +22,7 @@ pub(crate) mod prep;
 use sc_mesh_core::Aabb;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::node::{LeafPayload, NodeKind};
-use sc_scene::{NodeId, SceneError};
+use sc_scene::{NodeId, PaintKind, SceneError, SurfaceTags};
 use sc_scene_edit::SceneFragment;
 
 use crate::scene_document::SceneDocument;
@@ -137,17 +137,20 @@ pub(crate) fn paste(
 /// `AddMeshResource` edit.
 pub(crate) fn fragment_from_document_selection(doc: &SceneDocument) -> Option<SceneFragment> {
     let node_id = doc.selection_primary_node_id()?;
-    let (arc, world_xform) = doc
+    let (arc, world_xform, paint) = doc
         .with_scene(|spatial| {
-            let arc = spatial.graph().leaf_mesh_arc(node_id).cloned()?;
+            let graph = spatial.graph();
+            let arc = graph.leaf_mesh_arc(node_id).cloned()?;
             let world = spatial.leaf(node_id).map(|q| q.world_transform())?;
-            Some((arc, world))
+            let paint: Vec<(PaintKind, SurfaceTags)> = graph
+                .surface_tags_iter()
+                .filter(|(leaf, _, _)| *leaf == node_id)
+                .map(|(_, kind, tags)| (kind, tags.clone()))
+                .collect();
+            Some((arc, world, paint))
         })
         .flatten()?;
-    Some(SceneFragment::from_leaf_snapshot(
-        arc,
-        drop_translation(world_xform),
-    ))
+    Some(SceneFragment::from_leaf_snapshot(arc, drop_translation(world_xform)).with_paint(paint))
 }
 
 /// Returns the world-space AABB of the fragment's single root leaf, after

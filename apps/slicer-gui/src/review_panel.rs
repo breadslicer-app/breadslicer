@@ -1299,7 +1299,7 @@ impl ReviewPanel {
                 }
                 self.push(None);
             }
-            SceneEvent::SelectionChanged | SceneEvent::DirtyChanged => {}
+            SceneEvent::SelectionChanged | SceneEvent::DirtyChanged | SceneEvent::Painted => {}
         }
     }
 

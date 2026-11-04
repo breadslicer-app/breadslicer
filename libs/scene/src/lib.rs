@@ -27,6 +27,8 @@ pub mod node;
 pub mod repair;
 mod scene;
 pub mod shared_vertices;
+pub mod surface;
+pub mod surface_carry;
 pub mod traverse;
 pub mod validate;
 pub mod volume;
@@ -39,6 +41,10 @@ pub use crate::node::{
 };
 pub(crate) use crate::scene::node_id_at_index;
 pub use crate::scene::{RemovedLeaf, Scene};
+pub use crate::surface::{
+    PAINTED, PaintChanges, PaintKind, PaintRun, SurfaceTags, UNPAINTED, surface_area,
+};
+pub use crate::surface_carry::{CarriedTags, carry_tags};
 pub use crate::traverse::ReferencePolicy;
 
 #[cfg(test)]

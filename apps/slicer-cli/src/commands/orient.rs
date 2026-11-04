@@ -202,7 +202,7 @@ pub(crate) fn orient(args: OrientArgs, libraries: &ProfileLibraries) -> Result<(
             "triangles": triangles,
             "rankedOnTriangles": ranked_on,
             "closed": analysis.is_closed(),
-            "notes": outcome.notes.iter().map(|n| match n { Note::OpenMesh => "open-mesh" }).collect::<Vec<_>>(),
+            "notes": outcome.notes.iter().map(|n| match n { Note::OpenMesh => "open-mesh", Note::DetailTips { .. } => "detail-tips" }).collect::<Vec<_>>(),
             "keepCurrent": outcome.keep_current,
             "current": candidate_json(&outcome.current),
             "options": outcome.options.iter().map(candidate_json).collect::<Vec<_>>(),

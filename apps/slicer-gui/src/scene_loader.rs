@@ -861,6 +861,9 @@ pub(crate) fn describe_project_warning(warning: &ReadProjectWarning) -> String {
         ReadProjectWarning::UnrecognizedProfilePart { part_name } => {
             format!("ignored an unrecognized part in the embedded-profiles area: {part_name}")
         }
+        ReadProjectWarning::SurfacePaintDropped { reason } => {
+            format!("painted faces were left out: {reason}")
+        }
         ReadProjectWarning::ForeignProjectData { dialect } => format!(
             "the file carries project data written by {}; only the model data was loaded",
             dialect_name(*dialect),

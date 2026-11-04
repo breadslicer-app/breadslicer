@@ -397,7 +397,8 @@ fn display_project_warnings(warnings: &[ReadProjectWarning], out: &mut dyn Write
             // flags and nothing is re-saved.
             ReadProjectWarning::ProjectVersionUnsupported { .. }
             | ReadProjectWarning::UnrecognizedProfilePart { .. }
-            | ReadProjectWarning::ForeignProjectData { .. } => {}
+            | ReadProjectWarning::ForeignProjectData { .. }
+            | ReadProjectWarning::SurfacePaintDropped { .. } => {}
         }
     }
 }

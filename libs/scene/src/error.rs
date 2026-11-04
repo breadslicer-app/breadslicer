@@ -78,6 +78,9 @@ pub enum SceneError {
     /// A conditional swap named the inline mesh it expected to find at
     /// `node_id`, but the leaf holds a different `Arc`.
     InlineMeshMismatch { node_id: NodeId },
+    /// A paint edit does not fit the leaf's paint: its faces do not hold what
+    /// the edit starts from, or the paint is for another mesh.
+    SurfacePaintMismatch { node_id: NodeId },
     /// A walk or bake that refuses CSG met an unevaluated CSG node.
     UnevaluatedCsg { node_id: NodeId },
     /// A structural walk that refuses references met a `Reference`
@@ -179,6 +182,11 @@ impl fmt::Display for SceneError {
             Self::InlineMeshMismatch { node_id } => write!(
                 f,
                 "node {} does not hold the inline mesh the swap expected",
+                node_id.get()
+            ),
+            Self::SurfacePaintMismatch { node_id } => write!(
+                f,
+                "the paint of node {} does not fit the edit",
                 node_id.get()
             ),
             Self::UnevaluatedCsg { node_id } => {

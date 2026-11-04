@@ -6373,3 +6373,131 @@ msgstr "Arriostrar dos soportes (clic en uno, después en el otro)"
 msgctxt "Workspace"
 msgid "Click a support where the brace starts, then the support it goes to; it is laid by the preset's bracing rules. Esc or a right click drops the first."
 msgstr "Hacé clic en un soporte donde empieza la riostra y después en el soporte al que va; se arma con las reglas de arriostrado del preset. Esc o clic derecho cancelan el primero."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "PROTECT DETAIL"
+msgstr "PROTEGER DETALLE"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Optional: paint what matters most, like the face. The search keeps supports off it and turns it up."
+msgstr "Opcional: pintá lo que más importa, como la cara. La búsqueda no le pone soportes y lo gira hacia arriba."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Painting"
+msgstr "Pintando"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Paint detail"
+msgstr "Pintar detalle"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Erase"
+msgstr "Borrar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Brush size"
+msgstr "Tamaño del pincel"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Only what the camera sees"
+msgstr "Solo lo que ve la cámara"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Drag paints, Alt + drag erases, Shift + click fills a region. [ and ] size the brush, B turns it off."
+msgstr "Arrastrar pinta, Alt + arrastrar borra, Mayús + clic rellena una zona. [ y ] cambian el tamaño del pincel, B lo apaga."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Grow"
+msgstr "Agrandar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Shrink"
+msgstr "Achicar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Invert"
+msgstr "Invertir"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Clear all"
+msgstr "Borrar todo"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Painted: {} mm² ({} %)"
+msgstr "Pintado: {} mm² ({} %)"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "{} on detail"
+msgstr "{} sobre detalle"
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "The painted detail changed. Search again to take it into account."
+msgstr "El detalle pintado cambió. Buscá de nuevo para tenerlo en cuenta."
+
+#: src/surface_brush.rs
+#, rust-format
+msgctxt "PaintReport"
+msgid "The painted detail was lost: none of its {} mm² reached the new mesh. Paint it again in Orient."
+msgstr "Se perdió el detalle pintado: ninguno de sus {} mm² llegó a la malla nueva. Volvé a pintarlo en Orientar."
+
+#: src/surface_brush.rs
+#, rust-format
+msgctxt "PaintReport"
+msgid "{} mm² of the {} mm² of painted detail did not reach the new mesh. Check it in Orient."
+msgstr "{} mm² de los {} mm² de detalle pintado no llegaron a la malla nueva. Revisalo en Orientar."
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Painted detail"
+msgstr "Detalle pintado"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Painted detail"
+msgstr "Detalle pintado"
+
+#: src/import_notes.rs
+msgctxt "ImportNotes"
+msgid "Some painted detail could not be read and was left out. The models opened without it."
+msgstr "Parte del detalle pintado no se pudo leer y quedó afuera. Los modelos se abrieron sin él."
+
+#: crates/render/src/mesh_render/error.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its surface paint pipeline: {}"
+msgstr "La vista 3D no pudo armar su canal de pintura de superficie: {}"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "1 tip on detail: no orientation avoids it."
+msgid_plural "{n} tips on detail: no orientation avoids them."
+msgstr[0] "1 punta sobre el detalle: ninguna orientación la evita."
+msgstr[1] "{n} puntas sobre el detalle: ninguna orientación las evita."
+
+#: src/scene_save.rs
+msgctxt "SaveDialog"
+msgid "Painted detail not saved"
+msgstr "Detalle pintado sin guardar"
+
+#: src/scene_save.rs
+msgctxt "SaveDialog"
+msgid "A 3MF file does not hold painted detail, so this file was saved without it. Save as .bread to keep it."
+msgstr "Un archivo 3MF no guarda el detalle pintado, así que este se guardó sin él. Guardá como .bread para conservarlo."

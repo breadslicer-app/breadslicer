@@ -59,6 +59,7 @@ fn a_hollow_is_stored_with_its_mesh_and_its_document() {
         settings: None,
         supports: Vec::new(),
         hollows: vec![document(leaf)],
+        surface_notes: Vec::new(),
     };
     let bytes = write_project(&project, Vec::new()).unwrap();
     let back = read_project(bytes.as_slice()).unwrap();
@@ -101,6 +102,7 @@ fn a_build_that_does_not_know_hollows_opens_the_hollow() {
         settings: None,
         supports: Vec::new(),
         hollows: vec![document(leaf)],
+        surface_notes: Vec::new(),
     };
     let bytes = write_project(&project, Vec::new()).unwrap();
     let older = rewrite(&bytes, |tag, version, payload| {
@@ -131,6 +133,7 @@ fn hollows_of_a_part_outside_the_scene_are_refused() {
         settings: None,
         supports: Vec::new(),
         hollows: vec![document(loose)],
+        surface_notes: Vec::new(),
     };
     assert!(matches!(
         write_project(&project, Vec::new()),
@@ -159,6 +162,7 @@ fn a_damaged_hollows_chunk_is_reported() {
         settings: None,
         supports: Vec::new(),
         hollows: vec![document(leaf)],
+        surface_notes: Vec::new(),
     };
     let bytes = write_project(&project, Vec::new()).unwrap();
     let cut = rewrite(&bytes, |tag, version, mut payload| {

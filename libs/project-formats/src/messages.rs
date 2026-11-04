@@ -31,6 +31,10 @@ pub enum ReadProjectWarning {
     /// It is detected so the user knows it is there, but never
     /// parsed, and a re-save will not carry it.
     ForeignProjectData { dialect: ForeignDialect },
+    /// Paint the file holds did not make it onto the models (#183): the
+    /// scene opens without it, and a re-save will not carry it. The text
+    /// says why, in English.
+    SurfacePaintDropped { reason: String },
 }
 
 /// Slicer families whose project data our 3MF reader recognizes by

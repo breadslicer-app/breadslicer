@@ -86,6 +86,14 @@ pub trait MeshRenderer {
     /// clears them). Re-uploads only when `pieces` is a different `Arc`.
     fn set_overlay(&mut self, _pieces: Option<&super::Overlay>) {}
 
+    /// Shows `layers`, the paint on the models' faces, tinted `tint`, in
+    /// place of what was shown. A layer whose paint did not change keeps its
+    /// buffer.
+    fn set_surface_paint(&mut self, _layers: &[super::PaintLayer], _tint: [f32; 4]) {}
+
+    /// Shows the brush's ring on its model (`None` hides it).
+    fn set_brush_ring(&mut self, _ring: Option<super::BrushRing>) {}
+
     /// Paints the models of the workspace frames to come by overhang (`None`
     /// turns the map off).
     fn set_overhang_map(&mut self, _map: Option<super::OverhangMap>) {}
@@ -172,6 +180,14 @@ impl MeshRenderer for Renderer {
 
     fn set_overlay(&mut self, pieces: Option<&super::Overlay>) {
         Renderer::set_overlay(self, pieces);
+    }
+
+    fn set_surface_paint(&mut self, layers: &[super::PaintLayer], tint: [f32; 4]) {
+        Renderer::set_surface_paint(self, layers, tint);
+    }
+
+    fn set_brush_ring(&mut self, ring: Option<super::BrushRing>) {
+        Renderer::set_brush_ring(self, ring);
     }
 
     fn set_overhang_map(&mut self, map: Option<super::OverhangMap>) {
