@@ -82,6 +82,7 @@ pub fn run(ctx: &ReviewContext<'_>, options: &RaftOptions) -> Vec<Finding> {
 
 /// Every model in the raft, with what [`covers`] needs.
 pub fn clashes(ctx: &ReviewContext<'_>, options: &RaftOptions) -> Vec<RaftClash> {
+    let _clock = crate::clock::scope("raft.total");
     let input = ctx.input;
     let zone = input.raft_layers().min(input.layer_count());
     let Some(raft_top_mm) = input.raft_top_mm() else {

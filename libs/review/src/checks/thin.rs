@@ -227,6 +227,7 @@ pub fn run_with_thickenings(
     ctx: &ReviewContext<'_>,
     options: &ThinFeatureOptions,
 ) -> (Vec<Finding>, Vec<CavityFill>) {
+    let _clock = crate::clock::scope("thin.total");
     let input = ctx.input;
     let subpixels = options.subpixels.clamp(SUBPIXELS.0, SUBPIXELS.1);
     let Some(grid) = FineGrid::new(input, subpixels) else {
@@ -405,6 +406,7 @@ struct RoleLayer {
 /// only a batch of sub-pixel runs is held at once, and keeps the thin pieces
 /// of each pass.
 fn sweep(input: &ReviewInput<'_>, grid: &FineGrid, passes: &[Pass]) -> Vec<Vec<LayerPieces>> {
+    let _clock = crate::clock::scope("thin.sweep");
     let count = input.layer_count();
     let batch = (rayon::current_num_threads() * 2).max(4);
     let mut done: Vec<Vec<LayerPieces>> = vec![Vec::with_capacity(count); passes.len()];
@@ -471,6 +473,7 @@ fn measure_layer(
     passes: &[Pass],
     layer: usize,
 ) -> Vec<RoleLayer> {
+    let _clock = crate::clock::scope("thin.measure_layer");
     let model = RoleCut::new(input, grid, layer, Role::Model);
     passes
         .iter()
@@ -499,6 +502,10 @@ struct RoleCut<'a> {
 
 impl<'a> RoleCut<'a> {
     fn new(input: &ReviewInput<'a>, grid: &FineGrid, layer: usize, role: Role) -> Self {
+        let _clock = crate::clock::scope(match role {
+            Role::Model => "thin.rolecut.model",
+            Role::Support => "thin.rolecut.support",
+        });
         let contours = role_contours(input, layer, role);
         let rows = grid.edges(input, &contours, Axis::Rows);
         let lines = rows.lines(0.5, 1.0, 0, grid.height as usize);
@@ -533,6 +540,10 @@ fn thin_pieces(
     cut: &RoleCut<'_>,
     mask: Option<&[Run]>,
 ) -> RoleLayer {
+    let _clock = crate::clock::scope(match pass.role {
+        Role::Model => "thin.pieces.model",
+        Role::Support => "thin.pieces.support",
+    });
     let opened = lines::open(&cut.lines, &Disc::new(0.5 * pass.width, 1.0));
     let thick = opened.cells(grid.width, true);
     let mut thin = difference(&cut.solid, &thick);
@@ -649,6 +660,7 @@ fn coarse_widths(
     labels: &[u32],
     pieces: &mut [Piece],
 ) {
+    let _clock = crate::clock::scope("thin.coarse_widths");
     let Some(levels) = pieces.first().map(|p| p.widths.len()) else {
         return;
     };
@@ -694,6 +706,7 @@ fn decide_near_limit(
     labels: &[u32],
     pieces: &mut [Piece],
 ) -> Vec<bool> {
+    let _clock = crate::clock::scope("thin.near_limit");
     let near: Vec<bool> = pieces
         .iter()
         .map(|p| {
@@ -932,6 +945,7 @@ fn finish_layer(
     above: Option<&RoleLayer>,
     reach: i64,
 ) -> LayerPieces {
+    let _clock = crate::clock::scope("thin.finish_layer");
     let mut pieces = this.pieces.clone();
     // Layer 0 rests on the plate, which backs it all.
     if let Some(below) = below {
@@ -990,6 +1004,7 @@ fn report(
     rules: &Rules,
     thickenings: &mut Vec<CavityFill>,
 ) -> Vec<Finding> {
+    let _clock = crate::clock::scope("thin.report");
     let mut offsets = Vec::with_capacity(layers.len() + 1);
     let mut total = 0;
     offsets.push(0);
@@ -1213,6 +1228,7 @@ fn measure_requests(
     pass: &Pass,
     mut requests: Vec<Request>,
 ) -> Vec<(usize, f64, f64)> {
+    let _clock = crate::clock::scope("thin.measure_requests");
     requests.sort_by_key(|r| r.1);
     let by_layer: Vec<&[Request]> = requests.chunk_by(|a, b| a.1 == b.1).collect();
     by_layer

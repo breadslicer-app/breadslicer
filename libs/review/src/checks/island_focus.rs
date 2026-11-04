@@ -37,6 +37,7 @@ pub(super) fn deepest_unheld(
     below: &[Run],
     prefer: Option<&[Run]>,
 ) -> Option<([u32; 2], bool)> {
+    let _clock = crate::clock::scope("islands.focus");
     let held = intersect(piece, below);
     let unheld = subtract(piece, &held);
     if unheld.is_empty() {

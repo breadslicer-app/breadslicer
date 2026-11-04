@@ -272,6 +272,7 @@ impl LayerPixels {
     ///
     /// When `layer` is out of range.
     pub fn compute(input: &ReviewInput<'_>, layer: usize) -> Self {
+        let _clock = crate::clock::scope("pixels.compute");
         let model = role_runs(input, layer, Role::Model);
         let support = role_runs(input, layer, Role::Support);
         let solid = runs::union(&model, &support);
@@ -306,6 +307,7 @@ impl LayerPixels {
     /// The statistics of every region, without the links to other layers
     /// (`below_px` and `above_px` are 0).
     pub fn regions(&self, width_px: u32, height_px: u32) -> LayerRegions {
+        let _clock = crate::clock::scope("regions.measure");
         let mut solid = measure_runs(
             &self.solid,
             &self.solid_labels,
@@ -345,6 +347,7 @@ fn runs_of<'a>(
 /// rasterised together, so overlapping leaves merge exactly as they do in
 /// the printer file.
 fn role_runs(input: &ReviewInput<'_>, layer: usize, role: Role) -> Vec<Run> {
+    let _clock = crate::clock::scope("pixels.role_runs");
     let contours: Vec<&ContourLayer> = input
         .leaves()
         .iter()
@@ -352,6 +355,18 @@ fn role_runs(input: &ReviewInput<'_>, layer: usize, role: Role) -> Vec<Run> {
         .map(|leaf| &leaf.stack.layers()[layer])
         .filter(|contour| !contour.polygons().is_empty())
         .collect();
+    #[cfg(feature = "stage-clock")]
+    for contour in &contours {
+        crate::clock::count("items.raster_polygons", contour.polygons().len() as u64);
+        crate::clock::count(
+            "items.raster_points",
+            contour
+                .polygons()
+                .iter()
+                .map(|p| p.outer().len() + p.holes().iter().map(|h| h.len()).sum::<usize>())
+                .sum::<usize>() as u64,
+        );
+    }
     match contours.as_slice() {
         [] => Vec::new(),
         [only] => runs::runs_from_raster(&rasterize_layer_binary(only, input.pixel_map())),
@@ -371,6 +386,7 @@ fn role_runs(input: &ReviewInput<'_>, layer: usize, role: Role) -> Vec<Run> {
 /// regions. [`LayerPixels::compute`] uses it on the merged solid and on the
 /// air; a check can use it on one role alone (`LayerPixels::model`).
 pub fn label_runs(runs: &[Run], connectivity: Connectivity) -> (Vec<u32>, usize) {
+    let _clock = crate::clock::scope("runs.label");
     let reach = connectivity.reach();
     let mut sets = UnionFind::new(runs.len());
     let mut prev = 0..0;
@@ -498,6 +514,7 @@ fn link(lower: &[Run], lower_labels: &[u32], upper: &[Run], upper_labels: &[u32]
 }
 
 fn link_layers(lower: &LayerPixels, upper: &LayerPixels) -> LayerLinks {
+    let _clock = crate::clock::scope("regions.link_layers");
     LayerLinks {
         solid: link(
             &lower.solid,
@@ -512,6 +529,7 @@ fn link_layers(lower: &LayerPixels, upper: &LayerPixels) -> LayerLinks {
 /// Adds the links between `lower` and `upper` to their regions' `above_px`
 /// and `below_px`.
 fn apply_links(lower: &mut LayerRegions, upper: &mut LayerRegions, links: &LayerLinks) {
+    let _clock = crate::clock::scope("regions.apply_links");
     for o in &links.solid {
         lower.solid[o.lower as usize].above_px += o.pixels;
         upper.solid[o.upper as usize].below_px += o.pixels;
@@ -541,6 +559,7 @@ impl PlateRegions {
     /// result keeps statistics only. The result does not depend on the
     /// number of threads.
     pub fn compute(input: &ReviewInput<'_>) -> Self {
+        let _clock = crate::clock::scope("regions.compute");
         let started = Instant::now();
         let (width_px, height_px) = (input.width_px(), input.height_px());
         let count = input.layer_count();

@@ -39,6 +39,7 @@
 //! The crate does no I/O and depends only on the slicing engine's types.
 
 pub mod checks;
+pub mod clock;
 pub mod fill;
 pub mod finding;
 pub mod input;

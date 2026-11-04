@@ -140,6 +140,7 @@ pub fn run_with_erasures(
     ctx: &ReviewContext<'_>,
     options: &OutputOptions,
 ) -> (Vec<Finding>, Vec<CavityFill>) {
+    let _clock = crate::clock::scope("output.total");
     let contours = scan_contours(ctx.input, options.edge_tolerance_mm);
     let bodies = ctx.regions.group_solid(|_, _| true);
     let edge = plate_edge(ctx, &bodies, &contours);

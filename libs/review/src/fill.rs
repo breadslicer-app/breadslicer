@@ -221,6 +221,7 @@ pub fn fill_stack<'f>(
     fills: impl IntoIterator<Item = &'f CavityFill>,
     schedule: &LayerSchedule,
 ) -> Option<ContourStack> {
+    let _clock = crate::clock::scope("fill.stack");
     let slabs: Vec<&FillSlab> = fills
         .into_iter()
         .flat_map(|fill| &fill.slabs)
@@ -262,6 +263,7 @@ pub fn erase_stack<'e>(
     stacks: &[&ContourStack],
     schedule: &LayerSchedule,
 ) -> Option<ContourStack> {
+    let _clock = crate::clock::scope("fill.erase_stack");
     let slabs: Vec<&FillSlab> = erasures
         .into_iter()
         .flat_map(|erasure| &erasure.slabs)

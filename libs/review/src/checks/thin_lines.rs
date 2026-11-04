@@ -122,6 +122,7 @@ impl Edges {
         axis: Axis,
         size: [u32; 2],
     ) -> Self {
+        let _clock = crate::clock::scope("lines.edges_new");
         let [width, height] = size.map(f64::from);
         let (along, across) = match axis {
             Axis::Rows => (width, height),
@@ -165,6 +166,7 @@ impl Edges {
             }
         }
         edges.sort_unstable_by(|a, b| a.span().0.total_cmp(&b.span().0));
+        crate::clock::count("items.thin_edges", edges.len() as u64);
         Self {
             edges,
             along,
@@ -176,6 +178,7 @@ impl Edges {
     /// The bands, built on first use.
     fn bands(&self) -> &Bands {
         self.bands.get_or_init(|| {
+            let _clock = crate::clock::scope("lines.bands");
             let count = (self.across / BAND).ceil().max(1.0) as usize;
             let mut through: Vec<Vec<(f64, u32)>> = vec![Vec::new(); count];
             let mut partial: Vec<Vec<u32>> = vec![Vec::new(); count];
@@ -301,6 +304,7 @@ impl Edges {
     /// `origin + i * step` across (`step` > 0), along the whole grid. The
     /// lines are swept in order, each crossed only by the edges reaching it.
     pub(super) fn lines(&self, origin: f64, step: f64, first: i64, count: usize) -> Lines {
+        let _clock = crate::clock::scope("lines.lines");
         let mut lines = Lines::starting_at(first);
         let (mut crossings, mut line) = (Vec::new(), Vec::new());
         let mut active: Vec<u32> = Vec::new();
@@ -451,6 +455,7 @@ impl Lines {
     /// stretch is half-open, `[x0, x1)`, as the printer's raster fills a
     /// solid.
     pub(super) fn cells(&self, width: u32, closed: bool) -> Vec<Run> {
+        let _clock = crate::clock::scope("lines.cells");
         let mut runs: Vec<Run> = Vec::new();
         let limit = f64::from(width);
         for k in 0..self.starts.len().saturating_sub(1) {
@@ -587,6 +592,7 @@ pub(super) fn dilate(centres: &Lines, disc: &Disc) -> Lines {
 
 /// Opening: the union of every placement of `disc` that fits in `lines`.
 pub(super) fn open(lines: &Lines, disc: &Disc) -> Lines {
+    let _clock = crate::clock::scope("lines.open");
     dilate(&erode(lines, disc), disc)
 }
 

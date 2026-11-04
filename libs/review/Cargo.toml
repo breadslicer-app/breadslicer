@@ -18,6 +18,8 @@ workspace = true
 serde = ["dep:serde"]
 # Exposes `test_support`, the synthetic-plate builder, to other crates' tests.
 test-support = []
+# Times every procedure of a review, for measuring (`clock`).
+stage-clock = []
 
 [dependencies]
 sc-print-primitives.workspace = true

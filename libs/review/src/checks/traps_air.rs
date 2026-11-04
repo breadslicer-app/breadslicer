@@ -97,6 +97,7 @@ impl AirMap {
     /// opening `width` pixels wide. Layers are processed in parallel, a batch
     /// at a time, so only one batch of pixels is held at once.
     pub(super) fn compute(input: &ReviewInput<'_>, width: u32) -> Self {
+        let _clock = crate::clock::scope("traps.air_map");
         let count = input.layer_count();
         let batch = (rayon::current_num_threads() * 4).max(8);
         let mut layers: Vec<AirLayer> = Vec::with_capacity(count);
@@ -196,6 +197,7 @@ struct AirPixels {
 
 impl AirPixels {
     fn from_pixels(pixels: LayerPixels, width: u32, input: &ReviewInput<'_>) -> Self {
+        let _clock = crate::clock::scope("traps.air_pixels");
         let (width_px, height_px) = (input.width_px(), input.height_px());
         let air = open(&pixels.air, width, height_px);
         let (labels, count) = label_runs(&air, AIR_CONNECTIVITY);
@@ -236,6 +238,7 @@ impl AirPixels {
 
     /// The regions and the walls of the enclosed ones.
     fn layer(&self, input: &ReviewInput<'_>) -> AirLayer {
+        let _clock = crate::clock::scope("traps.air_layer");
         let (width_px, height_px) = (input.width_px(), input.height_px());
         let regions = measure_runs(&self.air, &self.labels, self.count, width_px, height_px);
         let mut sides = vec![Sides::default(); self.count];
@@ -258,6 +261,7 @@ impl AirPixels {
         width_px: u32,
         height_px: u32,
     ) {
+        let _clock = crate::clock::scope("traps.walls");
         let pixels = &self.pixels;
         let solid_boxes: Vec<PixelBox> = measure_runs(
             &pixels.solid,
@@ -351,6 +355,7 @@ struct Pair {
 
 impl Pair {
     fn compute(lower: &AirPixels, upper: &AirPixels, width: u32, height_px: u32) -> Self {
+        let _clock = crate::clock::scope("traps.pair");
         // The air both layers share, opened: a link narrower than a drain is
         // no link. Only links to an enclosed region matter (open air is
         // drained whatever lies below it), and no square of air straddles
@@ -438,6 +443,7 @@ pub(super) fn classify(
     layers: &[usize],
     [x, row]: [u32; 2],
 ) -> Vec<Pixel> {
+    let _clock = crate::clock::scope("traps.classify");
     layers
         .par_iter()
         .map(|&layer| {
@@ -467,6 +473,7 @@ pub(super) fn cavity_runs(
     width: u32,
     cavities: &[&[RegionRef]],
 ) -> Vec<Vec<FillLayerRuns>> {
+    let _clock = crate::clock::scope("traps.cavity_runs");
     let mut wanted: Vec<(usize, usize, u32)> = cavities
         .iter()
         .enumerate()
@@ -523,6 +530,7 @@ fn covers(runs: &[Run], row: u32, x: u32) -> bool {
 /// than the square in either direction disappear; wider ones keep their
 /// shape. A `width` of 0 or 1 changes nothing.
 pub(super) fn open(runs: &[Run], width: u32, height_px: u32) -> Vec<Run> {
+    let _clock = crate::clock::scope("traps.open");
     if width <= 1 || runs.is_empty() {
         return runs.to_vec();
     }

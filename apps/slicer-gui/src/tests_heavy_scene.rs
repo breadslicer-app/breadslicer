@@ -50,7 +50,7 @@ use super::*;
 use crate::mesh_render::{DeviceLoss, DeviceToken, Renderer};
 use crate::preferences_bus::PreferencesSnapshot;
 use crate::print_selection::PrintDefaults;
-use crate::review::{erased_stack, review_checks_alone, review_slices_measured};
+use crate::review::{erased_stack, review_procedures_alone, review_slices_measured};
 use crate::save_progress::SavePhase;
 use crate::scene_save::{prepare_save_for_target, write_bundle};
 use crate::slice_projection::load_selected_profiles;
@@ -120,6 +120,19 @@ mod process {
         (counters.private as u64, counters.working_set as u64)
     }
 
+    /// The process's page faults so far.
+    pub(super) fn page_faults() -> u32 {
+        let mut counters = Counters {
+            cb: size_of::<Counters>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: the pointer is to a live struct of the size given.
+        unsafe {
+            K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb);
+        }
+        counters.page_faults
+    }
+
     /// The physical memory the machine has free.
     pub(super) fn available_physical() -> u64 {
         let mut status = MemoryStatus {
@@ -187,13 +200,47 @@ impl Probe {
             let time_limit = env("BREADSLICER_HEAVY_SECONDS")
                 .map(|s| Duration::from_secs(s.parse().expect("seconds")));
             let started = Instant::now();
+            let timeline_file = file.with_extension("timeline.tsv");
             std::thread::spawn(move || {
                 let mut tick = 0u32;
+                let mut timeline = String::from(
+                    "t_s\tcores\tprivate_gb\tworking_gb\tfree_gb\tfaults_per_s\tstep\n",
+                );
+                let (mut last_at, mut last_cpu, mut last_faults) = (
+                    Instant::now(),
+                    process::cpu_seconds(),
+                    process::page_faults(),
+                );
                 while !stop.load(Ordering::Relaxed) {
                     let (private, working) = process::memory();
                     peak_private.fetch_max(private, Ordering::Relaxed);
                     peak_working.fetch_max(working, Ordering::Relaxed);
                     tick += 1;
+                    if last_at.elapsed() >= Duration::from_millis(250) {
+                        let (cpu, faults) = (process::cpu_seconds(), process::page_faults());
+                        let wall = last_at.elapsed().as_secs_f64();
+                        timeline.push_str(&format!(
+                            "{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.0}\t{}\n",
+                            started.elapsed().as_secs_f64(),
+                            (cpu - last_cpu) / wall,
+                            private as f64 / 1073741824.0,
+                            working as f64 / 1073741824.0,
+                            process::available_physical() as f64 / 1073741824.0,
+                            f64::from(faults.wrapping_sub(last_faults)) / wall,
+                            current.lock().expect("no panic holds it"),
+                        ));
+                        (last_at, last_cpu, last_faults) = (Instant::now(), cpu, faults);
+                        if timeline.len() > 1 << 14 {
+                            use std::io::Write as _;
+                            let mut out = fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(&timeline_file)
+                                .expect("the time line opens");
+                            out.write_all(timeline.as_bytes()).expect("it is written");
+                            timeline.clear();
+                        }
+                    }
                     let free = if tick % 20 == 0 {
                         process::available_physical()
                     } else {
@@ -231,6 +278,18 @@ impl Probe {
             profiler: RefCell::new(None),
             current,
         }
+    }
+
+    /// Adds lines to `<tag>.clock.tsv`.
+    fn append_clock(&self, lines: &str) {
+        use std::io::Write as _;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.file.with_extension("clock.tsv"))
+            .expect("the clock file opens");
+        file.write_all(lines.as_bytes())
+            .expect("the clock is written");
     }
 
     /// Samples the stacks of every step from now on.
@@ -525,6 +584,33 @@ struct Run<'a> {
     resin: MaterialId,
 }
 
+/// Runs each procedure alone as a step, and writes what the clock read.
+#[allow(clippy::too_many_arguments)]
+fn review_alone_steps(
+    p: &Probe,
+    label: &str,
+    leaves: &[sc_sl1cer::LeafSlices],
+    filled: Option<&sc_sl1cer::contour::ContourStack>,
+    erased: Option<&sc_sl1cer::contour::ContourStack>,
+    profile: &sc_sl1cer::profile::SliceProfile,
+    raft: Option<f64>,
+    lines: &mut String,
+) {
+    review_procedures_alone(leaves, filled, erased, profile, raft, &mut |name, run| {
+        sc_review::clock::reset();
+        p.step(&format!("{label}.alone.{name}"), On::Worker, run);
+        for stage in sc_review::clock::snapshot() {
+            lines.push_str(&format!(
+                "{label}\t{name}\t{}\t{}\t{:.3}\t{:.3}\n",
+                stage.name,
+                stage.calls,
+                stage.nanos as f64 / 1e9,
+                stage.span_nanos as f64 / 1e9,
+            ));
+        }
+    });
+}
+
 fn review_lines(probe: &Probe, label: &str, timings: &ReviewTimings) {
     for (name, wall) in [
         ("regions", timings.regions),
@@ -539,6 +625,34 @@ fn review_lines(probe: &Probe, label: &str, timings: &ReviewTimings) {
 }
 
 impl Run<'_> {
+    /// Every procedure of the review alone, with what the stage clock read
+    /// during it: `<tag>.clock.tsv`.
+    #[allow(clippy::too_many_arguments)]
+    fn review_alone(
+        &self,
+        label: &str,
+        leaves: &[sc_sl1cer::LeafSlices],
+        filled: Option<&sc_sl1cer::contour::ContourStack>,
+        erased: Option<&sc_sl1cer::contour::ContourStack>,
+        profile: &sc_sl1cer::profile::SliceProfile,
+        raft: Option<f64>,
+        facts: &mut Facts,
+    ) {
+        let p = self.probe;
+        let mut stacks: Vec<(String, &sc_sl1cer::contour::ContourStack)> = leaves
+            .iter()
+            .map(|leaf| (format!("{:?}", leaf.leaf_name()), leaf.stack()))
+            .collect();
+        stacks.extend(filled.map(|stack| ("filled".to_owned(), stack)));
+        stacks.extend(erased.map(|stack| ("erased".to_owned(), stack)));
+        for (name, stack) in stacks {
+            describe_stack(facts, &format!("{label} review input {name}"), stack);
+        }
+        let mut lines = String::new();
+        review_alone_steps(p, label, leaves, filled, erased, profile, raft, &mut lines);
+        p.append_clock(&lines);
+    }
+
     /// A slice, as `SliceRun` makes it: what `launch` does on the UI thread,
     /// then `run_slice` on a worker, then what `finish` does on the UI
     /// thread. `solo` also times every check alone, on its own.
@@ -616,18 +730,15 @@ impl Run<'_> {
         });
         review_lines(p, label, &timings);
         if solo {
-            let alone = p.step(&step("extra_checks_alone"), On::Worker, || {
-                review_checks_alone(
-                    plate.leaves(),
-                    filled.as_ref(),
-                    erased.as_ref(),
-                    plate.profile(),
-                    raft,
-                )
-            });
-            for (name, wall) in alone {
-                p.note(&format!("{label}.alone.{name}"), On::Worker, wall);
-            }
+            self.review_alone(
+                label,
+                plate.leaves(),
+                filled.as_ref(),
+                erased.as_ref(),
+                plate.profile(),
+                raft,
+                facts,
+            );
         }
         if !by_fix_all {
             for leaf in plate.leaves() {
@@ -753,6 +864,7 @@ fn heavy_scene_timing() {
     let preset_name = env("BREADSLICER_HEAVY_PRESET").unwrap_or_else(|| "structure".to_owned());
     let fix_all = env("BREADSLICER_HEAVY_FIX").is_none_or(|v| v != "0");
     let write_files = env("BREADSLICER_HEAVY_SAVE").is_none_or(|v| v != "0");
+    let alone = env("BREADSLICER_HEAVY_ALONE").is_some_and(|v| v == "1");
     fs::create_dir_all(&dir).expect("the output folder");
     let probe = Probe::new(dir.join(format!("{tag}.steps.tsv")));
     let facts_file = dir.join(format!("{tag}.facts.txt"));
@@ -854,7 +966,7 @@ fn heavy_scene_timing() {
             resin: resin.clone(),
         };
         // Each check alone only when Fix All does not follow: it takes minutes.
-        run.slice("slice", false, !fix_all, &mut facts);
+        run.slice("slice", false, !fix_all || alone, &mut facts);
         describe_findings(&panel, &mut facts, "after the slice");
         let held = document.held_slice().expect("a slice");
         describe_stack(&mut facts, "plate", held.contours.stack());
@@ -893,7 +1005,7 @@ fn heavy_scene_timing() {
                     break;
                 }
                 assert_eq!(resliced.get(), pass, "the pass asked for its slice");
-                run.slice(&name, true, false, &mut facts);
+                run.slice(&name, true, alone, &mut facts);
                 describe_findings(&panel, &mut facts, &format!("after pass {pass}"));
             }
             p.note("fix.total", On::Worker, press.elapsed());

@@ -405,6 +405,7 @@ pub fn run_with_joins(
     ctx: &ReviewContext<'_>,
     options: &IslandOptions,
 ) -> (Vec<Finding>, Vec<CavityFill>) {
+    let _clock = crate::clock::scope("islands.total");
     let options = options.sanitized();
     if options.min_supported_fraction == 0.0 || ctx.input.layer_count() <= PLATE_LAYERS {
         return (Vec::new(), Vec::new());
@@ -424,6 +425,7 @@ pub fn run_with_joins(
 
 /// Sorts every piece into sound or island, bottom up, and finds the starts.
 fn classify(scan: &PieceScan, options: &IslandOptions) -> Islands {
+    let _clock = crate::clock::scope("islands.classify");
     let mut offsets = Vec::with_capacity(scan.layers.len() + 1);
     let mut total = 0;
     offsets.push(0);
@@ -597,6 +599,7 @@ fn report(
     mut islands: Islands,
     options: &IslandOptions,
 ) -> (Vec<Finding>, Vec<CavityFill>) {
+    let _clock = crate::clock::scope("islands.report");
     let piece = |at: RegionRef| scan.layers[at.layer][at.index as usize];
     let groups = Groups::from_union_find(islands.offsets.clone(), &mut islands.sets);
     let ref_of = |id: usize| {
@@ -750,6 +753,7 @@ fn footprints(
     keep_px: u64,
     reported: &[Reported],
 ) -> Vec<Option<CavityFill>> {
+    let _clock = crate::clock::scope("islands.footprints");
     let mut wanted: Vec<(usize, usize, u32)> = reported
         .iter()
         .enumerate()
@@ -801,6 +805,7 @@ struct Below {
 
 impl Below {
     fn read(ctx: &ReviewContext<'_>, options: &IslandOptions, layer: usize) -> Self {
+        let _clock = crate::clock::scope("islands.held_below");
         let reach = 1 + pieces::cured_gap_layers(ctx.input, layer, options.cure_depth_mm);
         let mut held: Vec<Run> = Vec::new();
         for below in 1..=reach.min(layer) {
@@ -858,6 +863,7 @@ fn join_below(
     below: &Below,
     layer: usize,
 ) -> Option<(u64, f64, CavityFill)> {
+    let _clock = crate::clock::scope("islands.join_below");
     let mut open = unheld.to_vec();
     let mut joined_px = 0u64;
     let mut widest_gap: f64 = 0.0;
@@ -911,6 +917,7 @@ fn island_finding(
     below: &Below,
     pixel_mm2: f64,
 ) -> (Finding, Option<CavityFill>) {
+    let _clock = crate::clock::scope("islands.finding");
     let start = &reported.start;
     let is_model = piece.model_px > 0;
     let runs = cut.runs_of(start.at.index);

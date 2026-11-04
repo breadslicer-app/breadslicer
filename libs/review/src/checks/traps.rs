@@ -270,6 +270,7 @@ pub fn run_with_fills(
     ctx: &ReviewContext<'_>,
     options: &TrapOptions,
 ) -> (Vec<Finding>, Vec<CavityFill>) {
+    let _clock = crate::clock::scope("traps.total");
     let input = ctx.input;
     if input.layer_count() == 0 {
         return (Vec::new(), Vec::new());
@@ -336,6 +337,7 @@ enum Remedy {
 
 /// Pass 1, from the plate up: which air regions of every layer are drained.
 fn drain_pass(map: &AirMap, drain_px: u64) -> Vec<Vec<bool>> {
+    let _clock = crate::clock::scope("traps.drain_pass");
     let mut drained: Vec<Vec<bool>> = Vec::with_capacity(map.layers.len());
     for (layer, air) in map.layers.iter().enumerate() {
         let mut flags: Vec<bool> = air
@@ -359,6 +361,7 @@ fn drain_pass(map: &AirMap, drain_px: u64) -> Vec<Vec<bool>> {
 /// whether each group is vented (meaningful for cavities only; a drained
 /// region is a group of its own).
 fn vent_pass(map: &AirMap, drained: &[Vec<bool>], drain_px: u64) -> (Groups, Vec<bool>) {
+    let _clock = crate::clock::scope("traps.vent_pass");
     let candidate = |layer: usize, index: u32| !drained[layer][index as usize];
     let groups = map.group(|upper, link| {
         link.pixels >= drain_px && candidate(upper - 1, link.lower) && candidate(upper, link.upper)
@@ -421,6 +424,7 @@ impl<'g> Cavity<'g> {
         members: &'g [RegionRef],
         vented: bool,
     ) -> Self {
+        let _clock = crate::clock::scope("traps.measure_cavity");
         let pixel_mm2 = input.pixel_area_mm2();
         let first_layer = members[0].layer;
         let mut volume_mm3 = 0.0;

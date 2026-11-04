@@ -160,54 +160,45 @@ pub(crate) fn review_slices_measured(
     )
 }
 
-/// Each check of a review by itself on the same regions, which the review
-/// runs together (#427): how long they take with the machine to themselves.
+/// Each procedure of a review by itself (#427), on the same input, each
+/// through `step`: what it costs with the machine to itself.
 #[cfg(test)]
-pub(crate) fn review_checks_alone(
+pub(crate) fn review_procedures_alone(
     leaves: &[LeafSlices],
     filled: Option<&ContourStack>,
     erased: Option<&ContourStack>,
     profile: &SliceProfile,
     raft_top_mm: Option<f64>,
-) -> Vec<(&'static str, Duration)> {
+    step: &mut dyn FnMut(&'static str, &mut dyn FnMut()),
+) {
     use sc_review::checks::{islands, output, raft, thin, traps};
     use sc_review::{PlateRegions, ReviewContext};
-    let leaves = measured_leaves(leaves, filled, erased);
-    let input = measured_input(leaves, profile, raft_top_mm);
+    let mut input = None;
+    step("input", &mut || {
+        let leaves = measured_leaves(leaves, filled, erased);
+        input = Some(measured_input(leaves, profile, raft_top_mm));
+    });
+    let input = input.expect("built");
     let options = ReviewOptions::default();
-    let timed = |f: &mut dyn FnMut()| {
-        let started = std::time::Instant::now();
-        f();
-        started.elapsed()
-    };
     let mut regions = None;
-    let mut times = vec![(
-        "regions",
-        timed(&mut || regions = Some(PlateRegions::compute(&input))),
-    )];
+    step("regions", &mut || {
+        regions = Some(PlateRegions::compute(&input));
+    });
     let regions = regions.expect("computed");
     let ctx = ReviewContext::new(&input, &regions);
-    times.push((
-        "islands",
-        timed(&mut || drop(islands::run_with_joins(&ctx, &options.islands))),
-    ));
-    times.push((
-        "traps",
-        timed(&mut || drop(traps::run_with_fills(&ctx, &options.traps))),
-    ));
-    times.push((
-        "thin",
-        timed(&mut || drop(thin::run_with_thickenings(&ctx, &options.thin))),
-    ));
-    times.push((
-        "output",
-        timed(&mut || drop(output::run_with_erasures(&ctx, &options.output))),
-    ));
-    times.push((
-        "raft",
-        timed(&mut || drop(raft::clashes(&ctx, &options.raft))),
-    ));
-    times
+    step("islands", &mut || {
+        drop(islands::run_with_joins(&ctx, &options.islands));
+    });
+    step("traps", &mut || {
+        drop(traps::run_with_fills(&ctx, &options.traps));
+    });
+    step("thin", &mut || {
+        drop(thin::run_with_thickenings(&ctx, &options.thin));
+    });
+    step("output", &mut || {
+        drop(output::run_with_erasures(&ctx, &options.output));
+    });
+    step("raft", &mut || drop(raft::clashes(&ctx, &options.raft)));
 }
 
 #[cfg(test)]

@@ -133,11 +133,13 @@ impl LayerPieces {
     /// cut off with no more than `keep_px` pixels joining the largest piece
     /// it touches.
     pub(super) fn compute(input: &ReviewInput<'_>, layer: usize, keep_px: u64) -> Self {
+        let _clock = crate::clock::scope("pieces.compute");
         Self::cut(LayerPixels::compute(input, layer), keep_px)
     }
 
     /// Cuts the solid of `pixels` into pieces (see [`Self::compute`]).
     pub(super) fn cut(pixels: LayerPixels, keep_px: u64) -> Self {
+        let _clock = crate::clock::scope("pieces.cut");
         let (runs, labels, count) = cut(
             &pixels.solid,
             &pixels.solid_labels,
@@ -230,6 +232,7 @@ pub(super) fn scan(
     keep_px: u64,
     cure_depth_mm: f64,
 ) -> PieceScan {
+    let _clock = crate::clock::scope("islands.scan");
     let count = input.layer_count();
     let batch = (rayon::current_num_threads() * 4).max(8);
     let mut scan = PieceScan {
@@ -716,6 +719,7 @@ fn touching<'a>(list: &'a [Run], run: &Run) -> impl Iterator<Item = usize> + 'a 
 /// pixels they share, and on a deeper layer through the pixels with nothing
 /// in the layers between (#403). Sorted by `(below, lower, upper)`.
 fn contacts(lowers: &[&LayerPieces], upper: &LayerPieces) -> Vec<Contact> {
+    let _clock = crate::clock::scope("pieces.contacts");
     let mut out: Vec<Contact> = Vec::new();
     let mut open: Option<(Vec<Run>, Vec<u32>)> = None;
     for (depth, lower) in lowers.iter().enumerate() {
@@ -792,6 +796,7 @@ fn split_by_role(layer: &LayerPieces) -> RoleSplit {
 /// For every piece of `upper` that rests on nothing, the pieces of `lower`
 /// it touches through an edge or a corner, as sorted `(upper, lower)` pairs.
 fn touches(lower: &LayerPieces, upper: &LayerPieces, contacts: &[Contact]) -> Vec<(u32, u32)> {
+    let _clock = crate::clock::scope("pieces.touches");
     let mut rests = vec![false; upper.pieces.len()];
     for contact in contacts {
         rests[contact.upper as usize] = true;
