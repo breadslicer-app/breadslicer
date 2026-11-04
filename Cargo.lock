@@ -5316,6 +5316,7 @@ dependencies = [
  "i-slint-backend-testing",
  "ico",
  "image",
+ "meshopt",
  "newtypes",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",

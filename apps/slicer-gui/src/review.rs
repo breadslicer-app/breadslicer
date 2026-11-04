@@ -134,6 +134,82 @@ pub(crate) fn review_slices(
     })
 }
 
+/// [`review_slices`] with what it cost (#427): the review's own timings and,
+/// with `alone`, each check run again by itself on the same regions, which
+/// the review runs together.
+#[cfg(test)]
+pub(crate) fn review_slices_measured(
+    leaves: &[LeafSlices],
+    filled: Option<&ContourStack>,
+    erased: Option<&ContourStack>,
+    profile: &SliceProfile,
+    raft_top_mm: Option<f64>,
+    alone: bool,
+) -> (
+    ReviewOutcome,
+    sc_review::ReviewTimings,
+    Vec<(&'static str, Duration)>,
+) {
+    use sc_review::checks::{islands, output, raft, thin, traps};
+    use sc_review::{PlateRegions, ReviewContext};
+    let mut leaves = review_leaves(leaves);
+    if let Some(stack) = filled {
+        leaves.push(ReviewLeaf::new(Some(FILLED_LEAF), Role::Model, stack));
+    }
+    if let Some(stack) = erased {
+        leaves.push(ReviewLeaf::new(Some(ERASED_LEAF), Role::Model, stack));
+    }
+    let input = ReviewInput::from_profile(leaves, profile)
+        .expect("the stacks fit the run")
+        .with_raft_top_mm(raft_top_mm)
+        .with_support_lift_mm(Some(recommended_lift_mm(None)));
+    let options = ReviewOptions::default();
+    let report = review_with(&input, &options);
+    let mut times = Vec::new();
+    if alone {
+        let timed = |f: &mut dyn FnMut()| {
+            let started = std::time::Instant::now();
+            f();
+            started.elapsed()
+        };
+        let regions = PlateRegions::compute(&input);
+        let ctx = ReviewContext::new(&input, &regions);
+        times.push((
+            "islands",
+            timed(&mut || drop(islands::run_with_joins(&ctx, &options.islands))),
+        ));
+        times.push((
+            "traps",
+            timed(&mut || drop(traps::run_with_fills(&ctx, &options.traps))),
+        ));
+        times.push((
+            "thin",
+            timed(&mut || drop(thin::run_with_thickenings(&ctx, &options.thin))),
+        ));
+        times.push((
+            "output",
+            timed(&mut || drop(output::run_with_erasures(&ctx, &options.output))),
+        ));
+        times.push((
+            "raft",
+            timed(&mut || drop(raft::clashes(&ctx, &options.raft))),
+        ));
+    }
+    let timings = report.timings;
+    (
+        ReviewOutcome::Reviewed {
+            findings: report.findings,
+            fills: report.fills,
+            erasures: report.erasures,
+            thickenings: report.thickenings,
+            joins: report.joins,
+            took: report.timings.total,
+        },
+        timings,
+        times,
+    )
+}
+
 /// The name of the filled cavities' leaf in the review.
 const FILLED_LEAF: &str = "Filled cavities";
 

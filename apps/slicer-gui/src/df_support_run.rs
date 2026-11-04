@@ -1147,6 +1147,18 @@ struct Preset {
     built_in: bool,
 }
 
+/// What a measured Generate press cost (#427).
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct MeasuredRun {
+    pub(crate) start: Duration,
+    pub(crate) worker: Duration,
+    pub(crate) landing: Duration,
+    pub(crate) summary: String,
+    pub(crate) details: String,
+    pub(crate) report: String,
+}
+
 /// The presets that ship with SoulCrafted: DragonFruit's three sizing
 /// tiers, then the two zone presets (#360).
 fn built_in_presets() -> Vec<Preset> {
@@ -2252,14 +2264,58 @@ impl DfSupportRun {
         self.finish(outcome);
     }
 
+    /// A Generate press with `options`, then and there, with what it cost
+    /// (#427): the part a press does on the UI thread, the run on its
+    /// worker, and its landing back on the UI thread.
+    #[cfg(test)]
+    pub(crate) fn generate_measured(self: &Rc<Self>, options: DfSupportOptions) -> MeasuredRun {
+        *self.options.borrow_mut() = options;
+        let started = Instant::now();
+        let request = self.request_for_selection();
+        let lift = self.plate_lift(&request);
+        let scene = self.run_scene(lift.as_ref()).expect("a scene");
+        let start = started.elapsed();
+        let started = Instant::now();
+        let outcome = start_df_supports(&scene, request)
+            .expect("the run starts")
+            .join();
+        let worker = started.elapsed();
+        let (summary, details, report) = match &outcome {
+            Ok(outcome) => (
+                summary_message(outcome),
+                details_message(outcome),
+                outcome.timings.report(),
+            ),
+            Err(err) => (format!("failed: {err}"), String::new(), String::new()),
+        };
+        *self.started_on.borrow_mut() = Some(self.document.scene_revision());
+        *self.plate_lift.borrow_mut() = lift;
+        let started = Instant::now();
+        self.finish(outcome);
+        MeasuredRun {
+            start,
+            worker,
+            landing: started.elapsed(),
+            summary,
+            details,
+            report,
+        }
+    }
+
     /// Waits for the hand edit being made off the UI thread, and settles it
     /// as the UI's poll does. Returns the longest the UI thread was held by
     /// one poll: what landing the edit costs it.
     #[cfg(test)]
     pub(crate) fn settle_edit(self: &Rc<Self>) -> Duration {
+        self.settle_edit_within(Duration::from_secs(120))
+    }
+
+    /// [`Self::settle_edit`], waiting for `limit` at most.
+    #[cfg(test)]
+    pub(crate) fn settle_edit_within(self: &Rc<Self>, limit: Duration) -> Duration {
         let waited = Instant::now();
         let mut longest = Duration::ZERO;
-        while self.editing() && waited.elapsed() < Duration::from_secs(120) {
+        while self.editing() && waited.elapsed() < limit {
             std::thread::sleep(Duration::from_millis(5));
             let poll = Instant::now();
             self.poll_click();

@@ -99,6 +99,8 @@ float-cmp = { workspace = true }
 # Slint's element queries (positions and sizes of laid-out elements) for
 # layout tests; the same version as `slint`.
 i-slint-backend-testing = "=1.18.1"
+# Decimates a real model in the heavy-scene measurement (#427).
+meshopt = "0.7"
 tempfile = "3.23.0"
 
 # Every file in `tests/` is a module of this one test binary, so the crate is

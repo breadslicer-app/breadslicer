@@ -181,6 +181,12 @@ fn prepare_export(document: &SceneDocument) -> Result<ExportJob, ExportFailure> 
     export_job(held, &scene, &printer, &material)
 }
 
+/// [`prepare_export`], for what measures it.
+#[cfg(test)]
+pub(crate) fn prepare_export_for_test(document: &SceneDocument) -> Option<ExportJob> {
+    prepare_export(document).ok()
+}
+
 /// Check that `scene` and the profiles the held slice was cut under still give
 /// its schedule and the values its layers were cut with, then prepare its
 /// export under those profiles.

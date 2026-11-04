@@ -2328,3 +2328,7 @@ fn review_summary(findings: &[Finding]) -> String {
 #[cfg(test)]
 #[path = "tests_review_panel.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests_heavy_scene.rs"]
+mod tests_heavy_scene;
