@@ -58,6 +58,10 @@ pub enum BridgeRefusal {
     Canted,
     /// The shaft runs into the model.
     Blocked,
+    /// The contact lies on a top surface, its normal turned over to look
+    /// into the model: nothing hangs there, and a bridge from it would run
+    /// through the model and end in the air.
+    TopSurface,
 }
 
 /// What looking for a bridge found (SoulCrafted, #445).
@@ -120,6 +124,15 @@ pub fn attempt_cavity_bridge(
     const FLOOR_Z_MIN: f64 = 0.35;
     const MAX_HIT_SCAN: usize = 64;
     let normal_matrix = Matrix3::normal_matrix(mesh.rays.matrix_world);
+
+    if settings.mesh_to_mesh.every_landing
+        && looks_into_the_model(tip_pos, tip_normal, mesh, &normal_matrix)
+    {
+        return BridgeAttempt {
+            bridge: None,
+            refusals: vec![BridgeRefusal::TopSurface],
+        };
+    }
 
     let scan_down = |ox: f64, oy: f64| -> (Option<Candidate>, Option<Candidate>) {
         let ray = Ray {
@@ -338,4 +351,31 @@ pub fn attempt_cavity_bridge(
         bridge: None,
         refusals,
     }
+}
+
+/// Whether the normal of a contact at `tip_pos` looks into the model: from a
+/// step along it, the way back to the contact goes out through the back of
+/// the surface.
+fn looks_into_the_model(
+    tip_pos: Vec3,
+    tip_normal: Vec3,
+    mesh: ModelMesh<'_>,
+    normal_matrix: &Matrix3,
+) -> bool {
+    const STEP_MM: f64 = 0.1;
+    let normal = tip_normal.normalize();
+    let ray = Ray {
+        origin: tip_pos.add_scaled_vector(normal, STEP_MM),
+        direction: normal.multiply_scalar(-1.0),
+    };
+    mesh.rays
+        .intersect_object(&ray, Side::Double, 0.0, 2.0 * STEP_MM, false)
+        .first()
+        .is_some_and(|hit| {
+            hit.face
+                .normal
+                .apply_normal_matrix(normal_matrix)
+                .dot(normal)
+                < 0.0
+        })
 }

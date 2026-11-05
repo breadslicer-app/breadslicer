@@ -41,6 +41,10 @@ fn ground() -> Arc<MeshBvh> {
 }
 
 fn attempt_with(every_landing: bool) -> BridgeAttempt {
+    attempt_at(Vec3::new(0.0, 0.0, 6.2), every_landing)
+}
+
+fn attempt_at(tip: Vec3, every_landing: bool) -> BridgeAttempt {
     let bvh = ground();
     let matrix = Matrix4::IDENTITY;
     let sdf = SdfCache::new(bvh.clone(), matrix, Some(0.5));
@@ -52,7 +56,7 @@ fn attempt_with(every_landing: bool) -> BridgeAttempt {
         format!("id-{next}")
     };
     attempt_cavity_bridge(
-        Vec3::new(0.0, 0.0, 6.2),
+        tip,
         Vec3::new(0.0, 0.0, -1.0),
         "m",
         ModelMesh {
@@ -67,6 +71,15 @@ fn attempt_with(every_landing: bool) -> BridgeAttempt {
         &settings,
         &mut new_id,
     )
+}
+
+/// A contact read from the top of the ground, its normal turned over to look
+/// down into it: nothing hangs there.
+#[test]
+fn a_contact_on_a_top_surface_takes_no_bridge() {
+    let attempt = attempt_at(Vec3::new(3.0, 0.0, 0.0), true);
+    assert!(attempt.bridge.is_none());
+    assert_eq!(attempt.refusals, [BridgeRefusal::TopSurface]);
 }
 
 #[test]
