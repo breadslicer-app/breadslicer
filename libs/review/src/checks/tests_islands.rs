@@ -128,6 +128,70 @@ fn an_island_judges_a_tip_as_the_next_review_does() {
     assert!(verdicts.contains(&true) && verdicts.contains(&false));
 }
 
+/// A model that begins with a few pixels on layer 4 and opens up on layer 5:
+/// the link between them is too thin to hold by itself.
+fn begins_thin(builder: FixtureBuilder) -> FixtureBuilder {
+    builder
+        .model(4..5, Shape::rect(114.0, 54.0, 116.0, 56.0))
+        .model(5..10, Shape::rect(100.0, 40.0, 130.0, 70.0))
+}
+
+/// #433: a tip under the first pixels of a model holds what grows out of
+/// them: the next layer is the same part, not an island a layer above the tip.
+#[test]
+fn a_part_that_grows_out_of_pixels_a_tip_holds_is_held() {
+    let fixture = begins_thin(body(10)).tip(115.0, 55.0, 4, 3.0).build();
+    assert!(islands(&fixture).is_empty(), "{:?}", islands(&fixture));
+    let report = report(&fixture);
+    let part = report
+        .parts
+        .iter()
+        .find(|part| part.first_layer == 4)
+        .expect("the part");
+    assert_eq!(part.held, Held::Tip);
+    assert!(part.layers() > 1, "it goes on as one part");
+}
+
+/// The same model with no tip: what it says of a tip under those first
+/// pixels, and of one that stops short, is what the next review says.
+#[test]
+fn an_island_counts_a_tip_under_what_it_grows_out_of() {
+    let bare = begins_thin(body(10)).build();
+    let report = report(&bare);
+    let island = report
+        .islands
+        .iter()
+        .find(|island| island.first_layer == 5)
+        .expect("an island on the layer it opens up");
+    for (layer, held) in [(4, true), (2, false)] {
+        let tipped = begins_thin(body(10)).tip(115.0, 55.0, layer, 3.0).build();
+        assert_eq!(island.start.held_by(tipped.input().tips()), held, "{layer}");
+        assert_eq!(islands(&tipped).is_empty(), held, "{layer}");
+    }
+}
+
+/// A neck off a body is not where a part begins: what it hangs from began long
+/// before, so a tip under the body holds nothing of the part (#432).
+#[test]
+fn a_neck_off_a_held_body_stays_a_neck() {
+    let fixture = FixtureBuilder::new(12)
+        .model(0..6, Shape::rect(100.0, 40.0, 130.0, 70.0))
+        .model(6..7, Shape::rect(114.0, 54.0, 116.0, 56.0))
+        .model(7..12, Shape::rect(100.0, 40.0, 130.0, 70.0))
+        .build();
+    assert_eq!(islands(&fixture), [(7, 11)]);
+}
+
+/// #433: a tip that ends under an island without reaching it is told, so the
+/// row says what is there: its last pixels on layer 1, 3 under the block.
+#[test]
+fn an_island_tells_of_a_tip_that_stops_short_of_it() {
+    let short = with_block(body(10), 4, 10).tip(115.0, 55.0, 2, 3.0).build();
+    assert_eq!(report(&short).islands[0].tip_gap_layers, Some(3));
+    let none = with_block(body(10), 4, 10).build();
+    assert_eq!(report(&none).islands[0].tip_gap_layers, None);
+}
+
 #[test]
 fn a_tip_that_stops_short_of_the_layer_below_holds_nothing() {
     let fixture = with_block(body(10), 4, 10).tip(115.0, 55.0, 2, 3.0).build();
@@ -181,22 +245,19 @@ fn a_part_smaller_than_the_tip_stands_on_it() {
     assert!(islands(&fixture).is_empty());
 }
 
+/// #433: a block that opens up on pixels a tip holds is held, however fine
+/// they are: there is a tip under its pixels. What such a start cannot carry
+/// is told by its growth, which asks for tips of its own.
 #[test]
-fn a_tip_under_the_model_below_is_no_contact() {
-    // The layer below has model where the tip stands: the tip holds that,
-    // and the fine neck it makes does not carry what comes above.
+fn a_block_on_pixels_a_tip_holds_is_held_and_asks_for_tips() {
     let neck = Shape::rect(115.0, 55.0, 117.0, 57.0);
     let fixture = with_block(body(10).model(3..4, neck), 4, 10)
         .tip(116.0, 56.0, 3, 1.0)
-        .tip(116.0, 56.0, 4, 1.0)
         .build();
-    let report = report(&fixture);
-    let start = report
-        .parts
-        .iter()
-        .find(|part| part.first_layer == 4)
-        .expect("the block is a part of its own");
-    assert_eq!(start.held, Held::Nothing);
+    assert!(islands(&fixture).is_empty(), "{:?}", islands(&fixture));
+    let growth = findings_of(&fixture, CheckKind::SurfaceGrowth);
+    assert_eq!(growth.len(), 1, "{growth:?}");
+    assert_eq!(growth[0].first_layer, 4);
 }
 
 #[test]

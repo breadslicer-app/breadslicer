@@ -26,6 +26,11 @@
 //!
 //! - a part that starts on the first [`PLATE_LAYERS`] layers stands on the
 //!   build plate;
+//! - a region that grows out of a part a tip holds, one that has just begun,
+//!   goes on as that part, however thin its link: the first pixels of a
+//!   model are few, and the next layer is the same part, not a new one with
+//!   nothing under it. A neck off a body is no such thing: what it hangs from
+//!   began long before and goes on elsewhere;
 //! - any other part is held when, on the layer below its first layer, the
 //!   pixels of a support tip lie under it, however few: pixels within
 //!   [`TIP_REACH_MM`] of the part's own pixels, outside what the model has
@@ -93,6 +98,10 @@ pub const MIN_PART_LAYERS: usize = 3;
 /// How many times what stood under it a region must be for its growth to be
 /// listed: 10.
 pub const GROWTH_FACTOR: f64 = 10.0;
+
+/// How far below an island a tip that does not reach it is still told of,
+/// in layers: 4. Past that it is no tip of this island.
+pub const TIP_GAP_LAYERS: usize = 4;
 
 /// How many layers above a region that grew at once count for its tips: 20,
 /// a millimetre at 0.05 mm. What does not fit on its layer goes on these,
@@ -266,10 +275,20 @@ fn walk_parts(
                 at += 1;
             }
             let links = &by_upper[from..at];
-            let holding = if layer > 0 && table.start_of(index).is_none() {
+            let holding = if layer == 0 {
+                Vec::new()
+            } else if table.start_of(index).is_none() {
                 holding_links(links, region, min_link_px)
             } else {
-                Vec::new()
+                let lower = regions.layer(layer - 1);
+                links
+                    .iter()
+                    .filter(|(_, part_below, px)| {
+                        let part = &parts[root(&mut went_on, below[*part_below as usize]) as usize];
+                        let area_px = lower.solid[*part_below as usize].area_px;
+                        part.held == Held::Tip && begins_it(layer, part, *px, area_px)
+                    })
+                    .collect()
             };
             if holding.is_empty() {
                 let start = table.start_of(index);
@@ -333,6 +352,13 @@ fn walk_parts(
     parts
 }
 
+/// Whether `part`, whose region of `area_px` pixels on the layer below stands
+/// `link_px` of them under a region of `layer`, is where that region begins:
+/// it has just begun, and most of it goes on into it.
+fn begins_it(layer: usize, part: &Part, link_px: u64, area_px: u64) -> bool {
+    layer - part.first_layer <= MIN_PART_LAYERS && 2 * link_px >= area_px
+}
+
 /// The links of `links` that hold `region`: those that do alone, or all of
 /// them when they only do together.
 fn holding_links<'l>(
@@ -376,6 +402,9 @@ pub struct Island {
     pub tips_mm: Vec<[f64; 3]>,
     /// What decides whether a tip holds it.
     pub start: Arc<IslandStart>,
+    /// How many layers below its first pixels a tip under them ends, when
+    /// one does and it does not reach them.
+    pub tip_gap_layers: Option<usize>,
 }
 
 /// A region that grew at once and wants more tips, as a placement of supports
@@ -606,16 +635,24 @@ fn island_of(
     let part_start = table.start_of(part.start);
     let runs = part_start.map_or(&[][..], |start| start.runs.as_slice());
     let region = &table.solid[part.start as usize];
+    let surface = StartSurface {
+        z_mm: input.layers()[part.first_layer.saturating_sub(1)].sample_mm,
+        runs: runs.to_vec(),
+        area_px: region.area_px,
+        bbox: region.bbox,
+        below: part_start.map_or_else(Vec::new, |start| start.below.clone()),
+    };
+    let reach_px = tip_reach_px(input, options);
+    let grid = TipGrid::of(input);
+    let tip_gap_layers = tip_gap(input, tips, &grid, part.first_layer, &surface, reach_px);
+    // A tip under the few pixels this grows out of holds it too: they are
+    // where the model begins, and the next review goes on from them.
+    let mut surfaces = vec![surface];
+    surfaces.extend(beginning(input, regions, part));
     let start = IslandStart {
-        grid: TipGrid::of(input),
-        surfaces: vec![StartSurface {
-            z_mm: input.layers()[part.first_layer.saturating_sub(1)].sample_mm,
-            runs: runs.to_vec(),
-            area_px: region.area_px,
-            bbox: region.bbox,
-            below: part_start.map_or_else(Vec::new, |start| start.below.clone()),
-        }],
-        reach_px: tip_reach_px(input, options),
+        grid,
+        surfaces,
+        reach_px,
         share: options.min_tip_share,
     };
     let first_pixels_mm = runs
@@ -644,7 +681,51 @@ fn island_of(
         tips_mm: tips.standing_in(input, &pixels, SAME_TIP_MM),
         pixels: Arc::new(pixels),
         start: Arc::new(start),
+        tip_gap_layers,
     }
+}
+
+/// The part-starts right under `part`'s first pixels that it grows out of,
+/// read as first pixels.
+fn beginning(input: &ReviewInput<'_>, regions: &PlateRegions, part: &Part) -> Vec<StartSurface> {
+    if part.first_layer < 2 {
+        return Vec::new();
+    }
+    let lower = regions.layer(part.first_layer - 1);
+    regions
+        .solid_links(part.first_layer)
+        .iter()
+        .filter(|link| link.upper == part.start)
+        .filter_map(|link| {
+            let start = lower.start_of(link.lower)?;
+            let region = &lower.solid[link.lower as usize];
+            (2 * link.pixels >= region.area_px).then(|| StartSurface {
+                z_mm: input.layers()[part.first_layer - 2].sample_mm,
+                runs: start.runs.clone(),
+                area_px: region.area_px,
+                bbox: region.bbox,
+                below: start.below.clone(),
+            })
+        })
+        .collect()
+}
+
+/// How many layers below `first_layer` the nearest tip under `surface` ends,
+/// up to [`TIP_GAP_LAYERS`]: with nothing cured between, it holds nothing, and
+/// the row of the island must not read as if no tip were there.
+fn tip_gap(
+    input: &ReviewInput<'_>,
+    tips: &TipIndex,
+    grid: &TipGrid,
+    first_layer: usize,
+    surface: &StartSurface,
+    reach_px: [u32; 2],
+) -> Option<usize> {
+    let target = surface.target();
+    (2..=TIP_GAP_LAYERS.min(first_layer)).find(|gap| {
+        let z_mm = input.layers()[first_layer - gap].sample_mm;
+        tips.contact(grid, z_mm, &target, reach_px, 0.0).px > 0
+    })
 }
 
 /// The pixels of an island, with how raster pixels land on the plate.

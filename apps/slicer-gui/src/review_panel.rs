@@ -1608,6 +1608,7 @@ impl ReviewPanel {
                     };
                     row_marks.no_tip = island_tips.too_narrow(findings);
                     row_marks.growth_tips = island_tips.growth_counts(findings);
+                    row_marks.tip_gaps = island_tips.tip_gaps(findings);
                     let findings = &no_support_fits(findings, &row_marks);
                     // A finding fixed since the slice leaves the list (the
                     // next slice shows it again if the fix did not hold).
@@ -2161,6 +2162,22 @@ impl IslandTips<'_> {
             .collect()
     }
 
+    /// How many layers below each island of `findings` a tip ends, for those
+    /// with one under them that does not reach them.
+    fn tip_gaps(&self, findings: &[Finding]) -> BTreeMap<usize, usize> {
+        findings
+            .iter()
+            .enumerate()
+            .filter_map(|(i, finding)| {
+                let Some(SuggestedFix::AddSupport { at }) = finding.fix else {
+                    return None;
+                };
+                let island = self.island(finding, at)?;
+                Some((i, self.islands[island].tip_gap_layers?))
+            })
+            .collect()
+    }
+
     /// The findings of `findings` whose island no tip fits on.
     fn too_narrow(&self, findings: &[Finding]) -> BTreeSet<usize> {
         let Some(plan) = self.plan else {
@@ -2493,6 +2510,8 @@ struct RowMarks {
     no_tip: BTreeSet<usize>,
     /// What the regions that grew at once have and want.
     growth_tips: BTreeMap<usize, GrowthTips>,
+    /// How many layers below an island a tip that does not reach it ends.
+    tip_gaps: BTreeMap<usize, usize>,
     /// Whether fills can be marked: the models stand as sliced.
     fixable: bool,
     /// Whether the notes are unfolded.
@@ -2628,6 +2647,12 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
                         why
                     )
                 };
+            } else if let Some(gap) = marks.tip_gaps.get(&i) {
+                row.remains = ctr!(
+                    "Review",
+                    "A tip ends {} layers below this island and does not reach it, so it holds nothing. Place one that reaches it, or leave it.",
+                    gap
+                );
             } else if marks.no_tip.contains(&i) {
                 row.remains = ctr!(
                     "Review",

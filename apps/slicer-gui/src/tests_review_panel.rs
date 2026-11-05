@@ -481,6 +481,24 @@ fn an_island_no_tip_fits_offers_no_support_and_says_why() {
     assert!(rows[0].remains.contains("wide as a support's tip"));
 }
 
+/// #433: a tip under an island that stops short is what the row tells, not
+/// that nothing fits: there is a tip right there.
+#[test]
+fn an_island_with_a_tip_short_of_it_says_so() {
+    let at = PlatePoint::new(1.0, 2.0, 3.0);
+    let findings = [finding(CheckKind::Island, Severity::Error, 6, 9, "Island")
+        .with_fix(SuggestedFix::AddSupport { at })];
+    let mut marks = open_marks();
+    marks.no_tip.insert(0);
+    marks.tip_gaps.insert(0, 2);
+    let row = marked(&findings, &marks).remove(0);
+    assert!(
+        row.remains.contains("A tip ends 2 layers"),
+        "{}",
+        row.remains
+    );
+}
+
 /// #437: the question names the islands and the regions it offers tips for.
 #[test]
 fn the_question_counts_islands_and_regions() {
@@ -1769,6 +1787,19 @@ mod fix_all {
         }
     }
 
+    /// How many islands of the held review have a tip under them that stops
+    /// short.
+    fn tip_gaps(panel: &ReviewPanel) -> usize {
+        let held = panel.held.borrow();
+        match held.as_ref().map(|h| &h.outcome) {
+            Some(ReviewOutcome::Reviewed { islands, .. }) => islands
+                .iter()
+                .filter(|island| island.tip_gap_layers.is_some())
+                .count(),
+            _ => 0,
+        }
+    }
+
     /// The rows of the sudden growths: their layers and what they say.
     fn growth_rows(w: &IslandWindow) -> Vec<(String, String, bool)> {
         let rows = w.window.get_review_rows();
@@ -1861,6 +1892,11 @@ mod fix_all {
         };
         slice_project(&w.document, &w.panel, &printer, &resin, false);
         let before = held_islands(&w.panel).len();
+        eprintln!(
+            "{}: {} islands have a tip that stops short",
+            path.display(),
+            tip_gaps(&w.panel)
+        );
         let growth_had = growth_left(&w.panel);
         let growth_before = growth_had.len();
         let wanted_before: usize = growth_left(&w.panel).iter().map(|g| g.2 - g.1).sum();

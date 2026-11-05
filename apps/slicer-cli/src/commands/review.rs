@@ -853,6 +853,7 @@ fn write_json(
             "first_area_mm2": island.first_area_mm2,
             "growth_mm2": island.growth_mm2,
             "joins_on": island.joins_on,
+            "tip_gap_layers": island.tip_gap_layers,
         })).collect::<Vec<_>>(),
         "growths": growth_json(report),
         "parts": parts_json(&report.parts),
