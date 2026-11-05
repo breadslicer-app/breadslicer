@@ -70,7 +70,8 @@ fn a_block_inside_the_plate_has_no_output_problem() {
     let fixture = FixtureBuilder::new(8)
         .model(.., Shape::rect(40.0, 30.0, 80.0, 60.0))
         .build();
-    let findings = fixture.check(|ctx| run(ctx, &OutputOptions::default(), &SweepOptions::default()));
+    let findings =
+        fixture.check(|ctx| run(ctx, &OutputOptions::default(), &SweepOptions::default()));
     assert!(findings.is_empty(), "{findings:?}");
 }
 
@@ -141,11 +142,7 @@ fn a_part_off_the_plate_is_outside_the_printable_area() {
     // "Stray" lies 2 to 5 mm left of the plate on layers 2 to 5.
     let fixture = FixtureBuilder::new(8)
         .model(.., Shape::rect(40.0, 30.0, 80.0, 60.0))
-        .shape(
-            "Stray",
-            2..6,
-            Shape::rect(-50.0, 30.0, -20.0, 60.0),
-        )
+        .shape("Stray", 2..6, Shape::rect(-50.0, 30.0, -20.0, 60.0))
         .build();
     let findings = output(&fixture);
     assert_eq!(
@@ -199,11 +196,7 @@ fn a_mirrored_screen_matches_overhangs_to_their_pixels() {
     let fixture = FixtureBuilder::new(6)
         .mirror(Mirror { x: true, y: false })
         .model(.., Shape::rect(-20.0, 30.0, 30.0, 60.0))
-        .shape(
-            "Stray",
-            ..,
-            Shape::rect(210.0, 30.0, 230.0, 60.0),
-        )
+        .shape("Stray", .., Shape::rect(210.0, 30.0, 230.0, 60.0))
         .build();
     let findings = output(&fixture);
     assert_eq!(
@@ -226,11 +219,7 @@ fn a_part_off_the_plate_is_reported_beside_a_part_on_the_last_pixels() {
     // 2 to 5 mm left of the plate.
     let fixture = FixtureBuilder::new(4)
         .model(.., Shape::rect(0.4, 30.0, 10.0, 40.0))
-        .shape(
-            "Stray",
-            ..,
-            Shape::rect(-50.0, 80.0, -20.0, 100.0),
-        )
+        .shape("Stray", .., Shape::rect(-50.0, 80.0, -20.0, 100.0))
         .build();
     let findings = output(&fixture);
     assert_eq!(
@@ -256,11 +245,7 @@ fn an_unrelated_edge_contact_does_not_split_a_part_off_the_plate() {
     let fixture = FixtureBuilder::new(10)
         .model(.., Shape::rect(20.0, 20.0, 40.0, 40.0))
         .model(5..6, Shape::rect(0.0, 25.0, 20.0, 35.0))
-        .shape(
-            "Stray",
-            ..,
-            Shape::rect(-50.0, 80.0, -20.0, 100.0),
-        )
+        .shape("Stray", .., Shape::rect(-50.0, 80.0, -20.0, 100.0))
         .build();
     let findings = output(&fixture);
     assert_eq!(

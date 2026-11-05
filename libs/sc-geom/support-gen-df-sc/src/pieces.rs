@@ -168,9 +168,8 @@ impl DfSupportSession {
         let settings = &self.settings;
         let tip_scale = 1.0 - settings.support_tip_shrink_percent / 100.0;
         let penetration_mm = settings.tip_penetration_mm;
-        let sides = equal_area_radius(
-            resolve_support_slice_tessellation(c).contact_cone_radial_segments,
-        );
+        let sides =
+            equal_area_radius(resolve_support_slice_tessellation(c).contact_cone_radial_segments);
         let cone = |cone: &ContactCone| {
             SupportContact::of_cone(cone, penetration_mm, tip_scale, settings.tip_drawing, sides)
         };

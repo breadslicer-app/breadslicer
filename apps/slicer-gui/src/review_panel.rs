@@ -119,7 +119,7 @@ const NO_SUPPORT_NOTE_MM2: f64 = 1.0;
 
 /// The most passes a Fix All press makes with "Repeat until clean" (#163).
 /// The first fixes nearly everything; the second what the first one's
-/// fixes uncover (a speck an island stood on, a support that can now hang
+/// fixes uncover (a support that can now hang
 /// from one added) and the islands the first one's supports leave weakly
 /// held; a third rarely finds anything, and each pass slices the plate
 /// again.
@@ -1405,12 +1405,7 @@ impl ReviewPanel {
         ui.set_review_fixing(self.fixing());
         self.show_fix_progress();
         ui.set_review_fills_note(
-            fills_note(
-                marks.fill_count(),
-                marks.cured_count(),
-                marks.pending(),
-            )
-            .into(),
+            fills_note(marks.fill_count(), marks.cured_count(), marks.pending()).into(),
         );
         ui.set_review_fills_clearable(marks.fill_count() > 0);
         ui.set_review_fills_clear_label(ctr!("Review", "Clear fills"));
@@ -1710,7 +1705,7 @@ struct FixAllPlan {
 
 impl FixAllPlan {
     /// Where the supports go, each point once: an island that is also a
-    /// floating part is the same spot, found twice.
+    /// part above it is the same spot, found twice.
     fn support_points(&self) -> Vec<[f32; 3]> {
         let mut points: Vec<[f32; 3]> = Vec::new();
         for &(_, at) in &self.supports {

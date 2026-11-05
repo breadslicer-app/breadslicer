@@ -16,8 +16,8 @@
 //!   least [`RaftOptions::min_area_px`] pixels' worth of contour on a layer
 //!   of the raft zone ([`ReviewInput::raft_layers`]), from its first such
 //!   layer to its last, focused on the centre of what it has there. Only
-//!   when the plate has a raft: an input that knows the raft's top. It
-//!   suggests
+//!   when the plate has a raft: an input that knows the raft's top, with
+//!   supports on the first layer. It suggests
 //!   [`SuggestedFix::ClearRaft`]: lift the model to the recommended support
 //!   lift ([`ReviewInput::recommended_lift_mm`]), or turn the raft off.
 //!   Lifting it only above the raft would leave the supports no room to
@@ -86,7 +86,8 @@ pub fn clashes(ctx: &ReviewContext<'_>, options: &RaftOptions) -> Vec<RaftClash>
     let Some(raft_top_mm) = input.raft_top_mm() else {
         return Vec::new();
     };
-    if zone == 0 {
+    // With no support on the plate, no raft was generated.
+    if zone == 0 || !input.has_support_on(0) {
         return Vec::new();
     }
     let min_area_mm2 = options.min_area_px * input.pixel_area_mm2();

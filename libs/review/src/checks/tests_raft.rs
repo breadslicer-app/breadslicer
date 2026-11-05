@@ -27,6 +27,7 @@ fn rafted(fixture: &Fixture, raft_top_mm: Option<f64>) -> ReviewInput<'_> {
         .input()
         .with_raft_top_mm(raft_top_mm)
         .with_support_lift_mm(Some(LIFT_MM))
+        .with_support_extent(0..12, None)
 }
 
 /// The raft check on `fixture`.
@@ -52,8 +53,7 @@ fn review(fixture: &Fixture, raft_top_mm: Option<f64>) -> Vec<Finding> {
 
 /// A model standing on the plate beside a support on its raft.
 fn model_on_the_plate() -> FixtureBuilder {
-    FixtureBuilder::new(12)
-        .model(0..12, Shape::rect(20.0, 20.0, 60.0, 50.0))
+    FixtureBuilder::new(12).model(0..12, Shape::rect(20.0, 20.0, 60.0, 50.0))
 }
 
 #[test]
@@ -88,7 +88,10 @@ fn a_model_on_the_plate_is_inside_the_raft() {
 #[test]
 fn without_a_support_lift_the_raft_top_is_recommended() {
     let fixture = model_on_the_plate().build();
-    let input = fixture.input().with_raft_top_mm(Some(RAFT_TOP_MM));
+    let input = fixture
+        .input()
+        .with_raft_top_mm(Some(RAFT_TOP_MM))
+        .with_support_extent(0..12, None);
     let regions = PlateRegions::compute(&input, &SweepOptions::default());
     let findings = run(
         &ReviewContext::new(&input, &regions),
@@ -132,16 +135,8 @@ fn without_a_raft_nothing_is_reported() {
 #[test]
 fn every_model_in_the_raft_is_reported() {
     let fixture = model_on_the_plate()
-        .shape(
-            "Second",
-            0..12,
-            Shape::rect(20.0, 70.0, 50.0, 100.0),
-        )
-        .shape(
-            "Lifted",
-            6..12,
-            Shape::rect(170.0, 70.0, 190.0, 100.0),
-        )
+        .shape("Second", 0..12, Shape::rect(20.0, 70.0, 50.0, 100.0))
+        .shape("Lifted", 6..12, Shape::rect(170.0, 70.0, 190.0, 100.0))
         .build();
     let findings = raft(&fixture, Some(RAFT_TOP_MM));
     assert_eq!(findings.len(), 2, "{findings:?}");

@@ -26,7 +26,8 @@ use sc_sl1cer::{CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_scen
 
 use crate::prepare::{UnsliceableSelection, slice_profile_for_selection};
 use crate::scale_compensation::{
-    SupportOwners, compensated_heights, compensated_scene, scale_factors, support_box_mm,
+    LeafPivots, SupportOwners, compensated_heights, compensated_scene, scale_factors,
+    support_box_mm,
 };
 
 /// The per-print slicing inputs that come from neither profile.
@@ -86,7 +87,7 @@ pub struct SlicedPlate {
     pub(crate) scale: ScaleCompensation,
     /// The point each leaf was scaled about in X and Y, for a compensation
     /// that changes anything.
-    pub(crate) pivots: Vec<(NodeId, [f64; 2])>,
+    pub(crate) pivots: LeafPivots,
     /// The box the support leaves take once scaled.
     pub(crate) support_box_mm: Option<[f64; 5]>,
 }

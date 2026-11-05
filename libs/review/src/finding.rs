@@ -132,17 +132,6 @@ pub enum RoleScope {
 }
 
 impl RoleScope {
-    /// The scope of a region with `model_px` model pixels and `support_px`
-    /// support pixels; [`Both`](Self::Both) when it has neither, which only
-    /// plate-wide findings (an empty layer) are about.
-    pub const fn from_counts(model_px: u64, support_px: u64) -> Self {
-        match (model_px > 0, support_px > 0) {
-            (true, false) => Self::Model,
-            (false, true) => Self::Support,
-            _ => Self::Both,
-        }
-    }
-
     /// A stable machine name (`"support"`).
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -421,14 +410,6 @@ mod finding_tests {
         further.focus.x_mm = 5.0;
         assert_eq!(plain.listing_cmp(&further), Ordering::Less);
         assert_eq!(plain.listing_cmp(&plain.clone()), Ordering::Equal);
-    }
-
-    #[test]
-    fn scope_follows_the_role_counts() {
-        assert_eq!(RoleScope::from_counts(4, 0), RoleScope::Model);
-        assert_eq!(RoleScope::from_counts(0, 4), RoleScope::Support);
-        assert_eq!(RoleScope::from_counts(4, 4), RoleScope::Both);
-        assert_eq!(RoleScope::from_counts(0, 0), RoleScope::Both);
     }
 
     #[test]

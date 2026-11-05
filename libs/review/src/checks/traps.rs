@@ -111,7 +111,7 @@ use crate::finding::{
     CheckKind, Finding, MAX_FOOTPRINT_LAYERS, PlatePoint, RoleScope, Severity, SuggestedFix,
 };
 use crate::input::ReviewInput;
-use crate::regions::{PlateRegions, Region, SweepOptions, read_layers, runs_in, wanted};
+use crate::regions::{LayerRead, PlateRegions, Region, SweepOptions, read_layers, runs_in, wanted};
 use crate::runner::ReviewContext;
 use crate::runs::{dilate_square, intersection};
 use crate::union_find::{Groups, RegionRef};
@@ -335,12 +335,19 @@ fn cavity_runs(
         .flat_map(|(cavity, members)| members.iter().map(move |member| wanted(member, cavity)))
         .collect();
     let (width_px, height_px) = (input.width_px(), input.height_px());
-    read_layers(input, sweep, wants, cavities.len(), |pixels, _, regions| {
-        let runs = runs_in(&pixels.air, &pixels.air_labels, regions);
-        // The model pixels touching the cavity, sides or corners.
-        let rim = intersection(&dilate_square(&runs, 1, width_px, height_px), &pixels.model);
-        (runs, rim)
-    })
+    read_layers(
+        input,
+        sweep,
+        LayerRead::All,
+        wants,
+        cavities.len(),
+        |pixels, regions| {
+            let runs = runs_in(&pixels.air, &pixels.air_labels, regions);
+            // The model pixels touching the cavity, sides or corners.
+            let rim = intersection(&dilate_square(&runs, 1, width_px, height_px), &pixels.model);
+            (runs, rim)
+        },
+    )
     .into_iter()
     .map(|layers| {
         layers

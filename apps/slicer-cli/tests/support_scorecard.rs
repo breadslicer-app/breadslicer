@@ -1119,7 +1119,10 @@ fn slice_and_review(
         .with_raft_top_mm(raft_top)
         .with_support_lift_mm(raft_top.map(|_| recommended_lift_mm(None)))
         .with_tips(tips)
-        .with_support_extent(0..plate.profile().layer_schedule().total_layers() as usize, None);
+        .with_support_extent(
+            0..plate.profile().layer_schedule().total_layers() as usize,
+            None,
+        );
     let options = ReviewOptions::default();
     let regions = PlateRegions::compute(&input, &options.sweep);
     let report = check_regions(&ReviewContext::new(&input, &regions), &options);

@@ -27,7 +27,7 @@ use serde_json::Value;
 /// it touches a 31-pixel sliver beside it on its second layer.
 const ISLANDS: [u64; 8] = [232, 660, 942, 1264, 1422, 1444, 1486, 1501];
 
-/// Parts a tip holds, the least of them with 54 pixels of it in the file.
+/// Parts a tip holds, with over half of its section.
 const HELD: [u64; 4] = [1230, 1470, 1515, 1526];
 
 /// Screen pixels of the parts that come loose, each on its first layer, the

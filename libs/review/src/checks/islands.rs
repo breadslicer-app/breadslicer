@@ -26,13 +26,14 @@
 //!
 //! - a part that starts on the first [`PLATE_LAYERS`] layers stands on the
 //!   build plate;
-//! - any other part is held when, on the layer below its first layer, the
-//!   pixels of support tips within [`TIP_REACH_MM`] of its own pixels, and
-//!   outside what the model has on that layer, cover at least
-//!   [`MIN_TIP_CONTACT_MM2`]. Its own pixels decide, never its box: a tip
-//!   under the neighbour a part hangs from does not hold it, and neither
-//!   does a tip that stops under a neck of the model. Tips are read as data,
-//!   whatever piece of the support graph they belong to.
+//! - any other part is held when, on the layer below its first layer, a
+//!   support tip reaches it with at least [`MIN_TIP_SHARE`] of its section:
+//!   its pixels within [`TIP_REACH_MM`] of the part's own pixels, outside
+//!   what the model has on that layer. A part smaller than the tip is held
+//!   when tips stand under half of it. Its own pixels decide, never its box:
+//!   a tip under the neighbour a part hangs from does not hold it, and
+//!   neither does a tip that stops under a neck of the model. Tips are read
+//!   as data, whatever piece of the support graph they belong to.
 //!
 //! # What is done with a part nothing holds
 //!
@@ -59,12 +60,12 @@ use crate::fill::CavityFill;
 use crate::finding::{CheckKind, Finding, MAX_FOOTPRINT_LAYERS, RoleScope, Severity, SuggestedFix};
 use crate::input::ReviewInput;
 use crate::regions::{
-    PartStart, PlateRegions, Region, SweepOptions, WantedRegions, link_holds, read_layers,
-    runs_in, wanted,
+    LayerRead, PartStart, PlateRegions, Region, SweepOptions, WantedRegions, link_holds,
+    read_layers, runs_in, wanted,
 };
 use crate::runner::ReviewContext;
 use crate::runs::{Run, dilate_square, union};
-use crate::tips::TipIndex;
+use crate::tips::{TipContact, TipIndex, TipTarget};
 use crate::union_find::RegionRef;
 
 /// The layers that rest on the build plate: 2. Nothing that starts on them
@@ -84,14 +85,13 @@ pub const MIN_PART_LAYERS: usize = 3;
 /// listed: 10.
 pub const GROWTH_FACTOR: f64 = 10.0;
 
-/// The least contact with a tip that holds a part, in square millimetres:
-/// 0.018, under half of what a 0.24 mm tip was drawn to touch with. Less is
-/// the last sliver of a cone that ends right there, or a tip under a neck of
-/// the model: what the printer cures on it does not hold the part. On one
-/// scene measured in its printer file, the tips that hold touch from 48
-/// pixels of 0.00042 mm² up (0.020 mm²), and the ones that stop short touch
-/// with 38 at most (0.016 mm²).
-pub const MIN_TIP_CONTACT_MM2: f64 = 0.018;
+/// The share of its section a tip must reach a part with to hold it: a half.
+/// Less is the last sliver of a cone that ends right there, or a tip that
+/// stops under a neck of the model: what the printer cures on it does not
+/// hold the part. On one scene measured against its printer file, the tips
+/// that hold touch with 55 % of their section or more, and the ones that stop
+/// short with 43 % at most.
+pub const MIN_TIP_SHARE: f64 = 0.5;
 
 /// How far from a part's pixels a tip's pixels on the layer below still
 /// touch it, in millimetres: 0.07, a tip beside a part's edge cures into it.
@@ -106,10 +106,9 @@ pub struct IslandOptions {
     /// The growth a region must reach to be listed. Default
     /// [`GROWTH_FACTOR`].
     pub growth_factor: f64,
-    /// The least contact with a tip that holds a part, in square
-    /// millimetres. Default [`MIN_TIP_CONTACT_MM2`]; 0 lets any pixel of a
-    /// tip hold it.
-    pub min_tip_contact_mm2: f64,
+    /// The share of its section a tip must reach a part with to hold it.
+    /// Default [`MIN_TIP_SHARE`]; 0 lets any pixel of a tip hold it.
+    pub min_tip_share: f64,
     /// How far from a part's pixels a tip's still touch it, in millimetres.
     /// Default [`TIP_REACH_MM`].
     pub tip_reach_mm: f64,
@@ -120,7 +119,7 @@ impl Default for IslandOptions {
         Self {
             min_part_layers: MIN_PART_LAYERS,
             growth_factor: GROWTH_FACTOR,
-            min_tip_contact_mm2: MIN_TIP_CONTACT_MM2,
+            min_tip_share: MIN_TIP_SHARE,
             tip_reach_mm: TIP_REACH_MM,
         }
     }
@@ -200,9 +199,14 @@ fn walk_parts(
     let min_link_px = sweep.min_link_px(input);
     let [size_x, size_y] = input.pixel_size_mm();
     let reach_px = [size_x, size_y].map(|size| (options.tip_reach_mm / size).round() as u32);
-    let min_contact_px = (options.min_tip_contact_mm2 / input.pixel_area_mm2()).ceil() as usize;
-    let contact_of = |layer: usize, start: &PartStart| {
-        tips.contact_px(input, layer - 1, &start.runs, &start.below, reach_px)
+    let contact_of = |layer: usize, start: &PartStart, region: &Region| {
+        let target = TipTarget {
+            runs: &start.runs,
+            area_px: region.area_px,
+            bbox: region.bbox,
+            below: &start.below,
+        };
+        tips.contact(input, layer - 1, &target, reach_px, options.min_tip_share)
     };
     let mut parts: Vec<Part> = Vec::new();
     // The part each part went on as, itself while it goes on.
@@ -232,18 +236,23 @@ fn walk_parts(
                 at += 1;
             }
             let links = &by_upper[from..at];
-            let holding = (layer > 0 && table.start_of(index).is_none())
-                .then(|| holding_links(links, region, min_link_px))
-                .unwrap_or_default();
+            let holding = if layer > 0 && table.start_of(index).is_none() {
+                holding_links(links, region, min_link_px)
+            } else {
+                Vec::new()
+            };
             if holding.is_empty() {
                 let start = table.start_of(index);
-                let tip_contact_px = match start {
-                    Some(start) if layer >= PLATE_LAYERS => contact_of(layer, start),
-                    _ => 0,
+                let contact = match start {
+                    Some(start) if layer >= PLATE_LAYERS => contact_of(layer, start, region),
+                    _ => TipContact {
+                        px: 0,
+                        holds: false,
+                    },
                 };
                 let held = if layer < PLATE_LAYERS {
                     Held::Plate
-                } else if tip_contact_px > 0 && tip_contact_px >= min_contact_px {
+                } else if contact.holds {
                     Held::Tip
                 } else {
                     Held::Nothing
@@ -254,7 +263,7 @@ fn walk_parts(
                     first_layer: layer,
                     start: index,
                     held,
-                    tip_contact_px,
+                    tip_contact_px: contact.px,
                     area_px: Vec::new(),
                     joined: None,
                     members: Vec::new(),
@@ -369,9 +378,15 @@ pub fn run(ctx: &ReviewContext<'_>, options: &IslandOptions, sweep: &SweepOption
     for part in &debris {
         wants.extend(part.members.iter().map(|m| wanted(m, debris_asker)));
     }
-    let pixels = read_layers(input, sweep, wants, islands.len() + 1, |pixels, _, regions| {
-        runs_in(&pixels.solid, &pixels.solid_labels, regions)
-    });
+    let askers = islands.len() + 1;
+    let pixels = read_layers(
+        input,
+        sweep,
+        LayerRead::Solid,
+        wants,
+        askers,
+        |pixels, regions| runs_in(&pixels.solid, &pixels.solid_labels, regions),
+    );
     let mut findings = Vec::new();
     let mut reported = Vec::with_capacity(islands.len());
     for (part, runs) in islands.iter().zip(pixels.iter()) {
@@ -414,15 +429,21 @@ fn island_finding(input: &ReviewInput<'_>, regions: &PlateRegions, part: &Part) 
     let largest_mm2 = part.largest_px() as f64 * pixel_mm2;
     let last = part.last_layer();
     let span = plural(part.layers(), "layer", "layers");
+    let contact_mm2 = part.tip_contact_px as f64 * pixel_mm2;
+    let under = if part.tip_contact_px == 0 {
+        "nothing under it".to_owned()
+    } else {
+        format!("only {contact_mm2:.3} mm² of a support tip under it")
+    };
     let detail = match part.joined {
         Some(_) if largest_mm2 > first_mm2 => format!(
-            "{first_mm2:.3} mm² of model starts with nothing under it and grows to {largest_mm2:.3} mm² over {span} before it joins the rest."
+            "{first_mm2:.3} mm² of model starts with {under} and grows to {largest_mm2:.3} mm² over {span} before it joins the rest."
         ),
         Some(_) => format!(
-            "{first_mm2:.3} mm² of model starts with nothing under it and lasts {span} before it joins the rest."
+            "{first_mm2:.3} mm² of model starts with {under} and lasts {span} before it joins the rest."
         ),
         None => format!(
-            "{first_mm2:.3} mm² of model starts with nothing under it, reaches {largest_mm2:.3} mm² over {span} and never joins anything."
+            "{first_mm2:.3} mm² of model starts with {under}, reaches {largest_mm2:.3} mm² over {span} and never joins anything."
         ),
     };
     Finding::new(
@@ -493,11 +514,8 @@ fn growth_findings(
         )
         .collect();
     left_out.sort_unstable();
-    let is_left_out = |layer: usize, index: u32| {
-        left_out
-            .binary_search(&RegionRef { layer, index })
-            .is_ok()
-    };
+    let is_left_out =
+        |layer: usize, index: u32| left_out.binary_search(&RegionRef { layer, index }).is_ok();
     let mut findings = Vec::new();
     for layer in 1..regions.layers().len() {
         let table = regions.layer(layer);

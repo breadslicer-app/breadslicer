@@ -1082,7 +1082,11 @@ fn supports_past_the_plate(input: &ReviewInput<'_>, options: &OutputOptions) -> 
     if !past && above_mm <= options.height_tolerance_mm {
         return None;
     }
-    let focus = PlatePoint::new(0.5 * (x0 + x1), 0.5 * (y0 + y1), input.layers()[0].sample_mm);
+    let focus = PlatePoint::new(
+        0.5 * (x0 + x1),
+        0.5 * (y0 + y1),
+        input.layers()[0].sample_mm,
+    );
     let last = input.layer_count() - 1;
     Some(if past {
         Finding::new(

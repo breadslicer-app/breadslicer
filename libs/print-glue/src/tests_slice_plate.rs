@@ -327,7 +327,10 @@ fn a_point_lands_where_the_compensation_scaled_its_leaf() {
     let mut plate = completed(&meshes_as_roots([unit_cube_mesh()]));
     let leaf = plate.leaves()[0].leaf();
     // No compensation: the point stays.
-    assert_eq!(plate.compensated_point_mm(leaf, [3.0, 4.0, 5.0]), [3.0, 4.0, 5.0]);
+    assert_eq!(
+        plate.compensated_point_mm(leaf, [3.0, 4.0, 5.0]),
+        [3.0, 4.0, 5.0]
+    );
     let percent =
         |value| sc_print_primitives::ScaleCompensationPercent::new(value).expect("within +-10 %");
     plate.scale = sc_print_primitives::ScaleCompensation {
@@ -346,9 +349,7 @@ fn a_point_lands_where_the_compensation_scaled_its_leaf() {
 fn the_support_box_comes_from_the_support_leaves_alone() {
     let scene = meshes_as_roots([unit_cube_mesh(), cuboid_with_z_tunnel()]);
     let leaves = sc_sl1cer::sliceable_leaves(&scene).expect("two leaves");
-    assert!(
-        crate::scale_compensation::support_box_mm(&scene, &SupportOwners::new()).is_none()
-    );
+    assert!(crate::scale_compensation::support_box_mm(&scene, &SupportOwners::new()).is_none());
     let owners: SupportOwners = [(leaves[0], None)].into_iter().collect();
     let [x0, y0, x1, y1, top] =
         crate::scale_compensation::support_box_mm(&scene, &owners).expect("a support leaf");

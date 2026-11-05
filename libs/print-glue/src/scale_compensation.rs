@@ -74,6 +74,9 @@ pub(crate) fn is_identity(scale: ScaleCompensation) -> bool {
         .all(|pct| pct.value() == 0.0)
 }
 
+/// The point each leaf was scaled about in X and Y.
+pub(crate) type LeafPivots = Vec<(NodeId, [f64; 2])>;
+
 /// `scene` with every model and its supports scaled by `scale`, about the
 /// model's footprint centre as `supports` pairs them, with the point each
 /// leaf was scaled about. `None` when `scale` changes nothing, or when the
@@ -82,7 +85,7 @@ pub(crate) fn compensated_scene(
     scene: &Scene,
     scale: ScaleCompensation,
     supports: &SupportOwners,
-) -> Option<(Scene, Vec<(NodeId, [f64; 2])>)> {
+) -> Option<(Scene, LeafPivots)> {
     if is_identity(scale) {
         return None;
     }

@@ -6,8 +6,8 @@
 //! Parts and islands (#84, #432).
 //!
 //! The default fake printer has 0.1 mm pixels (0.01 mm² each) and 0.05 mm
-//! layers. A link of 5 pixels is 0.05 mm², so a tip must touch with at least
-//! 2 pixels to hold anything here, the first number over 0.018 mm².
+//! layers. A link of 5 pixels is 0.05 mm², and a tip reaches 1 pixel from a
+//! part's pixels.
 
 use super::*;
 use crate::finding::RoleScope;
@@ -111,11 +111,29 @@ fn a_tip_beside_a_part_holds_nothing() {
 }
 
 #[test]
-fn a_contact_too_thin_holds_nothing() {
-    // One pixel of tip (0.01 mm²) under the block.
-    let fixture = with_block(body(10), 4, 10).tip(115.5, 55.5, 4, 0.4).build();
-    assert_eq!(report(&fixture).parts[1].tip_contact_px, 1);
+fn a_tip_that_reaches_a_part_with_a_sliver_of_itself_holds_nothing() {
+    // A 6-pixel tip beside the block's edge at x = 130: a few of its pixels
+    // lie within a pixel of the block, out of a section of over 100.
+    let fixture = with_block(body(10), 4, 10).tip(136.0, 55.0, 4, 6.0).build();
+    let contact = report(&fixture).parts[1].tip_contact_px;
+    assert!(contact > 0 && contact < 50, "{contact}");
     assert_eq!(islands(&fixture), [(4, 9)]);
+}
+
+#[test]
+fn a_tip_that_reaches_a_part_with_most_of_itself_holds_it() {
+    let fixture = with_block(body(10), 4, 10).tip(129.0, 55.0, 4, 3.0).build();
+    assert!(islands(&fixture).is_empty());
+}
+
+#[test]
+fn a_part_smaller_than_the_tip_stands_on_it() {
+    // Two pixels on a tip of 113: all of the part is over it.
+    let fixture = body(10)
+        .model(4..10, Shape::rect(115.0, 55.0, 117.0, 57.0))
+        .tip(116.0, 56.0, 4, 6.0)
+        .build();
+    assert!(islands(&fixture).is_empty());
 }
 
 #[test]
@@ -294,9 +312,9 @@ fn three_layers_are_an_island() {
 
 #[test]
 fn a_short_part_a_tip_touches_stays() {
-    // Too thin to hold it, but the tip would stop short of nothing if the
-    // part went: it stays.
-    let fixture = with_block(body(10), 4, 6).tip(115.5, 55.5, 4, 0.4).build();
+    // Too little to hold it, but erasing it would leave the tip short of
+    // what comes above: it stays.
+    let fixture = with_block(body(10), 4, 6).tip(136.0, 55.0, 4, 6.0).build();
     let report = report(&fixture);
     assert!(report.erased.is_empty(), "{:?}", report.erased);
     assert!(report.findings.is_empty(), "{:?}", report.findings);
@@ -320,7 +338,8 @@ fn stray_pixels_leave_the_layers_with_a_note() {
     assert_eq!(note.title, "Stray pixels removed");
     assert_eq!((note.first_layer, note.last_layer), (1, 3));
     assert!(
-        note.detail.starts_with("30 stray pixels removed on layers 2–4"),
+        note.detail
+            .starts_with("30 stray pixels removed on layers 2–4"),
         "{}",
         note.detail
     );

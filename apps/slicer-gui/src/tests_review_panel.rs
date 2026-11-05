@@ -593,8 +593,8 @@ mod fix_all {
     use crate::hollow_run::HollowRun;
     use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
     use crate::review::{ReviewOutcome, erased_stack, review_for_test, review_slices};
-    use crate::support_persist::review_sets;
     use crate::slice_result::{SliceParams, SliceResult};
+    use crate::support_persist::review_sets;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
 
     fn pixels(x0_mm: f64, x1_mm: f64) -> CavityFill {
@@ -1109,7 +1109,10 @@ mod fix_all {
             let (leaf, before) = document
                 .with_scene(|spatial| {
                     let leaf = spatial.leaf_id_at_index(0).expect("a leaf");
-                    (leaf, spatial.graph().node(leaf).expect("a node").local_transform)
+                    (
+                        leaf,
+                        spatial.graph().node(leaf).expect("a node").local_transform,
+                    )
                 })
                 .expect("a scene");
             document
@@ -1185,7 +1188,11 @@ mod fix_all {
         });
         assert_eq!(
             titles(&before),
-            ["Stray pixels removed", "Tiny sealed cavity", "Unsupported island"],
+            [
+                "Stray pixels removed",
+                "Tiny sealed cavity",
+                "Unsupported island"
+            ],
             "{before:?}"
         );
         assert_eq!(fix_all, 2);

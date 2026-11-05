@@ -35,9 +35,7 @@ use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneErr
 use sc_sl1cer::{CancelToken, VERSION, sliceable_leaves};
 use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
-use crate::commands::df_supports::{
-    SupportSet, add_df_supports, lift_scene, restore_df_supports,
-};
+use crate::commands::df_supports::{SupportSet, add_df_supports, lift_scene, restore_df_supports};
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings, show_zero_area_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
 use crate::commands::review::cleaned_stack;

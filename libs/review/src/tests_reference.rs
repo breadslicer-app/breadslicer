@@ -490,9 +490,8 @@ fn check_plate(seed: u64, layers: usize) {
                 "{what}: solid links"
             );
             // Only links with an enclosed region are kept.
-            let enclosed = |layer: usize, index: u32| {
-                !regions.layer(layer).air[index as usize].touches_border
-            };
+            let enclosed =
+                |layer: usize, index: u32| !regions.layer(layer).air[index as usize].touches_border;
             let mut links = reference_links(&air_labels[k - 1].0, &air_labels[k].0);
             links.retain(|link| enclosed(k - 1, link.lower) || enclosed(k, link.upper));
             assert_eq!(regions.air_links(k), links.as_slice(), "{what}: air links");
@@ -504,11 +503,7 @@ fn check_plate(seed: u64, layers: usize) {
             region.below_px = 0;
             region.above_px = 0;
         }
-        assert_eq!(
-            fixture.raw_pixels(k).regions(W, H),
-            alone,
-            "{what}: pixels"
-        );
+        assert_eq!(fixture.raw_pixels(k).regions(W, H), alone, "{what}: pixels");
     }
 
     let solid_groups = regions.group_solid(|_, _| true);
@@ -650,13 +645,8 @@ fn focus_lands_on_the_part_under_every_mirror_with_non_square_pixels() {
             PixelResolution::new(100, 120).unwrap(),
             Mirror { x: mx, y: my },
         );
-        let input = ReviewInput::new(
-            vec![ReviewLeaf::new(None, &stack)],
-            &schedule,
-            map,
-            mm(5.0),
-        )
-        .unwrap();
+        let input =
+            ReviewInput::new(vec![ReviewLeaf::new(None, &stack)], &schedule, map, mm(5.0)).unwrap();
         assert_eq!(input.pixel_size_mm(), [0.2, 0.1]);
         let regions = PlateRegions::compute(&input, &RAW);
         let region = regions.layer(1).solid[0];

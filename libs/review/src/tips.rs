@@ -9,7 +9,7 @@
 //! The review never rasterises support geometry. What the engine knows of a
 //! tip (where it stands, its axis, its radii, how far it goes into the
 //! model) comes in as [`TipCone`]s, and a tip's pixels are worked out for
-//! the few parts that ask ([`TipIndex::contact_px`]): a pixel of a layer
+//! the few parts that ask ([`TipIndex::contact`]): a pixel of a layer
 //! belongs to a tip when its centre, at the height the layer was cut at,
 //! lies inside the cone. That is what the printer file lights there, without
 //! slicing a triangle of it.
@@ -17,6 +17,7 @@
 use sc_sl1cer::geom2d::Point2D;
 
 use crate::input::ReviewInput;
+use crate::regions::PixelBox;
 use crate::runs::Run;
 
 /// One stretch of a support's tip, in printer-frame millimetres: a cone cut
@@ -174,32 +175,68 @@ impl TipIndex {
             .filter(move |c| c.high >= z_mm)
     }
 
-    /// The pixels of the tips on layer `below` that a part starting right
-    /// above it touches: those within `reach_px` (columns, rows) of `runs`,
-    /// the part's pixels, and not among `solid_below`, what the model has on
-    /// that layer. Both lists are sorted by row. A pixel two tips share
-    /// counts once.
-    pub fn contact_px(
+    /// How the tips on layer `below` touch a part starting right above it:
+    /// `start` is its first pixels, `solid_below` what the model has on that
+    /// layer, and `reach_px` (columns, rows) how far from the part a tip's
+    /// pixel still touches it. Pixels of the model do not count: a tip
+    /// inside the model holds the model there, not this part.
+    pub fn contact(
         &self,
         input: &ReviewInput<'_>,
         below: usize,
-        runs: &[Run],
-        solid_below: &[Run],
+        start: &TipTarget<'_>,
         reach_px: [u32; 2],
-    ) -> usize {
+        share: f64,
+    ) -> TipContact {
         let z_mm = input.layers()[below].sample_mm;
+        let pixel_mm2 = input.pixel_area_mm2();
+        let reach = [f64::from(reach_px[0]), f64::from(reach_px[1])];
         let mut touched: Vec<(u32, u32)> = Vec::new();
+        let mut reaches_share = false;
         for cone in self.at(z_mm) {
-            for_each_pixel(input, cone, z_mm, |x, y| {
-                if near(runs, x, y, reach_px) && !lit(solid_below, x, y) {
+            let from = touched.len();
+            for_each_pixel(input, cone, z_mm, start.bbox, reach, |x, y| {
+                if near(start.runs, x, y, reach_px) && !lit(start.below, x, y) {
                     touched.push((y, x));
                 }
             });
+            let section_px = std::f64::consts::PI * cone.tip_radius * cone.tip_radius / pixel_mm2;
+            reaches_share |= (touched.len() - from) as f64 >= share * section_px;
         }
         touched.sort_unstable();
         touched.dedup();
-        touched.len()
+        let under = touched
+            .iter()
+            .filter(|&&(y, x)| lit(start.runs, x, y))
+            .count() as u64;
+        TipContact {
+            px: touched.len(),
+            holds: !touched.is_empty() && (reaches_share || 2 * under >= start.area_px),
+        }
     }
+}
+
+/// What [`TipIndex::contact`] judges: the first pixels of a part.
+#[derive(Clone, Copy, Debug)]
+pub struct TipTarget<'a> {
+    /// Its pixels, sorted by row.
+    pub runs: &'a [Run],
+    /// How many they are.
+    pub area_px: u64,
+    /// The box they span.
+    pub bbox: PixelBox,
+    /// What the model has on the layer below, sorted by row.
+    pub below: &'a [Run],
+}
+
+/// How tips touch a part.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TipContact {
+    /// The tip pixels that touch it.
+    pub px: usize,
+    /// Whether they hold it: a tip reaches it with its share of its section,
+    /// or the part is small enough to stand with half of itself on tips.
+    pub holds: bool,
 }
 
 /// Whether pixel `(x, y)` is in the run list `runs`, sorted by row.
@@ -221,12 +258,14 @@ fn near(runs: &[Run], x: u32, y: u32, reach_px: [u32; 2]) -> bool {
         .any(|run| run.x0 <= right && left < run.x1)
 }
 
-/// Calls `visit` with every pixel whose centre lies inside `cone` at height
-/// `z_mm`.
+/// Calls `visit` with every pixel within `reach` of `bbox` whose centre lies
+/// inside `cone` at height `z_mm`.
 fn for_each_pixel(
     input: &ReviewInput<'_>,
     cone: &Placed,
     z_mm: f64,
+    bbox: PixelBox,
+    reach: [f64; 2],
     mut visit: impl FnMut(u32, u32),
 ) {
     let [x0, y0, x1, y1] = cone.bounds_at(z_mm);
@@ -234,18 +273,15 @@ fn for_each_pixel(
     let a = map.mm_to_pixel(Point2D::new(x0, y0));
     let b = map.mm_to_pixel(Point2D::new(x1, y1));
     // Screen mirrors swap the corners.
-    let width = f64::from(input.width_px());
-    let height = f64::from(input.height_px());
-    let (left, right) = (
-        (a.0.min(b.0).floor() - 1.0).clamp(0.0, width),
-        (a.0.max(b.0).ceil() + 1.0).clamp(0.0, width),
-    );
-    let (top, bottom) = (
-        (a.1.min(b.1).floor() - 1.0).clamp(0.0, height),
-        (a.1.max(b.1).ceil() + 1.0).clamp(0.0, height),
-    );
-    for y in top as u32..bottom as u32 {
-        for x in left as u32..right as u32 {
+    let left = (a.0.min(b.0).floor() - 1.0).max(f64::from(bbox.x0) - reach[0]);
+    let right = (a.0.max(b.0).ceil() + 1.0).min(f64::from(bbox.x1) + reach[0]);
+    let top = (a.1.min(b.1).floor() - 1.0).max(f64::from(bbox.y0) - reach[1]);
+    let bottom = (a.1.max(b.1).ceil() + 1.0).min(f64::from(bbox.y1) + reach[1]);
+    if left >= right || top >= bottom {
+        return;
+    }
+    for y in top.max(0.0) as u32..bottom.max(0.0) as u32 {
+        for x in left.max(0.0) as u32..right.max(0.0) as u32 {
             let [px, py] = input.pixel_to_plate([f64::from(x) + 0.5, f64::from(y) + 0.5]);
             if cone.holds([px, py, z_mm]) {
                 visit(x, y);

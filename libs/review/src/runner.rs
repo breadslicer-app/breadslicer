@@ -109,10 +109,7 @@ pub fn review_with(
     watch: SweepWatch<'_>,
 ) -> Option<ReviewReport> {
     let regions = PlateRegions::sweep(input, &options.sweep, watch)?;
-    Some(check_regions(
-        &ReviewContext::new(input, &regions),
-        options,
-    ))
+    Some(check_regions(&ReviewContext::new(input, &regions), options))
 }
 
 /// Runs every check on tables already swept, for a frontend that keeps or

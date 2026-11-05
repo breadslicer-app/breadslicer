@@ -386,17 +386,35 @@ impl LayerPixels {
     ///
     /// When `layer` is out of range.
     pub fn compute(input: &ReviewInput<'_>, layer: usize, options: &SweepOptions) -> Self {
-        let (width_px, height_px) = (input.width_px(), input.height_px());
+        Self::solid_of(input, layer, options).with_air(input, options)
+    }
+
+    /// [`compute`](Self::compute) without the air, for what reads the solid
+    /// alone.
+    fn solid_of(input: &ReviewInput<'_>, layer: usize, options: &SweepOptions) -> Self {
         let model = model_runs(input, layer);
-        let solid = runs::open(&model, options.min_wall_px, height_px);
+        let solid = runs::open(&model, options.min_wall_px, input.height_px());
         let stray = if solid.len() == model.len() && solid == model {
             Vec::new()
         } else {
             runs::difference(&model, &solid)
         };
         let (solid_labels, solid_count) = label_runs(&solid, SOLID_CONNECTIVITY);
+        Self {
+            model,
+            solid,
+            stray,
+            solid_labels,
+            solid_count,
+            ..Self::default()
+        }
+    }
+
+    /// These pixels with their air opened and labelled.
+    fn with_air(mut self, input: &ReviewInput<'_>, options: &SweepOptions) -> Self {
+        let (width_px, height_px) = (input.width_px(), input.height_px());
         let air = runs::open(
-            &runs::complement(&solid, width_px, height_px),
+            &runs::complement(&self.solid, width_px, height_px),
             options.drain_width_px,
             height_px,
         );
@@ -407,17 +425,11 @@ impl LayerPixels {
                 air_enclosed[label as usize] = false;
             }
         }
-        Self {
-            model,
-            solid,
-            stray,
-            solid_labels,
-            solid_count,
-            air,
-            air_labels,
-            air_count,
-            air_enclosed,
-        }
+        self.air = air;
+        self.air_labels = air_labels;
+        self.air_count = air_count;
+        self.air_enclosed = air_enclosed;
+        self
     }
 
     /// The runs of solid region `region`. It scans every run of the layer:
@@ -458,12 +470,7 @@ impl LayerPixels {
 
     /// The part starts among `solid`, the layer's regions with their links
     /// below added up in `below_px`, over the layer `below`.
-    fn starts(
-        &self,
-        solid: &[Region],
-        below: Option<&Self>,
-        min_link_px: u64,
-    ) -> Vec<PartStart> {
+    fn starts(&self, solid: &[Region], below: Option<&Self>, min_link_px: u64) -> Vec<PartStart> {
         let mut slot = vec![u32::MAX; solid.len()];
         let mut starts: Vec<PartStart> = Vec::new();
         for (region, statistics) in solid.iter().enumerate() {
@@ -919,12 +926,12 @@ fn sweep_chunk(
         }
         let pixels = LayerPixels::compute(input, layer, options);
         let mut regions = pixels.regions(width_px, height_px);
-        let links = below.as_ref().map_or_else(LayerLinks::default, |below| {
-            LayerLinks {
+        let links = below
+            .as_ref()
+            .map_or_else(LayerLinks::default, |below| LayerLinks {
                 solid: link_solid(below, &pixels),
                 air: link_air(below, &pixels, options.drain_width_px, height_px),
-            }
-        });
+            });
         for overlap in &links.solid {
             regions.solid[overlap.upper as usize].below_px += overlap.pixels;
         }
@@ -946,6 +953,15 @@ fn sweep_chunk(
 /// number, kept with what comes back) and their indices.
 pub(crate) type WantedRegions = (usize, usize, u32);
 
+/// What [`read_layers`] needs of a layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LayerRead {
+    /// Its solid.
+    Solid,
+    /// Its solid and its air.
+    All,
+}
+
 /// Calls `read` with the pixels of every layer `wanted` names and the
 /// regions each asker wants there: each layer is rasterised once, in
 /// parallel. What `read` gives back comes back with its asker, lowest layer
@@ -953,9 +969,10 @@ pub(crate) type WantedRegions = (usize, usize, u32);
 pub(crate) fn read_layers<T: Send>(
     input: &ReviewInput<'_>,
     options: &SweepOptions,
+    needs: LayerRead,
     mut wanted: Vec<WantedRegions>,
     askers: usize,
-    read: impl Fn(&LayerPixels, usize, &[WantedRegions]) -> T + Sync,
+    read: impl Fn(&LayerPixels, &[WantedRegions]) -> T + Sync,
 ) -> Vec<Vec<(usize, T)>> {
     wanted.sort_unstable();
     let layers: Vec<&[WantedRegions]> = wanted.chunk_by(|a, b| a.0 == b.0).collect();
@@ -963,12 +980,15 @@ pub(crate) fn read_layers<T: Send>(
         .par_iter()
         .map(|members| {
             let layer = members[0].0;
-            let pixels = LayerPixels::compute(input, layer, options);
+            let pixels = match needs {
+                LayerRead::Solid => LayerPixels::solid_of(input, layer, options),
+                LayerRead::All => LayerPixels::compute(input, layer, options),
+            };
             members
                 .chunk_by(|a, b| a.1 == b.1)
                 .map(|regions| {
                     let asker = regions[0].1;
-                    (asker, layer, read(&pixels, layer, regions))
+                    (asker, layer, read(&pixels, regions))
                 })
                 .collect()
         })

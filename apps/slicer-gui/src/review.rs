@@ -197,16 +197,18 @@ fn review_stacks(
             .with_support_lift_mm(Some(recommended_lift_mm(None)))
             .with_tips(supports.tips.clone())
             .with_support_extent(support_layers(leaves, supports.sets), supports.box_mm);
-        Ok(match review_with(&input, &ReviewOptions::default(), watch) {
-            None => ReviewOutcome::Cancelled,
-            Some(report) => ReviewOutcome::Reviewed {
-                findings: report.findings,
-                fills: report.fills,
-                erased: report.erased,
-                islands: report.islands,
-                took: report.timings.total,
+        Ok(
+            match review_with(&input, &ReviewOptions::default(), watch) {
+                None => ReviewOutcome::Cancelled,
+                Some(report) => ReviewOutcome::Reviewed {
+                    findings: report.findings,
+                    fills: report.fills,
+                    erased: report.erased,
+                    islands: report.islands,
+                    took: report.timings.total,
+                },
             },
-        })
+        )
     })
 }
 
@@ -354,19 +356,42 @@ mod review_tests {
 
     #[test]
     fn what_the_review_erases_leaves_the_plate_it_slices() {
-        // A floating 1 mm cube of 1 layer of 0.25 mm: debris.
+        // A slab in mid-air one layer thick: debris.
         let mut scene = Scene::new();
         add_cube(&mut scene, "Wolf", [0.0, 0.0, 0.0]);
-        add_cube(&mut scene, "Speck", [4.0, 0.0, 1.5]);
+        let slab = scene
+            .add_leaf(
+                named("Slab"),
+                Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+                    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.25]],
+                    [4.0, 0.0, 1.725],
+                )),
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+            )
+            .expect("inline-mesh leaf");
+        scene.add_root(slab).expect("fresh leaf becomes a root");
         let profile = profile(12);
         let leaves = slice_scene(&scene, &profile).expect("the scene slices");
+        let plain =
+            merge_stacks(leaves.iter().map(|l| l.stack().clone()).collect()).expect("one schedule");
+        assert!(lit_pixels(&plain, 6, &profile) > 0);
+
         let ReviewOutcome::Reviewed { erased, .. } = review_plain(&leaves, None, &profile) else {
             panic!("the review failed");
         };
-        // The speck is 4 layers: an island, so nothing is erased here. A
-        // pixel-thin sliver of it would be: the stack cancels what it names.
-        assert!(erased.is_empty(), "{erased:?}");
-        assert!(erased_stack(&leaves, &[], None, &erased, profile.layer_schedule()).is_none());
+        let cut = erased_stack(&leaves, &[], None, &erased, profile.layer_schedule())
+            .expect("the slab leaves");
+        let stacks = leaves
+            .iter()
+            .map(|l| l.stack().clone())
+            .chain(Some(cut))
+            .collect();
+        let merged = merge_stacks(stacks).expect("one schedule");
+        assert_eq!(lit_pixels(&merged, 6, &profile), 0);
+        assert_eq!(
+            lit_pixels(&merged, 0, &profile),
+            lit_pixels(&plain, 0, &profile)
+        );
     }
 
     #[test]
@@ -386,8 +411,7 @@ mod review_tests {
         add_cube(&mut scene, "Wolf", [0.0, 0.0, 0.0]);
         add_cube(&mut scene, "Floating", [4.0, 0.0, 2.0]);
         let leaves = slice_scene(&scene, &profile(12)).expect("the scene slices");
-        let ReviewOutcome::Reviewed { findings, .. } =
-            review_plain(&leaves, None, &profile(12))
+        let ReviewOutcome::Reviewed { findings, .. } = review_plain(&leaves, None, &profile(12))
         else {
             panic!("the review failed");
         };

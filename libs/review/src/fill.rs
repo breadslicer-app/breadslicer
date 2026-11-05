@@ -168,22 +168,6 @@ impl CavityFill {
     pub fn is_empty(&self) -> bool {
         self.slabs.iter().all(|slab| slab.rects.is_empty())
     }
-
-    /// Whether a rectangle of it overlaps one of `other` on overlapping
-    /// slabs.
-    pub fn overlaps(&self, other: &Self) -> bool {
-        self.slabs.iter().any(|a| {
-            other
-                .slabs
-                .iter()
-                .filter(|b| a.bottom_mm < b.top_mm && b.bottom_mm < a.top_mm)
-                .any(|b| {
-                    a.rects
-                        .iter()
-                        .any(|r| b.rects.iter().any(|q| r.overlaps(q)))
-                })
-        })
-    }
 }
 
 /// The contour stack that cures `fills` on a plate cut with `schedule`: one
@@ -551,25 +535,6 @@ mod fill_tests {
         );
         assert!(erase_stack([&erasure], &[&empty], &schedule).is_none());
         assert!(erase_stack([&CavityFill::default()], &[&plate], &schedule).is_none());
-    }
-
-    #[test]
-    fn fills_overlap_only_on_shared_slabs() {
-        let a = CavityFill {
-            slabs: vec![slab(0.0, 0.05, vec![rect(0.0, 0.0, 1.0, 1.0)])],
-        };
-        let beside = CavityFill {
-            slabs: vec![slab(0.0, 0.05, vec![rect(1.0, 0.0, 2.0, 1.0)])],
-        };
-        let above = CavityFill {
-            slabs: vec![slab(0.05, 0.10, vec![rect(0.0, 0.0, 1.0, 1.0)])],
-        };
-        let across = CavityFill {
-            slabs: vec![slab(0.0, 0.05, vec![rect(0.5, 0.5, 2.0, 2.0)])],
-        };
-        assert!(!a.overlaps(&beside));
-        assert!(!a.overlaps(&above));
-        assert!(a.overlaps(&across) && across.overlaps(&a));
     }
 
     #[test]

@@ -252,11 +252,7 @@ impl<'a> ReviewInput<'a> {
     /// and take `box_mm`: `[min x, min y, max x, max y, top]` in plate
     /// millimetres, `None` when that is not known.
     #[must_use]
-    pub fn with_support_extent(
-        mut self,
-        layers: Range<usize>,
-        box_mm: Option<[f64; 5]>,
-    ) -> Self {
+    pub fn with_support_extent(mut self, layers: Range<usize>, box_mm: Option<[f64; 5]>) -> Self {
         self.support_layers = layers;
         self.support_box_mm = box_mm;
         self
@@ -504,13 +500,8 @@ mod input_tests {
             Mirror::default(),
         );
         let short = ContourStack::new_unchecked(vec![ContourLayer::new(0.025, vec![])]);
-        let err = ReviewInput::new(
-            vec![ReviewLeaf::new(None, &short)],
-            &schedule,
-            map,
-            mm(5.0),
-        )
-        .unwrap_err();
+        let err = ReviewInput::new(vec![ReviewLeaf::new(None, &short)], &schedule, map, mm(5.0))
+            .unwrap_err();
         assert_eq!(
             err,
             ReviewInputError::LayerCountMismatch {

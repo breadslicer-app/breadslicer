@@ -136,7 +136,14 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
             &mut out,
         )?;
     } else {
-        write_text(&input, support_leaves, &report, &stats, slice_time, &mut out)?;
+        write_text(
+            &input,
+            support_leaves,
+            &report,
+            &stats,
+            slice_time,
+            &mut out,
+        )?;
         if let Some(refilled) = &refilled {
             write_refilled(&input, support_leaves, refilled, &mut out)?;
         }
@@ -173,7 +180,10 @@ impl PlateContext<'_> {
 /// The stack that takes off `plate` what the review takes off the layers, as
 /// the app does on every slice (#432): merged with the plate, the printer
 /// file does not have those pixels. `None` when nothing goes.
-pub(crate) fn cleaned_stack(plate: &SlicedPlate, sets: &[SupportSet]) -> Result<Option<ContourStack>> {
+pub(crate) fn cleaned_stack(
+    plate: &SlicedPlate,
+    sets: &[SupportSet],
+) -> Result<Option<ContourStack>> {
     let leaves = model_leaves(plate, sets);
     let stacks: Vec<&ContourStack> = leaves.iter().map(|leaf| leaf.stack).collect();
     let context = PlateContext {
@@ -366,8 +376,7 @@ impl RegionStats {
             stats.solid += layer.solid.len();
             stats.air += layer.air.len();
             stats.enclosed_air += layer.air.iter().filter(|r| !r.touches_border).count();
-            stats.empty_layers +=
-                usize::from(layer.is_empty() && !input.has_support_on(index));
+            stats.empty_layers += usize::from(layer.is_empty() && !input.has_support_on(index));
             let solid_px = layer.solid_area_px();
             stats.solid_px += solid_px;
             stats.solid_mm3 += solid_px as f64 * pixel_mm2 * span.height_mm();

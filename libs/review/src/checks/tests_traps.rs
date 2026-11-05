@@ -190,9 +190,7 @@ fn an_empty_plate_has_no_trap() {
 #[test]
 fn an_open_tube_on_supports_is_quiet() {
     // Open at the bottom, between the pillars, and at the top.
-    let fixture = FixtureBuilder::new(12)
-        .model(4..12, walls())
-        .build();
+    let fixture = FixtureBuilder::new(12).model(4..12, walls()).build();
     assert!(traps(&fixture).is_empty(), "{:?}", traps(&fixture));
 }
 
