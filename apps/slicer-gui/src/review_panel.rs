@@ -646,7 +646,7 @@ impl ReviewPanel {
         let island_tips = IslandTips {
             islands,
             growths,
-            plan: tips.as_ref(),
+            plan: tips.as_deref(),
             frame: Some(frame),
         };
         plan_fix_all(findings, fills, &held.hollows, island_tips, |i| {
@@ -1603,7 +1603,7 @@ impl ReviewPanel {
                     let island_tips = IslandTips {
                         islands,
                         growths,
-                        plan: tips.as_ref(),
+                        plan: tips.as_deref(),
                         frame: Some(frame),
                     };
                     row_marks.no_tip = island_tips.too_narrow(findings);
@@ -1855,7 +1855,7 @@ impl ReviewPanel {
             }) => IslandTips {
                 islands,
                 growths,
-                plan: tips.as_ref(),
+                plan: tips.as_deref(),
                 frame: Some(frame),
             }
             .of(finding, at),

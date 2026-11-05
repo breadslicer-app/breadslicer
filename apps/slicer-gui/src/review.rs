@@ -62,7 +62,7 @@ pub(crate) enum ReviewOutcome {
         growths: Vec<Growth>,
         /// The tips those islands and regions need, `None` when no set can
         /// take them.
-        tips: Option<TipPlan>,
+        tips: Option<Box<TipPlan>>,
         /// How the slice read the scene's points: a tip placed on this list
         /// is judged where the next slice will see it (#433).
         frame: PlateFrame,
@@ -246,7 +246,7 @@ fn review_stacks(
             match review_with(&input, &ReviewOptions::default(), watch) {
                 None => ReviewOutcome::Cancelled,
                 Some(report) => ReviewOutcome::Reviewed {
-                    tips: tip_plan(&report.islands, &report.growths, supports),
+                    tips: tip_plan(&report.islands, &report.growths, supports).map(Box::new),
                     growths: report.growths,
                     frame: supports.frame.clone(),
                     findings: report.findings,
