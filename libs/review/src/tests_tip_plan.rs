@@ -31,9 +31,9 @@ fn an_island_as_wide_as_a_tip_gets_one_under_its_first_pixels() {
     let found = islands(builder);
     let plan = plan_tips(&found, &TipPlanOptions::for_tip(0.3));
     assert_eq!(plan.tips.len(), 1);
-    let tip = plan.tips[0];
+    let tip = &plan.tips[0];
     assert_eq!(tip.layer, 4);
-    assert!((tip.at.z_mm - 0.2).abs() < 1e-9, "{:?}", tip.at);
+    assert!((tip.at.z_mm - 0.25).abs() < 1e-9, "{:?}", tip.at);
     // The middle of the block: it stands under its first pixels.
     assert!((tip.at.x_mm - found[0].at.x_mm).abs() < 0.2, "{:?}", tip.at);
     assert!((tip.at.y_mm - found[0].at.y_mm).abs() < 0.2, "{:?}", tip.at);
@@ -59,16 +59,16 @@ fn an_island_that_never_reaches_the_tip_gets_nothing() {
 }
 
 #[test]
-fn a_tip_goes_at_the_underside_of_the_pixel_it_stands_on() {
+fn a_tip_goes_right_above_the_underside_of_the_pixel_it_stands_on() {
     // The first pixels are too small; the spot picked was lit two layers
     // lower than the one it was found on.
     let builder = body(12)
         .model(4..6, Shape::rect(100.0, 40.0, 110.0, 42.0))
         .model(6..12, Shape::rect(100.0, 40.0, 110.0, 50.0));
     let plan = plan_for(builder, 0.5);
-    let tip = plan.tips[0];
+    let tip = &plan.tips[0];
     assert_eq!(tip.layer, 6);
-    assert!((tip.at.z_mm - 0.3).abs() < 1e-9, "{:?}", tip.at);
+    assert!((tip.at.z_mm - 0.35).abs() < 1e-9, "{:?}", tip.at);
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn a_mirrored_screen_keeps_the_tip_under_the_island() {
                 .model(4..10, Shape::rect(100.0, 40.0, 130.0, 70.0)),
         );
         let plan = plan_tips(&found, &TipPlanOptions::for_tip(0.3));
-        let tip = plan.tips[0];
+        let tip = &plan.tips[0];
         assert!(
             (tip.at.x_mm - found[0].at.x_mm).abs() < 0.2,
             "{x} {y} {tip:?}"
@@ -183,6 +183,24 @@ fn a_huge_island_is_sampled_and_still_planned() {
     let builder = FixtureBuilder::new(8).model(4..8, Shape::rect(10.0, 10.0, 190.0, 110.0));
     let plan = plan_for(builder, 0.3);
     assert_eq!(plan.tips.len(), 1);
+}
+
+#[test]
+fn a_first_tip_comes_with_the_lowest_pixels_as_others() {
+    let builder = body(10).model(4..10, Shape::rect(100.0, 40.0, 130.0, 70.0));
+    let found = islands(builder);
+    let plan = plan_tips(&found, &TipPlanOptions::for_tip(0.3));
+    let tip = &plan.tips[0];
+    assert!(!tip.others.is_empty());
+    assert!(tip.others.iter().all(|other| *other != tip.at));
+    assert!(
+        (tip.others[0].z_mm - 0.25).abs() < 1e-9,
+        "{:?}",
+        tip.others[0]
+    );
+    let from = |p: &PlatePoint| (p.x_mm - tip.at.x_mm).hypot(p.y_mm - tip.at.y_mm);
+    let distances: Vec<f64> = tip.others.iter().take(5).map(from).collect();
+    assert!(distances.is_sorted(), "{distances:?}");
 }
 
 #[test]

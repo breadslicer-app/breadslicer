@@ -32,17 +32,25 @@
 //! those as they can, which is where it grew: a small tree.
 //!
 //! The tips an island has already, by hand or generated, count for what its
-//! growth asks for up to their layer, never for the first one: they stand
-//! higher than its first pixels, or it would be held.
+//! growth asks for, never for the first one: they stand higher than its first
+//! pixels, or it would be held.
 //!
-//! A point is at the underside of its pixel: the bottom of the first layer of
-//! the island that lights it.
+//! A point is right above the underside of its pixel: the top of the first
+//! layer of the island that lights it, inside the solid, where the surface
+//! nearest is that underside.
+//!
+//! The engine may not reach a point: under the middle of an island the way
+//! down can be blocked where one beside it is clear. So each tip comes with
+//! the other points that would do ([`PlannedTip::others`]), and the engine
+//! takes the first it can hold. A first tip's are the rim of the first pixels,
+//! then the rest of them, then the layers right above: it stays under what it
+//! must hold for as long as it can.
 
 use std::sync::Arc;
 
 use crate::checks::islands::{GROWTH_FACTOR, Island};
 use crate::finding::PlatePoint;
-use crate::runs::{Run, erode_ellipse};
+use crate::runs::{Run, difference, erode_ellipse};
 use crate::tips::lit;
 
 /// The surface an island gains for each extra tip, in square millimetres: 10.
@@ -62,6 +70,20 @@ pub const CHAINED_GROWTH_TIPS: usize = 3;
 /// width of a contact between two.
 pub const SPACING_DIAMETERS: f64 = 2.0;
 
+/// How many layers above the one it fits on a first tip's other points reach.
+const OTHERS_LAYERS: usize = 2;
+
+/// The most points of one layer among a tip's others.
+const OTHERS_PER_LAYER: u64 = 24;
+
+/// The most points of the rim of the first pixels among a first tip's others:
+/// a fifth of a millimetre apart on a rim of 3 mm, so they find the stretch
+/// of it the engine reaches, a few tenths long on a real island.
+const OTHERS_ON_THE_RIM: u64 = 64;
+
+/// How wide the rim of the first pixels is, in pixels.
+const RIM_PX: f64 = 3.0;
+
 /// The most pixels of a layer weighed for a tip. Past this they are sampled
 /// on a grid: a floating body covers millions, and a pixel more or less is
 /// not worth reading them all.
@@ -74,6 +96,8 @@ pub struct IslandLayer {
     pub layer: usize,
     /// The bottom of its slab, in millimetres above the plate.
     pub bottom_mm: f64,
+    /// The top of its slab.
+    pub top_mm: f64,
     /// Its pixels, sorted by row.
     pub runs: Vec<Run>,
 }
@@ -100,14 +124,16 @@ impl IslandPixels {
         ]
     }
 
-    /// The height of the underside of pixel `(x, y)`: the bottom of the
-    /// first layer up to `layers[upto]` that lights it.
-    fn underside_mm(&self, upto: usize, x: u32, y: u32) -> f64 {
-        self.layers[..=upto]
+    /// Where a tip on pixel `(x, y)` is aimed at: right above its underside,
+    /// the top of the first layer up to `layers[upto]` that lights it.
+    fn aim(&self, upto: usize, x: u32, y: u32) -> PlatePoint {
+        let z_mm = self.layers[..=upto]
             .iter()
             .find(|layer| lit(&layer.runs, x, y))
             .unwrap_or(&self.layers[upto])
-            .bottom_mm
+            .top_mm;
+        let [x_mm, y_mm] = self.centre_mm(x, y);
+        PlatePoint::new(x_mm, y_mm, z_mm)
     }
 
     /// The middle of `runs`, on the plate.
@@ -165,7 +191,7 @@ impl TipPlanOptions {
 }
 
 /// A tip to place.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PlannedTip {
     /// The island it holds, by its index in the list planned.
     pub island: usize,
@@ -173,6 +199,9 @@ pub struct PlannedTip {
     pub at: PlatePoint,
     /// The layer it was placed for.
     pub layer: usize,
+    /// The points that would do as well, best first, if the engine cannot
+    /// hold `at`.
+    pub others: Vec<PlatePoint>,
 }
 
 /// The tips of a list of islands.
@@ -200,12 +229,10 @@ pub fn plan_tips(islands: &[Island], options: &TipPlanOptions) -> TipPlan {
         if tips.is_empty() {
             plan.too_narrow.push(index);
         }
-        plan.tips
-            .extend(tips.into_iter().map(|(at, layer)| PlannedTip {
-                island: index,
-                at,
-                layer,
-            }));
+        plan.tips.extend(tips.into_iter().map(|mut tip| {
+            tip.island = index;
+            tip
+        }));
     }
     plan
 }
@@ -218,30 +245,28 @@ struct Placing<'i> {
     /// The tips it has by now, on the plate: those it came with and those
     /// placed.
     standing: Vec<[f64; 2]>,
-    /// What it came with that no layer has counted yet, lowest first.
-    spare: Vec<[f64; 3]>,
-    /// The tips placed, with their layers.
-    placed: Vec<(PlatePoint, usize)>,
+    /// How many it came with that nothing has counted yet.
+    spare: usize,
+    /// The tips placed.
+    placed: Vec<PlannedTip>,
     /// The extra tips asked for that have not found a place.
     owed: usize,
 }
 
 impl<'i> Placing<'i> {
     fn new(island: &'i Island, options: &'i TipPlanOptions) -> Self {
-        let mut spare = island.tips_mm.clone();
-        spare.sort_by(|a, b| a[2].total_cmp(&b[2]));
         Self {
             island,
             pixels: island.pixels.clone(),
             options,
-            standing: spare.iter().map(|tip| [tip[0], tip[1]]).collect(),
-            spare,
+            standing: island.tips_mm.iter().map(|tip| [tip[0], tip[1]]).collect(),
+            spare: island.tips_mm.len(),
             placed: Vec::new(),
             owed: 0,
         }
     }
 
-    fn run(mut self) -> Vec<(PlatePoint, usize)> {
+    fn run(mut self) -> Vec<PlannedTip> {
         let pixels = self.pixels.clone();
         let growth = &self.island.growth_mm2;
         let first_mm2 = growth.first().copied().unwrap_or(0.0);
@@ -274,7 +299,10 @@ impl<'i> Placing<'i> {
 
     /// Places on layer `at` what is due and fits there.
     fn settle(&mut self, at: usize) {
-        self.count_spare(at);
+        // The tips the island came with pay for what is owed.
+        let paid = self.owed.min(self.spare);
+        self.owed -= paid;
+        self.spare -= paid;
         if !self.placed.is_empty() && self.owed == 0 {
             return;
         }
@@ -294,8 +322,10 @@ impl<'i> Placing<'i> {
             let spot = spots
                 .iter()
                 .min_by(|a, b| distance2(mm(a), start).total_cmp(&distance2(mm(b), start)))
+                .copied()
                 .expect("spots to pick from");
-            self.place(*spot, at);
+            let others = self.first_others(spot, at);
+            self.place(spot, at, others);
         }
         let spacing = self.options.spacing_diameters * self.options.contact_diameter_mm;
         while self.owed > 0 {
@@ -313,30 +343,60 @@ impl<'i> Placing<'i> {
             else {
                 return;
             };
-            self.place(spot, at);
+            let others = spots
+                .iter()
+                .filter(|other| nearest(other) >= spacing * spacing)
+                .copied()
+                .collect();
+            let others = self
+                .nearest_first(spot, others)
+                .into_iter()
+                .take(OTHERS_PER_LAYER as usize)
+                .map(|(x, y)| pixels.aim(at, x, y))
+                .collect();
+            self.place(spot, at, others);
             self.owed -= 1;
         }
     }
 
-    /// The tips the island came with up to layer `at` pay for what is owed.
-    fn count_spare(&mut self, at: usize) {
-        let top = self
-            .pixels
-            .layers
-            .get(at + 1)
-            .map_or(f64::INFINITY, |layer| layer.bottom_mm);
-        while self.owed > 0 && self.spare.first().is_some_and(|tip| tip[2] < top) {
-            self.spare.remove(0);
-            self.owed -= 1;
-        }
+    /// `spots` without `spot`, the nearest to it first.
+    fn nearest_first(&self, spot: (u32, u32), mut spots: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
+        let from = self.pixels.centre_mm(spot.0, spot.1);
+        let mm = |&(x, y): &(u32, u32)| self.pixels.centre_mm(x, y);
+        spots.retain(|other| *other != spot);
+        spots.sort_by(|a, b| distance2(mm(a), from).total_cmp(&distance2(mm(b), from)));
+        spots
     }
 
-    fn place(&mut self, (x, y): (u32, u32), at: usize) {
-        let [x_mm, y_mm] = self.pixels.centre_mm(x, y);
-        let z_mm = self.pixels.underside_mm(at, x, y);
-        self.standing.push([x_mm, y_mm]);
-        let layer = self.pixels.layers[at].layer;
-        self.placed.push((PlatePoint::new(x_mm, y_mm, z_mm), layer));
+    /// The other points of a first tip placed at `spot`, on layer `at`.
+    fn first_others(&self, spot: (u32, u32), at: usize) -> Vec<PlatePoint> {
+        let pixels = &self.pixels;
+        let first = &pixels.layers[0].runs;
+        let inside = erode_ellipse(first, RIM_PX, RIM_PX);
+        let rim = difference(first, &inside);
+        let mut others = Vec::new();
+        let mut add = |layer: usize, picked: Vec<(u32, u32)>| {
+            let near = self.nearest_first(spot, picked);
+            others.extend(near.into_iter().map(|(x, y)| pixels.aim(layer, x, y)));
+        };
+        add(0, sampled(&rim, OTHERS_ON_THE_RIM));
+        add(0, sampled(&inside, OTHERS_PER_LAYER));
+        let reach = (at + OTHERS_LAYERS).min(pixels.layers.len() - 1);
+        for layer in 1..=reach {
+            add(layer, sampled(&pixels.layers[layer].runs, OTHERS_PER_LAYER));
+        }
+        others
+    }
+
+    fn place(&mut self, (x, y): (u32, u32), at: usize, others: Vec<PlatePoint>) {
+        let point = self.pixels.aim(at, x, y);
+        self.standing.push([point.x_mm, point.y_mm]);
+        self.placed.push(PlannedTip {
+            island: 0,
+            at: point,
+            layer: self.pixels.layers[at].layer,
+            others,
+        });
     }
 }
 
@@ -347,8 +407,14 @@ fn distance2(a: [f64; 2], b: [f64; 2]) -> f64 {
 /// The pixels of `room` to weigh: all of them, or a grid over them when they
 /// are more than [`MAX_CANDIDATES`].
 fn candidates(room: &[Run]) -> Vec<(u32, u32)> {
+    sampled(room, MAX_CANDIDATES)
+}
+
+/// The pixels of `room`, on a grid that leaves about `most` when they are
+/// more.
+fn sampled(room: &[Run], most: u64) -> Vec<(u32, u32)> {
     let area: u64 = room.iter().map(|run| u64::from(run.len())).sum();
-    let step = ((area as f64 / MAX_CANDIDATES as f64).sqrt().ceil() as u32).max(1);
+    let step = ((area as f64 / most as f64).sqrt().ceil() as u32).max(1);
     room.iter()
         .filter(|run| run.row % step == 0)
         .flat_map(|run| {

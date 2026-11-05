@@ -3166,7 +3166,8 @@ impl DfSupportRun {
 
     /// Adds a support at every point of `points` (world mm), whose tip
     /// touches the model there or at the nearest point next to it the engine
-    /// can hold ([`REVIEW_NUDGE_MM`]), as one undoable edit of the supports
+    /// can hold (`DfSupportSession::add_tip_near`), as one undoable edit of
+    /// the supports
     /// generated last, or a notice when there are none to edit. For the
     /// Review card's "Add support here" and Fix All (#156), whose points a
     /// check picked. Points the engine refuses are skipped, and returned by

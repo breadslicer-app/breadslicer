@@ -1345,6 +1345,30 @@ impl DfSupportSession {
         Err(first)
     }
 
+    /// Adds a tip a check asked for at `point` as [`Self::add_trunk_near`]
+    /// does ([`REVIEW_NUDGE_MM`]), or on the first of `others` the engine can
+    /// hold, tried as they are: "Add support here", Fix All and the tips of
+    /// an island (#437). At the very bottom of a narrow start the shaft
+    /// often grazes the island, and a step aside clears it. Returns the
+    /// point used; the error is the one at `point`.
+    pub fn add_tip_among(
+        &mut self,
+        point: [f64; 3],
+        others: &[[f64; 3]],
+    ) -> Result<[f64; 3], EditError> {
+        let first = match self.add_trunk_near(point, REVIEW_NUDGE_MM) {
+            Ok(used) => return Ok(used),
+            Err(err) => err,
+        };
+        let how = AddOptions::default();
+        for other in others {
+            if self.place(*other, &how).is_ok() {
+                return Ok(*other);
+            }
+        }
+        Err(first)
+    }
+
     /// What adding a support at `point` would add: green when it goes
     /// through, red (a straight trunk to the plate) when nothing can hold
     /// that point. `NothingThere` when the point is not on a model.

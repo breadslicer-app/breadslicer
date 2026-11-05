@@ -163,9 +163,11 @@ fn a_yes_to_the_question_leaves_the_heavy_scene_without_islands() {
     }
     assert_eq!(added["too_narrow"].as_array().map(Vec::len), Some(0));
     assert_eq!(added["islands"].as_array().map(Vec::len), Some(0));
-    let held = added["parts"].as_array().expect("parts").iter().any(|part| {
-        part["first_layer"].as_u64() == Some(ISLANDS[0] - 1) && part["held"] == "tip"
-    });
+    let held = added["parts"]
+        .as_array()
+        .expect("parts")
+        .iter()
+        .any(|part| part["first_layer"].as_u64() == Some(ISLANDS[0] - 1) && part["held"] == "tip");
     assert!(held, "a tip holds what was an island");
 }
 

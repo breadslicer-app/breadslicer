@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use sc_geom::df_supports::{REVIEW_NUDGE_MM, recommended_lift_mm};
+use sc_geom::df_supports::recommended_lift_mm;
 use sc_print_glue::SlicedPlate;
 use sc_print_profiles::ProfileLibraries;
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile};
@@ -190,6 +190,8 @@ struct YesAnswer<'a> {
 /// One tip of the plan and how it went.
 struct TipOutcome {
     tip: PlannedTip,
+    /// The point the engine took.
+    placed_at: Option<[f64; 3]>,
     /// Why the engine refused it.
     refused: Option<String>,
 }
@@ -231,8 +233,14 @@ fn add_supports(
     let started = Instant::now();
     let mut tips = Vec::with_capacity(plan.tips.len());
     let mut edited = vec![false; sets.len()];
-    for &tip in &plan.tips {
+    for tip in plan.tips {
         let point = [tip.at.x_mm, tip.at.y_mm, tip.at.z_mm];
+        let others: Vec<[f64; 3]> = tip
+            .others
+            .iter()
+            .map(|p| [p.x_mm, p.y_mm, p.z_mm])
+            .collect();
+        let mut placed_at = None;
         let nearest = sets
             .iter()
             .enumerate()
@@ -240,15 +248,20 @@ fn add_supports(
             .min_by(|a, b| a.0.total_cmp(&b.0));
         let refused = match nearest {
             None => Some("no model there".to_owned()),
-            Some((_, i)) => match sets[i].session.add_trunk_near(point, REVIEW_NUDGE_MM) {
-                Ok(_) => {
+            Some((_, i)) => match sets[i].session.add_tip_among(point, &others) {
+                Ok(used) => {
                     edited[i] = true;
+                    placed_at = Some(used);
                     None
                 }
                 Err(why) => Some(why.to_string()),
             },
         };
-        tips.push(TipOutcome { tip, refused });
+        tips.push(TipOutcome {
+            tip,
+            placed_at,
+            refused,
+        });
     }
     let placing = started.elapsed();
 
@@ -743,6 +756,7 @@ fn write_json(
                 "island": outcome.tip.island,
                 "layer": outcome.tip.layer,
                 "at_mm": [outcome.tip.at.x_mm, outcome.tip.at.y_mm, outcome.tip.at.z_mm],
+                "placed_at_mm": outcome.placed_at,
                 "refused": outcome.refused,
             })).collect::<Vec<_>>(),
             "too_narrow": added.too_narrow,

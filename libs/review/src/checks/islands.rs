@@ -536,6 +536,7 @@ fn island_pixels(input: &ReviewInput<'_>, layers: &[(usize, Vec<Run>)]) -> Islan
             .map(|(layer, runs)| IslandLayer {
                 layer: *layer,
                 bottom_mm: input.layers()[*layer].bottom_mm,
+                top_mm: input.layers()[*layer].top_mm,
                 runs: runs.clone(),
             })
             .collect(),
