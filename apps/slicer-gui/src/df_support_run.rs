@@ -65,6 +65,7 @@ use crate::raft_clash::{
     RaftClash, lift_edit, lowest_model_after_lift_mm, raft_clash, resting_lift_edit,
     support_lift_mm,
 };
+use crate::review::TipHold;
 use crate::scene_document::{
     SceneDocument, SceneEdit, SceneEvent, SceneRevision, SceneSubscription, SupportsWanted,
     leaf_mesh_swap,
@@ -180,6 +181,9 @@ pub(crate) struct DfSupportRun {
     options: RefCell<DfSupportOptions>,
     /// Built-in presets first, then the person's own.
     presets: RefCell<Vec<Preset>>,
+    /// What the sets born from the edit under way are made with, when the
+    /// person picked it for them (#444); the tab's otherwise.
+    born_options: RefCell<Option<DfSupportOptions>>,
     /// The last run's supports and every hand edit since, each with the scene
     /// revision it was drawn into. A click edits the entry matching the
     /// current scene, so Undo and Redo keep the editor in step; a scene that
@@ -268,9 +272,25 @@ const HOVER_POLL: Duration = Duration::from_millis(16);
 /// A point of a hand edit, with its place among the edit's points.
 type IndexedPoint = (usize, [f32; 3]);
 
-/// The other points that would do for each point of an edit, by its place
-/// among them: the tips of an island (#437). Empty for an edit that has none.
-pub(crate) type OtherPoints = Arc<Vec<Vec<[f32; 3]>>>;
+/// What an edit knows of one of its points besides where it goes: the tips
+/// of an island (#437). Placing and checking a tip are one step (#433).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PointPlan {
+    /// The other points that would do, best first.
+    pub(crate) others: Vec<[f32; 3]>,
+    /// What a tip here must hold to count as placed: an island's first tip
+    /// must hold its island. `None`: any tip the engine takes.
+    pub(crate) holds: Option<TipHold>,
+    /// The point, by its place among the edit's, whose tip this one goes
+    /// with: when that one found no place, this one is not placed either.
+    pub(crate) after: Option<usize>,
+    /// The size its tip takes, by id; `None` for the preset's.
+    pub(crate) size: Option<String>,
+}
+
+/// What an edit knows of each of its points, by their place among them.
+/// Empty for an edit that knows nothing more of them.
+pub(crate) type PointPlans = Arc<Vec<PointPlan>>;
 
 /// How a hand edit of the supports ended.
 #[derive(Clone, Debug, PartialEq)]
@@ -478,9 +498,9 @@ fn refusal(err: &EditError) -> slint::SharedString {
             "DfSupportDialog",
             "there is no model or support within reach of that point"
         ),
-        EditError::NoRoute(_) => ctr!(
+        EditError::NoRoute(_) | EditError::NotHeld => ctr!(
             "DfSupportDialog",
-            "no support can reach that point without crossing the model"
+            "there is no route to the plate or to another support"
         ),
         EditError::Tessellation(why) => {
             ctr!(
@@ -533,8 +553,10 @@ enum EditOp {
 struct EditJob {
     start: EditStart,
     op: EditOp,
-    /// What the points of `op` can fall back on.
-    others: OtherPoints,
+    /// The set's leaf.
+    leaf: NodeId,
+    /// What is known of the points of `op`.
+    plans: PointPlans,
 }
 
 /// A hand edit ready for the engine: the sets it edits and, in the same
@@ -699,7 +721,12 @@ fn compute_jobs_at_once(
 /// One set's share of [`compute_edit`]. Stopped through `watch`, it ends
 /// at its next point, and the caller drops what it made.
 fn compute_job(
-    EditJob { start, op, others }: EditJob,
+    EditJob {
+        start,
+        op,
+        leaf,
+        plans,
+    }: EditJob,
     tool: HandTool,
     how: &AddOptions,
     watch: &EditWatch,
@@ -742,13 +769,30 @@ fn compute_job(
                 let edit = match tool {
                     HandTool::Add => edited.add_at(p, how),
                     HandTool::AddNear => {
-                        let others: Vec<[f64; 3]> = others
-                            .get(*i)
-                            .into_iter()
-                            .flatten()
-                            .map(|other| other.map(f64::from))
-                            .collect();
-                        edited.add_tip_among(p, &others).map(|_| ())
+                        let plan = plans.get(*i);
+                        let lost = plan.and_then(|plan| plan.after).and_then(|first| {
+                            refused
+                                .iter()
+                                .find(|(place, _)| *place == first)
+                                .map(|(_, why)| why.clone())
+                        });
+                        match lost {
+                            Some(why) => Err(why),
+                            None => {
+                                let others: Vec<[f64; 3]> = plan
+                                    .into_iter()
+                                    .flat_map(|plan| &plan.others)
+                                    .map(|other| other.map(f64::from))
+                                    .collect();
+                                let hold = plan.and_then(|plan| plan.holds.as_ref());
+                                let size = plan.and_then(|plan| plan.size.as_deref());
+                                edited
+                                    .add_tip_among(p, &others, size, &|contacts| {
+                                        hold.is_none_or(|hold| hold.by(leaf, contacts))
+                                    })
+                                    .map(|_| ())
+                            }
+                        }
                     }
                     HandTool::Remove => edited.remove_near(p).map(|_| ()),
                 };
@@ -1352,6 +1396,7 @@ impl DfSupportRun {
             _scene_events: scene_events,
             options: RefCell::new(load_saved_options()),
             presets: RefCell::new(Vec::new()),
+            born_options: RefCell::new(None),
             sessions,
             ctrl,
             hover_worker: HoverWorker::spawn(),
@@ -2779,7 +2824,7 @@ impl DfSupportRun {
             return;
         }
         let (tool, how) = self.click_tool(&ui, tool, forced);
-        self.hand_edits(&ui, tool, &[point], &how, OtherPoints::default());
+        self.hand_edits(&ui, tool, &[point], &how, PointPlans::default());
     }
 
     /// A click of the armed tool at `point`, `forced` for a Shift+click of
@@ -2985,7 +3030,8 @@ impl DfSupportRun {
         let jobs = vec![EditJob {
             start,
             op,
-            others: OtherPoints::default(),
+            leaf: drawn.leaf,
+            plans: PointPlans::default(),
         }];
         let _ = self.launch_edit(
             ui,
@@ -3192,21 +3238,21 @@ impl DfSupportRun {
     /// index with why; the edit fails when none took.
     #[cfg(test)]
     pub(crate) fn add_supports_at(&self, points: &[[f32; 3]]) -> (HandEdit, Refusals) {
-        self.add_tips_at(points, OtherPoints::default())
+        self.add_tips_at(points, PointPlans::default())
     }
 
-    /// [`Self::add_supports_at`], with what each point can fall back on when
-    /// the engine cannot hold it: the tips of an island (#437).
+    /// [`Self::add_supports_at`], with what is known of each point: the
+    /// tips of an island (#437).
     pub(crate) fn add_tips_at(
         &self,
         points: &[[f32; 3]],
-        others: OtherPoints,
+        plans: PointPlans,
     ) -> (HandEdit, Refusals) {
         let Some(ui) = self.ui.upgrade() else {
             return (HandEdit::Notified, Vec::new());
         };
         let how = AddOptions::default();
-        self.hand_edits(&ui, HandTool::AddNear, points, &how, others)
+        self.hand_edits(&ui, HandTool::AddNear, points, &how, plans)
     }
 
     /// [`Self::add_supports_at`] made off the UI thread, for Fix All
@@ -3224,7 +3270,7 @@ impl DfSupportRun {
     pub(crate) fn start_supports_at(
         self: &Rc<Self>,
         points: &[[f32; 3]],
-        others: OtherPoints,
+        plans: PointPlans,
         join: Option<SceneRevision>,
         landing: impl FnOnce(PointsEdit) + 'static,
     ) -> Result<Arc<EditWatch>, (HandEdit, Refusals)> {
@@ -3252,7 +3298,7 @@ impl DfSupportRun {
                 Err(outcome) => return Err((outcome, refused)),
             };
         for job in &mut jobs {
-            job.others = others.clone();
+            job.plans = plans.clone();
         }
         crate::breadcrumbs::note(&format!(
             "supports: {} points made off the UI thread, {} sets",
@@ -3305,14 +3351,14 @@ impl DfSupportRun {
     /// Edits the supports at every point of `points` with `tool`, an Add
     /// made as `how` says, as one undoable edit, then and there. A point the
     /// engine refuses is skipped and returned, by index, with why; the edit
-    /// fails when none took. `others` is what each point can fall back on.
+    /// fails when none took. `plans` is what is known of each point.
     fn hand_edits(
         &self,
         ui: &MainWindow,
         tool: HandTool,
         points: &[[f32; 3]],
         how: &AddOptions,
-        others: OtherPoints,
+        plans: PointPlans,
     ) -> (HandEdit, Refusals) {
         if points.is_empty() {
             return (HandEdit::Notified, Vec::new());
@@ -3321,7 +3367,7 @@ impl DfSupportRun {
         let outcome = match self.prepare_edit(ui, tool, points, how, &mut refused) {
             Ok(Prepared { sets, mut jobs }) => {
                 for job in &mut jobs {
-                    job.others = others.clone();
+                    job.plans = plans.clone();
                 }
                 let computed = compute_edit(jobs, tool, how, &EditWatch::default());
                 self.commit_edit(ui, sets, computed, &mut refused, None)
@@ -3378,7 +3424,19 @@ impl DfSupportRun {
         let mut groups: Vec<(DrawnSet, Vec<IndexedPoint>)> = Vec::new();
         let mut unset = Vec::new();
         for (i, point) in points.iter().enumerate() {
-            let Some(drawn) = self.set_at(*point, tool) else {
+            // A model with no set starts one (#444), a single one for all
+            // its points.
+            let bare = self.bare_model_at(*point, tool);
+            if let Some(group) = bare.and_then(|model| {
+                groups
+                    .iter_mut()
+                    .find(|(d, _)| d.unborn && d.model == model)
+            }) {
+                group.1.push((i, *point));
+                continue;
+            }
+            let drawn = self.set_at(*point, tool).or_else(|| self.unborn_set(bare?));
+            let Some(drawn) = drawn else {
                 unset.push(i);
                 continue;
             };
@@ -3423,7 +3481,8 @@ impl DfSupportRun {
             jobs.push(EditJob {
                 start,
                 op: EditOp::Points(points),
-                others: OtherPoints::default(),
+                leaf: drawn.leaf,
+                plans: PointPlans::default(),
             });
             sets.push(drawn);
         }
@@ -3478,6 +3537,8 @@ impl DfSupportRun {
             "supports: edit drawn ({} triangles, reused preview {reused})",
             edits.iter().map(|(_, _, m)| m.faces().len()).sum::<usize>()
         ));
+        let (born, edits): (Vec<_>, Vec<_>) =
+            edits.into_iter().partition(|(drawn, _, _)| drawn.unborn);
         let swaps: Option<Vec<SceneEdit>> = edits
             .iter()
             .map(|(drawn, _, mesh)| {
@@ -3497,6 +3558,12 @@ impl DfSupportRun {
         } else {
             SceneEdit::Compound(swaps)
         };
+        // Sets born from this edit come in with it, as one undo step: Undo
+        // takes them out of the scene again.
+        if !born.is_empty() {
+            let prior = (!edits.is_empty()).then(|| swap.clone());
+            return self.commit_born(ui, born, edits, prior, refused);
+        }
         // A Fix All run's later pass joins the run's entry (#163). The
         // scene is still at that revision (the edit is dropped otherwise),
         // so it joins; should it not, the edit stands as its own step.
@@ -3554,6 +3621,166 @@ impl DfSupportRun {
                 format!("{err:?}")
             )),
         }
+    }
+
+    /// The rest of [`Self::commit_edit`] when the edit makes new sets (#444):
+    /// their leaves go into the scene, after `prior`, the edit of the sets
+    /// that were there.
+    fn commit_born(
+        &self,
+        ui: &MainWindow,
+        born: Vec<(DrawnSet, DfSupportSession, Arc<sc_mesh_core::IndexedMesh>)>,
+        edits: Vec<(DrawnSet, DfSupportSession, Arc<sc_mesh_core::IndexedMesh>)>,
+        prior: Option<SceneEdit>,
+        refused: &mut Refusals,
+    ) -> HandEdit {
+        let fragment = SceneFragment::from_leaf_snapshots(
+            born.iter()
+                .map(|(_, _, mesh)| (mesh.clone(), Transform3D::Identity)),
+        );
+        let pasted = self.document.paste_fragment_replacing_all_after(
+            prior,
+            &fragment,
+            [0.0, 0.0, 0.0],
+            &[],
+        );
+        let leaves = match pasted {
+            Ok(leaves) if leaves.len() == born.len() => leaves,
+            _ => {
+                let why = ctr!(
+                    "DfSupportDialog",
+                    "The scene rejected the new supports; nothing was changed."
+                );
+                ui.set_supports_last_run(why.clone());
+                return HandEdit::Failed(why);
+            }
+        };
+        crate::breadcrumbs::note(&format!("supports: {} sets born", leaves.len()));
+        let mut roots = 0;
+        for (drawn, edited, _) in edits {
+            roots += edited.state().collections.roots.len();
+            record(
+                &self.document,
+                &self.sessions,
+                drawn.leaf,
+                drawn.model,
+                Arc::new(edited),
+            );
+        }
+        for (leaf, (drawn, edited, _)) in leaves.into_iter().zip(born) {
+            roots += edited.state().collections.roots.len();
+            record(
+                &self.document,
+                &self.sessions,
+                leaf,
+                drawn.model,
+                Arc::new(edited),
+            );
+        }
+        let options = self.born_options_now();
+        self.generated_raft_top.set(Some(options.raft_top_mm()));
+        self.born_options.borrow_mut().take();
+        refused.sort_by_key(|(i, _)| *i);
+        ui.set_supports_last_run(ctr!(
+            "Inspector",
+            "{n} support root, edited by hand.",
+            "{n} support roots, edited by hand.",
+            roots
+        ));
+        self.warm_worker();
+        HandEdit::Applied
+    }
+
+    /// What a set born now is made with.
+    fn born_options_now(&self) -> DfSupportOptions {
+        self.born_options
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| self.options.borrow().clone())
+    }
+
+    /// The contact diameter of the tips of a set born now: what the review
+    /// of a plate with no set plans with.
+    pub(crate) fn born_tip_mm(&self) -> f64 {
+        let mut request = self.request_for_printer();
+        request.options = self.born_options_now();
+        sc_geom::df_supports::tip_diameter_for(&request)
+    }
+
+    /// The model at `point` when `tool` adds and no set of it exists, not
+    /// even one out of date: its first tip starts one (#444).
+    fn bare_model_at(&self, point: [f32; 3], tool: HandTool) -> Option<NodeId> {
+        if tool == HandTool::Remove {
+            return None;
+        }
+        let p = point.map(f64::from);
+        self.document
+            .with_scene(|spatial| {
+                let nearest = crate::raft_clash::model_bottoms(spatial)
+                    .into_iter()
+                    .filter_map(|(id, _)| {
+                        let aabb = spatial
+                            .leaf(id)?
+                            .transformed_aabb(spatial.leaf(id)?.world_transform())?;
+                        let distance = box_distance(&aabb, p);
+                        (distance <= SET_REACH_MM).then_some((distance, id))
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0))?;
+                sets_of_model(spatial, &self.sessions, nearest.1)
+                    .is_empty()
+                    .then_some(nearest.1)
+            })
+            .flatten()
+    }
+
+    /// Whether any of `points` falls on a model with no set: adding there
+    /// makes one, with a preset someone has to name.
+    pub(crate) fn makes_a_set(&self, points: &[[f32; 3]]) -> bool {
+        points
+            .iter()
+            .any(|point| self.bare_model_at(*point, HandTool::AddNear).is_some())
+    }
+
+    /// The names of the presets, and which one is in force in the tab.
+    pub(crate) fn preset_choice(&self) -> (Vec<slint::SharedString>, usize) {
+        let presets = self.presets.borrow();
+        let options = self.options.borrow();
+        let names = presets.iter().map(|p| p.name.as_str().into()).collect();
+        let current = presets.iter().position(|p| p.options == *options);
+        (names, current.unwrap_or(0))
+    }
+
+    /// Whether a preset was named for the sets of the next edit.
+    pub(crate) fn preset_named(&self) -> bool {
+        self.born_options.borrow().is_some()
+    }
+
+    /// Makes the sets the next edit starts with preset `index`.
+    pub(crate) fn use_preset_for_new_sets(&self, index: usize) {
+        let options = self.presets.borrow().get(index).map(|p| p.options.clone());
+        *self.born_options.borrow_mut() = options;
+    }
+
+    /// The set `model`'s first tip makes: an empty session, of the options
+    /// in force. A model that stands on the plate gets no raft: its own base
+    /// is where one would go, and it stays where it is.
+    fn unborn_set(&self, model: NodeId) -> Option<DrawnSet> {
+        let mut request = self.request_for_printer();
+        request.options = self.born_options_now();
+        self.document
+            .with_scene(|spatial| {
+                let rests = crate::raft_clash::model_bottoms(spatial)
+                    .iter()
+                    .any(|(id, z)| *id == model && *z < crate::raft_clash::RESTING_MM);
+                if rests {
+                    request.options.raft = RaftMode::Off;
+                }
+                let session =
+                    sc_geom::df_supports::empty_df_session(spatial.graph(), model, &request)
+                        .ok()??;
+                DrawnSet::unborn(spatial, model, session)
+            })
+            .flatten()
     }
 
     /// Why no support set in force takes a hand tool at `point`: the
@@ -7499,6 +7726,67 @@ mod hand_edit_tests {
             std::thread::sleep(Duration::from_millis(5));
             run.poll_click();
         }
+    }
+
+    /// #444: a click of the Add tool on a model with no set starts one, which
+    /// saves and reopens as a generated one.
+    #[test]
+    fn a_click_on_a_model_with_no_set_starts_one_that_reopens() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            assert!(run.support_leaf().is_none());
+
+            window.set_support_tool(1);
+            run.on_tool_click_with([20.2, 20.2, 7.5], false);
+            settle_click(&run);
+            assert!(window.get_supports_last_run().contains("edited by hand"));
+            assert!(run.support_leaf().is_some(), "the click started a set");
+            assert!(in_force_session(&run).is_some(), "and it can be edited");
+            // The next click goes on the same set.
+            run.on_tool_click_with([19.8, 19.8, 7.5], false);
+            settle_click(&run);
+            let sessions = document.support_sessions();
+            let sets = document
+                .with_scene(|spatial| sets_in_force(spatial, &sessions).len())
+                .unwrap();
+            assert_eq!(sets, 1);
+
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("cube.bread");
+            crate::scene_save::save_project_to(&document, &target, &PrintDefaults::default())
+                .expect("the project saves");
+            let mut stored = sc_project_formats::read_project(
+                &mut std::fs::File::open(&target).unwrap(),
+                sc_project_formats::ProjectFileType::Bread,
+            )
+            .unwrap();
+            assert_eq!(stored.supports.len(), 1);
+            let restored = crate::support_persist::restore_supports(
+                &mut stored.scene,
+                std::mem::take(&mut stored.supports),
+            );
+            assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+            assert_eq!(restored.sets.len(), 1);
+
+            assert!(document.undo().unwrap());
+            assert!(document.undo().unwrap());
+            assert!(run.support_leaf().is_none(), "undo takes the set out");
+        });
     }
 
     /// A click is made off the UI thread (#3) and lands as one undoable

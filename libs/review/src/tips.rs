@@ -15,8 +15,9 @@
 //! slicing a triangle of it.
 
 use sc_sl1cer::geom2d::Point2D;
+use sc_sl1cer::raster::pixel_map::PixelMap;
 
-use crate::input::ReviewInput;
+use crate::input::{ReviewInput, pixel_to_plate};
 use crate::regions::PixelBox;
 use crate::runs::Run;
 use crate::tip_plan::IslandPixels;
@@ -148,6 +149,59 @@ impl Placed {
     }
 }
 
+/// How many of `ends`, the ends of tips in plate millimetres, do not lie in
+/// the solid of the model on the layer they stand on: a tip must end in the
+/// model, with no layer of nothing between them.
+pub fn tips_outside_model(input: &ReviewInput<'_>, ends: &[[f64; 3]]) -> usize {
+    ends.iter().filter(|end| !in_model(input, **end)).count()
+}
+
+fn in_model(input: &ReviewInput<'_>, [x, y, z]: [f64; 3]) -> bool {
+    let Some(layer) = input
+        .layers()
+        .iter()
+        .position(|span| span.bottom_mm <= z && z < span.top_mm)
+    else {
+        return false;
+    };
+    let inside = |ring: &[Point2D]| {
+        let mut odd = false;
+        let mut last = ring.len().wrapping_sub(1);
+        for (i, a) in ring.iter().enumerate() {
+            let b = &ring[last];
+            if (a.y > y) != (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x {
+                odd = !odd;
+            }
+            last = i;
+        }
+        odd
+    };
+    input.leaves().iter().any(|leaf| {
+        leaf.stack.layers()[layer].polygons().iter().any(|polygon| {
+            inside(polygon.outer().vertices())
+                && !polygon.holes().iter().any(|hole| inside(hole.vertices()))
+        })
+    })
+}
+
+/// The screen a tip's pixels are read on: all of a slice that deciding
+/// whether a tip holds a part needs, once the slice's input is gone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TipGrid {
+    pixel_map: PixelMap,
+    pixel_area_mm2: f64,
+}
+
+impl TipGrid {
+    /// The screen of `input`.
+    pub fn of(input: &ReviewInput<'_>) -> Self {
+        Self {
+            pixel_map: *input.pixel_map(),
+            pixel_area_mm2: input.pixel_area_mm2(),
+        }
+    }
+}
+
 /// The tips of a plate by height.
 #[derive(Clone, Debug, Default)]
 pub struct TipIndex {
@@ -208,27 +262,31 @@ impl TipIndex {
             .filter(move |c| c.high >= z_mm)
     }
 
-    /// How the tips on layer `below` touch a part starting right above it:
-    /// `start` is its first pixels, `solid_below` what the model has on that
-    /// layer, and `reach_px` (columns, rows) how far from the part a tip's
-    /// pixel still touches it. Pixels of the model do not count: a tip
-    /// inside the model holds the model there, not this part.
+    /// How the tips at height `z_mm`, that of the layer below a part, touch
+    /// the part starting right above it: `start` is its first pixels and what
+    /// the model has on that layer, and `reach_px` (columns, rows) how far
+    /// from the part a tip's pixel still touches it. Pixels of the model do
+    /// not count: a tip inside the model holds the model there, not this
+    /// part.
+    ///
+    /// This is the one decision of whether a part is held: the review asks
+    /// it of a plate's tips, and a tip being placed asks it of itself
+    /// ([`crate::IslandStart::held_by`]).
     pub fn contact(
         &self,
-        input: &ReviewInput<'_>,
-        below: usize,
+        grid: &TipGrid,
+        z_mm: f64,
         start: &TipTarget<'_>,
         reach_px: [u32; 2],
         share: f64,
     ) -> TipContact {
-        let z_mm = input.layers()[below].sample_mm;
-        let pixel_mm2 = input.pixel_area_mm2();
+        let pixel_mm2 = grid.pixel_area_mm2;
         let reach = [f64::from(reach_px[0]), f64::from(reach_px[1])];
         let mut touched: Vec<(u32, u32)> = Vec::new();
         let mut reaches_share = false;
         for cone in self.at(z_mm) {
             let from = touched.len();
-            for_each_pixel(input, cone, z_mm, start.bbox, reach, |x, y| {
+            for_each_pixel(grid, cone, z_mm, start.bbox, reach, |x, y| {
                 if near(start.runs, x, y, reach_px) && !lit(start.below, x, y) {
                     touched.push((y, x));
                 }
@@ -245,6 +303,62 @@ impl TipIndex {
         TipContact {
             px: touched.len(),
             holds: !touched.is_empty() && (reaches_share || 2 * under >= start.area_px),
+        }
+    }
+}
+
+/// How close two points are to be the same joint of a tip, in millimetres:
+/// their own rounding, nothing a real distance could reach.
+const SAME_JOINT_MM: f64 = 1e-6;
+
+/// The ends of a stretch of a tip.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TipStretch {
+    /// The end that goes into the model.
+    pub tip_mm: [f64; 3],
+    /// The other end.
+    pub base_mm: [f64; 3],
+}
+
+impl TipStretch {
+    /// Whether `other` is this stretch, or the rest of the same tip: a tip
+    /// with a neck is two cones, one going on where the other ends. Two tips
+    /// may end a hair apart inside the model and still be two tips.
+    fn same_tip(&self, other: &Self) -> bool {
+        let meet = |a: [f64; 3], b: [f64; 3]| {
+            (0..3).map(|i| (a[i] - b[i]).powi(2)).sum::<f64>().sqrt() < SAME_JOINT_MM
+        };
+        meet(self.tip_mm, other.tip_mm)
+            || meet(self.base_mm, other.tip_mm)
+            || meet(self.tip_mm, other.base_mm)
+    }
+}
+
+impl TipIndex {
+    /// The stretches of the tips at height `z_mm` that touch `start`, as
+    /// [`Self::contact`] reads a touch, added to `found`: a tip counts once,
+    /// on however many layers it touches.
+    pub fn touching(
+        &self,
+        grid: &TipGrid,
+        z_mm: f64,
+        start: &TipTarget<'_>,
+        reach_px: [u32; 2],
+        found: &mut Vec<TipStretch>,
+    ) {
+        let reach = [f64::from(reach_px[0]), f64::from(reach_px[1])];
+        for cone in self.at(z_mm) {
+            let mut touches = false;
+            for_each_pixel(grid, cone, z_mm, start.bbox, reach, |x, y| {
+                touches |= near(start.runs, x, y, reach_px) && !lit(start.below, x, y);
+            });
+            let stretch = TipStretch {
+                tip_mm: cone.tip,
+                base_mm: [0, 1, 2].map(|i| cone.axis[i].mul_add(cone.length, cone.tip[i])),
+            };
+            if touches && !found.iter().any(|known| known.same_tip(&stretch)) {
+                found.push(stretch);
+            }
         }
     }
 }
@@ -294,7 +408,7 @@ fn near(runs: &[Run], x: u32, y: u32, reach_px: [u32; 2]) -> bool {
 /// Calls `visit` with every pixel within `reach` of `bbox` whose centre lies
 /// inside `cone` at height `z_mm`.
 fn for_each_pixel(
-    input: &ReviewInput<'_>,
+    grid: &TipGrid,
     cone: &Placed,
     z_mm: f64,
     bbox: PixelBox,
@@ -302,7 +416,7 @@ fn for_each_pixel(
     mut visit: impl FnMut(u32, u32),
 ) {
     let [x0, y0, x1, y1] = cone.bounds_at(z_mm);
-    let map = input.pixel_map();
+    let map = &grid.pixel_map;
     let a = map.mm_to_pixel(Point2D::new(x0, y0));
     let b = map.mm_to_pixel(Point2D::new(x1, y1));
     // Screen mirrors swap the corners.
@@ -315,7 +429,7 @@ fn for_each_pixel(
     }
     for y in top.max(0.0) as u32..bottom.max(0.0) as u32 {
         for x in left.max(0.0) as u32..right.max(0.0) as u32 {
-            let [px, py] = input.pixel_to_plate([f64::from(x) + 0.5, f64::from(y) + 0.5]);
+            let [px, py] = pixel_to_plate(map, [f64::from(x) + 0.5, f64::from(y) + 0.5]);
             if cone.holds([px, py, z_mm]) {
                 visit(x, y);
             }
@@ -326,6 +440,26 @@ fn for_each_pixel(
 #[cfg(test)]
 mod tips_tests {
     use super::*;
+
+    /// #433: two tips can end a hair apart inside the model, each leaning its
+    /// own way; a neck and its cone meet end to end.
+    #[test]
+    fn stretches_are_one_tip_only_when_they_meet() {
+        let neck = TipStretch {
+            tip_mm: [0.0, 0.0, 10.0],
+            base_mm: [0.0, 0.0, 9.5],
+        };
+        let cone = TipStretch {
+            tip_mm: [0.0, 0.0, 9.5],
+            base_mm: [1.0, 0.0, 7.0],
+        };
+        let other = TipStretch {
+            tip_mm: [0.1, 0.05, 10.0],
+            base_mm: [-1.0, 0.0, 7.0],
+        };
+        assert!(neck.same_tip(&cone) && cone.same_tip(&neck));
+        assert!(!neck.same_tip(&other) && !cone.same_tip(&other));
+    }
 
     fn upright(radius: f64) -> TipCone {
         TipCone {

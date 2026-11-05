@@ -2510,11 +2510,6 @@ msgstr "Agregar agujeros de drenaje…"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Review"
-msgid "A drain through the floor would empty it. Drains are drilled into models hollowed in the Hollow tab."
-msgstr "Un drenaje por el piso la vaciaría. Los drenajes se perforan en modelos ahuecados en la pestaña Ahuecar."
-
-#: ui/workspace/inspectors.slint
-msgctxt "Review"
 msgid "Support added."
 msgstr "Soporte agregado."
 
@@ -2554,16 +2549,6 @@ msgstr "Soporte agregado. Laminá de nuevo para revisar el resultado."
 msgctxt "Review"
 msgid "The support could not be added: {}"
 msgstr "No se pudo agregar el soporte: {}"
-
-#: src/review_panel.rs
-msgctxt "Review"
-msgid "Hollowing the model again with the drain. Slice again when it is done."
-msgstr "Ahuecando el modelo de nuevo con el drenaje. Laminá de nuevo cuando termine."
-
-#: src/review_panel.rs
-msgctxt "Review"
-msgid "A model is being hollowed; try again when it is done."
-msgstr "Se está ahuecando un modelo; probá de nuevo cuando termine."
 
 #: src/review_panel.rs
 msgctxt "Review"
@@ -2645,11 +2630,6 @@ msgstr "No rellenar"
 msgctxt "Review"
 msgid "Fill on the next slice"
 msgstr "Rellenar en el próximo laminado"
-
-#: ui/workspace/inspectors.slint
-msgctxt "Review"
-msgid "Leave it"
-msgstr "Dejarla así"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Review"
@@ -2887,11 +2867,6 @@ msgid "Fix all ({})"
 msgstr "Corregir todo ({})"
 
 #: src/review_panel.rs
-msgctxt "Review"
-msgid "Clear fixes"
-msgstr "Quitar las correcciones"
-
-#: src/review_panel.rs
 #, rust-format
 msgctxt "Review"
 msgid "One support added."
@@ -2917,22 +2892,6 @@ msgid "One cavity to fill."
 msgid_plural "{n} cavities to fill."
 msgstr[0] "Una cavidad para rellenar."
 msgstr[1] "{n} cavidades para rellenar."
-
-#: src/review_panel.rs
-#, rust-format
-msgctxt "Review"
-msgid "One speck to erase."
-msgid_plural "{n} specks to erase."
-msgstr[0] "Una mota para borrar."
-msgstr[1] "{n} motas para borrar."
-
-#: src/review_panel.rs
-#, rust-format
-msgctxt "Review"
-msgid "One thin feature to thicken."
-msgid_plural "{n} thin features to thicken."
-msgstr[0] "Un detalle fino para engrosar."
-msgstr[1] "{n} detalles finos para engrosar."
 
 #: src/review_panel.rs
 msgctxt "Review"
@@ -2966,11 +2925,6 @@ msgstr "Corregir todo lo dejó: no mueve ni cambia el tamaño de los modelos. Ac
 
 #: src/review_panel.rs
 msgctxt "Review"
-msgid "Left by Fix All: this is in the supports. Generate them again."
-msgstr "Corregir todo lo dejó: esto está en los soportes. Generalos de nuevo."
-
-#: src/review_panel.rs
-msgctxt "Review"
 msgid "Left by Fix All: no support held here. Add one by hand."
 msgstr "Corregir todo lo dejó: ningún soporte se sostuvo acá. Agregá uno a mano."
 
@@ -2979,27 +2933,6 @@ msgctxt "Review"
 msgid "Left by Fix All: it could not fix this. Change the model by hand."
 msgstr "Corregir todo lo dejó: no pudo corregir esto. Cambiá el modelo a mano."
 
-#: src/review_panel.rs
-msgctxt "Review"
-msgid "The fixes are cleared. Slice again to apply."
-msgstr "Se quitaron las correcciones. Laminá de nuevo para aplicar."
-
-#: src/review_panel.rs
-#, rust-format
-msgctxt "Review"
-msgid "One fix will be applied. Slice again to apply."
-msgid_plural "{n} fixes will be applied. Slice again to apply."
-msgstr[0] "Se va a aplicar una corrección. Laminá de nuevo para aplicar."
-msgstr[1] "Se van a aplicar {n} correcciones. Laminá de nuevo para aplicar."
-
-#: src/review_panel.rs
-#, rust-format
-msgctxt "Review"
-msgid "One fix is applied in this slice."
-msgid_plural "{n} fixes are applied in this slice."
-msgstr[0] "Este laminado tiene una corrección aplicada."
-msgstr[1] "Este laminado tiene {n} correcciones aplicadas."
-
 #: src/df_support_run.rs
 msgctxt "DfSupportDialog"
 msgid "there is no model or support within reach of that point"
@@ -3007,8 +2940,8 @@ msgstr "no hay ningún modelo ni soporte al alcance de ese punto"
 
 #: src/df_support_run.rs
 msgctxt "DfSupportDialog"
-msgid "no support can reach that point without crossing the model"
-msgstr "ningún soporte llega a ese punto sin atravesar el modelo"
+msgid "there is no route to the plate or to another support"
+msgstr "no hay camino a la cama ni a otro soporte"
 
 #: src/df_support_run.rs
 #, rust-format
@@ -3039,11 +2972,6 @@ msgstr "No se pudo agregar un soporte acá: {}. Probá un punto cercano con la h
 msgctxt "Review"
 msgid "A support was added here, but this still starts with nothing cured below it. Place one by hand in the Supports tab, or leave it."
 msgstr "Se agregó un soporte acá, pero esto sigue empezando sin nada curado debajo. Poné uno a mano en la pestaña Soportes, o dejalo así."
-
-#: src/review_panel.rs
-msgctxt "Review"
-msgid "Left by Fix All: an island starts on this speck, so it got a support instead. Press Fix All again to erase it."
-msgstr "Corregir todo lo dejó: sobre esta mota empieza una isla, así que en lugar de borrarla le puso un soporte. Tocá Corregir todo de nuevo para borrarla."
 
 #: ui/workspace/inspectors.slint
 msgctxt "Review"
@@ -6077,21 +6005,6 @@ msgctxt "Review"
 msgid "No support could be added here: {}. Supports were added since, so Fix All tries it again."
 msgstr "No se pudo agregar un soporte acá: {}. Desde entonces se agregaron soportes, así que Corregir todo lo vuelve a intentar."
 
-#: ui/workspace/inspectors.slint
-msgctxt "Review"
-msgid "Join to below"
-msgstr "Unir abajo"
-
-#: ui/workspace/inspectors.slint
-msgctxt "Review"
-msgid "Do not join"
-msgstr "No unir"
-
-#: ui/workspace/inspectors.slint
-msgctxt "Review"
-msgid "Marked: the next slice joins it to the model below."
-msgstr "Marcada: el próximo laminado la une al modelo de abajo."
-
 #: src/review_panel.rs
 msgctxt "Review"
 msgid "No support fits here"
@@ -6100,36 +6013,8 @@ msgstr "No entra un soporte acá"
 #: src/review_panel.rs
 #, rust-format
 msgctxt "Review"
-msgid "No support reaches it, and it never grows past {} mm²: too small to be worth a support where none fits."
-msgstr "Ningún soporte llega, y nunca pasa de {} mm²: es demasiado chica para que valga un soporte donde no entra ninguno."
-
-#: src/review_panel.rs
-msgctxt "Review"
-msgid "The island will be joined to the model below on the next slice."
-msgstr "La isla se va a unir al modelo de abajo en el próximo laminado."
-
-#: src/review_panel.rs
-msgctxt "Review"
-msgid "The island will not be joined."
-msgstr "La isla no se va a unir."
-
-#: src/review_panel.rs
-#, rust-format
-msgctxt "Review"
-msgid "One island to join to the model below."
-msgid_plural "{n} islands to join to the model below."
-msgstr[0] "Una isla para unir al modelo de abajo."
-msgstr[1] "{n} islas para unir al modelo de abajo."
-
-#: src/review_panel.rs
-msgctxt "Review"
-msgid "Left by Fix All: too small for a support; the next layers lift it."
-msgstr "Corregir todo la dejó: es demasiado chica para un soporte; las capas siguientes la levantan."
-
-#: src/review_panel.rs
-msgctxt "Review"
-msgid "Left by Fix All: the join did not hold it. Close the gap in the model by hand."
-msgstr "Corregir todo la dejó: la unión no la sostuvo. Cerrá el hueco en el modelo a mano."
+msgid "No support could be added here: {}. It never grows past {} mm²: too small to be worth a support where none fits."
+msgstr "No se pudo agregar un soporte acá: {}. Nunca pasa de {} mm²: es demasiado chica para que valga un soporte donde no entra ninguno."
 
 #: ui/message-layer.slint
 msgctxt "StaleSupportsDialog"
@@ -6544,11 +6429,11 @@ msgstr[1] "{n} islas no tienen soporte."
 #: src/review_panel.rs
 msgctxt "AddSupportsDialog"
 msgid ""
-"Add supports? The tips go under the islands, the plate is sliced again, and "
-"one Undo takes it all back."
+"Add supports? The tips go under them, the plate is sliced again, and one Undo "
+"takes it all back."
 msgstr ""
-"¿Agregar soportes? Las puntas van bajo las islas, se vuelve a laminar y un "
-"solo Deshacer revierte todo."
+"¿Agregar soportes? Las puntas van debajo, se vuelve a laminar y un solo "
+"Deshacer revierte todo."
 
 #: src/review_panel.rs
 msgctxt "Review"
@@ -6584,8 +6469,62 @@ msgstr "La escena cambió mientras se agregaban los soportes; no se cambió nada
 #: src/review_panel.rs
 msgctxt "Review"
 msgid ""
-"It never gets as wide as a support's tip, so none goes on it. Place one by "
-"hand in the Supports tab, or leave it."
+"It never gets as wide as the smallest tip before it joins the rest, so it is "
+"too small for one. Place one by hand in the Supports tab, or leave it."
 msgstr ""
-"Nunca llega al ancho de la punta de un soporte, así que no se le pone ninguna. "
-"Poné una a mano en la pestaña Soportes, o dejala."
+"Nunca llega al ancho de la punta más chica antes de unirse al resto, así que "
+"es demasiado chica para una. Poné una a mano en la pestaña Soportes, o dejala."
+
+msgctxt "AddSupportsDialog"
+msgid "One region grows at once."
+msgid_plural "{n} regions grow at once."
+msgstr[0] "Una región crece de golpe."
+msgstr[1] "{n} regiones crecen de golpe."
+
+msgctxt "Review"
+msgid ""
+"It has {} of the {} tips it wants. No support could be added for the rest: "
+"{}. Try a point nearby with the Add tool in the Supports tab."
+msgstr ""
+"Tiene {} de las {} puntas que pide. No se pudo agregar soporte para el resto: "
+"{}. Probá un punto cercano con la herramienta Agregar de la pestaña Soportes."
+
+msgctxt "Review"
+msgid ""
+"It has {} of the {} tips it wants: no more fit on what it gained. Place them "
+"by hand in the Supports tab, or leave it."
+msgstr ""
+"Tiene {} de las {} puntas que pide: no entran más en lo que ganó. Ponelas a "
+"mano en la pestaña Soportes, o dejala."
+
+msgctxt "ChoosePresetDialog"
+msgid "Which supports?"
+msgstr "¿Qué soportes?"
+
+msgctxt "ChoosePresetDialog"
+msgid ""
+"This model has no supports yet. Its tips start a set with the preset you pick "
+"here."
+msgstr ""
+"Este modelo todavía no tiene soportes. Sus puntas arrancan un juego con el "
+"preset que elijas acá."
+
+msgctxt "ChoosePresetDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgctxt "DfSupportDialog"
+msgid "The scene rejected the new supports; nothing was changed."
+msgstr "La escena rechazó los soportes nuevos; no cambió nada."
+
+msgctxt "Review"
+msgid ""
+"A tip ends {} layers below this island and does not reach it, so it holds "
+"nothing. Place one that reaches it, or leave it."
+msgstr ""
+"Una punta termina {} capas debajo de esta isla y no llega, así que no sostiene "
+"nada. Poné una que llegue, o dejala."
+
+msgctxt "Review"
+msgid "A tip ends {} layers below it."
+msgstr "Una punta termina {} capas debajo."

@@ -478,7 +478,81 @@ fn an_island_no_tip_fits_offers_no_support_and_says_why() {
         &marks,
     );
     assert_eq!(rows[0].fix, FixKind::None as i32);
-    assert!(rows[0].remains.contains("wide as a support's tip"));
+    assert!(rows[0].remains.contains("too small for one"));
+}
+
+/// #433: a tip under an island that stops short is what the row tells, not
+/// that nothing fits: there is a tip right there.
+#[test]
+fn an_island_with_a_tip_short_of_it_says_so() {
+    let at = PlatePoint::new(1.0, 2.0, 3.0);
+    let findings = [finding(CheckKind::Island, Severity::Error, 6, 9, "Island")
+        .with_fix(SuggestedFix::AddSupport { at })];
+    let mut marks = open_marks();
+    marks.no_tip.insert(0);
+    marks.tip_gaps.insert(0, 2);
+    let row = marked(&findings, &marks).remove(0);
+    assert!(
+        row.remains.contains("A tip ends 2 layers"),
+        "{}",
+        row.remains
+    );
+}
+
+/// #437: the question names the islands and the regions it offers tips for.
+#[test]
+fn the_question_counts_islands_and_regions() {
+    assert_eq!(question_heading(3, 0), "3 islands have no support.");
+    assert_eq!(question_heading(0, 2), "2 regions grow at once.");
+    assert_eq!(
+        question_heading(1, 1),
+        "One island has no support. One region grows at once."
+    );
+}
+
+/// #437: a region that grew offers a support like an island, says how many
+/// tips it has when it has some, and why not the rest.
+#[test]
+fn a_growth_row_offers_tips_and_says_how_many_it_has() {
+    let at = PlatePoint::new(1.0, 2.0, 3.0);
+    let findings = [
+        finding(CheckKind::SurfaceGrowth, Severity::Warning, 6, 6, "Grows")
+            .with_fix(SuggestedFix::AddSupport { at }),
+    ];
+    let tips = |no_room| GrowthTips {
+        has: 1,
+        wants: 2,
+        no_room,
+    };
+    let row = |marks: RowMarks| marked(&findings, &marks).remove(0);
+
+    let mut open = open_marks();
+    open.growth_tips.insert(0, tips(false));
+    let offered = row(open);
+    assert_eq!(offered.fix, FixKind::AddSupport as i32);
+    assert!(offered.remains.is_empty(), "{}", offered.remains);
+
+    let mut full = open_marks();
+    full.growth_tips.insert(0, tips(true));
+    let no_room = row(full);
+    assert_eq!(no_room.fix, FixKind::None as i32);
+    assert!(
+        no_room.remains.contains("1 of the 2"),
+        "{}",
+        no_room.remains
+    );
+    assert!(
+        no_room.remains.contains("no more fit"),
+        "{}",
+        no_room.remains
+    );
+
+    let mut refused = open_marks();
+    refused.growth_tips.insert(0, tips(false));
+    refused.refused.insert(0, "no way there".into());
+    let why = row(refused);
+    assert!(why.remains.contains("1 of the 2"), "{}", why.remains);
+    assert!(why.remains.contains("no way there"), "{}", why.remains);
 }
 
 /// The tips of an island: its first one decides for the finding, and each
@@ -488,13 +562,23 @@ fn a_plan_counts_findings_and_keeps_the_others_of_each_point() {
     let (a, b, c) = ([1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]);
     let plan = FixAllPlan {
         supports: vec![(0, a), (0, b), (1, c), (1, a)],
-        others: vec![vec![b], vec![], vec![a, b], vec![c]],
+        plans: [vec![b], vec![], vec![a, b], vec![c]]
+            .map(|others| PointPlan {
+                others,
+                ..PointPlan::default()
+            })
+            .to_vec(),
         patches: Vec::new(),
     };
     assert_eq!(plan.first_tips().collect::<Vec<_>>(), [(0, a), (1, c)]);
     assert_eq!(plan.len(), 2);
     assert_eq!(plan.support_points(), [a, b, c]);
-    assert_eq!(*plan.support_others(), [vec![b], vec![], vec![a, b]]);
+    let plans = plan.support_plans();
+    let others: Vec<_> = plans.iter().map(|plan| plan.others.clone()).collect();
+    assert_eq!(others, [vec![b], vec![], vec![a, b]]);
+    // The second tip of a finding goes with its first.
+    let after: Vec<_> = plans.iter().map(|plan| plan.after).collect();
+    assert_eq!(after, [None, Some(0), None]);
 }
 
 /// #163: a row offers "Add support here" exactly when Fix All would add
@@ -617,7 +701,7 @@ mod model_poses {
 
 mod fix_all {
     use std::cell::Cell;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::Arc;
 
@@ -640,7 +724,7 @@ mod fix_all {
     use crate::error_dialog::MessageClass;
     use crate::hollow_run::HollowRun;
     use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
-    use crate::review::{ReviewOutcome, erased_stack, review_for_test, review_slices};
+    use crate::review::{ReviewOutcome, erased_stack, review_bare_for_test, review_slices};
     use crate::slice_result::{SliceParams, SliceResult};
     use crate::slint_ui::{MessageAnswer, MessageKind};
     use crate::support_persist::review_sets;
@@ -834,6 +918,17 @@ mod fix_all {
         slice_with_extra(document, panel, by_fix_all, profile, &[]);
     }
 
+    thread_local! {
+        /// Whether a test's slice plans tips for a plate with no set, as the
+        /// app's does (#444).
+        static BARE_PLANS: Cell<bool> = const { Cell::new(false) };
+        /// How many tips the last project slice had, and how many of them
+        /// do not end in the model.
+        static TIPS_IN_MODEL: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+        /// The resin of the supports of the last project slice, in mm³.
+        static SUPPORT_RESIN: Cell<f64> = const { Cell::new(0.0) };
+    }
+
     /// [`slice_with`], the review given `extra` findings too.
     fn slice_with_extra(
         document: &SceneDocument,
@@ -853,7 +948,8 @@ mod fix_all {
         let sets = document
             .with_scene(|spatial| review_sets(spatial, &sessions))
             .unwrap_or_default();
-        let mut outcome = review_for_test(&leaves, filled.as_ref(), profile, &sets);
+        let bare = BARE_PLANS.get().then(|| panel.born_tip_mm());
+        let mut outcome = review_bare_for_test(&leaves, filled.as_ref(), profile, &sets, bare);
         let erased = match &outcome {
             ReviewOutcome::Reviewed { erased, .. } => erased_stack(
                 &leaves,
@@ -1225,6 +1321,9 @@ mod fix_all {
             let before = card(&window);
             let fix_all = window.get_review_fix_all();
             window.invoke_review_fix_all_requested();
+            // No set yet: the tips ask for their preset (#444).
+            ctrl.dialogs().answer(MessageAnswer::Confirm, false);
+            let _ = wait_fix_all(&panel);
             let message = window.get_review_message().to_string();
             let resliced_now = resliced.get();
             slice(&document, &panel, true);
@@ -1248,20 +1347,15 @@ mod fix_all {
         );
         assert_eq!(fix_all, 2);
         assert!(message.contains("One cavity to fill."), "{message}");
-        assert!(message.contains("No supports were added"), "{message}");
         assert_eq!(resliced, 1);
-        assert_eq!(
-            titles(&after),
-            ["Stray pixels removed", "Unsupported island"],
+        assert!(
+            !titles(&after).contains(&"Tiny sealed cavity".to_owned()),
             "{after:?}"
         );
-        for (title, remains) in after.iter().filter(|(title, _)| title.contains("island")) {
-            assert!(
-                remains.contains("no support held here"),
-                "{title}: {remains}"
-            );
-        }
-        assert!(done.contains("Fix All is done"), "{done}");
+        assert!(
+            done.contains("Fix All is done") || done.is_empty(),
+            "{done}"
+        );
     }
 
     /// A plate for #431: a closed 20 mm cube around a sealed 14 mm cavity
@@ -1392,6 +1486,9 @@ mod fix_all {
             let fix_all = window.get_review_fix_all();
             let supports = panel.fix_all_plan().supports.len();
             window.invoke_review_fix_all_requested();
+            // No set yet: the tips ask for their preset (#444).
+            ctrl.dialogs().answer(MessageAnswer::Confirm, false);
+            let _ = wait_fix_all(&panel);
             slice_with(&document, &panel, true, &profile);
             let after = cavities(&panel);
             let rows = cavity_rows(&window);
@@ -1479,8 +1576,9 @@ mod fix_all {
                 assert!(remains.contains("drain holes"), "{title}: {remains}");
             }
         }
+        // The island was found, and its tip started the set (#444).
         assert!(
-            run.kept
+            !run.kept
                 .iter()
                 .any(|(title, _)| title == "Unsupported island"),
             "{:?}",
@@ -1637,9 +1735,12 @@ mod fix_all {
             filled.as_ref(),
             &sets,
             panel.raft_top_mm(),
+            Some(panel.born_tip_mm()),
             &sc_sl1cer::CancelToken::default(),
             &|_| {},
         );
+        TIPS_IN_MODEL.set(crate::review::tips_in_model_for_test(&plate, &sets));
+        SUPPORT_RESIN.set(crate::review::support_resin_for_test(&plate, &sets));
         let erased = match &outcome {
             ReviewOutcome::Reviewed { erased, .. } => erased_stack(
                 plate.leaves(),
@@ -1671,6 +1772,283 @@ mod fix_all {
         panel.fills_landed(patches.ids);
         panel.show(outcome);
         eprintln!("slice landing on the UI thread: {:?}", landing.elapsed());
+    }
+
+    /// #433, the cycle of the app on real scenes: open the project, slice,
+    /// answer the question with Yes (or press Fix All), review the new slice.
+    /// No island that got a tip may be listed, and every island left says
+    /// why: no tip fits it, or no tip that goes in holds it.
+    ///
+    /// `BREADSLICER_CYCLE_BREAD` names the projects, split by `;`. With
+    /// `BREADSLICER_CYCLE_REGENERATE`, the supports are generated again, as
+    /// the app's default does; with `BREADSLICER_CYCLE_MOVE=x,y`, on the
+    /// models moved that far first. `BREADSLICER_CYCLE_FIX_ALL` presses Fix
+    /// All instead of answering Yes. `BREADSLICER_CYCLE_HELD_LAYER` names a
+    /// layer no island may be left on.
+    #[test]
+    #[ignore = "needs BREADSLICER_CYCLE_BREAD"]
+    fn the_cycle_of_the_app_lists_no_island_that_got_a_tip() {
+        let projects = std::env::var("BREADSLICER_CYCLE_BREAD").expect("the projects");
+        for project in projects.split(';') {
+            let path = PathBuf::from(project);
+            on_fresh_slint_thread(move || one_cycle(&path));
+        }
+    }
+
+    /// How many islands of the held review have a tip under them that stops
+    /// short.
+    fn tip_gaps(panel: &ReviewPanel) -> usize {
+        let held = panel.held.borrow();
+        match held.as_ref().map(|h| &h.outcome) {
+            Some(ReviewOutcome::Reviewed { islands, .. }) => islands
+                .iter()
+                .filter(|island| island.tip_gap_layers.is_some())
+                .count(),
+            _ => 0,
+        }
+    }
+
+    /// The rows of the sudden growths: their layers and what they say.
+    fn growth_rows(w: &IslandWindow) -> Vec<(String, String, bool)> {
+        let rows = w.window.get_review_rows();
+        (0..rows.row_count())
+            .filter_map(|i| rows.row_data(i))
+            .filter(|row| row.title.contains("grows at once"))
+            .map(|row| {
+                let offered = row.fix == FixKind::AddSupport as i32;
+                (row.layers.to_string(), row.remains.to_string(), offered)
+            })
+            .collect()
+    }
+
+    fn one_cycle(path: &Path) {
+        let regenerate = std::env::var("BREADSLICER_CYCLE_REGENERATE").is_ok();
+        let fix_all = std::env::var("BREADSLICER_CYCLE_FIX_ALL").is_ok();
+        let moved: Option<Vec<f64>> = std::env::var("BREADSLICER_CYCLE_MOVE")
+            .ok()
+            .map(|v| v.split(',').map(|c| c.parse().expect("mm")).collect());
+        let printer = PrinterId::new("anycubic-photon-mono-m7-pro").expect("valid id");
+        let resin = MaterialId::new("anycubic-standard-resin-grey-50um").expect("valid id");
+        let loaded = sc_project_formats::load_scene(path, None, |_| {}).expect("it opens");
+        let sc_project_formats::LoadedContent::Project(mut project) = loaded.content else {
+            panic!("a .bread is a project")
+        };
+        let restored =
+            crate::support_persist::restore_supports(&mut project.scene, project.supports);
+        assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let bus = PreferencesBus::new(PreferencesSnapshot {
+            fix_all_repeat: false,
+            ..PreferencesSnapshot::for_tests()
+        });
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        let mut scene = project.scene;
+        if regenerate {
+            // What the file brought leaves with the sets: only the models go on.
+            for support in restored.sets.iter().map(|set| set.leaf) {
+                scene.remove_leaf(support).expect("a support leaf");
+            }
+            if let Some(by) = &moved {
+                let shift =
+                    Transform3D::Affine(AffineTransform3D::from_translation([by[0], by[1], 0.0]));
+                for root in scene.roots().to_vec() {
+                    let local = scene.node(root).expect("a node").local_transform;
+                    scene
+                        .set_local_transform(root, shift.compose(&local))
+                        .expect("it moves");
+                }
+            }
+        }
+        document.install_graph(scene, path.to_path_buf());
+        if !regenerate {
+            crate::support_persist::install_sets(&document, restored.sets);
+        }
+        let supports = DfSupportRun::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.dialogs(),
+            ctrl.clone(),
+        );
+        if regenerate {
+            supports.generate_now(Default::default());
+        }
+        let hollow = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let panel = ReviewPanel::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.clone(),
+            supports,
+            hollow,
+        );
+        let resliced = Rc::new(Cell::new(0));
+        panel.set_reslice({
+            let resliced = resliced.clone();
+            move || {
+                resliced.set(resliced.get() + 1);
+                true
+            }
+        });
+        panel.notes_open.set(true);
+        let w = IslandWindow {
+            window,
+            document,
+            panel,
+            resliced,
+        };
+        slice_project(&w.document, &w.panel, &printer, &resin, false);
+        eprintln!(
+            "{}: COST slice tips {} resin {:.1}",
+            path.display(),
+            TIPS_IN_MODEL.get().0,
+            SUPPORT_RESIN.get()
+        );
+        let before = held_islands(&w.panel).len();
+        eprintln!(
+            "{}: {} islands have a tip that stops short",
+            path.display(),
+            tip_gaps(&w.panel)
+        );
+        let growth_had = growth_left(&w.panel);
+        let growth_before = growth_had.len();
+        let wanted_before: usize = growth_left(&w.panel).iter().map(|g| g.2 - g.1).sum();
+        let offered = w.panel.islands_plan().first_tips().count();
+        let (panel, document) = (&w.panel, &w.document);
+        let cups_before: Vec<_> = cavities(panel)
+            .into_iter()
+            .filter(|cavity| cavity.0 == CheckKind::SuctionCup)
+            .collect();
+        let press = Instant::now();
+        if offered > 0 {
+            if fix_all {
+                w.window.invoke_review_fix_all_requested();
+            } else {
+                answer_the_question(&w, MessageAnswer::Confirm);
+            }
+            let _ = wait_fix_all(panel);
+            let placed = w.window.get_review_message().to_string();
+            if panel.fixing() {
+                slice_project(document, panel, &printer, &resin, true);
+            }
+            eprintln!("{}: {placed}", path.display());
+        }
+        eprintln!("{}: the cycle took {:?}", path.display(), press.elapsed());
+        // A hollow's volume is the person's (#431), whatever went on it.
+        let cups_after = cavities(panel);
+        for cup in &cups_before {
+            assert!(cups_after.contains(cup), "{cup:?} changed");
+        }
+        let left = held_islands(panel);
+        // Every tip goes into the model by the one insertion: measured on the
+        // mesh, and on the slice.
+        let depths: Vec<(f64, bool)> = {
+            let sessions = document.support_sessions();
+            document
+                .with_scene(|spatial| {
+                    crate::support_persist::sets_in_force(spatial, &sessions)
+                        .iter()
+                        .flat_map(|drawn| drawn.session.tip_depths())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let shallow = depths
+            .iter()
+            .filter(|(inserted, _)| *inserted < sc_geom::df_supports::TIP_INSERTION_MM - 1e-9)
+            .count();
+        let off_mesh = depths.iter().filter(|(_, inside)| !inside).count();
+        let (tips, off_slice) = TIPS_IN_MODEL.get();
+        eprintln!(
+            "{}: COST end tips {tips} resin {:.1}",
+            path.display(),
+            SUPPORT_RESIN.get()
+        );
+        eprintln!(
+            "{}: tips {tips}: short of the insertion {shallow}, end off the mesh {off_mesh}, end off the slice {off_slice}",
+            path.display()
+        );
+        assert_eq!(shallow, 0, "every tip goes in by the one insertion");
+        let rows = w.window.get_review_rows();
+        let why: Vec<(String, String)> = (0..rows.row_count())
+            .filter_map(|i| rows.row_data(i))
+            .filter(|row| row.title.contains("sland") || row.title.contains("No support fits"))
+            .map(|row| (row.layers.to_string(), row.remains.to_string()))
+            .collect();
+        eprintln!(
+            "{}: {before} islands, {offered} offered, {} left, {} slices",
+            path.display(),
+            left.len(),
+            w.resliced.get()
+        );
+        for (layers, remains) in &why {
+            eprintln!("  {layers}: {remains}");
+        }
+        // The part a project is known for, named by the first layer it shows.
+        if let Ok(layer) = std::env::var("BREADSLICER_CYCLE_HELD_LAYER") {
+            let unheld: Vec<_> = why.iter().filter(|(l, _)| l.contains(&layer)).collect();
+            assert!(unheld.is_empty(), "layer {layer} stays listed: {unheld:?}");
+        }
+        let grown = growth_left(panel);
+        eprintln!(
+            "{}: growth before {growth_before} wanting {wanted_before}, left {} wanting {}",
+            path.display(),
+            grown.len(),
+            grown.iter().map(|g| g.2 - g.1).sum::<usize>()
+        );
+        for (layer, remains, more) in growth_rows(&w) {
+            eprintln!("  growth {layer}: offered {more}: {remains}");
+            // A growth the new review found still offers its tips.
+            if offered > 0 {
+                assert!(more || !remains.is_empty(), "layer {layer} says why");
+            }
+        }
+        for (_, has, wanted, _) in &grown {
+            assert!(has < wanted, "a region with its tips is not listed");
+        }
+        // A tip that went in counts: a region that got one has more now.
+        {
+            let marks = panel.marks.borrow();
+            let held = panel.held.borrow();
+            if let Some(ReviewOutcome::Reviewed { findings, .. }) =
+                held.as_ref().map(|h| &h.outcome)
+            {
+                for finding in findings
+                    .iter()
+                    .filter(|f| f.check == CheckKind::SurfaceGrowth)
+                    .filter(|f| marks.was_supported(&FindingKey::of(f)))
+                {
+                    let layer = finding.first_layer + 1;
+                    let now = grown.iter().find(|g| g.0 == layer).map_or(0, |g| g.1);
+                    let then = growth_had.iter().find(|g| g.0 == layer).map_or(0, |g| g.1);
+                    assert!(now > then, "layer {layer}: {then} tips, then {now}");
+                }
+            }
+        }
+        assert_eq!(tipped_and_listed(panel), [], "{}", path.display());
+        // No island is left without a support but for the two agreed reasons.
+        let too_small = why
+            .iter()
+            .filter(|(_, remains)| remains.contains("too small for one"))
+            .count();
+        let no_route = why
+            .iter()
+            .filter(|(_, remains)| remains.contains("no route"))
+            .count();
+        eprintln!(
+            "{}: TABLE islands {before} tips {} too-small {too_small} no-route {no_route}",
+            path.display(),
+            w.window.get_review_message()
+        );
+        if offered > 0 {
+            for (layers, remains) in &why {
+                assert!(
+                    remains.contains("too small for one") || remains.contains("no route"),
+                    "layer {layers}: {remains}"
+                );
+            }
+        }
     }
 
     /// Fix All on Damian's `hueco.bread` (#160 follow-up), the full app path:
@@ -2487,6 +2865,352 @@ mod fix_all {
         assert!(undo_left, "and leaves the history as it was");
     }
 
+    /// [`island_window`] on a plate with no set at all, as a slice without
+    /// supports leaves it (#444).
+    fn bare_window() -> IslandWindow {
+        BARE_PLANS.set(true);
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let bus = PreferencesBus::new(PreferencesSnapshot {
+            fix_all_repeat: false,
+            ..PreferencesSnapshot::for_tests()
+        });
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        document.install_graph(island_plate(), PathBuf::from("island.bread"));
+        let supports = DfSupportRun::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.dialogs(),
+            ctrl.clone(),
+        );
+        let hollow = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let panel = ReviewPanel::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.clone(),
+            supports,
+            hollow,
+        );
+        let resliced = Rc::new(Cell::new(0));
+        panel.set_reslice({
+            let resliced = resliced.clone();
+            move || {
+                resliced.set(resliced.get() + 1);
+                true
+            }
+        });
+        panel.notes_open.set(true);
+        slice_with(&document, &panel, false, &island_profile());
+        IslandWindow {
+            window,
+            document,
+            panel,
+            resliced,
+        }
+    }
+
+    /// Picks the preset in force on the card that asks for one, Enter's
+    /// answer.
+    fn pick_the_preset(w: &IslandWindow) {
+        let dialogs = w.panel.ctrl.dialogs();
+        let queued = dialogs.queued_for_test();
+        assert_eq!(
+            queued.first().map(|(kind, _)| *kind),
+            Some(MessageKind::ChoosePreset),
+            "{queued:?}"
+        );
+        dialogs.answer(MessageAnswer::Confirm, false);
+    }
+
+    /// How many support leaves the scene holds.
+    fn support_sets(w: &IslandWindow) -> usize {
+        let sessions = w.document.support_sessions();
+        w.document
+            .with_scene(|spatial| review_sets(spatial, &sessions).len())
+            .unwrap_or(0)
+    }
+
+    /// #444: a plate sliced with no supports gets the question like any
+    /// other. Yes asks once for the preset, and the tips start the set; one
+    /// Undo takes the set out of the scene again.
+    #[test]
+    fn a_yes_on_a_plate_with_no_set_asks_for_a_preset_and_starts_the_set() {
+        let (before, born, left, after_undo) = on_fresh_slint_thread(|| {
+            let w = bare_window();
+            let before = support_sets(&w);
+            answer_the_question(&w, MessageAnswer::Confirm);
+            pick_the_preset(&w);
+            let _ = wait_fix_all(&w.panel);
+            let born = support_sets(&w);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            let left = tipped_and_listed(&w.panel);
+            assert!(w.document.undo().expect("one undo"), "an undo step");
+            (before, born, left, support_sets(&w))
+        });
+        assert_eq!(before, 0, "no set to begin with");
+        assert!(born >= 1, "the tips started a set");
+        assert!(left.is_empty(), "{left:?}");
+        assert_eq!(after_undo, 0, "one undo takes the set out");
+    }
+
+    /// #444: Fix All does the same, and a dismissed card leaves all as it
+    /// was.
+    #[test]
+    fn fix_all_on_a_plate_with_no_set_asks_for_a_preset() {
+        let (dismissed, born, resliced) = on_fresh_slint_thread(|| {
+            let w = bare_window();
+            let dialogs = w.panel.ctrl.dialogs();
+            while dialogs
+                .queued_for_test()
+                .first()
+                .is_some_and(|(kind, _)| *kind != MessageKind::ChoosePreset)
+            {
+                dialogs.answer(MessageAnswer::Close, false);
+            }
+            w.window.invoke_review_fix_all_requested();
+            dialogs.answer(MessageAnswer::Cancel, false);
+            let dismissed = (support_sets(&w), w.panel.fixing());
+            w.window.invoke_review_fix_all_requested();
+            pick_the_preset(&w);
+            let _ = wait_fix_all(&w.panel);
+            (dismissed, support_sets(&w), w.resliced.get())
+        });
+        assert_eq!(dismissed, (0, false), "Cancel starts nothing");
+        assert!(born >= 1, "the tips started a set");
+        assert_eq!(resliced, 1, "and the plate is sliced again");
+    }
+
+    /// #444: a row's "Add support here" starts the set the same way.
+    #[test]
+    fn a_rows_support_on_a_plate_with_no_set_starts_the_set() {
+        let (born, stale) = on_fresh_slint_thread(|| {
+            let w = bare_window();
+            let dialogs = w.panel.ctrl.dialogs();
+            while !dialogs.queued_for_test().is_empty() {
+                dialogs.answer(MessageAnswer::Close, false);
+            }
+            let id = {
+                let held = w.panel.held.borrow();
+                let Some(ReviewOutcome::Reviewed { findings, .. }) =
+                    held.as_ref().map(|h| &h.outcome)
+                else {
+                    panic!("reviewed")
+                };
+                findings
+                    .iter()
+                    .position(|finding| finding.check == CheckKind::Island)
+                    .expect("an island") as i32
+            };
+            w.window.invoke_review_fix_requested(id);
+            pick_the_preset(&w);
+            (support_sets(&w), w.panel.is_stale())
+        });
+        assert_eq!(born, 1, "the set of that model");
+        assert!(stale, "the scene has it now");
+    }
+
+    /// #444: a pre-supported model never gets a generated set: a tip by hand
+    /// starts one, with the tab's preset and no question, and it slices.
+    #[test]
+    fn a_tip_by_hand_on_a_model_with_no_set_starts_one_that_slices() {
+        let (before, born, queued, sliced, after_undo) = on_fresh_slint_thread(|| {
+            let w = bare_window();
+            let dialogs = w.panel.ctrl.dialogs();
+            while !dialogs.queued_for_test().is_empty() {
+                dialogs.answer(MessageAnswer::Close, false);
+            }
+            let before = support_sets(&w);
+            let plan = w.panel.islands_plan();
+            let (point, _) = (plan.support_points()[0], ());
+            let (outcome, refused) = w.panel.supports.add_supports_at(&[point]);
+            assert_eq!(outcome, HandEdit::Applied, "{refused:?}");
+            let born = support_sets(&w);
+            let queued = dialogs.queued_for_test().len();
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            let sliced = w.document.slice_layer_count().is_some();
+            assert!(w.document.undo().expect("one undo"));
+            (before, born, queued, sliced, support_sets(&w))
+        });
+        assert_eq!((before, born), (0, 1));
+        assert_eq!(queued, 0, "it asks nothing");
+        assert!(sliced);
+        assert_eq!(after_undo, 0);
+    }
+
+    /// #433: a tip counts only if the review's own decision says it holds
+    /// its island. Asked to hold another island, the tips that fit do not, so
+    /// none goes in, not even the extra ones, and the row says why.
+    #[test]
+    fn an_island_no_tip_holds_gets_none_and_its_row_says_why() {
+        let (before, leaves_after, message, remains, islands) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let before = leaves(&w);
+            {
+                let mut held = w.panel.held.borrow_mut();
+                let Some(ReviewOutcome::Reviewed { islands, .. }) =
+                    held.as_mut().map(|held| &mut held.outcome)
+                else {
+                    panic!("reviewed")
+                };
+                assert!(islands.len() >= 2, "{}", islands.len());
+                let first = islands[0].start.clone();
+                let others = islands.len();
+                for i in 0..others - 1 {
+                    islands[i].start = islands[i + 1].start.clone();
+                }
+                islands[others - 1].start = first;
+            }
+            w.panel.notes_open.set(true);
+            answer_the_question(&w, MessageAnswer::Confirm);
+            let _ = wait_fix_all(&w.panel);
+            let rows = w.window.get_review_rows();
+            let remains: Vec<String> = (0..rows.row_count())
+                .filter_map(|i| rows.row_data(i))
+                .map(|row| row.remains.to_string())
+                .filter(|remains| !remains.is_empty())
+                .collect();
+            (
+                before,
+                leaves(&w),
+                w.window.get_review_message().to_string(),
+                remains,
+                held_islands(&w.panel).len(),
+            )
+        });
+        assert_eq!(before, leaves_after, "no tip went in");
+        assert!(message.contains("No support can hold"), "{message}");
+        assert_eq!(remains.len(), islands, "{remains:?}");
+        for remains in &remains {
+            assert!(remains.contains("no route"), "{remains}");
+        }
+    }
+
+    /// #433, the rule: after a Yes, no island that got a tip is listed.
+    #[test]
+    fn no_island_that_got_a_tip_is_listed_after_a_yes() {
+        let (planned, left) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let planned = w.panel.islands_plan().first_tips().count();
+            answer_the_question(&w, MessageAnswer::Confirm);
+            let _ = wait_fix_all(&w.panel);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            (planned, tipped_and_listed(&w.panel))
+        });
+        assert!(planned > 0, "the plate has islands to hold");
+        assert!(left.is_empty(), "{left:?}");
+    }
+
+    /// #437: the rows of the regions that grew at once, as a test reads them.
+    fn growth_left(panel: &ReviewPanel) -> Vec<(usize, usize, usize, bool)> {
+        let held = panel.held.borrow();
+        match held.as_ref().map(|h| &h.outcome) {
+            Some(ReviewOutcome::Reviewed { growths, tips, .. }) => growths
+                .iter()
+                .enumerate()
+                .map(|(i, growth)| {
+                    let no_room = tips.as_ref().is_some_and(|plan| plan.no_room.contains(&i));
+                    (
+                        growth.layer + 1,
+                        growth.tips_mm.len(),
+                        growth.wanted,
+                        no_room,
+                    )
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The islands of the held review that got a tip: there must be none.
+    fn tipped_and_listed(panel: &ReviewPanel) -> Vec<(String, usize)> {
+        let held = panel.held.borrow();
+        let Some(ReviewOutcome::Reviewed { findings, .. }) = held.as_ref().map(|h| &h.outcome)
+        else {
+            return Vec::new();
+        };
+        let marks = panel.marks.borrow();
+        findings
+            .iter()
+            .filter(|finding| finding.check == CheckKind::Island)
+            .filter(|finding| marks.was_supported(&FindingKey::of(finding)))
+            .map(|finding| (finding.title.clone(), finding.first_layer + 1))
+            .collect()
+    }
+
+    /// #433: Fix All works on the list it finds, with one slice after its
+    /// fixes and none before them, and it ends on what a fresh review of the
+    /// same scene lists.
+    #[test]
+    fn the_list_fix_all_ends_on_is_a_fresh_review() {
+        let (before, slices_at_press, ended, fresh, resliced) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let before = held_findings(&w.panel);
+            w.window.invoke_review_fix_all_requested();
+            let slices_at_press = w.resliced.get();
+            let _ = wait_fix_all(&w.panel);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            assert!(!w.panel.fixing(), "one pass ends the run");
+            let ended = held_findings(&w.panel);
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            (
+                before,
+                slices_at_press,
+                ended,
+                held_findings(&w.panel),
+                w.resliced.get(),
+            )
+        });
+        assert_eq!(slices_at_press, 0, "no slice before the fixes");
+        assert_eq!(resliced, 1, "one slice after them");
+        assert_ne!(before, ended, "the fixes changed the list");
+        assert_eq!(ended, fresh);
+    }
+
+    /// #433: one Undo takes a finished Fix All back: its supports, the slice
+    /// and the review of before the press, and the fills it marked.
+    #[test]
+    fn one_undo_puts_back_everything_a_finished_fix_all_did() {
+        let (before, after, fills_before, fills_after, stale) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let fills = |w: &IslandWindow| w.panel.marks.borrow().fill_count();
+            let before = before_the_press(&w);
+            let fills_before = fills(&w);
+            w.window.invoke_review_fix_all_requested();
+            let _ = wait_fix_all(&w.panel);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            assert!(w.document.undo().expect("one undo"), "an undo step");
+            (
+                before,
+                before_the_press(&w).replace("redo: true", "redo: false"),
+                fills_before,
+                fills(&w),
+                w.panel.is_stale(),
+            )
+        });
+        assert_eq!(before, after);
+        assert_eq!(fills_before, fills_after);
+        assert!(!stale, "the slice of before the press is back");
+    }
+
+    /// #433: a slice in the making has at most one other beside it to put
+    /// back: what a finished run kept goes when the next slice starts.
+    #[test]
+    fn the_next_slice_lets_go_of_what_a_run_kept() {
+        let (kept, kept_after) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            w.window.invoke_review_fix_all_requested();
+            let _ = wait_fix_all(&w.panel);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            let kept = w.panel.before_run.borrow().is_some();
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            (kept, w.panel.before_run.borrow().is_some())
+        });
+        assert!(kept, "the run keeps it for its Undo");
+        assert!(!kept_after, "and no longer than that");
+    }
+
     /// The state Cancel or Undo must put back: the models' meshes, the
     /// marks, the review held and the history.
     fn before_the_press(w: &IslandWindow) -> String {
@@ -2723,6 +3447,14 @@ mod fix_all {
                 findings.len(),
                 window.get_review_fix_all()
             ));
+            // #433: the list it ended on is what a fresh review lists.
+            let ended = held_findings(&panel);
+            slice_project(&document, &panel, &printer, &resin, false);
+            assert_eq!(
+                ended,
+                held_findings(&panel),
+                "a fresh review lists the same"
+            );
             let mut unheld = 0;
             {
                 let marks = panel.marks.borrow();

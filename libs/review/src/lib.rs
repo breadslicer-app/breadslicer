@@ -55,7 +55,7 @@ pub mod tip_plan;
 pub mod tips;
 pub mod union_find;
 
-pub use checks::islands::{Held, Island, Part};
+pub use checks::islands::{Growth, Held, Island, IslandStart, Part};
 pub use fill::{CavityFill, FillSlab, PlateRect, erase_stack, fill_stack};
 pub use finding::{
     CheckKind, Finding, MAX_FOOTPRINT_LAYERS, PlatePoint, RoleScope, Severity, SuggestedFix,
@@ -70,6 +70,9 @@ pub use runner::{
     ReviewContext, ReviewOptions, ReviewReport, ReviewTimings, check_regions, review, review_with,
 };
 pub use runs::Run;
-pub use tip_plan::{IslandLayer, IslandPixels, PlannedTip, TipPlan, TipPlanOptions, plan_tips};
-pub use tips::TipCone;
+pub use tip_plan::{
+    IslandLayer, IslandPixels, PlannedTip, TOO_SMALL_TITLE, TipPlan, TipPlanOptions, plan_all_tips,
+    plan_tips,
+};
+pub use tips::{TipCone, tips_outside_model};
 pub use union_find::{Groups, RegionRef, UnionFind};

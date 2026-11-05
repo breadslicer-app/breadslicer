@@ -26,6 +26,11 @@
 //!
 //! - a part that starts on the first [`PLATE_LAYERS`] layers stands on the
 //!   build plate;
+//! - a region that grows out of a part a tip holds, one that has just begun,
+//!   goes on as that part, however thin its link: the first pixels of a
+//!   model are few, and the next layer is the same part, not a new one with
+//!   nothing under it. A neck off a body is no such thing: what it hangs from
+//!   began long before and goes on elsewhere;
 //! - any other part is held when, on the layer below its first layer, the
 //!   pixels of a support tip lie under it, however few: pixels within
 //!   [`TIP_REACH_MM`] of the part's own pixels, outside what the model has
@@ -48,9 +53,15 @@
 //! # Surface growth
 //!
 //! A region at least [`GROWTH_FACTOR`] times as large as what stood under it
-//! is listed on its own, held or not: the peel force of the new surface
+//! wants tips of its own, held or not: the peel force of the new surface
 //! comes on all at once. The pixels counted are lit pixels, so it counts from
-//! the first pixel that exists.
+//! the first pixel that exists. It wants [`GROWTH_TIPS`], and
+//! [`CHAINED_GROWTH_TIPS`] more if the next layer grows
+//! [`CHAINED_GROWTH_FACTOR`] times over it (#437). A tip counts for it when it
+//! touches the surface the region gained, on its layer or on one of the next
+//! [`GROWTH_WINDOW_LAYERS`] until it joins something else: the pixels with no
+//! model under them, read as the first pixels of a part are. A region that has
+//! the tips it wants is not listed.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -61,13 +72,14 @@ use crate::finding::{
 };
 use crate::input::ReviewInput;
 use crate::regions::{
-    LayerRead, PartStart, PlateRegions, Region, SweepOptions, WantedRegions, link_holds,
+    LayerRead, PartStart, PixelBox, PlateRegions, Region, SweepOptions, WantedRegions, link_holds,
     read_layers, runs_in, wanted,
 };
 use crate::runner::ReviewContext;
-use crate::runs::{Run, dilate_square, union};
+use crate::runs::{Run, difference, dilate_square, union};
+use crate::tip_plan::{CHAINED_GROWTH_FACTOR, CHAINED_GROWTH_TIPS, GROWTH_TIPS};
 use crate::tip_plan::{IslandLayer, IslandPixels};
-use crate::tips::{TipContact, TipIndex, TipTarget};
+use crate::tips::{TipCone, TipContact, TipGrid, TipIndex, TipStretch, TipTarget};
 use crate::union_find::RegionRef;
 
 /// The layers that rest on the build plate: 2. Nothing that starts on them
@@ -86,6 +98,15 @@ pub const MIN_PART_LAYERS: usize = 3;
 /// How many times what stood under it a region must be for its growth to be
 /// listed: 10.
 pub const GROWTH_FACTOR: f64 = 10.0;
+
+/// How far below an island a tip that does not reach it is still told of,
+/// in layers: 4. Past that it is no tip of this island.
+pub const TIP_GAP_LAYERS: usize = 4;
+
+/// How many layers above a region that grew at once count for its tips: 20,
+/// a millimetre at 0.05 mm. What does not fit on its layer goes on these,
+/// where it has grown.
+pub const GROWTH_WINDOW_LAYERS: usize = 20;
 
 /// The share of its section a tip must reach a part with to hold it: 0, any
 /// pixel of a tip under the part's own pixels holds it, however few. A cone
@@ -198,6 +219,13 @@ impl Part {
 
 const NO_PART: u32 = u32::MAX;
 
+/// How far from a part a tip's pixel still touches it, in columns and rows.
+fn tip_reach_px(input: &ReviewInput<'_>, options: &IslandOptions) -> [u32; 2] {
+    input
+        .pixel_size_mm()
+        .map(|size| (options.tip_reach_mm / size).round() as u32)
+}
+
 /// The parts of the plate, in the order they start, and what they became.
 fn walk_parts(
     input: &ReviewInput<'_>,
@@ -207,8 +235,8 @@ fn walk_parts(
     sweep: &SweepOptions,
 ) -> Vec<Part> {
     let min_link_px = sweep.min_link_px(input);
-    let [size_x, size_y] = input.pixel_size_mm();
-    let reach_px = [size_x, size_y].map(|size| (options.tip_reach_mm / size).round() as u32);
+    let reach_px = tip_reach_px(input, options);
+    let grid = TipGrid::of(input);
     let contact_of = |layer: usize, start: &PartStart, region: &Region| {
         let target = TipTarget {
             runs: &start.runs,
@@ -216,7 +244,8 @@ fn walk_parts(
             bbox: region.bbox,
             below: &start.below,
         };
-        tips.contact(input, layer - 1, &target, reach_px, options.min_tip_share)
+        let z_mm = input.layers()[layer - 1].sample_mm;
+        tips.contact(&grid, z_mm, &target, reach_px, options.min_tip_share)
     };
     let mut parts: Vec<Part> = Vec::new();
     // The part each part went on as, itself while it goes on.
@@ -246,10 +275,20 @@ fn walk_parts(
                 at += 1;
             }
             let links = &by_upper[from..at];
-            let holding = if layer > 0 && table.start_of(index).is_none() {
+            let holding = if layer == 0 {
+                Vec::new()
+            } else if table.start_of(index).is_none() {
                 holding_links(links, region, min_link_px)
             } else {
-                Vec::new()
+                let lower = regions.layer(layer - 1);
+                links
+                    .iter()
+                    .filter(|(_, part_below, px)| {
+                        let part = &parts[root(&mut went_on, below[*part_below as usize]) as usize];
+                        let area_px = lower.solid[*part_below as usize].area_px;
+                        part.held == Held::Tip && begins_it(layer, part, *px, area_px)
+                    })
+                    .collect()
             };
             if holding.is_empty() {
                 let start = table.start_of(index);
@@ -313,6 +352,13 @@ fn walk_parts(
     parts
 }
 
+/// Whether `part`, whose region of `area_px` pixels on the layer below stands
+/// `link_px` of them under a region of `layer`, is where that region begins:
+/// it has just begun, and most of it goes on into it.
+fn begins_it(layer: usize, part: &Part, link_px: u64, area_px: u64) -> bool {
+    layer - part.first_layer <= MIN_PART_LAYERS && 2 * link_px >= area_px
+}
+
 /// The links of `links` that hold `region`: those that do alone, or all of
 /// them when they only do together.
 fn holding_links<'l>(
@@ -354,6 +400,92 @@ pub struct Island {
     /// The tips that stand in it already, higher than its first pixels, in
     /// plate millimetres.
     pub tips_mm: Vec<[f64; 3]>,
+    /// What decides whether a tip holds it.
+    pub start: Arc<IslandStart>,
+    /// How many layers below its first pixels a tip under them ends, when
+    /// one does and it does not reach them.
+    pub tip_gap_layers: Option<usize>,
+}
+
+/// A region that grew at once and wants more tips, as a placement of supports
+/// needs it (#437).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Growth {
+    /// The layer it grew on.
+    pub layer: usize,
+    /// Where its finding's [`SuggestedFix::AddSupport`] points: what names
+    /// it among the findings.
+    pub at: PlatePoint,
+    /// The tips its growth asks for.
+    pub wanted: usize,
+    /// The ends of the tips that touch what it gained, in plate millimetres.
+    pub tips_mm: Vec<[f64; 3]>,
+    /// The surface it gained, layer by layer: the pixels with no model
+    /// under them, from the layer it grew on.
+    pub pixels: Arc<IslandPixels>,
+    /// What decides whether a tip counts for it.
+    pub start: Arc<IslandStart>,
+}
+
+/// An island's first pixels as the review judged them, kept so a tip can be
+/// judged the same way once the review is over, before anything is sliced
+/// again (#433): nothing here is another rule.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IslandStart {
+    grid: TipGrid,
+    /// What a tip is judged on: an island's first pixels, or what a region
+    /// that grew gained, layer by layer.
+    surfaces: Vec<StartSurface>,
+    reach_px: [u32; 2],
+    share: f64,
+}
+
+/// Pixels with nothing of the model under them, read as a part's first
+/// pixels are.
+#[derive(Clone, Debug, PartialEq)]
+struct StartSurface {
+    /// The height of the layer below them.
+    z_mm: f64,
+    runs: Vec<Run>,
+    area_px: u64,
+    bbox: PixelBox,
+    below: Vec<Run>,
+}
+
+impl StartSurface {
+    fn target(&self) -> TipTarget<'_> {
+        TipTarget {
+            runs: &self.runs,
+            area_px: self.area_px,
+            bbox: self.bbox,
+            below: &self.below,
+        }
+    }
+}
+
+impl IslandStart {
+    /// Whether `tips`, in plate millimetres, hold the island: what the next
+    /// review of the plate says of a plate with them on it.
+    pub fn held_by(&self, tips: &[TipCone]) -> bool {
+        let index = TipIndex::new(tips);
+        self.surfaces.iter().any(|surface| {
+            let target = surface.target();
+            index
+                .contact(&self.grid, surface.z_mm, &target, self.reach_px, self.share)
+                .holds
+        })
+    }
+
+    /// The ends of the tips of `index` that touch what this judges, each tip
+    /// once.
+    fn touching(&self, index: &TipIndex) -> Vec<[f64; 3]> {
+        let mut found: Vec<TipStretch> = Vec::new();
+        for surface in &self.surfaces {
+            let target = surface.target();
+            index.touching(&self.grid, surface.z_mm, &target, self.reach_px, &mut found);
+        }
+        found.iter().map(|stretch| stretch.tip_mm).collect()
+    }
 }
 
 /// What the check gives: the findings, what they found and what to erase.
@@ -364,6 +496,8 @@ pub struct IslandReport {
     /// Every island of `findings`, in the same order, whichever findings a
     /// raft explains later.
     pub islands: Vec<Island>,
+    /// Every region of `findings` that grew at once and wants more tips.
+    pub growths: Vec<Growth>,
     /// Every part of the plate.
     pub parts: Vec<Part>,
     /// The pixels that leave the layers: every stray pixel and all of the
@@ -410,10 +544,13 @@ pub fn run(ctx: &ReviewContext<'_>, options: &IslandOptions, sweep: &SweepOption
     for (part, runs) in islands.iter().zip(pixels.iter()) {
         let footprint = CavityFill::from_runs(input, runs.clone());
         let finding = island_finding(input, regions, part).with_footprint(Arc::new(footprint));
-        reported.push(island_of(input, regions, part, &finding, runs, &tips));
+        reported.push(island_of(
+            input, regions, part, &finding, runs, &tips, options,
+        ));
         findings.push(finding);
     }
-    findings.extend(growth_findings(ctx, options, &parts));
+    let (growth_found, growths) = growth_findings(ctx, options, sweep, &parts, &tips);
+    findings.extend(growth_found);
     let debris_runs = pixels.last().cloned().unwrap_or_default();
     findings.extend(debris_note(input, regions, &debris));
     findings.extend(stray_note(input, regions));
@@ -421,6 +558,7 @@ pub fn run(ctx: &ReviewContext<'_>, options: &IslandOptions, sweep: &SweepOption
     IslandReport {
         findings,
         islands: reported,
+        growths,
         parts,
         erased,
     }
@@ -490,12 +628,33 @@ fn island_of(
     finding: &Finding,
     layers: &[(usize, Vec<Run>)],
     tips: &TipIndex,
+    options: &IslandOptions,
 ) -> Island {
     let pixel_mm2 = input.pixel_area_mm2();
     let table = regions.layer(part.first_layer);
-    let runs = table
-        .start_of(part.start)
-        .map_or(&[][..], |start| start.runs.as_slice());
+    let part_start = table.start_of(part.start);
+    let runs = part_start.map_or(&[][..], |start| start.runs.as_slice());
+    let region = &table.solid[part.start as usize];
+    let surface = StartSurface {
+        z_mm: input.layers()[part.first_layer.saturating_sub(1)].sample_mm,
+        runs: runs.to_vec(),
+        area_px: region.area_px,
+        bbox: region.bbox,
+        below: part_start.map_or_else(Vec::new, |start| start.below.clone()),
+    };
+    let reach_px = tip_reach_px(input, options);
+    let grid = TipGrid::of(input);
+    let tip_gap_layers = tip_gap(input, tips, &grid, part.first_layer, &surface, reach_px);
+    // A tip under the few pixels this grows out of holds it too: they are
+    // where the model begins, and the next review goes on from them.
+    let mut surfaces = vec![surface];
+    surfaces.extend(beginning(input, regions, part));
+    let start = IslandStart {
+        grid,
+        surfaces,
+        reach_px,
+        share: options.min_tip_share,
+    };
     let first_pixels_mm = runs
         .iter()
         .flat_map(|run| {
@@ -521,7 +680,52 @@ fn island_of(
         at,
         tips_mm: tips.standing_in(input, &pixels, SAME_TIP_MM),
         pixels: Arc::new(pixels),
+        start: Arc::new(start),
+        tip_gap_layers,
     }
+}
+
+/// The part-starts right under `part`'s first pixels that it grows out of,
+/// read as first pixels.
+fn beginning(input: &ReviewInput<'_>, regions: &PlateRegions, part: &Part) -> Vec<StartSurface> {
+    if part.first_layer < 2 {
+        return Vec::new();
+    }
+    let lower = regions.layer(part.first_layer - 1);
+    regions
+        .solid_links(part.first_layer)
+        .iter()
+        .filter(|link| link.upper == part.start)
+        .filter_map(|link| {
+            let start = lower.start_of(link.lower)?;
+            let region = &lower.solid[link.lower as usize];
+            (2 * link.pixels >= region.area_px).then(|| StartSurface {
+                z_mm: input.layers()[part.first_layer - 2].sample_mm,
+                runs: start.runs.clone(),
+                area_px: region.area_px,
+                bbox: region.bbox,
+                below: start.below.clone(),
+            })
+        })
+        .collect()
+}
+
+/// How many layers below `first_layer` the nearest tip under `surface` ends,
+/// up to [`TIP_GAP_LAYERS`]: with nothing cured between, it holds nothing, and
+/// the row of the island must not read as if no tip were there.
+fn tip_gap(
+    input: &ReviewInput<'_>,
+    tips: &TipIndex,
+    grid: &TipGrid,
+    first_layer: usize,
+    surface: &StartSurface,
+    reach_px: [u32; 2],
+) -> Option<usize> {
+    let target = surface.target();
+    (2..=TIP_GAP_LAYERS.min(first_layer)).find(|gap| {
+        let z_mm = input.layers()[first_layer - gap].sample_mm;
+        tips.contact(grid, z_mm, &target, reach_px, 0.0).px > 0
+    })
 }
 
 /// The pixels of an island, with how raster pixels land on the plate.
@@ -549,10 +753,11 @@ fn island_pixels(input: &ReviewInput<'_>, layers: &[(usize, Vec<Run>)]) -> Islan
 fn growth_findings(
     ctx: &ReviewContext<'_>,
     options: &IslandOptions,
+    sweep: &SweepOptions,
     parts: &[Part],
-) -> Vec<Finding> {
+    tips: &TipIndex,
+) -> (Vec<Finding>, Vec<Growth>) {
     let (input, regions) = (ctx.input, ctx.regions);
-    let pixel_mm2 = input.pixel_area_mm2();
     let mut left_out: Vec<RegionRef> = parts
         .iter()
         .filter(|part| is_debris(part, options))
@@ -570,7 +775,7 @@ fn growth_findings(
     left_out.sort_unstable();
     let is_left_out =
         |layer: usize, index: u32| left_out.binary_search(&RegionRef { layer, index }).is_ok();
-    let mut findings = Vec::new();
+    let mut jumps = Vec::new();
     for layer in 1..regions.layers().len() {
         let table = regions.layer(layer);
         let lower = regions.layer(layer - 1);
@@ -594,30 +799,222 @@ fn growth_findings(
             {
                 continue;
             }
-            let (from_mm2, to_mm2) = (
-                from_px as f64 * pixel_mm2,
-                region.area_px as f64 * pixel_mm2,
-            );
-            let focus = input.focus(layer, region.inside_point());
-            findings.push(
-                Finding::new(
-                    CheckKind::SurfaceGrowth,
-                    Severity::Warning,
-                    layer,
-                    layer,
-                    focus,
-                    RoleScope::Model,
-                    "Surface grows at once",
-                    format!(
-                        "The section grows from {from_mm2:.3} mm² to {to_mm2:.3} mm² on one layer (×{:.0}): it wants more support tips.",
-                        region.area_px as f64 / from_px as f64
-                    ),
-                )
-                .with_largest_mm2(to_mm2),
-            );
+            jumps.push(Jump {
+                layer,
+                index,
+                from_px,
+            });
         }
     }
-    findings
+    let lineages: Vec<Vec<RegionRef>> = jumps
+        .iter()
+        .map(|jump| lineage(regions, jump.layer, jump.index))
+        .collect();
+    let surfaces = gained_surfaces(input, regions, sweep, &lineages);
+    let pixel_mm2 = input.pixel_area_mm2();
+    let grid = TipGrid::of(input);
+    let reach_px = tip_reach_px(input, options);
+    let mut findings = Vec::new();
+    let mut growths = Vec::new();
+    for ((jump, lineage), gained) in jumps.iter().zip(&lineages).zip(surfaces) {
+        let region = &regions.layer(jump.layer).solid[jump.index as usize];
+        let wanted = wanted_tips(regions, lineage, options);
+        let start = IslandStart {
+            grid,
+            surfaces: gained
+                .iter()
+                .filter_map(|layer| layer.surface(input))
+                .collect(),
+            reach_px,
+            share: 0.0,
+        };
+        let tips_mm = start.touching(tips);
+        if tips_mm.len() >= wanted {
+            continue;
+        }
+        let (from_mm2, to_mm2) = (
+            jump.from_px as f64 * pixel_mm2,
+            region.area_px as f64 * pixel_mm2,
+        );
+        let focus = input.focus(jump.layer, region.inside_point());
+        growths.push(Growth {
+            layer: jump.layer,
+            at: focus,
+            wanted,
+            pixels: Arc::new(gained_pixels(input, &gained)),
+            start: Arc::new(start),
+            tips_mm: tips_mm.clone(),
+        });
+        findings.push(
+            Finding::new(
+                CheckKind::SurfaceGrowth,
+                Severity::Warning,
+                jump.layer,
+                jump.layer,
+                focus,
+                RoleScope::Model,
+                "Surface grows at once",
+                format!(
+                    "The section grows from {from_mm2:.3} mm² to {to_mm2:.3} mm² on one layer (×{:.0}): it wants {wanted} support tips, and {} stand under what it gained.",
+                    region.area_px as f64 / jump.from_px as f64,
+                    tips_mm.len()
+                ),
+            )
+            .with_largest_mm2(to_mm2)
+            .with_fix(SuggestedFix::AddSupport { at: focus }),
+        );
+    }
+    (findings, growths)
+}
+
+/// A region that grew at once.
+struct Jump {
+    layer: usize,
+    index: u32,
+    from_px: u64,
+}
+
+/// The region `index` of `layer` and what it goes on as, by its widest link,
+/// up to [`GROWTH_WINDOW_LAYERS`] layers above and until it joins something
+/// else: past that, what is new belongs to the rest of the model, and a tip
+/// there holds nothing of this growth.
+fn lineage(regions: &PlateRegions, layer: usize, index: u32) -> Vec<RegionRef> {
+    let mut line = vec![RegionRef { layer, index }];
+    let top = (layer + GROWTH_WINDOW_LAYERS).min(regions.layers().len() - 1);
+    for above in layer + 1..=top {
+        let lower = line[line.len() - 1].index;
+        let next = regions
+            .solid_links(above)
+            .iter()
+            .filter(|link| link.lower == lower)
+            .max_by_key(|link| link.pixels);
+        let Some(next) = next else {
+            break;
+        };
+        let joins = regions
+            .solid_links(above)
+            .iter()
+            .any(|link| link.upper == next.upper && link.lower != lower);
+        if joins {
+            break;
+        }
+        line.push(RegionRef {
+            layer: above,
+            index: next.upper,
+        });
+    }
+    line
+}
+
+/// The tips the growth along `line` asks for: [`GROWTH_TIPS`], and
+/// [`CHAINED_GROWTH_TIPS`] more when the next layer grows
+/// [`CHAINED_GROWTH_FACTOR`] times over it, short of a growth of its own.
+fn wanted_tips(regions: &PlateRegions, line: &[RegionRef], options: &IslandOptions) -> usize {
+    let area = |member: &RegionRef| {
+        regions.layer(member.layer).solid[member.index as usize].area_px as f64
+    };
+    let chained = line.get(1).is_some_and(|next| {
+        let ratio = area(next) / area(&line[0]);
+        (CHAINED_GROWTH_FACTOR..options.growth_factor).contains(&ratio)
+    });
+    GROWTH_TIPS + if chained { CHAINED_GROWTH_TIPS } else { 0 }
+}
+
+/// What a region gained on one layer.
+struct GainedLayer {
+    layer: usize,
+    /// Its pixels with no model under them.
+    runs: Vec<Run>,
+    /// What stood under it.
+    below: Vec<Run>,
+}
+
+impl GainedLayer {
+    fn surface(&self, input: &ReviewInput<'_>) -> Option<StartSurface> {
+        let bbox = run_box(&self.runs)?;
+        Some(StartSurface {
+            z_mm: input.layers()[self.layer - 1].sample_mm,
+            area_px: self.runs.iter().map(|run| u64::from(run.len())).sum(),
+            runs: self.runs.clone(),
+            bbox,
+            below: self.below.clone(),
+        })
+    }
+}
+
+/// The box of `runs`, `None` for no pixel.
+fn run_box(runs: &[Run]) -> Option<PixelBox> {
+    Some(PixelBox {
+        x0: runs.iter().map(|run| run.x0).min()?,
+        y0: runs.first()?.row,
+        x1: runs.iter().map(|run| run.x1).max()?,
+        y1: runs.last()?.row + 1,
+    })
+}
+
+/// What each of `lineages` gained on each of its layers: its pixels and what
+/// stood under them, read in one go.
+fn gained_surfaces(
+    input: &ReviewInput<'_>,
+    regions: &PlateRegions,
+    sweep: &SweepOptions,
+    lineages: &[Vec<RegionRef>],
+) -> Vec<Vec<GainedLayer>> {
+    // Each lineage asks twice: for its regions, and for what stood under them.
+    let mut wants: Vec<WantedRegions> = Vec::new();
+    for (i, line) in lineages.iter().enumerate() {
+        for member in line {
+            wants.push(wanted(member, 2 * i));
+            for link in regions.solid_links(member.layer) {
+                if link.upper == member.index {
+                    wants.push((member.layer - 1, 2 * i + 1, link.lower));
+                }
+            }
+        }
+    }
+    let read = read_layers(
+        input,
+        sweep,
+        LayerRead::Solid,
+        wants,
+        2 * lineages.len(),
+        |pixels, regions| runs_in(&pixels.solid, &pixels.solid_labels, regions),
+    );
+    let mut read = read.into_iter();
+    let mut gained = Vec::with_capacity(lineages.len());
+    while let (Some(own), Some(under)) = (read.next(), read.next()) {
+        gained.push(
+            own.into_iter()
+                .map(|(layer, runs)| {
+                    let below = under
+                        .iter()
+                        .find(|(at, _)| *at + 1 == layer)
+                        .map_or_else(Vec::new, |(_, runs)| runs.clone());
+                    GainedLayer {
+                        layer,
+                        runs: difference(&runs, &below),
+                        below,
+                    }
+                })
+                .collect(),
+        );
+    }
+    gained
+}
+
+/// What `gained` lit, as a placement of tips reads it: each layer holds all
+/// it has gained by then. On a slope a layer adds a thin ring no contact fits
+/// on: the surface a tip stands on is what the rings make together.
+fn gained_pixels(input: &ReviewInput<'_>, gained: &[GainedLayer]) -> IslandPixels {
+    let mut surface: Vec<Run> = Vec::new();
+    let layers: Vec<(usize, Vec<Run>)> = gained
+        .iter()
+        .map(|layer| {
+            surface = union(&surface, &layer.runs);
+            (layer.layer, surface.clone())
+        })
+        .collect();
+    island_pixels(input, &layers)
 }
 
 /// The one note about the debris erased from the layers.

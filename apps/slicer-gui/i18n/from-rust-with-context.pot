@@ -2249,22 +2249,6 @@ msgid_plural "{n} cavities to fill."
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/review_panel.rs:545
-#, rust-format
-msgctxt "Review"
-msgid "One speck to erase."
-msgid_plural "{n} specks to erase."
-msgstr[0] ""
-msgstr[1] ""
-
-#: src/review_panel.rs:556
-#, rust-format
-msgctxt "Review"
-msgid "One thin feature to thicken."
-msgid_plural "{n} thin features to thicken."
-msgstr[0] ""
-msgstr[1] ""
-
 #: src/review_panel.rs:566
 msgctxt "Review"
 msgid "Slicing again…"
@@ -2291,11 +2275,6 @@ msgstr ""
 #: src/review_panel.rs:810
 msgctxt "Review"
 msgid "Clear fills"
-msgstr ""
-
-#: src/review_panel.rs:812
-msgctxt "Review"
-msgid "Clear fixes"
 msgstr ""
 
 #: src/review_panel.rs:869
@@ -2377,18 +2356,6 @@ msgid ""
 "hand."
 msgstr ""
 
-#: src/review_panel.rs:1210
-msgctxt "Review"
-msgid "Left by Fix All: this is in the supports. Generate them again."
-msgstr ""
-
-#: src/review_panel.rs:1214
-msgctxt "Review"
-msgid ""
-"Left by Fix All: an island starts on this speck, so it got a support "
-"instead. Press Fix All again to erase it."
-msgstr ""
-
 #: src/review_panel.rs:1218
 msgctxt "Review"
 msgid "Left by Fix All: no support held here. Add one by hand."
@@ -2427,27 +2394,6 @@ msgstr[1] ""
 msgctxt "Review"
 msgid "{n} fixed"
 msgid_plural "{n} fixed"
-msgstr[0] ""
-msgstr[1] ""
-
-#: src/review_panel.rs:1406
-msgctxt "Review"
-msgid "The fixes are cleared. Slice again to apply."
-msgstr ""
-
-#: src/review_panel.rs:1409
-#, rust-format
-msgctxt "Review"
-msgid "One fix will be applied. Slice again to apply."
-msgid_plural "{n} fixes will be applied. Slice again to apply."
-msgstr[0] ""
-msgstr[1] ""
-
-#: src/review_panel.rs:1416
-#, rust-format
-msgctxt "Review"
-msgid "One fix is applied in this slice."
-msgid_plural "{n} fixes are applied in this slice."
 msgstr[0] ""
 msgstr[1] ""
 

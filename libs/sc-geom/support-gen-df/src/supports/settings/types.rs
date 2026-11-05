@@ -150,6 +150,10 @@ pub struct MeshToMeshSettings {
     /// model below; `None` ends it in the upper tip.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_tip: Option<BaseTip>,
+    /// SoulCrafted (#445): a cavity bridge the first surface it finds turns
+    /// down goes on to the other surfaces around the contact.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub every_landing: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -313,6 +317,7 @@ impl Default for MeshToMeshSettings {
         MeshToMeshSettings {
             stick_vs_twig_cutoff_mm: DEFAULT_MESH_TO_MESH_STICK_VS_TWIG_CUTOFF_MM,
             base_tip: None,
+            every_landing: false,
         }
     }
 }

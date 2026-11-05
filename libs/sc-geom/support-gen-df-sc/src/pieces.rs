@@ -5,6 +5,8 @@
 //! the number of pieces and never with their geometry. The review reads
 //! them instead of the supports' contours.
 
+use std::collections::HashSet;
+
 use support_gen_df::features::slicing::support_world_triangles::{
     TipDrawing, contact_disk_size, contact_ends, resolve_support_slice_tessellation,
 };
@@ -164,6 +166,20 @@ impl DfSupportSession {
     /// below; sticks and twigs join two parts of it, as they do inside a
     /// hollow. Braces and kickstands touch no model and are left out.
     pub fn pieces(&self) -> Vec<SupportPiece> {
+        self.pieces_where(&|_| true)
+    }
+
+    /// Where the pieces named `ids` touch the model.
+    pub(crate) fn contacts_of(&self, ids: &HashSet<String>) -> Vec<SupportContact> {
+        self.pieces_where(&|id| ids.contains(id))
+            .into_iter()
+            .flat_map(|piece| piece.contacts)
+            .collect()
+    }
+
+    /// [`Self::pieces`], only those whose id `wanted` takes: asking for one
+    /// piece costs that piece.
+    fn pieces_where(&self, wanted: &dyn Fn(&str) -> bool) -> Vec<SupportPiece> {
         let c = &self.state.collections;
         let settings = &self.settings;
         let tip_scale = 1.0 - settings.support_tip_shrink_percent / 100.0;
@@ -203,7 +219,7 @@ impl DfSupportSession {
                 contacts,
             });
         };
-        for (id, t) in &c.trunks {
+        for (id, t) in c.trunks.iter().filter(|(id, _)| wanted(id)) {
             add(
                 id,
                 SupportPieceKind::Trunk,
@@ -211,7 +227,7 @@ impl DfSupportSession {
                 t.contact_cone.iter().map(cone).collect(),
             );
         }
-        for (id, b) in &c.branches {
+        for (id, b) in c.branches.iter().filter(|(id, _)| wanted(id)) {
             add(
                 id,
                 SupportPieceKind::Branch,
@@ -219,7 +235,7 @@ impl DfSupportSession {
                 b.contact_cone.iter().map(cone).collect(),
             );
         }
-        for (id, l) in &c.leaves {
+        for (id, l) in c.leaves.iter().filter(|(id, _)| wanted(id)) {
             add(
                 id,
                 SupportPieceKind::Leaf,
@@ -227,7 +243,7 @@ impl DfSupportSession {
                 vec![cone(&l.contact_cone)],
             );
         }
-        for (id, t) in &c.twigs {
+        for (id, t) in c.twigs.iter().filter(|(id, _)| wanted(id)) {
             add(
                 id,
                 SupportPieceKind::Twig,
@@ -235,7 +251,7 @@ impl DfSupportSession {
                 vec![disk(&t.contact_disk_a), disk(&t.contact_disk_b)],
             );
         }
-        for (id, s) in &c.sticks {
+        for (id, s) in c.sticks.iter().filter(|(id, _)| wanted(id)) {
             add(
                 id,
                 SupportPieceKind::Stick,
@@ -243,7 +259,7 @@ impl DfSupportSession {
                 vec![cone(&s.contact_cone_a), cone(&s.contact_cone_b)],
             );
         }
-        for (id, s) in &c.stumps {
+        for (id, s) in c.stumps.iter().filter(|(id, _)| wanted(id)) {
             let foot = SupportJoint {
                 at: at(s.root_pos),
                 diameter_mm: s.root_base_diameter,

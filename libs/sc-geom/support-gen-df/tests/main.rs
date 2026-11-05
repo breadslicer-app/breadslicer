@@ -13,6 +13,7 @@ mod df_analytics;
 
 mod bench_real_model;
 mod builders5_df_tests;
+mod cavity_landing;
 mod df_parity_autobrace;
 mod df_parity_autosupport_a;
 mod df_parity_autosupport_b;

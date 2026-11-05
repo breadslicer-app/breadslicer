@@ -257,6 +257,19 @@ fn segment_bezier(segment: &Segment) -> Option<&BezierCurve> {
     }
 }
 
+/// The way out of the model at a contact, one millimetre long. A normal that
+/// comes from a smoothed surface is shorter than that, and a tip sunk along it
+/// would stop short of its penetration.
+fn sink_direction(cone: &ContactCone) -> Vec3 {
+    let n = cone.surface_normal.unwrap_or(cone.normal);
+    let length = n.length();
+    if length > 1e-9 {
+        n.multiply_scalar(1.0 / length)
+    } else {
+        cone.normal
+    }
+}
+
 /// `appendContactConePrimitive`: penetration point to socket.
 pub fn append_contact_cone_primitive(
     sink: &mut TriangleSink,
@@ -299,6 +312,9 @@ pub struct TipDrawing {
     /// instead of the run's; a tip resting on the model below keeps at least
     /// the run's.
     pub per_support_penetration: bool,
+    /// Every tip sinks by the run's penetration, whatever its profile says:
+    /// it is added past the surface, and no tip ends short of the model.
+    pub one_insertion: bool,
 }
 
 /// A contact cone's ends as drawn: its socket, where its tip ends inside
@@ -322,12 +338,14 @@ pub fn contact_ends(
     drawing: TipDrawing,
 ) -> ContactEnds {
     let socket = get_final_socket_position(cone);
-    let n = cone.surface_normal.unwrap_or(cone.normal);
+    let n = sink_direction(cone);
     // A tip whose socket stands above it rests on the model below (a
     // stick's base tip): it keeps the run's sink, or its apex would cure on
     // nothing. A tip holding the model takes its own (its normal leads to a
     // socket below it).
-    let penetration = if drawing.per_support_penetration && cone.normal.z <= 0.0 {
+    let penetration = if drawing.one_insertion {
+        penetration_mm
+    } else if drawing.per_support_penetration && cone.normal.z <= 0.0 {
         js_max(0.0, cone.profile.penetration_mm)
     } else if drawing.per_support_penetration {
         js_max(penetration_mm, cone.profile.penetration_mm)
@@ -372,8 +390,20 @@ pub fn append_contact_cone_with(
     tip_scale: f64,
     drawing: TipDrawing,
 ) {
-    if drawing == TipDrawing::default() {
-        append_contact_cone_primitive(sink, cone, radial_segments, penetration_mm, tip_scale);
+    let shaped = TipDrawing {
+        one_insertion: false,
+        ..drawing
+    };
+    if shaped == TipDrawing::default() {
+        // The primitive sinks along the normal as it comes, which a smoothed
+        // surface leaves shorter than a millimetre.
+        let length = cone.surface_normal.unwrap_or(cone.normal).length();
+        let sink_mm = if drawing.one_insertion && length > 1e-9 {
+            penetration_mm / length
+        } else {
+            penetration_mm
+        };
+        append_contact_cone_primitive(sink, cone, radial_segments, sink_mm, tip_scale);
         return;
     }
     let ends = contact_ends(cone, penetration_mm, tip_scale, drawing);

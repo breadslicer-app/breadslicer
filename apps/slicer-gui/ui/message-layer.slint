@@ -25,7 +25,7 @@ import { ActionRow, DialogHead, DialogRule } from "kit/dialog.slint";
 // before the diagnostic log starts (Preferences > Privacy); `stale-supports`
 // is a notice that a model's supports are out of date, with the ways to make
 // them again (#408).
-export enum MessageKind { info, error, scene-change, slice-overwrite, recovery, diagnostics, diagnostic-log, stale-supports, add-supports }
+export enum MessageKind { info, error, scene-change, slice-overwrite, recovery, diagnostics, diagnostic-log, stale-supports, add-supports, choose-preset }
 
 // What the person did with the message. `cancel` is also Escape and Enter;
 // Rust reads it as "close" for a message with nothing to decide.
@@ -58,6 +58,8 @@ export struct AppMessage {
     // Error only: the text of a button that does something about the error
     // (#407), such as Repair; it answers `confirm`. Empty shows none.
     action: string,
+    // Choose preset only: the presets, one button each (#444).
+    choices: [string],
 }
 
 // A paragraph of a card's body.
@@ -76,6 +78,8 @@ export component MessageLayer inherits Rectangle {
     in-out property <bool> silence: false;
     // Diagnostics only: whether the scene's models go in the file.
     in-out property <bool> include-models: false;
+    // Choose preset only: the one picked, which Enter takes as it stands.
+    in-out property <int> choice: 0;
     // Shown when the message brings no heading of its own.
     in property <string> default-heading;
 
@@ -107,6 +111,7 @@ export component MessageLayer inherits Rectangle {
     // The questions whose main answer is to go ahead: Enter gives it.
     property <MessageAnswer> go-ahead: root.kind == MessageKind.diagnostics ? MessageAnswer.export
         : root.kind == MessageKind.diagnostic-log ? MessageAnswer.confirm
+        : root.kind == MessageKind.choose-preset ? MessageAnswer.confirm
         : root.has-action ? MessageAnswer.confirm
         : MessageAnswer.cancel;
     // Whether Enter's button shows its ring: while the card has the keyboard.
@@ -161,7 +166,7 @@ export component MessageLayer inherits Rectangle {
                     // A notice with details is wider, so the report's
                     // lines fit on 1 line each.
                     root.kind == MessageKind.diagnostics || (root.notice && root.message.details != "") ? 600px
-                        : root.kind == MessageKind.slice-overwrite || root.kind == MessageKind.add-supports ? 480px
+                        : root.kind == MessageKind.slice-overwrite || root.kind == MessageKind.add-supports || root.kind == MessageKind.choose-preset ? 480px
                         : root.kind == MessageKind.diagnostic-log ? 540px
                         : 520px,
                     foot.preferred-width));
@@ -199,7 +204,7 @@ export component MessageLayer inherits Rectangle {
                 DialogHead {
                     icon: root.kind == MessageKind.error ? Icons.error
                         : root.kind == MessageKind.info ? Icons.info
-                        : root.kind == MessageKind.stale-supports || root.kind == MessageKind.add-supports ? Icons.supports
+                        : root.kind == MessageKind.stale-supports || root.kind == MessageKind.add-supports || root.kind == MessageKind.choose-preset ? Icons.supports
                         : root.kind == MessageKind.scene-change ? (root.message.has-unsaved-changes ? Icons.save : Icons.file)
                         : root.kind == MessageKind.slice-overwrite ? Icons.warning
                         : root.kind == MessageKind.recovery ? Icons.history
@@ -208,7 +213,7 @@ export component MessageLayer inherits Rectangle {
                     title: root.notice ? (root.message.heading != "" ? root.message.heading : root.default-heading)
                         : root.kind == MessageKind.scene-change ? (root.message.closing ? @tr("ReplaceSceneDialog" => "Close the current scene?") : @tr("ReplaceSceneDialog" => "Replace the current scene?"))
                         : root.kind == MessageKind.slice-overwrite ? @tr("SliceOverwriteDialog" => "Re-slice this scene?")
-                        : root.kind == MessageKind.recovery || root.kind == MessageKind.add-supports ? root.message.heading
+                        : root.kind == MessageKind.recovery || root.kind == MessageKind.add-supports || root.kind == MessageKind.choose-preset ? root.message.heading
                         : root.kind == MessageKind.diagnostics ? @tr("DiagnosticsDialog" => "Export diagnostics")
                         : @tr("DiagnosticLogDialog" => "Save a diagnostic log?");
                     subtitle: root.notice ? root.message.context
@@ -467,6 +472,28 @@ export component MessageLayer inherits Rectangle {
                     }
                 }
 
+                if root.kind == MessageKind.choose-preset: VerticalLayout {
+                    padding-left: 22px;
+                    padding-right: 22px;
+                    padding-top: 16px;
+                    padding-bottom: 18px;
+                    spacing: 8px;
+
+                    BodyText {
+                        text: root.message.text;
+                    }
+
+                    for name[index] in root.message.choices: ScButton {
+                        text: name;
+                        kind: index == root.choice ? ButtonKind.primary : ButtonKind.normal;
+                        ring: root.keyboard && index == root.choice;
+                        clicked => {
+                            root.choice = index;
+                            root.answered(MessageAnswer.confirm);
+                        }
+                    }
+                }
+
                 if root.kind == MessageKind.add-supports: VerticalLayout {
                     padding-left: 22px;
                     padding-right: 22px;
@@ -693,6 +720,14 @@ export component MessageLayer inherits Rectangle {
                         text: @tr("SliceOverwriteDialog" => "Cancel");
                         kind: ButtonKind.primary;
                         ring: root.keyboard;
+                        clicked => {
+                            root.answered(MessageAnswer.cancel);
+                        }
+                    }
+
+                    if root.kind == MessageKind.choose-preset: ScButton {
+                        text: @tr("ChoosePresetDialog" => "Cancel");
+                        min-width: 96px;
                         clicked => {
                             root.answered(MessageAnswer.cancel);
                         }
