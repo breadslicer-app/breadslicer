@@ -1345,28 +1345,26 @@ impl DfSupportSession {
         Err(first)
     }
 
-    /// Adds a tip a check asked for at `point` as [`Self::add_trunk_near`]
-    /// does ([`REVIEW_NUDGE_MM`]), or on the first of `others` the engine can
-    /// hold, tried as they are: "Add support here", Fix All and the tips of
-    /// an island (#437). At the very bottom of a narrow start the shaft
-    /// often grazes the island, and a step aside clears it. Returns the
-    /// point used; the error is the one at `point`.
+    /// Adds a tip a check asked for at `point`, or on the first of `others`
+    /// the engine can hold, tried as they are, or as [`Self::add_trunk_near`]
+    /// does around `point` ([`REVIEW_NUDGE_MM`]): "Add support here", Fix All
+    /// and the tips of an island (#437). `others` come first: they lie on the
+    /// island's own pixels, and each step aside costs a placement, a hundred
+    /// of them on a start the shaft cannot clear (#433). At the very bottom
+    /// of a narrow start the shaft often grazes the island, and a step aside
+    /// clears it. Returns the point used; the error is the one at `point`.
     pub fn add_tip_among(
         &mut self,
         point: [f64; 3],
         others: &[[f64; 3]],
     ) -> Result<[f64; 3], EditError> {
-        let first = match self.add_trunk_near(point, REVIEW_NUDGE_MM) {
-            Ok(used) => return Ok(used),
-            Err(err) => err,
-        };
         let how = AddOptions::default();
-        for other in others {
-            if self.place(*other, &how).is_ok() {
-                return Ok(*other);
+        for at in std::iter::once(&point).chain(others) {
+            if self.place(*at, &how).is_ok() {
+                return Ok(*at);
             }
         }
-        Err(first)
+        self.add_trunk_near(point, REVIEW_NUDGE_MM)
     }
 
     /// What adding a support at `point` would add: green when it goes
