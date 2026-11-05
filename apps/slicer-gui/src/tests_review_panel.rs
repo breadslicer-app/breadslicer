@@ -1770,12 +1770,15 @@ mod fix_all {
     }
 
     /// The rows of the sudden growths: their layers and what they say.
-    fn growth_rows(w: &IslandWindow) -> Vec<(String, String)> {
+    fn growth_rows(w: &IslandWindow) -> Vec<(String, String, bool)> {
         let rows = w.window.get_review_rows();
         (0..rows.row_count())
             .filter_map(|i| rows.row_data(i))
             .filter(|row| row.title.contains("grows at once"))
-            .map(|row| (row.layers.to_string(), row.remains.to_string()))
+            .map(|row| {
+                let offered = row.fix == FixKind::AddSupport as i32;
+                (row.layers.to_string(), row.remains.to_string(), offered)
+            })
             .collect()
     }
 
@@ -1858,10 +1861,16 @@ mod fix_all {
         };
         slice_project(&w.document, &w.panel, &printer, &resin, false);
         let before = held_islands(&w.panel).len();
-        let growth_before = growth_left(&w.panel).len();
+        let growth_had = growth_left(&w.panel);
+        let growth_before = growth_had.len();
         let wanted_before: usize = growth_left(&w.panel).iter().map(|g| g.2 - g.1).sum();
         let offered = w.panel.islands_plan().first_tips().count();
         let (panel, document) = (&w.panel, &w.document);
+        let cups_before: Vec<_> = cavities(panel)
+            .into_iter()
+            .filter(|cavity| cavity.0 == CheckKind::SuctionCup)
+            .collect();
+        let press = Instant::now();
         if offered > 0 {
             if fix_all {
                 w.window.invoke_review_fix_all_requested();
@@ -1874,6 +1883,12 @@ mod fix_all {
                 slice_project(document, panel, &printer, &resin, true);
             }
             eprintln!("{}: {placed}", path.display());
+        }
+        eprintln!("{}: the cycle took {:?}", path.display(), press.elapsed());
+        // A hollow's volume is the person's (#431), whatever went on it.
+        let cups_after = cavities(panel);
+        for cup in &cups_before {
+            assert!(cups_after.contains(cup), "{cup:?} changed");
         }
         let left = held_islands(panel);
         let rows = w.window.get_review_rows();
@@ -1898,14 +1913,34 @@ mod fix_all {
             grown.len(),
             grown.iter().map(|g| g.2 - g.1).sum::<usize>()
         );
-        for (layer, remains) in growth_rows(&w) {
-            eprintln!("  growth {layer}: {remains}");
+        for (layer, remains, more) in growth_rows(&w) {
+            eprintln!("  growth {layer}: offered {more}: {remains}");
+            // A growth the new review found still offers its tips.
             if offered > 0 {
-                assert!(!remains.is_empty(), "layer {layer} says why it is left");
+                assert!(more || !remains.is_empty(), "layer {layer} says why");
             }
         }
         for (_, has, wanted, _) in &grown {
             assert!(has < wanted, "a region with its tips is not listed");
+        }
+        // A tip that went in counts: a region that got one has more now.
+        {
+            let marks = panel.marks.borrow();
+            let held = panel.held.borrow();
+            if let Some(ReviewOutcome::Reviewed { findings, .. }) =
+                held.as_ref().map(|h| &h.outcome)
+            {
+                for finding in findings
+                    .iter()
+                    .filter(|f| f.check == CheckKind::SurfaceGrowth)
+                    .filter(|f| marks.was_supported(&FindingKey::of(f)))
+                {
+                    let layer = finding.first_layer + 1;
+                    let now = grown.iter().find(|g| g.0 == layer).map_or(0, |g| g.1);
+                    let then = growth_had.iter().find(|g| g.0 == layer).map_or(0, |g| g.1);
+                    assert!(now > then, "layer {layer}: {then} tips, then {now}");
+                }
+            }
         }
         assert_eq!(tipped_and_listed(panel), [], "{}", path.display());
         if offered > 0 {

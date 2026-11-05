@@ -816,6 +816,7 @@ fn write_json(
                     "layer": growth.layer,
                     "wanted": growth.wanted,
                     "has": growth.tips_mm.len(),
+                    "tips_mm": growth.tips_mm,
                 })
             })
             .collect::<Vec<_>>()

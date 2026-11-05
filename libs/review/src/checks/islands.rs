@@ -74,7 +74,7 @@ use crate::runner::ReviewContext;
 use crate::runs::{Run, difference, dilate_square, union};
 use crate::tip_plan::{CHAINED_GROWTH_FACTOR, CHAINED_GROWTH_TIPS, GROWTH_TIPS};
 use crate::tip_plan::{IslandLayer, IslandPixels};
-use crate::tips::{TipCone, TipContact, TipGrid, TipIndex, TipTarget};
+use crate::tips::{TipCone, TipContact, TipGrid, TipIndex, TipStretch, TipTarget};
 use crate::union_find::RegionRef;
 
 /// The layers that rest on the build plate: 2. Nothing that starts on them
@@ -447,14 +447,15 @@ impl IslandStart {
         })
     }
 
-    /// The ends of the tips of `index` that touch what this judges.
+    /// The ends of the tips of `index` that touch what this judges, each tip
+    /// once.
     fn touching(&self, index: &TipIndex) -> Vec<[f64; 3]> {
-        let mut found = Vec::new();
+        let mut found: Vec<TipStretch> = Vec::new();
         for surface in &self.surfaces {
             let target = surface.target();
             index.touching(&self.grid, surface.z_mm, &target, self.reach_px, &mut found);
         }
-        found
+        found.iter().map(|stretch| stretch.tip_mm).collect()
     }
 }
 
@@ -920,11 +921,17 @@ fn gained_surfaces(
     gained
 }
 
-/// What `gained` lit, as a placement of tips reads it.
+/// What `gained` lit, as a placement of tips reads it: each layer holds all
+/// it has gained by then. On a slope a layer adds a thin ring no contact fits
+/// on: the surface a tip stands on is what the rings make together.
 fn gained_pixels(input: &ReviewInput<'_>, gained: &[GainedLayer]) -> IslandPixels {
+    let mut surface: Vec<Run> = Vec::new();
     let layers: Vec<(usize, Vec<Run>)> = gained
         .iter()
-        .map(|layer| (layer.layer, layer.runs.clone()))
+        .map(|layer| {
+            surface = union(&surface, &layer.runs);
+            (layer.layer, surface.clone())
+        })
         .collect();
     island_pixels(input, &layers)
 }

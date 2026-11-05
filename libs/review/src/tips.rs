@@ -272,13 +272,35 @@ impl TipIndex {
     }
 }
 
-/// How far apart the ends of two cones must be to be two tips, in
-/// millimetres: a tip with a neck is two cones, and tips placed stand two
-/// contacts apart.
-const SAME_TIP_REACH_MM: f64 = 0.3;
+/// How close two points are to be the same joint of a tip, in millimetres:
+/// their own rounding, nothing a real distance could reach.
+const SAME_JOINT_MM: f64 = 1e-6;
+
+/// The ends of a stretch of a tip.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TipStretch {
+    /// The end that goes into the model.
+    pub tip_mm: [f64; 3],
+    /// The other end.
+    pub base_mm: [f64; 3],
+}
+
+impl TipStretch {
+    /// Whether `other` is this stretch, or the rest of the same tip: a tip
+    /// with a neck is two cones, one going on where the other ends. Two tips
+    /// may end a hair apart inside the model and still be two tips.
+    fn same_tip(&self, other: &Self) -> bool {
+        let meet = |a: [f64; 3], b: [f64; 3]| {
+            (0..3).map(|i| (a[i] - b[i]).powi(2)).sum::<f64>().sqrt() < SAME_JOINT_MM
+        };
+        meet(self.tip_mm, other.tip_mm)
+            || meet(self.base_mm, other.tip_mm)
+            || meet(self.tip_mm, other.base_mm)
+    }
+}
 
 impl TipIndex {
-    /// The ends of the tips at height `z_mm` that touch `start`, as
+    /// The stretches of the tips at height `z_mm` that touch `start`, as
     /// [`Self::contact`] reads a touch, added to `found`: a tip counts once,
     /// on however many layers it touches.
     pub fn touching(
@@ -287,7 +309,7 @@ impl TipIndex {
         z_mm: f64,
         start: &TipTarget<'_>,
         reach_px: [u32; 2],
-        found: &mut Vec<[f64; 3]>,
+        found: &mut Vec<TipStretch>,
     ) {
         let reach = [f64::from(reach_px[0]), f64::from(reach_px[1])];
         for cone in self.at(z_mm) {
@@ -295,15 +317,12 @@ impl TipIndex {
             for_each_pixel(grid, cone, z_mm, start.bbox, reach, |x, y| {
                 touches |= near(start.runs, x, y, reach_px) && !lit(start.below, x, y);
             });
-            let known = found.iter().any(|end| {
-                (0..3)
-                    .map(|i| (end[i] - cone.tip[i]).powi(2))
-                    .sum::<f64>()
-                    .sqrt()
-                    < SAME_TIP_REACH_MM
-            });
-            if touches && !known {
-                found.push(cone.tip);
+            let stretch = TipStretch {
+                tip_mm: cone.tip,
+                base_mm: [0, 1, 2].map(|i| cone.axis[i].mul_add(cone.length, cone.tip[i])),
+            };
+            if touches && !found.iter().any(|known| known.same_tip(&stretch)) {
+                found.push(stretch);
             }
         }
     }
@@ -386,6 +405,26 @@ fn for_each_pixel(
 #[cfg(test)]
 mod tips_tests {
     use super::*;
+
+    /// #433: two tips can end a hair apart inside the model, each leaning its
+    /// own way; a neck and its cone meet end to end.
+    #[test]
+    fn stretches_are_one_tip_only_when_they_meet() {
+        let neck = TipStretch {
+            tip_mm: [0.0, 0.0, 10.0],
+            base_mm: [0.0, 0.0, 9.5],
+        };
+        let cone = TipStretch {
+            tip_mm: [0.0, 0.0, 9.5],
+            base_mm: [1.0, 0.0, 7.0],
+        };
+        let other = TipStretch {
+            tip_mm: [0.1, 0.05, 10.0],
+            base_mm: [-1.0, 0.0, 7.0],
+        };
+        assert!(neck.same_tip(&cone) && cone.same_tip(&neck));
+        assert!(!neck.same_tip(&other) && !cone.same_tip(&other));
+    }
 
     fn upright(radius: f64) -> TipCone {
         TipCone {
