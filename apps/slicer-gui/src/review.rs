@@ -28,13 +28,14 @@
 
 use std::ops::Range;
 use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 use std::time::Duration;
 
 use sc_geom::df_supports::{SupportContact, recommended_lift_mm};
-use sc_print_glue::SlicedPlate;
+use sc_print_glue::{PlateFrame, SlicedPlate};
 use sc_review::{
-    CavityFill, Finding, Island, ReviewInput, ReviewLeaf, ReviewOptions, SweepWatch, TipCone,
-    TipPlan, TipPlanOptions, erase_stack, plan_tips, review_with,
+    CavityFill, Finding, Island, IslandStart, ReviewInput, ReviewLeaf, ReviewOptions, SweepWatch,
+    TipCone, TipPlan, TipPlanOptions, erase_stack, plan_tips, review_with,
 };
 use sc_scene::NodeId;
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
@@ -59,6 +60,9 @@ pub(crate) enum ReviewOutcome {
         islands: Vec<Island>,
         /// The tips those islands need, `None` when no set can take them.
         tips: Option<TipPlan>,
+        /// How the slice read the scene's points: a tip placed on this list
+        /// is judged where the next slice will see it (#433).
+        frame: PlateFrame,
         /// How long the review took, the sweep included.
         took: Duration,
     },
@@ -91,25 +95,51 @@ pub(crate) fn review_leaves<'l>(
         .collect()
 }
 
-/// The tips of `sets`, each point where `place` says its leaf's point lands.
-fn support_tips(
-    sets: &[SupportSet],
-    place: impl Fn(NodeId, [f64; 3]) -> [f64; 3] + Copy,
-) -> Vec<TipCone> {
+/// The stretches of `contact`, each point where `at` says it lands.
+fn contact_cones(
+    contact: &SupportContact,
+    at: impl Fn([f64; 3]) -> [f64; 3] + Copy,
+) -> impl Iterator<Item = TipCone> {
+    TipCone::stretches(
+        at(contact.tip),
+        contact.tip_radius_mm,
+        contact.neck.map(at),
+        at(contact.socket),
+        contact.socket_radius_mm,
+    )
+}
+
+/// The tips of `sets`, each point where `frame` says its leaf's point lands.
+fn support_tips(sets: &[SupportSet], frame: &PlateFrame) -> Vec<TipCone> {
     sets.iter()
         .flat_map(|set| {
-            let at = move |point| place(set.leaf, point);
-            set.contacts.iter().flat_map(move |contact| {
-                TipCone::stretches(
-                    at(contact.tip),
-                    contact.tip_radius_mm,
-                    contact.neck.map(at),
-                    at(contact.socket),
-                    contact.socket_radius_mm,
-                )
-            })
+            let at = move |point| frame.point_mm(set.leaf, point);
+            set.contacts
+                .iter()
+                .flat_map(move |contact| contact_cones(contact, at))
         })
         .collect()
+}
+
+/// What a tip must hold: the first pixels of an island, as the review that
+/// listed it judged them (#433).
+#[derive(Clone, Debug)]
+pub(crate) struct TipHold {
+    pub(crate) start: Arc<IslandStart>,
+    pub(crate) frame: PlateFrame,
+}
+
+impl TipHold {
+    /// Whether a tip of the set on `leaf` touching the model at `contacts`
+    /// holds the island: what the next review will say of it.
+    pub(crate) fn by(&self, leaf: NodeId, contacts: &[SupportContact]) -> bool {
+        let at = |point| self.frame.point_mm(leaf, point);
+        let cones: Vec<TipCone> = contacts
+            .iter()
+            .flat_map(|contact| contact_cones(contact, at))
+            .collect();
+        self.start.held_by(&cones)
+    }
 }
 
 /// The layers the support leaves of `sets` have contours on. It looks only
@@ -157,10 +187,12 @@ pub(crate) fn review_slices(
     cancel: &CancelToken,
     on_layer: &(dyn Fn(usize) + Sync),
 ) -> ReviewOutcome {
+    let frame = plate.frame();
     let supports = KnownSupports {
         sets,
-        tips: support_tips(sets, |leaf, point| plate.compensated_point_mm(leaf, point)),
+        tips: support_tips(sets, &frame),
         box_mm: plate.support_box_mm(),
+        frame,
     };
     let watch = SweepWatch { cancel, on_layer };
     review_stacks(
@@ -178,6 +210,7 @@ struct KnownSupports<'s> {
     sets: &'s [SupportSet],
     tips: Vec<TipCone>,
     box_mm: Option<[f64; 5]>,
+    frame: PlateFrame,
 }
 
 /// Reviews `leaves`, cut with `profile`: its layer schedule, its screen and
@@ -206,6 +239,7 @@ fn review_stacks(
                 None => ReviewOutcome::Cancelled,
                 Some(report) => ReviewOutcome::Reviewed {
                     tips: tip_plan(&report.islands, supports.sets),
+                    frame: supports.frame.clone(),
                     findings: report.findings,
                     fills: report.fills,
                     erased: report.erased,
@@ -241,10 +275,12 @@ pub(crate) fn review_for_test(
         cancel: &cancel,
         on_layer: &|_| {},
     };
+    let frame = PlateFrame::default();
     let supports = KnownSupports {
         sets,
-        tips: support_tips(sets, |_, point| point),
+        tips: support_tips(sets, &frame),
         box_mm: None,
+        frame,
     };
     review_stacks(leaves, profile, filled, &supports, None, watch)
 }
@@ -365,6 +401,7 @@ mod review_tests {
             sets: &[],
             tips: Vec::new(),
             box_mm: None,
+            frame: PlateFrame::default(),
         };
         let outcome = review_stacks(&leaves, &profile(4), None, &supports, None, watch);
         assert_eq!(outcome, ReviewOutcome::Cancelled);

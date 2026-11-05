@@ -29,8 +29,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use sc_geom::df_supports::recommended_lift_mm;
-use sc_print_glue::SlicedPlate;
+use sc_geom::df_supports::{SupportContact, recommended_lift_mm};
+use sc_print_glue::{PlateFrame, SlicedPlate};
 use sc_print_profiles::ProfileLibraries;
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile};
 use sc_review::{
@@ -38,7 +38,7 @@ use sc_review::{
     ReviewLeaf, ReviewOptions, ReviewReport, Severity, SuggestedFix, TipCone, TipPlan,
     TipPlanOptions, check_regions, erase_stack, fill_stack, plan_tips,
 };
-use sc_scene::Scene;
+use sc_scene::{NodeId, Scene};
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
 use crate::commands::df_supports::{SupportSet, df_raft_top_mm};
@@ -131,6 +131,7 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
             material: &material,
             options,
             lift: (context.raft_top_mm, context.support_lift_mm),
+            frame: plate.frame(),
         };
         let fills = if args.fix_all { picked } else { Vec::new() };
         Some(fix_the_list(scene, sets, &report, fills, &answer)?)
@@ -182,6 +183,8 @@ struct NewSlice<'a> {
     options: &'a PlateOptions,
     /// The raft's top and the support lift of the first review.
     lift: (Option<f64>, Option<f64>),
+    /// How the first slice read the scene's points.
+    frame: PlateFrame,
 }
 
 /// One tip of the plan and how it went.
@@ -236,7 +239,21 @@ fn fix_the_list(
     let started = Instant::now();
     let mut tips = Vec::with_capacity(plan.tips.len());
     let mut edited = vec![false; sets.len()];
+    // The island of the tip before, and why its first tip found no place.
+    let mut last: Option<(usize, Option<String>)> = None;
     for tip in plan.tips {
+        let first = last
+            .as_ref()
+            .is_none_or(|(island, _)| *island != tip.island);
+        if let (false, Some((_, Some(why)))) = (first, &last) {
+            let refused = Some(why.clone());
+            tips.push(TipOutcome {
+                tip,
+                placed_at: None,
+                refused,
+            });
+            continue;
+        }
         let point = [tip.at.x_mm, tip.at.y_mm, tip.at.z_mm];
         let others: Vec<[f64; 3]> = tip
             .others
@@ -251,15 +268,25 @@ fn fix_the_list(
             .min_by(|a, b| a.0.total_cmp(&b.0));
         let refused = match nearest {
             None => Some("no model there".to_owned()),
-            Some((_, i)) => match sets[i].session.add_tip_among(point, &others) {
-                Ok(used) => {
-                    edited[i] = true;
-                    placed_at = Some(used);
-                    None
+            Some((_, i)) => {
+                let leaf = sets[i].leaf;
+                let start = &report.islands[tip.island].start;
+                let holds = |contacts: &[SupportContact]| {
+                    !first || start.held_by(&tip_cones(contacts, leaf, &answer.frame))
+                };
+                match sets[i].session.add_tip_among(point, &others, &holds) {
+                    Ok(used) => {
+                        edited[i] = true;
+                        placed_at = Some(used);
+                        None
+                    }
+                    Err(why) => Some(why.to_string()),
                 }
-                Err(why) => Some(why.to_string()),
-            },
+            }
         };
+        if first {
+            last = Some((tip.island, refused.clone()));
+        }
         tips.push(TipOutcome {
             tip,
             placed_at,
@@ -412,6 +439,23 @@ fn model_leaves<'p>(plate: &'p SlicedPlate, sets: &[SupportSet]) -> Vec<ReviewLe
         .iter()
         .filter(|slices| !sets.iter().any(|set| set.leaf == slices.leaf()))
         .map(ReviewLeaf::from_slices)
+        .collect()
+}
+
+/// The cones of `contacts`, of the set on `leaf`, where `frame` puts them.
+fn tip_cones(contacts: &[SupportContact], leaf: NodeId, frame: &PlateFrame) -> Vec<TipCone> {
+    let at = |point| frame.point_mm(leaf, point);
+    contacts
+        .iter()
+        .flat_map(|contact| {
+            TipCone::stretches(
+                at(contact.tip),
+                contact.tip_radius_mm,
+                contact.neck.map(at),
+                at(contact.socket),
+                contact.socket_radius_mm,
+            )
+        })
         .collect()
 }
 

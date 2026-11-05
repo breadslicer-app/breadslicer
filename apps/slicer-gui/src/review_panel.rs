@@ -77,7 +77,11 @@
 //!
 //! An island gets what [`sc_review::plan_tips`] says, by its row, by Fix All
 //! and by the question that ends a slice (#437): "N islands have no
-//! support. Add supports?". The question comes only when the list has an
+//! support. Add supports?". A plan is candidates: each is placed through the
+//! engine and judged there and then by the very decision the review makes
+//! ([`TipHold`]), so a tip that goes in holds its island, and the next review
+//! does not list it (#433). An island none of them holds gets no tip at all,
+//! and its row says why. The question comes only when the list has an
 //! island a set can take tips for. Yes is a Fix All run of the islands alone
 //! ([`RunKind::Islands`]): the tips, then the slice, and Cancel or Undo take
 //! it back the same way. No leaves the list as it is. An island that never
@@ -97,6 +101,7 @@ use std::time::{Duration, Instant};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::SceneSpatial;
+use sc_print_glue::PlateFrame;
 use sc_review::{
     CavityFill, CheckKind, Finding, Island, PlatePoint, Severity, SuggestedFix, TipPlan,
 };
@@ -104,14 +109,14 @@ use sc_scene::NodeId;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::df_support_run::{
-    DfSupportRun, EditDropped, EditWatch, HandEdit, OtherPoints, PointsEdit, Refusals,
+    DfSupportRun, EditDropped, EditWatch, HandEdit, PointPlan, PointPlans, PointsEdit, Refusals,
     raft_lift_label,
 };
 use crate::error_dialog::InfoTexts;
 use crate::hollow_run::HollowRun;
 use crate::i18n::ctr;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
-use crate::review::ReviewOutcome;
+use crate::review::{ReviewOutcome, TipHold};
 use crate::review_marks::{FindingKey, ReviewMarks, SlicePatches};
 use crate::scene_document::{SceneDocument, SceneEvent, SceneRevision, SceneSubscription};
 use crate::selection::{LeafId, Selection};
@@ -624,6 +629,7 @@ impl ReviewPanel {
             fills,
             islands,
             tips,
+            frame,
             ..
         } = &held.outcome
         else {
@@ -634,6 +640,7 @@ impl ReviewPanel {
         let island_tips = IslandTips {
             islands,
             plan: tips.as_ref(),
+            frame: Some(frame),
         };
         plan_fix_all(findings, fills, &held.hollows, island_tips, |i| {
             let key = FindingKey::of(&findings[i]);
@@ -651,7 +658,7 @@ impl ReviewPanel {
         let run = self.run.borrow();
         if run.as_ref().is_some_and(|run| run.supports_off) {
             plan.supports.clear();
-            plan.others.clear();
+            plan.plans.clear();
         }
         if run.as_ref().is_some_and(|run| run.kind == RunKind::Islands) {
             plan.patches.clear();
@@ -772,13 +779,13 @@ impl ReviewPanel {
             run.pass_started = Instant::now();
         }
         let points = plan.support_points();
-        let others = plan.support_others();
+        let plans = plan.support_plans();
         let generation = self.held.borrow().as_ref().map(|held| held.generation);
         let work = FixAllWork {
             plan,
             models,
             points,
-            others,
+            plans,
             generation,
             revision: self.document.scene_revision(),
         };
@@ -806,10 +813,10 @@ impl ReviewPanel {
             }
         };
         let join = self.run.borrow().as_ref().and_then(|run| run.entry);
-        let others = work.others.clone();
+        let plans = work.plans.clone();
         match self
             .supports
-            .start_supports_at(&work.points, others, join, landing)
+            .start_supports_at(&work.points, plans, join, landing)
         {
             Ok(watch) => {
                 *self.placing.borrow_mut() = Some(watch);
@@ -842,15 +849,15 @@ impl ReviewPanel {
         let marks = self.marks.borrow().clone();
         *self.run.borrow_mut() = Some(FixRun::new(RunKind::FixAll, 1, marks));
         let points = plan.support_points();
-        let others = plan.support_others();
+        let plans = plan.support_plans();
         let supports =
-            (!points.is_empty()).then(|| self.supports.add_tips_at(&points, others.clone()));
+            (!points.is_empty()).then(|| self.supports.add_tips_at(&points, plans.clone()));
         let generation = self.held.borrow().as_ref().map(|held| held.generation);
         let work = FixAllWork {
             plan,
             models,
             points,
-            others,
+            plans,
             generation,
             revision: self.document.scene_revision(),
         };
@@ -1059,6 +1066,12 @@ impl ReviewPanel {
                     }
                 }
             }
+            // What the rows tell: an extra tip that goes with a first one
+            // has no row of its own.
+            let no_tip = plan
+                .first_tips()
+                .filter(|(_, at)| refusal_at(*at).is_some())
+                .count();
             // No set took any point (none to edit, a run generating them):
             // another pass would only tell it again.
             let unplaced = match &outcome {
@@ -1085,13 +1098,13 @@ impl ReviewPanel {
                         ctr!("Review", "One support added.", "{n} supports added.", added)
                             .to_string(),
                     );
-                    if !refused.is_empty() {
+                    if no_tip > 0 {
                         lines.push(
                             ctr!(
                                 "Review",
                                 "No support can hold one point; its row says why.",
                                 "No support can hold {n} points; their rows say why.",
-                                refused.len()
+                                no_tip
                             )
                             .to_string(),
                         );
@@ -1103,7 +1116,7 @@ impl ReviewPanel {
                         "Review",
                         "No support can hold one point; its row says why.",
                         "No support can hold {n} points; their rows say why.",
-                        refused.len()
+                        no_tip
                     )
                     .to_string(),
                 ),
@@ -1561,6 +1574,7 @@ impl ReviewPanel {
                     fills,
                     islands,
                     tips,
+                    frame,
                     ..
                 } => {
                     let fixable = self.fixes_apply(held);
@@ -1574,6 +1588,7 @@ impl ReviewPanel {
                     let island_tips = IslandTips {
                         islands,
                         plan: tips.as_ref(),
+                        frame: Some(frame),
                     };
                     row_marks.no_tip = island_tips.too_narrow(findings);
                     let findings = &no_support_fits(findings, &row_marks);
@@ -1714,8 +1729,16 @@ impl ReviewPanel {
                 };
                 let first = *first;
                 let points: Vec<[f32; 3]> = tips.iter().map(|tip| tip.0).collect();
-                let others: Vec<Vec<[f32; 3]>> = tips.into_iter().map(|tip| tip.1).collect();
-                match self.supports.add_tips_at(&points, Arc::new(others)) {
+                // The first tip holds the island, or none of them goes in.
+                let plans: Vec<PointPlan> = tips
+                    .into_iter()
+                    .enumerate()
+                    .map(|(k, (_, plan))| PointPlan {
+                        after: (k > 0).then_some(0),
+                        ..plan
+                    })
+                    .collect();
+                match self.supports.add_tips_at(&points, Arc::new(plans)) {
                     // The tip that starts it stands, or none of it holds.
                     (HandEdit::Applied, refused) if refused.iter().any(|(i, _)| *i == 0) => {
                         let why = refused[0].1.clone();
@@ -1796,16 +1819,22 @@ impl ReviewPanel {
     }
 
     /// The tips of the island `finding`, whose fix points at `at`, each with
-    /// the points it can fall back on.
+    /// what is known of it.
     fn tips_of(&self, finding: &Finding, at: PlatePoint) -> Vec<FindingTip> {
         let held = self.held.borrow();
         match held.as_ref().map(|held| &held.outcome) {
-            Some(ReviewOutcome::Reviewed { islands, tips, .. }) => IslandTips {
+            Some(ReviewOutcome::Reviewed {
+                islands,
+                tips,
+                frame,
+                ..
+            }) => IslandTips {
                 islands,
                 plan: tips.as_ref(),
+                frame: Some(frame),
             }
             .of(finding, at),
-            _ => vec![(world(at), Vec::new())],
+            _ => vec![(world(at), PointPlan::default())],
         }
     }
 
@@ -1982,8 +2011,8 @@ fn review_rows(
     rows
 }
 
-/// A tip of an island, and the points it can fall back on.
-type FindingTip = ([f32; 3], Vec<[f32; 3]>);
+/// A tip of an island, and what is known of it.
+type FindingTip = ([f32; 3], PointPlan);
 
 /// What the review knows of where its islands' tips go (#437).
 #[derive(Clone, Copy, Debug, Default)]
@@ -1991,6 +2020,8 @@ struct IslandTips<'r> {
     islands: &'r [Island],
     /// The tips of `islands`, `None` with no set to add them to.
     plan: Option<&'r TipPlan>,
+    /// How their slice read the scene's points.
+    frame: Option<&'r PlateFrame>,
 }
 
 impl IslandTips<'_> {
@@ -2002,20 +2033,28 @@ impl IslandTips<'_> {
             .position(|island| island.first_layer == finding.first_layer && island.at == at)
     }
 
-    /// The tips of the finding whose fix points at `at`: the one point, for
-    /// a finding of no island or a plate with no set.
+    /// The tips of the finding whose fix points at `at`, the first one
+    /// asked to hold the island: the one point, for a finding of no island
+    /// or a plate with no set.
     fn of(&self, finding: &Finding, at: PlatePoint) -> Vec<FindingTip> {
         match (self.plan, self.island(finding, at)) {
             (Some(plan), Some(island)) => plan
                 .of(island)
-                .map(|tip| {
-                    (
-                        world(tip.at),
-                        tip.others.iter().copied().map(world).collect(),
-                    )
+                .enumerate()
+                .map(|(k, tip)| {
+                    let hold = TipHold {
+                        start: self.islands[island].start.clone(),
+                        frame: self.frame.cloned().unwrap_or_default(),
+                    };
+                    let plan = PointPlan {
+                        others: tip.others.iter().copied().map(world).collect(),
+                        holds: (k == 0).then_some(hold),
+                        after: None,
+                    };
+                    (world(tip.at), plan)
                 })
                 .collect(),
-            _ => vec![(world(at), Vec::new())],
+            _ => vec![(world(at), PointPlan::default())],
         }
     }
 
@@ -2044,8 +2083,8 @@ impl IslandTips<'_> {
 #[derive(Debug, Default)]
 struct FixAllPlan {
     supports: Vec<(usize, [f32; 3])>,
-    /// What each of `supports` can fall back on, by its place there.
-    others: Vec<Vec<[f32; 3]>>,
+    /// What is known of each of `supports`, by its place there.
+    plans: Vec<PointPlan>,
     patches: Vec<(usize, CavityFill)>,
 }
 
@@ -2071,14 +2110,19 @@ impl FixAllPlan {
         unique.iter().map(|&k| self.supports[k].1).collect()
     }
 
-    /// What each of [`Self::support_points`] can fall back on.
-    fn support_others(&self) -> OtherPoints {
-        let others = self.unique_supports().into_iter();
-        Arc::new(
-            others
-                .map(|k| self.others.get(k).cloned().unwrap_or_default())
-                .collect(),
-        )
+    /// What is known of each of [`Self::support_points`]: the tips of a
+    /// finding go with its first one, which holds it or none goes in.
+    fn support_plans(&self) -> PointPlans {
+        let unique = self.unique_supports();
+        let of = |place: usize| self.supports[unique[place]].0;
+        let plans = (0..unique.len()).map(|place| {
+            let first = (0..place).find(|&other| of(other) == of(place));
+            PointPlan {
+                after: first,
+                ..self.plans.get(unique[place]).cloned().unwrap_or_default()
+            }
+        });
+        Arc::new(plans.collect())
     }
 
     /// The first tip of each finding that gets supports: what holds it or
@@ -2109,8 +2153,8 @@ struct FixAllWork {
     models: Vec<ModelPose>,
     /// Where the supports go, each point once.
     points: Vec<[f32; 3]>,
-    /// What each of them can fall back on.
-    others: OtherPoints,
+    /// What is known of each of them.
+    plans: PointPlans,
     /// The slice generation of the review the plan was made from.
     generation: Option<u64>,
     /// The scene the plan's supports are placed on: a refusal is kept with
@@ -2171,9 +2215,9 @@ fn plan_fix_all(
         }
         match finding.fix {
             Some(SuggestedFix::AddSupport { at }) => {
-                for (point, others) in tips.of(finding, at) {
+                for (point, known) in tips.of(finding, at) {
                     plan.supports.push((i, point));
-                    plan.others.push(others);
+                    plan.plans.push(known);
                 }
             }
             // Small traps, as "Fill all small traps".
@@ -2379,10 +2423,15 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
             {
                 row.fix = FixKind::None as i32;
             }
-            if let (true, Some(mm2)) = (marks.too_small.contains(&i), finding.largest_mm2) {
+            if let (true, Some(mm2), Some(why)) = (
+                marks.too_small.contains(&i),
+                finding.largest_mm2,
+                marks.refused.get(&i),
+            ) {
                 row.remains = ctr!(
                     "Review",
-                    "No support reaches it, and it never grows past {} mm²: too small to be worth a support where none fits.",
+                    "No support could be added here: {}. It never grows past {} mm²: too small to be worth a support where none fits.",
+                    why,
                     format!("{mm2:.3}")
                 );
             } else if let Some(why) = marks.refused.get(&i) {

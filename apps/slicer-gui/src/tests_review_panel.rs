@@ -488,13 +488,23 @@ fn a_plan_counts_findings_and_keeps_the_others_of_each_point() {
     let (a, b, c) = ([1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]);
     let plan = FixAllPlan {
         supports: vec![(0, a), (0, b), (1, c), (1, a)],
-        others: vec![vec![b], vec![], vec![a, b], vec![c]],
+        plans: [vec![b], vec![], vec![a, b], vec![c]]
+            .map(|others| PointPlan {
+                others,
+                ..PointPlan::default()
+            })
+            .to_vec(),
         patches: Vec::new(),
     };
     assert_eq!(plan.first_tips().collect::<Vec<_>>(), [(0, a), (1, c)]);
     assert_eq!(plan.len(), 2);
     assert_eq!(plan.support_points(), [a, b, c]);
-    assert_eq!(*plan.support_others(), [vec![b], vec![], vec![a, b]]);
+    let plans = plan.support_plans();
+    let others: Vec<_> = plans.iter().map(|plan| plan.others.clone()).collect();
+    assert_eq!(others, [vec![b], vec![], vec![a, b]]);
+    // The second tip of a finding goes with its first.
+    let after: Vec<_> = plans.iter().map(|plan| plan.after).collect();
+    assert_eq!(after, [None, Some(0), None]);
 }
 
 /// #163: a row offers "Add support here" exactly when Fix All would add
@@ -617,7 +627,7 @@ mod model_poses {
 
 mod fix_all {
     use std::cell::Cell;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::Arc;
 
@@ -1673,6 +1683,144 @@ mod fix_all {
         eprintln!("slice landing on the UI thread: {:?}", landing.elapsed());
     }
 
+    /// #433, the cycle of the app on real scenes: open the project, slice,
+    /// answer the question with Yes (or press Fix All), review the new slice.
+    /// No island that got a tip may be listed, and every island left says
+    /// why: no tip fits it, or no tip that goes in holds it.
+    ///
+    /// `BREADSLICER_CYCLE_BREAD` names the projects, split by `;`. With
+    /// `BREADSLICER_CYCLE_REGENERATE`, the supports are generated again, as
+    /// the app's default does; with `BREADSLICER_CYCLE_MOVE=x,y`, on the
+    /// models moved that far first. `BREADSLICER_CYCLE_FIX_ALL` presses Fix
+    /// All instead of answering Yes.
+    #[test]
+    #[ignore = "needs BREADSLICER_CYCLE_BREAD"]
+    fn the_cycle_of_the_app_lists_no_island_that_got_a_tip() {
+        let projects = std::env::var("BREADSLICER_CYCLE_BREAD").expect("the projects");
+        for project in projects.split(';') {
+            let path = PathBuf::from(project);
+            on_fresh_slint_thread(move || one_cycle(&path));
+        }
+    }
+
+    fn one_cycle(path: &Path) {
+        let regenerate = std::env::var("BREADSLICER_CYCLE_REGENERATE").is_ok();
+        let fix_all = std::env::var("BREADSLICER_CYCLE_FIX_ALL").is_ok();
+        let moved: Option<Vec<f64>> = std::env::var("BREADSLICER_CYCLE_MOVE")
+            .ok()
+            .map(|v| v.split(',').map(|c| c.parse().expect("mm")).collect());
+        let printer = PrinterId::new("anycubic-photon-mono-m7-pro").expect("valid id");
+        let resin = MaterialId::new("anycubic-standard-resin-grey-50um").expect("valid id");
+        let loaded = sc_project_formats::load_scene(path, None, |_| {}).expect("it opens");
+        let sc_project_formats::LoadedContent::Project(mut project) = loaded.content else {
+            panic!("a .bread is a project")
+        };
+        let restored =
+            crate::support_persist::restore_supports(&mut project.scene, project.supports);
+        assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let bus = PreferencesBus::new(PreferencesSnapshot {
+            fix_all_repeat: false,
+            ..PreferencesSnapshot::for_tests()
+        });
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        let mut scene = project.scene;
+        if regenerate {
+            // What the file brought leaves with the sets: only the models go on.
+            for support in restored.sets.iter().map(|set| set.leaf) {
+                scene.remove_leaf(support).expect("a support leaf");
+            }
+            if let Some(by) = &moved {
+                let shift =
+                    Transform3D::Affine(AffineTransform3D::from_translation([by[0], by[1], 0.0]));
+                for root in scene.roots().to_vec() {
+                    let local = scene.node(root).expect("a node").local_transform;
+                    scene
+                        .set_local_transform(root, shift.compose(&local))
+                        .expect("it moves");
+                }
+            }
+        }
+        document.install_graph(scene, path.to_path_buf());
+        if !regenerate {
+            crate::support_persist::install_sets(&document, restored.sets);
+        }
+        let supports = DfSupportRun::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.dialogs(),
+            ctrl.clone(),
+        );
+        if regenerate {
+            supports.generate_now(Default::default());
+        }
+        let hollow = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let panel = ReviewPanel::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.clone(),
+            supports,
+            hollow,
+        );
+        let resliced = Rc::new(Cell::new(0));
+        panel.set_reslice({
+            let resliced = resliced.clone();
+            move || {
+                resliced.set(resliced.get() + 1);
+                true
+            }
+        });
+        panel.notes_open.set(true);
+        let w = IslandWindow {
+            window,
+            document,
+            panel,
+            resliced,
+        };
+        slice_project(&w.document, &w.panel, &printer, &resin, false);
+        let before = held_islands(&w.panel).len();
+        let offered = w.panel.islands_plan().first_tips().count();
+        let (panel, document) = (&w.panel, &w.document);
+        if offered > 0 {
+            if fix_all {
+                w.window.invoke_review_fix_all_requested();
+            } else {
+                answer_the_question(&w, MessageAnswer::Confirm);
+            }
+            let _ = wait_fix_all(panel);
+            let placed = w.window.get_review_message().to_string();
+            if panel.fixing() {
+                slice_project(document, panel, &printer, &resin, true);
+            }
+            eprintln!("{}: {placed}", path.display());
+        }
+        let left = held_islands(panel);
+        let rows = w.window.get_review_rows();
+        let why: Vec<(String, String)> = (0..rows.row_count())
+            .filter_map(|i| rows.row_data(i))
+            .filter(|row| row.title.contains("island") || row.title.contains("No support fits"))
+            .map(|row| (row.layers.to_string(), row.remains.to_string()))
+            .collect();
+        eprintln!(
+            "{}: {before} islands, {offered} offered, {} left, {} slices",
+            path.display(),
+            left.len(),
+            w.resliced.get()
+        );
+        for (layers, remains) in &why {
+            eprintln!("  {layers}: {remains}");
+        }
+        assert_eq!(tipped_and_listed(panel), [], "{}", path.display());
+        if offered > 0 {
+            for (layers, remains) in &why {
+                assert!(!remains.is_empty(), "layer {layers} says why it is left");
+            }
+        }
+    }
+
     /// Fix All on Damian's `hueco.bread` (#160 follow-up), the full app path:
     /// the project opens with its supports as data, slices with its printer
     /// and resin, Fix All adds the supports and marks, and the slice it asks
@@ -2485,6 +2633,85 @@ mod fix_all {
         );
         assert_eq!(before, after_one_undo, "one undo takes both passes back");
         assert!(undo_left, "and leaves the history as it was");
+    }
+
+    /// #433: a tip counts only if the review's own decision says it holds
+    /// its island. Asked to hold another island, the tips that fit do not, so
+    /// none goes in, not even the extra ones, and the row says why.
+    #[test]
+    fn an_island_no_tip_holds_gets_none_and_its_row_says_why() {
+        let (before, leaves_after, message, remains, islands) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let before = leaves(&w);
+            {
+                let mut held = w.panel.held.borrow_mut();
+                let Some(ReviewOutcome::Reviewed { islands, .. }) =
+                    held.as_mut().map(|held| &mut held.outcome)
+                else {
+                    panic!("reviewed")
+                };
+                assert!(islands.len() >= 2, "{}", islands.len());
+                let first = islands[0].start.clone();
+                let others = islands.len();
+                for i in 0..others - 1 {
+                    islands[i].start = islands[i + 1].start.clone();
+                }
+                islands[others - 1].start = first;
+            }
+            w.panel.notes_open.set(true);
+            answer_the_question(&w, MessageAnswer::Confirm);
+            let _ = wait_fix_all(&w.panel);
+            let rows = w.window.get_review_rows();
+            let remains: Vec<String> = (0..rows.row_count())
+                .filter_map(|i| rows.row_data(i))
+                .map(|row| row.remains.to_string())
+                .filter(|remains| !remains.is_empty())
+                .collect();
+            (
+                before,
+                leaves(&w),
+                w.window.get_review_message().to_string(),
+                remains,
+                held_islands(&w.panel).len(),
+            )
+        });
+        assert_eq!(before, leaves_after, "no tip went in");
+        assert!(message.contains("No support can hold"), "{message}");
+        assert_eq!(remains.len(), islands, "{remains:?}");
+        for remains in &remains {
+            assert!(remains.contains("reaches under"), "{remains}");
+        }
+    }
+
+    /// #433, the rule: after a Yes, no island that got a tip is listed.
+    #[test]
+    fn no_island_that_got_a_tip_is_listed_after_a_yes() {
+        let (planned, left) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let planned = w.panel.islands_plan().first_tips().count();
+            answer_the_question(&w, MessageAnswer::Confirm);
+            let _ = wait_fix_all(&w.panel);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            (planned, tipped_and_listed(&w.panel))
+        });
+        assert!(planned > 0, "the plate has islands to hold");
+        assert!(left.is_empty(), "{left:?}");
+    }
+
+    /// The islands of the held review that got a tip: there must be none.
+    fn tipped_and_listed(panel: &ReviewPanel) -> Vec<(String, usize)> {
+        let held = panel.held.borrow();
+        let Some(ReviewOutcome::Reviewed { findings, .. }) = held.as_ref().map(|h| &h.outcome)
+        else {
+            return Vec::new();
+        };
+        let marks = panel.marks.borrow();
+        findings
+            .iter()
+            .filter(|finding| finding.check == CheckKind::Island)
+            .filter(|finding| marks.was_supported(&FindingKey::of(finding)))
+            .map(|finding| (finding.title.clone(), finding.first_layer + 1))
+            .collect()
     }
 
     /// #433: Fix All works on the list it finds, with one slice after its

@@ -850,6 +850,7 @@ mod capture_tests {
             erased: CavityFill::default(),
             islands: Vec::new(),
             took: Duration::ZERO,
+            frame: Default::default(),
         }
     }
 

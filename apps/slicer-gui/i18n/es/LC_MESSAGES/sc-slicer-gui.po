@@ -2940,6 +2940,10 @@ msgstr "no hay ningún modelo ni soporte al alcance de ese punto"
 
 #: src/df_support_run.rs
 msgctxt "DfSupportDialog"
+msgid "no tip that fits reaches under the first pixels it must hold"
+msgstr "ninguna punta que entra llega debajo de los primeros píxeles que tiene que sostener"
+
+msgctxt "DfSupportDialog"
 msgid "no support can reach that point without crossing the model"
 msgstr "ningún soporte llega a ese punto sin atravesar el modelo"
 
@@ -6013,8 +6017,8 @@ msgstr "No entra un soporte acá"
 #: src/review_panel.rs
 #, rust-format
 msgctxt "Review"
-msgid "No support reaches it, and it never grows past {} mm²: too small to be worth a support where none fits."
-msgstr "Ningún soporte llega, y nunca pasa de {} mm²: es demasiado chica para que valga un soporte donde no entra ninguno."
+msgid "No support could be added here: {}. It never grows past {} mm²: too small to be worth a support where none fits."
+msgstr "No se pudo agregar un soporte acá: {}. Nunca pasa de {} mm²: es demasiado chica para que valga un soporte donde no entra ninguno."
 
 #: ui/message-layer.slint
 msgctxt "StaleSupportsDialog"
