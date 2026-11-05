@@ -17,10 +17,21 @@
 //!
 //! Layer numbers here are as the app shows them, from 1.
 
+use std::collections::{BTreeMap, HashSet};
+use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Instant;
 
+use sc_geom::df_supports::{DfSupportRequest, scene_model_leaves, settings_for};
+use sc_project_formats::{LoadedContent, load_scene};
 use serde_json::Value;
+use support_gen_df::pipeline::world_soup;
+use support_gen_df::supports::model_mesh::ModelMesh;
+use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
+use support_gen_df::supports::support_types::trunk::cavity_bridge::attempt_cavity_bridge;
+use support_gen_df::three::{Matrix4, Vec3};
+use support_gen_df::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
 
 /// Parts that start with no pixel of a tip under them and last: what
 /// supports must go under.
@@ -265,4 +276,98 @@ fn the_review_of_the_heavy_scene_matches_its_printer_file() {
             "the part at ({x}, {y}) of layer {layer} is gone"
         );
     }
+}
+
+/// The first pixels of the part that starts on layer 942, in plate
+/// millimetres: inside the hollow, where no trunk reaches.
+const ISLAND_942_MM: [f64; 3] = [11.886, -12.586, 47.1];
+
+/// Why the cavity bridge turns down the underside of the island at 942, and
+/// whether going on to the other surfaces around each contact lands it (#445).
+/// A step of 0.1 mm over its first pixels, each face once, tried the way a
+/// run does, stopping at the first surface, and going on past it.
+#[test]
+#[ignore = "needs a real project, named by BREADSLICER_WORM"]
+fn the_underside_of_942_has_a_landing_at_every_contact() {
+    let project = std::env::var("BREADSLICER_WORM").expect("BREADSLICER_WORM names the project");
+    let loaded = load_scene(Path::new(&project), None, |_| {}).expect("it opens");
+    let LoadedContent::Project(project) = loaded.content else {
+        panic!("a .bread is a project");
+    };
+    let leaves = scene_model_leaves(&project.scene, None).expect("bake");
+    let soup = world_soup(&leaves[0].1);
+    let corners: Vec<[f32; 3]> = soup
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
+    let bvh = Arc::new(MeshBvh::new(corners, None));
+    let matrix = Matrix4::IDENTITY;
+    let sdf = SdfCache::new(bvh.clone(), matrix, Some(0.5));
+    let mesh = ModelMesh {
+        field: &sdf,
+        rays: BvhMesh {
+            bvh: &bvh,
+            matrix_world: &matrix,
+        },
+    };
+    let mut settings = settings_for(&DfSupportRequest::default()).supports;
+    let [x, y, z] = ISLAND_942_MM;
+    let mut seen = HashSet::new();
+    let mut contacts = Vec::new();
+    for i in -15..=15 {
+        for j in -15..=15 {
+            let near = Vec3::new(x + f64::from(i) * 0.1, y + f64::from(j) * 0.1, z);
+            let Some(hit) = bvh.closest_point_to_point(near, 0.0, 1.0) else {
+                continue;
+            };
+            let tri = bvh.triangle(hit.face_index);
+            let normal = Vec3::sub_vectors(tri.b, tri.a)
+                .cross(Vec3::sub_vectors(tri.c, tri.a))
+                .normalize();
+            if normal.z < -0.2 && (hit.point.z - z).abs() < 0.3 && seen.insert(hit.face_index) {
+                contacts.push((hit.point, normal));
+            }
+        }
+    }
+    assert!(!contacts.is_empty(), "the island's underside is there");
+    let mut next = 0;
+    let mut new_id = || {
+        next += 1;
+        format!("id-{next}")
+    };
+    let mut first_refusal: BTreeMap<String, usize> = BTreeMap::new();
+    let mut landed_at_once = 0;
+    let mut stranded = Vec::new();
+    for &(tip, normal) in &contacts {
+        for every_landing in [false, true] {
+            settings.mesh_to_mesh.every_landing = every_landing;
+            let attempt = attempt_cavity_bridge(
+                tip,
+                normal,
+                "m",
+                mesh,
+                Side::Front,
+                None,
+                &settings,
+                &mut new_id,
+            );
+            if every_landing {
+                if attempt.bridge.is_none() {
+                    stranded.push(tip);
+                }
+            } else if let Some(why) = attempt.refusals.first() {
+                *first_refusal.entry(format!("{why:?}")).or_default() += 1;
+            } else {
+                landed_at_once += 1;
+            }
+        }
+    }
+    eprintln!(
+        "{} contacts: {landed_at_once} land at once, turned down {first_refusal:?}, {} with no landing at all",
+        contacts.len(),
+        stranded.len()
+    );
+    assert!(stranded.is_empty(), "no landing for {stranded:?}");
 }

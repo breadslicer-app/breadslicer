@@ -44,6 +44,30 @@ struct Candidate {
     normal: Vec3,
 }
 
+/// Why a contact has no bridge, or why a place to land one was turned down
+/// (SoulCrafted, #445).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BridgeRefusal {
+    /// Nothing of the model lies under the contact.
+    NoSurface,
+    /// No support type bridges that span.
+    NoType,
+    /// A landing out to the side, which that type may not reach.
+    Sideways,
+    /// The shaft leans past what its type stands.
+    Canted,
+    /// The shaft runs into the model.
+    Blocked,
+}
+
+/// What looking for a bridge found (SoulCrafted, #445).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeAttempt {
+    pub bridge: Option<CavityBridgeResult>,
+    /// Why each landing before the one taken was turned down, in order.
+    pub refusals: Vec<BridgeRefusal>,
+}
+
 /// The cavity bridge, or None when no lower surface is found or the bridge is
 /// not worth placing. `side` is the mesh material's raycast side; `settings`
 /// is the live `getSettings()`.
@@ -58,6 +82,32 @@ pub fn build_cavity_bridge(
     settings: &SupportSettings,
     new_id: &mut dyn FnMut() -> String,
 ) -> Option<CavityBridgeResult> {
+    attempt_cavity_bridge(
+        tip_pos, tip_normal, model_id, mesh, side, sizing, settings, new_id,
+    )
+    .bridge
+}
+
+/// [`build_cavity_bridge`], saying why each landing was turned down.
+///
+/// DragonFruit lands on the first surface its search likes and stops there.
+/// With [`MeshToMeshSettings::every_landing`] the other surfaces around the
+/// contact are tried after it, in the order the search meets them: under a
+/// contact, one slanted wall says nothing of the rest (#445). Each is held to
+/// the same gates, and what the first landing gave never changes.
+///
+/// [`MeshToMeshSettings::every_landing`]: crate::supports::settings::types::MeshToMeshSettings::every_landing
+#[allow(clippy::too_many_arguments)]
+pub fn attempt_cavity_bridge(
+    tip_pos: Vec3,
+    tip_normal: Vec3,
+    model_id: &str,
+    mesh: ModelMesh<'_>,
+    side: Side,
+    sizing: Option<CavityBridgeSizing>,
+    settings: &SupportSettings,
+    new_id: &mut dyn FnMut() -> String,
+) -> BridgeAttempt {
     // Offset origin slightly inward along tip normal so we don't self-hit the
     // surface we just clicked, then nudge down past it.
     const OFFSET_MM: f64 = 0.5;
@@ -143,83 +193,149 @@ pub fn build_cavity_bridge(
         // neighbouring surface, so the search may reach that far sideways.
         (chosen, reached_sideways) = run_search(&twig_reach_radii);
     }
-    let chosen = chosen?;
+    let Some(first) = chosen else {
+        return BridgeAttempt {
+            bridge: None,
+            refusals: vec![BridgeRefusal::NoSurface],
+        };
+    };
 
-    let b_pos = chosen.point;
-    let b_normal = chosen.normal;
-    let dx = tip_pos.x - b_pos.x;
-    let dy = tip_pos.y - b_pos.y;
-    let dz = tip_pos.z - b_pos.z;
-    let dist = (dx * dx + dy * dy + dz * dz).sqrt();
     let read_setting = |path: SupportPlacementSettingPath| match path {
         SupportPlacementSettingPath::MeshToMeshStickVsTwigCutoffMm => {
             Some(settings.mesh_to_mesh.stick_vs_twig_cutoff_mm)
         }
     };
-    let kind = select_type_for_placement(SupportPlacementMetric::ContactSpan, dist, &read_setting)?;
+    let mut land =
+        |chosen: Candidate, reached_sideways: bool| -> Result<CavityBridgeResult, BridgeRefusal> {
+            let b_pos = chosen.point;
+            let b_normal = chosen.normal;
+            let dx = tip_pos.x - b_pos.x;
+            let dy = tip_pos.y - b_pos.y;
+            let dz = tip_pos.z - b_pos.z;
+            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+            let kind =
+                select_type_for_placement(SupportPlacementMetric::ContactSpan, dist, &read_setting)
+                    .ok_or(BridgeRefusal::NoType)?;
 
-    // Landing beyond the near cutoff on the wide search is a lateral prop, which
-    // only a type declaring `mayReachSideways` may build.
-    if !bridge_may_land_sideways(kind, dist, cutoff, reached_sideways) {
-        return None;
+            // Landing beyond the near cutoff on the wide search is a lateral prop, which
+            // only a type declaring `mayReachSideways` may build.
+            if !bridge_may_land_sideways(kind, dist, cutoff, reached_sideways) {
+                return Err(BridgeRefusal::Sideways);
+            }
+
+            let built = build_contact_bridge(
+                kind,
+                &ContactBridgeRequest {
+                    model_id,
+                    a_pos: tip_pos,
+                    a_normal: tip_normal,
+                    b_pos,
+                    b_normal,
+                    shaft_diameter_mm: sizing.map(|s| s.shaft_diameter_mm),
+                    tip_contact_diameter_mm: sizing.map(|s| s.tip_contact_diameter_mm),
+                    mesh: None,
+                    manual: None,
+                },
+                settings,
+                &mut *new_id,
+            )
+            .ok_or(BridgeRefusal::Canted)?;
+            let entity = built.entity;
+            // The SHORT bridge is the type whose contact-span rule is bounded above.
+            let short_bridge = get_support_type_descriptor(kind)
+                .placement_rule
+                .is_some_and(|rule| rule.max_mm.is_some());
+
+            // The shaft must not pierce the model (trunk post-cull clearance).
+            let segments = match &entity {
+                BridgeEntity::Twig(t) => &t.segments,
+                BridgeEntity::Stick(s) => &s.segments,
+            };
+            let seg = segments.first();
+            let start = seg
+                .and_then(|s| s.bottom_joint.as_ref())
+                .map_or(b_pos, |j| j.pos);
+            let end = seg
+                .and_then(|s| s.top_joint.as_ref())
+                .map_or(tip_pos, |j| j.pos);
+            let radius = seg.map_or_else(
+                || sizing.map_or(1.0, |s| s.shaft_diameter_mm),
+                |s| s.diameter,
+            ) / 2.0
+                + 0.15;
+            // Ray-based for a twig, like buildTwig: the SDF reads the thin gap as material.
+            let blocked = if short_bridge {
+                check_short_bridge_collision(start, end, radius, mesh.rays).hit
+            } else {
+                is_shaft_blocked(start, end, radius, mesh.field)
+            };
+            if blocked {
+                return Err(BridgeRefusal::Blocked);
+            }
+
+            let support_data = match &entity {
+                BridgeEntity::Twig(t) => support_data_for_entity(ShaftEntity::Twig(t)),
+                BridgeEntity::Stick(s) => support_data_for_entity(ShaftEntity::Stick(s)),
+            };
+            Ok(CavityBridgeResult {
+                kind,
+                support_data,
+                entity,
+            })
+        };
+
+    let mut refusals = Vec::new();
+    match land(first, reached_sideways) {
+        Ok(bridge) => {
+            return BridgeAttempt {
+                bridge: Some(bridge),
+                refusals,
+            };
+        }
+        Err(why) => refusals.push(why),
+    }
+    if !settings.mesh_to_mesh.every_landing {
+        return BridgeAttempt {
+            bridge: None,
+            refusals,
+        };
     }
 
-    let built = build_contact_bridge(
-        kind,
-        &ContactBridgeRequest {
-            model_id,
-            a_pos: tip_pos,
-            a_normal: tip_normal,
-            b_pos,
-            b_normal,
-            shaft_diameter_mm: sizing.map(|s| s.shaft_diameter_mm),
-            tip_contact_diameter_mm: sizing.map(|s| s.tip_contact_diameter_mm),
-            mesh: None,
-            manual: None,
-        },
-        settings,
-        new_id,
-    )?;
-    let entity = built.entity;
-    // The SHORT bridge is the type whose contact-span rule is bounded above.
-    let short_bridge = get_support_type_descriptor(kind)
-        .placement_rule
-        .is_some_and(|rule| rule.max_mm.is_some());
-
-    // The shaft must not pierce the model (trunk post-cull clearance).
-    let segments = match &entity {
-        BridgeEntity::Twig(t) => &t.segments,
-        BridgeEntity::Stick(s) => &s.segments,
-    };
-    let seg = segments.first();
-    let start = seg
-        .and_then(|s| s.bottom_joint.as_ref())
-        .map_or(b_pos, |j| j.pos);
-    let end = seg
-        .and_then(|s| s.top_joint.as_ref())
-        .map_or(tip_pos, |j| j.pos);
-    let radius = seg.map_or_else(
-        || sizing.map_or(1.0, |s| s.shaft_diameter_mm),
-        |s| s.diameter,
-    ) / 2.0
-        + 0.15;
-    // Ray-based for a twig, like buildTwig: the SDF reads the thin gap as material.
-    let blocked = if short_bridge {
-        check_short_bridge_collision(start, end, radius, mesh.rays).hit
-    } else {
-        is_shaft_blocked(start, end, radius, mesh.field)
-    };
-    if blocked {
-        return None;
+    // Every other surface around the contact, as the search would meet it:
+    // the floors first, the rest after them.
+    let mut floors = Vec::new();
+    let mut others = Vec::new();
+    for &radius_mm in NEAR_RADII_MM.iter().chain(&twig_reach_radii) {
+        let steps = if radius_mm == 0.0 { 1 } else { 8 };
+        for i in 0..steps {
+            let angle = (f64::from(i) / f64::from(steps)) * std::f64::consts::PI * 2.0;
+            let (floor, below) = scan_down(
+                base_origin.x + js_cos(angle) * radius_mm,
+                base_origin.y + js_sin(angle) * radius_mm,
+            );
+            match (floor, below) {
+                (Some(floor), _) => floors.push((floor, radius_mm > near_max)),
+                (None, Some(below)) => others.push((below, false)),
+                (None, None) => {}
+            }
+        }
     }
-
-    let support_data = match &entity {
-        BridgeEntity::Twig(t) => support_data_for_entity(ShaftEntity::Twig(t)),
-        BridgeEntity::Stick(s) => support_data_for_entity(ShaftEntity::Stick(s)),
-    };
-    Some(CavityBridgeResult {
-        kind,
-        support_data,
-        entity,
-    })
+    for (landing, sideways) in floors.into_iter().chain(others) {
+        if landing.point == first.point {
+            continue;
+        }
+        match land(landing, sideways) {
+            Ok(bridge) => {
+                return BridgeAttempt {
+                    bridge: Some(bridge),
+                    refusals,
+                };
+            }
+            Err(why) => refusals.push(why),
+        }
+    }
+    BridgeAttempt {
+        bridge: None,
+        refusals,
+    }
 }

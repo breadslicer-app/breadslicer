@@ -26,6 +26,7 @@ mod df_parity_islands_c;
 mod df_parity_native_islands;
 mod df_parity_primitives;
 mod df_parity_rafts;
+mod cavity_landing;
 mod df_parity_sdf;
 mod df_parity_support_triangles;
 mod df_parity_tip_offset;

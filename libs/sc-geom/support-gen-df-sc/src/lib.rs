@@ -514,6 +514,8 @@ impl SettingsRecipe {
             ..PipelineSettings::defaults(self.layer_height_mm)
         };
         self.options.apply(&mut settings);
+        // An island under a slanted wall lands on the next surface (#445).
+        settings.supports.mesh_to_mesh.every_landing = true;
         settings
     }
 }

@@ -1780,7 +1780,8 @@ mod fix_all {
     /// `BREADSLICER_CYCLE_REGENERATE`, the supports are generated again, as
     /// the app's default does; with `BREADSLICER_CYCLE_MOVE=x,y`, on the
     /// models moved that far first. `BREADSLICER_CYCLE_FIX_ALL` presses Fix
-    /// All instead of answering Yes.
+    /// All instead of answering Yes. `BREADSLICER_CYCLE_HELD_LAYER` names a
+    /// layer no island may be left on.
     #[test]
     #[ignore = "needs BREADSLICER_CYCLE_BREAD"]
     fn the_cycle_of_the_app_lists_no_island_that_got_a_tip() {
@@ -1969,6 +1970,11 @@ mod fix_all {
         );
         for (layers, remains) in &why {
             eprintln!("  {layers}: {remains}");
+        }
+        // The part a project is known for, named by the first layer it shows.
+        if let Ok(layer) = std::env::var("BREADSLICER_CYCLE_HELD_LAYER") {
+            let unheld: Vec<_> = why.iter().filter(|(l, _)| l.contains(&layer)).collect();
+            assert!(unheld.is_empty(), "layer {layer} stays listed: {unheld:?}");
         }
         let grown = growth_left(panel);
         eprintln!(
