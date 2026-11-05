@@ -111,13 +111,27 @@ fn a_tip_beside_a_part_holds_nothing() {
 }
 
 #[test]
-fn a_tip_that_reaches_a_part_with_a_sliver_of_itself_holds_nothing() {
+fn any_pixel_of_a_tip_holds_a_part_unless_a_share_is_asked_for() {
     // A 6-pixel tip beside the block's edge at x = 130: a few of its pixels
     // lie within a pixel of the block, out of a section of over 100.
     let fixture = with_block(body(10), 4, 10).tip(136.0, 55.0, 4, 6.0).build();
     let contact = report(&fixture).parts[1].tip_contact_px;
     assert!(contact > 0 && contact < 50, "{contact}");
-    assert_eq!(islands(&fixture), [(4, 9)]);
+    assert!(islands(&fixture).is_empty());
+
+    let input = fixture.input();
+    let regions = PlateRegions::compute(&input, &SweepOptions::default());
+    let half = IslandOptions {
+        min_tip_share: 0.5,
+        ..IslandOptions::default()
+    };
+    let found = run(
+        &ReviewContext::new(&input, &regions),
+        &half,
+        &SweepOptions::default(),
+    );
+    assert_eq!(found.islands.len(), 1);
+    assert_eq!(found.islands[0].first_layer, 4);
 }
 
 #[test]

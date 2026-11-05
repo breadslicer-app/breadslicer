@@ -19,6 +19,7 @@ use sc_sl1cer::geom2d::Point2D;
 use crate::input::ReviewInput;
 use crate::regions::PixelBox;
 use crate::runs::Run;
+use crate::tip_plan::IslandPixels;
 
 /// One stretch of a support's tip, in printer-frame millimetres: a cone cut
 /// flat at both ends, from one circle to another. A tip with a break-point
@@ -166,6 +167,38 @@ impl TipIndex {
         Self { cones, tallest }
     }
 
+    /// The ends of the tips that stand inside `pixels`, in plate millimetres.
+    /// Ends closer than `apart_mm` are one tip: one with a neck is two cones.
+    pub fn standing_in(
+        &self,
+        input: &ReviewInput<'_>,
+        pixels: &IslandPixels,
+        apart_mm: f64,
+    ) -> Vec<[f64; 3]> {
+        let mut found: Vec<[f64; 3]> = Vec::new();
+        for end in self.cones.iter().map(|cone| cone.tip) {
+            let Some(layer) = pixels
+                .layers
+                .iter()
+                .rev()
+                .find(|layer| layer.bottom_mm <= end[2])
+            else {
+                continue;
+            };
+            let (x, y) = input.pixel_map().mm_to_pixel(Point2D::new(end[0], end[1]));
+            if x < 0.0 || y < 0.0 || !lit(&layer.runs, x as u32, y as u32) {
+                continue;
+            }
+            let twin = found
+                .iter()
+                .any(|other| (other[0] - end[0]).hypot(other[1] - end[1]) < apart_mm);
+            if !twin {
+                found.push(end);
+            }
+        }
+        found
+    }
+
     /// The cones that span height `z_mm`.
     fn at(&self, z_mm: f64) -> impl Iterator<Item = &Placed> + '_ {
         let from = self.cones.partition_point(|c| c.low < z_mm - self.tallest);
@@ -240,7 +273,7 @@ pub struct TipContact {
 }
 
 /// Whether pixel `(x, y)` is in the run list `runs`, sorted by row.
-fn lit(runs: &[Run], x: u32, y: u32) -> bool {
+pub(crate) fn lit(runs: &[Run], x: u32, y: u32) -> bool {
     let at = runs.partition_point(|run| (run.row, run.x1) <= (y, x));
     runs.get(at)
         .is_some_and(|run| run.row == y && run.x0 <= x && x < run.x1)

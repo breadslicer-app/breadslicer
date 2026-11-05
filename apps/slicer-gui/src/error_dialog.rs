@@ -202,6 +202,11 @@ enum Entry {
     SliceOverwrite {
         on_confirm: Box<dyn FnOnce()>,
     },
+    /// The question after Slice (#437): the islands with no support.
+    AddSupports {
+        build_texts: Box<dyn Fn() -> InfoTexts>,
+        on_yes: Box<dyn FnOnce()>,
+    },
     Recovery {
         /// 1 line per scene.
         scenes: SharedString,
@@ -227,6 +232,7 @@ impl Entry {
             Self::Error { .. }
             | Self::SceneChange { .. }
             | Self::SliceOverwrite { .. }
+            | Self::AddSupports { .. }
             | Self::Recovery { .. } => MessageClass::MustAnswer,
         }
     }
@@ -303,6 +309,12 @@ impl Entry {
                 message.save_as_mode = offer.save_as_mode();
             }
             Self::SliceOverwrite { .. } => message.kind = MessageKind::SliceOverwrite,
+            Self::AddSupports { build_texts, .. } => {
+                let texts = build_texts();
+                message.kind = MessageKind::AddSupports;
+                message.heading = texts.heading;
+                message.text = texts.message;
+            }
             Self::Diagnostics { has_scene, .. } => {
                 message.kind = MessageKind::Diagnostics;
                 message.has_scene = *has_scene;
@@ -356,6 +368,12 @@ impl Entry {
                 // Only an explicit Re-slice replaces the held slice.
                 if answer == MessageAnswer::Confirm {
                     on_confirm();
+                }
+            }
+            Self::AddSupports { on_yes, .. } => {
+                // Anything but Yes leaves the list as it is.
+                if answer == MessageAnswer::Confirm {
+                    on_yes();
                 }
             }
             Self::Diagnostics {
@@ -704,6 +722,28 @@ impl DialogManager {
         });
     }
 
+    /// Asks whether to add supports to the islands a slice left without
+    /// them (#437). Runs `on_yes` once on Yes; No, Enter and Escape leave the
+    /// list as it is. Must run on the Slint UI thread.
+    pub(crate) fn show_add_supports(
+        self: &Rc<Self>,
+        build_texts: impl Fn() -> InfoTexts + 'static,
+        on_yes: impl FnOnce() + 'static,
+    ) {
+        let asking = self
+            .queue
+            .borrow()
+            .iter()
+            .any(|e| matches!(e, Entry::AddSupports { .. }));
+        if asking {
+            return;
+        }
+        self.enqueue(Entry::AddSupports {
+            build_texts: Box::new(build_texts),
+            on_yes: Box::new(on_yes),
+        });
+    }
+
     /// Shows what a diagnostics file holds (Help > Export Diagnostics). On
     /// Save, calls `on_save` once with whether the scene's models go in; a
     /// scene must be there to offer them. Nothing on Cancel. Must run on the
@@ -774,7 +814,7 @@ impl DialogManager {
 
     /// The kind and the class of each queued message, in order.
     #[cfg(test)]
-    fn queued_for_test(&self) -> Vec<(MessageKind, MessageClass)> {
+    pub(crate) fn queued_for_test(&self) -> Vec<(MessageKind, MessageClass)> {
         self.queue
             .borrow()
             .iter()

@@ -17,6 +17,10 @@
 //! next slice (#156): the small resin traps filled. The supports Fix All would
 //! add for islands are only counted: the CLI does not edit supports. The
 //! plate is then reviewed again.
+//!
+//! With `--add-supports`, the plate gets what a Yes to the app's question
+//! after Slice gives it (#437): the tips the islands need, through the engine,
+//! then a new slice and its review.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -28,15 +32,18 @@ use anyhow::{Result, anyhow};
 use sc_geom::df_supports::recommended_lift_mm;
 use sc_print_glue::SlicedPlate;
 use sc_print_profiles::ProfileLibraries;
+use sc_print_profiles::{EffectiveMaterial, PrinterProfile};
 use sc_review::{
-    CavityFill, Finding, Held, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions,
-    ReviewReport, Severity, SuggestedFix, TipCone, check_regions, erase_stack, fill_stack,
+    CavityFill, Finding, Held, Part, PlannedTip, PlateRegions, ReviewContext, ReviewInput,
+    ReviewLeaf, ReviewOptions, ReviewReport, Severity, SuggestedFix, TipCone, TipPlan,
+    TipPlanOptions, check_regions, erase_stack, fill_stack, plan_tips,
 };
+use sc_scene::Scene;
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
 use crate::commands::df_supports::{SupportSet, df_raft_top_mm};
 use crate::commands::slice::{
-    SlicedScene, load_and_slice, load_material_profile, load_printer_profile,
+    SlicedScene, load_and_slice, load_material_profile, load_printer_profile, slice_scene,
 };
 use crate::config::cmd_options::PlateOptions;
 use crate::filesystem::validate_sourcefile_path;
@@ -48,6 +55,7 @@ pub(crate) struct ReviewArgs {
     pub json: bool,
     pub fill: bool,
     pub fix_all: bool,
+    pub add_supports: bool,
 }
 
 pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<()> {
@@ -60,7 +68,7 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
     }
 
     let slicing = Instant::now();
-    let SlicedScene { plate, sets, .. } =
+    let SlicedScene { scene, plate, sets } =
         load_and_slice(&source_path, &printer, &material, options)?;
     let slice_time = slicing.elapsed();
 
@@ -124,14 +132,29 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
         }
     });
 
+    let added = if args.add_supports {
+        let answer = YesAnswer {
+            printer: &printer,
+            material: &material,
+            options,
+            lift: (context.raft_top_mm, context.support_lift_mm),
+        };
+        Some(add_supports(scene, sets, &report, &answer)?)
+    } else {
+        None
+    };
+
     let mut out = std::io::stdout().lock();
     if args.json {
         write_json(
             &input,
             &report,
             &stats,
-            refilled.as_ref(),
-            fixed_all.as_ref(),
+            &Passes {
+                refilled: refilled.as_ref(),
+                fixed_all: fixed_all.as_ref(),
+                added: added.as_ref(),
+            },
             slice_time,
             &mut out,
         )?;
@@ -150,6 +173,161 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
         if let Some(fixed_all) = &fixed_all {
             write_fixed_all(&input, support_leaves, fixed_all, &mut out)?;
         }
+        if let Some(added) = &added {
+            write_added(added, &mut out)?;
+        }
+    }
+    Ok(())
+}
+
+/// What a new slice of the plate needs.
+struct YesAnswer<'a> {
+    printer: &'a PrinterProfile,
+    material: &'a EffectiveMaterial,
+    options: &'a PlateOptions,
+    /// The raft's top and the support lift of the first review.
+    lift: (Option<f64>, Option<f64>),
+}
+
+/// One tip of the plan and how it went.
+struct TipOutcome {
+    tip: PlannedTip,
+    /// The point the engine took.
+    placed_at: Option<[f64; 3]>,
+    /// Why the engine refused it.
+    refused: Option<String>,
+}
+
+/// What a Yes to the question after Slice did (#437).
+struct AddedSupports {
+    /// The tips' contact diameter.
+    diameter_mm: f64,
+    tips: Vec<TipOutcome>,
+    /// Islands that never get as wide as a contact, by first layer.
+    too_narrow: Vec<usize>,
+    /// Placing the tips, drawing the sets, the new slice and its review.
+    placing: Duration,
+    drawing: Duration,
+    slicing: Duration,
+    reviewing: Duration,
+    report: ReviewReport,
+}
+
+/// Places the tips the islands of `report` need on the sets they fall on,
+/// draws those sets again and reviews a new slice. A plate with no set to
+/// edit gets none: the CLI generates supports only with `--df-supports`.
+fn add_supports(
+    mut scene: Scene,
+    mut sets: Vec<SupportSet>,
+    report: &ReviewReport,
+    answer: &YesAnswer<'_>,
+) -> Result<AddedSupports> {
+    let diameter_mm = sets
+        .iter()
+        .map(|set| set.session.tip_diameter_mm())
+        .fold(0.0, f64::max);
+    let plan = if sets.is_empty() {
+        TipPlan::default()
+    } else {
+        plan_tips(&report.islands, &TipPlanOptions::for_tip(diameter_mm))
+    };
+
+    let started = Instant::now();
+    let mut tips = Vec::with_capacity(plan.tips.len());
+    let mut edited = vec![false; sets.len()];
+    for tip in plan.tips {
+        let point = [tip.at.x_mm, tip.at.y_mm, tip.at.z_mm];
+        let others: Vec<[f64; 3]> = tip
+            .others
+            .iter()
+            .map(|p| [p.x_mm, p.y_mm, p.z_mm])
+            .collect();
+        let mut placed_at = None;
+        let nearest = sets
+            .iter()
+            .enumerate()
+            .filter_map(|(i, set)| Some((set.session.add_distance(point)?, i)))
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        let refused = match nearest {
+            None => Some("no model there".to_owned()),
+            Some((_, i)) => match sets[i].session.add_tip_among(point, &others) {
+                Ok(used) => {
+                    edited[i] = true;
+                    placed_at = Some(used);
+                    None
+                }
+                Err(why) => Some(why.to_string()),
+            },
+        };
+        tips.push(TipOutcome {
+            tip,
+            placed_at,
+            refused,
+        });
+    }
+    let placing = started.elapsed();
+
+    let started = Instant::now();
+    for (set, _) in sets.iter().zip(&edited).filter(|(_, edited)| **edited) {
+        set.session
+            .redraw_into(&mut scene, set.leaf)
+            .map_err(|err| anyhow!("the supports could not be drawn: {err}"))?;
+    }
+    let drawing = started.elapsed();
+
+    let started = Instant::now();
+    let plate = slice_scene(&scene, answer.printer, answer.material, answer.options)?;
+    let slicing = started.elapsed();
+
+    let started = Instant::now();
+    let sets: Vec<SupportSet> = sets.into_iter().map(SupportSet::refreshed).collect();
+    let context = PlateContext {
+        plate: &plate,
+        raft_top_mm: answer.lift.0,
+        support_lift_mm: answer.lift.1,
+        tips: support_tips(&plate, &sets),
+        support_layers: support_layers(&plate, &sets),
+    };
+    let input = context
+        .input(model_leaves(&plate, &sets))
+        .map_err(|err| anyhow!("internal error: the sliced stacks do not fit the run: {err}"))?;
+    let options = ReviewOptions::default();
+    let regions = PlateRegions::compute(&input, &options.sweep);
+    let again = check_regions(&ReviewContext::new(&input, &regions), &options);
+    Ok(AddedSupports {
+        diameter_mm,
+        tips,
+        too_narrow: plan
+            .too_narrow
+            .iter()
+            .map(|&i| report.islands[i].first_layer)
+            .collect(),
+        placing,
+        drawing,
+        slicing,
+        reviewing: started.elapsed(),
+        report: again,
+    })
+}
+
+/// What the tips did, as text.
+fn write_added(added: &AddedSupports, out: &mut dyn Write) -> Result<()> {
+    let refused = added.tips.iter().filter(|tip| tip.refused.is_some());
+    writeln!(
+        out,
+        "Add supports: {} planned, {} refused, {} too narrow for a tip; {} left unsupported.",
+        plural(added.tips.len(), "tip", "tips"),
+        refused.clone().count(),
+        plural(added.too_narrow.len(), "island", "islands"),
+        plural(added.report.islands.len(), "island", "islands"),
+    )?;
+    for tip in refused {
+        writeln!(
+            out,
+            "  layer {}: {}",
+            tip.tip.layer + 1,
+            tip.refused.as_deref().unwrap_or_default()
+        )?;
     }
     Ok(())
 }
@@ -497,13 +675,40 @@ fn millis(duration: Duration) -> f64 {
     (duration.as_secs_f64() * 1e6).round() / 1e3
 }
 
+/// The parts of a review, as JSON.
+fn parts_json(parts: &[Part]) -> Vec<serde_json::Value> {
+    parts
+        .iter()
+        .map(|part| {
+            serde_json::json!({
+                "first_layer": part.first_layer,
+                "layers": part.layers(),
+                "held": match part.held {
+                    Held::Plate => "plate",
+                    Held::Tip => "tip",
+                    Held::Nothing => "nothing",
+                },
+                "tip_contact_px": part.tip_contact_px,
+                "largest_px": part.largest_px(),
+                "joined_on": part.joined.map(|(layer, _)| layer),
+            })
+        })
+        .collect()
+}
+
+/// What the run did after the first review, each when it was asked for.
+struct Passes<'p> {
+    refilled: Option<&'p Refilled>,
+    fixed_all: Option<&'p FixedAll>,
+    added: Option<&'p AddedSupports>,
+}
+
 /// The findings, the counts and the timings as one JSON document.
 fn write_json(
     input: &ReviewInput<'_>,
     report: &ReviewReport,
     stats: &RegionStats,
-    refilled: Option<&Refilled>,
-    fixed_all: Option<&FixedAll>,
+    passes: &Passes<'_>,
     slice_time: Duration,
     out: &mut dyn Write,
 ) -> Result<()> {
@@ -533,35 +738,47 @@ fn write_json(
             "growth_mm2": island.growth_mm2,
             "joins_on": island.joins_on,
         })).collect::<Vec<_>>(),
-        "parts": report.parts.iter().map(|part| serde_json::json!({
-            "first_layer": part.first_layer,
-            "layers": part.layers(),
-            "held": match part.held {
-                Held::Plate => "plate",
-                Held::Tip => "tip",
-                Held::Nothing => "nothing",
-            },
-            "tip_contact_px": part.tip_contact_px,
-            "largest_px": part.largest_px(),
-            "joined_on": part.joined.map(|(layer, _)| layer),
-        })).collect::<Vec<_>>(),
+        "parts": parts_json(&report.parts),
         "erased": report.erased.slabs.iter().map(|slab| serde_json::json!({
             "bottom_mm": slab.bottom_mm,
             "rects": slab.rects.iter()
                 .map(|r| [r.x0_mm, r.y0_mm, r.x1_mm, r.y1_mm])
                 .collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
-        "filled": refilled.map(|refilled| serde_json::json!({
+        "filled": passes.refilled.map(|refilled| serde_json::json!({
             "cavities": refilled.cavities,
             "volume_mm3": (refilled.volume_mm3 * 1e3).round() / 1e3,
             "findings": refilled.report.findings,
             "summary": summary(&refilled.report.findings),
         })),
-        "fixed_all": fixed_all.map(|fixed| serde_json::json!({
+        "fixed_all": passes.fixed_all.map(|fixed| serde_json::json!({
             "cavities": fixed.cavities,
             "supports_not_added": fixed.supports,
             "findings": fixed.report.findings,
             "summary": summary(&fixed.report.findings),
+        })),
+        "added_supports": passes.added.map(|added| serde_json::json!({
+            "diameter_mm": added.diameter_mm,
+            "tips": added.tips.iter().map(|outcome| serde_json::json!({
+                "island": outcome.tip.island,
+                "layer": outcome.tip.layer,
+                "at_mm": [outcome.tip.at.x_mm, outcome.tip.at.y_mm, outcome.tip.at.z_mm],
+                "placed_at_mm": outcome.placed_at,
+                "refused": outcome.refused,
+            })).collect::<Vec<_>>(),
+            "too_narrow": added.too_narrow,
+            "timings_ms": {
+                "placing": millis(added.placing),
+                "drawing": millis(added.drawing),
+                "slicing": millis(added.slicing),
+                "reviewing": millis(added.reviewing),
+            },
+            "islands": added.report.islands.iter()
+                .map(|island| island.first_layer)
+                .collect::<Vec<_>>(),
+            "parts": parts_json(&added.report.parts),
+            "findings": added.report.findings,
+            "summary": summary(&added.report.findings),
         })),
         "regions": {
             "solid": stats.solid,

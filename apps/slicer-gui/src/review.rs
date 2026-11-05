@@ -34,7 +34,7 @@ use sc_geom::df_supports::{SupportContact, recommended_lift_mm};
 use sc_print_glue::SlicedPlate;
 use sc_review::{
     CavityFill, Finding, Island, ReviewInput, ReviewLeaf, ReviewOptions, SweepWatch, TipCone,
-    erase_stack, review_with,
+    TipPlan, TipPlanOptions, erase_stack, plan_tips, review_with,
 };
 use sc_scene::NodeId;
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
@@ -57,6 +57,8 @@ pub(crate) enum ReviewOutcome {
         erased: CavityFill,
         /// Every island, as a placement of supports needs it (#437).
         islands: Vec<Island>,
+        /// The tips those islands need, `None` when no set can take them.
+        tips: Option<TipPlan>,
         /// How long the review took, the sweep included.
         took: Duration,
     },
@@ -72,6 +74,8 @@ pub(crate) enum ReviewOutcome {
 pub(crate) struct SupportSet {
     pub(crate) leaf: NodeId,
     pub(crate) contacts: Vec<SupportContact>,
+    /// The contact diameter of a tip added to it.
+    pub(crate) tip_diameter_mm: f64,
 }
 
 /// The leaves the review reads: every sliced leaf but those `sets` know as
@@ -201,6 +205,7 @@ fn review_stacks(
             match review_with(&input, &ReviewOptions::default(), watch) {
                 None => ReviewOutcome::Cancelled,
                 Some(report) => ReviewOutcome::Reviewed {
+                    tips: tip_plan(&report.islands, supports.sets),
                     findings: report.findings,
                     fills: report.fills,
                     erased: report.erased,
@@ -210,6 +215,16 @@ fn review_stacks(
             },
         )
     })
+}
+
+/// The tips `islands` need, of the widest contact among `sets`, which is
+/// the one that has to fit; `None` without a set to add them to.
+fn tip_plan(islands: &[Island], sets: &[SupportSet]) -> Option<TipPlan> {
+    let diameter_mm = sets
+        .iter()
+        .map(|set| set.tip_diameter_mm)
+        .reduce(f64::max)?;
+    Some(plan_tips(islands, &TipPlanOptions::for_tip(diameter_mm)))
 }
 
 /// [`review_stacks`] for a test that slices with its own profile, nobody
@@ -329,6 +344,7 @@ mod review_tests {
         let sets = [SupportSet {
             leaf: leaves[1].leaf(),
             contacts: Vec::new(),
+            tip_diameter_mm: 0.3,
         }];
         let models = review_leaves(&leaves, &sets);
         assert_eq!(models.len(), 1);

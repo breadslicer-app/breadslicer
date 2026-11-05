@@ -844,6 +844,7 @@ mod capture_tests {
 
     fn clean_review() -> ReviewOutcome {
         ReviewOutcome::Reviewed {
+            tips: None,
             findings: Vec::new(),
             fills: Vec::new(),
             erased: CavityFill::default(),

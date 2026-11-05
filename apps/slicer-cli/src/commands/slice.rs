@@ -223,32 +223,41 @@ pub(crate) fn load_and_slice(
         let pitch_mm = [pitch.x.value() / 1000.0, pitch.y.value() / 1000.0];
         sets.extend(add_df_supports(&mut scene, layer_height_mm, pitch_mm)?);
     }
+    let plate = slice_scene(&scene, printer, material, options)?;
+    Ok(SlicedScene { scene, plate, sets })
+}
+
+/// Slices `scene` as it stands.
+pub(crate) fn slice_scene(
+    scene: &Scene,
+    printer: &PrinterProfile,
+    material: &EffectiveMaterial,
+    options: &PlateOptions,
+) -> Result<SlicedPlate> {
     let params = SlicingParams {
         layer_height_request: options.layer_height,
         first_layer_height: options.first_layer_height,
         aa_level: options.aa,
     };
-    let plate = match slice_plate(
-        &scene,
+    match slice_plate(
+        scene,
         printer,
         material,
         &params,
-        &support_owners(&scene),
+        &support_owners(scene),
         &CancelToken::new(),
         |_| {},
     ) {
-        Ok(SliceRun::Completed(plate)) => plate,
+        Ok(SliceRun::Completed(plate)) => Ok(plate),
         // Unreachable with the fresh, never-cancelled token above.
-        Ok(SliceRun::Cancelled) => return Err(anyhow!("slicing was cancelled")),
-        Err(SlicePlateError::Prepare(err)) => return Err(describe_unsliceable(err)),
+        Ok(SliceRun::Cancelled) => Err(anyhow!("slicing was cancelled")),
+        Err(SlicePlateError::Prepare(err)) => Err(describe_unsliceable(err)),
         Err(SlicePlateError::Engine(err @ SliceSceneError::LeavesValidationFailed(_))) => {
             report_validation_failure(&err, options.verbose, &mut std::io::stderr());
-            return Err(anyhow!("mesh validation failed; slicing aborted"));
+            Err(anyhow!("mesh validation failed; slicing aborted"))
         }
-        Err(SlicePlateError::Engine(other)) => return Err(other.into()),
-    };
-
-    Ok(SlicedScene { scene, plate, sets })
+        Err(SlicePlateError::Engine(other)) => Err(other.into()),
+    }
 }
 
 /// The scene's support leaves, told apart by their name. The scale

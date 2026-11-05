@@ -32,6 +32,9 @@
 //! a stack that, merged with the plate, leaves those pixels out of the
 //! preview and the printer file, on this same slice.
 //!
+//! An island's [`ReviewReport::islands`] entry has its pixels, layer by layer:
+//! [`plan_tips`] turns the list into the points to put a tip on (#437).
+//!
 //! A small sealed trap is offered a fill (#132, #431): the report carries
 //! its pixels as a [`CavityFill`], and [`fill_stack`] turns the fills kept
 //! from one review into a contour stack that cures them solid on the next
@@ -48,6 +51,7 @@ pub mod runner;
 pub mod runs;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+pub mod tip_plan;
 pub mod tips;
 pub mod union_find;
 
@@ -66,5 +70,6 @@ pub use runner::{
     ReviewContext, ReviewOptions, ReviewReport, ReviewTimings, check_regions, review, review_with,
 };
 pub use runs::Run;
+pub use tip_plan::{IslandLayer, IslandPixels, PlannedTip, TipPlan, TipPlanOptions, plan_tips};
 pub use tips::TipCone;
 pub use union_find::{Groups, RegionRef, UnionFind};

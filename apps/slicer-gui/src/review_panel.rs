@@ -10,7 +10,7 @@
 //! and centres the camera on its focus point. A finding with a suggested fix
 //! offers it where the app's own tools apply it as one undoable edit:
 //! "Add support here" through the Supports tab's hand tool
-//! ([`DfSupportRun::add_supports_at`]). A suction cup, a cavity of a
+//! ([`DfSupportRun::add_tips_at`]). A suction cup, a cavity of a
 //! millilitre or more and any cavity in a model hollowed in this window
 //! offer "Add drain holes…", which opens the Hollow tab's drain tool on that
 //! model, so the person picks where the holes go (#158); a hollow with no
@@ -41,8 +41,8 @@
 //! "Fix all" (#156) resolves in one go every finding the app can fix by
 //! itself, then slices again so the new review shows the result:
 //!
-//! - islands get a support at their suggested point, all of them in one
-//!   undoable edit ([`DfSupportRun::add_supports_at`]);
+//! - islands get their tips ([`sc_review::plan_tips`]), all of them in one
+//!   undoable edit ([`DfSupportRun::start_supports_at`]);
 //! - the small resin traps are marked to fill, as "Fill all small traps"
 //!   does.
 //!
@@ -70,6 +70,16 @@
 //! and did not hold, and not where the engine refused one on the scene as
 //! it stands.
 //!
+//! An island gets what [`sc_review::plan_tips`] says, by its row, by Fix All
+//! and by the question that ends a slice (#437): "N islands have no
+//! support. Add supports?". The question comes only when the list has an
+//! island a set can take tips for. Yes is a Fix All run of the islands alone
+//! ([`RunKind::Islands`]): the tips, then the slice, and Cancel, Undo or an
+//! edit meanwhile take it back the same way. Once it is over, one Undo also
+//! puts back the slice and the review of before the Yes. No leaves the list
+//! as it is. An island that never gets as wide as a tip offers nothing, and
+//! its row says so.
+//!
 //! Everything else stays as it is: a hollow, a suction cup or a large cavity,
 //! which only drain holes open, the output checks, a model in the raft and
 //! the supports' own findings. On the review that follows, each finding left
@@ -84,13 +94,17 @@ use std::time::{Duration, Instant};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::SceneSpatial;
-use sc_review::{CavityFill, CheckKind, Finding, Severity, SuggestedFix};
+use sc_review::{
+    CavityFill, CheckKind, Finding, Island, PlatePoint, Severity, SuggestedFix, TipPlan,
+};
 use sc_scene::NodeId;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::df_support_run::{
-    DfSupportRun, EditDropped, EditWatch, HandEdit, PointsEdit, Refusals, raft_lift_label,
+    DfSupportRun, EditDropped, EditWatch, HandEdit, OtherPoints, PointsEdit, Refusals,
+    raft_lift_label,
 };
+use crate::error_dialog::InfoTexts;
 use crate::hollow_run::HollowRun;
 use crate::i18n::ctr;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
@@ -224,6 +238,8 @@ pub(crate) struct ReviewPanel {
     /// Fix All's supports being placed off the UI thread (#390): how far
     /// the engine is, and the timer that shows it.
     placing: RefCell<Option<Arc<EditWatch>>>,
+    /// What a Yes to the question replaced, for its Undo (#437).
+    before_yes: RefCell<Option<BeforeYes>>,
     fix_poll: slint::Timer,
     /// Starts a slice without asking to overwrite the held one, and tells
     /// whether one started: Fix All promises one. Set by the Slice driver.
@@ -234,9 +250,30 @@ pub(crate) struct ReviewPanel {
     scene_events: RefCell<Option<SceneSubscription>>,
 }
 
+/// What a run does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunKind {
+    /// Everything Fix All fixes.
+    FixAll,
+    /// The tips of the islands alone: a Yes to the question after a slice
+    /// (#437).
+    Islands,
+}
+
+/// What a Yes to the question replaced, kept once its run is over: Undo puts
+/// it back, on the scene it was made for.
+struct BeforeYes {
+    slice: SliceResult,
+    held: Option<HeldReview>,
+    marks: ReviewMarks<Vec<ModelPose>>,
+}
+
 /// A Fix All press being carried out (#163): one pass, or with "Repeat
-/// until clean" up to [`REPEAT_PASSES`].
+/// until clean" up to [`REPEAT_PASSES`]. A Yes to the question after a slice
+/// runs the same way, in one pass (#437).
 struct FixRun {
+    /// What it does.
+    kind: RunKind,
     /// The pass being made, from 1.
     pass: usize,
     /// The most passes this run makes.
@@ -275,8 +312,9 @@ enum AfterPass {
 
 impl FixRun {
     /// A run of up to `passes` passes, the marks being `marks_before`.
-    fn new(passes: usize, marks_before: ReviewMarks<Vec<ModelPose>>) -> Self {
+    fn new(kind: RunKind, passes: usize, marks_before: ReviewMarks<Vec<ModelPose>>) -> Self {
         Self {
+            kind,
             pass: 1,
             passes,
             entry: None,
@@ -314,6 +352,7 @@ impl ReviewPanel {
             fix_all_slicing: Cell::new(false),
             run: RefCell::new(None),
             placing: RefCell::new(None),
+            before_yes: RefCell::new(None),
             fix_poll: slint::Timer::default(),
             reslice: RefCell::new(None),
             bus,
@@ -576,14 +615,22 @@ impl ReviewPanel {
             return FixAllPlan::default();
         };
         let ReviewOutcome::Reviewed {
-            findings, fills, ..
+            findings,
+            fills,
+            islands,
+            tips,
+            ..
         } = &held.outcome
         else {
             return FixAllPlan::default();
         };
         let marks = self.marks.borrow();
         let now = self.document.scene_revision();
-        plan_fix_all(findings, fills, &held.hollows, |i| {
+        let island_tips = IslandTips {
+            islands,
+            plan: tips.as_ref(),
+        };
+        plan_fix_all(findings, fills, &held.hollows, island_tips, |i| {
             let key = FindingKey::of(&findings[i]);
             held.fixed.contains(&i)
                 || marks.is_left(&key)
@@ -593,18 +640,87 @@ impl ReviewPanel {
     }
 
     /// [`Self::fix_all_plan`] for the run's next pass: without supports
-    /// once a pass found none to edit.
+    /// once a pass found none to edit, and only them for a Yes.
     fn pass_plan(&self) -> FixAllPlan {
         let mut plan = self.fix_all_plan();
-        if self
-            .run
-            .borrow()
-            .as_ref()
-            .is_some_and(|run| run.supports_off)
-        {
+        let run = self.run.borrow();
+        if run.as_ref().is_some_and(|run| run.supports_off) {
             plan.supports.clear();
+            plan.others.clear();
+        }
+        if run.as_ref().is_some_and(|run| run.kind == RunKind::Islands) {
+            plan.patches.clear();
         }
         plan
+    }
+
+    /// The tips the question after a slice would place.
+    fn islands_plan(&self) -> FixAllPlan {
+        let mut plan = self.fix_all_plan();
+        plan.patches.clear();
+        plan
+    }
+
+    /// Whether the held review knows which tips its islands need: a set can
+    /// take them.
+    fn tips_planned(&self) -> bool {
+        self.held.borrow().as_ref().is_some_and(|held| {
+            matches!(&held.outcome, ReviewOutcome::Reviewed { tips: Some(_), .. })
+                && self.fixes_apply(held)
+        })
+    }
+
+    /// Ends a slice with the question (#437), when the list has an island a
+    /// set can take tips for.
+    fn ask_for_supports(self: &Rc<Self>) {
+        if self.fixing() || !self.tips_planned() {
+            return;
+        }
+        let islands = self.islands_plan().first_tips().count();
+        if islands == 0 {
+            return;
+        }
+        crate::breadcrumbs::note(&format!("review: {islands} islands, asking for supports"));
+        let weak = Rc::downgrade(self);
+        self.ctrl.dialogs().show_add_supports(
+            move || InfoTexts {
+                heading: ctr!(
+                    "AddSupportsDialog",
+                    "One island has no support.",
+                    "{n} islands have no support.",
+                    islands
+                ),
+                message: ctr!(
+                    "AddSupportsDialog",
+                    "Add supports? The tips go under the islands, the plate is sliced again, and one Undo takes it all back."
+                ),
+                details: SharedString::new(),
+            },
+            move || {
+                if let Some(panel) = weak.upgrade() {
+                    panel.add_island_supports();
+                }
+            },
+        );
+    }
+
+    /// Yes to the question: the tips of the islands, in one undoable edit,
+    /// then a new slice. It runs as Fix All does ([`Self::start_pass`]).
+    fn add_island_supports(self: &Rc<Self>) {
+        let slicing = self
+            .ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_slicing_in_progress());
+        if self.fixing() || slicing {
+            return;
+        }
+        if self.markable_models().is_none() || self.islands_plan().supports.is_empty() {
+            return;
+        }
+        crate::breadcrumbs::note("review: adding the islands' supports");
+        let marks = self.marks.borrow().clone();
+        *self.run.borrow_mut() = Some(FixRun::new(RunKind::Islands, 1, marks));
+        self.start_pass();
     }
 
     /// Fix All (#156): adds the supports in one undoable edit, marks the
@@ -630,7 +746,8 @@ impl ReviewPanel {
             1
         };
         crate::breadcrumbs::note(&format!("review: fix all, up to {passes} passes"));
-        *self.run.borrow_mut() = Some(FixRun::new(passes, self.marks.borrow().clone()));
+        let marks = self.marks.borrow().clone();
+        *self.run.borrow_mut() = Some(FixRun::new(RunKind::FixAll, passes, marks));
         self.start_pass();
     }
 
@@ -650,11 +767,13 @@ impl ReviewPanel {
             run.pass_started = Instant::now();
         }
         let points = plan.support_points();
+        let others = plan.support_others();
         let generation = self.held.borrow().as_ref().map(|held| held.generation);
         let work = FixAllWork {
             plan,
             models,
             points,
+            others,
             generation,
             revision: self.document.scene_revision(),
         };
@@ -682,7 +801,11 @@ impl ReviewPanel {
             }
         };
         let join = self.run.borrow().as_ref().and_then(|run| run.entry);
-        match self.supports.start_supports_at(&work.points, join, landing) {
+        let others = work.others.clone();
+        match self
+            .supports
+            .start_supports_at(&work.points, others, join, landing)
+        {
             Ok(watch) => {
                 *self.placing.borrow_mut() = Some(watch);
                 let weak = Rc::downgrade(self);
@@ -711,14 +834,18 @@ impl ReviewPanel {
         if plan.is_empty() {
             return;
         }
-        *self.run.borrow_mut() = Some(FixRun::new(1, self.marks.borrow().clone()));
+        let marks = self.marks.borrow().clone();
+        *self.run.borrow_mut() = Some(FixRun::new(RunKind::FixAll, 1, marks));
         let points = plan.support_points();
-        let supports = (!points.is_empty()).then(|| self.supports.add_supports_at(&points));
+        let others = plan.support_others();
+        let supports =
+            (!points.is_empty()).then(|| self.supports.add_tips_at(&points, others.clone()));
         let generation = self.held.borrow().as_ref().map(|held| held.generation);
         let work = FixAllWork {
             plan,
             models,
             points,
+            others,
             generation,
             revision: self.document.scene_revision(),
         };
@@ -772,7 +899,7 @@ impl ReviewPanel {
         self.stop_placing();
         self.show_pass(None);
         let Some(run) = self.run.borrow_mut().take() else {
-            self.push(Some(dropped_message(reason)));
+            self.push(Some(dropped_message(RunKind::FixAll, reason)));
             return;
         };
         let taken_back = match run.entry {
@@ -800,7 +927,7 @@ impl ReviewPanel {
             "review: fix all taken back at pass {} ({reason:?})",
             run.pass
         ));
-        self.push(Some(dropped_message(reason)));
+        self.push(Some(dropped_message(run.kind, reason)));
     }
 
     /// The slice window's line for the run's pass, or none.
@@ -900,7 +1027,7 @@ impl ReviewPanel {
             };
             {
                 let mut marks = self.marks.borrow_mut();
-                for &(i, at) in &plan.supports {
+                for (i, at) in plan.first_tips() {
                     if let Some(why) = refusal_at(at) {
                         let key =
                             FindingKey::of(&self.finding(i as i32).expect("a planned finding"));
@@ -921,7 +1048,7 @@ impl ReviewPanel {
                     if let Some(run) = self.run.borrow_mut().as_mut() {
                         run.entry = Some(self.document.scene_revision());
                     }
-                    for &(i, at) in &plan.supports {
+                    for (i, at) in plan.first_tips() {
                         if refusal_at(at).is_none() {
                             let key =
                                 FindingKey::of(&self.finding(i as i32).expect("a planned finding"));
@@ -1108,6 +1235,13 @@ impl ReviewPanel {
                 "review: fix all done after {made} passes, {:?}",
                 run.started.elapsed()
             ));
+            if let (RunKind::Islands, Some(slice)) = (run.kind, run.slice_before) {
+                *self.before_yes.borrow_mut() = Some(BeforeYes {
+                    slice,
+                    held: run.held_before,
+                    marks: run.marks_before,
+                });
+            }
         }
         AfterPass::Done(made)
     }
@@ -1152,8 +1286,10 @@ impl ReviewPanel {
     }
 
     /// Shows the review of the slice the document has just stored; for the
-    /// slice a Fix All pass asked for, goes on with the run (#163).
+    /// slice a Fix All pass asked for, goes on with the run (#163). Any other
+    /// slice ends with the question about its islands (#437).
     pub(crate) fn show(self: &Rc<Self>, outcome: ReviewOutcome) {
+        self.before_yes.borrow_mut().take();
         let hollows = match &outcome {
             ReviewOutcome::Reviewed { findings, .. } => findings
                 .iter()
@@ -1177,7 +1313,14 @@ impl ReviewPanel {
                 .borrow_mut()
                 .restore_decisions(&self.document.review_decisions(), models);
         }
-        let after_fix_all = self.fix_all_slicing.replace(false);
+        let by_run = self.fix_all_slicing.replace(false);
+        let yes = by_run
+            && self
+                .run
+                .borrow()
+                .as_ref()
+                .is_some_and(|run| run.kind == RunKind::Islands);
+        let after_fix_all = by_run && !yes;
         let left = match &outcome {
             ReviewOutcome::Reviewed { findings, .. } => findings.len(),
             ReviewOutcome::Cancelled | ReviewOutcome::Failed(_) => 0,
@@ -1195,7 +1338,7 @@ impl ReviewPanel {
         }
         // A new review: no finding is selected, nothing is highlighted.
         self.ctrl.set_review_highlight(None);
-        let passes = if after_fix_all {
+        let passes = if by_run {
             match self.after_pass_slice() {
                 AfterPass::Done(passes) => passes,
                 // The next pass is on its way, or the run said why it
@@ -1206,6 +1349,10 @@ impl ReviewPanel {
         } else {
             0
         };
+        if yes {
+            self.push(Some(self.after_yes()));
+            return;
+        }
         let nothing_left = self.fix_all_plan().is_empty();
         self.push((after_fix_all && left > 0).then(|| match (passes > 1, nothing_left) {
             (false, true) => ctr!(
@@ -1227,6 +1374,64 @@ impl ReviewPanel {
                 passes
             ),
         }));
+        if !by_run {
+            self.ask_for_supports();
+        }
+    }
+
+    /// What the card says of the review that follows a Yes.
+    fn after_yes(&self) -> SharedString {
+        let held = self.held.borrow();
+        let islands = match held.as_ref().map(|held| &held.outcome) {
+            Some(ReviewOutcome::Reviewed { findings, .. }) => {
+                let marks = self.marks.borrow();
+                findings
+                    .iter()
+                    .filter(|finding| finding.check == CheckKind::Island)
+                    .filter(|finding| !marks.is_left(&FindingKey::of(finding)))
+                    .count()
+            }
+            _ => 0,
+        };
+        if islands == 0 {
+            ctr!(
+                "Review",
+                "The supports are in: no island is left without one."
+            )
+        } else {
+            ctr!(
+                "Review",
+                "The supports are in. One island is still without one; its row says why.",
+                "The supports are in. {n} islands are still without one; their rows say why.",
+                islands
+            )
+        }
+    }
+
+    /// Puts back the slice and the review of before a Yes once Undo took its
+    /// supports out of the scene (#437). Says whether it did.
+    fn undo_yes(&self) -> bool {
+        let back = self.before_yes.borrow().as_ref().is_some_and(|before| {
+            !self
+                .document
+                .slice_geometry_changed(before.slice.params.geometry)
+        });
+        if !back {
+            return false;
+        }
+        let Some(before) = self.before_yes.borrow_mut().take() else {
+            return false;
+        };
+        *self.marks.borrow_mut() = before.marks;
+        // The document drops the held review with its slice.
+        self.document.set_slice_result(before.slice);
+        if let Some(mut held) = before.held {
+            held.generation = self.document.slice_generation();
+            *self.held.borrow_mut() = Some(held);
+        }
+        crate::breadcrumbs::note("review: the slice of before the Yes is back");
+        self.push(None);
+        true
     }
 
     fn on_scene_event(&self, event: SceneEvent) {
@@ -1242,6 +1447,7 @@ impl ReviewPanel {
                     // Another scene: nothing of a Fix All run applies to it.
                     self.stop_placing();
                     self.run.borrow_mut().take();
+                    self.before_yes.borrow_mut().take();
                     self.show_pass(None);
                 }
                 let current = self.document.slice_generation();
@@ -1266,6 +1472,9 @@ impl ReviewPanel {
                 self.push(None);
             }
             SceneEvent::Mutated | SceneEvent::Restructured | SceneEvent::UndoStackChanged => {
+                if self.undo_yes() {
+                    return;
+                }
                 // Back on the sliced geometry (an undo of the fixes), the fixes
                 // are undone too.
                 if !self.is_stale()
@@ -1321,16 +1530,25 @@ impl ReviewPanel {
             None => (CardState::NotReviewed, Vec::new(), String::new(), -1, None),
             Some(held) => match &held.outcome {
                 ReviewOutcome::Reviewed {
-                    findings, fills, ..
+                    findings,
+                    fills,
+                    islands,
+                    tips,
+                    ..
                 } => {
                     let fixable = self.fixes_apply(held);
-                    let row_marks = RowMarks::of(
+                    let mut row_marks = RowMarks::of(
                         findings,
                         &marks,
                         fixable,
                         self.notes_open.get(),
                         self.document.scene_revision(),
                     );
+                    let island_tips = IslandTips {
+                        islands,
+                        plan: tips.as_ref(),
+                    };
+                    row_marks.no_tip = island_tips.too_narrow(findings);
                     let findings = &no_support_fits(findings, &row_marks);
                     // A finding fixed since the slice leaves the list (the
                     // next slice shows it again if the fix did not hold).
@@ -1463,7 +1681,26 @@ impl ReviewPanel {
         let message = match finding.fix {
             Some(SuggestedFix::AddSupport { at }) => {
                 let key = FindingKey::of(&finding);
-                match self.supports.add_supports_at(&[world(at)]) {
+                let tips = self.tips_of(&finding, at);
+                let Some((first, _)) = tips.first() else {
+                    return;
+                };
+                let first = *first;
+                let points: Vec<[f32; 3]> = tips.iter().map(|tip| tip.0).collect();
+                let others: Vec<Vec<[f32; 3]>> = tips.into_iter().map(|tip| tip.1).collect();
+                match self.supports.add_tips_at(&points, Arc::new(others)) {
+                    // The tip that starts it stands, or none of it holds.
+                    (HandEdit::Applied, refused) if refused.iter().any(|(i, _)| *i == 0) => {
+                        let why = refused[0].1.clone();
+                        if let Some(models) = self.markable_models() {
+                            let on = self.document.scene_revision();
+                            self.marks.borrow_mut().refuse(key, &why, on, &models);
+                        }
+                        crate::breadcrumbs::note(&format!(
+                            "review: first tip refused at {first:?}"
+                        ));
+                        Some(ctr!("Review", "The support could not be added: {}", why))
+                    }
                     (HandEdit::Applied, _) => {
                         if let Some(models) = self.markable_models() {
                             self.marks.borrow_mut().supported(key, &models);
@@ -1531,6 +1768,20 @@ impl ReviewPanel {
         self.push(message);
     }
 
+    /// The tips of the island `finding`, whose fix points at `at`, each with
+    /// the points it can fall back on.
+    fn tips_of(&self, finding: &Finding, at: PlatePoint) -> Vec<FindingTip> {
+        let held = self.held.borrow();
+        match held.as_ref().map(|held| &held.outcome) {
+            Some(ReviewOutcome::Reviewed { islands, tips, .. }) => IslandTips {
+                islands,
+                plan: tips.as_ref(),
+            }
+            .of(finding, at),
+            _ => vec![(world(at), Vec::new())],
+        }
+    }
+
     /// The second fix of a model inside the raft (#131): turns the raft off
     /// in the support options.
     fn turn_raft_off(&self, id: i32) {
@@ -1566,7 +1817,7 @@ impl ReviewPanel {
 
 /// A plate point as the scene's world coordinates: the same frame, in single
 /// precision.
-fn world(point: sc_review::PlatePoint) -> [f32; 3] {
+fn world(point: PlatePoint) -> [f32; 3] {
     [point.x_mm, point.y_mm, point.z_mm].map(|c| c as f32)
 }
 
@@ -1695,31 +1946,118 @@ fn review_rows(
     rows
 }
 
+/// A tip of an island, and the points it can fall back on.
+type FindingTip = ([f32; 3], Vec<[f32; 3]>);
+
+/// What the review knows of where its islands' tips go (#437).
+#[derive(Clone, Copy, Debug, Default)]
+struct IslandTips<'r> {
+    islands: &'r [Island],
+    /// The tips of `islands`, `None` with no set to add them to.
+    plan: Option<&'r TipPlan>,
+}
+
+impl IslandTips<'_> {
+    /// The index in `islands` of the island `finding`, whose fix points at
+    /// `at`.
+    fn island(&self, finding: &Finding, at: PlatePoint) -> Option<usize> {
+        self.islands
+            .iter()
+            .position(|island| island.first_layer == finding.first_layer && island.at == at)
+    }
+
+    /// The tips of the finding whose fix points at `at`: the one point, for
+    /// a finding of no island or a plate with no set.
+    fn of(&self, finding: &Finding, at: PlatePoint) -> Vec<FindingTip> {
+        match (self.plan, self.island(finding, at)) {
+            (Some(plan), Some(island)) => plan
+                .of(island)
+                .map(|tip| {
+                    (
+                        world(tip.at),
+                        tip.others.iter().copied().map(world).collect(),
+                    )
+                })
+                .collect(),
+            _ => vec![(world(at), Vec::new())],
+        }
+    }
+
+    /// The findings of `findings` whose island no tip fits on.
+    fn too_narrow(&self, findings: &[Finding]) -> BTreeSet<usize> {
+        let Some(plan) = self.plan else {
+            return BTreeSet::new();
+        };
+        findings
+            .iter()
+            .enumerate()
+            .filter(|(_, finding)| match finding.fix {
+                Some(SuggestedFix::AddSupport { at }) => self
+                    .island(finding, at)
+                    .is_some_and(|island| plan.too_narrow.contains(&island)),
+                _ => false,
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+}
+
 /// What Fix All does with a review (#156): the supports to add, by finding
-/// and point, and the pixels to mark for the next slice, by finding.
+/// and point, an island's first tip first, and the pixels to mark for the
+/// next slice, by finding.
 #[derive(Debug, Default)]
 struct FixAllPlan {
     supports: Vec<(usize, [f32; 3])>,
+    /// What each of `supports` can fall back on, by its place there.
+    others: Vec<Vec<[f32; 3]>>,
     patches: Vec<(usize, CavityFill)>,
 }
 
 impl FixAllPlan {
-    /// Where the supports go, each point once: an island that is also a
-    /// part above it is the same spot, found twice.
-    fn support_points(&self) -> Vec<[f32; 3]> {
-        let mut points: Vec<[f32; 3]> = Vec::new();
-        for &(_, at) in &self.supports {
-            let twin = points.iter().any(|other| same_point(*other, at));
+    /// The places in `supports` of the points to place, each point once: an
+    /// island that is also a part above it is the same spot, found twice.
+    fn unique_supports(&self) -> Vec<usize> {
+        let mut unique: Vec<usize> = Vec::new();
+        for (k, &(_, at)) in self.supports.iter().enumerate() {
+            let twin = unique
+                .iter()
+                .any(|&other| same_point(self.supports[other].1, at));
             if !twin {
-                points.push(at);
+                unique.push(k);
             }
         }
-        points
+        unique
+    }
+
+    /// Where the supports go, each point once.
+    fn support_points(&self) -> Vec<[f32; 3]> {
+        let unique = self.unique_supports();
+        unique.iter().map(|&k| self.supports[k].1).collect()
+    }
+
+    /// What each of [`Self::support_points`] can fall back on.
+    fn support_others(&self) -> OtherPoints {
+        let others = self.unique_supports().into_iter();
+        Arc::new(
+            others
+                .map(|k| self.others.get(k).cloned().unwrap_or_default())
+                .collect(),
+        )
+    }
+
+    /// The first tip of each finding that gets supports: what holds it or
+    /// not.
+    fn first_tips(&self) -> impl Iterator<Item = (usize, [f32; 3])> + '_ {
+        self.supports
+            .iter()
+            .enumerate()
+            .filter(|(k, (i, _))| !self.supports[..*k].iter().any(|(other, _)| other == i))
+            .map(|(_, support)| *support)
     }
 
     /// How many findings it fixes.
     fn len(&self) -> usize {
-        self.supports.len() + self.patches.len()
+        self.first_tips().count() + self.patches.len()
     }
 
     fn is_empty(&self) -> bool {
@@ -1735,6 +2073,8 @@ struct FixAllWork {
     models: Vec<ModelPose>,
     /// Where the supports go, each point once.
     points: Vec<[f32; 3]>,
+    /// What each of them can fall back on.
+    others: OtherPoints,
     /// The slice generation of the review the plan was made from.
     generation: Option<u64>,
     /// The scene the plan's supports are placed on: a refusal is kept with
@@ -1742,9 +2082,27 @@ struct FixAllWork {
     revision: SceneRevision,
 }
 
-/// What the card says of a Fix All run dropped before its supports were
-/// in: nothing of it was made.
-fn dropped_message(reason: EditDropped) -> SharedString {
+/// What the card says of a run dropped before its supports were in: nothing
+/// of it was made.
+fn dropped_message(kind: RunKind, reason: EditDropped) -> SharedString {
+    if kind == RunKind::Islands {
+        return match reason {
+            EditDropped::Cancelled => {
+                ctr!(
+                    "Review",
+                    "Adding supports was cancelled; nothing was changed."
+                )
+            }
+            EditDropped::Undone => ctr!(
+                "Review",
+                "Adding supports was undone before it was done; nothing was changed."
+            ),
+            EditDropped::SceneChanged => ctr!(
+                "Review",
+                "The scene changed while the supports were added; nothing was changed."
+            ),
+        };
+    }
     match reason {
         EditDropped::Cancelled => ctr!("Review", "Fix All was cancelled; nothing was changed."),
         EditDropped::Undone => ctr!(
@@ -1759,14 +2117,15 @@ fn dropped_message(reason: EditDropped) -> SharedString {
 }
 
 /// Fix All's plan for `findings` and the `fills` their fixes name, without
-/// the findings `skip` names: a support under every island, and a fill in
-/// every small resin trap outside the `hollows` made here (as "Fill all small
-/// traps"). Everything else is left, and with it every hollow, suction cup
-/// and large cavity (#431).
+/// the findings `skip` names: the tips of every island, as `tips` says, and
+/// a fill in every small resin trap outside the `hollows` made here (as "Fill
+/// all small traps"). Everything else is left, and with it every hollow,
+/// suction cup and large cavity (#431).
 fn plan_fix_all(
     findings: &[Finding],
     fills: &[CavityFill],
     hollows: &[Option<usize>],
+    tips: IslandTips<'_>,
     skip: impl Fn(usize) -> bool,
 ) -> FixAllPlan {
     let mut plan = FixAllPlan::default();
@@ -1775,7 +2134,12 @@ fn plan_fix_all(
             continue;
         }
         match finding.fix {
-            Some(SuggestedFix::AddSupport { at }) => plan.supports.push((i, world(at))),
+            Some(SuggestedFix::AddSupport { at }) => {
+                for (point, others) in tips.of(finding, at) {
+                    plan.supports.push((i, point));
+                    plan.others.push(others);
+                }
+            }
             // Small traps, as "Fill all small traps".
             Some(SuggestedFix::Fill { .. }) => {
                 let cavity = fill_of(finding, hollow_drains(hollows, i));
@@ -1892,6 +2256,8 @@ struct RowMarks {
     /// Islands no support reaches that never grow larger than
     /// [`NO_SUPPORT_NOTE_MM2`]: notes, not warnings (#163).
     too_small: BTreeSet<usize>,
+    /// Islands that never get as wide as a tip: none goes on them (#437).
+    no_tip: BTreeSet<usize>,
     /// Whether fills can be marked: the models stand as sliced.
     fixable: bool,
     /// Whether the notes are unfolded.
@@ -1976,7 +2342,9 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
                         | CheckKind::SuctionCup
                         | CheckKind::SurfaceGrowth
                 );
-            if marks.held_back.contains(&i) && row.fix == FixKind::AddSupport as i32 {
+            if (marks.held_back.contains(&i) || marks.no_tip.contains(&i))
+                && row.fix == FixKind::AddSupport as i32
+            {
                 row.fix = FixKind::None as i32;
             }
             if let (true, Some(mm2)) = (marks.too_small.contains(&i), finding.largest_mm2) {
@@ -1999,6 +2367,11 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
                         why
                     )
                 };
+            } else if marks.no_tip.contains(&i) {
+                row.remains = ctr!(
+                    "Review",
+                    "It never gets as wide as a support's tip, so none goes on it. Place one by hand in the Supports tab, or leave it."
+                );
             } else if marks.unheld.contains(&i) {
                 row.remains = ctr!(
                     "Review",

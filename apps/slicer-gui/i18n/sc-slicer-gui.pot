@@ -273,11 +273,6 @@ msgctxt "MenuBar"
 msgid "Save As…"
 msgstr ""
 
-#: ui/main-window.slint:718 ui/main-window.slint:2029
-msgctxt "MenuBar"
-msgid "Save As 3MF…"
-msgstr ""
-
 #: ui/main-window.slint:726 ui/main-window.slint:2037
 msgctxt "MenuBar"
 msgid "Previous Versions…"
@@ -4791,9 +4786,7 @@ msgstr ""
 
 #: src/scene_save.rs:162
 msgctxt "ErrorDialog"
-msgid ""
-"Project files are saved as .bread files. To save a 3MF project, use Save As "
-"3MF."
+msgid "Project files are saved as .bread files."
 msgstr ""
 
 #: src/scene_save.rs:165

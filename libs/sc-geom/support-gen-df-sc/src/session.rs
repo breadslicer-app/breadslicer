@@ -78,6 +78,12 @@ const ON_BRACE_MM: f64 = 0.1;
 /// How far from a support's axis a point of the brace tool may land and
 /// still take that support (#3): the removal's reach.
 const BRACE_REACH_MM: f64 = REMOVE_REACH_MM;
+/// How far "Add support here", Fix All and the tips of an island may move a
+/// check's point to one the engine can hold
+/// ([`DfSupportSession::add_trunk_near`]). An island is often a fraction of a
+/// millimetre across: the tip has to stay on it.
+pub const REVIEW_NUDGE_MM: f64 = 0.3;
+
 /// How much lower [`DfSupportSession::add_trunk_near`] may move a point the
 /// engine cannot hold: a point a layer or two up the island's underside.
 const NUDGE_DOWN_MM: [f64; 4] = [0.05, 0.1, 0.2, 0.4];
@@ -1339,6 +1345,30 @@ impl DfSupportSession {
         Err(first)
     }
 
+    /// Adds a tip a check asked for at `point` as [`Self::add_trunk_near`]
+    /// does ([`REVIEW_NUDGE_MM`]), or on the first of `others` the engine can
+    /// hold, tried as they are: "Add support here", Fix All and the tips of
+    /// an island (#437). At the very bottom of a narrow start the shaft
+    /// often grazes the island, and a step aside clears it. Returns the
+    /// point used; the error is the one at `point`.
+    pub fn add_tip_among(
+        &mut self,
+        point: [f64; 3],
+        others: &[[f64; 3]],
+    ) -> Result<[f64; 3], EditError> {
+        let first = match self.add_trunk_near(point, REVIEW_NUDGE_MM) {
+            Ok(used) => return Ok(used),
+            Err(err) => err,
+        };
+        let how = AddOptions::default();
+        for other in others {
+            if self.place(*other, &how).is_ok() {
+                return Ok(*other);
+            }
+        }
+        Err(first)
+    }
+
     /// What adding a support at `point` would add: green when it goes
     /// through, red (a straight trunk to the plate) when nothing can hold
     /// that point. `NothingThere` when the point is not on a model.
@@ -1872,6 +1902,18 @@ impl DfSupportSession {
             }
         }
         Some((session, report))
+    }
+
+    /// The contact diameter of a tip added to this set without a size, in
+    /// millimetres: its preset's. A tip that hangs from a support gets just
+    /// that; without zone sizes, one on a trunk of its own is sized from it
+    /// by the surface it stands on, so it comes out close to it.
+    pub fn tip_diameter_mm(&self) -> f64 {
+        let supports = &self.settings.supports;
+        SizingBands::factory()
+            .with_zone_sizes(supports.auto_support.zone_rules.as_ref())
+            .active(supports)
+            .tip_contact_diameter_mm
     }
 
     /// The tip diameter of support `id`, when it has one.
@@ -2837,6 +2879,38 @@ mod session_tests {
             Err(EditError::CannotAttach(AddNote::TooFar))
         );
         assert_eq!(untouched.state, session.state, "nothing placed");
+    }
+
+    #[test]
+    fn a_set_tells_the_diameter_of_the_tips_added_to_it() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        session.add_trunk_at([5.0, 5.0, 12.0]).expect("a trunk");
+        let trunk = session.state.collections.trunks.values().next().unwrap();
+        let cone = trunk.contact_cone.as_ref().unwrap();
+        let drawn = cone.profile.contact_diameter_mm;
+        let preset = session.tip_diameter_mm();
+        assert!((drawn - preset).abs() <= 0.25 * preset, "{drawn} {preset}");
+    }
+
+    #[test]
+    fn a_tip_goes_on_the_first_other_point_the_engine_holds() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        let away = [500.0, 500.0, 12.0];
+        let used = session
+            .add_tip_among(away, &[[600.0, 500.0, 12.0], [5.0, 5.0, 12.0]])
+            .expect("the second one holds");
+        assert_eq!(used, [5.0, 5.0, 12.0]);
+        assert_eq!(session.state.collections.trunks.len(), 1);
+        assert!(session.hand_edited);
+    }
+
+    #[test]
+    fn a_tip_with_nowhere_to_go_tells_why_of_its_point() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        let away = [500.0, 500.0, 12.0];
+        let err = session.add_tip_among(away, &[[600.0, 500.0, 12.0]]);
+        assert!(matches!(err, Err(EditError::NothingThere)), "{err:?}");
+        assert!(session.state.collections.trunks.is_empty());
     }
 
     #[test]

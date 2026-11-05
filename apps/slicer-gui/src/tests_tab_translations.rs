@@ -269,6 +269,22 @@ fn every_text_of_the_hollow_job_has_spanish() {
 }
 
 #[test]
+fn the_question_after_slice_has_spanish() {
+    let (untranslated, found) = untranslated_calls(
+        &spanish(),
+        "review_panel.rs",
+        include_str!("review_panel.rs"),
+    );
+    assert!(found > 20, "{found} texts found");
+    assert!(untranslated.is_empty(), "no Spanish for {untranslated:#?}");
+    for text in slint_texts(include_str!("../ui/message-layer.slint")) {
+        if text.context == "AddSupportsDialog" {
+            assert!(text.has_spanish(&spanish()), "{:?}", text.message);
+        }
+    }
+}
+
+#[test]
 fn every_text_of_the_transform_supports_and_slice_tabs_has_spanish() {
     let spanish = spanish();
     let mut texts: Vec<SlintText> = PANEL_COMPONENTS

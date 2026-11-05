@@ -26,14 +26,13 @@
 //!
 //! - a part that starts on the first [`PLATE_LAYERS`] layers stands on the
 //!   build plate;
-//! - any other part is held when, on the layer below its first layer, a
-//!   support tip reaches it with at least [`MIN_TIP_SHARE`] of its section:
-//!   its pixels within [`TIP_REACH_MM`] of the part's own pixels, outside
-//!   what the model has on that layer. A part smaller than the tip is held
-//!   when tips stand under half of it. Its own pixels decide, never its box:
-//!   a tip under the neighbour a part hangs from does not hold it, and
-//!   neither does a tip that stops under a neck of the model. Tips are read
-//!   as data, whatever piece of the support graph they belong to.
+//! - any other part is held when, on the layer below its first layer, the
+//!   pixels of a support tip lie under it, however few: pixels within
+//!   [`TIP_REACH_MM`] of the part's own pixels, outside what the model has
+//!   on that layer ([`MIN_TIP_SHARE`] can ask for more). Its own pixels
+//!   decide, never its box: a tip under the neighbour a part hangs from does
+//!   not hold it. Tips are read as data, whatever piece of the support graph
+//!   they belong to.
 //!
 //! # What is done with a part nothing holds
 //!
@@ -57,7 +56,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::fill::CavityFill;
-use crate::finding::{CheckKind, Finding, MAX_FOOTPRINT_LAYERS, RoleScope, Severity, SuggestedFix};
+use crate::finding::{
+    CheckKind, Finding, MAX_FOOTPRINT_LAYERS, PlatePoint, RoleScope, Severity, SuggestedFix,
+};
 use crate::input::ReviewInput;
 use crate::regions::{
     LayerRead, PartStart, PlateRegions, Region, SweepOptions, WantedRegions, link_holds,
@@ -65,6 +66,7 @@ use crate::regions::{
 };
 use crate::runner::ReviewContext;
 use crate::runs::{Run, dilate_square, union};
+use crate::tip_plan::{IslandLayer, IslandPixels};
 use crate::tips::{TipContact, TipIndex, TipTarget};
 use crate::union_find::RegionRef;
 
@@ -85,17 +87,25 @@ pub const MIN_PART_LAYERS: usize = 3;
 /// listed: 10.
 pub const GROWTH_FACTOR: f64 = 10.0;
 
-/// The share of its section a tip must reach a part with to hold it: a half.
-/// Less is the last sliver of a cone that ends right there, or a tip that
-/// stops under a neck of the model: what the printer cures on it does not
-/// hold the part. On one scene measured against its printer file, the tips
-/// that hold touch with about 55 % of their section or more, and the ones
-/// that stop short with about 45 % at most.
-pub const MIN_TIP_SHARE: f64 = 0.5;
+/// The share of its section a tip must reach a part with to hold it: 0, any
+/// pixel of a tip under the part's own pixels holds it, however few. A cone
+/// ends in the middle of a layer, so how much of it shows on the layer right
+/// below says where the cut fell, not whether a support is there.
+///
+/// Measured on real scenes, the islands listed with 0 and with a half: a
+/// 171 mm hollowed model, 1 and 8; three well-supported minis, 29 and 175.
+/// Go back to 0.5 if prints show that the last sliver of a tip does not hold
+/// what starts on it: a tip then has to reach a part with half its section,
+/// or a part smaller than the tip has to stand with half of itself on tips.
+pub const MIN_TIP_SHARE: f64 = 0.0;
 
 /// How far from a part's pixels a tip's pixels on the layer below still
 /// touch it, in millimetres: 0.07, a tip beside a part's edge cures into it.
 pub const TIP_REACH_MM: f64 = 0.07;
+
+/// How close the ends of two cones are to be the same tip, in millimetres: a
+/// neck and the cone above it.
+const SAME_TIP_MM: f64 = 0.05;
 
 /// Settings of the island check.
 #[derive(Clone, Debug, PartialEq)]
@@ -336,6 +346,14 @@ pub struct Island {
     /// The layer it joins the rest of the model on, `None` when it never
     /// does.
     pub joins_on: Option<usize>,
+    /// Where its finding's [`SuggestedFix::AddSupport`] points: what names
+    /// this island among the findings.
+    pub at: PlatePoint,
+    /// Its pixels, layer by layer.
+    pub pixels: Arc<IslandPixels>,
+    /// The tips that stand in it already, higher than its first pixels, in
+    /// plate millimetres.
+    pub tips_mm: Vec<[f64; 3]>,
 }
 
 /// What the check gives: the findings, what they found and what to erase.
@@ -391,8 +409,9 @@ pub fn run(ctx: &ReviewContext<'_>, options: &IslandOptions, sweep: &SweepOption
     let mut reported = Vec::with_capacity(islands.len());
     for (part, runs) in islands.iter().zip(pixels.iter()) {
         let footprint = CavityFill::from_runs(input, runs.clone());
-        findings.push(island_finding(input, regions, part).with_footprint(Arc::new(footprint)));
-        reported.push(island_of(input, regions, part));
+        let finding = island_finding(input, regions, part).with_footprint(Arc::new(footprint));
+        reported.push(island_of(input, regions, part, &finding, runs, &tips));
+        findings.push(finding);
     }
     findings.extend(growth_findings(ctx, options, &parts));
     let debris_runs = pixels.last().cloned().unwrap_or_default();
@@ -462,8 +481,16 @@ fn island_finding(input: &ReviewInput<'_>, regions: &PlateRegions, part: &Part) 
     .with_largest_mm2(largest_mm2)
 }
 
-/// Island `part` as a placement of supports needs it.
-fn island_of(input: &ReviewInput<'_>, regions: &PlateRegions, part: &Part) -> Island {
+/// Island `part`, found as `finding` and of the pixels `layers`, as a
+/// placement of supports needs it.
+fn island_of(
+    input: &ReviewInput<'_>,
+    regions: &PlateRegions,
+    part: &Part,
+    finding: &Finding,
+    layers: &[(usize, Vec<Run>)],
+    tips: &TipIndex,
+) -> Island {
     let pixel_mm2 = input.pixel_area_mm2();
     let table = regions.layer(part.first_layer);
     let runs = table
@@ -476,6 +503,11 @@ fn island_of(input: &ReviewInput<'_>, regions: &PlateRegions, part: &Part) -> Is
                 .map(|x| input.pixel_to_plate([f64::from(x) + 0.5, f64::from(run.row) + 0.5]))
         })
         .collect();
+    let pixels = island_pixels(input, layers);
+    let at = match finding.fix {
+        Some(SuggestedFix::AddSupport { at }) => at,
+        _ => finding.focus,
+    };
     Island {
         first_layer: part.first_layer,
         first_pixels_mm,
@@ -486,6 +518,28 @@ fn island_of(input: &ReviewInput<'_>, regions: &PlateRegions, part: &Part) -> Is
             .map(|px| *px as f64 * pixel_mm2)
             .collect(),
         joins_on: part.joined.map(|(layer, _)| layer),
+        at,
+        tips_mm: tips.standing_in(input, &pixels, SAME_TIP_MM),
+        pixels: Arc::new(pixels),
+    }
+}
+
+/// The pixels of an island, with how raster pixels land on the plate.
+fn island_pixels(input: &ReviewInput<'_>, layers: &[(usize, Vec<Run>)]) -> IslandPixels {
+    let origin_mm = input.pixel_to_plate([0.0, 0.0]);
+    let next = input.pixel_to_plate([1.0, 1.0]);
+    IslandPixels {
+        origin_mm,
+        step_mm: [next[0] - origin_mm[0], next[1] - origin_mm[1]],
+        layers: layers
+            .iter()
+            .map(|(layer, runs)| IslandLayer {
+                layer: *layer,
+                bottom_mm: input.layers()[*layer].bottom_mm,
+                top_mm: input.layers()[*layer].top_mm,
+                runs: runs.clone(),
+            })
+            .collect(),
     }
 }
 

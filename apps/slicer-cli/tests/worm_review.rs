@@ -22,13 +22,15 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-/// Parts that start on nothing a tip holds and last: what supports must go
-/// under. 1444 is here because it lasts 18 layers and reaches 8.6 mm², though
-/// it touches a 31-pixel sliver beside it on its second layer.
-const ISLANDS: [u64; 8] = [232, 660, 942, 1264, 1422, 1444, 1486, 1501];
+/// Parts that start with no pixel of a tip under them and last: what
+/// supports must go under.
+const ISLANDS: [u64; 1] = [942];
 
-/// Parts a tip holds, with over half of its section.
-const HELD: [u64; 4] = [1230, 1470, 1515, 1526];
+/// Parts a tip holds. On 232 to 1501 only the last slice of a cone shows on
+/// the layer right below, 5 to 40 pixels of it: any pixel holds.
+const HELD: [u64; 11] = [
+    232, 660, 1230, 1264, 1422, 1444, 1470, 1486, 1501, 1515, 1526,
+];
 
 /// Screen pixels of the parts that come loose, each on its first layer, the
 /// floating speck at 2262 among them. All of them leave the layers, as debris
@@ -112,6 +114,61 @@ fn erased_near(erased: &[Value], layer: u64, point: [f64; 2]) -> bool {
                     && point[1] <= r[3] + REACH_MM
             })
     })
+}
+
+/// The question after Slice answered Yes (#437): every island gets a tip
+/// under its first pixels, or as soon as it has grown to the tip's diameter,
+/// and the review of the new slice lists none.
+#[test]
+#[ignore = "needs a real project, named by BREADSLICER_WORM"]
+fn a_yes_to_the_question_leaves_the_heavy_scene_without_islands() {
+    let project = std::env::var("BREADSLICER_WORM").expect("BREADSLICER_WORM names the project");
+    let started = Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_sc-slicer-cli"))
+        .args([
+            "review",
+            &format!("-s={project}"),
+            "--printer-profile=anycubic-photon-mono-m7-pro",
+            "--material-profile=anycubic-abs-like-resin-pro-50um",
+            "--no-auto-place",
+            "--add-supports",
+            "--json",
+        ])
+        .output()
+        .expect("the review runs");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    eprintln!("whole run: {:?}", started.elapsed());
+    let report: Value = serde_json::from_slice(&output.stdout).expect("JSON");
+    let added = &report["added_supports"];
+    eprintln!("cycle: {}", added["timings_ms"]);
+    eprintln!("tips: {}", added["tips"]);
+    eprintln!("diameter: {}", added["diameter_mm"]);
+
+    let islands = report["islands"].as_array().expect("islands");
+    let tips = added["tips"].as_array().expect("tips");
+    assert!(tips.iter().all(|tip| tip["refused"].is_null()), "{tips:?}");
+    for (index, island) in islands.iter().enumerate() {
+        let first = island["first_layer"].as_u64().expect("a layer");
+        let lowest = tips
+            .iter()
+            .filter(|tip| tip["island"].as_u64() == Some(index as u64))
+            .filter_map(|tip| tip["layer"].as_u64())
+            .min()
+            .expect("a tip on every island");
+        assert!(lowest >= first && lowest - first < 8, "{first}: {lowest}");
+    }
+    assert_eq!(added["too_narrow"].as_array().map(Vec::len), Some(0));
+    assert_eq!(added["islands"].as_array().map(Vec::len), Some(0));
+    let held = added["parts"]
+        .as_array()
+        .expect("parts")
+        .iter()
+        .any(|part| part["first_layer"].as_u64() == Some(ISLANDS[0] - 1) && part["held"] == "tip");
+    assert!(held, "a tip holds what was an island");
 }
 
 #[test]

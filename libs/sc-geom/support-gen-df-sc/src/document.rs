@@ -366,6 +366,18 @@ fn add_root_leaf(
     Ok(id)
 }
 
+impl DfSupportSession {
+    /// Draws the set again into `leaf`, the leaf that shows it, once it was
+    /// edited outside an app: a frontend with undo swaps meshes itself.
+    pub fn redraw_into(&self, scene: &mut Scene, leaf: NodeId) -> Result<(), RestoreError> {
+        let mesh = self
+            .mesh()
+            .map_err(|e| RestoreError::Mesh(e.to_string()))?
+            .ok_or_else(|| RestoreError::Mesh("no supports left".to_owned()))?;
+        swap_leaf_mesh(scene, leaf, Arc::new(mesh))
+    }
+}
+
 /// Puts `mesh` in `leaf`, inline or through its mesh resource.
 fn swap_leaf_mesh(
     scene: &mut Scene,
