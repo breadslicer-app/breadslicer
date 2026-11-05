@@ -187,6 +187,7 @@ pub(crate) fn review_slices(
     filled: Option<&ContourStack>,
     sets: &[SupportSet],
     raft_top_mm: Option<f64>,
+    bare_tip_mm: Option<f64>,
     cancel: &CancelToken,
     on_layer: &(dyn Fn(usize) + Sync),
 ) -> ReviewOutcome {
@@ -196,6 +197,7 @@ pub(crate) fn review_slices(
         tips: support_tips(sets, &frame),
         box_mm: plate.support_box_mm(),
         frame,
+        bare_tip_mm,
     };
     let watch = SweepWatch { cancel, on_layer };
     review_stacks(
@@ -214,6 +216,9 @@ struct KnownSupports<'s> {
     tips: Vec<TipCone>,
     box_mm: Option<[f64; 5]>,
     frame: PlateFrame,
+    /// The contact of the tips a plate with no set would get (#444): its
+    /// first tip starts the set.
+    bare_tip_mm: Option<f64>,
 }
 
 /// Reviews `leaves`, cut with `profile`: its layer schedule, its screen and
@@ -241,7 +246,7 @@ fn review_stacks(
             match review_with(&input, &ReviewOptions::default(), watch) {
                 None => ReviewOutcome::Cancelled,
                 Some(report) => ReviewOutcome::Reviewed {
-                    tips: tip_plan(&report.islands, &report.growths, supports.sets),
+                    tips: tip_plan(&report.islands, &report.growths, supports),
                     growths: report.growths,
                     frame: supports.frame.clone(),
                     findings: report.findings,
@@ -255,14 +260,20 @@ fn review_stacks(
     })
 }
 
-/// The tips `islands` and `growths` need, of the widest contact among
-/// `sets`, which is the one that has to fit; `None` without a set to add them
-/// to.
-fn tip_plan(islands: &[Island], growths: &[Growth], sets: &[SupportSet]) -> Option<TipPlan> {
-    let diameter_mm = sets
+/// The tips `islands` and `growths` need, of the widest contact among the
+/// sets, which is the one that has to fit, or of the tips a plate with no set
+/// would get; `None` when nothing says what tips those are.
+fn tip_plan(
+    islands: &[Island],
+    growths: &[Growth],
+    supports: &KnownSupports<'_>,
+) -> Option<TipPlan> {
+    let diameter_mm = supports
+        .sets
         .iter()
         .map(|set| set.tip_diameter_mm)
-        .reduce(f64::max)?;
+        .reduce(f64::max)
+        .or(supports.bare_tip_mm)?;
     Some(plan_all_tips(
         islands,
         growths,
@@ -279,6 +290,19 @@ pub(crate) fn review_for_test(
     profile: &SliceProfile,
     sets: &[SupportSet],
 ) -> ReviewOutcome {
+    review_bare_for_test(leaves, filled, profile, sets, None)
+}
+
+/// [`review_for_test`], planning for a plate with no set with tips of
+/// `bare_tip_mm`.
+#[cfg(test)]
+pub(crate) fn review_bare_for_test(
+    leaves: &[LeafSlices],
+    filled: Option<&ContourStack>,
+    profile: &SliceProfile,
+    sets: &[SupportSet],
+    bare_tip_mm: Option<f64>,
+) -> ReviewOutcome {
     let cancel = CancelToken::new();
     let watch = SweepWatch {
         cancel: &cancel,
@@ -290,6 +314,7 @@ pub(crate) fn review_for_test(
         tips: support_tips(sets, &frame),
         box_mm: None,
         frame,
+        bare_tip_mm,
     };
     review_stacks(leaves, profile, filled, &supports, None, watch)
 }
@@ -411,6 +436,7 @@ mod review_tests {
             tips: Vec::new(),
             box_mm: None,
             frame: PlateFrame::default(),
+            bare_tip_mm: None,
         };
         let outcome = review_stacks(&leaves, &profile(4), None, &supports, None, watch);
         assert_eq!(outcome, ReviewOutcome::Cancelled);

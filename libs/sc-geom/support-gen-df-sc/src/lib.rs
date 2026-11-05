@@ -444,6 +444,38 @@ pub fn start_df_supports(
     ))
 }
 
+/// A session of `model` with no support on it yet, made as `request` says, for
+/// a set born from its first tip (#444): nothing runs and nothing is scanned.
+/// `None` when `model` is no model of `scene`.
+pub fn empty_df_session(
+    scene: &Scene,
+    model: NodeId,
+    request: &DfSupportRequest,
+) -> Result<Option<DfSupportSession>, SceneError> {
+    let leaves = scene_model_leaves(scene, Some(&[model]))?;
+    let run = RUN.fetch_add(1, Ordering::Relaxed) + 1;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    Ok((!leaves.is_empty()).then(|| {
+        DfSupportSession::new(
+            leaves.into_iter().map(|(_, input)| input).collect(),
+            settings_for(request),
+            request
+                .settings
+                .is_none()
+                .then(|| SettingsRecipe::of(request)),
+            SupportState::default(),
+            format!("df{stamp}-{run}"),
+        )
+    }))
+}
+
+/// The contact diameter of the tips a set made as `request` says places.
+pub fn tip_diameter_for(request: &DfSupportRequest) -> f64 {
+    session::tip_contact_diameter(&settings_for(request))
+}
+
 /// The pipeline settings a request runs with: its explicit `settings`, or
 /// SoulCrafted's defaults with the person's `options` applied. Public for a
 /// caller that runs the pipeline itself with the settings a run would use,

@@ -24,7 +24,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use slint::winit_030::WinitWindowAccessor;
-use slint::{ComponentHandle, SharedString};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::i18n::ctr;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
@@ -207,6 +207,13 @@ enum Entry {
         build_texts: Box<dyn Fn() -> InfoTexts>,
         on_yes: Box<dyn FnOnce()>,
     },
+    /// Which preset the supports of a model with no set are made with
+    /// (#444): `names`, the one in force being `current`.
+    ChoosePreset {
+        names: Vec<SharedString>,
+        current: usize,
+        on_choice: Box<dyn FnOnce(usize)>,
+    },
     Recovery {
         /// 1 line per scene.
         scenes: SharedString,
@@ -233,7 +240,16 @@ impl Entry {
             | Self::SceneChange { .. }
             | Self::SliceOverwrite { .. }
             | Self::AddSupports { .. }
+            | Self::ChoosePreset { .. }
             | Self::Recovery { .. } => MessageClass::MustAnswer,
+        }
+    }
+
+    /// The choice a card opens on.
+    fn choice(&self) -> i32 {
+        match self {
+            Self::ChoosePreset { current, .. } => *current as i32,
+            _ => 0,
         }
     }
 
@@ -261,6 +277,7 @@ impl Entry {
             has_scene: false,
             hand_edited: false,
             action: SharedString::new(),
+            choices: ModelRc::default(),
         };
         match self {
             Self::Error {
@@ -315,6 +332,15 @@ impl Entry {
                 message.heading = texts.heading;
                 message.text = texts.message;
             }
+            Self::ChoosePreset { names, .. } => {
+                message.kind = MessageKind::ChoosePreset;
+                message.heading = ctr!("ChoosePresetDialog", "Which supports?");
+                message.text = ctr!(
+                    "ChoosePresetDialog",
+                    "This model has no supports yet. Its tips start a set with the preset you pick here."
+                );
+                message.choices = ModelRc::new(VecModel::from(names.clone()));
+            }
             Self::Diagnostics { has_scene, .. } => {
                 message.kind = MessageKind::Diagnostics;
                 message.has_scene = *has_scene;
@@ -334,7 +360,7 @@ impl Entry {
 
     /// Carries out `answer`: the caller's callback of a question; nothing for
     /// a notice or an error. `include_models` is the diagnostics' tick.
-    fn settle(self, answer: MessageAnswer, include_models: bool) {
+    fn settle(self, answer: MessageAnswer, include_models: bool, choice: usize) {
         match self {
             Self::Error { action, .. } => {
                 // Only the action's own button runs it: Escape, Close and a
@@ -374,6 +400,12 @@ impl Entry {
                 // Anything but Yes leaves the list as it is.
                 if answer == MessageAnswer::Confirm {
                     on_yes();
+                }
+            }
+            Self::ChoosePreset { on_choice, .. } => {
+                // Anything but a pick asks nothing of the scene.
+                if answer == MessageAnswer::Confirm {
+                    on_choice(choice);
                 }
             }
             Self::Diagnostics {
@@ -475,6 +507,7 @@ impl DialogManager {
                     self.serial.set(self.serial.get().wrapping_add(1));
                     ui.set_message_silence(false);
                     ui.set_message_include_models(false);
+                    ui.set_message_choice(self.queue.borrow().front().map_or(0, Entry::choice));
                     ui.set_message_serial(self.serial.get());
                 }
                 ui.set_message_open(true);
@@ -506,6 +539,11 @@ impl DialogManager {
             .borrow()
             .upgrade()
             .is_some_and(|ui| ui.get_message_include_models());
+        let choice = self
+            .host
+            .borrow()
+            .upgrade()
+            .map_or(0, |ui| ui.get_message_choice().max(0) as usize);
         // The next message (or none) goes on show before the answer runs: a
         // callback that queues a message then finds the queue settled.
         self.present(true);
@@ -515,7 +553,7 @@ impl DialogManager {
                 PreferencesChange::SilencedMessages
             });
         }
-        entry.settle(answer, include_models);
+        entry.settle(answer, include_models, choice);
     }
 
     /// A click on the window around the message: closes a notice, and does
@@ -741,6 +779,22 @@ impl DialogManager {
         self.enqueue(Entry::AddSupports {
             build_texts: Box::new(build_texts),
             on_yes: Box::new(on_yes),
+        });
+    }
+
+    /// Asks which preset the first tips of a model with no set are made with
+    /// (#444). `on_choice` hears the pick; Enter picks `current`, and Escape
+    /// nothing.
+    pub(crate) fn show_choose_preset(
+        self: &Rc<Self>,
+        names: Vec<SharedString>,
+        current: usize,
+        on_choice: impl FnOnce(usize) + 'static,
+    ) {
+        self.enqueue(Entry::ChoosePreset {
+            names,
+            current,
+            on_choice: Box::new(on_choice),
         });
     }
 

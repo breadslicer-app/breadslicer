@@ -52,6 +52,9 @@ pub(crate) struct DrawnSet {
     /// The model's mesh and world transform then.
     model_mesh: Arc<IndexedMesh>,
     model_world: Transform3D,
+    /// Not in the scene yet: its first tip makes it (#444), and `leaf` is
+    /// the model's until then.
+    pub(crate) unborn: bool,
 }
 
 /// Every drawing of the scene's support sets, oldest first.
@@ -65,6 +68,25 @@ fn model_state(spatial: &SceneSpatial, model: NodeId) -> Option<(Arc<IndexedMesh
 }
 
 impl DrawnSet {
+    /// The set of `model` its first tip is about to make (#444), holding
+    /// `session`.
+    pub(crate) fn unborn(
+        spatial: &SceneSpatial,
+        model: NodeId,
+        session: DfSupportSession,
+    ) -> Option<Self> {
+        let (model_mesh, model_world) = model_state(spatial, model)?;
+        Some(Self {
+            leaf: model,
+            model,
+            session: Arc::new(session),
+            mesh: model_mesh.clone(),
+            model_mesh,
+            model_world,
+            unborn: true,
+        })
+    }
+
     /// Whether this drawing is the one the scene of `spatial` shows: the
     /// leaf holds its mesh and the model stands as it did.
     fn shown_in(&self, spatial: &SceneSpatial) -> bool {
@@ -100,6 +122,7 @@ pub(crate) fn record(
                 mesh,
                 model_mesh,
                 model_world,
+                unborn: false,
             })
         })
         .flatten();

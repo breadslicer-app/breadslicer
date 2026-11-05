@@ -740,10 +740,13 @@ impl ReviewPanel {
         if self.markable_models().is_none() || self.islands_plan().supports.is_empty() {
             return;
         }
-        crate::breadcrumbs::note("review: adding the islands' supports");
-        let marks = self.marks.borrow().clone();
-        *self.run.borrow_mut() = Some(FixRun::new(RunKind::Islands, 1, marks));
-        self.start_pass();
+        let points = self.islands_plan().support_points();
+        self.with_preset(&points, |panel| {
+            crate::breadcrumbs::note("review: adding the islands' supports");
+            let marks = panel.marks.borrow().clone();
+            *panel.run.borrow_mut() = Some(FixRun::new(RunKind::Islands, 1, marks));
+            panel.start_pass();
+        });
     }
 
     /// Fix All (#156): adds the supports in one undoable edit, marks the
@@ -768,10 +771,13 @@ impl ReviewPanel {
         } else {
             1
         };
-        crate::breadcrumbs::note(&format!("review: fix all, up to {passes} passes"));
-        let marks = self.marks.borrow().clone();
-        *self.run.borrow_mut() = Some(FixRun::new(RunKind::FixAll, passes, marks));
-        self.start_pass();
+        let points = self.fix_all_plan().support_points();
+        self.with_preset(&points, move |panel| {
+            crate::breadcrumbs::note(&format!("review: fix all, up to {passes} passes"));
+            let marks = panel.marks.borrow().clone();
+            *panel.run.borrow_mut() = Some(FixRun::new(RunKind::FixAll, passes, marks));
+            panel.start_pass();
+        });
     }
 
     /// Starts the run's pass on the held review: its supports off the UI
@@ -1710,7 +1716,7 @@ impl ReviewPanel {
     }
 
     /// Applies the finding's suggested fix, and tells how it went.
-    fn apply_fix(&self, id: i32) {
+    fn apply_fix(self: &Rc<Self>, id: i32) {
         // Fix All's run settles first: an edit now would drop it.
         if self.fixing() {
             return;
@@ -1740,6 +1746,11 @@ impl ReviewPanel {
                 };
                 let first = *first;
                 let points: Vec<[f32; 3]> = tips.iter().map(|tip| tip.0).collect();
+                // A model with no set asks for its preset first (#444).
+                if self.supports.makes_a_set(&points) && !self.supports.preset_named() {
+                    self.with_preset(&points, move |panel| panel.apply_fix(id));
+                    return;
+                }
                 // The first tip holds the island, or none of them goes in;
                 // each tip of a region counts by itself.
                 let plans: Vec<PointPlan> = tips
@@ -1870,6 +1881,31 @@ impl ReviewPanel {
             "Review",
             "Raft turned off. Generate the supports again, then slice."
         )));
+    }
+
+    /// The contact of the tips a plate with no set would get (#444).
+    pub(crate) fn born_tip_mm(&self) -> f64 {
+        self.supports.born_tip_mm()
+    }
+
+    /// Runs `then`, once a preset is picked if `points` make a set: a model
+    /// with no set starts one with its first tip (#444). Nothing happens if
+    /// the question is dismissed.
+    fn with_preset(self: &Rc<Self>, points: &[[f32; 3]], then: impl FnOnce(&Rc<Self>) + 'static) {
+        if !self.supports.makes_a_set(points) {
+            then(self);
+            return;
+        }
+        let (names, current) = self.supports.preset_choice();
+        let weak = Rc::downgrade(self);
+        self.ctrl
+            .dialogs()
+            .show_choose_preset(names, current, move |chosen| {
+                if let Some(panel) = weak.upgrade() {
+                    panel.supports.use_preset_for_new_sets(chosen);
+                    then(&panel);
+                }
+            });
     }
 
     /// The top of the raft the scene's supports stand on, for the review of

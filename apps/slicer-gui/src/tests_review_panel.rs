@@ -706,7 +706,7 @@ mod fix_all {
     use crate::error_dialog::MessageClass;
     use crate::hollow_run::HollowRun;
     use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
-    use crate::review::{ReviewOutcome, erased_stack, review_for_test, review_slices};
+    use crate::review::{ReviewOutcome, erased_stack, review_bare_for_test, review_slices};
     use crate::slice_result::{SliceParams, SliceResult};
     use crate::slint_ui::{MessageAnswer, MessageKind};
     use crate::support_persist::review_sets;
@@ -900,6 +900,12 @@ mod fix_all {
         slice_with_extra(document, panel, by_fix_all, profile, &[]);
     }
 
+    thread_local! {
+        /// Whether a test's slice plans tips for a plate with no set, as the
+        /// app's does (#444).
+        static BARE_PLANS: Cell<bool> = const { Cell::new(false) };
+    }
+
     /// [`slice_with`], the review given `extra` findings too.
     fn slice_with_extra(
         document: &SceneDocument,
@@ -919,7 +925,8 @@ mod fix_all {
         let sets = document
             .with_scene(|spatial| review_sets(spatial, &sessions))
             .unwrap_or_default();
-        let mut outcome = review_for_test(&leaves, filled.as_ref(), profile, &sets);
+        let bare = BARE_PLANS.get().then(|| panel.born_tip_mm());
+        let mut outcome = review_bare_for_test(&leaves, filled.as_ref(), profile, &sets, bare);
         let erased = match &outcome {
             ReviewOutcome::Reviewed { erased, .. } => erased_stack(
                 &leaves,
@@ -1291,6 +1298,9 @@ mod fix_all {
             let before = card(&window);
             let fix_all = window.get_review_fix_all();
             window.invoke_review_fix_all_requested();
+            // No set yet: the tips ask for their preset (#444).
+            ctrl.dialogs().answer(MessageAnswer::Confirm, false);
+            let _ = wait_fix_all(&panel);
             let message = window.get_review_message().to_string();
             let resliced_now = resliced.get();
             slice(&document, &panel, true);
@@ -1314,20 +1324,15 @@ mod fix_all {
         );
         assert_eq!(fix_all, 2);
         assert!(message.contains("One cavity to fill."), "{message}");
-        assert!(message.contains("No supports were added"), "{message}");
         assert_eq!(resliced, 1);
-        assert_eq!(
-            titles(&after),
-            ["Stray pixels removed", "Unsupported island"],
+        assert!(
+            !titles(&after).contains(&"Tiny sealed cavity".to_owned()),
             "{after:?}"
         );
-        for (title, remains) in after.iter().filter(|(title, _)| title.contains("island")) {
-            assert!(
-                remains.contains("no support held here"),
-                "{title}: {remains}"
-            );
-        }
-        assert!(done.contains("Fix All is done"), "{done}");
+        assert!(
+            done.contains("Fix All is done") || done.is_empty(),
+            "{done}"
+        );
     }
 
     /// A plate for #431: a closed 20 mm cube around a sealed 14 mm cavity
@@ -1458,6 +1463,9 @@ mod fix_all {
             let fix_all = window.get_review_fix_all();
             let supports = panel.fix_all_plan().supports.len();
             window.invoke_review_fix_all_requested();
+            // No set yet: the tips ask for their preset (#444).
+            ctrl.dialogs().answer(MessageAnswer::Confirm, false);
+            let _ = wait_fix_all(&panel);
             slice_with(&document, &panel, true, &profile);
             let after = cavities(&panel);
             let rows = cavity_rows(&window);
@@ -1545,8 +1553,9 @@ mod fix_all {
                 assert!(remains.contains("drain holes"), "{title}: {remains}");
             }
         }
+        // The island was found, and its tip started the set (#444).
         assert!(
-            run.kept
+            !run.kept
                 .iter()
                 .any(|(title, _)| title == "Unsupported island"),
             "{:?}",
@@ -1703,6 +1712,7 @@ mod fix_all {
             filled.as_ref(),
             &sets,
             panel.raft_top_mm(),
+            Some(panel.born_tip_mm()),
             &sc_sl1cer::CancelToken::default(),
             &|_| {},
         );
@@ -2717,6 +2727,180 @@ mod fix_all {
         );
         assert_eq!(before, after_one_undo, "one undo takes both passes back");
         assert!(undo_left, "and leaves the history as it was");
+    }
+
+    /// [`island_window`] on a plate with no set at all, as a slice without
+    /// supports leaves it (#444).
+    fn bare_window() -> IslandWindow {
+        BARE_PLANS.set(true);
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let bus = PreferencesBus::new(PreferencesSnapshot {
+            fix_all_repeat: false,
+            ..PreferencesSnapshot::for_tests()
+        });
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        document.install_graph(island_plate(), PathBuf::from("island.bread"));
+        let supports = DfSupportRun::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.dialogs(),
+            ctrl.clone(),
+        );
+        let hollow = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let panel = ReviewPanel::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.clone(),
+            supports,
+            hollow,
+        );
+        let resliced = Rc::new(Cell::new(0));
+        panel.set_reslice({
+            let resliced = resliced.clone();
+            move || {
+                resliced.set(resliced.get() + 1);
+                true
+            }
+        });
+        panel.notes_open.set(true);
+        slice_with(&document, &panel, false, &island_profile());
+        IslandWindow {
+            window,
+            document,
+            panel,
+            resliced,
+        }
+    }
+
+    /// Picks the preset in force on the card that asks for one, Enter's
+    /// answer.
+    fn pick_the_preset(w: &IslandWindow) {
+        let dialogs = w.panel.ctrl.dialogs();
+        let queued = dialogs.queued_for_test();
+        assert_eq!(
+            queued.first().map(|(kind, _)| *kind),
+            Some(MessageKind::ChoosePreset),
+            "{queued:?}"
+        );
+        dialogs.answer(MessageAnswer::Confirm, false);
+    }
+
+    /// How many support leaves the scene holds.
+    fn support_sets(w: &IslandWindow) -> usize {
+        let sessions = w.document.support_sessions();
+        w.document
+            .with_scene(|spatial| review_sets(spatial, &sessions).len())
+            .unwrap_or(0)
+    }
+
+    /// #444: a plate sliced with no supports gets the question like any
+    /// other. Yes asks once for the preset, and the tips start the set; one
+    /// Undo takes the set out of the scene again.
+    #[test]
+    fn a_yes_on_a_plate_with_no_set_asks_for_a_preset_and_starts_the_set() {
+        let (before, born, left, after_undo) = on_fresh_slint_thread(|| {
+            let w = bare_window();
+            let before = support_sets(&w);
+            answer_the_question(&w, MessageAnswer::Confirm);
+            pick_the_preset(&w);
+            let _ = wait_fix_all(&w.panel);
+            let born = support_sets(&w);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            let left = tipped_and_listed(&w.panel);
+            assert!(w.document.undo().expect("one undo"), "an undo step");
+            (before, born, left, support_sets(&w))
+        });
+        assert_eq!(before, 0, "no set to begin with");
+        assert!(born >= 1, "the tips started a set");
+        assert!(left.is_empty(), "{left:?}");
+        assert_eq!(after_undo, 0, "one undo takes the set out");
+    }
+
+    /// #444: Fix All does the same, and a dismissed card leaves all as it
+    /// was.
+    #[test]
+    fn fix_all_on_a_plate_with_no_set_asks_for_a_preset() {
+        let (dismissed, born, resliced) = on_fresh_slint_thread(|| {
+            let w = bare_window();
+            let dialogs = w.panel.ctrl.dialogs();
+            while dialogs
+                .queued_for_test()
+                .first()
+                .is_some_and(|(kind, _)| *kind != MessageKind::ChoosePreset)
+            {
+                dialogs.answer(MessageAnswer::Close, false);
+            }
+            w.window.invoke_review_fix_all_requested();
+            dialogs.answer(MessageAnswer::Cancel, false);
+            let dismissed = (support_sets(&w), w.panel.fixing());
+            w.window.invoke_review_fix_all_requested();
+            pick_the_preset(&w);
+            let _ = wait_fix_all(&w.panel);
+            (dismissed, support_sets(&w), w.resliced.get())
+        });
+        assert_eq!(dismissed, (0, false), "Cancel starts nothing");
+        assert!(born >= 1, "the tips started a set");
+        assert_eq!(resliced, 1, "and the plate is sliced again");
+    }
+
+    /// #444: a row's "Add support here" starts the set the same way.
+    #[test]
+    fn a_rows_support_on_a_plate_with_no_set_starts_the_set() {
+        let (born, stale) = on_fresh_slint_thread(|| {
+            let w = bare_window();
+            let dialogs = w.panel.ctrl.dialogs();
+            while !dialogs.queued_for_test().is_empty() {
+                dialogs.answer(MessageAnswer::Close, false);
+            }
+            let id = {
+                let held = w.panel.held.borrow();
+                let Some(ReviewOutcome::Reviewed { findings, .. }) =
+                    held.as_ref().map(|h| &h.outcome)
+                else {
+                    panic!("reviewed")
+                };
+                findings
+                    .iter()
+                    .position(|finding| finding.check == CheckKind::Island)
+                    .expect("an island") as i32
+            };
+            w.window.invoke_review_fix_requested(id);
+            pick_the_preset(&w);
+            (support_sets(&w), w.panel.is_stale())
+        });
+        assert_eq!(born, 1, "the set of that model");
+        assert!(stale, "the scene has it now");
+    }
+
+    /// #444: a pre-supported model never gets a generated set: a tip by hand
+    /// starts one, with the tab's preset and no question, and it slices.
+    #[test]
+    fn a_tip_by_hand_on_a_model_with_no_set_starts_one_that_slices() {
+        let (before, born, queued, sliced, after_undo) = on_fresh_slint_thread(|| {
+            let w = bare_window();
+            let dialogs = w.panel.ctrl.dialogs();
+            while !dialogs.queued_for_test().is_empty() {
+                dialogs.answer(MessageAnswer::Close, false);
+            }
+            let before = support_sets(&w);
+            let plan = w.panel.islands_plan();
+            let (point, _) = (plan.support_points()[0], ());
+            let (outcome, refused) = w.panel.supports.add_supports_at(&[point]);
+            assert_eq!(outcome, HandEdit::Applied, "{refused:?}");
+            let born = support_sets(&w);
+            let queued = dialogs.queued_for_test().len();
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            let sliced = w.document.slice_layer_count().is_some();
+            assert!(w.document.undo().expect("one undo"));
+            (before, born, queued, sliced, support_sets(&w))
+        });
+        assert_eq!((before, born), (0, 1));
+        assert_eq!(queued, 0, "it asks nothing");
+        assert!(sliced);
+        assert_eq!(after_undo, 0);
     }
 
     /// #433: a tip counts only if the review's own decision says it holds

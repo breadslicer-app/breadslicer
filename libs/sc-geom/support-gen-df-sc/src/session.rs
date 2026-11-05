@@ -111,6 +111,15 @@ mod pieces;
 
 pub use pieces::{SupportContact, SupportJoint, SupportPiece, SupportPieceKind};
 
+/// The contact diameter of the tips `settings` place.
+pub(crate) fn tip_contact_diameter(settings: &PipelineSettings) -> f64 {
+    let supports = &settings.supports;
+    SizingBands::factory()
+        .with_zone_sizes(supports.auto_support.zone_rules.as_ref())
+        .active(supports)
+        .tip_contact_diameter_mm
+}
+
 /// The supports of a run, kept for editing.
 #[derive(Debug, Clone)]
 pub struct DfSupportSession {
@@ -1950,11 +1959,7 @@ impl DfSupportSession {
     /// that; without zone sizes, one on a trunk of its own is sized from it
     /// by the surface it stands on, so it comes out close to it.
     pub fn tip_diameter_mm(&self) -> f64 {
-        let supports = &self.settings.supports;
-        SizingBands::factory()
-            .with_zone_sizes(supports.auto_support.zone_rules.as_ref())
-            .active(supports)
-            .tip_contact_diameter_mm
+        tip_contact_diameter(&self.settings)
     }
 
     /// The tip diameter of support `id`, when it has one.
@@ -2975,6 +2980,24 @@ mod session_tests {
         assert!(asked.get() >= 2, "every point was tried");
         assert!(session.state.collections.trunks.is_empty());
         assert!(!session.hand_edited);
+    }
+
+    /// #444: a set can start from nothing: a session with no support takes
+    /// its first tip, and draws.
+    #[test]
+    fn an_empty_session_takes_its_first_tip() {
+        let scene = slab_scene(12.0);
+        let model = crate::scene_model_leaves(&scene, None).unwrap()[0].0;
+        let mut session =
+            crate::empty_df_session(&scene, model, &crate::DfSupportRequest::default())
+                .unwrap()
+                .expect("a model");
+        assert!(session.is_empty());
+        session
+            .add_tip_among([5.0, 5.0, 12.0], &[], &|_| true)
+            .expect("the tip goes in");
+        assert!(!session.is_empty());
+        assert!(session.mesh().unwrap().is_some(), "it draws");
     }
 
     #[test]

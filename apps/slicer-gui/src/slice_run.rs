@@ -350,6 +350,7 @@ impl SliceRun {
         self.start_poll();
         // The raft the scene's supports stand on, for the review (#131).
         let raft_top_mm = self.review.raft_top_mm();
+        let bare_tip_mm = Some(self.review.born_tip_mm());
         self.spawn(
             scene,
             SliceInputs {
@@ -358,6 +359,7 @@ impl SliceRun {
                 first_layer_height: current.first_layer_height,
                 aa_level: current.aa_level,
                 raft_top_mm,
+                bare_tip_mm,
                 supports,
                 support_sets,
                 fills: patches.fills,
@@ -703,6 +705,8 @@ struct SliceInputs {
     /// The top of the raft the scene's supports stand on, for the review
     /// (#131).
     raft_top_mm: Option<f64>,
+    /// The contact of the tips a plate with no set would get (#444).
+    bare_tip_mm: Option<f64>,
     /// The support leaves and the model each stands on, which the scale
     /// compensation scales them with (#227).
     supports: SupportOwners,
@@ -752,6 +756,7 @@ fn run_slice(
                 inputs
                     .raft_top_mm
                     .map(|top| plate.compensated_height_mm(top)),
+                inputs.bare_tip_mm,
                 cancel,
                 &|done| progress.record_review(done),
             );
@@ -1068,6 +1073,7 @@ mod progress_tests {
             first_layer_height: None,
             aa_level: AaLevel::Off,
             raft_top_mm: None,
+            bare_tip_mm: None,
             supports: SupportOwners::new(),
             fills: Vec::new(),
             support_sets: Vec::new(),
