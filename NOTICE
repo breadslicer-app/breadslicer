@@ -10,8 +10,9 @@ the source as their licenses require:
   libraries under Apache-2.0), which Breadslicer is based on.
   https://codeberg.org/SoulCrafted/Slicer
 
-- DragonFruit (Open Resin Alliance and contributors; MIT): parts of the
-  support and hollowing engines. See libs/sc-geom/support-gen-df/NOTICE and
+- DragonFruit (Open Resin Alliance and contributors): the support system,
+  ported under AGPL-3.0-or-later, and the hollowing engine, ported from its
+  MIT mesh crates. See libs/sc-geom/support-gen-df/NOTICE and
   libs/sc-geom/hollow-df/NOTICE. The bundled Anycubic and ELEGOO printer
   profiles were first converted from its printer plugins, and their product
   images come from them; see assets/profiles/README.md and
