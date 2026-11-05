@@ -1537,11 +1537,6 @@ msgctxt "Review"
 msgid "Fill on the next slice"
 msgstr ""
 
-#: ui/workspace/inspectors.slint:249
-msgctxt "Review"
-msgid "Leave it"
-msgstr ""
-
 #: ui/workspace/inspectors.slint:257
 msgctxt "Review"
 msgid "Marked: the next slice cures this cavity solid."
