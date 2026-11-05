@@ -243,6 +243,9 @@ pub enum EditError {
     CannotAttach(AddNote),
     /// A brace laid by hand cannot go there, for this reason (#3).
     CannotBrace(HandBraceRefusal),
+    /// The engine could place a tip, but none of those tried holds what it
+    /// was placed for (#433).
+    NotHeld,
 }
 
 impl std::fmt::Display for EditError {
@@ -255,6 +258,7 @@ impl std::fmt::Display for EditError {
             EditError::Tessellation(why) => write!(f, "the supports could not be drawn ({why})"),
             EditError::CannotAttach(why) => write!(f, "no support to hang it from ({why:?})"),
             EditError::CannotBrace(why) => write!(f, "no brace there ({why:?})"),
+            EditError::NotHeld => write!(f, "no tip that fits reaches under what it must hold"),
         }
     }
 }
@@ -1303,6 +1307,17 @@ impl DfSupportSession {
         point: [f64; 3],
         reach_mm: f64,
     ) -> Result<[f64; 3], EditError> {
+        self.place_near(point, reach_mm, &mut |_, _| true)
+    }
+
+    /// [`Self::add_trunk_near`], taking only a support `keep` keeps. One it
+    /// does not goes on trying, and `keep` is the one to put the session back.
+    fn place_near(
+        &mut self,
+        point: [f64; 3],
+        reach_mm: f64,
+        keep: &mut dyn FnMut(&mut Self, &Placed) -> bool,
+    ) -> Result<[f64; 3], EditError> {
         let Some((_, aimed, normal)) = self.contact(point) else {
             return Err(EditError::NothingThere);
         };
@@ -1321,7 +1336,8 @@ impl DfSupportSession {
         };
         if normal.z < 0.0 {
             match self.place(point, &how) {
-                Ok(_) => return Ok(point),
+                Ok(placed) if keep(self, &placed) => return Ok(point),
+                Ok(_) => {}
                 Err((err @ EditError::NoRoute(_), _)) => first = err,
                 Err((other, _)) => return Err(other),
             }
@@ -1337,7 +1353,9 @@ impl DfSupportSession {
             if seen(&tried, tip, n) || !same_underside(aimed, normal, tip, n, reach_mm) {
                 continue;
             }
-            if self.place(q, &how).is_ok() {
+            if let Ok(placed) = self.place(q, &how)
+                && keep(self, &placed)
+            {
                 return Ok(q);
             }
             tried.push((tip, n));
@@ -1346,25 +1364,48 @@ impl DfSupportSession {
     }
 
     /// Adds a tip a check asked for at `point`, or on the first of `others`
-    /// the engine can hold, tried as they are, or as [`Self::add_trunk_near`]
-    /// does around `point` ([`REVIEW_NUDGE_MM`]): "Add support here", Fix All
-    /// and the tips of an island (#437). `others` come first: they lie on the
+    /// that works, tried as they are, or as [`Self::add_trunk_near`] does
+    /// around `point` ([`REVIEW_NUDGE_MM`]): "Add support here", Fix All and
+    /// the tips of an island (#437). `others` come first: they lie on the
     /// island's own pixels, and each step aside costs a placement, a hundred
     /// of them on a start the shaft cannot clear (#433). At the very bottom
     /// of a narrow start the shaft often grazes the island, and a step aside
-    /// clears it. Returns the point used; the error is the one at `point`.
+    /// clears it.
+    ///
+    /// Works means the engine holds the point and `holds` says the contacts
+    /// of what it added do what the tip is for: placing and checking are one
+    /// step (#433). A tip `holds` turns down leaves the session as it was.
+    /// Returns the point used. The error is [`EditError::NotHeld`] when tips
+    /// went in and none held, otherwise the one at `point`.
     pub fn add_tip_among(
         &mut self,
         point: [f64; 3],
         others: &[[f64; 3]],
+        holds: &dyn Fn(&[SupportContact]) -> bool,
     ) -> Result<[f64; 3], EditError> {
         let how = AddOptions::default();
+        let before = self.clone();
+        let mut turned_down = false;
+        let mut keep = |session: &mut Self, placed: &Placed| {
+            let held = holds(&session.contacts_of(&placed.added));
+            if !held {
+                *session = before.clone();
+                turned_down = true;
+            }
+            held
+        };
         for at in std::iter::once(&point).chain(others) {
-            if self.place(*at, &how).is_ok() {
+            if let Ok(placed) = self.place(*at, &how)
+                && keep(self, &placed)
+            {
                 return Ok(*at);
             }
         }
-        self.add_trunk_near(point, REVIEW_NUDGE_MM)
+        let near = self.place_near(point, REVIEW_NUDGE_MM, &mut keep);
+        match near {
+            Err(_) if turned_down => Err(EditError::NotHeld),
+            other => other,
+        }
     }
 
     /// What adding a support at `point` would add: green when it goes
@@ -1851,7 +1892,9 @@ impl DfSupportSession {
                     EditError::CannotAttach(AddNote::CarriesOthers) => LostWhy::CarriesOthers,
                     EditError::CannotAttach(_) => LostWhy::CannotAttach,
                     EditError::NothingThere => LostWhy::SurfaceChanged,
-                    EditError::NoRoute(_) | EditError::Tessellation(_) => LostWhy::NoRoute,
+                    EditError::NoRoute(_) | EditError::Tessellation(_) | EditError::NotHeld => {
+                        LostWhy::NoRoute
+                    }
                     EditError::CannotBrace(why) => LostWhy::BraceRefused(why),
                 })),
             }
@@ -2895,18 +2938,50 @@ mod session_tests {
         let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
         let away = [500.0, 500.0, 12.0];
         let used = session
-            .add_tip_among(away, &[[600.0, 500.0, 12.0], [5.0, 5.0, 12.0]])
+            .add_tip_among(away, &[[600.0, 500.0, 12.0], [5.0, 5.0, 12.0]], &|_| true)
             .expect("the second one holds");
         assert_eq!(used, [5.0, 5.0, 12.0]);
         assert_eq!(session.state.collections.trunks.len(), 1);
         assert!(session.hand_edited);
     }
 
+    /// #433: a tip the check turns down is not placed, the next one is tried,
+    /// and the session is as if the first had never been there.
+    #[test]
+    fn a_tip_that_does_not_hold_gives_way_to_the_next_point() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        let (first, second) = ([5.0, 5.0, 12.0], [15.0, 5.0, 12.0]);
+        let used = session
+            .add_tip_among(first, &[second], &|contacts| {
+                contacts.iter().any(|contact| contact.surface[0] > 10.0)
+            })
+            .expect("the second one holds");
+        assert_eq!(used, second);
+        assert_eq!(session.state.collections.trunks.len(), 1);
+    }
+
+    /// #433: tips that went in and held nothing are a refusal of their own,
+    /// and leave nothing behind.
+    #[test]
+    fn tips_that_hold_nothing_leave_the_session_as_it_was() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        let asked = std::cell::Cell::new(0);
+        let err = session.add_tip_among([5.0, 5.0, 12.0], &[[15.0, 5.0, 12.0]], &|contacts| {
+            asked.set(asked.get() + 1);
+            assert!(!contacts.is_empty(), "the check reads the new tip");
+            false
+        });
+        assert_eq!(err, Err(EditError::NotHeld));
+        assert!(asked.get() >= 2, "every point was tried");
+        assert!(session.state.collections.trunks.is_empty());
+        assert!(!session.hand_edited);
+    }
+
     #[test]
     fn a_tip_with_nowhere_to_go_tells_why_of_its_point() {
         let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
         let away = [500.0, 500.0, 12.0];
-        let err = session.add_tip_among(away, &[[600.0, 500.0, 12.0]]);
+        let err = session.add_tip_among(away, &[[600.0, 500.0, 12.0]], &|_| true);
         assert!(matches!(err, Err(EditError::NothingThere)), "{err:?}");
         assert!(session.state.collections.trunks.is_empty());
     }
