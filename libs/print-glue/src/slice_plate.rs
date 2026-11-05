@@ -13,6 +13,7 @@
 
 use std::fmt;
 use std::num::NonZeroU32;
+use std::sync::Arc;
 
 use sc_print_primitives::{AaLevel, PositiveFiniteMm, ScaleCompensation};
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile, resolve_scale_compensation};
@@ -136,16 +137,18 @@ impl SlicedPlate {
                 .collect(),
         )?;
         Ok(PlateContours {
-            stack,
+            stack: Arc::new(stack),
             schedule: *self.profile.layer_schedule(),
         })
     }
 }
 
-/// The whole plate's contour stack and the layer schedule it was cut on.
+/// The whole plate's contour stack and the layer schedule it was cut on. The
+/// stack is shared: a clone costs nothing, and the stack can outlive the holder
+/// on another thread, as a save needs.
 #[derive(Clone, Debug)]
 pub struct PlateContours {
-    stack: ContourStack,
+    stack: Arc<ContourStack>,
     schedule: LayerSchedule,
 }
 
@@ -163,12 +166,20 @@ impl PlateContours {
                 schedule_layers,
             });
         }
-        Ok(Self { stack, schedule })
+        Ok(Self {
+            stack: Arc::new(stack),
+            schedule,
+        })
     }
 
     /// Return the plate's contour stack.
     pub fn stack(&self) -> &ContourStack {
         &self.stack
+    }
+
+    /// Return the plate's contour stack as a handle that shares it.
+    pub fn shared_stack(&self) -> Arc<ContourStack> {
+        Arc::clone(&self.stack)
     }
 
     /// Return the layer schedule the stack was cut on.
@@ -185,7 +196,9 @@ impl PlateContours {
         }
         let LayerSchedule::Uniform(grid) = self.schedule;
         Self {
-            stack: ContourStack::new_unchecked(self.stack.layers()[..kept].to_vec()),
+            stack: Arc::new(ContourStack::new_unchecked(
+                self.stack.layers()[..kept].to_vec(),
+            )),
             schedule: LayerSchedule::Uniform(UniformSchedule::new(
                 grid.layer_height(),
                 grid.first_layer_height(),

@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -119,7 +120,7 @@ pub(crate) fn project_with_in_sync_slices() -> (Vec<u8>, String) {
         })
         .collect();
     let plate = PlateSlices {
-        contours: ContourStack::new_unchecked(layers),
+        contours: Arc::new(ContourStack::new_unchecked(layers)),
         slab_tops,
     };
 
@@ -139,7 +140,7 @@ pub(crate) fn project_with_in_sync_slices() -> (Vec<u8>, String) {
         Some(&plate),
         Some(&token),
         three_mf(),
-        &mut bytes,
+        &mut Cursor::new(&mut bytes),
     )
     .expect("the project writes cleanly");
     (bytes, token)

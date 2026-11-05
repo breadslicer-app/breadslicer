@@ -56,7 +56,7 @@ pub(super) fn plate_slices() -> PlateSlices {
     let void = ContourLayer::new(0.075, vec![]);
     let contours = ContourStack::new(vec![solid, void]).expect("z is strictly increasing");
     PlateSlices {
-        contours,
+        contours: Arc::new(contours),
         slab_tops: vec![0.05, 0.10],
     }
 }

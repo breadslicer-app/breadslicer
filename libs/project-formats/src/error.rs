@@ -87,7 +87,7 @@ pub enum WriteThreeMfProjectError {
         name: String,
         source: MalformedPartNameError,
     },
-    /// Copying the buffered package to the caller's writer failed.
+    /// Writing to the caller's writer failed.
     Io(std::io::Error),
 }
 

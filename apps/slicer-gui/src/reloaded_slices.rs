@@ -199,7 +199,7 @@ mod reloaded_slices_tests {
             None,
             Some(&token),
             three_mf(),
-            &mut bytes,
+            &mut Cursor::new(&mut bytes),
         )
         .expect("the project writes cleanly");
 

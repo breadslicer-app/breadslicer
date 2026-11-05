@@ -20,6 +20,7 @@
 
 use std::collections::HashMap;
 
+use rayon::prelude::*;
 use sc_3mf::model::resource_ids::{ResourceId, ResourceIndex};
 use sc_3mf::model::{
     Slice, SlicePolygon, SliceSegment, SliceStack, SliceStackContent, SliceVertex,
@@ -93,17 +94,29 @@ pub(crate) fn slice_stack_from_contours(
         });
     }
 
+    Ok(slice_stack_from_layers(layers, slab_tops, 0.0, stack_id))
+}
+
+/// Map a run of layers to a [`SliceStack`] with `stack_id`, starting at
+/// `z_bottom`. `slab_tops` gives the top Z of each layer, index-aligned with
+/// `layers`; zipping them stops at the shorter of the 2.
+pub(crate) fn slice_stack_from_layers(
+    layers: &[ContourLayer],
+    slab_tops: &[f64],
+    z_bottom: f64,
+    stack_id: ResourceId,
+) -> SliceStack {
     let slices = layers
-        .iter()
-        .zip(slab_tops)
+        .par_iter()
+        .zip(slab_tops.par_iter())
         .map(|(layer, &z_top)| slice_from_layer(layer, z_top))
         .collect();
 
-    Ok(SliceStack {
+    SliceStack {
         id: stack_id,
-        z_bottom: 0.0,
+        z_bottom,
         content: SliceStackContent::Slices(slices),
-    })
+    }
 }
 
 /// Map a [`SliceStack`] of inline slices back to a [`ContourStack`] for the
@@ -116,13 +129,23 @@ pub(crate) fn slice_stack_from_contours(
 pub(crate) fn contours_from_slice_stack(
     stack: &SliceStack,
 ) -> Result<ContourStack, SliceMappingError> {
+    contour_stack(layers_from_slice_stack(stack)?)
+}
+
+/// Map a [`SliceStack`] of inline slices back to its [`ContourLayer`]s, as
+/// [`contours_from_slice_stack`] does, without requiring them to form a whole
+/// stack: they can be 1 run of layers of it.
+pub(crate) fn layers_from_slice_stack(
+    stack: &SliceStack,
+) -> Result<Vec<ContourLayer>, SliceMappingError> {
     let SliceStackContent::Slices(slices) = &stack.content else {
         return Err(SliceMappingError::SliceRefsUnsupported);
     };
-    let layers = slices
-        .iter()
-        .map(layer_from_slice)
-        .collect::<Result<Vec<_>, _>>()?;
+    slices.par_iter().map(layer_from_slice).collect()
+}
+
+/// Makes a [`ContourStack`] of `layers`.
+pub(crate) fn contour_stack(layers: Vec<ContourLayer>) -> Result<ContourStack, SliceMappingError> {
     ContourStack::new(layers).map_err(|e| match e {
         ContourStackError::NonFiniteZ { .. } => SliceMappingError::NonFiniteLayerZ,
         ContourStackError::NonMonotoneZ { .. } => SliceMappingError::NonMonotoneLayers,

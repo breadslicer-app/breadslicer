@@ -5,7 +5,7 @@
 
 //! Assembly of 3MF project packages.
 
-use std::io::{Cursor, Write};
+use std::io::{Seek, Write};
 
 use sc_3mf::error::ModelWriteError;
 use sc_3mf::model::ModelDocument;
@@ -31,6 +31,7 @@ use crate::threemf::names::{
 };
 use crate::threemf::payload_part::serialize_payload;
 use crate::threemf::slice_mapping::slice_stack_from_contours;
+use crate::threemf::slice_parts::{SLICE_PART_TARGET_BYTES, SplitSlices};
 use crate::write::progress::WriteProgress;
 
 /// Writes `scene` and `payload` as a 3MF project package: the parts a plain 3MF
@@ -38,9 +39,12 @@ use crate::write::progress::WriteProgress;
 /// 1 part per embedded profile document. When `slices` is `Some`, the merged
 /// slice result is written to its own model part, standalone from the scene,
 /// and `slice_fingerprint`, when present, is recorded in the project part as
-/// that slice data's opaque validity token. The zip layer needs a seekable
-/// sink, so the package is serialized into memory first and then copied to
-/// `writer`.
+/// that slice data's opaque validity token.
+///
+/// The package goes straight to `writer`, which the zip layer needs seekable.
+/// Slices too large for 1 part go through in a run of parts, 1 in memory at a
+/// time, so what a save holds beyond the scene and its slices does not grow
+/// with the file.
 pub fn write_threemf_project<W>(
     scene: &Scene,
     payload: &ProjectPayload,
@@ -50,7 +54,7 @@ pub fn write_threemf_project<W>(
     writer: &mut W,
 ) -> Result<(), WriteThreeMfProjectError>
 where
-    W: Write,
+    W: Write + Seek,
 {
     write_threemf_project_with_progress(
         scene,
@@ -64,7 +68,8 @@ where
 }
 
 /// Writes as [`write_threemf_project`] does, and reports serialize and compress
-/// progress through `progress`.
+/// progress through `progress`. Slices split across parts are serialized as
+/// they are compressed, so they count as compress progress.
 pub fn write_threemf_project_with_progress<W>(
     scene: &Scene,
     payload: &ProjectPayload,
@@ -72,12 +77,45 @@ pub fn write_threemf_project_with_progress<W>(
     slices: Option<&PlateSlices>,
     slice_fingerprint: Option<&str>,
     writer: &mut W,
+    progress: impl FnMut(WriteProgress),
+) -> Result<(), WriteThreeMfProjectError>
+where
+    W: Write + Seek,
+{
+    write_package(
+        scene,
+        payload,
+        embed,
+        slices,
+        slice_fingerprint,
+        SLICE_PART_TARGET_BYTES,
+        writer,
+        progress,
+    )
+}
+
+/// Writes the project package, splitting slices whose XML runs past
+/// `slice_part_target_bytes`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn write_package<W>(
+    scene: &Scene,
+    payload: &ProjectPayload,
+    embed: EmbedProfiles,
+    slices: Option<&PlateSlices>,
+    slice_fingerprint: Option<&str>,
+    slice_part_target_bytes: u64,
+    writer: &mut W,
     mut progress: impl FnMut(WriteProgress),
 ) -> Result<(), WriteThreeMfProjectError>
 where
-    W: Write,
+    W: Write + Seek,
 {
-    let (scene_model, slice_document) = build_documents(scene, slices)?;
+    let split = match slices {
+        Some(plate) => SplitSlices::of(plate, slice_part_target_bytes)?,
+        None => None,
+    };
+    let inline_slices = slices.filter(|_| split.is_none());
+    let (scene_model, slice_document) = build_documents(scene, inline_slices)?;
     let (model_xml, slice_xml) = serialize_documents(
         &scene_model.document,
         slice_document.as_ref(),
@@ -87,11 +125,15 @@ where
         model_xml,
         &scene_model.mesh_objects,
         slice_xml,
+        split.as_ref(),
         payload,
         embed,
         slice_fingerprint,
     )?;
-    compress_into(&package, writer, progress)
+    // The XML in the package replaces them for the long part of the write.
+    drop(slice_document);
+    drop(scene_model);
+    compress_into(&package, split.as_ref(), writer, progress)
 }
 
 /// Builds the scene document and, when `slices` is `Some`, the standalone slice
@@ -147,6 +189,7 @@ fn assemble_package(
     model_xml: Vec<u8>,
     mesh_objects: &[(ResourceId, &IndexedMesh)],
     slice_xml: Option<Vec<u8>>,
+    split: Option<&SplitSlices<'_>>,
     payload: &ProjectPayload,
     embed: EmbedProfiles,
     slice_fingerprint: Option<&str>,
@@ -181,6 +224,10 @@ fn assemble_package(
     });
     add_declared_facet_normals_parts(&mut package, mesh_objects)?;
 
+    let slice_xml = match split {
+        Some(split) => Some(split.index_xml()?),
+        None => slice_xml,
+    };
     if let Some(slice_xml) = slice_xml {
         package.add_part(
             PartName::from(SLICE_PART_NAME),
@@ -198,6 +245,31 @@ fn assemble_package(
             target: SLICE_PART_NAME.as_str().to_string(),
         });
     }
+    if let Some(split) = split {
+        let index = PartName::from(SLICE_PART_NAME);
+        for (ordinal, part) in split.parts().iter().enumerate() {
+            package.add_deferred_part(
+                part.name().clone(),
+                MODEL_PART_CONTENT_TYPE,
+                part.estimated_bytes(),
+            )?;
+            // The slice extension reaches a referenced part through a
+            // relationship from the part that names it.
+            package.add_part_relationship(
+                &index,
+                Relationship {
+                    id: format!("rel-{}", ordinal + 1),
+                    rel_type: START_PART_REL_TYPE.to_string(),
+                    target: part.name().as_str().to_string(),
+                },
+            )?;
+            package.add_root_relationship(Relationship {
+                id: rel_ids.next(),
+                rel_type: MUST_PRESERVE_REL_TYPE.to_string(),
+                target: part.name().as_str().to_string(),
+            });
+        }
+    }
 
     if embed == EmbedProfiles::Yes {
         for profile in &payload.embedded {
@@ -213,16 +285,19 @@ fn assemble_package(
     Ok(package)
 }
 
-fn compress_into<W: Write>(
+/// Writes `package` to `writer`, making the slice parts of `split` as it
+/// reaches them.
+fn compress_into<W: Write + Seek>(
     package: &Package,
+    split: Option<&SplitSlices<'_>>,
     writer: &mut W,
     mut progress: impl FnMut(WriteProgress),
 ) -> Result<(), WriteThreeMfProjectError> {
-    let mut buffer = Cursor::new(Vec::new());
-    package.write_to_with_progress(&mut buffer, |done, total| {
-        progress(WriteProgress::Compress { done, total })
-    })?;
-    writer.write_all(buffer.get_ref())?;
+    let report = |done, total| progress(WriteProgress::Compress { done, total });
+    match split {
+        Some(split) => package.write_deferring_to(writer, |part| split.part_xml(part), report)?,
+        None => package.write_to_with_progress(writer, report)?,
+    }
     Ok(())
 }
 
@@ -242,7 +317,7 @@ impl RelationshipIds {
 /// Returns `name`, a part name that the writer built, as a [`PartName`], or
 /// [`WriteThreeMfProjectError::MalformedPartName`] when it breaks the part-name
 /// rules.
-fn checked_part_name(name: String) -> Result<PartName, WriteThreeMfProjectError> {
+pub(super) fn checked_part_name(name: String) -> Result<PartName, WriteThreeMfProjectError> {
     PartName::new(&name)
         .map_err(|source| WriteThreeMfProjectError::MalformedPartName { name, source })
 }
@@ -386,6 +461,7 @@ mod assemble_package_tests {
             b"model".to_vec(),
             &[],
             slice_xml,
+            None,
             &full_payload(),
             embed,
             None,
@@ -459,6 +535,8 @@ mod assemble_package_tests {
 
 #[cfg(test)]
 mod compress_into_tests {
+    use std::io::{Cursor, SeekFrom};
+
     use super::*;
     use crate::threemf::test_fixtures::part;
 
@@ -486,6 +564,12 @@ mod compress_into_tests {
         }
     }
 
+    impl Seek for RefusingWriter {
+        fn seek(&mut self, _: SeekFrom) -> std::io::Result<u64> {
+            Ok(0)
+        }
+    }
+
     #[test]
     fn the_writer_receives_the_compressed_package() {
         let package = small_package();
@@ -493,16 +577,16 @@ mod compress_into_tests {
         package
             .write_to(&mut expected)
             .expect("the package compresses");
-        let mut written = Vec::new();
-        compress_into(&package, &mut written, |_| {}).expect("the package compresses");
-        assert_eq!(written, expected.into_inner());
+        let mut written = Cursor::new(Vec::new());
+        compress_into(&package, None, &mut written, |_| {}).expect("the package compresses");
+        assert_eq!(written.into_inner(), expected.into_inner());
     }
 
     #[test]
-    fn a_refusing_writer_gives_an_io_error() {
-        let result = compress_into(&small_package(), &mut RefusingWriter, |_| {});
+    fn a_refusing_writer_gives_a_package_error() {
+        let result = compress_into(&small_package(), None, &mut RefusingWriter, |_| {});
         assert!(
-            matches!(result, Err(WriteThreeMfProjectError::Io(_))),
+            matches!(result, Err(WriteThreeMfProjectError::Package(_))),
             "{result:?}"
         );
     }

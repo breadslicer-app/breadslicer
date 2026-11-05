@@ -6,8 +6,10 @@
 //! Worker-side save-progress accounting.
 //!
 //! A project save runs 3 phases on the worker thread: serialize the
-//! scene and slice geometry to XML, compress the assembled package,
-//! and write the bytes to disk. Progress is published through one
+//! scene and slice geometry to XML, compress the package to a temp file
+//! beside the target (slices split across parts are serialized as they
+//! are compressed), and sync the file and put it in place. Progress is
+//! published through one
 //! shared `AtomicU32` cell packing `(phase, permille)` with the phase
 //! in the high bits, so a phase advance always outranks any within-phase
 //! value and `fetch_max` keeps the published value monotonic across the

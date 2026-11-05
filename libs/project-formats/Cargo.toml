@@ -21,6 +21,7 @@ sc-print-primitives = { workspace = true, features = ["serde"] }
 sc-scene.workspace = true
 sc-sl1cer.workspace = true
 
+rayon.workspace = true
 serde.workspace = true
 toml_edit.workspace = true
 

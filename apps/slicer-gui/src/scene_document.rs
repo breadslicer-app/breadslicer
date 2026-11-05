@@ -881,7 +881,7 @@ impl SceneDocument {
             return None;
         }
         let plate = PlateSlices {
-            contours: held.contours.stack().clone(),
+            contours: held.contours.shared_stack(),
             slab_tops: schedule.iter_slab_tops().collect(),
         };
         Some((plate, held.token.clone()))

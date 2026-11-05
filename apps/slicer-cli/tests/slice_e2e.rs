@@ -820,7 +820,7 @@ fn project_bytes(scene: &Scene) -> Vec<u8> {
         None,
         None,
         ProjectFileType::ThreeMf,
-        &mut bytes,
+        &mut Cursor::new(&mut bytes),
     )
     .expect("project fixture writes");
     bytes

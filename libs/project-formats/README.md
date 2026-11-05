@@ -110,12 +110,16 @@ Pass a `PlateSlices`, the merged contour stack for the whole plate plus the
 top Z of each layer, and a token of your own that identifies what the slices
 were computed from. Reading gives both back untouched; deciding whether the
 token still matches the scene is yours, since only you know what went into
-it.
+it. The package goes straight to `out`, which has to be seekable. Slices too
+large for 1 part are written across several, 1 in memory at a time, and read
+back the same way, so a large plate does not need its XML in memory.
 
 ```rust
+use std::sync::Arc;
+
 use sc_project_formats::PlateSlices;
 
-let slices = PlateSlices { contours, slab_tops };
+let slices = PlateSlices { contours: Arc::new(contours), slab_tops };
 
 write_project(
     &scene,

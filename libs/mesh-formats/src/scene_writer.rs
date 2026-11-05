@@ -56,15 +56,34 @@ fn atomic_temp_path(target: &Path) -> Result<PathBuf> {
     Ok(parent.join(format!(".{file_name}.tmp.{pid}.{token}")))
 }
 
+/// A temp file that goes away unless it is kept: an error or a panic in the
+/// middle of a write leaves nothing behind.
+struct TempFile<'p> {
+    path: &'p Path,
+    keep: bool,
+}
+
+impl Drop for TempFile<'_> {
+    fn drop(&mut self) {
+        if !self.keep {
+            let _ = std::fs::remove_file(self.path);
+        }
+    }
+}
+
 /// Replaces `target_path` with what `write_fn` writes, through a temp file in
-/// the same directory that is synced and then renamed over the target. On any
-/// error the temp file is removed and an existing target keeps its content. A
-/// symlink at `target_path` is replaced by the new file, and the file it points
-/// to keeps its content.
-fn write_atomically<F>(target_path: &Path, write_fn: F) -> Result<()>
+/// the same directory that is synced and then renamed over the target, so a
+/// file of any size goes to disk as it is made. On any error or panic the temp
+/// file is removed and an existing target keeps its content. A symlink at
+/// `target_path` is replaced by the new file, and the file it points to keeps
+/// its content.
+pub fn write_atomically<E, F>(target_path: &Path, write_fn: F) -> std::result::Result<(), E>
 where
-    F: FnOnce(&mut BufWriter<File>) -> Result<()>,
+    E: From<WriteSceneError>,
+    F: FnOnce(&mut BufWriter<File>) -> std::result::Result<(), E>,
 {
+    const BUFFER_BYTES: usize = 1 << 20;
+
     let temp_path = atomic_temp_path(target_path)?;
 
     // `create_new` fails on any existing path, a symlink included, so the write
@@ -77,34 +96,25 @@ where
             path: temp_path.clone(),
             source,
         })?;
-    let mut writer = BufWriter::new(file);
+    let mut temp = TempFile {
+        path: &temp_path,
+        keep: false,
+    };
+    // Declared after `temp`, so the file closes before `temp` removes it.
+    let mut writer = BufWriter::with_capacity(BUFFER_BYTES, file);
 
-    let inner = (|| -> Result<()> {
-        write_fn(&mut writer)?;
-        writer.flush()?;
-        writer.get_ref().sync_all()?;
-        Ok(())
-    })();
-
+    write_fn(&mut writer)?;
+    writer.flush().map_err(WriteSceneError::from)?;
+    writer.get_ref().sync_all().map_err(WriteSceneError::from)?;
     drop(writer);
 
-    match inner {
-        Ok(()) => match std::fs::rename(&temp_path, target_path) {
-            Ok(()) => Ok(()),
-            Err(source) => {
-                let _ = std::fs::remove_file(&temp_path);
-                Err(WriteSceneError::Rename {
-                    from: temp_path,
-                    to: target_path.to_path_buf(),
-                    source,
-                })
-            }
-        },
-        Err(e) => {
-            let _ = std::fs::remove_file(&temp_path);
-            Err(e)
-        }
-    }
+    std::fs::rename(&temp_path, target_path).map_err(|source| WriteSceneError::Rename {
+        from: temp_path.clone(),
+        to: target_path.to_path_buf(),
+        source,
+    })?;
+    temp.keep = true;
+    Ok(())
 }
 
 /// Replaces `target_path` with `bytes` through a synced temp file in the same
@@ -276,7 +286,7 @@ pub fn write_scene_with_progress(
     mut progress: impl FnMut(WriteSceneProgress),
 ) -> Result<Vec<FlattenWarning>> {
     let mut warnings: Vec<FlattenWarning> = Vec::new();
-    write_atomically(target_path, |writer| {
+    write_atomically::<WriteSceneError, _>(target_path, |writer| {
         warnings = match target_format {
             WriteFormat::Obj => Obj::write_with_progress(graph, writer, &mut progress)?,
             WriteFormat::StlBin => StlBin::write_with_progress(graph, writer, &mut progress)?,

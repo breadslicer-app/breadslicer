@@ -17,6 +17,10 @@
 //!   `/Metadata/profiles/materials/extensions/<id>.toml`: embedded profile
 //!   documents (raw TOML bytes), mirroring the profile library layout, each
 //!   also marked MustPreserve.
+//! - `/3D/slices.model`: the slice stack, when the project carries slices. A
+//!   stack too large for 1 part moves to `/3D/slices-1.model` and on, a run of
+//!   layers in each, and this part holds the slice extension's references to
+//!   them, in order. See `slice_parts`.
 //!
 //! A package without the project part reads as a plain model. Parts written by
 //! other slicers are never parsed; known dialects are detected by their marker
@@ -27,6 +31,7 @@ mod names;
 pub(crate) mod payload_part;
 mod reader;
 pub(crate) mod slice_mapping;
+mod slice_parts;
 mod writer;
 
 #[cfg(test)]
@@ -39,6 +44,8 @@ mod tests_payload_part;
 mod tests_reader;
 #[cfg(test)]
 mod tests_slice_mapping;
+#[cfg(test)]
+mod tests_slice_parts;
 #[cfg(test)]
 mod tests_writer;
 
