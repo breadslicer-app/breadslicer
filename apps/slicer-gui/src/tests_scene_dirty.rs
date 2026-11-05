@@ -493,6 +493,7 @@ mod unsaved_project_state_tests {
                 first_layer_height: None,
                 output_format: None,
                 embedded: Vec::new(),
+                review_decisions: Vec::new(),
             }
         );
     }
@@ -523,6 +524,7 @@ mod unsaved_project_state_tests {
                 id: printer("anycubic-photon"),
                 bytes: b"kind = \"printer\"".to_vec(),
             }],
+            review_decisions: Vec::new(),
         };
         let doc = SceneDocument::new();
         doc.install_project_graph(

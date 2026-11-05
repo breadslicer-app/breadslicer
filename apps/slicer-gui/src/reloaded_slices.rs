@@ -179,6 +179,7 @@ mod reloaded_slices_tests {
             first_layer_height: None,
             output_format: None,
             embedded: Vec::new(),
+            review_decisions: Vec::new(),
         }
     }
 

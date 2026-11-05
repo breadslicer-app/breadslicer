@@ -479,6 +479,7 @@ mod scene_save_tests {
                 id: printer_id("held-printer"),
                 bytes: b"kind = \"printer\"".to_vec(),
             }],
+            review_decisions: Vec::new(),
         }
     }
 

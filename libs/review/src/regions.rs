@@ -3,35 +3,59 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Per-layer regions and their links across layers: the machinery every
-//! check shares, computed once per review by [`PlateRegions::compute`].
+//! The sweep (#432): one pass over the model's layers that builds the small
+//! tables every check reads. It is the only step of a review that touches
+//! pixels and it grows with the model, never with the supports, whose
+//! geometry it does not read.
 //!
-//! # What is computed
+//! # What one layer goes through
 //!
-//! Each layer is rasterised at the printer's own resolution with the
-//! slicer's binary rasteriser (the same pixels the printer file gets,
-//! without anti-aliasing), once for the model leaves and once for the
-//! support leaves, and kept as row runs ([`LayerPixels`]). Then:
+//! Each layer is rasterised once at the printer's own resolution, with the
+//! slicer's binary rasteriser (the pixels a printer file gets, without
+//! anti-aliasing), and kept as row runs ([`LayerPixels`]):
 //!
-//! - **Solid regions**: the connected parts of the merged plate (model and
-//!   support together), with **8-connectivity**: pixels that touch by an edge
-//!   or a corner belong together. Each [`Region`] carries its area, pixel
-//!   bounding box, centroid, a pixel inside it, whether it reaches the screen
-//!   edge, and how many of its pixels are model and how many support.
-//! - **Air regions**: the connected parts of the complement, with
-//!   **4-connectivity**: air pixels belong together only through an edge.
-//!   This is the dual of the solid rule: a solid ring closed only through
-//!   corners still seals the air inside it, so a region is never both
-//!   walled in and leaking. An air region that reaches the screen edge is
-//!   *open air*; every other air region is enclosed within its layer.
-//! - **Links**: for each pair of consecutive layers, how many pixels every
-//!   region of the lower layer shares with every region of the same kind in
-//!   the upper layer ([`Overlap`]). Pixels are linked across layers only
-//!   straight up (same `x`, `y`), never diagonally.
+//! 1. **Clean-up.** The layer's pixels are opened by a square of
+//!    [`SweepOptions::min_wall_px`] pixels: what no such square of solid
+//!    covers is thinner than the printer can make, a wall, a pin or an edge
+//!    of one pixel. Those are the layer's *stray pixels*: they leave the
+//!    layer, and every later step reads what is left.
+//! 2. **Solid regions**: the connected parts of what is left, with
+//!    **8-connectivity**: pixels that touch by an edge or a corner belong
+//!    together. Each [`Region`] carries its area, pixel bounding box,
+//!    centroid, a pixel inside it and whether it reaches the screen edge.
+//! 3. **Air regions.** *Air* is every other pixel, which in the vat is liquid
+//!    resin. Resin needs an opening of some width to flow, so the air is
+//!    opened by a square of [`SweepOptions::drain_width_px`] pixels: only the
+//!    air pixels such a square of air covers are kept. A narrower crack is a
+//!    hairline that thick resin barely passes and light bleed tends to cure
+//!    shut. What is left is split with **4-connectivity**, the dual of the
+//!    solid rule: a solid ring closed only through corners still seals the
+//!    air inside it. An air region that reaches the screen edge is *open
+//!    air*; every other air region is enclosed within its layer.
+//! 4. **Links** with the layer below ([`Overlap`]): how many pixels every
+//!    region shares with every region of the same kind straight below it
+//!    (same `x`, `y`, never diagonally). Air regions only link where one
+//!    side is enclosed, through the air the two layers share, opened the
+//!    same way: open air is drained whatever lies below it.
+//! 5. **Part starts** ([`PartStart`]): a solid region that no link holds
+//!    keeps its pixels, the only pixels the sweep keeps of any region (see
+//!    [`PartStart`] for what counts as a link).
 //!
-//! [`PlateRegions::group_solid`] and [`PlateRegions::group_air`] join regions
-//! across layers through the links (union-find), for bodies and cavities
-//! that span many layers.
+//! No image outlives its layer. What stays is [`PlateRegions`]: for every
+//! layer, its regions, its links, its stray pixels and its part starts.
+//! These tables are plain data: the checks read them, and they are all a
+//! later review needs to re-judge a part without rasterising.
+//!
+//! # How the layers are walked
+//!
+//! Layers are cut into chunks that run in parallel, each walking its layers
+//! from the bottom with the layer below in hand. The first layer of a chunk
+//! rasterises the one below it again, so chunks never wait for one another:
+//! what is in memory is two layers of runs per thread, however tall the
+//! plate. The result does not depend on the number of threads.
+//!
+//! [`PlateRegions::sweep`] reports each finished layer and stops within a
+//! layer of its [`CancelToken`] being tripped.
 //!
 //! # Conventions
 //!
@@ -49,15 +73,18 @@
 //! right) first meets each region, so they are deterministic and identical
 //! between [`PlateRegions`] and [`LayerPixels::compute`].
 
+use std::ops::Range;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
-use sc_sl1cer::contour::{ContourLayer, Polygon};
-use sc_sl1cer::raster::rasterize_layer_binary;
+use sc_sl1cer::CancelToken;
+use sc_sl1cer::contour::ContourLayer;
+use sc_sl1cer::raster::rasterize_layers_binary;
 
-use crate::input::{ReviewInput, Role};
+use crate::input::ReviewInput;
 use crate::runs::{self, Run, for_each_overlap};
-use crate::union_find::{Groups, UnionFind};
+use crate::union_find::{Groups, RegionRef, UnionFind};
 
 /// Which neighbours of a pixel count as connected to it within a layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -84,6 +111,65 @@ pub const SOLID_CONNECTIVITY: Connectivity = Connectivity::Eight;
 
 /// The connectivity of air regions, the dual of [`SOLID_CONNECTIVITY`].
 pub const AIR_CONNECTIVITY: Connectivity = Connectivity::Four;
+
+/// Default of [`SweepOptions::min_wall_px`].
+pub const DEFAULT_MIN_WALL_PX: u32 = 2;
+
+/// Default of [`SweepOptions::drain_width_px`].
+pub const DEFAULT_DRAIN_WIDTH_PX: u32 = 3;
+
+/// Default of [`SweepOptions::min_link_mm2`]: a link under 0.05 mm² holds
+/// nothing, on every printer, whatever its pixel. It is the one number to
+/// raise if prints ask for it.
+pub const DEFAULT_MIN_LINK_MM2: f64 = 0.05;
+
+/// How far around a part start's box the sweep keeps the solid of the layer
+/// below: past the reach of any tip that touches it, on any screen.
+pub const START_MARGIN_PX: u32 = 32;
+
+/// What the sweep reads a layer with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SweepOptions {
+    /// The side of the square that opens the solid, in pixels: what no such
+    /// square of solid covers is a stray pixel. 2 takes everything one pixel
+    /// wide, which is what a feature thinner than a pixel lights, and leaves
+    /// whatever is two pixels wide. 0 or 1 keeps every pixel.
+    pub min_wall_px: u32,
+    /// The side of the square that opens the air, in pixels: the narrowest
+    /// opening resin flows through, within a layer or from one layer to the
+    /// next. 3 pixels is 57 x 72 µm on a 19 x 24 µm screen. 0 or 1 keeps
+    /// every air pixel.
+    pub drain_width_px: u32,
+    /// The smallest link with the layer below that holds a larger part, in
+    /// square millimetres (see [`PartStart`]).
+    pub min_link_mm2: f64,
+}
+
+impl Default for SweepOptions {
+    fn default() -> Self {
+        Self {
+            min_wall_px: DEFAULT_MIN_WALL_PX,
+            drain_width_px: DEFAULT_DRAIN_WIDTH_PX,
+            min_link_mm2: DEFAULT_MIN_LINK_MM2,
+        }
+    }
+}
+
+impl SweepOptions {
+    /// [`min_link_mm2`](Self::min_link_mm2) in whole pixels of `input`, at
+    /// least one.
+    pub(crate) fn min_link_px(&self, input: &ReviewInput<'_>) -> u64 {
+        ((self.min_link_mm2 / input.pixel_area_mm2()).ceil() as u64).max(1)
+    }
+}
+
+/// Whether a link of `link_px` pixels with the layer below holds a part of
+/// `area_px` pixels: at least `min_link_px` of them, or at least half of the
+/// part, when the part is small enough to rest whole on what is below.
+#[inline]
+pub const fn link_holds(link_px: u64, area_px: u64, min_link_px: u64) -> bool {
+    link_px >= min_link_px || 2 * link_px >= area_px
+}
 
 /// A pixel rectangle, half-open: columns `x0..x1`, rows `y0..y1`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -164,18 +250,13 @@ pub struct Region {
     /// last layer is open towards the resin above as well, whatever this
     /// says.
     pub touches_border: bool,
-    /// Pixels that are model. Solid only; 0 for air.
-    pub model_px: u64,
-    /// Pixels that are support. Solid only; 0 for air. Model and support may
-    /// share pixels (support tips enter the model), so `model_px +
-    /// support_px` can exceed `area_px`.
-    pub support_px: u64,
     /// Pixels with a pixel of the same kind straight below, in the previous
     /// layer: for solid, the pixels resting on cured resin. Always 0 on
-    /// layer 0, which rests on the plate.
+    /// layer 0, which rests on the plate. For air, only the links an
+    /// enclosed region has count.
     pub below_px: u64,
     /// Pixels with a pixel of the same kind straight above, in the next
-    /// layer. Always 0 on the last layer.
+    /// layer. Always 0 on the last layer. Counted as `below_px` is.
     pub above_px: u64,
 }
 
@@ -189,14 +270,36 @@ impl Region {
     }
 }
 
-/// The regions of one layer.
+/// The first pixels of a solid region that the layer below does not hold.
+///
+/// A link holds a part when it shares at least
+/// [`min_link_mm2`](SweepOptions::min_link_mm2) with the layer below, or at
+/// least half of its own pixels: a thin pin standing on a surface rests
+/// whole on it, however small it is. Any other region is a part of its own
+/// from this layer on, whatever it may touch: a neck that fine holds nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartStart {
+    /// The region's index in [`LayerRegions::solid`].
+    pub region: u32,
+    /// Its pixels.
+    pub runs: Vec<Run>,
+    /// What the layer below has around them, within
+    /// [`START_MARGIN_PX`] pixels of the region's box.
+    pub below: Vec<Run>,
+}
+
+/// The tables of one layer.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LayerRegions {
-    /// Solid regions of the merged plate, in scan order.
+    /// Solid regions, in scan order.
     pub solid: Vec<Region>,
-    /// Air regions, in scan order. There is always at least one unless the
-    /// layer is solid from edge to edge.
+    /// Air regions, in scan order, of the opened air. There is at least one
+    /// unless the layer is solid from edge to edge.
     pub air: Vec<Region>,
+    /// The stray pixels the clean-up took off this layer, in no region.
+    pub stray: Vec<Run>,
+    /// The solid regions that start a part on this layer, by region index.
+    pub starts: Vec<PartStart>,
 }
 
 impl LayerRegions {
@@ -217,6 +320,14 @@ impl LayerRegions {
             .map(|region| region.bbox)
             .reduce(|a, b| a.union(&b))
     }
+
+    /// The part start of solid region `region`, if it is one.
+    pub fn start_of(&self, region: u32) -> Option<&PartStart> {
+        self.starts
+            .binary_search_by_key(&region, |start| start.region)
+            .ok()
+            .map(|at| &self.starts[at])
+    }
 }
 
 /// Pixels shared by a region of one layer and a region of the next.
@@ -236,58 +347,89 @@ pub struct Overlap {
 pub struct LayerLinks {
     /// Solid regions below and above.
     pub solid: Vec<Overlap>,
-    /// Air regions below and above.
+    /// Air regions below and above, where at least one of the two is
+    /// enclosed, counting the opened air they share.
     pub air: Vec<Overlap>,
 }
 
 /// The pixels of one layer as row runs, with the region of every run.
 ///
-/// [`PlateRegions`] keeps only the statistics; a check that needs the pixels
-/// of a layer recomputes them with [`LayerPixels::compute`], which gives the
+/// [`PlateRegions`] keeps only the tables; a check that needs the pixels of
+/// a layer recomputes them with [`LayerPixels::compute`], which gives the
 /// same region indices.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LayerPixels {
-    /// Model pixels.
+    /// The layer's pixels as rasterised.
     pub model: Vec<Run>,
-    /// Support pixels.
-    pub support: Vec<Run>,
-    /// Solid pixels: model and support merged.
+    /// What the clean-up leaves of them: the layer's solid.
     pub solid: Vec<Run>,
+    /// What the clean-up took: `model` less `solid`.
+    pub stray: Vec<Run>,
     /// The solid region of each run of `solid`.
     pub solid_labels: Vec<u32>,
     /// Number of solid regions.
     pub solid_count: usize,
-    /// Air pixels, the complement of `solid` on the screen.
+    /// The opened air, within the complement of `solid` on the screen.
     pub air: Vec<Run>,
     /// The air region of each run of `air`.
     pub air_labels: Vec<u32>,
     /// Number of air regions.
     pub air_count: usize,
+    /// Whether each air region is enclosed within the layer.
+    pub air_enclosed: Vec<bool>,
 }
 
 impl LayerPixels {
-    /// Rasterises and labels layer `layer` of `input`.
+    /// Rasterises, cleans and labels layer `layer` of `input`.
     ///
     /// # Panics
     ///
     /// When `layer` is out of range.
-    pub fn compute(input: &ReviewInput<'_>, layer: usize) -> Self {
-        let model = role_runs(input, layer, Role::Model);
-        let support = role_runs(input, layer, Role::Support);
-        let solid = runs::union(&model, &support);
-        let air = runs::complement(&solid, input.width_px(), input.height_px());
+    pub fn compute(input: &ReviewInput<'_>, layer: usize, options: &SweepOptions) -> Self {
+        Self::solid_of(input, layer, options).with_air(input, options)
+    }
+
+    /// [`compute`](Self::compute) without the air, for what reads the solid
+    /// alone.
+    fn solid_of(input: &ReviewInput<'_>, layer: usize, options: &SweepOptions) -> Self {
+        let model = model_runs(input, layer);
+        let solid = runs::open(&model, options.min_wall_px, input.height_px());
+        let stray = if solid.len() == model.len() && solid == model {
+            Vec::new()
+        } else {
+            runs::difference(&model, &solid)
+        };
         let (solid_labels, solid_count) = label_runs(&solid, SOLID_CONNECTIVITY);
-        let (air_labels, air_count) = label_runs(&air, AIR_CONNECTIVITY);
         Self {
             model,
-            support,
             solid,
+            stray,
             solid_labels,
             solid_count,
-            air,
-            air_labels,
-            air_count,
+            ..Self::default()
         }
+    }
+
+    /// These pixels with their air opened and labelled.
+    fn with_air(mut self, input: &ReviewInput<'_>, options: &SweepOptions) -> Self {
+        let (width_px, height_px) = (input.width_px(), input.height_px());
+        let air = runs::open(
+            &runs::complement(&self.solid, width_px, height_px),
+            options.drain_width_px,
+            height_px,
+        );
+        let (air_labels, air_count) = label_runs(&air, AIR_CONNECTIVITY);
+        let mut air_enclosed = vec![true; air_count];
+        for (run, &label) in air.iter().zip(&air_labels) {
+            if run.row == 0 || run.row + 1 == height_px || run.x0 == 0 || run.x1 == width_px {
+                air_enclosed[label as usize] = false;
+            }
+        }
+        self.air = air;
+        self.air_labels = air_labels;
+        self.air_count = air_count;
+        self.air_enclosed = air_enclosed;
+        self
     }
 
     /// The runs of solid region `region`. It scans every run of the layer:
@@ -306,27 +448,72 @@ impl LayerPixels {
     /// The statistics of every region, without the links to other layers
     /// (`below_px` and `above_px` are 0).
     pub fn regions(&self, width_px: u32, height_px: u32) -> LayerRegions {
-        let mut solid = measure_runs(
-            &self.solid,
-            &self.solid_labels,
-            self.solid_count,
-            width_px,
-            height_px,
+        LayerRegions {
+            solid: measure_runs(
+                &self.solid,
+                &self.solid_labels,
+                self.solid_count,
+                width_px,
+                height_px,
+            ),
+            air: measure_runs(
+                &self.air,
+                &self.air_labels,
+                self.air_count,
+                width_px,
+                height_px,
+            ),
+            stray: Vec::new(),
+            starts: Vec::new(),
+        }
+    }
+
+    /// The part starts among `solid`, the layer's regions with their links
+    /// below added up in `below_px`, over the layer `below`.
+    fn starts(&self, solid: &[Region], below: Option<&Self>, min_link_px: u64) -> Vec<PartStart> {
+        let mut slot = vec![u32::MAX; solid.len()];
+        let mut starts: Vec<PartStart> = Vec::new();
+        for (region, statistics) in solid.iter().enumerate() {
+            if !link_holds(statistics.below_px, statistics.area_px, min_link_px) {
+                slot[region] = starts.len() as u32;
+                starts.push(PartStart {
+                    region: region as u32,
+                    runs: Vec::new(),
+                    below: below.map_or_else(Vec::new, |below| below.around(&statistics.bbox)),
+                });
+            }
+        }
+        if !starts.is_empty() {
+            for (run, &label) in self.solid.iter().zip(&self.solid_labels) {
+                let at = slot[label as usize];
+                if at != u32::MAX {
+                    starts[at as usize].runs.push(*run);
+                }
+            }
+        }
+        starts
+    }
+}
+
+impl LayerPixels {
+    /// The stretches of this layer's solid within [`START_MARGIN_PX`] of
+    /// `bbox`.
+    fn around(&self, bbox: &PixelBox) -> Vec<Run> {
+        let (top, bottom) = (
+            bbox.y0.saturating_sub(START_MARGIN_PX),
+            bbox.y1.saturating_add(START_MARGIN_PX),
         );
-        for_each_overlap(&self.solid, &self.model, |i, _, px| {
-            solid[self.solid_labels[i] as usize].model_px += u64::from(px);
-        });
-        for_each_overlap(&self.solid, &self.support, |i, _, px| {
-            solid[self.solid_labels[i] as usize].support_px += u64::from(px);
-        });
-        let air = measure_runs(
-            &self.air,
-            &self.air_labels,
-            self.air_count,
-            width_px,
-            height_px,
+        let (left, right) = (
+            bbox.x0.saturating_sub(START_MARGIN_PX),
+            bbox.x1.saturating_add(START_MARGIN_PX),
         );
-        LayerRegions { solid, air }
+        let first = self.solid.partition_point(|run| run.row < top);
+        self.solid[first..]
+            .iter()
+            .take_while(|run| run.row < bottom)
+            .filter(|run| run.x0 < right && left < run.x1)
+            .map(|run| Run::new(run.row, run.x0.max(left), run.x1.min(right)))
+            .collect()
     }
 }
 
@@ -341,35 +528,25 @@ fn runs_of<'a>(
         .map(|(run, _)| run)
 }
 
-/// The lit pixels of every `role` leaf on `layer`. Leaves of one role are
-/// rasterised together, so overlapping leaves merge exactly as they do in
-/// the printer file.
-fn role_runs(input: &ReviewInput<'_>, layer: usize, role: Role) -> Vec<Run> {
+/// The lit pixels of every leaf on `layer`. Leaves are rasterised together,
+/// so overlapping leaves merge exactly as they do in the printer file, and a
+/// stack that erases cancels the ones it was cut from.
+fn model_runs(input: &ReviewInput<'_>, layer: usize) -> Vec<Run> {
     let contours: Vec<&ContourLayer> = input
         .leaves()
         .iter()
-        .filter(|leaf| leaf.role == role)
         .map(|leaf| &leaf.stack.layers()[layer])
         .filter(|contour| !contour.polygons().is_empty())
         .collect();
-    match contours.as_slice() {
-        [] => Vec::new(),
-        [only] => runs::runs_from_raster(&rasterize_layer_binary(only, input.pixel_map())),
-        many => {
-            let polygons: Vec<Polygon> = many
-                .iter()
-                .flat_map(|contour| contour.polygons().iter().cloned())
-                .collect();
-            let merged = ContourLayer::new(many[0].z_mm(), polygons);
-            runs::runs_from_raster(&rasterize_layer_binary(&merged, input.pixel_map()))
-        }
+    if contours.is_empty() {
+        return Vec::new();
     }
+    runs::runs_from_raster(&rasterize_layers_binary(&contours, input.pixel_map()))
 }
 
 /// Labels the connected regions of a run list with `connectivity`. Returns
 /// the region of every run, numbered in scan order, and the number of
-/// regions. [`LayerPixels::compute`] uses it on the merged solid and on the
-/// air; a check can use it on one role alone (`LayerPixels::model`).
+/// regions.
 pub fn label_runs(runs: &[Run], connectivity: Connectivity) -> (Vec<u32>, usize) {
     let reach = connectivity.reach();
     let mut sets = UnionFind::new(runs.len());
@@ -412,8 +589,8 @@ pub fn label_runs(runs: &[Run], connectivity: Connectivity) -> (Vec<u32>, usize)
 }
 
 /// Area, box, centroid, inside pixel and border contact of every region
-/// labelled by [`label_runs`] on a `width_px` x `height_px` screen. Role
-/// counts and links are left at 0.
+/// labelled by [`label_runs`] on a `width_px` x `height_px` screen. Links are
+/// left at 0.
 pub fn measure_runs(
     runs: &[Run],
     labels: &[u32],
@@ -436,8 +613,6 @@ pub fn measure_runs(
                 centroid_px: [0.0, 0.0],
                 inside_px: [run.x0, run.row],
                 touches_border: false,
-                model_px: 0,
-                support_px: 0,
                 below_px: 0,
                 above_px: 0,
             });
@@ -470,21 +645,9 @@ pub fn measure_runs(
     regions
 }
 
-/// The overlaps of the labelled runs of a lower and an upper layer, merged
-/// per region pair and sorted by `(lower, upper)`.
-fn link(lower: &[Run], lower_labels: &[u32], upper: &[Run], upper_labels: &[u32]) -> Vec<Overlap> {
-    let mut pairs: Vec<Overlap> = Vec::new();
-    for_each_overlap(lower, upper, |i, j, px| {
-        let (a, b) = (lower_labels[i], upper_labels[j]);
-        match pairs.last_mut() {
-            Some(last) if last.lower == a && last.upper == b => last.pixels += u64::from(px),
-            _ => pairs.push(Overlap {
-                lower: a,
-                upper: b,
-                pixels: u64::from(px),
-            }),
-        }
-    });
+/// Sums the pixels of pairs of regions that repeat in `pairs`, sorted by
+/// `(lower, upper)`.
+fn merged_pairs(mut pairs: Vec<Overlap>) -> Vec<Overlap> {
     pairs.sort_unstable_by_key(|o| (o.lower, o.upper));
     pairs.dedup_by(|next, kept| {
         if next.lower == kept.lower && next.upper == kept.upper {
@@ -497,32 +660,80 @@ fn link(lower: &[Run], lower_labels: &[u32], upper: &[Run], upper_labels: &[u32]
     pairs
 }
 
-fn link_layers(lower: &LayerPixels, upper: &LayerPixels) -> LayerLinks {
-    LayerLinks {
-        solid: link(
-            &lower.solid,
-            &lower.solid_labels,
-            &upper.solid,
-            &upper.solid_labels,
-        ),
-        air: link(&lower.air, &lower.air_labels, &upper.air, &upper.air_labels),
+/// The overlaps of the labelled solid runs of a lower and an upper layer.
+fn link_solid(lower: &LayerPixels, upper: &LayerPixels) -> Vec<Overlap> {
+    let mut pairs: Vec<Overlap> = Vec::new();
+    for_each_overlap(&lower.solid, &upper.solid, |i, j, px| {
+        let (a, b) = (lower.solid_labels[i], upper.solid_labels[j]);
+        match pairs.last_mut() {
+            Some(last) if last.lower == a && last.upper == b => last.pixels += u64::from(px),
+            _ => pairs.push(Overlap {
+                lower: a,
+                upper: b,
+                pixels: u64::from(px),
+            }),
+        }
+    });
+    merged_pairs(pairs)
+}
+
+/// The links of the opened air of a lower and an upper layer: the air both
+/// share, opened again, so a link narrower than a drain is no link. Only
+/// links to an enclosed region matter (open air is drained whatever lies
+/// below it), and no square of air straddles two regions, so the rest is
+/// left out before opening.
+fn link_air(
+    lower: &LayerPixels,
+    upper: &LayerPixels,
+    drain_width_px: u32,
+    height_px: u32,
+) -> Vec<Overlap> {
+    let mut shared: Vec<Run> = Vec::new();
+    for_each_overlap(&lower.air, &upper.air, |i, j, _| {
+        if lower.air_enclosed[lower.air_labels[i] as usize]
+            || upper.air_enclosed[upper.air_labels[j] as usize]
+        {
+            let (a, b) = (lower.air[i], upper.air[j]);
+            shared.push(Run::new(a.row, a.x0.max(b.x0), a.x1.min(b.x1)));
+        }
+    });
+    let shared = runs::open(&shared, drain_width_px, height_px);
+    // Each opened run lies within one run of each layer.
+    let mut pairs: Vec<Overlap> = vec![
+        Overlap {
+            lower: 0,
+            upper: 0,
+            pixels: 0
+        };
+        shared.len()
+    ];
+    for_each_overlap(&shared, &lower.air, |i, j, px| {
+        pairs[i].lower = lower.air_labels[j];
+        pairs[i].pixels = u64::from(px);
+    });
+    for_each_overlap(&shared, &upper.air, |i, j, _| {
+        pairs[i].upper = upper.air_labels[j];
+    });
+    merged_pairs(pairs)
+}
+
+/// What watches a sweep: the token that stops it, and who hears of each
+/// layer done, called from any thread with the number of layers done so far.
+#[derive(Clone, Copy)]
+pub struct SweepWatch<'a> {
+    /// Stops the sweep at the next layer of every thread.
+    pub cancel: &'a CancelToken,
+    /// Hears every finished layer.
+    pub on_layer: &'a (dyn Fn(usize) + Sync),
+}
+
+impl std::fmt::Debug for SweepWatch<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SweepWatch").finish_non_exhaustive()
     }
 }
 
-/// Adds the links between `lower` and `upper` to their regions' `above_px`
-/// and `below_px`.
-fn apply_links(lower: &mut LayerRegions, upper: &mut LayerRegions, links: &LayerLinks) {
-    for o in &links.solid {
-        lower.solid[o.lower as usize].above_px += o.pixels;
-        upper.solid[o.upper as usize].below_px += o.pixels;
-    }
-    for o in &links.air {
-        lower.air[o.lower as usize].above_px += o.pixels;
-        upper.air[o.upper as usize].below_px += o.pixels;
-    }
-}
-
-/// Every layer's regions and the links between consecutive layers.
+/// Every layer's tables and the links between consecutive layers.
 #[derive(Clone, Debug, Default)]
 pub struct PlateRegions {
     width_px: u32,
@@ -534,64 +745,58 @@ pub struct PlateRegions {
 }
 
 impl PlateRegions {
-    /// Rasterises, labels and links every layer of `input`.
-    ///
-    /// Layers are processed in parallel, a batch of a few per thread at a
-    /// time, so only one batch of pixels is held in memory at once; the
-    /// result keeps statistics only. The result does not depend on the
-    /// number of threads.
-    pub fn compute(input: &ReviewInput<'_>) -> Self {
+    /// Sweeps every layer of `input`, with nobody watching.
+    pub fn compute(input: &ReviewInput<'_>, options: &SweepOptions) -> Self {
+        let cancel = CancelToken::new();
+        let watch = SweepWatch {
+            cancel: &cancel,
+            on_layer: &|_| {},
+        };
+        Self::sweep(input, options, watch).expect("a token nobody holds is never tripped")
+    }
+
+    /// Sweeps every layer of `input`, in parallel, telling `watch` of every
+    /// layer done. `None` when `watch` stopped it.
+    pub fn sweep(
+        input: &ReviewInput<'_>,
+        options: &SweepOptions,
+        watch: SweepWatch<'_>,
+    ) -> Option<Self> {
         let started = Instant::now();
-        let (width_px, height_px) = (input.width_px(), input.height_px());
         let count = input.layer_count();
-        let batch = (rayon::current_num_threads() * 4).max(8);
+        let size = chunk_size(count, rayon::current_num_threads());
+        let chunks: Vec<Range<usize>> = (0..count)
+            .step_by(size)
+            .map(|start| start..(start + size).min(count))
+            .collect();
+        let done = AtomicUsize::new(0);
+        let min_link_px = options.min_link_px(input);
+        let swept: Vec<Vec<(LayerRegions, LayerLinks)>> = chunks
+            .into_par_iter()
+            .map(|chunk| sweep_chunk(input, options, min_link_px, chunk, watch, &done))
+            .collect::<Option<_>>()?;
         let mut layers: Vec<LayerRegions> = Vec::with_capacity(count);
         let mut links: Vec<LayerLinks> = Vec::with_capacity(count);
-        let mut previous: Option<LayerPixels> = None;
-        let mut start = 0;
-        while start < count {
-            let end = (start + batch).min(count);
-            let (mut pixels, mut regions): (Vec<LayerPixels>, Vec<LayerRegions>) = (start..end)
-                .into_par_iter()
-                .map(|layer| {
-                    let pixels = LayerPixels::compute(input, layer);
-                    let regions = pixels.regions(width_px, height_px);
-                    (pixels, regions)
-                })
-                .unzip();
-            let batch_links: Vec<LayerLinks> = (0..pixels.len())
-                .into_par_iter()
-                .map(|i| {
-                    let lower = if i == 0 {
-                        previous.as_ref()
-                    } else {
-                        Some(&pixels[i - 1])
-                    };
-                    lower.map_or_else(LayerLinks::default, |lower| link_layers(lower, &pixels[i]))
-                })
-                .collect();
-            for (i, layer_links) in batch_links.iter().enumerate() {
-                if i == 0 {
-                    if let Some(lower) = layers.last_mut() {
-                        apply_links(lower, &mut regions[0], layer_links);
-                    }
-                } else {
-                    let (below, above) = regions.split_at_mut(i);
-                    apply_links(&mut below[i - 1], &mut above[0], layer_links);
-                }
-            }
-            layers.append(&mut regions);
-            links.extend(batch_links);
-            previous = pixels.pop();
-            start = end;
+        for (layer, layer_links) in swept.into_iter().flatten() {
+            layers.push(layer);
+            links.push(layer_links);
         }
-        Self {
-            width_px,
-            height_px,
+        for upper in 1..layers.len() {
+            let lower = &mut layers[upper - 1];
+            for overlap in &links[upper].solid {
+                lower.solid[overlap.lower as usize].above_px += overlap.pixels;
+            }
+            for overlap in &links[upper].air {
+                lower.air[overlap.lower as usize].above_px += overlap.pixels;
+            }
+        }
+        Some(Self {
+            width_px: input.width_px(),
+            height_px: input.height_px(),
             layers,
             links,
             elapsed: started.elapsed(),
-        }
+        })
     }
 
     /// The screen width in pixels.
@@ -606,13 +811,13 @@ impl PlateRegions {
         self.height_px
     }
 
-    /// Every layer's regions, from the plate up.
+    /// Every layer's tables, from the plate up.
     #[inline]
     pub fn layers(&self) -> &[LayerRegions] {
         &self.layers
     }
 
-    /// The regions of layer `layer`.
+    /// The tables of layer `layer`.
     ///
     /// # Panics
     ///
@@ -634,7 +839,7 @@ impl PlateRegions {
         &self.links[layer].solid
     }
 
-    /// The overlaps between the air regions of layer `layer - 1` and layer
+    /// The links between the air regions of layer `layer - 1` and layer
     /// `layer`. Empty for layer 0.
     ///
     /// # Panics
@@ -653,10 +858,7 @@ impl PlateRegions {
     }
 
     /// Groups the air regions of all layers, as
-    /// [`group_solid`](Self::group_solid) does for solid. With `|_, _| true`
-    /// a group is a cavity, or open air when one of its regions touches the
-    /// screen edge or lies on the last layer (open towards the resin above,
-    /// which is not represented).
+    /// [`group_solid`](Self::group_solid) does for solid.
     pub fn group_air(&self, keep: impl FnMut(usize, &Overlap) -> bool) -> Groups {
         self.group(|layer| layer.air.len(), |links| &links.air, keep)
     }
@@ -688,11 +890,130 @@ impl PlateRegions {
         Groups::from_union_find(offsets, &mut sets)
     }
 
-    /// How long [`compute`](Self::compute) took.
+    /// How long the sweep took.
     #[inline]
     pub fn elapsed(&self) -> Duration {
         self.elapsed
     }
+}
+
+/// The layers a chunk walks: enough chunks for every thread to stay busy to
+/// the end, and few enough that rasterising the layer below each one again
+/// stays cheap.
+fn chunk_size(layers: usize, threads: usize) -> usize {
+    (layers / (threads.max(1) * 8)).clamp(4, 32)
+}
+
+/// Sweeps the layers of `chunk`, the layer below its first one rasterised
+/// again. `None` when the watch stopped it.
+fn sweep_chunk(
+    input: &ReviewInput<'_>,
+    options: &SweepOptions,
+    min_link_px: u64,
+    chunk: Range<usize>,
+    watch: SweepWatch<'_>,
+    done: &AtomicUsize,
+) -> Option<Vec<(LayerRegions, LayerLinks)>> {
+    let (width_px, height_px) = (input.width_px(), input.height_px());
+    let mut below = chunk
+        .start
+        .checked_sub(1)
+        .map(|layer| LayerPixels::compute(input, layer, options));
+    let mut out = Vec::with_capacity(chunk.len());
+    for layer in chunk {
+        if watch.cancel.is_cancelled() {
+            return None;
+        }
+        let pixels = LayerPixels::compute(input, layer, options);
+        let mut regions = pixels.regions(width_px, height_px);
+        let links = below
+            .as_ref()
+            .map_or_else(LayerLinks::default, |below| LayerLinks {
+                solid: link_solid(below, &pixels),
+                air: link_air(below, &pixels, options.drain_width_px, height_px),
+            });
+        for overlap in &links.solid {
+            regions.solid[overlap.upper as usize].below_px += overlap.pixels;
+        }
+        for overlap in &links.air {
+            regions.air[overlap.upper as usize].below_px += overlap.pixels;
+        }
+        if layer > 0 {
+            regions.starts = pixels.starts(&regions.solid, below.as_ref(), min_link_px);
+        }
+        regions.stray.clone_from(&pixels.stray);
+        out.push((regions, links));
+        below = Some(pixels);
+        (watch.on_layer)(done.fetch_add(1, Ordering::Relaxed) + 1);
+    }
+    Some(out)
+}
+
+/// One set of regions to read the pixels of: their layer, who asked (any
+/// number, kept with what comes back) and their indices.
+pub(crate) type WantedRegions = (usize, usize, u32);
+
+/// What [`read_layers`] needs of a layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LayerRead {
+    /// Its solid.
+    Solid,
+    /// Its solid and its air.
+    All,
+}
+
+/// Calls `read` with the pixels of every layer `wanted` names and the
+/// regions each asker wants there: each layer is rasterised once, in
+/// parallel. What `read` gives back comes back with its asker, lowest layer
+/// first.
+pub(crate) fn read_layers<T: Send>(
+    input: &ReviewInput<'_>,
+    options: &SweepOptions,
+    needs: LayerRead,
+    mut wanted: Vec<WantedRegions>,
+    askers: usize,
+    read: impl Fn(&LayerPixels, &[WantedRegions]) -> T + Sync,
+) -> Vec<Vec<(usize, T)>> {
+    wanted.sort_unstable();
+    let layers: Vec<&[WantedRegions]> = wanted.chunk_by(|a, b| a.0 == b.0).collect();
+    let found: Vec<Vec<(usize, usize, T)>> = layers
+        .par_iter()
+        .map(|members| {
+            let layer = members[0].0;
+            let pixels = match needs {
+                LayerRead::Solid => LayerPixels::solid_of(input, layer, options),
+                LayerRead::All => LayerPixels::compute(input, layer, options),
+            };
+            members
+                .chunk_by(|a, b| a.1 == b.1)
+                .map(|regions| {
+                    let asker = regions[0].1;
+                    (asker, layer, read(&pixels, regions))
+                })
+                .collect()
+        })
+        .collect();
+    let mut out: Vec<Vec<(usize, T)>> = Vec::with_capacity(askers);
+    out.resize_with(askers, Vec::new);
+    for (asker, layer, value) in found.into_iter().flatten() {
+        out[asker].push((layer, value));
+    }
+    out
+}
+
+/// The runs among `runs`, labelled by `labels`, of the regions `wanted`
+/// names.
+pub(crate) fn runs_in(runs: &[Run], labels: &[u32], wanted: &[WantedRegions]) -> Vec<Run> {
+    runs.iter()
+        .zip(labels)
+        .filter(|(_, label)| wanted.iter().any(|w| w.2 == **label))
+        .map(|(run, _)| *run)
+        .collect()
+}
+
+/// A [`RegionRef`] as one [`WantedRegions`] entry of `asker`.
+pub(crate) const fn wanted(member: &RegionRef, asker: usize) -> WantedRegions {
+    (member.layer, asker, member.index)
 }
 
 #[cfg(test)]

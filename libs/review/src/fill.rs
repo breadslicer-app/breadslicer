@@ -31,29 +31,19 @@
 //! fill flush with the model. Support pixels are left out of the rim: the
 //! fill is model, and the review tells the two apart.
 //!
-//! Fix All (#156) uses the same pixels for two more fixes:
-//!
-//! - **Thickening** a feature thinner than a pixel: the thin-feature check
-//!   offers [`SuggestedFix::Thicken`](crate::SuggestedFix) with the
-//!   feature's pixels grown a pixel on every side, cured on the next slice
-//!   exactly as a cavity's fill is.
-//! - **Erasing** a floating speck: the output check offers
-//!   [`SuggestedFix::Erase`](crate::SuggestedFix) with the speck's pixels
-//!   grown a pixel on every side. [`erase_stack`] turns them into a stack
-//!   that, merged with the stacks it was cut from, removes everything inside
-//!   those rectangles. The slicer fills by the non-zero winding rule, so a
-//!   ring clipped to a rectangle and reversed cancels the ring there exactly
-//!   and changes nothing elsewhere: no polygon boolean is needed, and the
-//!   model meshes are never touched. The pixels around a speck are air on
-//!   its layer (solid is 8-connected), so the margin only takes the parts of
-//!   its polygons too thin to light a pixel, which anti-aliasing would still
-//!   grey.
+//! The review takes pixels off the layers the same way (#432): the stray
+//! pixels and the debris it finds come back as one [`CavityFill`], and
+//! [`erase_stack`] turns them into a stack that, merged with the stacks it
+//! was cut from, removes everything inside those rectangles. The slicer fills
+//! by the non-zero winding rule, so a ring clipped to a rectangle and
+//! reversed cancels the ring there exactly and changes nothing elsewhere: no
+//! polygon boolean is needed, and the model meshes are never touched.
 
+use rayon::prelude::*;
 use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
 use sc_sl1cer::geom2d::Point2D;
 use sc_sl1cer::profile::LayerSchedule;
 
-use crate::checks::thin::dilate_square;
 use crate::input::ReviewInput;
 use crate::runs::Run;
 
@@ -109,8 +99,8 @@ pub struct FillSlab {
     pub rects: Vec<PlateRect>,
     /// The model pixels on the cavity's rim on this layer, as disjoint
     /// rectangles beside `rects` (see the module documentation). Cured with
-    /// the fill but solid already, so they add no resin. Empty for a
-    /// thickening or an erasure.
+    /// the fill but solid already, so they add no resin. Empty for anything
+    /// but a cavity.
     pub rim: Vec<PlateRect>,
 }
 
@@ -163,22 +153,6 @@ impl CavityFill {
         Self { slabs }
     }
 
-    /// The fill of the run lists `layers`, each grown `margin_px` pixels on
-    /// every side (a square), within the screen: a feature to thicken or a
-    /// speck to erase with its margin.
-    pub(crate) fn grown_from_runs(
-        input: &ReviewInput<'_>,
-        layers: Vec<(usize, Vec<Run>)>,
-        margin_px: u32,
-    ) -> Self {
-        let (width, height) = (input.width_px(), input.height_px());
-        let grown = layers
-            .into_iter()
-            .map(|(layer, runs)| (layer, dilate_square(&runs, margin_px, width, height)))
-            .collect();
-        Self::from_runs(input, grown)
-    }
-
     /// The resin it cures, in cubic millimetres.
     pub fn volume_mm3(&self) -> f64 {
         self.slabs
@@ -193,22 +167,6 @@ impl CavityFill {
     /// Whether it fills nothing.
     pub fn is_empty(&self) -> bool {
         self.slabs.iter().all(|slab| slab.rects.is_empty())
-    }
-
-    /// Whether a rectangle of it overlaps one of `other` on overlapping
-    /// slabs.
-    pub fn overlaps(&self, other: &Self) -> bool {
-        self.slabs.iter().any(|a| {
-            other
-                .slabs
-                .iter()
-                .filter(|b| a.bottom_mm < b.top_mm && b.bottom_mm < a.top_mm)
-                .any(|b| {
-                    a.rects
-                        .iter()
-                        .any(|r| b.rects.iter().any(|q| r.overlaps(q)))
-                })
-        })
     }
 }
 
@@ -270,9 +228,9 @@ pub fn erase_stack<'e>(
     if slabs.is_empty() {
         return None;
     }
-    let mut cut = false;
-    let layers = schedule
-        .iter_z()
+    let heights: Vec<f64> = schedule.iter_z().collect();
+    let layers: Vec<ContourLayer> = heights
+        .into_par_iter()
         .enumerate()
         .map(|(layer, z_mm)| {
             let rects: Vec<&PlateRect> = slabs
@@ -299,10 +257,10 @@ pub fn erase_stack<'e>(
                     }
                 }
             }
-            cut |= !polygons.is_empty();
             ContourLayer::new(z_mm, polygons)
         })
         .collect();
+    let cut = layers.iter().any(|layer| !layer.polygons().is_empty());
     cut.then(|| ContourStack::new_unchecked(layers))
 }
 
@@ -577,25 +535,6 @@ mod fill_tests {
         );
         assert!(erase_stack([&erasure], &[&empty], &schedule).is_none());
         assert!(erase_stack([&CavityFill::default()], &[&plate], &schedule).is_none());
-    }
-
-    #[test]
-    fn fills_overlap_only_on_shared_slabs() {
-        let a = CavityFill {
-            slabs: vec![slab(0.0, 0.05, vec![rect(0.0, 0.0, 1.0, 1.0)])],
-        };
-        let beside = CavityFill {
-            slabs: vec![slab(0.0, 0.05, vec![rect(1.0, 0.0, 2.0, 1.0)])],
-        };
-        let above = CavityFill {
-            slabs: vec![slab(0.05, 0.10, vec![rect(0.0, 0.0, 1.0, 1.0)])],
-        };
-        let across = CavityFill {
-            slabs: vec![slab(0.0, 0.05, vec![rect(0.5, 0.5, 2.0, 2.0)])],
-        };
-        assert!(!a.overlaps(&beside));
-        assert!(!a.overlaps(&above));
-        assert!(a.overlaps(&across) && across.overlaps(&a));
     }
 
     #[test]

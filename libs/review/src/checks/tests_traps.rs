@@ -19,7 +19,8 @@ use sc_sl1cer::raster::{rasterize_layer, rasterize_layer_binary};
 
 use super::*;
 use crate::fill::PlateRect;
-use crate::input::Role;
+use crate::input::ReviewLeaf;
+use crate::runner::{ReviewOptions, check_regions};
 use crate::test_support::{Fixture, FixtureBuilder, Shape};
 
 /// The outside of the standard box.
@@ -42,15 +43,6 @@ fn block_with_hole(x0: f64, y0: f64, x1: f64, y1: f64) -> Shape {
     Shape::polygon(ring(40.0, 30.0, 100.0, 80.0), vec![ring(x0, y0, x1, y1)])
 }
 
-/// Four support pillars under the corners of the standard box.
-fn corner_pillars(builder: FixtureBuilder, layers: std::ops::Range<usize>) -> FixtureBuilder {
-    builder
-        .support(layers.clone(), Shape::rect(40.0, 30.0, 44.0, 34.0))
-        .support(layers.clone(), Shape::rect(96.0, 30.0, 100.0, 34.0))
-        .support(layers.clone(), Shape::rect(40.0, 76.0, 44.0, 80.0))
-        .support(layers, Shape::rect(96.0, 76.0, 100.0, 80.0))
-}
-
 /// The options under which every trap is an error, whatever its size. The
 /// tiers have tests of their own.
 fn all_errors() -> TrapOptions {
@@ -62,11 +54,33 @@ fn all_errors() -> TrapOptions {
 }
 
 fn traps(fixture: &Fixture) -> Vec<Finding> {
-    fixture.check(|ctx| run(ctx, &all_errors()))
+    traps_with(fixture, &all_errors())
 }
 
 fn traps_with(fixture: &Fixture, options: &TrapOptions) -> Vec<Finding> {
-    fixture.check(|ctx| run(ctx, options))
+    fixture.check(|ctx| run(ctx, options, &SweepOptions::default()).0)
+}
+
+/// The findings of `options`, with air opened `width` pixels wide.
+fn traps_of_width(fixture: &Fixture, options: &TrapOptions, width: u32) -> Vec<Finding> {
+    let sweep = SweepOptions {
+        drain_width_px: width,
+        ..SweepOptions::default()
+    };
+    let input = fixture.input();
+    let regions = PlateRegions::compute(&input, &sweep);
+    let mut findings = run(&ReviewContext::new(&input, &regions), options, &sweep).0;
+    crate::finding::sort_findings(&mut findings);
+    findings
+}
+
+/// The review of `input` with the default options.
+fn reviewed(input: &ReviewInput<'_>) -> crate::runner::ReviewReport {
+    let regions = PlateRegions::compute(input, &SweepOptions::default());
+    check_regions(
+        &ReviewContext::new(input, &regions),
+        &ReviewOptions::default(),
+    )
 }
 
 /// The inside point of the first enclosed air region of `layer`: where a
@@ -84,6 +98,21 @@ fn hole_point(fixture: &Fixture, layer: usize) -> [f64; 2] {
 
 fn assert_close(found: f64, expected: f64) {
     assert!((found - expected).abs() < 1e-9, "{found} != {expected}");
+}
+
+/// The polygons of `layer` of `fixture`, with `fills` merged.
+fn merged_with_fills(fixture: &Fixture, fills: &[CavityFill], layer: usize) -> ContourLayer {
+    let filled = crate::fill::fill_stack(fills, fixture.schedule()).expect("a fill");
+    let input = fixture.input_with(ReviewLeaf::new(Some("Filled cavities"), &filled));
+    let z_mm = filled.layers()[layer].z_mm();
+    ContourLayer::new(
+        z_mm,
+        input
+            .leaves()
+            .iter()
+            .flat_map(|leaf| leaf.stack.layers()[layer].polygons().iter().cloned())
+            .collect(),
+    )
 }
 
 /// Asserts that `finding` is offered a fill and no drain.
@@ -148,7 +177,7 @@ fn a_solid_block_has_no_trap() {
     let fixture = FixtureBuilder::new(8)
         .model(.., Shape::rect(40.0, 30.0, 80.0, 60.0))
         .build();
-    let findings = fixture.check(|ctx| run(ctx, &TrapOptions::default()));
+    let findings = traps_with(&fixture, &TrapOptions::default());
     assert!(findings.is_empty(), "{findings:?}");
 }
 
@@ -161,9 +190,7 @@ fn an_empty_plate_has_no_trap() {
 #[test]
 fn an_open_tube_on_supports_is_quiet() {
     // Open at the bottom, between the pillars, and at the top.
-    let fixture = corner_pillars(FixtureBuilder::new(12), 0..4)
-        .model(4..12, walls())
-        .build();
+    let fixture = FixtureBuilder::new(12).model(4..12, walls()).build();
     assert!(traps(&fixture).is_empty(), "{:?}", traps(&fixture));
 }
 
@@ -171,7 +198,7 @@ fn an_open_tube_on_supports_is_quiet() {
 fn a_dome_on_supports_is_not_a_trap() {
     // A box with a lid and no floor, held by pillars: its cavity opens
     // toward the plate, into the open air between the pillars.
-    let fixture = corner_pillars(FixtureBuilder::new(14), 0..5)
+    let fixture = FixtureBuilder::new(14)
         .model(5..10, walls())
         .model(10..12, block())
         .build();
@@ -182,55 +209,11 @@ fn a_dome_on_supports_is_not_a_trap() {
 fn a_drain_in_the_floor_drains_the_cavity() {
     // A 4 x 4 pixel drain (16 pixels) through the floor of a closed box held
     // by pillars.
-    let fixture = corner_pillars(FixtureBuilder::new(18), 0..4)
+    let fixture = FixtureBuilder::new(18)
         .model(4..6, block_with_hole(68.0, 53.0, 72.0, 57.0))
         .model(6..14, walls())
         .model(14..16, block())
         .build();
-    assert!(traps(&fixture).is_empty(), "{:?}", traps(&fixture));
-}
-
-#[test]
-fn holes_between_support_trunks_are_open_air() {
-    // Four trunks braced by a ring on layer 4, holding a block. Inside the
-    // brace the air is enclosed within its layer, but it sits on the open
-    // air between the trunks.
-    let mut builder = FixtureBuilder::new(12);
-    for (x, y) in [(128.0, 60.0), (72.0, 60.0), (100.0, 88.0), (100.0, 32.0)] {
-        builder = builder.support(0..8, Shape::circle(x, y, 4.0));
-    }
-    let fixture = builder
-        .support(4..5, Shape::ring(100.0, 60.0, 30.0, 26.0))
-        .model(8..12, Shape::rect(65.0, 25.0, 135.0, 95.0))
-        .build();
-    assert!(
-        fixture
-            .regions()
-            .layer(4)
-            .air
-            .iter()
-            .any(|r| !r.touches_border),
-        "the brace encloses air"
-    );
-    assert!(traps(&fixture).is_empty(), "{:?}", traps(&fixture));
-}
-
-#[test]
-fn a_hole_in_a_support_raft_is_open_air_at_plate_level() {
-    // A raft with a hole cut around a block that stands on the plate.
-    let fixture = FixtureBuilder::new(10)
-        .support(0..3, Shape::frame(20.0, 10.0, 180.0, 110.0, 30.0))
-        .model(.., Shape::rect(80.0, 50.0, 120.0, 70.0))
-        .build();
-    assert!(
-        fixture
-            .regions()
-            .layer(0)
-            .air
-            .iter()
-            .any(|r| !r.touches_border),
-        "the raft encloses air"
-    );
     assert!(traps(&fixture).is_empty(), "{:?}", traps(&fixture));
 }
 
@@ -342,7 +325,7 @@ fn sealed_box(side: f64, layers: usize) -> FixtureBuilder {
 fn a_tiny_trap_is_a_note_to_fill() {
     // A 10 x 10 pixel cavity over 4 layers: 0.2 mm³.
     let fixture = sealed_box(10.0, 4).build();
-    let findings = fixture.check(|ctx| run(ctx, &TrapOptions::default()));
+    let findings = traps_with(&fixture, &TrapOptions::default());
     assert_eq!(findings.len(), 1, "{findings:?}");
     let trap = &findings[0];
     assert_eq!(trap.check, CheckKind::ResinTrap);
@@ -419,9 +402,10 @@ fn a_trap_is_filled_only_under_a_millilitre() {
         let fixture = sealed_box(70.0, layers).build();
         let input = fixture.input();
         let regions = fixture.regions();
-        run_with_fills(
+        run(
             &ReviewContext::new(&input, &regions),
             &TrapOptions::default(),
+            &SweepOptions::default(),
         )
     };
     let (findings, fills) = review(405);
@@ -467,7 +451,7 @@ fn a_small_trap_names_its_fill_beside_a_large_one() {
     let input = fixture.input();
     let regions = fixture.regions();
     let ctx = ReviewContext::new(&input, &regions);
-    let (findings, fills) = run_with_fills(&ctx, &TrapOptions::default());
+    let (findings, fills) = run(&ctx, &TrapOptions::default(), &SweepOptions::default());
     assert_eq!(findings.len(), 2, "{findings:?}");
     assert_eq!(fills.len(), 1);
     let small = findings
@@ -500,7 +484,7 @@ fn a_fill_holds_the_pixels_of_the_cavity() {
     let input = fixture.input();
     let regions = fixture.regions();
     let ctx = ReviewContext::new(&input, &regions);
-    let (findings, fills) = run_with_fills(&ctx, &TrapOptions::default());
+    let (findings, fills) = run(&ctx, &TrapOptions::default(), &SweepOptions::default());
     assert_eq!(findings.len(), 1);
     assert_eq!(fills.len(), 1);
     let fill = &fills[0];
@@ -524,68 +508,10 @@ fn a_fill_holds_the_pixels_of_the_cavity() {
 }
 
 #[test]
-fn a_filled_cavity_is_gone_on_the_next_review() {
-    // A tiny and a medium trap side by side, and one of more than a
-    // millilitre: fill the two that offer it, as the app does on the next
-    // slice.
-    let sealed = |builder: FixtureBuilder, [x0, y0, x1, y1]: [f64; 4], top: usize| {
-        builder
-            .model(0..2, Shape::rect(x0, y0, x1, y1))
-            .model(2..top, Shape::frame(x0, y0, x1, y1, 5.0))
-            .model(top..top + 2, Shape::rect(x0, y0, x1, y1))
-    };
-    // 0.2 mm3, 10 mm3 and 1064.7 mm3.
-    let builder = sealed(FixtureBuilder::new(344), [10.0, 10.0, 30.0, 30.0], 6);
-    let builder = sealed(builder, [40.0, 10.0, 100.0, 70.0], 10);
-    let fixture = sealed(builder, [110.0, 10.0, 190.0, 110.0], 340).build();
-    let input = fixture.input();
-    let report = crate::runner::review_with(&input, &crate::runner::ReviewOptions::default());
-    let trap_tiers = |findings: &[Finding]| {
-        let mut tiers: Vec<Severity> = findings
-            .iter()
-            .filter(|f| f.check == CheckKind::ResinTrap)
-            .map(|f| f.severity)
-            .collect();
-        tiers.sort();
-        tiers
-    };
-    assert_eq!(
-        trap_tiers(&report.findings),
-        [Severity::Error, Severity::Warning, Severity::Info],
-        "{:?}",
-        report.findings
-    );
-    let picked: Vec<&CavityFill> = report
-        .findings
-        .iter()
-        .filter_map(|f| match f.fix {
-            Some(SuggestedFix::Fill { cavity, .. }) => Some(&report.fills[cavity]),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(picked.len(), 2);
-    let filled = crate::fill::fill_stack(picked, fixture.schedule()).expect("two cavities to fill");
-    let again = fixture.input_with(crate::input::ReviewLeaf::new(
-        Some("Filled cavities"),
-        Role::Model,
-        &filled,
-    ));
-    let after = crate::runner::review_with(&again, &crate::runner::ReviewOptions::default());
-    assert_eq!(
-        trap_tiers(&after.findings),
-        [Severity::Error],
-        "{:?}",
-        after.findings
-    );
-    // The trap left has no pixels to fill.
-    assert!(after.fills.is_empty());
-}
-
-#[test]
 fn a_pinhole_drain_leaves_a_trap() {
     // The same box as `a_drain_in_the_floor_drains_the_cavity`, with a
     // 3 x 3 pixel drain: 9 pixels, under the 10-pixel threshold.
-    let fixture = corner_pillars(FixtureBuilder::new(18), 0..4)
+    let fixture = FixtureBuilder::new(18)
         .model(4..6, block_with_hole(68.0, 53.0, 71.0, 56.0))
         .model(6..14, walls())
         .model(14..16, block())
@@ -661,36 +587,6 @@ fn separate_cavities_are_separate_findings() {
         found,
         vec![(CheckKind::ResinTrap, 2, 5), (CheckKind::ResinTrap, 4, 8)]
     );
-}
-
-#[test]
-fn a_trap_walled_by_supports_has_support_scope() {
-    let fixture = FixtureBuilder::new(12)
-        .support(0..3, block())
-        .support(3..8, walls())
-        .support(8..10, block())
-        .build();
-    let findings = traps(&fixture);
-    assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].check, CheckKind::ResinTrap);
-    assert_eq!(findings[0].scope, RoleScope::Support);
-    assert_fill_only(&findings[0]);
-}
-
-#[test]
-fn a_cavity_walled_by_model_and_support_has_both_scopes() {
-    // Three model walls; a support closes the fourth side.
-    let fixture = FixtureBuilder::new(10)
-        .model(0..2, block())
-        .model(2..7, Shape::rect(40.0, 30.0, 45.0, 80.0))
-        .model(2..7, Shape::rect(45.0, 30.0, 95.0, 35.0))
-        .model(2..7, Shape::rect(45.0, 75.0, 95.0, 80.0))
-        .support(2..7, Shape::rect(95.0, 30.0, 100.0, 80.0))
-        .model(7..9, block())
-        .build();
-    let findings = traps(&fixture);
-    assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].scope, RoleScope::Both);
 }
 
 #[test]
@@ -852,41 +748,6 @@ fn a_cup_small_beside_its_layer_is_not_reported() {
     assert_eq!(found[0].check, CheckKind::SuctionCup);
 }
 
-#[test]
-fn a_recess_under_a_model_inside_a_raft_is_still_a_cup() {
-    // The raft's hole is open air, but the recess under the block is walled
-    // by the model.
-    let fixture = FixtureBuilder::new(10)
-        .support(0..3, Shape::frame(20.0, 10.0, 180.0, 110.0, 30.0))
-        .model(0..6, Shape::frame(70.0, 45.0, 130.0, 75.0, 5.0))
-        .model(6..9, Shape::rect(70.0, 45.0, 130.0, 75.0))
-        .build();
-    let findings = traps(&fixture);
-    let found: Vec<(CheckKind, usize, usize, RoleScope)> = findings
-        .iter()
-        .map(|f| (f.check, f.first_layer, f.last_layer, f.scope))
-        .collect();
-    assert_eq!(found, vec![(CheckKind::SuctionCup, 0, 5, RoleScope::Model)]);
-}
-
-#[test]
-fn a_single_layer_ring_on_the_plate_is_a_cup() {
-    // One layer: the hole is closed by the plate and open to the resin
-    // above at once.
-    let fixture = FixtureBuilder::new(1)
-        .shape(
-            "Ring",
-            Role::Model,
-            ..,
-            Shape::ring(100.0, 60.0, 20.0, 15.0),
-        )
-        .build();
-    let findings = traps(&fixture);
-    assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].check, CheckKind::SuctionCup);
-    assert_eq!((findings[0].first_layer, findings[0].last_layer), (0, 0));
-}
-
 // ---- Openings as wide as a drain --------------------------------------------
 
 #[test]
@@ -928,7 +789,7 @@ fn a_gap_as_wide_as_a_drain_opens_the_wall() {
 fn a_one_pixel_wide_slit_does_not_drain_a_trap() {
     // The box of `a_drain_in_the_floor_drains_the_cavity` with a 1 x 20
     // pixel slit for a drain: 20 pixels, but a hairline.
-    let fixture = corner_pillars(FixtureBuilder::new(18), 0..4)
+    let fixture = FixtureBuilder::new(18)
         .model(4..6, block_with_hole(68.0, 45.0, 69.0, 65.0))
         .model(6..14, walls())
         .model(14..16, block())
@@ -936,11 +797,7 @@ fn a_one_pixel_wide_slit_does_not_drain_a_trap() {
     assert_eq!(spans(&traps(&fixture)), vec![(CheckKind::ResinTrap, 6, 13)]);
 
     // Without the width rule its 20 pixels drain the box.
-    let any_width = TrapOptions {
-        drain_width_px: 1,
-        ..all_errors()
-    };
-    assert!(traps_with(&fixture, &any_width).is_empty());
+    assert!(traps_of_width(&fixture, &all_errors(), 1).is_empty());
 }
 
 #[test]
@@ -954,197 +811,37 @@ fn a_one_pixel_wide_crack_is_not_a_trap() {
         .build();
     assert!(traps(&fixture).is_empty(), "{:?}", traps(&fixture));
 
-    let any_width = TrapOptions {
-        drain_width_px: 1,
+    let any_size = TrapOptions {
         min_trap_volume_mm3: 0.0,
         ..all_errors()
     };
     assert_eq!(
-        spans(&traps_with(&fixture, &any_width)),
+        spans(&traps_of_width(&fixture, &any_size, 1)),
         vec![(CheckKind::ResinTrap, 2, 7)]
     );
 }
 
-// ---- Support pockets --------------------------------------------------------
-
 #[test]
-fn a_support_ring_under_a_hollow_model_is_still_a_cup() {
-    // Support walls on layers 0-3 carry the model walls and lid: the cavity
-    // is walled by the model on layers 4-11.
-    let fixture = FixtureBuilder::new(16)
-        .support(0..4, walls())
-        .model(4..12, walls())
-        .model(12..14, block())
-        .build();
-    let findings = traps(&fixture);
-    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 0, 11)]);
-    assert_eq!(findings[0].scope, RoleScope::Both);
-}
-
-#[test]
-fn support_pads_in_a_recess_do_not_hide_it() {
-    // Pads on layers 0-1, fused to the inside of the left and right walls,
-    // make half the outer wall support there, but not above.
-    let fixture = recess()
-        .support(0..2, Shape::rect(45.0, 35.0, 50.0, 75.0))
-        .support(0..2, Shape::rect(90.0, 35.0, 95.0, 75.0))
-        .build();
-    let findings = traps(&fixture);
-    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 0, 4)]);
-    assert_eq!(findings[0].scope, RoleScope::Both);
-}
-
-#[test]
-fn a_support_sliver_on_the_plate_does_not_hide_a_recess() {
-    // A 1-pixel support line across the recess on layer 0.
-    let fixture = recess()
-        .support(0..1, Shape::rect(69.0, 35.0, 70.0, 75.0))
-        .build();
-    assert_eq!(spans(&traps(&fixture)), vec![(CheckKind::SuctionCup, 0, 4)]);
-}
-
-#[test]
-fn a_hollow_support_foot_in_a_recess_does_not_drain_it() {
-    // A support ring on layers 0-2 inside a recess on layers 0-5: its bore
-    // joins the recess where the ring ends.
-    let fixture = FixtureBuilder::new(10)
-        .model(0..6, walls())
-        .model(6..9, block())
-        .support(0..3, Shape::ring(70.0, 55.0, 10.0, 6.0))
-        .build();
-    assert_eq!(spans(&traps(&fixture)), vec![(CheckKind::SuctionCup, 0, 5)]);
-}
-
-#[test]
-fn a_raft_hole_under_an_open_box_is_still_a_cup() {
-    // A raft with a hole on layers 0-2, under a box with no floor and with a
-    // lid: the hole is the bottom of the cavity of the box.
-    let fixture = FixtureBuilder::new(16)
-        .support(0..3, Shape::frame(20.0, 10.0, 180.0, 110.0, 30.0))
-        .model(3..12, Shape::frame(40.0, 30.0, 160.0, 90.0, 15.0))
-        .model(12..15, Shape::rect(40.0, 30.0, 160.0, 90.0))
-        .build();
-    let findings = traps(&fixture);
-    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 0, 11)]);
-    assert_eq!(findings[0].scope, RoleScope::Both);
-}
-
-/// A 50 x 10 pixel recess on layers 0-4 with nothing above, its long walls
-/// of role `long` and its short walls of role `short`; mirrored across a
-/// diagonal, which swaps rows and columns (10 x 50 pixels), when `tall`.
-fn walled_recess(long: Role, short: Role, tall: bool) -> Fixture {
-    let place = |x0: f64, y0: f64, x1: f64, y1: f64| {
-        if tall {
-            // Mirrored about the line x - y = 20: (x, y) to (y + 20, x - 20).
-            Shape::rect(y0 + 20.0, x0 - 20.0, y1 + 20.0, x1 - 20.0)
-        } else {
-            Shape::rect(x0, y0, x1, y1)
-        }
-    };
-    let leaf = |role: Role| match role {
-        Role::Model => "Model",
-        Role::Support => "Supports",
-    };
-    FixtureBuilder::new(10)
-        .shape(leaf(long), long, 0..5, place(45.0, 45.0, 105.0, 50.0))
-        .shape(leaf(long), long, 0..5, place(45.0, 60.0, 105.0, 65.0))
-        .shape(leaf(short), short, 0..5, place(45.0, 50.0, 50.0, 60.0))
-        .shape(leaf(short), short, 0..5, place(100.0, 50.0, 105.0, 60.0))
-        .build()
-}
-
-#[test]
-fn the_support_pocket_rule_does_not_depend_on_orientation() {
-    for tall in [false, true] {
-        // Model on the long walls: a recess in the model, a cup.
-        let model = walled_recess(Role::Model, Role::Support, tall);
-        assert_eq!(
-            spans(&traps(&model)),
-            vec![(CheckKind::SuctionCup, 0, 4)],
-            "tall: {tall}"
-        );
-        // Support on the long walls: a pocket in the supports.
-        let support = walled_recess(Role::Support, Role::Model, tall);
-        assert!(traps(&support).is_empty(), "tall: {tall}");
-    }
-}
-
-#[test]
-fn a_pocket_in_the_supports_above_the_plate_is_not_reported() {
-    // A solid raft on layers 0-2. On layers 3-5 its rim and the support
-    // bases fused in the middle leave a trench, open from layer 6 on, where
-    // a trunk carries a block.
-    let fixture = FixtureBuilder::new(12)
-        .support(0..3, Shape::rect(20.0, 10.0, 180.0, 110.0))
-        .support(3..6, Shape::frame(20.0, 10.0, 180.0, 110.0, 10.0))
-        .support(3..6, Shape::rect(60.0, 40.0, 140.0, 80.0))
-        .support(6..10, Shape::rect(95.0, 55.0, 105.0, 65.0))
-        .model(10..12, Shape::rect(80.0, 50.0, 120.0, 70.0))
-        .build();
-    assert!(traps(&fixture).is_empty(), "{:?}", traps(&fixture));
-}
-
-#[test]
-fn support_walls_on_a_model_floor_are_a_cup() {
-    // A support ring standing on a block: the floor of the pocket is model.
-    let fixture = FixtureBuilder::new(10)
-        .model(0..3, block())
-        .support(3..8, walls())
-        .build();
-    let findings = traps(&fixture);
-    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 3, 7)]);
-    assert_eq!(findings[0].scope, RoleScope::Both);
-}
-
-// ---- Scope ------------------------------------------------------------------
-
-#[test]
-fn walls_in_front_and_behind_count_for_the_scope() {
-    // `a_cavity_walled_by_model_and_support_has_both_scopes` with the
-    // support wall along the first rows instead of on the right.
-    let fixture = FixtureBuilder::new(10)
-        .model(0..2, block())
-        .model(2..7, Shape::rect(40.0, 30.0, 45.0, 80.0))
-        .model(2..7, Shape::rect(95.0, 30.0, 100.0, 80.0))
-        .model(2..7, Shape::rect(45.0, 75.0, 95.0, 80.0))
-        .support(2..7, Shape::rect(45.0, 30.0, 95.0, 35.0))
-        .model(7..9, block())
+fn a_single_layer_ring_on_the_plate_is_a_cup() {
+    // One layer: the hole is closed by the plate and open to the resin
+    // above at once.
+    let fixture = FixtureBuilder::new(1)
+        .shape("Ring", .., Shape::ring(100.0, 60.0, 20.0, 15.0))
         .build();
     let findings = traps(&fixture);
     assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].scope, RoleScope::Both);
-}
-
-#[test]
-fn a_trap_on_a_model_floor_between_support_sides_is_aimed_at_it() {
-    // Model floor, lid, and front and back walls; support left and right.
-    let fixture = FixtureBuilder::new(10)
-        .model(0..2, block())
-        .model(2..7, Shape::rect(40.0, 30.0, 100.0, 35.0))
-        .model(2..7, Shape::rect(40.0, 75.0, 100.0, 80.0))
-        .support(2..7, Shape::rect(40.0, 35.0, 45.0, 75.0))
-        .support(2..7, Shape::rect(95.0, 35.0, 100.0, 75.0))
-        .model(7..9, block())
-        .build();
-    let findings = traps(&fixture);
-    assert_eq!(spans(&findings), vec![(CheckKind::ResinTrap, 2, 6)]);
-    assert_eq!(findings[0].scope, RoleScope::Both);
-    assert_close(aimed_at(&findings[0]).z_mm, 2.0 * 0.05);
+    assert_eq!(findings[0].check, CheckKind::SuctionCup);
+    assert_eq!((findings[0].first_layer, findings[0].last_layer), (0, 0));
 }
 
 // ---- Drains for cups --------------------------------------------------------
 
-/// A box with a floor on layers 4-5 and walls up to the last layer, held by
-/// corner pillars over the open air.
-fn cup_on_pillars() -> FixtureBuilder {
-    corner_pillars(FixtureBuilder::new(12), 0..4)
-        .model(4..6, block())
-        .model(6..12, walls())
-}
-
 #[test]
 fn a_cup_over_open_air_asks_for_a_drain_at_its_floor() {
-    let fixture = cup_on_pillars().build();
+    let fixture = FixtureBuilder::new(12)
+        .model(4..6, block())
+        .model(6..12, walls())
+        .build();
     let findings = traps(&fixture);
     assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 6, 11)]);
     let [x, y] = fixture.pixel_to_plate(hole_point(&fixture, 6));
@@ -1155,14 +852,56 @@ fn a_cup_over_open_air_asks_for_a_drain_at_its_floor() {
 }
 
 #[test]
-fn a_cup_over_a_support_still_asks_for_drains() {
-    // A pillar under the middle of the floor.
-    let fixture = cup_on_pillars()
-        .support(0..4, Shape::rect(60.0, 45.0, 80.0, 65.0))
-        .build();
-    let findings = traps(&fixture);
-    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 6, 11)]);
-    assert_drain_only(&findings[0]);
+fn a_filled_cavity_is_gone_on_the_next_review() {
+    // A tiny and a medium trap side by side, and one of more than a
+    // millilitre: fill the two that offer it, as the app does on the next
+    // slice.
+    let sealed = |builder: FixtureBuilder, [x0, y0, x1, y1]: [f64; 4], top: usize| {
+        builder
+            .model(0..2, Shape::rect(x0, y0, x1, y1))
+            .model(2..top, Shape::frame(x0, y0, x1, y1, 5.0))
+            .model(top..top + 2, Shape::rect(x0, y0, x1, y1))
+    };
+    // 0.2 mm3, 10 mm3 and 1064.7 mm3.
+    let builder = sealed(FixtureBuilder::new(344), [10.0, 10.0, 30.0, 30.0], 6);
+    let builder = sealed(builder, [40.0, 10.0, 100.0, 70.0], 10);
+    let fixture = sealed(builder, [110.0, 10.0, 190.0, 110.0], 340).build();
+    let report = reviewed(&fixture.input());
+    let trap_tiers = |findings: &[Finding]| {
+        let mut tiers: Vec<Severity> = findings
+            .iter()
+            .filter(|f| f.check == CheckKind::ResinTrap)
+            .map(|f| f.severity)
+            .collect();
+        tiers.sort();
+        tiers
+    };
+    assert_eq!(
+        trap_tiers(&report.findings),
+        [Severity::Error, Severity::Warning, Severity::Info],
+        "{:?}",
+        report.findings
+    );
+    let picked: Vec<&CavityFill> = report
+        .findings
+        .iter()
+        .filter_map(|f| match f.fix {
+            Some(SuggestedFix::Fill { cavity, .. }) => Some(&report.fills[cavity]),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(picked.len(), 2);
+    let filled = crate::fill::fill_stack(picked, fixture.schedule()).expect("two cavities to fill");
+    let again = fixture.input_with(ReviewLeaf::new(Some("Filled cavities"), &filled));
+    let after = reviewed(&again);
+    assert_eq!(
+        trap_tiers(&after.findings),
+        [Severity::Error],
+        "{:?}",
+        after.findings
+    );
+    // The trap left has no pixels to fill.
+    assert!(after.fills.is_empty());
 }
 
 // ---- Severity ---------------------------------------------------------------
@@ -1197,29 +936,13 @@ fn no_cup_is_ever_offered_a_fill() {
     let input = fixture.input();
     let regions = fixture.regions();
     let ctx = ReviewContext::new(&input, &regions);
-    let (findings, fills) = run_with_fills(&ctx, &TrapOptions::default());
+    let (findings, fills) = run(&ctx, &TrapOptions::default(), &SweepOptions::default());
     assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 0, 4)]);
     assert_drain_only(&findings[0]);
     assert!(fills.is_empty(), "no pixels to fill");
     // It still shows its pixels.
     let footprint = findings[0].footprint.as_ref().expect("a footprint");
     assert_eq!(footprint.slabs.len(), 5);
-}
-
-/// Layer `layer` of `fixture` with `fills` cured on it, merged into one
-/// contour layer as export and the slice view merge the leaves.
-fn merged_with_fills(fixture: &Fixture, fills: &[CavityFill], layer: usize) -> ContourLayer {
-    let filled = crate::fill::fill_stack(fills, fixture.schedule()).expect("a fill");
-    let input = fixture.input_with(crate::input::ReviewLeaf::new(
-        Some("Filled cavities"),
-        Role::Model,
-        &filled,
-    ));
-    let z_mm = filled.layers()[layer].z_mm();
-    ContourLayer::new(
-        z_mm,
-        input.polygons(layer).map(|(_, p)| p.clone()).collect(),
-    )
 }
 
 /// The pixel values of `raster`, row by row.
@@ -1247,7 +970,7 @@ fn a_fill_closes_flush_with_the_model() {
     let input = fixture.input();
     let regions = fixture.regions();
     let ctx = ReviewContext::new(&input, &regions);
-    let (_, fills) = run_with_fills(&ctx, &TrapOptions::default());
+    let (_, fills) = run(&ctx, &TrapOptions::default(), &SweepOptions::default());
     assert_eq!(fills.len(), 1);
     assert!(fills[0].slabs.iter().all(|slab| !slab.rim.is_empty()));
     let layer = 10;

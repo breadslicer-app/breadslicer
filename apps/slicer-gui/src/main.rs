@@ -11,6 +11,13 @@
 
 use std::error::Error;
 
+// The review and the slicer's workers allocate and free layer buffers from
+// every core at once, and the Windows heap makes them queue: measured on a
+// 3536-layer plate, the sweep over its layers took 3.3 s on it and 0.6 s on
+// this one (#432).
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> Result<(), Box<dyn Error>> {
     draw_menus_in_window();
     sc_slicer_gui::run()

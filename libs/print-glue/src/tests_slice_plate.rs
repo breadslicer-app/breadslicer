@@ -316,8 +316,44 @@ fn stacks_from_different_schedules_refuse_to_merge() {
         leaves,
         profile: cube.profile,
         scale: cube.scale,
+        pivots: Vec::new(),
+        support_box_mm: None,
     };
     assert!(mixed.merge().is_err());
+}
+
+#[test]
+fn a_point_lands_where_the_compensation_scaled_its_leaf() {
+    let mut plate = completed(&meshes_as_roots([unit_cube_mesh()]));
+    let leaf = plate.leaves()[0].leaf();
+    // No compensation: the point stays.
+    assert_eq!(
+        plate.compensated_point_mm(leaf, [3.0, 4.0, 5.0]),
+        [3.0, 4.0, 5.0]
+    );
+    let percent =
+        |value| sc_print_primitives::ScaleCompensationPercent::new(value).expect("within +-10 %");
+    plate.scale = sc_print_primitives::ScaleCompensation {
+        x: percent(10.0),
+        y: percent(0.0),
+        z: percent(-10.0),
+    };
+    plate.pivots = vec![(leaf, [1.0, 2.0])];
+    let [x, y, z] = plate.compensated_point_mm(leaf, [3.0, 4.0, 5.0]);
+    assert!((x - 3.2).abs() < 1e-9, "{x}");
+    assert!((y - 4.0).abs() < 1e-9, "{y}");
+    assert!((z - 4.5).abs() < 1e-9, "{z}");
+}
+
+#[test]
+fn the_support_box_comes_from_the_support_leaves_alone() {
+    let scene = meshes_as_roots([unit_cube_mesh(), cuboid_with_z_tunnel()]);
+    let leaves = sc_sl1cer::sliceable_leaves(&scene).expect("two leaves");
+    assert!(crate::scale_compensation::support_box_mm(&scene, &SupportOwners::new()).is_none());
+    let owners: SupportOwners = [(leaves[0], None)].into_iter().collect();
+    let [x0, y0, x1, y1, top] =
+        crate::scale_compensation::support_box_mm(&scene, &owners).expect("a support leaf");
+    assert!(x0 < x1 && y0 < y1 && top > 0.0, "{x0} {y0} {x1} {y1} {top}");
 }
 
 #[test]

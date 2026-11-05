@@ -100,6 +100,11 @@ const NUDGE_UP_MM: [f64; 2] = [0.05, 0.10];
 /// underside lands on the tip it was nudged from.
 const SAME_TIP_MM: f64 = 1e-6;
 
+#[path = "pieces.rs"]
+mod pieces;
+
+pub use pieces::{SupportContact, SupportJoint, SupportPiece, SupportPieceKind};
+
 /// The supports of a run, kept for editing.
 #[derive(Debug, Clone)]
 pub struct DfSupportSession {

@@ -315,7 +315,7 @@ fn get_review_options() -> impl Parser<CmdOptions> {
 
     let fix_all = long("fix-all")
         .help(
-            "Apply what the app's Fix All applies on the next slice: fill the small resin traps, erase the floating specks and thicken the thin model features; then review the plate again. Supports are not added: the islands they would hold are counted.",
+            "Apply what the app's Fix All applies on the next slice: fill the small resin traps; then review the plate again. Supports are not added: the islands they would hold are counted.",
         )
         .switch();
 

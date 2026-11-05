@@ -6516,3 +6516,19 @@ msgstr "Detalle pintado sin guardar"
 msgctxt "SaveDialog"
 msgid "A 3MF file does not hold painted detail, so this file was saved without it. Save as .bread to keep it."
 msgstr "Un archivo 3MF no guarda el detalle pintado, así que este se guardó sin él. Guardá como .bread para conservarlo."
+
+msgctxt "SlicePanel"
+msgid "Checking layers: {} / {}"
+msgstr "Revisando capas: {} / {}"
+
+msgctxt "Review"
+msgid "Ignore"
+msgstr "Ignorar"
+
+msgctxt "Review"
+msgid "Done by the review itself: nothing to fix."
+msgstr "Lo hizo la revisión sola: no hay nada que arreglar."
+
+msgctxt "Review"
+msgid "Left by Fix All: more tips here are placed by hand, in the Supports tab."
+msgstr "Corregir todo lo dejó: las puntas de más se ubican a mano, en la pestaña Soportes."

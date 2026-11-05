@@ -18,6 +18,7 @@ use std::sync::Arc;
 use sc_print_primitives::{AaLevel, PositiveFiniteMm, ScaleCompensation};
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile, resolve_scale_compensation};
 use sc_scene::Scene;
+use sc_scene::node::NodeId;
 use sc_sl1cer::contour::{ContourStack, LayerAlignmentError, merge_stacks};
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile, UniformSchedule};
@@ -25,7 +26,8 @@ use sc_sl1cer::{CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_scen
 
 use crate::prepare::{UnsliceableSelection, slice_profile_for_selection};
 use crate::scale_compensation::{
-    SupportOwners, compensated_heights, compensated_scene, scale_factors,
+    LeafPivots, SupportOwners, compensated_heights, compensated_scene, scale_factors,
+    support_box_mm,
 };
 
 /// The per-print slicing inputs that come from neither profile.
@@ -83,6 +85,11 @@ pub struct SlicedPlate {
     pub(crate) leaves: Vec<LeafSlices>,
     pub(crate) profile: SliceProfile,
     pub(crate) scale: ScaleCompensation,
+    /// The point each leaf was scaled about in X and Y, for a compensation
+    /// that changes anything.
+    pub(crate) pivots: LeafPivots,
+    /// The box the support leaves take once scaled.
+    pub(crate) support_box_mm: Option<[f64; 5]>,
 }
 
 impl SlicedPlate {
@@ -110,6 +117,30 @@ impl SlicedPlate {
     /// lands in the sliced leaves, once scaled in Z about the plate.
     pub fn compensated_height_mm(&self, height_mm: f64) -> f64 {
         height_mm * scale_factors(self.scale)[2]
+    }
+
+    /// Return where `point` (millimetres, as the scene has it) of leaf `leaf`
+    /// lands in the sliced leaves, once scaled about that leaf's pivot in X
+    /// and Y and about the plate in Z.
+    pub fn compensated_point_mm(&self, leaf: NodeId, point: [f64; 3]) -> [f64; 3] {
+        let [fx, fy, fz] = scale_factors(self.scale);
+        let [cx, cy] = self
+            .pivots
+            .iter()
+            .find(|(id, _)| *id == leaf)
+            .map_or([0.0, 0.0], |(_, pivot)| *pivot);
+        [
+            cx + (point[0] - cx) * fx,
+            cy + (point[1] - cy) * fy,
+            point[2] * fz,
+        ]
+    }
+
+    /// Return the box the support leaves take once scaled, `[min x, min y,
+    /// max x, max y, top]` in millimetres; `None` without support leaves. It
+    /// is read from the meshes' vertices, whatever the layers.
+    pub fn support_box_mm(&self) -> Option<[f64; 5]> {
+        self.support_box_mm
     }
 
     /// Merge the per-leaf stacks into the whole plate's contours.
@@ -249,10 +280,11 @@ where
     F: Fn(SliceProgress) + Sync,
 {
     let scale = resolve_scale_compensation(printer, material);
-    let compensated = compensated_scene(scene, scale, supports);
+    let (compensated, pivots) = compensated_scene(scene, scale, supports).unzip();
     let scene = compensated.as_ref().unwrap_or(scene);
     let profile =
         profile_for(scene, printer, material, params).map_err(SlicePlateError::Prepare)?;
+    let support_box_mm = support_box_mm(scene, supports);
     match slice_scene_with_progress(scene, &profile, cancel, on_progress)
         .map_err(SlicePlateError::Engine)?
     {
@@ -261,6 +293,8 @@ where
             leaves,
             profile,
             scale,
+            pivots: pivots.unwrap_or_default(),
+            support_box_mm,
         })),
     }
 }

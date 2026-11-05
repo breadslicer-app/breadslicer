@@ -6,50 +6,34 @@
 //! What the review reads: [`ReviewInput`].
 //!
 //! The input is one slicing run as the engine produced it: one contour
-//! stack per scene leaf, each tagged with a [`Role`], all cut on the same
-//! layer schedule; plus the printer's screen (plate size, pixel resolution,
-//! mirror) and its maximum height. Stacks are borrowed, so a frontend that
-//! holds the per-leaf stacks of a run (`sc_print_glue::SlicedPlate::leaves`)
-//! can review them without copying any contour.
+//! stack per model leaf, all cut on the same layer schedule; plus the
+//! printer's screen (plate size, pixel resolution, mirror) and its maximum
+//! height. Stacks are borrowed, so a frontend that holds the per-leaf stacks
+//! of a run (`sc_print_glue::SlicedPlate::leaves`) can review them without
+//! copying any contour.
+//!
+//! Supports made here never come in as contours (#432): what the review
+//! knows of them is data, their tips ([`ReviewInput::with_tips`]), the layers
+//! they stand on and the box they take ([`ReviewInput::with_support_extent`]).
+//! Supports that came in the file, with no data, are a model like any other.
 
 use std::fmt;
+use std::ops::Range;
 
 use sc_print_primitives::PositiveFiniteMm;
 use sc_sl1cer::LeafSlices;
-use sc_sl1cer::contour::{ContourStack, Polygon};
+use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::profile::{LayerSchedule, SliceProfile};
 use sc_sl1cer::raster::pixel_map::PixelMap;
 
 use crate::finding::PlatePoint;
+use crate::tips::TipCone;
 
-/// What a leaf of the plate is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
-pub enum Role {
-    /// Something the user wants printed.
-    Model,
-    /// Supports and raft generated to hold the models.
-    Support,
-}
-
-impl Role {
-    /// A stable machine name (`"support"`).
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Model => "model",
-            Self::Support => "support",
-        }
-    }
-}
-
-/// One leaf's contours and its role.
+/// One leaf's contours.
 #[derive(Clone, Copy, Debug)]
 pub struct ReviewLeaf<'a> {
     /// The leaf's display name, when it has one.
     pub name: Option<&'a str>,
-    /// Model or support.
-    pub role: Role,
     /// The leaf's contours, one layer per scheduled layer.
     pub stack: &'a ContourStack,
 }
@@ -57,14 +41,14 @@ pub struct ReviewLeaf<'a> {
 impl<'a> ReviewLeaf<'a> {
     /// A leaf with these contours.
     #[inline]
-    pub const fn new(name: Option<&'a str>, role: Role, stack: &'a ContourStack) -> Self {
-        Self { name, role, stack }
+    pub const fn new(name: Option<&'a str>, stack: &'a ContourStack) -> Self {
+        Self { name, stack }
     }
 
     /// The leaf the engine sliced into `slices`, with its name.
     #[inline]
-    pub fn from_slices(slices: &'a LeafSlices, role: Role) -> Self {
-        Self::new(slices.leaf_name(), role, slices.stack())
+    pub fn from_slices(slices: &'a LeafSlices) -> Self {
+        Self::new(slices.leaf_name(), slices.stack())
     }
 }
 
@@ -150,6 +134,9 @@ pub struct ReviewInput<'a> {
     max_z_mm: f64,
     raft_top_mm: Option<f64>,
     support_lift_mm: Option<f64>,
+    tips: Vec<TipCone>,
+    support_layers: Range<usize>,
+    support_box_mm: Option<[f64; 5]>,
 }
 
 impl<'a> ReviewInput<'a> {
@@ -206,6 +193,9 @@ impl<'a> ReviewInput<'a> {
             max_z_mm: max_z.value(),
             raft_top_mm: None,
             support_lift_mm: None,
+            tips: Vec::new(),
+            support_layers: 0..0,
+            support_box_mm: None,
         })
     }
 
@@ -248,6 +238,43 @@ impl<'a> ReviewInput<'a> {
     pub fn with_support_lift_mm(mut self, support_lift_mm: Option<f64>) -> Self {
         self.support_lift_mm = support_lift_mm.filter(|lift| lift.is_finite() && *lift > 0.0);
         self
+    }
+
+    /// The same input, with the tips of the supports made here, in
+    /// printer-frame millimetres, as the slice placed them.
+    #[must_use]
+    pub fn with_tips(mut self, tips: Vec<TipCone>) -> Self {
+        self.tips = tips;
+        self
+    }
+
+    /// The same input, knowing that the supports made here stand on `layers`
+    /// and take `box_mm`: `[min x, min y, max x, max y, top]` in plate
+    /// millimetres, `None` when that is not known.
+    #[must_use]
+    pub fn with_support_extent(mut self, layers: Range<usize>, box_mm: Option<[f64; 5]>) -> Self {
+        self.support_layers = layers;
+        self.support_box_mm = box_mm;
+        self
+    }
+
+    /// The tips of the supports made here.
+    #[inline]
+    pub fn tips(&self) -> &[TipCone] {
+        &self.tips
+    }
+
+    /// Whether supports made here stand on layer `layer`.
+    #[inline]
+    pub fn has_support_on(&self, layer: usize) -> bool {
+        self.support_layers.contains(&layer)
+    }
+
+    /// The box the supports made here take, when it is known:
+    /// `[min x, min y, max x, max y, top]` in plate millimetres.
+    #[inline]
+    pub fn support_box_mm(&self) -> Option<[f64; 5]> {
+        self.support_box_mm
     }
 
     /// The lift recommended for a model in the raft: the support lift given
@@ -350,21 +377,6 @@ impl<'a> ReviewInput<'a> {
     #[inline]
     pub fn max_z_mm(&self) -> f64 {
         self.max_z_mm
-    }
-
-    /// Every polygon of layer `layer` with the role of its leaf, leaf by
-    /// leaf. For checks that measure the vector contours rather than pixels.
-    ///
-    /// # Panics
-    ///
-    /// When `layer` is out of range.
-    pub fn polygons(&self, layer: usize) -> impl Iterator<Item = (Role, &'a Polygon)> + '_ {
-        self.leaves.iter().flat_map(move |leaf| {
-            leaf.stack.layers()[layer]
-                .polygons()
-                .iter()
-                .map(move |polygon| (leaf.role, polygon))
-        })
     }
 
     /// Converts a point in raster space (pixels, `(0, 0)` at the corner of
@@ -488,13 +500,8 @@ mod input_tests {
             Mirror::default(),
         );
         let short = ContourStack::new_unchecked(vec![ContourLayer::new(0.025, vec![])]);
-        let err = ReviewInput::new(
-            vec![ReviewLeaf::new(None, Role::Model, &short)],
-            &schedule,
-            map,
-            mm(5.0),
-        )
-        .unwrap_err();
+        let err = ReviewInput::new(vec![ReviewLeaf::new(None, &short)], &schedule, map, mm(5.0))
+            .unwrap_err();
         assert_eq!(
             err,
             ReviewInputError::LayerCountMismatch {
@@ -508,7 +515,7 @@ mod input_tests {
             ContourLayer::new(0.08, vec![]),
         ]);
         let err = ReviewInput::new(
-            vec![ReviewLeaf::new(None, Role::Support, &shifted)],
+            vec![ReviewLeaf::new(None, &shifted)],
             &schedule,
             map,
             mm(5.0),

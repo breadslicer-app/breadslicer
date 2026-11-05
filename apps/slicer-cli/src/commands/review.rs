@@ -4,36 +4,37 @@
  */
 
 //! `review`: slices a model exactly as `slice` does, writes no file, and runs
-//! the pre-flight review (`sc_review`) on the per-leaf contours, knowing which
-//! leaves are models and which are the generated supports.
+//! the pre-flight review (`sc_review`) on the contours of the models. The
+//! supports made here enter as data: where their tips stand, the layers they
+//! stand on and the box they take (#432). Supports that came in the file with
+//! no data are reviewed as a model.
 //!
 //! With `--fill`, every small trap the review offers to fill is cut on the run's
 //! schedule and added to the plate as model, as the app does on the next
 //! slice (#132), and the plate is reviewed again.
 //!
 //! With `--fix-all`, the plate gets what the app's Fix All gives it on the
-//! next slice (#156): the small resin traps filled, the floating specks
-//! erased, the thin model features thickened and the islands just above the
-//! model joined to it (#235). The supports Fix All would add for islands and
-//! floating parts are only counted: the CLI does not edit supports. The
+//! next slice (#156): the small resin traps filled. The supports Fix All would
+//! add for islands are only counted: the CLI does not edit supports. The
 //! plate is then reviewed again.
 
 use std::ffi::OsString;
 use std::io::Write;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use sc_geom::df_supports::{is_support_mesh_name, recommended_lift_mm};
+use sc_geom::df_supports::recommended_lift_mm;
+use sc_print_glue::SlicedPlate;
 use sc_print_profiles::ProfileLibraries;
 use sc_review::{
-    CavityFill, Finding, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions,
-    ReviewReport, Role, Severity, SuggestedFix, erase_stack, fill_stack, review_regions,
-    review_with,
+    CavityFill, Finding, Held, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions,
+    ReviewReport, Severity, SuggestedFix, TipCone, check_regions, erase_stack, fill_stack,
 };
-use sc_sl1cer::contour::ContourStack;
+use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
-use crate::commands::df_supports::df_raft_top_mm;
+use crate::commands::df_supports::{SupportSet, df_raft_top_mm};
 use crate::commands::slice::{
     SlicedScene, load_and_slice, load_material_profile, load_printer_profile,
 };
@@ -59,14 +60,14 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
     }
 
     let slicing = Instant::now();
-    let SlicedScene { plate, .. } = load_and_slice(&source_path, &printer, &material, options)?;
+    let SlicedScene { plate, sets, .. } =
+        load_and_slice(&source_path, &printer, &material, options)?;
     let slice_time = slicing.elapsed();
 
-    let leaves: Vec<ReviewLeaf<'_>> = plate
-        .leaves()
-        .iter()
-        .map(|slices| ReviewLeaf::from_slices(slices, role_of(slices.leaf_name())))
-        .collect();
+    let leaves: Vec<ReviewLeaf<'_>> = model_leaves(&plate, &sets);
+    let support_leaves = plate.leaves().len() - leaves.len();
+    let tips = support_tips(&plate, &sets);
+    let support_layers = support_layers(&plate, &sets);
     // Generated supports stand on the raft their options build, scaled in Z
     // with them (#227).
     let raft_top_mm = options
@@ -77,74 +78,49 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
     // A model in the raft is pointed at the support lift: the default, or a
     // higher --df-lift.
     let support_lift_mm = raft_top_mm.map(|_| recommended_lift_mm(Some(options.df_lift)));
-    let input = ReviewInput::from_profile(leaves, plate.profile())
-        .map_err(|err| anyhow!("internal error: the sliced stacks do not fit the run: {err}"))?
-        .with_raft_top_mm(raft_top_mm)
-        .with_support_lift_mm(support_lift_mm);
-    let regions = PlateRegions::compute(&input);
-    let report = review_regions(
-        &ReviewContext::new(&input, &regions),
-        &ReviewOptions::default(),
-    );
+    let context = PlateContext {
+        plate: &plate,
+        raft_top_mm,
+        support_lift_mm,
+        tips,
+        support_layers,
+    };
+    let input = context
+        .input(leaves)
+        .map_err(|err| anyhow!("internal error: the sliced stacks do not fit the run: {err}"))?;
+    let review_options = ReviewOptions::default();
+    let regions = PlateRegions::compute(&input, &review_options.sweep);
+    let report = check_regions(&ReviewContext::new(&input, &regions), &review_options);
     let stats = RegionStats::of(&input, &regions);
 
+    let review_again = |stack: &ContourStack| {
+        let mut leaves = input.leaves().to_vec();
+        leaves.push(ReviewLeaf::new(Some("Filled cavities"), stack));
+        let again = context
+            .input(leaves)
+            .expect("the fill is cut on the run's schedule");
+        let regions = PlateRegions::compute(&again, &review_options.sweep);
+        check_regions(&ReviewContext::new(&again, &regions), &review_options)
+    };
     let picked = offered_fills(&report);
     let filled_stack = if args.fill {
         fill_stack(picked.iter().copied(), plate.schedule())
     } else {
         None
     };
-    let refilled = filled_stack.as_ref().map(|stack| {
-        let mut leaves = input.leaves().to_vec();
-        leaves.push(ReviewLeaf::new(Some("Filled cavities"), Role::Model, stack));
-        let again = ReviewInput::from_profile(leaves, plate.profile())
-            .expect("the fill is cut on the run's schedule")
-            .with_raft_top_mm(raft_top_mm)
-            .with_support_lift_mm(support_lift_mm);
-        Refilled {
-            cavities: picked.len(),
-            volume_mm3: picked.iter().map(|fill| fill.volume_mm3()).sum(),
-            report: review_with(&again, &ReviewOptions::default()),
-        }
+    let refilled = filled_stack.as_ref().map(|stack| Refilled {
+        cavities: picked.len(),
+        volume_mm3: picked.iter().map(|fill| fill.volume_mm3()).sum(),
+        report: review_again(stack),
     });
 
     let fixed_all = args.fix_all.then(|| {
         let plan = FixAll::of(&report);
-        let filled = fill_stack(
-            plan.fills
-                .iter()
-                .chain(&plan.thickenings)
-                .chain(&plan.joins)
-                .copied(),
-            plate.schedule(),
-        );
-        // Specks come out of the models and the fills, never the supports.
-        let models: Vec<&ContourStack> = input
-            .leaves()
-            .iter()
-            .filter(|leaf| leaf.role == Role::Model)
-            .map(|leaf| leaf.stack)
-            .chain(filled.as_ref())
-            .collect();
-        let erased = erase_stack(plan.erasures.iter().copied(), &models, plate.schedule());
-        let mut leaves = input.leaves().to_vec();
-        if let Some(stack) = &filled {
-            leaves.push(ReviewLeaf::new(Some("Filled cavities"), Role::Model, stack));
-        }
-        if let Some(stack) = &erased {
-            leaves.push(ReviewLeaf::new(Some("Erased specks"), Role::Model, stack));
-        }
-        let again = ReviewInput::from_profile(leaves, plate.profile())
-            .expect("the fixes are cut on the run's schedule")
-            .with_raft_top_mm(raft_top_mm)
-            .with_support_lift_mm(support_lift_mm);
+        let filled = fill_stack(plan.fills.iter().copied(), plate.schedule());
         FixedAll {
             supports: plan.supports,
             cavities: plan.fills.len(),
-            specks: plan.erasures.len(),
-            features: plan.thickenings.len(),
-            joined: plan.joins.len(),
-            report: review_with(&again, &ReviewOptions::default()),
+            report: filled.as_ref().map_or_else(|| report.clone(), review_again),
         }
     });
 
@@ -160,28 +136,123 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
             &mut out,
         )?;
     } else {
-        write_text(&input, &report, &stats, slice_time, &mut out)?;
+        write_text(
+            &input,
+            support_leaves,
+            &report,
+            &stats,
+            slice_time,
+            &mut out,
+        )?;
         if let Some(refilled) = &refilled {
-            write_refilled(&input, refilled, &mut out)?;
+            write_refilled(&input, support_leaves, refilled, &mut out)?;
         }
         if let Some(fixed_all) = &fixed_all {
-            write_fixed_all(&input, fixed_all, &mut out)?;
+            write_fixed_all(&input, support_leaves, fixed_all, &mut out)?;
         }
     }
     Ok(())
 }
 
+/// What every review of one slice shares, besides its leaves.
+struct PlateContext<'p> {
+    plate: &'p SlicedPlate,
+    raft_top_mm: Option<f64>,
+    support_lift_mm: Option<f64>,
+    tips: Vec<TipCone>,
+    support_layers: Range<usize>,
+}
+
+impl PlateContext<'_> {
+    /// The review input of `leaves`.
+    fn input<'a>(
+        &self,
+        leaves: Vec<ReviewLeaf<'a>>,
+    ) -> Result<ReviewInput<'a>, sc_review::ReviewInputError> {
+        Ok(ReviewInput::from_profile(leaves, self.plate.profile())?
+            .with_raft_top_mm(self.raft_top_mm)
+            .with_support_lift_mm(self.support_lift_mm)
+            .with_tips(self.tips.clone())
+            .with_support_extent(self.support_layers.clone(), self.plate.support_box_mm()))
+    }
+}
+
+/// The stack that takes off `plate` what the review takes off the layers, as
+/// the app does on every slice (#432): merged with the plate, the printer
+/// file does not have those pixels. `None` when nothing goes.
+pub(crate) fn cleaned_stack(
+    plate: &SlicedPlate,
+    sets: &[SupportSet],
+) -> Result<Option<ContourStack>> {
+    let leaves = model_leaves(plate, sets);
+    let stacks: Vec<&ContourStack> = leaves.iter().map(|leaf| leaf.stack).collect();
+    let context = PlateContext {
+        plate,
+        raft_top_mm: None,
+        support_lift_mm: None,
+        tips: support_tips(plate, sets),
+        support_layers: support_layers(plate, sets),
+    };
+    let input = context
+        .input(leaves)
+        .map_err(|err| anyhow!("internal error: the sliced stacks do not fit the run: {err}"))?;
+    let options = ReviewOptions::default();
+    let regions = PlateRegions::compute(&input, &options.sweep);
+    let report = check_regions(&ReviewContext::new(&input, &regions), &options);
+    Ok(erase_stack([&report.erased], &stacks, plate.schedule()))
+}
+
+/// The leaves the review reads: everything but the supports known as data.
+fn model_leaves<'p>(plate: &'p SlicedPlate, sets: &[SupportSet]) -> Vec<ReviewLeaf<'p>> {
+    plate
+        .leaves()
+        .iter()
+        .filter(|slices| !sets.iter().any(|set| set.leaf == slices.leaf()))
+        .map(ReviewLeaf::from_slices)
+        .collect()
+}
+
+/// The tips of `sets`, where the slice put them.
+fn support_tips(plate: &SlicedPlate, sets: &[SupportSet]) -> Vec<TipCone> {
+    sets.iter()
+        .flat_map(|set| {
+            let at = move |point| plate.compensated_point_mm(set.leaf, point);
+            set.contacts.iter().flat_map(move |contact| {
+                TipCone::stretches(
+                    at(contact.tip),
+                    contact.tip_radius_mm,
+                    contact.neck.map(at),
+                    at(contact.socket),
+                    contact.socket_radius_mm,
+                )
+            })
+        })
+        .collect()
+}
+
+/// The layers the support leaves of `sets` have contours on. It looks only
+/// at whether a layer has any.
+fn support_layers(plate: &SlicedPlate, sets: &[SupportSet]) -> Range<usize> {
+    let spans = plate
+        .leaves()
+        .iter()
+        .filter(|slices| sets.iter().any(|set| set.leaf == slices.leaf()))
+        .filter_map(|slices| {
+            let lit = |layer: &ContourLayer| !layer.polygons().is_empty();
+            let layers = slices.stack().layers();
+            Some((layers.iter().position(lit)?, layers.iter().rposition(lit)?))
+        });
+    spans
+        .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
+        .map_or(0..0, |(first, last)| first..last + 1)
+}
+
 /// What the app's Fix All applies to a review (#156), as far as the CLI
-/// applies it: the small traps' fills, the specks' erasures, the thin model
-/// features' thickenings (those an erasure touches left out) and the joins
-/// of islands to the model below (#235); plus the number of findings it
-/// would hold with a support.
+/// applies it: the small traps' fills; plus the number of findings it would
+/// hold with a support.
 struct FixAll<'r> {
     supports: usize,
     fills: Vec<&'r CavityFill>,
-    erasures: Vec<&'r CavityFill>,
-    thickenings: Vec<&'r CavityFill>,
-    joins: Vec<&'r CavityFill>,
 }
 
 impl<'r> FixAll<'r> {
@@ -189,11 +260,7 @@ impl<'r> FixAll<'r> {
         let mut plan = Self {
             supports: 0,
             fills: Vec::new(),
-            erasures: Vec::new(),
-            thickenings: Vec::new(),
-            joins: Vec::new(),
         };
-        let mut thicken = Vec::new();
         for finding in &report.findings {
             match finding.fix {
                 Some(SuggestedFix::AddSupport { .. }) => plan.supports += 1,
@@ -202,22 +269,9 @@ impl<'r> FixAll<'r> {
                 Some(SuggestedFix::Fill { cavity, .. }) => {
                     plan.fills.extend(report.fills.get(cavity));
                 }
-                Some(SuggestedFix::Erase { speck, .. }) => {
-                    plan.erasures.extend(report.erasures.get(speck));
-                }
-                Some(SuggestedFix::Thicken { feature, .. }) => {
-                    thicken.extend(report.thickenings.get(feature));
-                }
-                Some(SuggestedFix::JoinBelow { join, .. }) => {
-                    plan.joins.extend(report.joins.get(join));
-                }
                 _ => {}
             }
         }
-        plan.thickenings = thicken
-            .into_iter()
-            .filter(|thickening| !plan.erasures.iter().any(|e| e.overlaps(thickening)))
-            .collect();
         plan
     }
 }
@@ -226,27 +280,30 @@ impl<'r> FixAll<'r> {
 struct FixedAll {
     supports: usize,
     cavities: usize,
-    specks: usize,
-    features: usize,
-    joined: usize,
     report: ReviewReport,
 }
 
 /// The review after Fix All, as text.
-fn write_fixed_all(input: &ReviewInput<'_>, fixed: &FixedAll, out: &mut dyn Write) -> Result<()> {
+fn write_fixed_all(
+    input: &ReviewInput<'_>,
+    support_leaves: usize,
+    fixed: &FixedAll,
+    out: &mut dyn Write,
+) -> Result<()> {
     writeln!(
         out,
-        "Fix all: filled {}, erased {}, thickened {}, joined {} to the model below; {} would get a support in the app (not added here). The review again:",
+        "Fix all: filled {}; {} would get a support in the app (not added here). The review again:",
         plural(fixed.cavities, "cavity", "cavities"),
-        plural(fixed.specks, "speck", "specks"),
-        plural(fixed.features, "thin feature", "thin features"),
-        plural(fixed.joined, "island", "islands"),
         plural(fixed.supports, "finding", "findings"),
     )?;
     for finding in &fixed.report.findings {
         writeln!(out, "{}", finding_line(finding))?;
     }
-    writeln!(out, "{}", summary_line(input, &fixed.report.findings))?;
+    writeln!(
+        out,
+        "{}",
+        summary_line(input, support_leaves, &fixed.report.findings)
+    )?;
     Ok(())
 }
 
@@ -270,7 +327,12 @@ struct Refilled {
 }
 
 /// The second review, after the fills, as text.
-fn write_refilled(input: &ReviewInput<'_>, refilled: &Refilled, out: &mut dyn Write) -> Result<()> {
+fn write_refilled(
+    input: &ReviewInput<'_>,
+    support_leaves: usize,
+    refilled: &Refilled,
+    out: &mut dyn Write,
+) -> Result<()> {
     writeln!(
         out,
         "Filled {} ({:.3} mm3 of resin); the review again:",
@@ -280,7 +342,11 @@ fn write_refilled(input: &ReviewInput<'_>, refilled: &Refilled, out: &mut dyn Wr
     for finding in &refilled.report.findings {
         writeln!(out, "{}", finding_line(finding))?;
     }
-    writeln!(out, "{}", summary_line(input, &refilled.report.findings))?;
+    writeln!(
+        out,
+        "{}",
+        summary_line(input, support_leaves, &refilled.report.findings)
+    )?;
     Ok(())
 }
 
@@ -292,8 +358,6 @@ struct RegionStats {
     enclosed_air: usize,
     empty_layers: usize,
     solid_px: u64,
-    model_px: u64,
-    support_px: u64,
     solid_mm3: f64,
 }
 
@@ -305,38 +369,26 @@ impl RegionStats {
             enclosed_air: 0,
             empty_layers: 0,
             solid_px: 0,
-            model_px: 0,
-            support_px: 0,
             solid_mm3: 0.0,
         };
         let pixel_mm2 = input.pixel_area_mm2();
-        for (layer, span) in regions.layers().iter().zip(input.layers()) {
+        for (index, (layer, span)) in regions.layers().iter().zip(input.layers()).enumerate() {
             stats.solid += layer.solid.len();
             stats.air += layer.air.len();
             stats.enclosed_air += layer.air.iter().filter(|r| !r.touches_border).count();
-            stats.empty_layers += usize::from(layer.is_empty());
+            stats.empty_layers += usize::from(layer.is_empty() && !input.has_support_on(index));
             let solid_px = layer.solid_area_px();
             stats.solid_px += solid_px;
-            stats.model_px += layer.solid.iter().map(|r| r.model_px).sum::<u64>();
-            stats.support_px += layer.solid.iter().map(|r| r.support_px).sum::<u64>();
             stats.solid_mm3 += solid_px as f64 * pixel_mm2 * span.height_mm();
         }
         stats
     }
 }
 
-/// Generated supports carry their own leaf name; every other leaf is a model.
-fn role_of(name: Option<&str>) -> Role {
-    if name.is_some_and(is_support_mesh_name) {
-        Role::Support
-    } else {
-        Role::Model
-    }
-}
-
 /// One line per finding, then the summary.
 fn write_text(
     input: &ReviewInput<'_>,
+    support_leaves: usize,
     report: &ReviewReport,
     stats: &RegionStats,
     slice_time: Duration,
@@ -345,29 +397,29 @@ fn write_text(
     for finding in &report.findings {
         writeln!(out, "{}", finding_line(finding))?;
     }
-    writeln!(out, "{}", summary_line(input, &report.findings))?;
     writeln!(
         out,
-        "Layer regions: {} solid and {} air ({} enclosed within their layer), {} empty layers; {} solid pixels ({} model, {} support), {:.1} mm3.",
+        "{}",
+        summary_line(input, support_leaves, &report.findings)
+    )?;
+    writeln!(
+        out,
+        "Layer regions: {} solid and {} air ({} enclosed within their layer), {} empty layers; {} model pixels, {:.1} mm3.",
         stats.solid,
         stats.air,
         stats.enclosed_air,
         stats.empty_layers,
         stats.solid_px,
-        stats.model_px,
-        stats.support_px,
         stats.solid_mm3,
     )?;
     let t = &report.timings;
     writeln!(
         out,
-        "Review took {} (layer regions {}, checks {}: islands {}, traps {}, thin features {}, output {}); slicing took {}.",
+        "Review took {} (sweep {}, islands {}, traps {}, output {}); slicing took {}.",
         seconds(t.total),
-        seconds(t.regions),
-        seconds(t.checks),
+        seconds(t.sweep),
         seconds(t.islands),
         seconds(t.traps),
-        seconds(t.thin),
         seconds(t.output),
         seconds(slice_time),
     )?;
@@ -401,11 +453,6 @@ fn finding_line(finding: &Finding) -> String {
         Some(SuggestedFix::ClearRaft { lift_to_mm }) => {
             format!(" Fix: lift the model to {lift_to_mm:.2} mm or turn the raft off.")
         }
-        Some(SuggestedFix::Erase { .. }) => " Fix: erase it on the next slice.".to_owned(),
-        Some(SuggestedFix::Thicken { .. }) => " Fix: thicken it on the next slice.".to_owned(),
-        Some(SuggestedFix::JoinBelow { .. }) => {
-            " Fix: join it to the model below on the next slice.".to_owned()
-        }
     };
     format!(
         "{layers:<15} {:<7} {:<13} {:<7} {}. {} At ({:.2}, {:.2}, {:.2}) mm.{fix}",
@@ -420,30 +467,21 @@ fn finding_line(finding: &Finding) -> String {
     )
 }
 
-/// The counts: leaves by role, layers, and findings by severity.
-fn summary_line(input: &ReviewInput<'_>, findings: &[Finding]) -> String {
-    let models = count_role(input, Role::Model);
-    let supports = count_role(input, Role::Support);
+/// The counts: leaves, layers, and findings by severity.
+fn summary_line(input: &ReviewInput<'_>, support_leaves: usize, findings: &[Finding]) -> String {
+    let models = input.leaves().len();
     let count = |severity: Severity| findings.iter().filter(|f| f.severity == severity).count();
     format!(
         "Reviewed {} ({}, {}) over {} layers: {} ({} errors, {} warnings, {} info).",
-        plural(input.leaves().len(), "leaf", "leaves"),
+        plural(models + support_leaves, "leaf", "leaves"),
         plural(models, "model", "models"),
-        plural(supports, "support", "supports"),
+        plural(support_leaves, "support", "supports"),
         input.layer_count(),
         plural(findings.len(), "finding", "findings"),
         count(Severity::Error),
         count(Severity::Warning),
         count(Severity::Info),
     )
-}
-
-fn count_role(input: &ReviewInput<'_>, role: Role) -> usize {
-    input
-        .leaves()
-        .iter()
-        .filter(|leaf| leaf.role == role)
-        .count()
 }
 
 fn plural(count: usize, one: &str, many: &str) -> String {
@@ -481,7 +519,7 @@ fn write_json(
     let leaves: Vec<serde_json::Value> = input
         .leaves()
         .iter()
-        .map(|leaf| serde_json::json!({ "name": leaf.name, "role": leaf.role }))
+        .map(|leaf| serde_json::json!({ "name": leaf.name }))
         .collect();
     let t = &report.timings;
     let document = serde_json::json!({
@@ -489,6 +527,30 @@ fn write_json(
         "leaves": leaves,
         "findings": report.findings,
         "summary": summary(&report.findings),
+        "islands": report.islands.iter().map(|island| serde_json::json!({
+            "first_layer": island.first_layer,
+            "first_area_mm2": island.first_area_mm2,
+            "growth_mm2": island.growth_mm2,
+            "joins_on": island.joins_on,
+        })).collect::<Vec<_>>(),
+        "parts": report.parts.iter().map(|part| serde_json::json!({
+            "first_layer": part.first_layer,
+            "layers": part.layers(),
+            "held": match part.held {
+                Held::Plate => "plate",
+                Held::Tip => "tip",
+                Held::Nothing => "nothing",
+            },
+            "tip_contact_px": part.tip_contact_px,
+            "largest_px": part.largest_px(),
+            "joined_on": part.joined.map(|(layer, _)| layer),
+        })).collect::<Vec<_>>(),
+        "erased": report.erased.slabs.iter().map(|slab| serde_json::json!({
+            "bottom_mm": slab.bottom_mm,
+            "rects": slab.rects.iter()
+                .map(|r| [r.x0_mm, r.y0_mm, r.x1_mm, r.y1_mm])
+                .collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
         "filled": refilled.map(|refilled| serde_json::json!({
             "cavities": refilled.cavities,
             "volume_mm3": (refilled.volume_mm3 * 1e3).round() / 1e3,
@@ -497,9 +559,6 @@ fn write_json(
         })),
         "fixed_all": fixed_all.map(|fixed| serde_json::json!({
             "cavities": fixed.cavities,
-            "specks": fixed.specks,
-            "thin_features": fixed.features,
-            "joined": fixed.joined,
             "supports_not_added": fixed.supports,
             "findings": fixed.report.findings,
             "summary": summary(&fixed.report.findings),
@@ -510,18 +569,14 @@ fn write_json(
             "enclosed_air": stats.enclosed_air,
             "empty_layers": stats.empty_layers,
             "solid_px": stats.solid_px,
-            "model_px": stats.model_px,
-            "support_px": stats.support_px,
             "solid_mm3": (stats.solid_mm3 * 1e3).round() / 1e3,
         },
         "timings_ms": {
             "slice": millis(slice_time),
             "review": millis(t.total),
-            "regions": millis(t.regions),
-            "checks": millis(t.checks),
+            "sweep": millis(t.sweep),
             "islands": millis(t.islands),
             "traps": millis(t.traps),
-            "thin": millis(t.thin),
             "output": millis(t.output),
         },
     });
@@ -586,13 +641,6 @@ mod review_output_tests {
     fn the_review_knows_the_raft_of_the_generated_supports() {
         let top = df_raft_top_mm().expect("the default supports stand on a raft");
         assert!((top - 0.85).abs() < 1e-9, "{top}");
-    }
-
-    #[test]
-    fn supports_are_told_apart_by_their_leaf_name() {
-        assert_eq!(role_of(Some("Supports")), Role::Support);
-        assert_eq!(role_of(Some("wolverine")), Role::Model);
-        assert_eq!(role_of(None), Role::Model);
     }
 
     #[test]

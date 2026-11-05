@@ -41,7 +41,7 @@ fn findings() -> Vec<Finding> {
         finding(CheckKind::EmptyLayer, Severity::Info, 30, 30, "Empty"),
         finding(CheckKind::ResinTrap, Severity::Error, 40, 48, "Trap")
             .with_fix(SuggestedFix::AddDrain { at }),
-        finding(CheckKind::ThinFeature, Severity::Warning, 50, 52, "Thin"),
+        finding(CheckKind::SurfaceGrowth, Severity::Warning, 50, 52, "Thin"),
     ]
 }
 
@@ -243,13 +243,13 @@ fn a_fixed_finding_leaves_the_list_and_the_summary_counts_it() {
 }
 
 #[test]
-fn small_cavities_offer_a_fill_and_tiny_ones_can_be_left() {
+fn small_cavities_offer_a_fill_and_every_cavity_can_be_ignored() {
     let rows = marked(&tiered(), &open_marks());
     assert_eq!(titles(&rows), ["Large", "Cup", "Medium", "Tiny", "Empty"]);
     let fills: Vec<i32> = rows.iter().map(|r| r.fill).collect();
     assert_eq!(fills, [0, 0, 1, 1, 0]);
     let leave: Vec<bool> = rows.iter().map(|r| r.leave).collect();
-    assert_eq!(leave, [false, false, false, true, false]);
+    assert_eq!(leave, [true, true, true, true, false]);
     // A fill is no button of its own; the large trap and the cup ask for
     // drains.
     let drain = FixKind::AddDrain as i32;
@@ -305,21 +305,21 @@ fn fill_all_small_traps_takes_the_traps_only() {
 
 #[test]
 fn the_fills_line_tells_what_the_next_slice_does() {
-    assert_eq!(fills_note(0, 0, false, true), "");
+    assert_eq!(fills_note(0, 0, false), "");
     assert_eq!(
-        fills_note(2, 0, true, true),
+        fills_note(2, 0, true),
         "2 cavities will be filled. Slice again to apply."
     );
     assert_eq!(
-        fills_note(1, 0, true, true),
+        fills_note(1, 0, true),
         "One cavity will be filled. Slice again to apply."
     );
     assert_eq!(
-        fills_note(3, 3, false, true),
+        fills_note(3, 3, false),
         "3 cavities are filled in this slice."
     );
     assert_eq!(
-        fills_note(0, 2, true, true),
+        fills_note(0, 2, true),
         "The fills are cleared. Slice again to apply."
     );
     assert_eq!(summary_with_left("1 warning".into(), 0), "1 warning");
@@ -354,24 +354,6 @@ fn a_model_inside_the_raft_offers_its_lift_and_no_raft() {
     // Once the models moved, the raft fixes are withdrawn too.
     let rows = review_rows(&[raft], &[None], &BTreeSet::new(), false, false);
     assert_eq!(rows[0].fix, FixKind::None as i32);
-}
-
-/// #402: a minimal island is a note with no button, Fix All leaves it,
-/// and its row says why.
-#[test]
-fn a_minimal_island_is_a_note_fix_all_leaves() {
-    let minimal = finding(CheckKind::Island, Severity::Info, 10, 10, "Minimal island");
-    let findings = vec![minimal];
-    let rows = review_rows(&findings, &[None], &BTreeSet::new(), true, true);
-    assert_eq!(rows[0].fix, FixKind::None as i32);
-    assert_eq!(rows[0].severity, 2);
-    assert!(
-        rows[0].remains.contains("too small for a support"),
-        "{}",
-        rows[0].remains
-    );
-    let plan = plan_fix_all(&findings, &FixPixels::default(), &[], |_| false);
-    assert!(plan.is_empty());
 }
 
 /// #235: an island whose support the engine refused on the scene as it
@@ -427,7 +409,7 @@ fn a_refused_island_no_larger_than_a_tip_is_a_note() {
         .with_fix(SuggestedFix::AddSupport { at })
         .with_largest_mm2(largest_mm2)
     };
-    let limit = island_policy::NO_SUPPORT_NOTE_MM2;
+    let limit = NO_SUPPORT_NOTE_MM2;
     let findings = vec![island(10, 0.0296), island(20, limit), island(30, 1.2)];
     let now = SceneRevision::from_top_edit_id(Some(3));
     let mut marks: ReviewMarks<i32> = ReviewMarks::default();
@@ -510,7 +492,7 @@ fn a_row_offers_a_support_exactly_when_fix_all_takes_it() {
             .filter(|row| row.fix == FixKind::AddSupport as i32)
             .map(|row| row.id as usize)
             .collect();
-        let plan = plan_fix_all(&findings, &FixPixels::default(), &[], |i| {
+        let plan = plan_fix_all(&findings, &[], &[], |i| {
             support_held_back(&findings[i], &marks, now)
         });
         let by_fix_all: Vec<usize> = plan.supports.iter().map(|(i, _)| *i).collect();
@@ -610,8 +592,9 @@ mod fix_all {
     use crate::df_support_run::DfSupportRun;
     use crate::hollow_run::HollowRun;
     use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
-    use crate::review::{erased_stack, review_slices};
+    use crate::review::{ReviewOutcome, erased_stack, review_for_test, review_slices};
     use crate::slice_result::{SliceParams, SliceResult};
+    use crate::support_persist::review_sets;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
 
     fn pixels(x0_mm: f64, x1_mm: f64) -> CavityFill {
@@ -630,25 +613,14 @@ mod fix_all {
         }
     }
 
-    /// An island and its floating part at one point, a small trap, a cup and
-    /// a large trap to drain, a speck, two thin model features (the second
-    /// inside the speck's erasure) and a thin support.
-    fn review() -> (
-        Vec<Finding>,
-        Vec<CavityFill>,
-        Vec<CavityFill>,
-        Vec<CavityFill>,
-    ) {
+    /// Two islands at one point, a small trap, a cup, a large trap to drain,
+    /// a sudden growth and a clean-up note.
+    fn review() -> (Vec<Finding>, Vec<CavityFill>) {
         let at = PlatePoint::new(1.0, 2.0, 3.0);
-        let thin = |scope| {
-            let mut f = finding(CheckKind::ThinFeature, Severity::Error, 9, 9, "Thin");
-            f.scope = scope;
-            f
-        };
         let findings = vec![
             finding(CheckKind::Island, Severity::Error, 1, 1, "Island")
                 .with_fix(SuggestedFix::AddSupport { at }),
-            finding(CheckKind::FloatingPart, Severity::Error, 1, 4, "Floating")
+            finding(CheckKind::Island, Severity::Error, 1, 4, "Part")
                 .with_fix(SuggestedFix::AddSupport { at }),
             finding(CheckKind::ResinTrap, Severity::Info, 2, 3, "Tiny")
                 .with_fix(SuggestedFix::Fill { at, cavity: 0 }),
@@ -656,64 +628,26 @@ mod fix_all {
                 .with_fix(SuggestedFix::AddDrain { at }),
             finding(CheckKind::ResinTrap, Severity::Error, 4, 9, "Large")
                 .with_fix(SuggestedFix::AddDrain { at }),
-            finding(CheckKind::FloatingPart, Severity::Warning, 6, 6, "Speck")
-                .with_fix(SuggestedFix::Erase { at, speck: 0 }),
-            thin(RoleScope::Model).with_fix(SuggestedFix::Thicken { at, feature: 0 }),
-            thin(RoleScope::Model).with_fix(SuggestedFix::Thicken { at, feature: 1 }),
-            thin(RoleScope::Support),
+            finding(CheckKind::SurfaceGrowth, Severity::Warning, 6, 6, "Growth"),
+            finding(CheckKind::CleanUp, Severity::Info, 7, 9, "Stray pixels"),
         ];
-        let fills = vec![pixels(0.0, 1.0)];
-        let erasures = vec![pixels(5.0, 6.0)];
-        let thickenings = vec![pixels(8.0, 9.0), pixels(5.5, 6.5)];
-        (findings, fills, erasures, thickenings)
-    }
-
-    /// The pixels of a review without joins.
-    fn fix_pixels<'a>(
-        fills: &'a [CavityFill],
-        erasures: &'a [CavityFill],
-        thickenings: &'a [CavityFill],
-    ) -> FixPixels<'a> {
-        FixPixels {
-            fills,
-            erasures,
-            thickenings,
-            joins: &[],
-        }
+        (findings, vec![pixels(0.0, 1.0)])
     }
 
     #[test]
-    fn fix_all_plans_supports_small_traps_specks_and_thin_model_features() {
-        let (findings, fills, erasures, thickenings) = review();
-        let plan = plan_fix_all(
-            &findings,
-            &fix_pixels(&fills, &erasures, &thickenings),
-            &[],
-            |_| false,
-        );
+    fn fix_all_plans_supports_and_small_traps() {
+        let (findings, fills) = review();
+        let plan = plan_fix_all(&findings, &fills, &[], |_| false);
         let supported: Vec<usize> = plan.supports.iter().map(|s| s.0).collect();
         assert_eq!(supported, [0, 1]);
-        // The island and its floating part share one support.
+        // Both islands share one support.
         assert_eq!(plan.support_points().len(), 1);
-        let patches: Vec<(usize, PatchKind)> = plan.patches.iter().map(|p| (p.0, p.1)).collect();
-        // The cup, the large trap and the thin support are left (#431), and
-        // so is the thin feature inside the speck's erasure.
-        assert_eq!(
-            patches,
-            [
-                (2, PatchKind::Fill),
-                (5, PatchKind::Erase),
-                (6, PatchKind::Thicken)
-            ]
-        );
-        assert_eq!(plan.len(), 5);
+        // The cup and the large trap are left (#431).
+        let patches: Vec<usize> = plan.patches.iter().map(|p| p.0).collect();
+        assert_eq!(patches, [2]);
+        assert_eq!(plan.len(), 3);
         // Findings fixed, marked or left alone already are skipped.
-        let rest = plan_fix_all(
-            &findings,
-            &fix_pixels(&fills, &erasures, &thickenings),
-            &[],
-            |i| i != 2,
-        );
+        let rest = plan_fix_all(&findings, &fills, &[], |i| i != 2);
         assert_eq!(rest.len(), 1);
     }
 
@@ -721,43 +655,11 @@ mod fix_all {
     /// is the person's, whatever its size (#431).
     #[test]
     fn fix_all_fills_no_trap_in_a_hollow_made_here() {
-        let (findings, fills, erasures, thickenings) = review();
-        let mut hollows = [None; 9];
+        let (findings, fills) = review();
+        let mut hollows = [None; 7];
         hollows[2] = Some(1);
-        let plan = plan_fix_all(
-            &findings,
-            &fix_pixels(&fills, &erasures, &thickenings),
-            &hollows,
-            |_| false,
-        );
-        assert!(plan.patches.iter().all(|p| p.1 != PatchKind::Fill));
-    }
-
-    /// A speck where an island starts is its first layer: Fix All supports
-    /// it and does not erase it.
-    #[test]
-    fn fix_all_does_not_erase_a_speck_it_supports() {
-        let (mut findings, fills, mut erasures, thickenings) = review();
-        // The island's support point, inside the speck's erasure.
-        findings[0].fix = Some(SuggestedFix::AddSupport {
-            at: PlatePoint::new(5.5, 0.5, 0.02),
-        });
-        erasures[0] = pixels(5.0, 6.0);
-        let plan = plan_fix_all(
-            &findings,
-            &fix_pixels(&fills, &erasures, &thickenings),
-            &[],
-            |_| false,
-        );
-        assert!(plan.patches.iter().all(|p| p.1 != PatchKind::Erase));
-        // With the island skipped (its support did not hold), the speck goes.
-        let plan = plan_fix_all(
-            &findings,
-            &fix_pixels(&fills, &erasures, &thickenings),
-            &[],
-            |i| i == 0,
-        );
-        assert!(plan.patches.iter().any(|p| p.1 == PatchKind::Erase));
+        let plan = plan_fix_all(&findings, &fills, &hollows, |_| false);
+        assert!(plan.patches.is_empty());
     }
 
     #[test]
@@ -780,14 +682,10 @@ mod fix_all {
             why(2, Some(1))
         );
         assert!(why(2, None).contains("opening"), "{}", why(2, None));
-        assert!(why(8, None).contains("supports"), "{}", why(8, None));
         assert!(why(0, None).contains("support"), "{}", why(0, None));
-        let rows = review_rows(&findings, &[None; 9], &BTreeSet::new(), true, true);
-        assert!(
-            rows.iter()
-                .all(|r| r.remains.starts_with("Left by Fix All"))
-        );
-        let rows = review_rows(&findings, &[None; 9], &BTreeSet::new(), true, false);
+        assert!(why(5, None).contains("tips"), "{}", why(5, None));
+        assert!(why(6, None).contains("review itself"), "{}", why(6, None));
+        let rows = review_rows(&findings, &[None; 7], &BTreeSet::new(), true, false);
         assert!(rows.iter().all(|r| r.remains.is_empty()));
     }
 
@@ -900,13 +798,21 @@ mod fix_all {
         let patches = panel.fills_for_slice();
         let leaves = slice_scene(&scene, profile).expect("the scene slices");
         let filled = fill_stack(patches.fills.iter().map(|f| &**f), profile.layer_schedule());
-        let erased = erased_stack(
-            &leaves,
-            filled.as_ref(),
-            patches.erasures.iter().map(|e| &**e),
-            profile.layer_schedule(),
-        );
-        let mut outcome = review_slices(&leaves, filled.as_ref(), erased.as_ref(), profile, None);
+        let sessions = document.support_sessions();
+        let sets = document
+            .with_scene(|spatial| review_sets(spatial, &sessions))
+            .unwrap_or_default();
+        let mut outcome = review_for_test(&leaves, filled.as_ref(), profile, &sets);
+        let erased = match &outcome {
+            ReviewOutcome::Reviewed { erased, .. } => erased_stack(
+                &leaves,
+                &sets,
+                filled.as_ref(),
+                erased,
+                profile.layer_schedule(),
+            ),
+            _ => None,
+        };
         if let ReviewOutcome::Reviewed { findings, .. } = &mut outcome {
             findings.extend_from_slice(extra);
         }
@@ -1145,121 +1051,93 @@ mod fix_all {
         titles
     }
 
-    /// A 2 x 2 mm block on the plate up to 1.0 mm, and the same block from
-    /// 1.10 mm up: an island over a 0.10 mm gap (two layers), too thin for
-    /// a support (#235).
-    fn gap_plate() -> Scene {
-        let mut scene = Scene::new();
-        add(
-            &mut scene,
-            unit_cube_mesh(),
-            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]],
-            [0.0, 0.0, 0.5],
-        );
-        add(
-            &mut scene,
-            unit_cube_mesh(),
-            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 0.9]],
-            [0.0, 0.0, 1.55],
-        );
-        scene
-    }
-
-    /// The island findings of the panel's review, by title.
-    fn island_titles(panel: &ReviewPanel) -> Vec<String> {
-        held_findings(panel)
-            .into_iter()
-            .filter(|(title, ..)| title.contains("island") || title.contains("Island"))
-            .map(|(title, ..)| title)
-            .collect()
-    }
-
-    /// #235: an island just above the model offers "Join to below"; marked
-    /// from its row, the next slice cures the gap and the island is gone.
-    /// Fix All joins it as well.
+    /// #432: the list is made again on every slice, and what the person
+    /// ignored stays out of it, in the project too; moving the model drops
+    /// the decision.
     #[test]
-    fn join_to_below_cures_the_gap_and_the_island_goes() {
-        let (offered, join_row, marked_row, message, after, by_fix_all, fix_all) =
-            on_fresh_slint_thread(|| {
-                let window =
-                    MainWindow::new().expect("the headless platform creates a main window");
-                let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-                let ctrl = Rc::new(ViewportController::new_for_test());
-                let document = ctrl.document();
-                document.install_graph(gap_plate(), PathBuf::from("gap.bread"));
-                let supports = DfSupportRun::install(
-                    &window,
-                    bus.clone(),
-                    document.clone(),
-                    ctrl.dialogs(),
-                    ctrl.clone(),
-                );
-                let hollow =
-                    HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
-                let panel = ReviewPanel::install(
-                    &window,
-                    bus.clone(),
-                    document.clone(),
-                    ctrl.clone(),
-                    supports,
-                    hollow,
-                );
-                panel.set_reslice(|| true);
-                slice(&document, &panel, false);
-                let offered = island_titles(&panel);
-                let join_id = {
-                    let held = panel.held.borrow();
-                    let Some(ReviewOutcome::Reviewed { findings, .. }) =
-                        held.as_ref().map(|h| &h.outcome)
-                    else {
-                        panic!("reviewed")
-                    };
-                    findings
-                        .iter()
-                        .position(|f| matches!(f.fix, Some(SuggestedFix::JoinBelow { .. })))
-                        .expect("a join") as i32
-                };
-                let row_of = |window: &MainWindow| {
-                    let rows = window.get_review_rows();
-                    (0..rows.row_count())
-                        .filter_map(|i| rows.row_data(i))
-                        .find(|row| row.id == join_id)
-                        .map(|row| (row.fix, row.join))
-                };
-                let join_row = row_of(&window);
-                let fix_all = window.get_review_fix_all();
-                window.invoke_review_fix_requested(join_id);
-                let marked_row = row_of(&window);
-                let message = window.get_review_message().to_string();
-                slice(&document, &panel, false);
-                let after = island_titles(&panel);
+    fn an_ignored_finding_stays_out_of_every_new_list_until_the_model_moves() {
+        let (first, again, decisions, reopened, moved) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            document.install_graph(plate(), PathBuf::from("plate.bread"));
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
+            let hollow =
+                HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
+            panel.set_reslice(|| true);
+            slice(&document, &panel, false);
+            let first = card(&window);
+            let island = window
+                .get_review_rows()
+                .iter()
+                .find(|row| row.title == "Unsupported island")
+                .expect("the island's row");
+            assert!(island.leave);
+            window.invoke_review_leave_requested(island.id);
+            slice(&document, &panel, false);
+            let again = card(&window);
+            let decisions = document.review_decisions();
 
-                // The same plate, by Fix All.
-                let document = ctrl.document();
-                document.install_graph(gap_plate(), PathBuf::from("gap.bread"));
-                slice(&document, &panel, false);
-                window.invoke_review_fix_all_requested();
-                slice(&document, &panel, true);
-                let by_fix_all = island_titles(&panel);
-                (
-                    offered, join_row, marked_row, message, after, by_fix_all, fix_all,
-                )
-            });
-        assert_eq!(offered, ["Unsupported island"], "{offered:?}");
-        assert_eq!(join_row, Some((FixKind::JoinBelow as i32, 1)));
-        assert_eq!(marked_row, Some((FixKind::JoinBelow as i32, 2)));
-        assert!(message.contains("joined"), "{message}");
-        assert!(after.is_empty(), "{after:?}");
-        assert!(fix_all >= 1, "Fix All takes the join");
-        assert!(by_fix_all.is_empty(), "{by_fix_all:?}");
+            // The same scene from its file.
+            document.install_project_graph(
+                plate(),
+                PathBuf::from("plate.bread"),
+                sc_project_formats::ProjectPayload {
+                    review_decisions: decisions.clone(),
+                    ..Default::default()
+                },
+            );
+            slice(&document, &panel, false);
+            let reopened = card(&window);
+
+            // A move of a model drops it.
+            let (leaf, before) = document
+                .with_scene(|spatial| {
+                    let leaf = spatial.leaf_id_at_index(0).expect("a leaf");
+                    (
+                        leaf,
+                        spatial.graph().node(leaf).expect("a node").local_transform,
+                    )
+                })
+                .expect("a scene");
+            document
+                .apply_edit(crate::scene_document::SceneEdit::SetLocalTransform {
+                    node_id: leaf,
+                    before,
+                    after: Transform3D::Affine(AffineTransform3D::from_translation([
+                        -4.0, 0.0, 1.0,
+                    ])),
+                })
+                .expect("the edit lands");
+            slice(&document, &panel, false);
+            (first, again, decisions, reopened, card(&window))
+        });
+        let island = "Unsupported island".to_owned();
+        assert!(titles(&first).contains(&island), "{first:?}");
+        assert!(!titles(&again).contains(&island), "{again:?}");
+        assert_eq!(decisions.len(), 1, "{decisions:?}");
+        assert_eq!(decisions[0].check, "island");
+        assert!(!titles(&reopened).contains(&island), "{reopened:?}");
+        assert!(titles(&moved).contains(&island), "{moved:?}");
     }
 
-    /// Fix All on a plate with an island, a speck and a small trap: the
-    /// trap is filled and the speck erased on the slice it asks for; with no
-    /// supports to edit, the island and its floating part stay, each saying
-    /// why.
     #[test]
-    fn fix_all_fills_the_trap_erases_the_speck_and_slices_again() {
+    fn fix_all_fills_the_trap_and_slices_again() {
         let (before, fix_all, message, resliced, after, done) = on_fresh_slint_thread(|| {
             let window = MainWindow::new().expect("the headless platform creates a main window");
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
@@ -1311,24 +1189,22 @@ mod fix_all {
         assert_eq!(
             titles(&before),
             [
-                "Floating part",
-                "Floating speck",
+                "Stray pixels removed",
                 "Tiny sealed cavity",
                 "Unsupported island"
             ],
             "{before:?}"
         );
-        assert_eq!(fix_all, 4);
+        assert_eq!(fix_all, 2);
         assert!(message.contains("One cavity to fill."), "{message}");
-        assert!(message.contains("One speck to erase."), "{message}");
         assert!(message.contains("No supports were added"), "{message}");
         assert_eq!(resliced, 1);
         assert_eq!(
             titles(&after),
-            ["Floating part", "Unsupported island"],
+            ["Stray pixels removed", "Unsupported island"],
             "{after:?}"
         );
-        for (title, remains) in &after {
+        for (title, remains) in after.iter().filter(|(title, _)| title.contains("island")) {
             assert!(
                 remains.contains("no support held here"),
                 "{title}: {remains}"
@@ -1526,8 +1402,8 @@ mod fix_all {
             run.before
         );
         assert_eq!(run.small_traps, 1, "the 125 mm³ trap alone");
-        assert_eq!(run.supports, 2, "the island and its floating part");
-        assert_eq!(run.fix_all, 3, "those two and the trap");
+        assert_eq!(run.supports, 1, "the island");
+        assert_eq!(run.fix_all, 2, "the island and the trap");
         // The trap went; the hollow and the cup are exactly as they were:
         // same layers, same volume, same section.
         assert_eq!(run.after.len(), 2, "{:?}", run.after);
@@ -1701,19 +1577,28 @@ mod fix_all {
             panic!("not cancelled")
         };
         let filled = fill_stack(patches.fills.iter().map(|f| &**f), plate.schedule());
-        let erased = erased_stack(
-            plate.leaves(),
-            filled.as_ref(),
-            patches.erasures.iter().map(|e| &**e),
-            plate.schedule(),
-        );
+        let sessions = document.support_sessions();
+        let sets = document
+            .with_scene(|spatial| review_sets(spatial, &sessions))
+            .unwrap_or_default();
         let outcome = review_slices(
-            plate.leaves(),
+            &plate,
             filled.as_ref(),
-            erased.as_ref(),
-            plate.profile(),
+            &sets,
             panel.raft_top_mm(),
+            &sc_sl1cer::CancelToken::default(),
+            &|_| {},
         );
+        let erased = match &outcome {
+            ReviewOutcome::Reviewed { erased, .. } => erased_stack(
+                plate.leaves(),
+                &sets,
+                filled.as_ref(),
+                erased,
+                plate.schedule(),
+            ),
+            _ => None,
+        };
         let contours = plate
             .merge_with(filled.into_iter().chain(erased))
             .expect("one schedule");
@@ -1922,7 +1807,6 @@ mod fix_all {
         };
         lines.push(format!("marks: {}", patches.ids.len()));
         lines.push(format!("fills: {}", digest(&patches.fills)));
-        lines.push(format!("erasures: {}", digest(&patches.erasures)));
         lines.join("\n")
     }
 

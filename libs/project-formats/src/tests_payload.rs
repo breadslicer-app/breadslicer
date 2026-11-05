@@ -23,6 +23,7 @@ fn payload_with_refs() -> ProjectPayload {
         first_layer_height: None,
         output_format: None,
         embedded: Vec::new(),
+        review_decisions: Vec::new(),
     }
 }
 

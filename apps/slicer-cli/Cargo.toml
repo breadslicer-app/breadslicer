@@ -12,6 +12,7 @@ workspace = true
 name = "sc-slicer-cli"
 
 [dependencies]
+mimalloc.workspace = true
 sc-app-paths.workspace = true
 sc-geom.workspace = true
 sc-mesh-core.workspace = true

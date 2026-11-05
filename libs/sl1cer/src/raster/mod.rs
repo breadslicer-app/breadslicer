@@ -22,4 +22,4 @@ pub mod pixel_map;
 pub mod rle;
 pub mod scanline;
 
-pub use scanline::{rasterize_layer, rasterize_layer_binary};
+pub use scanline::{rasterize_layer, rasterize_layer_binary, rasterize_layers_binary};

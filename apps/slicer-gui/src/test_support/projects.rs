@@ -130,6 +130,7 @@ pub(crate) fn project_with_in_sync_slices() -> (Vec<u8>, String) {
         first_layer_height: None,
         output_format: None,
         embedded: Vec::new(),
+        review_decisions: Vec::new(),
     };
 
     let mut bytes = Vec::new();

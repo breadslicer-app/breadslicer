@@ -57,6 +57,7 @@ fn full_payload() -> ProjectPayload {
                 bytes: TEST_RESIN_EXTENSION_TOML.to_vec(),
             },
         ],
+        review_decisions: Vec::new(),
     }
 }
 

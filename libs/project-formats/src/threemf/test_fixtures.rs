@@ -81,6 +81,7 @@ pub(super) fn full_payload() -> ProjectPayload {
                 bytes: b"kind = \"extension\"".to_vec(),
             },
         ],
+        review_decisions: Vec::new(),
     }
 }
 

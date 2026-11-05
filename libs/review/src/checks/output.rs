@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Output checks (#93): plate edges, maximum height, empty layers and
-//! floating parts.
+//! Output checks (#93): plate edges, maximum height and empty layers.
 //!
-//! Reports [`CheckKind::PlateEdge`], [`CheckKind::TooTall`],
-//! [`CheckKind::EmptyLayer`] and [`CheckKind::FloatingPart`] findings, all
-//! read from the shared [`PlateRegions`] plus, for the plate edge and the
-//! empty plate, the vector contours:
+//! Reports [`CheckKind::PlateEdge`], [`CheckKind::TooTall`] and
+//! [`CheckKind::EmptyLayer`] findings, all read from the sweep's tables plus,
+//! for the plate edge and the empty plate, the models' vector contours.
+//! Supports are data (#432): the layers they stand on count as lit, and the
+//! box they take is compared with the plate:
 //!
 //! - **Plate edge**, one finding per part. A part is a printed body (the
 //!   solid regions joined through every overlap between layers) with its
@@ -52,53 +52,30 @@
 //!   the printer does not stall on it (#309).
 //! - **Nothing to print** (error). Contours on the plate, yet no layer has
 //!   a single lit pixel: the printer file would print nothing.
-//! - **Floating part** (error). A printed body whose lowest region is on
-//!   layer [`PLATE_LAYERS`] (counting from 0) or higher: nothing below it in
-//!   any earlier layer ever reaches the plate. A body that starts on one of
-//!   the first [`PLATE_LAYERS`] layers rests on the plate, as in the island
-//!   check: the raft and bottom layers absorb a body that starts a layer up.
-//!   A body that starts right above an empty layer is left to the
-//!   empty-layer finding, and one whose part is cut by the plate edge on
-//!   the layer right below it to the plate-edge finding: each explains it.
-//!   It suggests a support under the body's largest bottom region when that
-//!   region has model in it. A body
-//!   smaller than [`OutputOptions::speck_volume_mm3`] is a *floating speck*
-//!   (warning): too small for a support to hold. It suggests erasing it
-//!   (#156): its pixels, grown a pixel on every side, are erased on the next
-//!   slice ([`crate::fill::erase_stack`]).
+//! - **Supports past the plate** (error). The box the supports take reaches
+//!   past the plate's edge or above the printer's maximum height.
 //!
 //! Joining solid within a layer follows the shared regions, which are
 //! 8-connected: a part that touches a body only by a corner pixel belongs to
-//! it. How weakly a part is held is the island check's question, not this
-//! one's.
+//! it. A body that never reaches the plate is an island (see
+//! [`crate::checks::islands`]).
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::iter;
 use std::ops::Range;
-use std::sync::Arc;
 
 use rayon::prelude::*;
 use sc_sl1cer::contour::{ClosedRing, Polygon};
 use sc_sl1cer::geom2d::Point2D;
 use sc_sl1cer::raster::pixel_map::PixelMap;
 
-use crate::checks::thin;
-use crate::fill::CavityFill;
-use crate::finding::{
-    CheckKind, Finding, MAX_FOOTPRINT_LAYERS, PlatePoint, RoleScope, Severity, SuggestedFix,
-};
-use crate::input::{ReviewInput, Role};
-use crate::regions::{LayerPixels, PlateRegions, Region};
+use crate::finding::{CheckKind, Finding, PlatePoint, RoleScope, Severity};
+use crate::input::ReviewInput;
+use crate::regions::{LayerPixels, PlateRegions, Region, SweepOptions};
 use crate::runner::ReviewContext;
-use crate::runs::{self, Run, for_each_overlap};
+use crate::runs::{Run, for_each_overlap};
 use crate::union_find::{Groups, RegionRef, UnionFind};
-
-/// The layers, counted from 0, on which a printed body rests on the plate:
-/// one whose lowest layer is below this does not float. It must match the
-/// island check's `PLATE_LAYERS`, so that both checks agree on what stands
-/// on the plate.
-pub const PLATE_LAYERS: usize = 2;
 
 /// Settings of the output checks.
 #[derive(Clone, Debug, PartialEq)]
@@ -111,11 +88,6 @@ pub struct OutputOptions {
     /// printer's maximum height before it is too tall. Only absorbs
     /// rounding in the layer heights.
     pub height_tolerance_mm: f64,
-    /// Floating bodies smaller than this, in cubic millimetres, are specks:
-    /// a warning without a support suggestion. The default, 0.001 mm³, is a
-    /// 0.1 mm cube: about the smallest feature a resin printer cures
-    /// reliably, and smaller than any support tip.
-    pub speck_volume_mm3: f64,
 }
 
 impl Default for OutputOptions {
@@ -123,36 +95,23 @@ impl Default for OutputOptions {
         Self {
             edge_tolerance_mm: 1e-3,
             height_tolerance_mm: 1e-3,
-            speck_volume_mm3: 1e-3,
         }
     }
 }
 
 /// Finds the output problems of the plate.
-pub fn run(ctx: &ReviewContext<'_>, options: &OutputOptions) -> Vec<Finding> {
-    run_with_erasures(ctx, options).0
-}
-
-/// Finds the output problems of the plate, with the pixels of every
-/// floating speck: a [`SuggestedFix::Erase`] names its [`CavityFill`] by
-/// index in the second list (#156).
-pub fn run_with_erasures(
-    ctx: &ReviewContext<'_>,
-    options: &OutputOptions,
-) -> (Vec<Finding>, Vec<CavityFill>) {
+pub fn run(ctx: &ReviewContext<'_>, options: &OutputOptions, sweep: &SweepOptions) -> Vec<Finding> {
     let contours = scan_contours(ctx.input, options.edge_tolerance_mm);
     let bodies = ctx.regions.group_solid(|_, _| true);
-    let edge = plate_edge(ctx, &bodies, &contours);
-    let mut findings = edge.findings;
-    let Some(extent) = SolidExtent::of(ctx.regions) else {
+    let mut findings = plate_edge(ctx, &bodies, &contours, sweep);
+    findings.extend(supports_past_the_plate(ctx.input, options));
+    let Some(extent) = SolidExtent::of(ctx) else {
         findings.extend(nothing_to_print(ctx.input, &contours));
-        return (findings, Vec::new());
+        return findings;
     };
     findings.extend(too_tall(ctx, extent, options));
     findings.extend(empty_layers(ctx, extent));
-    let (floating, erasures) = floating_parts(ctx, &bodies, &edge.held_past, options);
-    findings.extend(floating);
-    (findings, erasures)
+    findings
 }
 
 /// The first and the last layer with solid.
@@ -163,10 +122,10 @@ struct SolidExtent {
 }
 
 impl SolidExtent {
-    fn of(regions: &PlateRegions) -> Option<Self> {
-        let layers = regions.layers();
-        let first = layers.iter().position(|layer| !layer.is_empty())?;
-        let last = layers.iter().rposition(|layer| !layer.is_empty())?;
+    fn of(ctx: &ReviewContext<'_>) -> Option<Self> {
+        let count = ctx.input.layer_count();
+        let first = (0..count).find(|&layer| !ctx.layer_is_empty(layer))?;
+        let last = (0..count).rfind(|&layer| !ctx.layer_is_empty(layer))?;
         Some(Self { first, last })
     }
 }
@@ -195,18 +154,6 @@ fn counted(count: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// A volume in cubic millimetres with enough decimals to stay non-zero for
-/// a few pixels.
-fn volume_text(mm3: f64) -> String {
-    if mm3 >= 0.1 {
-        format!("{mm3:.2}")
-    } else if mm3 >= 0.001 {
-        format!("{mm3:.4}")
-    } else {
-        format!("{mm3:.6}")
-    }
-}
-
 fn pixel_centre(pixel: [u32; 2]) -> [f64; 2] {
     [f64::from(pixel[0]) + 0.5, f64::from(pixel[1]) + 0.5]
 }
@@ -221,10 +168,6 @@ fn pixel_centre(pixel: [u32; 2]) -> [f64; 2] {
 struct LayerContours {
     /// The centre of the first polygon that stays within the plate.
     inside: Option<Point2D>,
-    /// Whether a model polygon stays within the plate.
-    inside_model: bool,
-    /// Whether a support polygon stays within the plate.
-    inside_support: bool,
     /// The polygons that reach past the plate, leaf by leaf.
     overhangs: Vec<Overhang>,
 }
@@ -312,10 +255,6 @@ fn scan_contours(input: &ReviewInput<'_>, tolerance_mm: f64) -> Vec<LayerContour
                     contours.inside.get_or_insert_with(|| {
                         Point2D::new(0.5 * (bounds[0] + bounds[2]), 0.5 * (bounds[1] + bounds[3]))
                     });
-                    match review_leaf.role {
-                        Role::Model => contours.inside_model = true,
-                        Role::Support => contours.inside_support = true,
-                    }
                 }
             }
             contours
@@ -449,8 +388,6 @@ struct EdgeContact {
     last_layer: usize,
     /// Layers on which the body touches the edge.
     layers: usize,
-    model_px: u64,
-    support_px: u64,
 }
 
 impl EdgeContact {
@@ -459,22 +396,16 @@ impl EdgeContact {
             .iter()
             .filter(|member| region_of(regions, member).touches_border);
         let first = *touching.next()?;
-        let region = region_of(regions, &first);
         let mut contact = Self {
             first,
             last_layer: first.layer,
             layers: 1,
-            model_px: region.model_px,
-            support_px: region.support_px,
         };
         for member in touching {
             if member.layer != contact.last_layer {
                 contact.layers += 1;
                 contact.last_layer = member.layer;
             }
-            let region = region_of(regions, member);
-            contact.model_px += region.model_px;
-            contact.support_px += region.support_px;
         }
         Some(contact)
     }
@@ -499,6 +430,7 @@ fn layer_hits(
     layer: usize,
     overhangs: &[Overhang],
     starting: &[usize],
+    sweep: &SweepOptions,
 ) -> LayerHits {
     let (input, regions) = (ctx.input, ctx.regions);
     let (width_px, height_px) = (regions.width_px(), regions.height_px());
@@ -517,7 +449,7 @@ fn layer_hits(
     if starting.is_empty() && !on_plate.contains(&true) {
         return hits;
     }
-    let pixels = LayerPixels::compute(input, layer);
+    let pixels = LayerPixels::compute(input, layer, sweep);
     for ((overhang, lit), _) in overhangs
         .iter()
         .zip(&mut hits.lit)
@@ -657,8 +589,6 @@ struct EdgePart {
     /// Its farthest vertex past the plate on the lowest layer it reaches
     /// past the plate on: that layer, how far, and the vertex.
     lowest_past: Option<(usize, f64, Point2D)>,
-    model: bool,
-    support: bool,
 }
 
 impl EdgePart {
@@ -673,12 +603,10 @@ impl EdgePart {
         self.widen(contact.first.layer, contact.last_layer);
         self.contacts.push((body, contact.first.layer));
         self.touch_layers += contact.layers;
-        self.model |= contact.model_px > 0;
-        self.support |= contact.support_px > 0;
     }
 
     /// Adds an overhang of layer `layer`. Overhangs come in layer order.
-    fn add_overhang(&mut self, layer: usize, overhang: &Overhang, role: Role) {
+    fn add_overhang(&mut self, layer: usize, overhang: &Overhang) {
         self.widen(layer, layer);
         if self.past_layers.last() != Some(&layer) {
             self.past_layers.push(layer);
@@ -687,10 +615,6 @@ impl EdgePart {
         match self.lowest_past {
             Some((lowest, past_mm, _)) if lowest != layer || past_mm >= overhang.past_mm => {}
             _ => self.lowest_past = Some((layer, overhang.past_mm, overhang.vertex)),
-        }
-        match role {
-            Role::Model => self.model = true,
-            Role::Support => self.support = true,
         }
     }
 
@@ -708,7 +632,7 @@ impl EdgePart {
                     .map(|(_, _, v)| PlatePoint::new(v.x, v.y, input.layers()[first].sample_mm))
             })
             .expect("a part touches the edge or reaches past it on its first layer");
-        let scope = RoleScope::from_counts(u64::from(self.model), u64::from(self.support));
+        let scope = RoleScope::Model;
         if !self.past_layers.is_empty() {
             Finding::new(
                 CheckKind::PlateEdge,
@@ -742,18 +666,14 @@ impl EdgePart {
     }
 }
 
-/// What the plate-edge check found.
-struct PlateEdge {
-    findings: Vec<Finding>,
-    /// For each body, whether its part reaches past the plate on the layer
-    /// right below the body's lowest layer: what holds it lies beyond the
-    /// screen.
-    held_past: Vec<bool>,
-}
-
 /// One finding per part at the edge of the plate, and per part of contours
 /// past the plate that joins no body.
-fn plate_edge(ctx: &ReviewContext<'_>, bodies: &Groups, contours: &[LayerContours]) -> PlateEdge {
+fn plate_edge(
+    ctx: &ReviewContext<'_>,
+    bodies: &Groups,
+    contours: &[LayerContours],
+    sweep: &SweepOptions,
+) -> Vec<Finding> {
     let (input, regions) = (ctx.input, ctx.regions);
     let contacts: Vec<Option<EdgeContact>> = bodies
         .iter()
@@ -775,6 +695,7 @@ fn plate_edge(ctx: &ReviewContext<'_>, bodies: &Groups, contours: &[LayerContour
                 layer,
                 &contours[layer].overhangs,
                 &starting[layer],
+                sweep,
             )
         })
         .collect();
@@ -824,37 +745,18 @@ fn plate_edge(ctx: &ReviewContext<'_>, bodies: &Groups, contours: &[LayerContour
         for (k, overhang) in layer_contours.overhangs.iter().enumerate() {
             let root = sets.find(offsets[layer] + k);
             if has_body[root] {
-                let role = input.leaves()[overhang.leaf].role;
-                parts
-                    .entry(root)
-                    .or_default()
-                    .add_overhang(layer, overhang, role);
+                parts.entry(root).or_default().add_overhang(layer, overhang);
             } else {
                 lost.push((root, layer, *overhang));
             }
         }
     }
-    let held_past = bodies
-        .iter()
-        .enumerate()
-        .map(|(body, members)| {
-            let Some(below) = members[0].layer.checked_sub(1) else {
-                return false;
-            };
-            parts
-                .get(&sets.find(body))
-                .is_some_and(|part| part.past_layers.binary_search(&below).is_ok())
-        })
-        .collect();
     let mut findings: Vec<Finding> = parts
         .values()
         .map(|part| part.finding(input, &edge_pixels))
         .collect();
     findings.extend(outside_plate(input, &lost));
-    PlateEdge {
-        findings,
-        held_past,
-    }
+    findings
 }
 
 /// For each solid region of `wanted` (its index in the layer and its
@@ -922,12 +824,8 @@ struct OutsidePart {
 }
 
 /// How a leaf is named in a finding: its name in quotes, or what it is.
-fn leaf_name(name: Option<&str>, role: Role) -> String {
-    match (name, role) {
-        (Some(name), _) => format!("'{name}'"),
-        (None, Role::Model) => "a model".to_string(),
-        (None, Role::Support) => "a support".to_string(),
-    }
+fn leaf_name(name: Option<&str>) -> String {
+    name.map_or_else(|| "a model".to_string(), |name| format!("'{name}'"))
 }
 
 /// One finding per part of `lost`, the overhangs that join no body, each
@@ -972,16 +870,10 @@ fn outside_plate(input: &ReviewInput<'_>, lost: &[(usize, usize, Overhang)]) -> 
     parts
         .into_iter()
         .map(|part| {
-            let has = |role: Role| part.leaves.iter().any(|&leaf| leaves[leaf].role == role);
-            // Models first, then supports, each in leaf order.
-            let mut names: Vec<String> = [Role::Model, Role::Support]
-                .into_iter()
-                .flat_map(|role| {
-                    part.leaves
-                        .iter()
-                        .filter(move |&&leaf| leaves[leaf].role == role)
-                        .map(move |&leaf| leaf_name(leaves[leaf].name, role))
-                })
+            let mut names: Vec<String> = part
+                .leaves
+                .iter()
+                .map(|&leaf| leaf_name(leaves[leaf].name))
                 .collect();
             let verb = if names.len() == 1 { "reaches" } else { "reach" };
             let last_name = names.pop().expect("a part has a leaf");
@@ -1000,7 +892,7 @@ fn outside_plate(input: &ReviewInput<'_>, lost: &[(usize, usize, Overhang)]) -> 
                 part.first,
                 part.last,
                 part.focus,
-                RoleScope::from_counts(u64::from(has(Role::Model)), u64::from(has(Role::Support))),
+                RoleScope::Model,
                 "Part outside the printable area",
                 format!(
                     "{who} {verb} up to {:.2} mm past the edge of the plate on {}, and nothing beyond the screen is printed.",
@@ -1023,7 +915,7 @@ fn too_tall(
     extent: SolidExtent,
     options: &OutputOptions,
 ) -> Option<Finding> {
-    let (input, regions) = (ctx.input, ctx.regions);
+    let input = ctx.input;
     let layers = input.layers();
     let max_z = input.max_z_mm();
     let limit = max_z + options.height_tolerance_mm;
@@ -1032,22 +924,14 @@ fn too_tall(
         return None;
     }
     let first = (extent.first..=extent.last)
-        .find(|&layer| layers[layer].top_mm > limit && !regions.layer(layer).is_empty())?;
-    let (mut model_px, mut support_px) = (0, 0);
-    for layer in first..=extent.last {
-        for region in &regions.layer(layer).solid {
-            model_px += region.model_px;
-            support_px += region.support_px;
-        }
-    }
-    let region = largest(&regions.layer(first).solid)?;
+        .find(|&layer| layers[layer].top_mm > limit && !ctx.layer_is_empty(layer))?;
     Some(Finding::new(
         CheckKind::TooTall,
         Severity::Error,
         first,
         extent.last,
-        input.focus(first, region.inside_point()),
-        RoleScope::from_counts(model_px, support_px),
+        input.focus(first, point_on(ctx, first)),
+        RoleScope::Model,
         "Print taller than the printer",
         format!(
             "The print reaches {top:.2} mm, {:.2} mm above the printer's maximum height of {max_z:.2} mm, so its top {} cannot be printed.",
@@ -1064,14 +948,11 @@ fn too_tall(
 /// One finding per run of consecutive empty layers: before the first solid
 /// layer, between solid layers, and after the last one.
 fn empty_layers(ctx: &ReviewContext<'_>, extent: SolidExtent) -> Vec<Finding> {
-    let (input, regions) = (ctx.input, ctx.regions);
+    let input = ctx.input;
     let layers = input.layers();
     // Focus on the solid next to the empty layers, at the first empty
     // layer's height.
-    let focus = |empty: usize, solid: usize| {
-        let region = largest(&regions.layer(solid).solid).expect("a layer with solid");
-        input.focus(empty, region.inside_point())
-    };
+    let focus = |empty: usize, solid: usize| input.focus(empty, point_on(ctx, solid));
     let mut findings = Vec::new();
     if extent.first > 0 {
         let count = extent.first;
@@ -1092,12 +973,12 @@ fn empty_layers(ctx: &ReviewContext<'_>, extent: SolidExtent) -> Vec<Finding> {
     }
     let mut layer = extent.first + 1;
     while layer < extent.last {
-        if !regions.layer(layer).is_empty() {
+        if !ctx.layer_is_empty(layer) {
             layer += 1;
             continue;
         }
         let start = layer;
-        while regions.layer(layer).is_empty() {
+        while ctx.layer_is_empty(layer) {
             layer += 1;
         }
         let gap_mm = layers[layer].bottom_mm - layers[start].bottom_mm;
@@ -1148,8 +1029,6 @@ fn empty_layers(ctx: &ReviewContext<'_>, extent: SolidExtent) -> Vec<Finding> {
 /// reported as outside the printable area.
 fn nothing_to_print(input: &ReviewInput<'_>, contours: &[LayerContours]) -> Option<Finding> {
     let centre = contours.iter().find_map(|layer| layer.inside)?;
-    let model = contours.iter().any(|layer| layer.inside_model);
-    let support = contours.iter().any(|layer| layer.inside_support);
     let count = input.layer_count();
     Some(Finding::new(
         CheckKind::EmptyLayer,
@@ -1157,7 +1036,7 @@ fn nothing_to_print(input: &ReviewInput<'_>, contours: &[LayerContours]) -> Opti
         0,
         count - 1,
         PlatePoint::new(centre.x, centre.y, input.layers()[0].sample_mm),
-        RoleScope::from_counts(u64::from(model), u64::from(support)),
+        RoleScope::Model,
         "Nothing to print",
         format!(
             "{} empty: the parts on the plate are too small or too thin to light a single pixel, so the printer file prints nothing.",
@@ -1170,196 +1049,72 @@ fn nothing_to_print(input: &ReviewInput<'_>, contours: &[LayerContours]) -> Opti
     ))
 }
 
+/// A point of layer `layer` to look at: inside its largest solid region, or
+/// the middle of the screen on a layer only supports stand on.
+fn point_on(ctx: &ReviewContext<'_>, layer: usize) -> [f64; 2] {
+    largest(&ctx.regions.layer(layer).solid).map_or_else(
+        || {
+            [
+                0.5 * f64::from(ctx.input.width_px()),
+                0.5 * f64::from(ctx.input.height_px()),
+            ]
+        },
+        Region::inside_point,
+    )
+}
+
 // ---------------------------------------------------------------------------
-// Floating parts.
+// Supports past the plate.
 // ---------------------------------------------------------------------------
 
-/// One finding per printed body that never reaches the plate, unless it
-/// starts right above an empty layer, which the empty-layer finding
-/// explains, or right above where its part is cut by the plate edge
-/// (`held_past`), which the plate-edge finding explains.
-fn floating_parts(
-    ctx: &ReviewContext<'_>,
-    bodies: &Groups,
-    held_past: &[bool],
-    options: &OutputOptions,
-) -> (Vec<Finding>, Vec<CavityFill>) {
-    let (input, regions) = (ctx.input, ctx.regions);
-    let layers = input.layers();
-    let pixel_mm2 = input.pixel_area_mm2();
-    let mut findings = Vec::new();
-    let mut specks: Vec<&[RegionRef]> = Vec::new();
-    // The body of each finding, for its footprint (#409).
-    let mut found: Vec<&[RegionRef]> = Vec::new();
-    for (members, &held_past) in bodies.iter().zip(held_past) {
-        let bottom = members[0].layer;
-        if bottom < PLATE_LAYERS || regions.layer(bottom - 1).is_empty() || held_past {
-            continue;
-        }
-        let (mut model_px, mut support_px, mut volume_mm3) = (0, 0, 0.0);
-        for member in members {
-            let region = region_of(regions, member);
-            model_px += region.model_px;
-            support_px += region.support_px;
-            volume_mm3 += region.area_px as f64 * pixel_mm2 * layers[member.layer].height_mm();
-        }
-        let base = members
-            .iter()
-            .take_while(|member| member.layer == bottom)
-            .map(|member| region_of(regions, member))
-            .min_by_key(|region| Reverse(region.area_px))
-            .expect("a body has a bottom region");
-        let focus = input.focus(bottom, base.inside_point());
-        let last = members[members.len() - 1].layer;
-        let scope = RoleScope::from_counts(model_px, support_px);
-        let height_mm = layers[bottom].bottom_mm;
-        if volume_mm3 < options.speck_volume_mm3 {
-            findings.push(Finding::new(
-                CheckKind::FloatingPart,
-                Severity::Warning,
-                bottom,
-                last,
-                focus,
-                scope,
-                "Floating speck",
-                format!(
-                    "This {} mm³ speck starts {height_mm:.2} mm above the build plate with nothing below it. It is too small to hold with a support: it may cure as loose debris in the vat, or not at all.",
-                    volume_text(volume_mm3)
-                ),
-            ).with_fix(SuggestedFix::Erase { at: focus, speck: specks.len() }));
-            specks.push(members);
-            found.push(members);
-            continue;
-        }
-        let finding = Finding::new(
-            CheckKind::FloatingPart,
+/// One finding when the box the supports take reaches past the plate or
+/// above the printer's maximum height. Their geometry is not read: the box
+/// is what the input says of them.
+fn supports_past_the_plate(input: &ReviewInput<'_>, options: &OutputOptions) -> Option<Finding> {
+    let [x0, y0, x1, y1, top] = input.support_box_mm()?;
+    let half_x = 0.5 * input.pixel_map().plate_x().value();
+    let half_y = 0.5 * input.pixel_map().plate_y().value();
+    let past_mm = [-half_x - x0, x1 - half_x, -half_y - y0, y1 - half_y]
+        .into_iter()
+        .fold(f64::NEG_INFINITY, f64::max);
+    let above_mm = top - input.max_z_mm();
+    let past = past_mm > options.edge_tolerance_mm;
+    if !past && above_mm <= options.height_tolerance_mm {
+        return None;
+    }
+    let focus = PlatePoint::new(
+        0.5 * (x0 + x1),
+        0.5 * (y0 + y1),
+        input.layers()[0].sample_mm,
+    );
+    let last = input.layer_count() - 1;
+    Some(if past {
+        Finding::new(
+            CheckKind::PlateEdge,
             Severity::Error,
-            bottom,
+            0,
             last,
             focus,
-            scope,
-            "Floating part",
+            RoleScope::Support,
+            "Supports cut by the plate edge",
             format!(
-                "This {} mm³ part starts {height_mm:.2} mm above the build plate and never joins anything standing on the plate, so it will not stay attached.",
-                volume_text(volume_mm3)
+                "The supports reach up to {past_mm:.2} mm past the edge of the plate, and nothing beyond the screen is printed."
             ),
-        );
-        findings.push(if base.model_px > 0 {
-            finding.with_fix(SuggestedFix::AddSupport {
-                at: input.underside(bottom, focus),
-            })
-        } else {
-            finding
-        });
-        found.push(members);
-    }
-    let erasures = speck_erasures(input, &specks);
-    let findings = findings
-        .into_iter()
-        .zip(body_footprints(input, &found))
-        .map(|(finding, footprint)| finding.with_footprint(Arc::new(footprint)))
-        .collect();
-    (findings, erasures)
-}
-
-/// The pixels of each body of `bodies` (its member regions), on at most
-/// [`MAX_FOOTPRINT_LAYERS`] layers from its first: what its finding
-/// highlights (#409). Each layer is rasterised once, in parallel.
-fn body_footprints(input: &ReviewInput<'_>, bodies: &[&[RegionRef]]) -> Vec<CavityFill> {
-    let mut wanted: Vec<(usize, usize, u32)> = bodies
-        .iter()
-        .enumerate()
-        .flat_map(|(body, members)| {
-            let first = members.first().map_or(0, |m| m.layer);
-            members
-                .iter()
-                .filter(move |m| m.layer < first + MAX_FOOTPRINT_LAYERS)
-                .map(move |m| (m.layer, body, m.index))
-        })
-        .collect();
-    wanted.sort_unstable();
-    let by_layer: Vec<&[(usize, usize, u32)]> = wanted.chunk_by(|a, b| a.0 == b.0).collect();
-    let found: Vec<Vec<(usize, usize, Vec<Run>)>> = by_layer
-        .par_iter()
-        .map(|members| {
-            let layer = members[0].0;
-            let pixels = LayerPixels::compute(input, layer);
-            members
-                .chunk_by(|a, b| a.1 == b.1)
-                .map(|regions| {
-                    let own: Vec<Run> = pixels
-                        .solid
-                        .iter()
-                        .zip(&pixels.solid_labels)
-                        .filter(|(_, label)| regions.iter().any(|r| r.2 == **label))
-                        .map(|(run, _)| *run)
-                        .collect();
-                    (layer, regions[0].1, own)
-                })
-                .collect()
-        })
-        .collect();
-    let mut out: Vec<Vec<(usize, Vec<Run>)>> = vec![Vec::new(); bodies.len()];
-    for (layer, body, runs) in found.into_iter().flatten() {
-        out[body].push((layer, runs));
-    }
-    out.into_iter()
-        .map(|layers| CavityFill::from_runs(input, layers))
-        .collect()
-}
-
-/// The pixels that erase each speck of `specks` (its member regions): its
-/// own, grown a pixel on every side. The margin is air on the speck's
-/// layers, solid being 8-connected; where two specks' margins meet, the
-/// pixel goes to the first one, so no pixel is erased twice. Each layer any
-/// speck touches is rasterised once, in parallel.
-fn speck_erasures(input: &ReviewInput<'_>, specks: &[&[RegionRef]]) -> Vec<CavityFill> {
-    if specks.is_empty() {
-        return Vec::new();
-    }
-    let mut wanted: Vec<(usize, usize, u32)> = specks
-        .iter()
-        .enumerate()
-        .flat_map(|(speck, members)| {
-            members
-                .iter()
-                .map(move |member| (member.layer, speck, member.index))
-        })
-        .collect();
-    wanted.sort_unstable();
-    let by_layer: Vec<&[(usize, usize, u32)]> = wanted.chunk_by(|a, b| a.0 == b.0).collect();
-    let (width, height) = (input.width_px(), input.height_px());
-    let found: Vec<Vec<(usize, usize, Vec<Run>)>> = by_layer
-        .par_iter()
-        .map(|members| {
-            let layer = members[0].0;
-            let pixels = LayerPixels::compute(input, layer);
-            let mut claimed: Vec<Run> = Vec::new();
-            members
-                .chunk_by(|a, b| a.1 == b.1)
-                .map(|regions| {
-                    let own: Vec<Run> = pixels
-                        .solid
-                        .iter()
-                        .zip(&pixels.solid_labels)
-                        .filter(|(_, label)| regions.iter().any(|r| r.2 == **label))
-                        .map(|(run, _)| *run)
-                        .collect();
-                    let grown =
-                        thin::difference(&thin::dilate_square(&own, 1, width, height), &claimed);
-                    claimed = runs::union(&claimed, &grown);
-                    (layer, regions[0].1, grown)
-                })
-                .collect()
-        })
-        .collect();
-    let mut out: Vec<Vec<(usize, Vec<Run>)>> = vec![Vec::new(); specks.len()];
-    for (layer, speck, runs) in found.into_iter().flatten() {
-        out[speck].push((layer, runs));
-    }
-    out.into_iter()
-        .map(|layers| CavityFill::from_runs(input, layers))
-        .collect()
+        )
+    } else {
+        Finding::new(
+            CheckKind::TooTall,
+            Severity::Error,
+            0,
+            last,
+            focus,
+            RoleScope::Support,
+            "Supports taller than the printer",
+            format!(
+                "The supports reach {above_mm:.2} mm above the printer's maximum height, so their top cannot be printed."
+            ),
+        )
+    })
 }
 
 #[cfg(test)]

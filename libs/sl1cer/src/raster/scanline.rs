@@ -120,14 +120,18 @@ impl EdgeRows {
     }
 }
 
-fn collect_edges(layer: &ContourLayer, pixel_map: &PixelMap) -> Vec<Edge> {
-    let mut edges = Vec::new();
+fn push_layer_edges(layer: &ContourLayer, pixel_map: &PixelMap, edges: &mut Vec<Edge>) {
     for polygon in layer.polygons() {
-        push_ring_edges(polygon.outer(), pixel_map, &mut edges);
+        push_ring_edges(polygon.outer(), pixel_map, edges);
         for hole in polygon.holes() {
-            push_ring_edges(hole, pixel_map, &mut edges);
+            push_ring_edges(hole, pixel_map, edges);
         }
     }
+}
+
+fn collect_edges(layer: &ContourLayer, pixel_map: &PixelMap) -> Vec<Edge> {
+    let mut edges = Vec::new();
+    push_layer_edges(layer, pixel_map, &mut edges);
     edges
 }
 
@@ -137,9 +141,21 @@ fn collect_edges(layer: &ContourLayer, pixel_map: &PixelMap) -> Vec<Edge> {
 /// the centring shift into the pixel grid is `pixel_map`'s job, not
 /// the caller's. The output layer inherits `layer.z_mm()`.
 pub fn rasterize_layer_binary(layer: &ContourLayer, pixel_map: &PixelMap) -> LayerRaster {
+    rasterize_layers_binary(&[layer], pixel_map)
+}
+
+/// [`rasterize_layer_binary`] of `layers` taken as one layer, as if their
+/// polygons were listed together: their windings add up, so a stack merged
+/// into a plate keeps cancelling what it cancels there, and nothing is
+/// copied to get them together. The output layer inherits the first layer's
+/// height, 0 with no layers.
+pub fn rasterize_layers_binary(layers: &[&ContourLayer], pixel_map: &PixelMap) -> LayerRaster {
     let width_px = pixel_map.pixel_resolution().x();
     let height_px = pixel_map.pixel_resolution().y();
-    let edges = collect_edges(layer, pixel_map);
+    let mut edges = Vec::new();
+    for layer in layers {
+        push_layer_edges(layer, pixel_map, &mut edges);
+    }
 
     let mut rows = EdgeRows::new(&edges);
     let mut acc = RleRunAccumulator::new();
@@ -179,7 +195,8 @@ pub fn rasterize_layer_binary(layer: &ContourLayer, pixel_map: &PixelMap) -> Lay
         }
     }
 
-    LayerRaster::new(layer.z_mm(), width_px, height_px, acc.into_runs())
+    let z_mm = layers.first().map_or(0.0, |layer| layer.z_mm());
+    LayerRaster::new(z_mm, width_px, height_px, acc.into_runs())
 }
 
 /// Rasterise `layer` with the chosen anti-aliasing level. As in
@@ -398,6 +415,30 @@ mod scanline_tests {
         assert_eq!(raster.runs().len(), 1);
         assert_eq!(raster.runs()[0].value, 0);
         assert_eq!(u64::from(raster.runs()[0].length), 100 * 100);
+    }
+
+    #[test]
+    fn layers_rasterised_together_add_their_windings() {
+        let map = one_mm_per_hundred_pixels();
+        let square = |min, max| Polygon::new(ccw_square(min, max), vec![]).unwrap();
+        let left = ContourLayer::new(0.05, vec![square(p(-0.5, -0.5), p(0.0, 0.5))]);
+        let right = ContourLayer::new(0.05, vec![square(p(0.0, -0.5), p(0.5, 0.5))]);
+        let whole = ContourLayer::new(0.05, vec![square(p(-0.5, -0.5), p(0.5, 0.5))]);
+        let both = rasterize_layers_binary(&[&left, &right], &map);
+        assert_eq!(both, rasterize_layer_binary(&whole, &map));
+
+        // A ring wound the other way cancels what it covers.
+        let hole = Polygon::new_unchecked(cw_square(p(-0.5, -0.5), p(0.0, 0.5)), vec![]);
+        let cut = ContourLayer::new(0.05, vec![hole]);
+        let both = rasterize_layers_binary(&[&whole, &cut], &map);
+        assert_eq!(both, rasterize_layer_binary(&right, &map));
+    }
+
+    #[test]
+    fn no_layers_raster_to_nothing() {
+        let raster = rasterize_layers_binary(&[], &one_mm_per_hundred_pixels());
+        assert_eq!(raster.runs().len(), 1);
+        assert_eq!(raster.runs()[0].value, 0);
     }
 
     #[test]
