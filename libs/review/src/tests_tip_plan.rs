@@ -44,6 +44,35 @@ fn the_tips_of_a_growth_share_out_what_it_gained() {
     }
 }
 
+/// #433: an island too narrow for the plan's tip takes the smallest; one too
+/// narrow even for that is left, and reads as a note.
+#[test]
+fn an_island_too_narrow_takes_the_smallest_tip_or_is_a_note() {
+    let builder = || {
+        body(10)
+            .model(4..8, Shape::rect(100.0, 40.0, 104.0, 44.0))
+            .model(8..10, Shape::rect(40.0, 40.0, 104.0, 44.0))
+    };
+    let mut report = builder().build().report();
+    let wide = TipPlanOptions::for_tip(0.6);
+    assert_eq!(plan_tips(&report.islands, &wide).too_narrow, [0]);
+
+    let plan = plan_tips(&report.islands, &wide.with_smallest(0.3));
+    assert!(plan.too_narrow.is_empty());
+    assert!(plan.tips.iter().all(|tip| tip.small));
+
+    let plan = plan_tips(&report.islands, &wide.with_smallest(0.5));
+    assert_eq!(plan.too_narrow, [0]);
+    plan.note_too_small(&mut report.findings, &report.islands);
+    let finding = report
+        .findings
+        .iter()
+        .find(|finding| finding.check == CheckKind::Island)
+        .expect("the island");
+    assert_eq!(finding.severity, Severity::Info);
+    assert_eq!(finding.title, TOO_SMALL_TITLE);
+}
+
 /// A region where no contact ever fits gets no tip, and says so.
 #[test]
 fn a_growth_no_contact_fits_on_is_left_with_no_room() {

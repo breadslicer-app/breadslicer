@@ -109,6 +109,15 @@ pub fn support_sizes() -> Vec<SupportSize> {
     ]
 }
 
+/// The smallest tip there is: what goes on an island too narrow for the
+/// tips of its preset, before it is given up as too small for any.
+pub fn smallest_size() -> SupportSize {
+    support_sizes()
+        .into_iter()
+        .min_by(|a, b| a.tip_diameter_mm.total_cmp(&b.tip_diameter_mm))
+        .expect("the sizes that ship")
+}
+
 fn chain(
     gap_mm: f64,
     (bottom_pattern, bottom_repeat): (AutoBracingPattern, u32),

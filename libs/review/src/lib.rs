@@ -71,7 +71,8 @@ pub use runner::{
 };
 pub use runs::Run;
 pub use tip_plan::{
-    IslandLayer, IslandPixels, PlannedTip, TipPlan, TipPlanOptions, plan_all_tips, plan_tips,
+    IslandLayer, IslandPixels, PlannedTip, TOO_SMALL_TITLE, TipPlan, TipPlanOptions, plan_all_tips,
+    plan_tips,
 };
-pub use tips::TipCone;
+pub use tips::{TipCone, tips_outside_model};
 pub use union_find::{Groups, RegionRef, UnionFind};

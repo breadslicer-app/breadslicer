@@ -111,6 +111,22 @@ mod pieces;
 
 pub use pieces::{SupportContact, SupportJoint, SupportPiece, SupportPieceKind};
 
+/// How far every tip goes into the model past the surface it touches, in
+/// millimetres: 0.2, added to the tip's length and not taken from it. A support
+/// always ends in the model, whatever made it (a run, a click, a tip moved,
+/// Fix All) and whatever its size says: this is the only such number. It is
+/// what the drawing and [`DfSupportSession::pieces`] read, so the review sees
+/// the tip the printer cures.
+pub const TIP_INSERTION_MM: f64 = 0.2;
+
+/// `settings`, with every tip sinking by [`TIP_INSERTION_MM`]. A session
+/// always runs on this, so it holds for one reopened from a file too.
+fn with_one_insertion(mut settings: PipelineSettings) -> PipelineSettings {
+    settings.tip_penetration_mm = TIP_INSERTION_MM;
+    settings.tip_drawing.one_insertion = true;
+    settings
+}
+
 /// The contact diameter of the tips `settings` place.
 pub(crate) fn tip_contact_diameter(settings: &PipelineSettings) -> f64 {
     let supports = &settings.supports;
@@ -771,7 +787,7 @@ impl DfSupportSession {
         DfSupportSession {
             removal_index: Arc::default(),
             models: models.into(),
-            settings: Arc::new(settings),
+            settings: Arc::new(with_one_insertion(settings)),
             recipe: recipe.map(Arc::new),
             state,
             bvhs,
@@ -1316,7 +1332,7 @@ impl DfSupportSession {
         point: [f64; 3],
         reach_mm: f64,
     ) -> Result<[f64; 3], EditError> {
-        self.place_near(point, reach_mm, &mut |_, _| true)
+        self.place_near(point, reach_mm, &AddOptions::default(), &mut |_, _| true)
     }
 
     /// [`Self::add_trunk_near`], taking only a support `keep` keeps. One it
@@ -1325,6 +1341,7 @@ impl DfSupportSession {
         &mut self,
         point: [f64; 3],
         reach_mm: f64,
+        how: &AddOptions,
         keep: &mut dyn FnMut(&mut Self, &Placed) -> bool,
     ) -> Result<[f64; 3], EditError> {
         let Some((_, aimed, normal)) = self.contact(point) else {
@@ -1333,7 +1350,6 @@ impl DfSupportSession {
         // A face that looks up holds nothing above it: only the points next
         // to it are tried.
         let mut first = EditError::NoRoute("the nearest face looks up".to_owned());
-        let how = AddOptions::default();
         // Contacts already tried: a nudge onto one of them places the very
         // same support, refused the same way.
         let mut tried: Vec<(Vec3, Vec3)> = Vec::new();
@@ -1344,7 +1360,7 @@ impl DfSupportSession {
             })
         };
         if normal.z < 0.0 {
-            match self.place(point, &how) {
+            match self.place(point, how) {
                 Ok(placed) if keep(self, &placed) => return Ok(point),
                 Ok(_) => {}
                 Err((err @ EditError::NoRoute(_), _)) => first = err,
@@ -1362,7 +1378,7 @@ impl DfSupportSession {
             if seen(&tried, tip, n) || !same_underside(aimed, normal, tip, n, reach_mm) {
                 continue;
             }
-            if let Ok(placed) = self.place(q, &how)
+            if let Ok(placed) = self.place(q, how)
                 && keep(self, &placed)
             {
                 return Ok(q);
@@ -1384,15 +1400,22 @@ impl DfSupportSession {
     /// Works means the engine holds the point and `holds` says the contacts
     /// of what it added do what the tip is for: placing and checking are one
     /// step (#433). A tip `holds` turns down leaves the session as it was.
-    /// Returns the point used. The error is [`EditError::NotHeld`] when tips
-    /// went in and none held, otherwise the one at `point`.
+    /// The tip takes `size`, or the preset's. Last of all each point is tried
+    /// hanging from the nearest support, as Shift+click does: a tip with no way
+    /// of its own to the plate may still reach one. Returns the point used.
+    /// The error is [`EditError::NotHeld`] when tips went in and none held,
+    /// otherwise the one at `point`.
     pub fn add_tip_among(
         &mut self,
         point: [f64; 3],
         others: &[[f64; 3]],
+        size: Option<&str>,
         holds: &dyn Fn(&[SupportContact]) -> bool,
     ) -> Result<[f64; 3], EditError> {
-        let how = AddOptions::default();
+        let how = AddOptions {
+            size: size.map(str::to_owned),
+            ..AddOptions::default()
+        };
         let before = self.clone();
         let mut turned_down = false;
         let mut keep = |session: &mut Self, placed: &Placed| {
@@ -1410,11 +1433,50 @@ impl DfSupportSession {
                 return Ok(*at);
             }
         }
-        let near = self.place_near(point, REVIEW_NUDGE_MM, &mut keep);
+        let near = self.place_near(point, REVIEW_NUDGE_MM, &how, &mut keep);
+        if near.is_ok() {
+            return near;
+        }
+        let hanging = AddOptions {
+            attach: true,
+            ..how
+        };
+        for at in std::iter::once(&point).chain(others) {
+            if let Ok(placed) = self.place(*at, &hanging)
+                && keep(self, &placed)
+            {
+                return Ok(*at);
+            }
+        }
         match near {
             Err(_) if turned_down => Err(EditError::NotHeld),
             other => other,
         }
+    }
+
+    /// How far each tip goes past the surface it touches, and whether its end
+    /// lies inside the model, measured on the mesh: what says a support
+    /// ends in the model.
+    pub fn tip_depths(&self) -> Vec<(f64, bool)> {
+        self.pieces()
+            .iter()
+            .flat_map(|piece| &piece.contacts)
+            .map(|contact| {
+                let [x, y, z] = contact.tip;
+                let end = Vec3::new(x, y, z);
+                let inside = (0..self.models.len()).any(|i| {
+                    let bvh = self.bvh(i);
+                    bvh.closest_point_to_point(end, 0.0, 2.0)
+                        .is_some_and(|hit| {
+                            let tri = bvh.triangle(hit.face_index);
+                            let n = Vec3::sub_vectors(tri.b, tri.a)
+                                .cross(Vec3::sub_vectors(tri.c, tri.a));
+                            n.dot(Vec3::sub_vectors(end, hit.point)) < 0.0
+                        })
+                });
+                (contact.inserted_mm, inside)
+            })
+            .collect()
     }
 
     /// What adding a support at `point` would add: green when it goes
@@ -2943,7 +3005,12 @@ mod session_tests {
         let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
         let away = [500.0, 500.0, 12.0];
         let used = session
-            .add_tip_among(away, &[[600.0, 500.0, 12.0], [5.0, 5.0, 12.0]], &|_| true)
+            .add_tip_among(
+                away,
+                &[[600.0, 500.0, 12.0], [5.0, 5.0, 12.0]],
+                None,
+                &|_| true,
+            )
             .expect("the second one holds");
         assert_eq!(used, [5.0, 5.0, 12.0]);
         assert_eq!(session.state.collections.trunks.len(), 1);
@@ -2957,7 +3024,7 @@ mod session_tests {
         let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
         let (first, second) = ([5.0, 5.0, 12.0], [15.0, 5.0, 12.0]);
         let used = session
-            .add_tip_among(first, &[second], &|contacts| {
+            .add_tip_among(first, &[second], None, &|contacts| {
                 contacts.iter().any(|contact| contact.surface[0] > 10.0)
             })
             .expect("the second one holds");
@@ -2971,15 +3038,47 @@ mod session_tests {
     fn tips_that_hold_nothing_leave_the_session_as_it_was() {
         let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
         let asked = std::cell::Cell::new(0);
-        let err = session.add_tip_among([5.0, 5.0, 12.0], &[[15.0, 5.0, 12.0]], &|contacts| {
-            asked.set(asked.get() + 1);
-            assert!(!contacts.is_empty(), "the check reads the new tip");
-            false
-        });
+        let err =
+            session.add_tip_among([5.0, 5.0, 12.0], &[[15.0, 5.0, 12.0]], None, &|contacts| {
+                asked.set(asked.get() + 1);
+                assert!(!contacts.is_empty(), "the check reads the new tip");
+                false
+            });
         assert_eq!(err, Err(EditError::NotHeld));
         assert!(asked.get() >= 2, "every point was tried");
         assert!(session.state.collections.trunks.is_empty());
         assert!(!session.hand_edited);
+    }
+
+    /// #433: every tip ends in the model by the one insertion, whatever made
+    /// it and whatever its size asks for, and it sinks past the surface
+    /// without losing its length.
+    #[test]
+    fn every_tip_goes_into_the_model_by_the_one_insertion() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        session.add_trunk_at([5.0, 5.0, 12.0]).expect("a trunk");
+        session
+            .add_tip_among([15.0, 5.0, 12.0], &[], Some("extrasmall"), &|_| true)
+            .expect("a small tip");
+        session
+            .add_tip_among([25.0, 5.0, 12.0], &[], Some("heavy"), &|_| true)
+            .expect("a heavy tip");
+        let depths = session.tip_depths();
+        assert_eq!(depths.len(), 3);
+        for (inserted, inside) in depths {
+            assert!((inserted - TIP_INSERTION_MM).abs() < 1e-9, "{inserted}");
+            assert!(inside, "the tip ends in the model");
+        }
+    }
+
+    /// #433: a session reopened with settings of old keeps the one insertion.
+    #[test]
+    fn the_one_insertion_holds_on_any_settings() {
+        let mut settings = PipelineSettings::defaults(0.05);
+        settings.tip_penetration_mm = 0.0;
+        let fixed = with_one_insertion(settings);
+        assert_eq!(fixed.tip_penetration_mm, TIP_INSERTION_MM);
+        assert!(fixed.tip_drawing.one_insertion);
     }
 
     /// #444: a set can start from nothing: a session with no support takes
@@ -2994,7 +3093,7 @@ mod session_tests {
                 .expect("a model");
         assert!(session.is_empty());
         session
-            .add_tip_among([5.0, 5.0, 12.0], &[], &|_| true)
+            .add_tip_among([5.0, 5.0, 12.0], &[], None, &|_| true)
             .expect("the tip goes in");
         assert!(!session.is_empty());
         assert!(session.mesh().unwrap().is_some(), "it draws");
@@ -3004,7 +3103,7 @@ mod session_tests {
     fn a_tip_with_nowhere_to_go_tells_why_of_its_point() {
         let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
         let away = [500.0, 500.0, 12.0];
-        let err = session.add_tip_among(away, &[[600.0, 500.0, 12.0]], &|_| true);
+        let err = session.add_tip_among(away, &[[600.0, 500.0, 12.0]], None, &|_| true);
         assert!(matches!(err, Err(EditError::NothingThere)), "{err:?}");
         assert!(session.state.collections.trunks.is_empty());
     }

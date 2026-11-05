@@ -235,10 +235,11 @@ fn fix_the_list(
     let plan = if sets.is_empty() {
         TipPlan::default()
     } else {
+        let smallest = sc_geom::df_supports::zone_presets::smallest_size().tip_diameter_mm;
         plan_all_tips(
             &report.islands,
             &report.growths,
-            &TipPlanOptions::for_tip(diameter_mm),
+            &TipPlanOptions::for_tip(diameter_mm).with_smallest(smallest),
         )
     };
 
@@ -380,7 +381,9 @@ fn place_tip(
     let holds = |contacts: &[SupportContact]| {
         start.is_none_or(|start| start.held_by(&tip_cones(contacts, leaf, frame)))
     };
-    match sets[i].session.add_tip_among(point, &others, &holds) {
+    let smallest = sc_geom::df_supports::zone_presets::smallest_size().id;
+    let size = tip.small.then_some(smallest.as_str());
+    match sets[i].session.add_tip_among(point, &others, size, &holds) {
         Ok(used) => {
             edited[i] = true;
             TipOutcome {

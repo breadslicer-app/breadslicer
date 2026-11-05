@@ -149,6 +149,41 @@ impl Placed {
     }
 }
 
+/// How many of `ends`, the ends of tips in plate millimetres, do not lie in
+/// the solid of the model on the layer they stand on: a tip must end in the
+/// model, with no layer of nothing between them.
+pub fn tips_outside_model(input: &ReviewInput<'_>, ends: &[[f64; 3]]) -> usize {
+    ends.iter().filter(|end| !in_model(input, **end)).count()
+}
+
+fn in_model(input: &ReviewInput<'_>, [x, y, z]: [f64; 3]) -> bool {
+    let Some(layer) = input
+        .layers()
+        .iter()
+        .position(|span| span.bottom_mm <= z && z < span.top_mm)
+    else {
+        return false;
+    };
+    let inside = |ring: &[Point2D]| {
+        let mut odd = false;
+        let mut last = ring.len().wrapping_sub(1);
+        for (i, a) in ring.iter().enumerate() {
+            let b = &ring[last];
+            if (a.y > y) != (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x {
+                odd = !odd;
+            }
+            last = i;
+        }
+        odd
+    };
+    input.leaves().iter().any(|leaf| {
+        leaf.stack.layers()[layer].polygons().iter().any(|polygon| {
+            inside(polygon.outer().vertices())
+                && !polygon.holes().iter().any(|hole| inside(hole.vertices()))
+        })
+    })
+}
+
 /// The screen a tip's pixels are read on: all of a slice that deciding
 /// whether a tip holds a part needs, once the slice's input is gone.
 #[derive(Clone, Copy, Debug, PartialEq)]

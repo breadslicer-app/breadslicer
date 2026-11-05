@@ -284,6 +284,8 @@ pub(crate) struct PointPlan {
     /// The point, by its place among the edit's, whose tip this one goes
     /// with: when that one found no place, this one is not placed either.
     pub(crate) after: Option<usize>,
+    /// The size its tip takes, by id; `None` for the preset's.
+    pub(crate) size: Option<String>,
 }
 
 /// What an edit knows of each of its points, by their place among them.
@@ -496,13 +498,9 @@ fn refusal(err: &EditError) -> slint::SharedString {
             "DfSupportDialog",
             "there is no model or support within reach of that point"
         ),
-        EditError::NoRoute(_) => ctr!(
+        EditError::NoRoute(_) | EditError::NotHeld => ctr!(
             "DfSupportDialog",
-            "no support can reach that point without crossing the model"
-        ),
-        EditError::NotHeld => ctr!(
-            "DfSupportDialog",
-            "no tip that fits reaches under the first pixels it must hold"
+            "there is no route to the plate or to another support"
         ),
         EditError::Tessellation(why) => {
             ctr!(
@@ -787,8 +785,9 @@ fn compute_job(
                                     .map(|other| other.map(f64::from))
                                     .collect();
                                 let hold = plan.and_then(|plan| plan.holds.as_ref());
+                                let size = plan.and_then(|plan| plan.size.as_deref());
                                 edited
-                                    .add_tip_among(p, &others, &|contacts| {
+                                    .add_tip_among(p, &others, size, &|contacts| {
                                         hold.is_none_or(|hold| hold.by(leaf, contacts))
                                     })
                                     .map(|_| ())

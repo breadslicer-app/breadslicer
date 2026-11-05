@@ -2116,7 +2116,7 @@ impl IslandTips<'_> {
                     let known = PointPlan {
                         others: tip.others.iter().copied().map(world).collect(),
                         holds: Some(hold.clone()),
-                        after: None,
+                        ..PointPlan::default()
                     };
                     (world(tip.at), known)
                 })
@@ -2132,6 +2132,9 @@ impl IslandTips<'_> {
                         others: tip.others.iter().copied().map(world).collect(),
                         holds: (k == 0).then_some(hold),
                         after: None,
+                        size: tip
+                            .small
+                            .then(|| sc_geom::df_supports::zone_presets::smallest_size().id),
                     };
                     (world(tip.at), plan)
                 })
@@ -2647,16 +2650,24 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
                         why
                     )
                 };
+            } else if marks.no_tip.contains(&i) {
+                let small = ctr!(
+                    "Review",
+                    "It never gets as wide as the smallest tip before it joins the rest, so it is too small for one. Place one by hand in the Supports tab, or leave it."
+                );
+                row.remains = match marks.tip_gaps.get(&i) {
+                    Some(gap) => format!(
+                        "{small} {}",
+                        ctr!("Review", "A tip ends {} layers below it.", gap)
+                    )
+                    .into(),
+                    None => small,
+                };
             } else if let Some(gap) = marks.tip_gaps.get(&i) {
                 row.remains = ctr!(
                     "Review",
                     "A tip ends {} layers below this island and does not reach it, so it holds nothing. Place one that reaches it, or leave it.",
                     gap
-                );
-            } else if marks.no_tip.contains(&i) {
-                row.remains = ctr!(
-                    "Review",
-                    "It never gets as wide as a support's tip, so none goes on it. Place one by hand in the Supports tab, or leave it."
                 );
             } else if marks.unheld.contains(&i) {
                 row.remains = ctr!(

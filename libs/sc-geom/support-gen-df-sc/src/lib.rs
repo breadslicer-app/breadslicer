@@ -18,7 +18,6 @@ use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{CsgPolicy, NodeId, Scene, SceneError, bake_mesh_to_world};
 use support_gen_df::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
-use support_gen_df::features::slicing::tip_offset::default_tip_offset_mm;
 use support_gen_df::perf::{PerfEntry, PerfFrame};
 use support_gen_df::pipeline::{
     CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, plan_supports_with,
@@ -43,7 +42,7 @@ pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{
     AddNote, AddOptions, BraceEnd, DfSupportSession, EditError, EditPreview, REVIEW_NUDGE_MM,
-    SupportContact, SupportJoint, SupportPiece, SupportPieceKind,
+    SupportContact, SupportJoint, SupportPiece, SupportPieceKind, TIP_INSERTION_MM,
 };
 pub use support_gen_df::native::overhang::{
     is_overhang_normal_z, overhang_and_stability_from_soup, overhang_normal_z_limit,
@@ -76,10 +75,8 @@ pub fn is_support_mesh(mesh: &IndexedMesh) -> bool {
 pub struct DfSupportRequest {
     /// The slicing layer height the island scan bands by.
     pub layer_height_mm: f64,
-    /// The printer's pixel pitch (X, Y) in mm. With it the contact tips sink
-    /// into the model as DragonFruit's slice export sinks them for the
-    /// default material anti-aliasing (`default_tip_offset_mm`); without it
-    /// they stop at the surface.
+    /// The printer's pixel pitch (X, Y) in mm, kept with the settings a set
+    /// was made from.
     pub pixel_pitch_mm: Option<[f64; 2]>,
     /// Scans a [`start_df_prescan`] already made. Models it does not match
     /// (moved since, other settings) are scanned by the run as usual; the
@@ -514,9 +511,6 @@ impl SettingsRecipe {
             shaft_style: ShaftStyle::Smooth(SmoothShaftParams::default()),
             // Walls that slice cleanly on trimmed footprints.
             robust_raft_geometry: true,
-            tip_penetration_mm: self.pixel_pitch_mm.map_or(0.0, |[x, y]| {
-                default_tip_offset_mm(self.layer_height_mm, x, y)
-            }),
             ..PipelineSettings::defaults(self.layer_height_mm)
         };
         self.options.apply(&mut settings);

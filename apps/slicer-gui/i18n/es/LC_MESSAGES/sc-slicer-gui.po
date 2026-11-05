@@ -2940,12 +2940,8 @@ msgstr "no hay ningún modelo ni soporte al alcance de ese punto"
 
 #: src/df_support_run.rs
 msgctxt "DfSupportDialog"
-msgid "no tip that fits reaches under the first pixels it must hold"
-msgstr "ninguna punta que entra llega debajo de los primeros píxeles que tiene que sostener"
-
-msgctxt "DfSupportDialog"
-msgid "no support can reach that point without crossing the model"
-msgstr "ningún soporte llega a ese punto sin atravesar el modelo"
+msgid "there is no route to the plate or to another support"
+msgstr "no hay camino a la cama ni a otro soporte"
 
 #: src/df_support_run.rs
 #, rust-format
@@ -6473,11 +6469,11 @@ msgstr "La escena cambió mientras se agregaban los soportes; no se cambió nada
 #: src/review_panel.rs
 msgctxt "Review"
 msgid ""
-"It never gets as wide as a support's tip, so none goes on it. Place one by "
-"hand in the Supports tab, or leave it."
+"It never gets as wide as the smallest tip before it joins the rest, so it is "
+"too small for one. Place one by hand in the Supports tab, or leave it."
 msgstr ""
-"Nunca llega al ancho de la punta de un soporte, así que no se le pone ninguna. "
-"Poné una a mano en la pestaña Soportes, o dejala."
+"Nunca llega al ancho de la punta más chica antes de unirse al resto, así que "
+"es demasiado chica para una. Poné una a mano en la pestaña Soportes, o dejala."
 
 msgctxt "AddSupportsDialog"
 msgid "One region grows at once."
@@ -6528,3 +6524,7 @@ msgid ""
 msgstr ""
 "Una punta termina {} capas debajo de esta isla y no llega, así que no sostiene "
 "nada. Poné una que llegue, o dejala."
+
+msgctxt "Review"
+msgid "A tip ends {} layers below it."
+msgstr "Una punta termina {} capas debajo."

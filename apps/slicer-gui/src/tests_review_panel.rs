@@ -478,7 +478,7 @@ fn an_island_no_tip_fits_offers_no_support_and_says_why() {
         &marks,
     );
     assert_eq!(rows[0].fix, FixKind::None as i32);
-    assert!(rows[0].remains.contains("wide as a support's tip"));
+    assert!(rows[0].remains.contains("too small for one"));
 }
 
 /// #433: a tip under an island that stops short is what the row tells, not
@@ -922,6 +922,9 @@ mod fix_all {
         /// Whether a test's slice plans tips for a plate with no set, as the
         /// app's does (#444).
         static BARE_PLANS: Cell<bool> = const { Cell::new(false) };
+        /// How many tips the last project slice had, and how many of them
+        /// do not end in the model.
+        static TIPS_IN_MODEL: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
     }
 
     /// [`slice_with`], the review given `extra` findings too.
@@ -1734,6 +1737,7 @@ mod fix_all {
             &sc_sl1cer::CancelToken::default(),
             &|_| {},
         );
+        TIPS_IN_MODEL.set(crate::review::tips_in_model_for_test(&plate, &sets));
         let erased = match &outcome {
             ReviewOutcome::Reviewed { erased, .. } => erased_stack(
                 plate.leaves(),
@@ -1927,10 +1931,34 @@ mod fix_all {
             assert!(cups_after.contains(cup), "{cup:?} changed");
         }
         let left = held_islands(panel);
+        // Every tip goes into the model by the one insertion: measured on the
+        // mesh, and on the slice.
+        let depths: Vec<(f64, bool)> = {
+            let sessions = document.support_sessions();
+            document
+                .with_scene(|spatial| {
+                    crate::support_persist::sets_in_force(spatial, &sessions)
+                        .iter()
+                        .flat_map(|drawn| drawn.session.tip_depths())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let shallow = depths
+            .iter()
+            .filter(|(inserted, _)| *inserted < sc_geom::df_supports::TIP_INSERTION_MM - 1e-9)
+            .count();
+        let off_mesh = depths.iter().filter(|(_, inside)| !inside).count();
+        let (tips, off_slice) = TIPS_IN_MODEL.get();
+        eprintln!(
+            "{}: tips {tips}: short of the insertion {shallow}, end off the mesh {off_mesh}, end off the slice {off_slice}",
+            path.display()
+        );
+        assert_eq!(shallow, 0, "every tip goes in by the one insertion");
         let rows = w.window.get_review_rows();
         let why: Vec<(String, String)> = (0..rows.row_count())
             .filter_map(|i| rows.row_data(i))
-            .filter(|row| row.title.contains("island") || row.title.contains("No support fits"))
+            .filter(|row| row.title.contains("sland") || row.title.contains("No support fits"))
             .map(|row| (row.layers.to_string(), row.remains.to_string()))
             .collect();
         eprintln!(
@@ -1979,9 +2007,26 @@ mod fix_all {
             }
         }
         assert_eq!(tipped_and_listed(panel), [], "{}", path.display());
+        // No island is left without a support but for the two agreed reasons.
+        let too_small = why
+            .iter()
+            .filter(|(_, remains)| remains.contains("too small for one"))
+            .count();
+        let no_route = why
+            .iter()
+            .filter(|(_, remains)| remains.contains("no route"))
+            .count();
+        eprintln!(
+            "{}: TABLE islands {before} tips {} too-small {too_small} no-route {no_route}",
+            path.display(),
+            w.window.get_review_message()
+        );
         if offered > 0 {
             for (layers, remains) in &why {
-                assert!(!remains.is_empty(), "layer {layers} says why it is left");
+                assert!(
+                    remains.contains("too small for one") || remains.contains("no route"),
+                    "layer {layers}: {remains}"
+                );
             }
         }
     }
@@ -3018,7 +3063,7 @@ mod fix_all {
         assert!(message.contains("No support can hold"), "{message}");
         assert_eq!(remains.len(), islands, "{remains:?}");
         for remains in &remains {
-            assert!(remains.contains("reaches under"), "{remains}");
+            assert!(remains.contains("no route"), "{remains}");
         }
     }
 

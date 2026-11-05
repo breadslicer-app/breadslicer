@@ -31,6 +31,11 @@
 //! diameters from the island's other tips, and the extra ones go as far from
 //! those as they can, which is where it grew: a small tree.
 //!
+//! An island too narrow for the plan's tip gets the smallest there is
+//! ([`TipPlanOptions::smallest_contact_mm`]). Only one too narrow for that is
+//! left with none ([`TipPlan::too_narrow`]), and it is a note, not an error:
+//! it is too small for a tip ([`TipPlan::note_too_small`]).
+//!
 //! The tips an island has already, by hand or generated, count for what its
 //! growth asks for, never for the first one: they stand higher than its first
 //! pixels, or it would be held.
@@ -64,7 +69,7 @@
 use std::sync::Arc;
 
 use crate::checks::islands::{GROWTH_FACTOR, Growth, Island};
-use crate::finding::PlatePoint;
+use crate::finding::{CheckKind, Finding, PlatePoint, Severity, SuggestedFix};
 use crate::runs::{Run, difference, erode_ellipse};
 use crate::tips::lit;
 
@@ -188,6 +193,9 @@ pub struct TipPlanOptions {
     pub chained_growth_tips: usize,
     /// See [`SPACING_DIAMETERS`].
     pub spacing_diameters: f64,
+    /// The contact of the smallest tip there is: an island too narrow for
+    /// `contact_diameter_mm` gets that one before it is given up.
+    pub smallest_contact_mm: Option<f64>,
 }
 
 impl TipPlanOptions {
@@ -201,7 +209,15 @@ impl TipPlanOptions {
             chained_growth_factor: CHAINED_GROWTH_FACTOR,
             chained_growth_tips: CHAINED_GROWTH_TIPS,
             spacing_diameters: SPACING_DIAMETERS,
+            smallest_contact_mm: None,
         }
+    }
+
+    /// These options, with `smallest_mm` as the smallest tip there is.
+    #[must_use]
+    pub fn with_smallest(mut self, smallest_mm: f64) -> Self {
+        self.smallest_contact_mm = Some(smallest_mm);
+        self
     }
 }
 
@@ -217,6 +233,8 @@ pub struct PlannedTip {
     /// The points that would do as well, best first, if the engine cannot
     /// hold `at`.
     pub others: Vec<PlatePoint>,
+    /// It takes the smallest tip: the plan's would not fit.
+    pub small: bool,
 }
 
 /// The tips of a list of islands.
@@ -240,17 +258,44 @@ impl TipPlan {
         self.tips.iter().filter(move |tip| tip.island == island)
     }
 
+    /// Writes down what is left of the islands no tip fits on: not an error
+    /// anyone can act on, but a note that says they are too small for one.
+    pub fn note_too_small(&self, findings: &mut [Finding], islands: &[Island]) {
+        for island in self.too_narrow.iter().filter_map(|&i| islands.get(i)) {
+            let finding = findings.iter_mut().find(|finding| {
+                finding.check == CheckKind::Island
+                    && finding.first_layer == island.first_layer
+                    && matches!(finding.fix, Some(SuggestedFix::AddSupport { at }) if at == island.at)
+            });
+            if let Some(finding) = finding {
+                finding.severity = Severity::Info;
+                finding.title = TOO_SMALL_TITLE.to_owned();
+            }
+        }
+    }
+
     /// The tips of region `growth`.
     pub fn of_growth(&self, growth: usize) -> impl Iterator<Item = &PlannedTip> + '_ {
         self.growth.iter().filter(move |tip| tip.island == growth)
     }
 }
 
+/// The title of an island that never gets as wide as the smallest tip.
+pub const TOO_SMALL_TITLE: &str = "Island too small for a tip";
+
 /// The tips `islands` need: see the module documentation.
 pub fn plan_tips(islands: &[Island], options: &TipPlanOptions) -> TipPlan {
     let mut plan = TipPlan::default();
     for (index, island) in islands.iter().enumerate() {
-        let tips = Placing::new(island, options).run();
+        let mut tips = Placing::new(island, options).run();
+        if let (true, Some(smallest)) = (tips.is_empty(), options.smallest_contact_mm) {
+            let small = TipPlanOptions {
+                contact_diameter_mm: smallest,
+                ..*options
+            };
+            tips = Placing::new(island, &small).run();
+            tips.iter_mut().for_each(|tip| tip.small = true);
+        }
         if tips.is_empty() {
             plan.too_narrow.push(index);
         }
@@ -495,6 +540,7 @@ impl<'i> Placing<'i> {
             at: point,
             layer: self.pixels.layers[at].layer,
             others,
+            small: false,
         });
     }
 }

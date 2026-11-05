@@ -245,8 +245,11 @@ fn review_stacks(
         Ok(
             match review_with(&input, &ReviewOptions::default(), watch) {
                 None => ReviewOutcome::Cancelled,
-                Some(report) => ReviewOutcome::Reviewed {
-                    tips: tip_plan(&report.islands, &report.growths, supports).map(Box::new),
+                Some(mut report) => ReviewOutcome::Reviewed {
+                    tips: tip_plan(&report.islands, &report.growths, supports).map(|plan| {
+                        plan.note_too_small(&mut report.findings, &report.islands);
+                        Box::new(plan)
+                    }),
                     growths: report.growths,
                     frame: supports.frame.clone(),
                     findings: report.findings,
@@ -274,10 +277,11 @@ fn tip_plan(
         .map(|set| set.tip_diameter_mm)
         .reduce(f64::max)
         .or(supports.bare_tip_mm)?;
+    let smallest = sc_geom::df_supports::zone_presets::smallest_size().tip_diameter_mm;
     Some(plan_all_tips(
         islands,
         growths,
-        &TipPlanOptions::for_tip(diameter_mm),
+        &TipPlanOptions::for_tip(diameter_mm).with_smallest(smallest),
     ))
 }
 
@@ -317,6 +321,25 @@ pub(crate) fn review_bare_for_test(
         bare_tip_mm,
     };
     review_stacks(leaves, profile, filled, &supports, None, watch)
+}
+
+/// How many tips of `sets` there are, and how many do not end in the models
+/// of `plate`: a support always ends in the model.
+#[cfg(test)]
+pub(crate) fn tips_in_model_for_test(plate: &SlicedPlate, sets: &[SupportSet]) -> (usize, usize) {
+    let frame = plate.frame();
+    let ends: Vec<[f64; 3]> = sets
+        .iter()
+        .flat_map(|set| {
+            let frame = &frame;
+            set.contacts
+                .iter()
+                .map(move |contact| frame.point_mm(set.leaf, contact.tip))
+        })
+        .collect();
+    let input = ReviewInput::from_profile(review_leaves(plate.leaves(), sets), plate.profile())
+        .expect("the slice's leaves");
+    (ends.len(), sc_review::tips_outside_model(&input, &ends))
 }
 
 /// The name of the filled cavities' leaf in the review.
