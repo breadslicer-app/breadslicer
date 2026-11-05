@@ -26,10 +26,10 @@ use serde_json::Value;
 /// supports must go under.
 const ISLANDS: [u64; 1] = [942];
 
-/// Parts a tip holds. On 232 to 1501 only the last slice of a cone shows on
-/// the layer right below, 5 to 40 pixels of it: any pixel holds.
+/// Parts a tip holds, by the layer of their very first pixels (#433): those
+/// few pixels and the region that grows out of them are one part.
 const HELD: [u64; 11] = [
-    232, 660, 1230, 1264, 1422, 1444, 1470, 1486, 1501, 1515, 1526,
+    232, 660, 1229, 1263, 1421, 1443, 1470, 1485, 1500, 1514, 1525,
 ];
 
 /// Screen pixels of the parts that come loose, each on its first layer, the
