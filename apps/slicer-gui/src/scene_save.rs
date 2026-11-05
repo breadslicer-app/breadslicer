@@ -160,7 +160,7 @@ impl fmt::Display for WrongProjectExtension {
         f.write_str(&match self.0 {
             ProjectFormat::Bread => ctr!(
                 "ErrorDialog",
-                "Project files are saved as .bread files. To save a 3MF project, use Save As 3MF."
+                "Project files are saved as .bread files."
             ),
             ProjectFormat::ThreeMf => {
                 ctr!("ErrorDialog", "Project files are saved as .3mf packages.")
@@ -732,7 +732,7 @@ mod scene_save_tests {
         fn the_refusal_names_the_format_asked_for() {
             assert_eq!(
                 WrongProjectExtension(Bread).to_string(),
-                "Project files are saved as .bread files. To save a 3MF project, use Save As 3MF."
+                "Project files are saved as .bread files."
             );
             assert_eq!(
                 WrongProjectExtension(ThreeMf).to_string(),

@@ -2581,9 +2581,7 @@ msgstr ""
 
 #: src/scene_save.rs:162
 msgctxt "ErrorDialog"
-msgid ""
-"Project files are saved as .bread files. To save a 3MF project, use Save As "
-"3MF."
+msgid "Project files are saved as .bread files."
 msgstr ""
 
 #: src/scene_save.rs:165

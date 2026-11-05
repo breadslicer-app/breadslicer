@@ -889,7 +889,9 @@ fn wire_save_as(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Prefere
     });
 }
 
-/// "Save As 3MF": the same flow as "Save As", for a 3MF project.
+/// "Save As 3MF": the same flow as "Save As", for a 3MF project. Projects are
+/// `.bread` for now (#439): no menu or shortcut reaches it, and it stays for
+/// the day one does.
 fn wire_save_as_3mf(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
     ui.on_save_as_3mf_requested(move || {
         ctrl.on_modal_transform_finish(false);
@@ -1314,6 +1316,13 @@ mod dialog_text_tests {
     use super::*;
 
     #[test]
+    fn no_menu_offers_to_save_a_3mf_project() {
+        let window = include_str!("../ui/main-window.slint");
+        assert!(!window.contains("Save As 3MF"));
+        assert_eq!(window.matches("root.save-as-3mf-requested").count(), 0);
+    }
+
+    #[test]
     fn a_save_under_another_extension_says_projects_are_bread_files() {
         let err = anyhow::Error::new(scene_save::WrongProjectExtension(ProjectFormat::Bread));
         let texts = save_error_texts(Path::new("/tmp/plate.stl"), &err);
@@ -1321,7 +1330,7 @@ mod dialog_text_tests {
         assert_eq!(texts.context.as_deref(), Some("File: /tmp/plate.stl"));
         assert_eq!(
             texts.message,
-            "Project files are saved as .bread files. To save a 3MF project, use Save As 3MF."
+            "Project files are saved as .bread files."
         );
         assert_eq!(texts.details, "");
     }

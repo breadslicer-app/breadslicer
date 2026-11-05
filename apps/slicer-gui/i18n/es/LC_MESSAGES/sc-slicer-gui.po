@@ -2822,11 +2822,6 @@ msgid_plural "{n} fixed"
 msgstr[0] "{n} corregido"
 msgstr[1] "{n} corregidos"
 
-#: ui/main-window.slint
-msgctxt "MenuBar"
-msgid "Save As 3MF…"
-msgstr "Guardar como 3MF…"
-
 #: src/wiring.rs
 msgctxt "FileDialog"
 msgid "Breadslicer projects"
@@ -2834,12 +2829,8 @@ msgstr "Proyectos de Breadslicer"
 
 #: src/scene_save.rs
 msgctxt "ErrorDialog"
-msgid ""
-"Project files are saved as .bread files. To save a 3MF project, use Save As "
-"3MF."
-msgstr ""
-"Los archivos de proyecto se guardan como archivos .bread. Para guardar un "
-"proyecto 3MF, usá Guardar como 3MF."
+msgid "Project files are saved as .bread files."
+msgstr "Los archivos de proyecto se guardan como archivos .bread."
 
 #: src/scene_loader.rs
 msgctxt "DfSupportDialog"
