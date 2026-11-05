@@ -259,7 +259,8 @@ pub fn erode_ellipse(runs: &[Run], rx: f64, ry: f64) -> Vec<Run> {
             .unwrap_or(&[])
     };
     let mut out = Vec::new();
-    let (mut kept, mut next): (Vec<(u32, u32)>, Vec<(u32, u32)>) = (Vec::new(), Vec::new());
+    let mut kept: Vec<(u32, u32)> = Vec::new();
+    let mut next: Vec<(u32, u32)> = Vec::new();
     for y in first.row..=last.row {
         kept.clear();
         kept.extend(

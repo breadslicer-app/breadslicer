@@ -150,9 +150,11 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
             &input,
             &report,
             &stats,
-            refilled.as_ref(),
-            fixed_all.as_ref(),
-            added.as_ref(),
+            &Passes {
+                refilled: refilled.as_ref(),
+                fixed_all: fixed_all.as_ref(),
+                added: added.as_ref(),
+            },
             slice_time,
             &mut out,
         )?;
@@ -694,14 +696,19 @@ fn parts_json(parts: &[Part]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// What the run did after the first review, each when it was asked for.
+struct Passes<'p> {
+    refilled: Option<&'p Refilled>,
+    fixed_all: Option<&'p FixedAll>,
+    added: Option<&'p AddedSupports>,
+}
+
 /// The findings, the counts and the timings as one JSON document.
 fn write_json(
     input: &ReviewInput<'_>,
     report: &ReviewReport,
     stats: &RegionStats,
-    refilled: Option<&Refilled>,
-    fixed_all: Option<&FixedAll>,
-    added: Option<&AddedSupports>,
+    passes: &Passes<'_>,
     slice_time: Duration,
     out: &mut dyn Write,
 ) -> Result<()> {
@@ -738,19 +745,19 @@ fn write_json(
                 .map(|r| [r.x0_mm, r.y0_mm, r.x1_mm, r.y1_mm])
                 .collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
-        "filled": refilled.map(|refilled| serde_json::json!({
+        "filled": passes.refilled.map(|refilled| serde_json::json!({
             "cavities": refilled.cavities,
             "volume_mm3": (refilled.volume_mm3 * 1e3).round() / 1e3,
             "findings": refilled.report.findings,
             "summary": summary(&refilled.report.findings),
         })),
-        "fixed_all": fixed_all.map(|fixed| serde_json::json!({
+        "fixed_all": passes.fixed_all.map(|fixed| serde_json::json!({
             "cavities": fixed.cavities,
             "supports_not_added": fixed.supports,
             "findings": fixed.report.findings,
             "summary": summary(&fixed.report.findings),
         })),
-        "added_supports": added.map(|added| serde_json::json!({
+        "added_supports": passes.added.map(|added| serde_json::json!({
             "diameter_mm": added.diameter_mm,
             "tips": added.tips.iter().map(|outcome| serde_json::json!({
                 "island": outcome.tip.island,
