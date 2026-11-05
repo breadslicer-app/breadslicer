@@ -171,6 +171,51 @@ fn a_yes_to_the_question_leaves_the_heavy_scene_without_islands() {
     assert!(held, "a tip holds what was an island");
 }
 
+/// Fix All on the heavy scene (#433), from the list of the first review: the
+/// island gets its tip, nothing fills the hollow, and the one review that
+/// follows reads the cavity as the first one did.
+#[test]
+#[ignore = "needs a real project, named by BREADSLICER_WORM"]
+fn fix_all_leaves_the_heavy_scene_hollow_and_without_islands() {
+    let project = std::env::var("BREADSLICER_WORM").expect("BREADSLICER_WORM names the project");
+    let started = Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_sc-slicer-cli"))
+        .args([
+            "review",
+            &format!("-s={project}"),
+            "--printer-profile=anycubic-photon-mono-m7-pro",
+            "--material-profile=anycubic-abs-like-resin-pro-50um",
+            "--no-auto-place",
+            "--fix-all",
+            "--json",
+        ])
+        .output()
+        .expect("the review runs");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    eprintln!("whole run: {:?}", started.elapsed());
+    let report: Value = serde_json::from_slice(&output.stdout).expect("JSON");
+    let fixed = &report["fixed_all"];
+    eprintln!("cycle: {}", fixed["timings_ms"]);
+
+    assert_eq!(fixed["islands"].as_array().map(Vec::len), Some(0));
+    let cups = |findings: &Value| -> Vec<Value> {
+        findings
+            .as_array()
+            .expect("findings")
+            .iter()
+            .filter(|finding| finding["check"] == "suction-cup")
+            .cloned()
+            .collect()
+    };
+    let before = cups(&report["findings"]);
+    assert_eq!(before.len(), 1, "the hollow is listed");
+    assert_eq!(before, cups(&fixed["findings"]), "and it is untouched");
+}
+
 #[test]
 #[ignore = "needs a real project, named by BREADSLICER_WORM"]
 fn the_review_of_the_heavy_scene_matches_its_printer_file() {

@@ -13,14 +13,14 @@
 //! schedule and added to the plate as model, as the app does on the next
 //! slice (#132), and the plate is reviewed again.
 //!
-//! With `--fix-all`, the plate gets what the app's Fix All gives it on the
-//! next slice (#156): the small resin traps filled. The supports Fix All would
-//! add for islands are only counted: the CLI does not edit supports. The
-//! plate is then reviewed again.
+//! With `--fix-all`, the plate gets what one pass of the app's Fix All gives
+//! it (#433), straight from the list of the first review: the tips the islands
+//! need, through the engine, and the small traps filled. Then a new slice, and
+//! the one review, whole.
 //!
 //! With `--add-supports`, the plate gets what a Yes to the app's question
-//! after Slice gives it (#437): the tips the islands need, through the engine,
-//! then a new slice and its review.
+//! after Slice gives it (#437): the tips alone, then the same new slice and
+//! review.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -47,6 +47,9 @@ use crate::commands::slice::{
 };
 use crate::config::cmd_options::PlateOptions;
 use crate::filesystem::validate_sourcefile_path;
+
+/// The name of the filled cavities' leaf in the review.
+const FILLED_LEAF: &str = "Filled cavities";
 
 /// Parsed CLI arguments for the `review` subcommand.
 pub(crate) struct ReviewArgs {
@@ -103,7 +106,7 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
 
     let review_again = |stack: &ContourStack| {
         let mut leaves = input.leaves().to_vec();
-        leaves.push(ReviewLeaf::new(Some("Filled cavities"), stack));
+        leaves.push(ReviewLeaf::new(Some(FILLED_LEAF), stack));
         let again = context
             .input(leaves)
             .expect("the fill is cut on the run's schedule");
@@ -122,24 +125,15 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
         report: review_again(stack),
     });
 
-    let fixed_all = args.fix_all.then(|| {
-        let plan = FixAll::of(&report);
-        let filled = fill_stack(plan.fills.iter().copied(), plate.schedule());
-        FixedAll {
-            supports: plan.supports,
-            cavities: plan.fills.len(),
-            report: filled.as_ref().map_or_else(|| report.clone(), review_again),
-        }
-    });
-
-    let added = if args.add_supports {
-        let answer = YesAnswer {
+    let fixed = if args.fix_all || args.add_supports {
+        let answer = NewSlice {
             printer: &printer,
             material: &material,
             options,
             lift: (context.raft_top_mm, context.support_lift_mm),
         };
-        Some(add_supports(scene, sets, &report, &answer)?)
+        let fills = if args.fix_all { picked } else { Vec::new() };
+        Some(fix_the_list(scene, sets, &report, fills, &answer)?)
     } else {
         None
     };
@@ -152,8 +146,8 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
             &stats,
             &Passes {
                 refilled: refilled.as_ref(),
-                fixed_all: fixed_all.as_ref(),
-                added: added.as_ref(),
+                fixed: fixed.as_ref(),
+                fix_all: args.fix_all,
             },
             slice_time,
             &mut out,
@@ -170,18 +164,19 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
         if let Some(refilled) = &refilled {
             write_refilled(&input, support_leaves, refilled, &mut out)?;
         }
-        if let Some(fixed_all) = &fixed_all {
-            write_fixed_all(&input, support_leaves, fixed_all, &mut out)?;
-        }
-        if let Some(added) = &added {
-            write_added(added, &mut out)?;
+        if let Some(fixed) = &fixed {
+            if args.fix_all {
+                write_fixed_all(&input, support_leaves, fixed, &mut out)?;
+            } else {
+                write_added(fixed, &mut out)?;
+            }
         }
     }
     Ok(())
 }
 
 /// What a new slice of the plate needs.
-struct YesAnswer<'a> {
+struct NewSlice<'a> {
     printer: &'a PrinterProfile,
     material: &'a EffectiveMaterial,
     options: &'a PlateOptions,
@@ -198,14 +193,18 @@ struct TipOutcome {
     refused: Option<String>,
 }
 
-/// What a Yes to the question after Slice did (#437).
-struct AddedSupports {
+/// What working through the list did: a Yes to the question after Slice
+/// (#437), or a pass of Fix All (#433).
+struct FixedList {
     /// The tips' contact diameter.
     diameter_mm: f64,
     tips: Vec<TipOutcome>,
+    /// The small traps filled.
+    cavities: usize,
     /// Islands that never get as wide as a contact, by first layer.
     too_narrow: Vec<usize>,
-    /// Placing the tips, drawing the sets, the new slice and its review.
+    /// Placing the tips, drawing the sets, the new slice and its review. A
+    /// list that changed nothing is not sliced again.
     placing: Duration,
     drawing: Duration,
     slicing: Duration,
@@ -213,15 +212,17 @@ struct AddedSupports {
     report: ReviewReport,
 }
 
-/// Places the tips the islands of `report` need on the sets they fall on,
-/// draws those sets again and reviews a new slice. A plate with no set to
-/// edit gets none: the CLI generates supports only with `--df-supports`.
-fn add_supports(
+/// Works through the list of `report` with no review in between: places the
+/// tips its islands need on the sets they fall on, draws those sets again,
+/// and reviews a new slice with `fills` cured. A plate with no set to edit
+/// gets no tip: the CLI generates supports only with `--df-supports`.
+fn fix_the_list(
     mut scene: Scene,
     mut sets: Vec<SupportSet>,
     report: &ReviewReport,
-    answer: &YesAnswer<'_>,
-) -> Result<AddedSupports> {
+    fills: Vec<&CavityFill>,
+    answer: &NewSlice<'_>,
+) -> Result<FixedList> {
     let diameter_mm = sets
         .iter()
         .map(|set| set.session.tip_diameter_mm())
@@ -274,12 +275,33 @@ fn add_supports(
             .map_err(|err| anyhow!("the supports could not be drawn: {err}"))?;
     }
     let drawing = started.elapsed();
+    let too_narrow = plan
+        .too_narrow
+        .iter()
+        .map(|&i| report.islands[i].first_layer)
+        .collect();
+
+    // Nothing changed: the review held is the last one.
+    if fills.is_empty() && !edited.contains(&true) {
+        return Ok(FixedList {
+            diameter_mm,
+            tips,
+            cavities: 0,
+            too_narrow,
+            placing,
+            drawing,
+            slicing: Duration::ZERO,
+            reviewing: Duration::ZERO,
+            report: report.clone(),
+        });
+    }
 
     let started = Instant::now();
     let plate = slice_scene(&scene, answer.printer, answer.material, answer.options)?;
     let slicing = started.elapsed();
 
     let started = Instant::now();
+    let filled = fill_stack(fills.iter().copied(), plate.schedule());
     let sets: Vec<SupportSet> = sets.into_iter().map(SupportSet::refreshed).collect();
     let context = PlateContext {
         plate: &plate,
@@ -288,20 +310,23 @@ fn add_supports(
         tips: support_tips(&plate, &sets),
         support_layers: support_layers(&plate, &sets),
     };
+    let mut leaves = model_leaves(&plate, &sets);
+    leaves.extend(
+        filled
+            .as_ref()
+            .map(|stack| ReviewLeaf::new(Some(FILLED_LEAF), stack)),
+    );
     let input = context
-        .input(model_leaves(&plate, &sets))
+        .input(leaves)
         .map_err(|err| anyhow!("internal error: the sliced stacks do not fit the run: {err}"))?;
     let options = ReviewOptions::default();
     let regions = PlateRegions::compute(&input, &options.sweep);
     let again = check_regions(&ReviewContext::new(&input, &regions), &options);
-    Ok(AddedSupports {
+    Ok(FixedList {
         diameter_mm,
         tips,
-        too_narrow: plan
-            .too_narrow
-            .iter()
-            .map(|&i| report.islands[i].first_layer)
-            .collect(),
+        cavities: fills.len(),
+        too_narrow,
         placing,
         drawing,
         slicing,
@@ -311,7 +336,7 @@ fn add_supports(
 }
 
 /// What the tips did, as text.
-fn write_added(added: &AddedSupports, out: &mut dyn Write) -> Result<()> {
+fn write_added(added: &FixedList, out: &mut dyn Write) -> Result<()> {
     let refused = added.tips.iter().filter(|tip| tip.refused.is_some());
     writeln!(
         out,
@@ -425,54 +450,20 @@ fn support_layers(plate: &SlicedPlate, sets: &[SupportSet]) -> Range<usize> {
         .map_or(0..0, |(first, last)| first..last + 1)
 }
 
-/// What the app's Fix All applies to a review (#156), as far as the CLI
-/// applies it: the small traps' fills; plus the number of findings it would
-/// hold with a support.
-struct FixAll<'r> {
-    supports: usize,
-    fills: Vec<&'r CavityFill>,
-}
-
-impl<'r> FixAll<'r> {
-    fn of(report: &'r ReviewReport) -> Self {
-        let mut plan = Self {
-            supports: 0,
-            fills: Vec::new(),
-        };
-        for finding in &report.findings {
-            match finding.fix {
-                Some(SuggestedFix::AddSupport { .. }) => plan.supports += 1,
-                // Small traps, as the app's Fix All. A hollow, a suction cup
-                // or a large cavity has no pixels to fill (#431).
-                Some(SuggestedFix::Fill { cavity, .. }) => {
-                    plan.fills.extend(report.fills.get(cavity));
-                }
-                _ => {}
-            }
-        }
-        plan
-    }
-}
-
-/// The review of the plate once Fix All's fixes are applied.
-struct FixedAll {
-    supports: usize,
-    cavities: usize,
-    report: ReviewReport,
-}
-
 /// The review after Fix All, as text.
 fn write_fixed_all(
     input: &ReviewInput<'_>,
     support_leaves: usize,
-    fixed: &FixedAll,
+    fixed: &FixedList,
     out: &mut dyn Write,
 ) -> Result<()> {
+    let refused = fixed.tips.iter().filter(|tip| tip.refused.is_some());
     writeln!(
         out,
-        "Fix all: filled {}; {} would get a support in the app (not added here). The review again:",
+        "Fix all: filled {}; {} planned, {} refused. The review again:",
         plural(fixed.cavities, "cavity", "cavities"),
-        plural(fixed.supports, "finding", "findings"),
+        plural(fixed.tips.len(), "tip", "tips"),
+        refused.count(),
     )?;
     for finding in &fixed.report.findings {
         writeln!(out, "{}", finding_line(finding))?;
@@ -699,8 +690,9 @@ fn parts_json(parts: &[Part]) -> Vec<serde_json::Value> {
 /// What the run did after the first review, each when it was asked for.
 struct Passes<'p> {
     refilled: Option<&'p Refilled>,
-    fixed_all: Option<&'p FixedAll>,
-    added: Option<&'p AddedSupports>,
+    fixed: Option<&'p FixedList>,
+    /// Whether `fixed` is a pass of Fix All, not a Yes to the question.
+    fix_all: bool,
 }
 
 /// The findings, the counts and the timings as one JSON document.
@@ -727,6 +719,32 @@ fn write_json(
         .map(|leaf| serde_json::json!({ "name": leaf.name }))
         .collect();
     let t = &report.timings;
+    let fixed = passes.fixed.map(|added| {
+        serde_json::json!({
+            "cavities": added.cavities,
+            "diameter_mm": added.diameter_mm,
+            "tips": added.tips.iter().map(|outcome| serde_json::json!({
+                "island": outcome.tip.island,
+                "layer": outcome.tip.layer,
+                "at_mm": [outcome.tip.at.x_mm, outcome.tip.at.y_mm, outcome.tip.at.z_mm],
+                "placed_at_mm": outcome.placed_at,
+                "refused": outcome.refused,
+            })).collect::<Vec<_>>(),
+            "too_narrow": added.too_narrow,
+            "timings_ms": {
+                "placing": millis(added.placing),
+                "drawing": millis(added.drawing),
+                "slicing": millis(added.slicing),
+                "reviewing": millis(added.reviewing),
+            },
+            "islands": added.report.islands.iter()
+                .map(|island| island.first_layer)
+                .collect::<Vec<_>>(),
+            "parts": parts_json(&added.report.parts),
+            "findings": added.report.findings,
+            "summary": summary(&added.report.findings),
+        })
+    });
     let document = serde_json::json!({
         "layers": input.layer_count(),
         "leaves": leaves,
@@ -751,35 +769,8 @@ fn write_json(
             "findings": refilled.report.findings,
             "summary": summary(&refilled.report.findings),
         })),
-        "fixed_all": passes.fixed_all.map(|fixed| serde_json::json!({
-            "cavities": fixed.cavities,
-            "supports_not_added": fixed.supports,
-            "findings": fixed.report.findings,
-            "summary": summary(&fixed.report.findings),
-        })),
-        "added_supports": passes.added.map(|added| serde_json::json!({
-            "diameter_mm": added.diameter_mm,
-            "tips": added.tips.iter().map(|outcome| serde_json::json!({
-                "island": outcome.tip.island,
-                "layer": outcome.tip.layer,
-                "at_mm": [outcome.tip.at.x_mm, outcome.tip.at.y_mm, outcome.tip.at.z_mm],
-                "placed_at_mm": outcome.placed_at,
-                "refused": outcome.refused,
-            })).collect::<Vec<_>>(),
-            "too_narrow": added.too_narrow,
-            "timings_ms": {
-                "placing": millis(added.placing),
-                "drawing": millis(added.drawing),
-                "slicing": millis(added.slicing),
-                "reviewing": millis(added.reviewing),
-            },
-            "islands": added.report.islands.iter()
-                .map(|island| island.first_layer)
-                .collect::<Vec<_>>(),
-            "parts": parts_json(&added.report.parts),
-            "findings": added.report.findings,
-            "summary": summary(&added.report.findings),
-        })),
+        "fixed_all": fixed.clone().filter(|_| passes.fix_all),
+        "added_supports": fixed.filter(|_| !passes.fix_all),
         "regions": {
             "solid": stats.solid,
             "air": stats.air,
@@ -889,7 +880,6 @@ mod review_output_tests {
             fills: vec![CavityFill { slabs: Vec::new() }],
             ..ReviewReport::default()
         };
-        assert_eq!(FixAll::of(&report).fills.len(), 1);
         assert_eq!(offered_fills(&report).len(), 1);
     }
 }

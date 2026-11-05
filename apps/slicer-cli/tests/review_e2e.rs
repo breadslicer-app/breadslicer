@@ -84,6 +84,23 @@ fn review_fills_on_request() {
         .stdout(predicate::str::contains("Filled ").not());
 }
 
+/// #433: Fix All works on the list; a list with nothing to fix is not
+/// sliced again, and stays the list.
+#[test]
+fn fix_all_with_nothing_to_fix_leaves_the_list_as_it_is() {
+    let output = review_cube(&["--json", "--fix-all"])
+        .success()
+        .get_output()
+        .clone();
+    let document: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
+    let fixed = &document["fixed_all"];
+    assert_eq!(fixed["findings"], document["findings"]);
+    assert_eq!(fixed["cavities"], 0);
+    assert_eq!(fixed["timings_ms"]["slicing"], 0.0);
+    assert!(document["added_supports"].is_null());
+}
+
 #[test]
 fn review_writes_no_file() {
     let dir = tempfile::tempdir().unwrap();
