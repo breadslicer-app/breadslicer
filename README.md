@@ -43,7 +43,7 @@ cargo test  --release -p sc-slicer-gui --lib
 <sub>**Acknowledgements.** Breadslicer is based on [SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer)
 (MyMiniFactory, CTRLback; AGPL-3.0). Its history up to the fork (1379 commits, to upstream
 `fd238bbd`) lives there; here it is a single import commit. Parts of its support and hollowing engines derive from
-[DragonFruit](https://github.com/Open-Resin-Alliance/DragonFruit) (Open Resin Alliance; MIT). The Creality
+[DragonFruit](https://github.com/Open-Resin-Alliance/DragonFruit) (Open Resin Alliance; the support system under AGPL-3.0-or-later, the hollowing engine from its MIT crates). The Creality
 `.cxdlp` writer, the ChiTuBox `.ctb` writer for versions 2 to 4 and the Anycubic writers (the ZIP family, `.pwsz`
 and the rest, and the binary family, `.pwmx`, `.pwma`, `.pm3`, `.pws` and the rest) are ported from
 [UVtools](https://github.com/sn4k3/UVtools) (Tiago Conceição / sn4k3 and UVtools contributors; AGPL-3.0),
