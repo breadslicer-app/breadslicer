@@ -9,6 +9,7 @@ use std::fmt;
 use std::io::Write;
 
 use crate::error::ModelWriteError;
+use crate::package::MAX_PART_BYTES;
 
 use super::slice::SliceStackContent;
 use super::types::{ModelDocument, ObjectPayload};
@@ -70,12 +71,28 @@ impl<'d, const N: usize> ModelSerialization<'d, N> {
     /// Reports the byte count, carried across the documents, after each step of
     /// at least 256 KiB and at the end of each document. Stops at the first
     /// document that fails, and returns its error.
+    ///
+    /// XML past [`MAX_PART_BYTES`] gives [`ModelWriteError::PartTooLarge`]: a
+    /// part that large could not be read back. A buffer the system refuses
+    /// gives an error too, instead of ending the process.
     pub fn write(
         self,
         progress: impl FnMut(SerializationProgress),
     ) -> Result<[Vec<u8>; N], ModelWriteError> {
+        self.write_capped(MAX_PART_BYTES, progress)
+    }
+
+    /// Writes as [`Self::write`] does, under a ceiling of `cap_bytes` of XML
+    /// per document.
+    fn write_capped(
+        self,
+        cap_bytes: u64,
+        progress: impl FnMut(SerializationProgress),
+    ) -> Result<[Vec<u8>; N], ModelWriteError> {
         let mut sink = CountingSink {
             xml: Vec::new(),
+            cap_bytes,
+            over_cap: false,
             finished_bytes: 0,
             last_reported: 0,
             estimated_total_bytes: self.estimated_total_bytes,
@@ -117,6 +134,10 @@ impl<const N: usize> fmt::Debug for ModelSerialization<'_, N> {
 /// byte count of the whole phase.
 struct CountingSink<F> {
     xml: Vec<u8>,
+    /// The most XML that 1 document may take.
+    cap_bytes: u64,
+    /// Whether a write was refused for going past `cap_bytes`.
+    over_cap: bool,
     /// XML bytes of the documents already serialized.
     finished_bytes: u64,
     last_reported: u64,
@@ -127,7 +148,15 @@ struct CountingSink<F> {
 impl<F: FnMut(SerializationProgress)> CountingSink<F> {
     /// Serializes `document`, reports its end, and returns its XML.
     fn serialize(&mut self, document: &ModelDocument) -> Result<Vec<u8>, ModelWriteError> {
-        write_model(document, self)?;
+        if let Err(error) = write_model(document, self) {
+            return Err(if self.over_cap {
+                ModelWriteError::PartTooLarge {
+                    cap_bytes: self.cap_bytes,
+                }
+            } else {
+                error
+            });
+        }
         self.report();
         let xml = std::mem::take(&mut self.xml);
         self.finished_bytes += xml.len() as u64;
@@ -149,6 +178,13 @@ impl<F: FnMut(SerializationProgress)> CountingSink<F> {
 
 impl<F: FnMut(SerializationProgress)> Write for CountingSink<F> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if (self.xml.len() + buf.len()) as u64 > self.cap_bytes {
+            self.over_cap = true;
+            return Err(std::io::ErrorKind::FileTooLarge.into());
+        }
+        self.xml
+            .try_reserve(buf.len())
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
         self.xml.extend_from_slice(buf);
         if self.serialized_bytes() - self.last_reported >= REPORT_STEP {
             self.report();
@@ -188,4 +224,60 @@ fn estimate_model_bytes(document: &ModelDocument) -> u64 {
         }
     }
     bytes
+}
+
+#[cfg(test)]
+mod capped_write_tests {
+    use super::*;
+    use crate::model::resource_ids::ResourceId;
+    use crate::model::{MeshData, MeshResolution, ObjectResource, ObjectType, Vertex3};
+
+    fn document_of(vertices: usize) -> ModelDocument {
+        let vertex = Vertex3 {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        };
+        ModelDocument {
+            objects: vec![ObjectResource {
+                id: ResourceId::MIN,
+                object_type: ObjectType::Model,
+                name: None,
+                partnumber: None,
+                property_ref: None,
+                slice_stack: None,
+                mesh_resolution: MeshResolution::default(),
+                payload: ObjectPayload::Mesh(MeshData {
+                    vertices: vec![vertex; vertices],
+                    triangles: Vec::new(),
+                }),
+            }],
+            ..ModelDocument::default()
+        }
+    }
+
+    #[test]
+    fn xml_past_the_cap_is_refused() {
+        let document = document_of(100);
+        let result = ModelSerialization::new([&document]).write_capped(1024, |_| {});
+        assert!(
+            matches!(
+                result,
+                Err(ModelWriteError::PartTooLarge { cap_bytes: 1024 })
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn xml_under_the_cap_is_the_plain_serialization() {
+        let document = document_of(4);
+        let [capped] = ModelSerialization::new([&document])
+            .write_capped(1 << 20, |_| {})
+            .expect("the document fits");
+        let [plain] = ModelSerialization::new([&document])
+            .write(|_| {})
+            .expect("the document fits");
+        assert_eq!(capped, plain);
+    }
 }

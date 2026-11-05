@@ -289,6 +289,8 @@ fn write_slice_stack<W: Write>(
 /// order; the output bytes are identical to a sequential emit, so
 /// readers and the slice-input fingerprint see no difference. Short
 /// lists format inline, avoiding thread-pool overhead on small meshes.
+/// A long list goes through in batches, so the formatted text held at
+/// once does not grow with the mesh.
 fn write_parts<T, W>(
     sink: &mut W,
     items: &[T],
@@ -299,14 +301,17 @@ where
     W: Write,
 {
     const PARALLEL_THRESHOLD: usize = 8192;
+    const BATCH_ELEMENTS: usize = 1 << 20;
     if items.len() < PARALLEL_THRESHOLD {
         sink.write_all(&format_chunk(items))?;
         return Ok(());
     }
-    let chunk = (items.len() / (rayon::current_num_threads() * 4)).max(1);
-    let parts: Vec<Vec<u8>> = items.par_chunks(chunk).map(format_chunk).collect();
-    for part in &parts {
-        sink.write_all(part)?;
+    for batch in items.chunks(BATCH_ELEMENTS) {
+        let chunk = (batch.len() / (rayon::current_num_threads() * 4)).max(1);
+        let parts: Vec<Vec<u8>> = batch.par_chunks(chunk).map(format_chunk).collect();
+        for part in &parts {
+            sink.write_all(part)?;
+        }
     }
     Ok(())
 }
@@ -343,20 +348,16 @@ fn format_triangles(chunk: &[TriangleRef]) -> Vec<u8> {
     out
 }
 
-/// Emit `slices` to `sink`. A stack with many layers formats its slice
-/// fragments in parallel and writes them in order; the bytes match a
-/// sequential emit. Few-layer stacks format inline.
+/// Emit `slices` to `sink`. Their fragments are formatted in parallel, a
+/// batch of layers at a time so the text held at once does not grow with
+/// the stack, and written in order; the bytes match a sequential emit.
 fn write_slices<W: Write>(sink: &mut W, slices: &[Slice]) -> std::io::Result<()> {
-    const PARALLEL_THRESHOLD: usize = 64;
-    if slices.len() < PARALLEL_THRESHOLD {
-        for slice in slices {
-            sink.write_all(&format_slice(slice))?;
+    const BATCH_LAYERS: usize = 64;
+    for batch in slices.chunks(BATCH_LAYERS) {
+        let parts: Vec<Vec<u8>> = batch.par_iter().map(format_slice).collect();
+        for part in &parts {
+            sink.write_all(part)?;
         }
-        return Ok(());
-    }
-    let parts: Vec<Vec<u8>> = slices.par_iter().map(format_slice).collect();
-    for part in &parts {
-        sink.write_all(part)?;
     }
     Ok(())
 }

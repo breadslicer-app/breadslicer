@@ -21,7 +21,10 @@ use crate::names::{
     DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE, THUMBNAIL_REL_TYPE,
 };
 use crate::package::static_part_name::StaticPartName;
-use crate::package::{DecompressionProgress, Package, PackageReadLimits, PartName, Relationship};
+use crate::package::{
+    DecompressionProgress, MAX_PART_BYTES, Package, PackageReadLimits, PartHandOff, PartName,
+    Relationship,
+};
 
 fn part(name: &str) -> PartName {
     PartName::new(name).expect("valid part name")
@@ -2325,5 +2328,327 @@ mod parallel_compression_tests {
             restored.part_data(&part(DEFAULT_MODEL_PART_NAME.as_str())),
             Some(big.as_slice()),
         );
+    }
+}
+
+mod deferred_part_tests {
+    use super::*;
+
+    /// A package with a held model part and 2 deferred parts.
+    fn package_with_deferred_parts() -> Package {
+        let mut package = Package::new();
+        package
+            .add_part(
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
+                MODEL_PART_CONTENT_TYPE,
+                b"<model/>".to_vec(),
+            )
+            .expect("unique name");
+        for name in ["/3D/a.model", "/3D/b.model"] {
+            package
+                .add_deferred_part(part(name), MODEL_PART_CONTENT_TYPE, 100)
+                .expect("unique name");
+        }
+        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME.as_str()));
+        package
+    }
+
+    fn bytes_of(name: &PartName) -> Result<Vec<u8>, PackageWriteError> {
+        Ok(format!("<deferred name={name}/>").into_bytes())
+    }
+
+    #[test]
+    fn a_deferred_part_is_made_once_and_reads_back_as_any_part() {
+        let package = package_with_deferred_parts();
+        let mut asked = Vec::new();
+        let mut file = Cursor::new(Vec::new());
+        package
+            .write_deferring_to(
+                &mut file,
+                |name| {
+                    asked.push(name.as_str().to_string());
+                    bytes_of(name)
+                },
+                |_, _| {},
+            )
+            .expect("the package writes");
+        assert_eq!(asked, ["/3D/a.model", "/3D/b.model"]);
+        let read = Package::read_from(Cursor::new(file.into_inner())).expect("the package reads");
+        assert_eq!(
+            read.part_data(&part("/3D/b.model")),
+            Some(b"<deferred name=/3D/b.model/>".as_slice())
+        );
+        assert_eq!(
+            read.part_content_type(&part("/3D/a.model")),
+            Some(MODEL_PART_CONTENT_TYPE)
+        );
+    }
+
+    #[test]
+    fn a_large_deferred_part_goes_through_the_threaded_path_whole() {
+        let mut package = Package::new();
+        package
+            .add_deferred_part(part("/3D/big.model"), MODEL_PART_CONTENT_TYPE, 1)
+            .expect("unique name");
+        let big = incompressible_bytes(5 * 1024 * 1024);
+        let mut file = Cursor::new(Vec::new());
+        package
+            .write_deferring_to(&mut file, |_| Ok(big.clone()), |_, _| {})
+            .expect("the package writes");
+        let mut archive = zip::ZipArchive::new(Cursor::new(file.into_inner())).expect("a ZIP");
+        let mut read = Vec::new();
+        archive
+            .by_name("3D/big.model")
+            .expect("the part")
+            .read_to_end(&mut read)
+            .expect("the part inflates");
+        assert_eq!(read, big);
+    }
+
+    #[test]
+    fn deferred_parts_count_their_estimates_in_the_progress() {
+        let package = package_with_deferred_parts();
+        let mut ticks = Vec::new();
+        package
+            .write_deferring_to(Cursor::new(Vec::new()), bytes_of, |done, total| {
+                ticks.push((done, total))
+            })
+            .expect("the package writes");
+        let total = 8 + 100 + 100;
+        assert_eq!(ticks, [(8, total), (108, total), (208, total)]);
+    }
+
+    #[test]
+    fn a_deferred_part_holds_no_bytes_in_the_package() {
+        let package = package_with_deferred_parts();
+        assert_eq!(package.part_data(&part("/3D/a.model")), None);
+        assert_eq!(
+            package.part_content_type(&part("/3D/a.model")),
+            Some(MODEL_PART_CONTENT_TYPE)
+        );
+    }
+
+    #[test]
+    fn the_rules_of_part_names_hold_for_deferred_parts() {
+        let mut package = package_with_deferred_parts();
+        assert!(matches!(
+            package.add_deferred_part(part("/3D/A.MODEL"), MODEL_PART_CONTENT_TYPE, 1),
+            Err(PackageWriteError::DuplicatePartName { .. })
+        ));
+        assert!(matches!(
+            package.add_deferred_part(part("/_rels/.rels"), MODEL_PART_CONTENT_TYPE, 1),
+            Err(PackageWriteError::ReservedPartName { .. })
+        ));
+    }
+
+    #[test]
+    fn a_plain_write_refuses_a_part_nothing_makes() {
+        let package = package_with_deferred_parts();
+        let result = package.write_to(Cursor::new(Vec::new()));
+        assert!(
+            matches!(result, Err(PackageWriteError::PartSource { ref part, .. }) if part == "/3D/a.model"),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_part_that_cannot_be_made_stops_the_write_with_its_reason() {
+        let package = package_with_deferred_parts();
+        let result = package.write_deferring_to(
+            Cursor::new(Vec::new()),
+            |name| {
+                Err(PackageWriteError::PartSource {
+                    part: name.as_str().to_string(),
+                    source: "no memory left".into(),
+                })
+            },
+            |_, _| {},
+        );
+        let error = result.expect_err("the part is not made");
+        assert!(error.to_string().contains("no memory left"), "{error}");
+        assert!(error.to_string().contains("/3D/a.model"), "{error}");
+    }
+
+    #[test]
+    fn a_full_disk_stops_the_write_with_an_error_while_a_part_is_written() {
+        let package = package_with_deferred_parts();
+        let mut whole = ProbeWriter::unlimited();
+        package
+            .write_deferring_to(&mut whole, bytes_of, |_, _| {})
+            .expect("the package writes");
+        let size = whole.len.get();
+        for capacity in (0..size).step_by(61) {
+            let result = package.write_deferring_to(
+                ProbeWriter::with_capacity(capacity),
+                bytes_of,
+                |_, _| {},
+            );
+            assert!(result.is_err(), "{capacity} of {size} bytes");
+        }
+    }
+
+    /// Past 4 GiB the archive needs the 64-bit records, which the zip layer
+    /// must add by itself. Takes minutes: run with `--release --ignored`.
+    #[test]
+    #[ignore = "writes more than 4 GiB to a temporary file"]
+    fn an_archive_past_4_gib_reads_back() {
+        const PARTS: usize = 5;
+        let chunk = incompressible_bytes(1 << 30);
+        let mut package = Package::new();
+        package
+            .add_part(
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
+                MODEL_PART_CONTENT_TYPE,
+                b"<model/>".to_vec(),
+            )
+            .expect("unique name");
+        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME.as_str()));
+        for index in 0..PARTS {
+            package
+                .add_deferred_part(
+                    part(&format!("/3D/big-{index}.model")),
+                    MODEL_PART_CONTENT_TYPE,
+                    1,
+                )
+                .expect("unique name");
+        }
+        let mut file = tempfile::tempfile().expect("a temporary file");
+        package
+            .write_deferring_to(&mut file, |_| Ok(chunk.clone()), |_, _| {})
+            .expect("the package writes");
+        assert!(file.metadata().expect("its size").len() > 1 << 32);
+
+        struct Lengths(Vec<usize>);
+        impl PartHandOff for Lengths {
+            fn wants(&self, part: &str) -> bool {
+                part.starts_with("/3D/big-")
+            }
+            fn take(&mut self, part: &str, data: Result<Vec<u8>, PackageReadError>) {
+                self.0.push(data.expect(part).len());
+            }
+        }
+        file.seek(SeekFrom::Start(0)).expect("back to the start");
+        let mut lengths = Lengths(Vec::new());
+        let read = Package::read_handing_off_with_progress(&mut file, &mut lengths, |_| {})
+            .expect("the package reads");
+        assert_eq!(lengths.0, vec![1 << 30; PARTS]);
+        assert_eq!(
+            read.start_part().expect("the start part").as_str(),
+            "/3D/3dmodel.model"
+        );
+    }
+}
+
+mod hand_off_tests {
+    use super::*;
+
+    /// Takes the parts under `/2D/`, keeping what it was given.
+    #[derive(Default)]
+    struct TakeSlices {
+        taken: Vec<(String, Result<Vec<u8>, String>)>,
+    }
+
+    impl PartHandOff for TakeSlices {
+        fn wants(&self, part: &str) -> bool {
+            part.starts_with("/2D/")
+        }
+
+        fn take(&mut self, part: &str, data: Result<Vec<u8>, PackageReadError>) {
+            self.taken
+                .push((part.to_string(), data.map_err(|error| error.to_string())));
+        }
+    }
+
+    /// A model part, then 3 slice parts of `slice_bytes` bytes.
+    fn package_bytes(slice_bytes: usize) -> Vec<u8> {
+        let mut package = Package::new();
+        package
+            .add_part(
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
+                MODEL_PART_CONTENT_TYPE,
+                b"<model/>".to_vec(),
+            )
+            .expect("unique name");
+        for index in 0..3 {
+            package
+                .add_part(
+                    part(&format!("/2D/s{index}.model")),
+                    MODEL_PART_CONTENT_TYPE,
+                    vec![b'x'; slice_bytes],
+                )
+                .expect("unique name");
+        }
+        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME.as_str()));
+        write_to_bytes(&package)
+    }
+
+    #[test]
+    fn a_part_handed_off_stays_out_of_the_package() {
+        let mut hand_off = TakeSlices::default();
+        let package = Package::read_handing_off_with_progress(
+            Cursor::new(package_bytes(10)),
+            &mut hand_off,
+            |_| {},
+        )
+        .expect("the package reads");
+        let names: Vec<&str> = package.part_names().map(PartName::as_str).collect();
+        assert_eq!(names, ["/3D/3dmodel.model"]);
+        assert_eq!(hand_off.taken.len(), 3);
+        assert_eq!(hand_off.taken[1].0, "/2D/s1.model");
+        assert_eq!(hand_off.taken[1].1, Ok(vec![b'x'; 10]));
+    }
+
+    #[test]
+    fn parts_handed_off_do_not_add_up_to_the_package_ceiling() {
+        let limits = PackageReadLimits {
+            max_part_bytes: 1000,
+            max_total_bytes: 1500,
+        };
+        let bytes = package_bytes(800);
+        assert!(Package::read_from_with_limits(Cursor::new(&bytes), limits).is_err());
+
+        let mut hand_off = TakeSlices::default();
+        Package::read_handing_off_with_limits(Cursor::new(&bytes), limits, &mut hand_off)
+            .expect("each part is within its ceiling");
+        assert!(hand_off.taken.iter().all(|(_, data)| data.is_ok()));
+    }
+
+    #[test]
+    fn a_part_past_its_ceiling_is_reported_and_the_package_still_opens() {
+        let limits = PackageReadLimits {
+            max_part_bytes: 700,
+            max_total_bytes: 2000,
+        };
+        let mut hand_off = TakeSlices::default();
+        let package = Package::read_handing_off_with_limits(
+            Cursor::new(package_bytes(800)),
+            limits,
+            &mut hand_off,
+        )
+        .expect("a part handed off does not stop the read");
+        assert_eq!(package.part_names().count(), 1);
+        assert_eq!(hand_off.taken.len(), 3);
+        for (_, data) in &hand_off.taken {
+            let error = data.as_ref().expect_err("the part is too large");
+            assert!(error.contains("700"), "{error}");
+        }
+    }
+
+    #[test]
+    fn the_progress_counts_the_parts_handed_off() {
+        let mut last = None;
+        Package::read_handing_off_with_progress(
+            Cursor::new(package_bytes(4096)),
+            &mut TakeSlices::default(),
+            |tick| last = Some(tick),
+        )
+        .expect("the package reads");
+        let last = last.expect("a tick");
+        assert_eq!(last.decompressed_bytes, last.total_bytes);
+    }
+
+    #[test]
+    fn the_reader_ceiling_for_a_part_is_public() {
+        assert_eq!(PackageReadLimits::default().max_part_bytes, MAX_PART_BYTES);
     }
 }

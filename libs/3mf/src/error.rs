@@ -221,6 +221,12 @@ pub enum PackageWriteError {
     /// `write_to` also checks the Relationships parts and `[Content_Types].xml`
     /// that it writes.
     DerivablePartNames { base: String, derived: String },
+    /// The bytes of a deferred part could not be made while the package was
+    /// being written.
+    PartSource {
+        part: String,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 impl fmt::Display for PackageWriteError {
@@ -244,6 +250,9 @@ impl fmt::Display for PackageWriteError {
                 f,
                 "part name \"{derived}\" starts with the part name \"{base}\" and a slash, which OPC forbids",
             ),
+            Self::PartSource { part, source } => {
+                write!(f, "could not make part \"{part}\": {source}")
+            }
         }
     }
 }
@@ -253,6 +262,7 @@ impl std::error::Error for PackageWriteError {
         match self {
             Self::Zip(err) => Some(err),
             Self::Io(err) => Some(err),
+            Self::PartSource { source, .. } => Some(source.as_ref()),
             Self::DuplicatePartName { .. }
             | Self::ReservedPartName { .. }
             | Self::DerivablePartNames { .. } => None,
@@ -496,6 +506,11 @@ impl From<quick_xml::encoding::EncodingError> for ModelParseError {
 #[derive(Debug)]
 pub enum ModelWriteError {
     Io(io::Error),
+    /// The XML of 1 model part outgrew the largest part a package reader
+    /// accepts, so the file could not be opened again.
+    PartTooLarge {
+        cap_bytes: u64,
+    },
     /// Slice boundaries must strictly increase, starting above the stack's
     /// zbottom. `index` is the offending slice's position.
     SliceZNotIncreasing {
@@ -549,6 +564,10 @@ impl fmt::Display for ModelWriteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(err) => write!(f, "could not write model XML: {err}"),
+            Self::PartTooLarge { cap_bytes } => write!(
+                f,
+                "the model needs more than {cap_bytes} bytes of XML, too much for a 3MF file to open again",
+            ),
             Self::SliceZNotIncreasing { stack_id, index } => write!(
                 f,
                 "slice stack {stack_id}: slice {index} does not increase the stack's z",
@@ -597,7 +616,8 @@ impl std::error::Error for ModelWriteError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(err) => Some(err),
-            Self::SliceZNotIncreasing { .. }
+            Self::PartTooLarge { .. }
+            | Self::SliceZNotIncreasing { .. }
             | Self::SliceZTopNotFinite { .. }
             | Self::SliceZBottomNotFinite { .. }
             | Self::PolygonWithoutSegments { .. }
