@@ -8,7 +8,6 @@
 use sc_print_primitives::Mirror;
 
 use super::*;
-use crate::finding::RoleScope;
 use crate::test_support::{FixtureBuilder, HEIGHT_PX, Shape, WIDTH_PX};
 use crate::union_find::RegionRef;
 
@@ -20,7 +19,7 @@ fn one_layer(shapes: &[Shape]) -> LayerRegions {
     for shape in shapes {
         builder = builder.model(0..1, shape.clone());
     }
-    builder.build().regions().layer(0).clone()
+    builder.build().raw_regions().layer(0).clone()
 }
 
 fn pixel(x0: u32, y0: u32) -> Shape {
@@ -75,7 +74,6 @@ fn a_single_pixel_is_one_region() {
     assert_eq!(solid.centroid_px, [10.5, 12.5]);
     assert_eq!(solid.inside_px, [10, 12]);
     assert!(!solid.touches_border);
-    assert_eq!((solid.model_px, solid.support_px), (1, 0));
     assert_eq!(layer.air.len(), 1);
     assert_eq!(layer.air[0].area_px, SCREEN_PX - 1);
 }
@@ -195,18 +193,11 @@ fn overlaps_link_consecutive_layers() {
             pixels: 100
         }]
     );
-    assert_eq!(
-        regions.air_links(1),
-        &[Overlap {
-            lower: 0,
-            upper: 0,
-            pixels: SCREEN_PX - 700
-        }]
-    );
+    // Open air over open air drains whatever lies below it: no link.
+    assert!(regions.air_links(1).is_empty());
     let (lower, upper) = (regions.layer(0), regions.layer(1));
     assert_eq!((lower.solid[0].below_px, lower.solid[0].above_px), (0, 100));
     assert_eq!((upper.solid[0].below_px, upper.solid[0].above_px), (100, 0));
-    assert_eq!(upper.air[0].below_px, SCREEN_PX - 700);
 }
 
 #[test]
@@ -271,47 +262,26 @@ fn a_sealed_cavity_is_its_own_air_group() {
         .build()
         .regions();
     let air = regions.group_air(|_, _| true);
-    assert_eq!(air.len(), 2);
-    let cavity = air.members(1);
+    let enclosed = |r: &RegionRef| !regions.layer(r.layer).air[r.index as usize].touches_border;
+    let cavities: Vec<&[RegionRef]> = air
+        .iter()
+        .filter(|members| members.iter().any(enclosed))
+        .collect();
     assert_eq!(
-        cavity,
-        &[region_ref(1, 1), region_ref(2, 1), region_ref(3, 1)]
-    );
-    let open = air.members(0);
-    assert!(
-        open.iter()
-            .all(|r| regions.layer(r.layer).air[r.index as usize].touches_border)
-    );
-}
-
-#[test]
-fn model_and_support_merge_with_their_role_counts() {
-    let regions = FixtureBuilder::new(1)
-        .model(0..1, Shape::rect(10.0, 10.0, 30.0, 20.0))
-        .support(0..1, Shape::rect(25.0, 10.0, 40.0, 20.0))
-        .build()
-        .regions();
-    let layer = regions.layer(0);
-    assert_eq!(layer.solid.len(), 1);
-    let region = layer.solid[0];
-    assert_eq!(region.area_px, 300);
-    assert_eq!((region.model_px, region.support_px), (200, 150));
-    assert_eq!(
-        RoleScope::from_counts(region.model_px, region.support_px),
-        RoleScope::Both
+        cavities,
+        [&[region_ref(1, 1), region_ref(2, 1), region_ref(3, 1)][..]]
     );
 }
 
 #[test]
 fn leaves_of_one_role_rasterise_as_a_union() {
     let regions = FixtureBuilder::new(1)
-        .shape("A", Role::Model, 0..1, Shape::rect(10.0, 10.0, 30.0, 20.0))
-        .shape("B", Role::Model, 0..1, Shape::rect(20.0, 10.0, 40.0, 20.0))
+        .shape("A", 0..1, Shape::rect(10.0, 10.0, 30.0, 20.0))
+        .shape("B", 0..1, Shape::rect(20.0, 10.0, 40.0, 20.0))
         .build()
         .regions();
     let region = regions.layer(0).solid[0];
     assert_eq!(region.area_px, 300);
-    assert_eq!(region.model_px, 300);
 }
 
 #[test]
@@ -331,39 +301,6 @@ fn mirroring_keeps_the_pixels_and_maps_back_to_the_plate() {
     assert!((b_mm.x_mm - 8.0).abs() < 1e-9, "{b_mm:?}");
     assert!((a_mm.y_mm + b_mm.y_mm).abs() < 1e-9);
     assert_eq!(a_mm.z_mm, 0.025);
-}
-
-#[test]
-fn layer_pixels_match_the_plate_regions() {
-    let fixture = FixtureBuilder::new(4)
-        .model(0..4, Shape::frame(10.0, 10.0, 60.0, 50.0, 5.0))
-        .model(1..3, Shape::ring(120.0, 60.0, 20.0, 8.0))
-        .support(0..2, Shape::circle(120.0, 45.0, 3.0))
-        .support(0..4, pixel(150, 100))
-        .build();
-    let regions = fixture.regions();
-    for layer in 0..4 {
-        let pixels = fixture.layer_pixels(layer);
-        let stats = regions.layer(layer);
-        assert_eq!(pixels.solid_count, stats.solid.len());
-        assert_eq!(pixels.air_count, stats.air.len());
-        for (index, region) in stats.solid.iter().enumerate() {
-            let area: u64 = pixels
-                .solid_runs_of(index as u32)
-                .map(|r| u64::from(r.len()))
-                .sum();
-            assert_eq!(area, region.area_px);
-        }
-        for (index, region) in stats.air.iter().enumerate() {
-            let area: u64 = pixels
-                .air_runs_of(index as u32)
-                .map(|r| u64::from(r.len()))
-                .sum();
-            assert_eq!(area, region.area_px);
-        }
-        let total = runs::area_px(&pixels.solid) + runs::area_px(&pixels.air);
-        assert_eq!(total, SCREEN_PX);
-    }
 }
 
 #[test]
@@ -389,22 +326,4 @@ fn links_cross_every_batch_boundary() {
         assert_eq!(regions.layer(layer - 1).solid[0].above_px, 200);
     }
     assert_eq!(regions.group_solid(|_, _| true).len(), 1);
-}
-
-#[test]
-fn a_role_can_be_labelled_on_its_own() {
-    // Two model blocks bridged by a support bar: one solid region, two model
-    // regions.
-    let fixture = FixtureBuilder::new(1)
-        .model(0..1, Shape::rect(10.0, 10.0, 20.0, 20.0))
-        .model(0..1, Shape::rect(30.0, 10.0, 40.0, 20.0))
-        .support(0..1, Shape::rect(15.0, 12.0, 35.0, 14.0))
-        .build();
-    let pixels = fixture.layer_pixels(0);
-    assert_eq!(pixels.solid_count, 1);
-    let (labels, count) = label_runs(&pixels.model, SOLID_CONNECTIVITY);
-    assert_eq!(count, 2);
-    let model = measure_runs(&pixels.model, &labels, count, WIDTH_PX, HEIGHT_PX);
-    let areas: Vec<u64> = model.iter().map(|r| r.area_px).collect();
-    assert_eq!(areas, vec![100, 100]);
 }

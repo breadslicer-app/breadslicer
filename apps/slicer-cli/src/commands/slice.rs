@@ -35,7 +35,9 @@ use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneErr
 use sc_sl1cer::{CancelToken, VERSION, sliceable_leaves};
 use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
-use crate::commands::df_supports::{add_df_supports, lift_scene, restore_df_supports};
+use crate::commands::df_supports::{
+    SupportSet, add_df_supports, lift_scene, restore_df_supports,
+};
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings, show_zero_area_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
 use crate::config::cmd_options::PlateOptions;
@@ -63,6 +65,8 @@ pub(crate) struct SlicedScene {
     pub scene: Scene,
     /// The per-leaf contour stacks and the engine profile they were cut with.
     pub plate: SlicedPlate,
+    /// The supports known as data, for the review.
+    pub sets: Vec<SupportSet>,
 }
 
 pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()> {
@@ -101,7 +105,8 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         eprintln!("warning: {issue}");
     }
 
-    let SlicedScene { scene, plate } = load_and_slice(&source_path, &printer, &material, options)?;
+    let SlicedScene { scene, plate, .. } =
+        load_and_slice(&source_path, &printer, &material, options)?;
     report_plate_overflow(
         &scene,
         &printer.hardware.build_volume(),
@@ -182,6 +187,7 @@ pub(crate) fn load_and_slice(
 
     // A project's placement is part of its saved content, so only a mesh is
     // placed on the plate.
+    let mut sets = Vec::new();
     let scene = match content {
         LoadedContent::Mesh(mut scene) => {
             if options.repair {
@@ -204,7 +210,7 @@ pub(crate) fn load_and_slice(
             supports,
             ..
         }) => {
-            restore_df_supports(&mut scene, supports, &mut std::io::stderr());
+            sets = restore_df_supports(&mut scene, supports, &mut std::io::stderr());
             if options.repair {
                 repair_scene(&mut scene, &mut std::io::stderr());
             }
@@ -216,7 +222,7 @@ pub(crate) fn load_and_slice(
         let layer_height_mm = options.layer_height.map_or(0.05, PositiveFiniteMm::value);
         let pitch = printer.hardware.pixel_size_microns();
         let pitch_mm = [pitch.x.value() / 1000.0, pitch.y.value() / 1000.0];
-        add_df_supports(&mut scene, layer_height_mm, pitch_mm)?;
+        sets.extend(add_df_supports(&mut scene, layer_height_mm, pitch_mm)?);
     }
     let params = SlicingParams {
         layer_height_request: options.layer_height,
@@ -243,7 +249,7 @@ pub(crate) fn load_and_slice(
         Err(SlicePlateError::Engine(other)) => return Err(other.into()),
     };
 
-    Ok(SlicedScene { scene, plate })
+    Ok(SlicedScene { scene, plate, sets })
 }
 
 /// The scene's support leaves, told apart by their name. The scale

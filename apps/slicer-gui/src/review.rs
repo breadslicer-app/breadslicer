@@ -4,34 +4,42 @@
  */
 
 //! The pre-flight review of a slice (#90), run on the slice worker right
-//! after the engine finishes and before the per-leaf stacks are merged:
-//! `sc_review` reads every leaf's contours with its role, model or support.
+//! after the engine finishes and before the per-leaf stacks are merged.
+//!
+//! `sc_review` reads the model leaves' contours. Supports made here enter as
+//! data, what the graph knows of their tips (#432): their geometry is never
+//! read, so the review's cost grows with the model and not with them. A
+//! support leaf no session drew has no such data, and is reviewed as a model.
 //!
 //! Cavities the user marked to fill (#132) arrive as one more stack, cut on
 //! the slice's schedule ([`sc_review::fill_stack`]): it is reviewed as model
 //! solid here, and merged with the plate's stacks for the preview and the
 //! printer file, so all three see the same cured pixels.
 //!
-//! Specks marked to erase by Fix All (#156) arrive the same way, as one more
-//! stack ([`erased_stack`]): cut from the model leaves and the fills, it
-//! cancels them inside the specks' pixels when merged with them, so the
-//! review, the preview and the printer file all see the specks gone. The
-//! model meshes are not touched.
+//! The review gives back what it took off the layers by itself, stray pixels
+//! and debris (#432): [`erased_stack`], cut from the model leaves and the
+//! fills, cancels them inside those pixels when merged with them, so the
+//! preview and the printer file see them gone on this same slice. The model
+//! meshes are not touched.
 //!
 //! A review never fails the slice. An input the review refuses, or a panic
 //! inside a check, becomes [`ReviewOutcome::Failed`], and the slice lands as
 //! usual.
 
+use std::ops::Range;
 use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
-use sc_geom::df_supports::{is_support_mesh_name, recommended_lift_mm};
+use sc_geom::df_supports::{SupportContact, recommended_lift_mm};
+use sc_print_glue::SlicedPlate;
 use sc_review::{
-    CavityFill, Finding, ReviewInput, ReviewLeaf, ReviewOptions, Role, erase_stack, review_with,
+    CavityFill, Finding, Island, ReviewInput, ReviewLeaf, ReviewOptions, SweepWatch, TipCone,
+    erase_stack, review_with,
 };
-use sc_sl1cer::LeafSlices;
-use sc_sl1cer::contour::ContourStack;
+use sc_scene::NodeId;
+use sc_sl1cer::contour::{ContourLayer, ContourStack};
 use sc_sl1cer::profile::{LayerSchedule, SliceProfile};
+use sc_sl1cer::{CancelToken, LeafSlices};
 
 use crate::mesh_loader::panic_message;
 
@@ -45,100 +53,187 @@ pub(crate) enum ReviewOutcome {
         /// The pixels of the cavities offered a fill, by the index their
         /// fix names.
         fills: Vec<CavityFill>,
-        /// The pixels that erase each floating speck, by the index its fix
-        /// names (#156).
-        erasures: Vec<CavityFill>,
-        /// The pixels that thicken each thin model feature, by the index
-        /// its fix names (#156).
-        thickenings: Vec<CavityFill>,
-        /// The pixels that join each island to the model just below it, by
-        /// the index its fix names (#235).
-        joins: Vec<CavityFill>,
-        /// How long the review took, layer regions included.
+        /// The pixels the review takes off the layers (#432).
+        erased: CavityFill,
+        /// Every island, as a placement of supports needs it (#437).
+        islands: Vec<Island>,
+        /// How long the review took, the sweep included.
         took: Duration,
     },
+    /// Cancel stopped it: the run is cancelled with it.
+    Cancelled,
     /// The review could not run, for this reason; the slice is unaffected.
     Failed(String),
 }
 
-/// The role of a sliced leaf: generated supports carry their own name, and
-/// every other leaf is a model.
-pub(crate) fn role_of(name: Option<&str>) -> Role {
-    if name.is_some_and(is_support_mesh_name) {
-        Role::Support
-    } else {
-        Role::Model
-    }
+/// A support leaf a session drew and where its supports touch the model: all
+/// the review reads of them.
+#[derive(Clone, Debug)]
+pub(crate) struct SupportSet {
+    pub(crate) leaf: NodeId,
+    pub(crate) contacts: Vec<SupportContact>,
 }
 
-/// Every sliced leaf with its role, in the engine's order.
-pub(crate) fn review_leaves(leaves: &[LeafSlices]) -> Vec<ReviewLeaf<'_>> {
+/// The leaves the review reads: every sliced leaf but those `sets` know as
+/// data, in the engine's order.
+pub(crate) fn review_leaves<'l>(
+    leaves: &'l [LeafSlices],
+    sets: &[SupportSet],
+) -> Vec<ReviewLeaf<'l>> {
     leaves
         .iter()
-        .map(|slices| ReviewLeaf::from_slices(slices, role_of(slices.leaf_name())))
+        .filter(|slices| !sets.iter().any(|set| set.leaf == slices.leaf()))
+        .map(ReviewLeaf::from_slices)
         .collect()
 }
 
-/// The stack that erases `erasures` (#156) from the model leaves of
-/// `leaves` and from `filled`, all cut on `schedule`; `None` when nothing is
-/// erased. Supports are never erased: a new support may run through where
-/// a speck was.
-pub(crate) fn erased_stack<'e>(
-    leaves: &[LeafSlices],
-    filled: Option<&ContourStack>,
-    erasures: impl IntoIterator<Item = &'e CavityFill>,
-    schedule: &LayerSchedule,
-) -> Option<ContourStack> {
-    let models: Vec<&ContourStack> = leaves
-        .iter()
-        .filter(|slices| role_of(slices.leaf_name()) == Role::Model)
-        .map(LeafSlices::stack)
-        .chain(filled)
-        .collect();
-    erase_stack(erasures, &models, schedule)
+/// The tips of `sets`, each point where `place` says its leaf's point lands.
+fn support_tips(
+    sets: &[SupportSet],
+    place: impl Fn(NodeId, [f64; 3]) -> [f64; 3] + Copy,
+) -> Vec<TipCone> {
+    sets.iter()
+        .flat_map(|set| {
+            let at = move |point| place(set.leaf, point);
+            set.contacts.iter().flat_map(move |contact| {
+                TipCone::stretches(
+                    at(contact.tip),
+                    contact.tip_radius_mm,
+                    contact.neck.map(at),
+                    at(contact.socket),
+                    contact.socket_radius_mm,
+                )
+            })
+        })
+        .collect()
 }
 
-/// Reviews the leaves of one slicing run, cut with `profile`: its layer
-/// schedule, its screen and its maximum height. `filled` is the stack of the
-/// cavities filled on this slice, and `erased` the one that erases the
-/// specks ([`erased_stack`]), both reviewed as model. The supports stand on
-/// a raft whose top is `raft_top_mm` above the plate, or on none (#131).
-pub(crate) fn review_slices(
+/// The layers the support leaves of `sets` have contours on. It looks only
+/// at whether a layer has any.
+fn support_layers(leaves: &[LeafSlices], sets: &[SupportSet]) -> Range<usize> {
+    leaves
+        .iter()
+        .filter(|slices| sets.iter().any(|set| set.leaf == slices.leaf()))
+        .filter_map(|slices| {
+            let lit = |layer: &ContourLayer| !layer.polygons().is_empty();
+            let layers = slices.stack().layers();
+            Some((layers.iter().position(lit)?, layers.iter().rposition(lit)?))
+        })
+        .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
+        .map_or(0..0, |(first, last)| first..last + 1)
+}
+
+/// The stack that takes `erased` off the leaves `sets` does not know as data
+/// and off `filled`, all cut on `schedule`; `None` when nothing is erased.
+/// Supports made here are never erased: what is erased is the model's.
+pub(crate) fn erased_stack(
     leaves: &[LeafSlices],
+    sets: &[SupportSet],
     filled: Option<&ContourStack>,
-    erased: Option<&ContourStack>,
-    profile: &SliceProfile,
+    erased: &CavityFill,
+    schedule: &LayerSchedule,
+) -> Option<ContourStack> {
+    let models: Vec<&ContourStack> = review_leaves(leaves, sets)
+        .iter()
+        .map(|leaf| leaf.stack)
+        .chain(filled)
+        .collect();
+    erase_stack([erased], &models, schedule)
+}
+
+/// Reviews `plate`: its models, with `filled`, the stack of the cavities
+/// filled on this slice, as model; and what is known of its supports as
+/// data, standing on a raft whose top is `raft_top_mm` above the plate, or
+/// on none (#131). `on_layer` hears every layer swept, and `cancel` stops it.
+pub(crate) fn review_slices(
+    plate: &SlicedPlate,
+    filled: Option<&ContourStack>,
+    sets: &[SupportSet],
     raft_top_mm: Option<f64>,
+    cancel: &CancelToken,
+    on_layer: &(dyn Fn(usize) + Sync),
+) -> ReviewOutcome {
+    let supports = KnownSupports {
+        sets,
+        tips: support_tips(sets, |leaf, point| plate.compensated_point_mm(leaf, point)),
+        box_mm: plate.support_box_mm(),
+    };
+    let watch = SweepWatch { cancel, on_layer };
+    review_stacks(
+        plate.leaves(),
+        plate.profile(),
+        filled,
+        &supports,
+        raft_top_mm,
+        watch,
+    )
+}
+
+/// What the review reads of the supports made here.
+struct KnownSupports<'s> {
+    sets: &'s [SupportSet],
+    tips: Vec<TipCone>,
+    box_mm: Option<[f64; 5]>,
+}
+
+/// Reviews `leaves`, cut with `profile`: its layer schedule, its screen and
+/// its maximum height.
+fn review_stacks(
+    leaves: &[LeafSlices],
+    profile: &SliceProfile,
+    filled: Option<&ContourStack>,
+    supports: &KnownSupports<'_>,
+    raft_top_mm: Option<f64>,
+    watch: SweepWatch<'_>,
 ) -> ReviewOutcome {
     guarded(|| {
-        let mut leaves = review_leaves(leaves);
+        let mut reviewed = review_leaves(leaves, supports.sets);
         if let Some(stack) = filled {
-            leaves.push(ReviewLeaf::new(Some(FILLED_LEAF), Role::Model, stack));
+            reviewed.push(ReviewLeaf::new(Some(FILLED_LEAF), stack));
         }
-        if let Some(stack) = erased {
-            leaves.push(ReviewLeaf::new(Some(ERASED_LEAF), Role::Model, stack));
-        }
-        let input = ReviewInput::from_profile(leaves, profile)
+        let input = ReviewInput::from_profile(reviewed, profile)
             .map_err(|err| err.to_string())?
             .with_raft_top_mm(raft_top_mm)
-            .with_support_lift_mm(Some(recommended_lift_mm(None)));
-        let report = review_with(&input, &ReviewOptions::default());
-        Ok(ReviewOutcome::Reviewed {
-            findings: report.findings,
-            fills: report.fills,
-            erasures: report.erasures,
-            thickenings: report.thickenings,
-            joins: report.joins,
-            took: report.timings.total,
+            .with_support_lift_mm(Some(recommended_lift_mm(None)))
+            .with_tips(supports.tips.clone())
+            .with_support_extent(support_layers(leaves, supports.sets), supports.box_mm);
+        Ok(match review_with(&input, &ReviewOptions::default(), watch) {
+            None => ReviewOutcome::Cancelled,
+            Some(report) => ReviewOutcome::Reviewed {
+                findings: report.findings,
+                fills: report.fills,
+                erased: report.erased,
+                islands: report.islands,
+                took: report.timings.total,
+            },
         })
     })
 }
 
+/// [`review_stacks`] for a test that slices with its own profile, nobody
+/// watching, the supports where `sets` says.
+#[cfg(test)]
+pub(crate) fn review_for_test(
+    leaves: &[LeafSlices],
+    filled: Option<&ContourStack>,
+    profile: &SliceProfile,
+    sets: &[SupportSet],
+) -> ReviewOutcome {
+    let cancel = CancelToken::new();
+    let watch = SweepWatch {
+        cancel: &cancel,
+        on_layer: &|_| {},
+    };
+    let supports = KnownSupports {
+        sets,
+        tips: support_tips(sets, |_, point| point),
+        box_mm: None,
+    };
+    review_stacks(leaves, profile, filled, &supports, None, watch)
+}
+
 /// The name of the filled cavities' leaf in the review.
 const FILLED_LEAF: &str = "Filled cavities";
-
-/// The name of the erased specks' leaf in the review.
-const ERASED_LEAF: &str = "Erased specks";
 
 /// Runs `review`, turning its error or its panic into
 /// [`ReviewOutcome::Failed`].
@@ -212,40 +307,76 @@ mod review_tests {
         scene
     }
 
-    #[test]
-    fn support_names_are_supports_and_the_rest_models() {
-        assert_eq!(role_of(Some("Supports")), Role::Support);
-        assert_eq!(role_of(Some("Supports (DragonFruit)")), Role::Support);
-        assert_eq!(role_of(Some("Wolf")), Role::Model);
-        assert_eq!(role_of(Some("supports")), Role::Model);
-        assert_eq!(role_of(None), Role::Model);
+    /// The review of `leaves` with no support known as data.
+    fn review_plain(
+        leaves: &[LeafSlices],
+        filled: Option<&ContourStack>,
+        profile: &SliceProfile,
+    ) -> ReviewOutcome {
+        review_for_test(leaves, filled, profile, &[])
     }
 
     #[test]
-    fn every_sliced_leaf_is_reviewed_with_its_role() {
+    fn supports_known_as_data_are_left_out_and_the_rest_are_models() {
         let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
-        let reviewed = review_leaves(&leaves);
-        let roles: Vec<(Option<&str>, Role)> = reviewed.iter().map(|l| (l.name, l.role)).collect();
-        assert_eq!(
-            roles,
-            [
-                (Some("Wolf"), Role::Model),
-                (Some("Supports"), Role::Support)
-            ]
-        );
-        for (leaf, slices) in reviewed.iter().zip(&leaves) {
+        let all = review_leaves(&leaves, &[]);
+        assert_eq!(all.len(), 2);
+        for (leaf, slices) in all.iter().zip(&leaves) {
             assert!(std::ptr::eq(leaf.stack, slices.stack()));
         }
+        let sets = [SupportSet {
+            leaf: leaves[1].leaf(),
+            contacts: Vec::new(),
+        }];
+        let models = review_leaves(&leaves, &sets);
+        assert_eq!(models.len(), 1);
+        assert!(std::ptr::eq(models[0].stack, leaves[0].stack()));
+        assert_eq!(support_layers(&leaves, &sets), 0..4);
+    }
+
+    #[test]
+    fn a_tripped_token_cancels_the_review() {
+        let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let watch = SweepWatch {
+            cancel: &cancel,
+            on_layer: &|_| {},
+        };
+        let supports = KnownSupports {
+            sets: &[],
+            tips: Vec::new(),
+            box_mm: None,
+        };
+        let outcome = review_stacks(&leaves, &profile(4), None, &supports, None, watch);
+        assert_eq!(outcome, ReviewOutcome::Cancelled);
+    }
+
+    #[test]
+    fn what_the_review_erases_leaves_the_plate_it_slices() {
+        // A floating 1 mm cube of 1 layer of 0.25 mm: debris.
+        let mut scene = Scene::new();
+        add_cube(&mut scene, "Wolf", [0.0, 0.0, 0.0]);
+        add_cube(&mut scene, "Speck", [4.0, 0.0, 1.5]);
+        let profile = profile(12);
+        let leaves = slice_scene(&scene, &profile).expect("the scene slices");
+        let ReviewOutcome::Reviewed { erased, .. } = review_plain(&leaves, None, &profile) else {
+            panic!("the review failed");
+        };
+        // The speck is 4 layers: an island, so nothing is erased here. A
+        // pixel-thin sliver of it would be: the stack cancels what it names.
+        assert!(erased.is_empty(), "{erased:?}");
+        assert!(erased_stack(&leaves, &[], None, &erased, profile.layer_schedule()).is_none());
     }
 
     #[test]
     fn a_plate_standing_on_the_build_plate_reviews_clean() {
         let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
-        match review_slices(&leaves, None, None, &profile(4), None) {
+        match review_plain(&leaves, None, &profile(4)) {
             ReviewOutcome::Reviewed { findings, .. } => {
                 assert!(findings.is_empty(), "two cubes on the plate: {findings:?}")
             }
-            ReviewOutcome::Failed(why) => panic!("the review failed: {why}"),
+            other => panic!("the review failed: {other:?}"),
         }
     }
 
@@ -256,7 +387,7 @@ mod review_tests {
         add_cube(&mut scene, "Floating", [4.0, 0.0, 2.0]);
         let leaves = slice_scene(&scene, &profile(12)).expect("the scene slices");
         let ReviewOutcome::Reviewed { findings, .. } =
-            review_slices(&leaves, None, None, &profile(12), None)
+            review_plain(&leaves, None, &profile(12))
         else {
             panic!("the review failed");
         };
@@ -271,7 +402,7 @@ mod review_tests {
     #[test]
     fn stacks_that_do_not_fit_the_profile_fail_the_review_only() {
         let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
-        let outcome = review_slices(&leaves, None, None, &profile(8), None);
+        let outcome = review_plain(&leaves, None, &profile(8));
         let ReviewOutcome::Failed(why) = outcome else {
             panic!("a 4-layer slice reviewed on 8 layers: {outcome:?}");
         };
@@ -355,7 +486,7 @@ mod review_tests {
         let leaves = slice_scene(&hollow_cube(6.0, 2.0), &profile).expect("the scene slices");
         let ReviewOutcome::Reviewed {
             findings, fills, ..
-        } = review_slices(&leaves, None, None, &profile, None)
+        } = review_plain(&leaves, None, &profile)
         else {
             panic!("the review failed");
         };
@@ -373,7 +504,7 @@ mod review_tests {
 
         // Reviewed with the fill, the trap is gone.
         let ReviewOutcome::Reviewed { findings, .. } =
-            review_slices(&leaves, Some(&filled), None, &profile, None)
+            review_plain(&leaves, Some(&filled), &profile)
         else {
             panic!("the review failed");
         };

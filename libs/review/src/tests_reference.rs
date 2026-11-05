@@ -23,7 +23,7 @@ use sc_sl1cer::raster::rle::{LayerRaster, RleRun};
 
 use super::*;
 use crate::input::ReviewLeaf;
-use crate::test_support::{Fixture, FixtureBuilder, Shape};
+use crate::test_support::{Fixture, FixtureBuilder, RAW, Shape};
 use crate::union_find::RegionRef;
 
 /// Screen of the random plates: odd sizes, so nothing lines up by chance.
@@ -187,7 +187,7 @@ fn build(plate: &[DrawnLayer]) -> Fixture {
             builder = builder.model(k..=k, drawn.shape());
         }
         for drawn in &layer.support {
-            builder = builder.support(k..=k, drawn.shape());
+            builder = builder.shape("Second", k..=k, drawn.shape());
         }
     }
     builder.build()
@@ -266,8 +266,7 @@ fn check_regions(
     regions: &[Region],
     labels: &[u32],
     count: usize,
-    model: Option<&[bool]>,
-    support: Option<&[bool]>,
+    linked: bool,
     below: Option<&[bool]>,
     above: Option<&[bool]>,
 ) {
@@ -298,10 +297,10 @@ fn check_regions(
         let count_in = |mask: Option<&[bool]>| {
             mask.map_or(0, |m| pixels.iter().filter(|&&i| m[i]).count() as u64)
         };
-        assert_eq!(region.model_px, count_in(model), "{what} {r}: model");
-        assert_eq!(region.support_px, count_in(support), "{what} {r}: support");
-        assert_eq!(region.below_px, count_in(below), "{what} {r}: below");
-        assert_eq!(region.above_px, count_in(above), "{what} {r}: above");
+        if linked {
+            assert_eq!(region.below_px, count_in(below), "{what} {r}: below");
+            assert_eq!(region.above_px, count_in(above), "{what} {r}: above");
+        }
         let [ix, iy] = region.inside_px;
         let inside = (iy * W + ix) as usize;
         assert_eq!(labels[inside], r as u32, "{what} {r}: inside pixel");
@@ -438,14 +437,14 @@ fn compute_with_threads(input: &ReviewInput<'_>, threads: usize) -> PlateRegions
         .num_threads(threads)
         .build()
         .expect("a thread pool")
-        .install(|| PlateRegions::compute(input))
+        .install(|| PlateRegions::compute(input, &RAW))
 }
 
 fn check_plate(seed: u64, layers: usize) {
     let plate = random_plate(seed, layers);
     let fixture = build(&plate);
     let input = fixture.input();
-    // One thread: batches of 8 layers, so the links cross batch boundaries.
+    // One thread, then others: chunks of other sizes.
     let regions = compute_with_threads(&input, 1);
     let bitmaps: Vec<Bitmaps> = plate.iter().map(Bitmaps::paint).collect();
     let solids: Vec<Vec<bool>> = bitmaps.iter().map(Bitmaps::solid).collect();
@@ -468,8 +467,7 @@ fn check_plate(seed: u64, layers: usize) {
             &layer.solid,
             &solid_labels[k].0,
             solid_labels[k].1,
-            Some(&bitmaps[k].model),
-            Some(&bitmaps[k].support),
+            true,
             below(&solids).as_deref(),
             above(&solids).as_deref(),
         );
@@ -478,10 +476,9 @@ fn check_plate(seed: u64, layers: usize) {
             &layer.air,
             &air_labels[k].0,
             air_labels[k].1,
+            false,
             None,
             None,
-            below(&airs).as_deref(),
-            above(&airs).as_deref(),
         );
         if k == 0 {
             assert!(regions.solid_links(0).is_empty());
@@ -492,20 +489,23 @@ fn check_plate(seed: u64, layers: usize) {
                 reference_links(&solid_labels[k - 1].0, &solid_labels[k].0).as_slice(),
                 "{what}: solid links"
             );
-            assert_eq!(
-                regions.air_links(k),
-                reference_links(&air_labels[k - 1].0, &air_labels[k].0).as_slice(),
-                "{what}: air links"
-            );
+            // Only links with an enclosed region are kept.
+            let enclosed = |layer: usize, index: u32| {
+                !regions.layer(layer).air[index as usize].touches_border
+            };
+            let mut links = reference_links(&air_labels[k - 1].0, &air_labels[k].0);
+            links.retain(|link| enclosed(k - 1, link.lower) || enclosed(k, link.upper));
+            assert_eq!(regions.air_links(k), links.as_slice(), "{what}: air links");
         }
         // The per-layer pixels give the same regions, without the links.
         let mut alone = regions.layer(k).clone();
+        alone.starts.clear();
         for region in alone.solid.iter_mut().chain(alone.air.iter_mut()) {
             region.below_px = 0;
             region.above_px = 0;
         }
         assert_eq!(
-            fixture.layer_pixels(k).regions(W, H),
+            fixture.raw_pixels(k).regions(W, H),
             alone,
             "{what}: pixels"
         );
@@ -519,15 +519,6 @@ fn check_plate(seed: u64, layers: usize) {
         &labels,
         &components_3d(&solids, true),
     );
-    let air_groups = regions.group_air(|_, _| true);
-    let labels: Vec<Vec<u32>> = air_labels.iter().map(|(l, _)| l.clone()).collect();
-    check_groups(
-        &format!("seed {seed} air"),
-        &air_groups,
-        &labels,
-        &components_3d(&airs, false),
-    );
-
     // The same plate on other thread counts (other batch sizes).
     for threads in [3, 8] {
         let other = compute_with_threads(&input, threads);
@@ -660,14 +651,14 @@ fn focus_lands_on_the_part_under_every_mirror_with_non_square_pixels() {
             Mirror { x: mx, y: my },
         );
         let input = ReviewInput::new(
-            vec![ReviewLeaf::new(None, Role::Model, &stack)],
+            vec![ReviewLeaf::new(None, &stack)],
             &schedule,
             map,
             mm(5.0),
         )
         .unwrap();
         assert_eq!(input.pixel_size_mm(), [0.2, 0.1]);
-        let regions = PlateRegions::compute(&input);
+        let regions = PlateRegions::compute(&input, &RAW);
         let region = regions.layer(1).solid[0];
         assert_eq!(region.area_px, 10 * 20, "mirror {mx} {my}");
         assert_eq!(
@@ -712,15 +703,16 @@ fn a_cup_open_at_the_last_layer_never_touches_the_screen_edge() {
         .model(1..4, Shape::frame(10.0, 10.0, 30.0, 30.0, 2.0))
         .build()
         .regions();
+    let enclosed = |r: &RegionRef| !regions.layer(r.layer).air[r.index as usize].touches_border;
     let air = regions.group_air(|_, _| true);
-    assert_eq!(air.len(), 2);
-    let cup = air.members(1);
-    assert!(
-        cup.iter()
-            .all(|r| !regions.layer(r.layer).air[r.index as usize].touches_border)
-    );
+    let cups: Vec<&[RegionRef]> = air
+        .iter()
+        .filter(|members| members.iter().any(enclosed))
+        .collect();
+    assert_eq!(cups.len(), 1);
+    assert!(cups[0].iter().all(enclosed));
     assert_eq!(
-        cup.last().map(|r| r.layer),
+        cups[0].last().map(|r| r.layer),
         Some(regions.layers().len() - 1)
     );
 }

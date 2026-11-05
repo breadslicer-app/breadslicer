@@ -2679,7 +2679,8 @@ export component MainWindow inherits Window {
                     horizontal-alignment: center;
                 }
                 Text {
-                    text: root.slice-reviewing ? @tr("SlicePanel" => "Checking the layers...")
+                    text: root.slice-reviewing
+                        ? @tr("SlicePanel" => "Checking layers: {} / {}", root.slice-completed, root.slice-total)
                         : root.slice-total > 0
                         ? @tr("SlicePanel" => "{} / {} layers", root.slice-completed, root.slice-total)
                         : @tr("SlicePanel" => "Preparing...");

@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ReadBreadProjectError, WriteBreadProjectError};
 use crate::messages::ReadProjectWarning;
-use crate::payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
+use crate::payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload, ReviewDecision};
 use crate::read::LoadedProject;
 use crate::threemf::payload_part::{PrintSection, ProfilesSection};
 use crate::write::progress::WriteProgress;
@@ -40,6 +40,18 @@ struct SettingsDoc {
     /// The embedded profile documents, in payload order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     embedded: Vec<EmbeddedDoc>,
+    /// The findings of the review the person chose to ignore (#432).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ignored: Vec<IgnoredDoc>,
+}
+
+/// One entry of the `ignored` list.
+#[derive(Debug, Serialize, Deserialize)]
+struct IgnoredDoc {
+    check: String,
+    first_layer: u64,
+    last_layer: u64,
+    focus_um: [i64; 3],
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -90,6 +102,16 @@ fn serialize_settings(
             output_format: payload.output_format.clone(),
         },
         embedded,
+        ignored: payload
+            .review_decisions
+            .iter()
+            .map(|decision| IgnoredDoc {
+                check: decision.check.clone(),
+                first_layer: decision.first_layer,
+                last_layer: decision.last_layer,
+                focus_um: decision.focus_um,
+            })
+            .collect(),
     })
     .map_err(WriteBreadProjectError::Settings)
 }
@@ -156,6 +178,16 @@ fn parse_settings(
         first_layer_height: doc.print.first_layer_height_mm,
         output_format: doc.print.output_format,
         embedded,
+        review_decisions: doc
+            .ignored
+            .into_iter()
+            .map(|entry| ReviewDecision {
+                check: entry.check,
+                first_layer: entry.first_layer,
+                last_layer: entry.last_layer,
+                focus_um: entry.focus_um,
+            })
+            .collect(),
     }))
 }
 

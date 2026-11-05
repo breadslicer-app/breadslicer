@@ -20,11 +20,11 @@
 //! use sc_review::test_support::{FixtureBuilder, Shape};
 //!
 //! // 10 layers: a block on the plate, a ring that starts at layer 5 held by
-//! // a support pillar below it.
+//! // a support tip under it.
 //! let fixture = FixtureBuilder::new(10)
 //!     .model(0..10, Shape::rect(20.0, 20.0, 60.0, 50.0))
 //!     .model(5..10, Shape::ring(130.0, 60.0, 20.0, 12.0))
-//!     .support(0..5, Shape::circle(130.0, 44.0, 3.0))
+//!     .tip(130.0, 44.0, 5, 3.0)
 //!     .build();
 //! let findings = fixture.review();
 //! ```
@@ -42,9 +42,10 @@ use sc_sl1cer::profile::LayerSchedule;
 use sc_sl1cer::raster::pixel_map::PixelMap;
 
 use crate::finding::{Finding, sort_findings};
-use crate::input::{ReviewInput, ReviewLeaf, Role, pixel_to_plate};
-use crate::regions::{LayerPixels, PlateRegions};
-use crate::runner::{ReviewContext, review};
+use crate::input::{ReviewInput, ReviewLeaf, pixel_to_plate};
+use crate::regions::{LayerPixels, PlateRegions, SweepOptions};
+use crate::runner::{ReviewContext, ReviewOptions, ReviewReport, check_regions, review};
+use crate::tips::TipCone;
 
 /// Screen width of the default fake printer.
 pub const WIDTH_PX: u32 = 200;
@@ -56,6 +57,13 @@ pub const PIXEL_MM: f64 = 0.1;
 pub const LAYER_HEIGHT_MM: f64 = 0.05;
 /// Maximum height of the default fake printer.
 pub const MAX_Z_MM: f64 = 10.0;
+
+/// A sweep that keeps every pixel, of solid and of air.
+pub const RAW: SweepOptions = SweepOptions {
+    min_wall_px: 1,
+    drain_width_px: 1,
+    min_link_mm2: crate::regions::DEFAULT_MIN_LINK_MM2,
+};
 
 /// Segments of the polygons that approximate circles.
 const CIRCLE_SEGMENTS: usize = 48;
@@ -147,9 +155,18 @@ fn oriented_ring(points: &[[f64; 2]], pixel_map: &PixelMap, ccw: bool) -> Closed
 #[derive(Clone, Debug)]
 struct FixtureLeaf {
     name: String,
-    role: Role,
     /// Shapes per layer.
     layers: Vec<Vec<Shape>>,
+}
+
+/// A support tip of a fixture, in raster pixels and layers.
+#[derive(Clone, Copy, Debug)]
+struct FixtureTip {
+    x_px: f64,
+    y_px: f64,
+    /// The layer it reaches into: it stands on every layer below.
+    top_layer: usize,
+    radius_px: f64,
 }
 
 /// Builds a [`Fixture`] layer by layer.
@@ -163,6 +180,8 @@ pub struct FixtureBuilder {
     max_z_mm: f64,
     mirror: Mirror,
     leaves: Vec<FixtureLeaf>,
+    tips: Vec<FixtureTip>,
+    support_layers: std::ops::Range<usize>,
 }
 
 impl FixtureBuilder {
@@ -182,6 +201,8 @@ impl FixtureBuilder {
             max_z_mm: MAX_Z_MM,
             mirror: Mirror::default(),
             leaves: Vec::new(),
+            tips: Vec::new(),
+            support_layers: 0..0,
         }
     }
 
@@ -219,30 +240,37 @@ impl FixtureBuilder {
     /// Adds `shape` on `layers` to the model leaf `"Model"`.
     #[must_use]
     pub fn model(self, layers: impl RangeBounds<usize>, shape: Shape) -> Self {
-        self.shape("Model", Role::Model, layers, shape)
+        self.shape("Model", layers, shape)
     }
 
-    /// Adds `shape` on `layers` to the support leaf `"Supports"`.
+    /// Adds a straight support tip of `radius_px` pixels at `(x_px, y_px)`,
+    /// standing on every layer below `top_layer` and reaching into it.
     #[must_use]
-    pub fn support(self, layers: impl RangeBounds<usize>, shape: Shape) -> Self {
-        self.shape("Supports", Role::Support, layers, shape)
+    pub fn tip(mut self, x_px: f64, y_px: f64, top_layer: usize, radius_px: f64) -> Self {
+        self.tips.push(FixtureTip {
+            x_px,
+            y_px,
+            top_layer,
+            radius_px,
+        });
+        self
     }
 
-    /// Adds `shape` on `layers` to the leaf named `leaf`, created with
-    /// `role` on first use. Leaves keep their order of first use.
+    /// Says that supports made here stand on `layers`.
+    #[must_use]
+    pub fn support_layers(mut self, layers: std::ops::Range<usize>) -> Self {
+        self.support_layers = layers;
+        self
+    }
+
+    /// Adds `shape` on `layers` to the leaf named `leaf`, created on first
+    /// use. Leaves keep their order of first use.
     ///
     /// # Panics
     ///
-    /// When `layers` reaches past the last layer, or `leaf` exists with
-    /// another role.
+    /// When `layers` reaches past the last layer.
     #[must_use]
-    pub fn shape(
-        mut self,
-        leaf: &str,
-        role: Role,
-        layers: impl RangeBounds<usize>,
-        shape: Shape,
-    ) -> Self {
+    pub fn shape(mut self, leaf: &str, layers: impl RangeBounds<usize>, shape: Shape) -> Self {
         let start = match layers.start_bound() {
             Bound::Included(&s) => s,
             Bound::Excluded(&s) => s + 1,
@@ -260,15 +288,12 @@ impl FixtureBuilder {
             None => {
                 self.leaves.push(FixtureLeaf {
                     name: leaf.to_string(),
-                    role,
                     layers: vec![Vec::new(); layer_count],
                 });
                 self.leaves.len() - 1
             }
         };
-        let target = &mut self.leaves[index];
-        assert_eq!(target.role, role, "leaf {leaf} has another role");
-        for layer in &mut target.layers[start..end] {
+        for layer in &mut self.leaves[index].layers[start..end] {
             layer.push(shape.clone());
         }
         self
@@ -308,8 +333,22 @@ impl FixtureBuilder {
                     .collect();
                 FixtureStack {
                     name: leaf.name.clone(),
-                    role: leaf.role,
                     stack: ContourStack::new_unchecked(layers),
+                }
+            })
+            .collect();
+        let tips = self
+            .tips
+            .iter()
+            .map(|tip| {
+                let [x, y] = pixel_to_plate(&pixel_map, [tip.x_px, tip.y_px]);
+                let z = self.layer_height_mm * tip.top_layer as f64;
+                let radius = tip.radius_px * self.pixel_mm;
+                TipCone {
+                    tip_mm: [x, y, z + 0.1 * self.layer_height_mm],
+                    tip_radius_mm: radius,
+                    base_mm: [x, y, 0.0],
+                    base_radius_mm: radius,
                 }
             })
             .collect();
@@ -318,6 +357,8 @@ impl FixtureBuilder {
             schedule,
             pixel_map,
             max_z: mm(self.max_z_mm),
+            tips,
+            support_layers: self.support_layers.clone(),
         }
     }
 }
@@ -325,7 +366,6 @@ impl FixtureBuilder {
 #[derive(Clone, Debug)]
 struct FixtureStack {
     name: String,
-    role: Role,
     stack: ContourStack,
 }
 
@@ -337,18 +377,14 @@ pub struct Fixture {
     schedule: LayerSchedule,
     pixel_map: PixelMap,
     max_z: PositiveFiniteMm,
+    tips: Vec<TipCone>,
+    support_layers: std::ops::Range<usize>,
 }
 
 impl Fixture {
     /// The plate as review input.
     pub fn input(&self) -> ReviewInput<'_> {
-        let leaves = self
-            .leaves
-            .iter()
-            .map(|leaf| ReviewLeaf::new(Some(&leaf.name), leaf.role, &leaf.stack))
-            .collect();
-        ReviewInput::new(leaves, &self.schedule, self.pixel_map, self.max_z)
-            .expect("fixture stacks follow their schedule")
+        self.input_with_all([])
     }
 
     /// The plate as review input, with `extra` as one more leaf: a fill
@@ -361,8 +397,7 @@ impl Fixture {
         self.input_with_all([extra])
     }
 
-    /// The plate as review input, with every leaf of `extra` added: the
-    /// erasures of each role, say.
+    /// The plate as review input, with every leaf of `extra` added.
     ///
     /// # Panics
     ///
@@ -371,10 +406,16 @@ impl Fixture {
         &'a self,
         extra: impl IntoIterator<Item = ReviewLeaf<'a>>,
     ) -> ReviewInput<'a> {
-        let mut leaves = self.input().leaves().to_vec();
-        leaves.extend(extra);
+        let leaves = self
+            .leaves
+            .iter()
+            .map(|leaf| ReviewLeaf::new(Some(&leaf.name), &leaf.stack))
+            .chain(extra)
+            .collect();
         ReviewInput::new(leaves, &self.schedule, self.pixel_map, self.max_z)
-            .expect("the extra leaves follow the schedule")
+            .expect("fixture stacks follow their schedule")
+            .with_tips(self.tips.clone())
+            .with_support_extent(self.support_layers.clone(), None)
     }
 
     /// The layer schedule the plate is cut on.
@@ -382,21 +423,31 @@ impl Fixture {
         &self.schedule
     }
 
-    /// The plate's regions.
+    /// The plate's tables, with the default sweep.
     pub fn regions(&self) -> PlateRegions {
-        PlateRegions::compute(&self.input())
+        PlateRegions::compute(&self.input(), &SweepOptions::default())
     }
 
-    /// The pixels of layer `layer`.
+    /// The pixels of layer `layer`, with the default sweep.
     pub fn layer_pixels(&self, layer: usize) -> LayerPixels {
-        LayerPixels::compute(&self.input(), layer)
+        LayerPixels::compute(&self.input(), layer, &SweepOptions::default())
+    }
+
+    /// The plate's tables as rasterised: nothing cleaned, no air closed.
+    pub fn raw_regions(&self) -> PlateRegions {
+        PlateRegions::compute(&self.input(), &RAW)
+    }
+
+    /// The pixels of layer `layer` as rasterised.
+    pub fn raw_pixels(&self, layer: usize) -> LayerPixels {
+        LayerPixels::compute(&self.input(), layer, &RAW)
     }
 
     /// Runs one check on the plate and returns its findings in listing
-    /// order: `fixture.check(|ctx| islands::run(ctx, &IslandOptions::default()))`.
+    /// order.
     pub fn check(&self, run: impl FnOnce(&ReviewContext<'_>) -> Vec<Finding>) -> Vec<Finding> {
         let input = self.input();
-        let regions = PlateRegions::compute(&input);
+        let regions = PlateRegions::compute(&input, &SweepOptions::default());
         let mut findings = run(&ReviewContext::new(&input, &regions));
         sort_findings(&mut findings);
         findings
@@ -405,6 +456,16 @@ impl Fixture {
     /// Runs the whole review with the default options.
     pub fn review(&self) -> Vec<Finding> {
         review(&self.input())
+    }
+
+    /// The whole report of a review with the default options.
+    pub fn report(&self) -> ReviewReport {
+        let input = self.input();
+        let regions = PlateRegions::compute(&input, &SweepOptions::default());
+        check_regions(
+            &ReviewContext::new(&input, &regions),
+            &ReviewOptions::default(),
+        )
     }
 
     /// Converts a raster point to plate millimetres.

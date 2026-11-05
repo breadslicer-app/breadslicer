@@ -3,70 +3,70 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! The review run: computes the shared [`PlateRegions`] once, runs every
-//! check on them and returns the sorted findings.
+//! The review run: sweeps the layers once, runs every check on the tables
+//! and returns the sorted findings.
 
 use std::time::{Duration, Instant};
 
-use crate::checks::islands::{self, IslandOptions};
+use crate::checks::islands::{self, Island, IslandOptions, Part};
 use crate::checks::output::{self, OutputOptions};
 use crate::checks::raft::{self, RaftOptions};
-use crate::checks::thin::{self, ThinFeatureOptions};
 use crate::checks::traps::{self, TrapOptions};
 use crate::fill::CavityFill;
 use crate::finding::{Finding, sort_findings};
 use crate::input::ReviewInput;
-use crate::regions::PlateRegions;
+use crate::regions::{PlateRegions, SweepOptions, SweepWatch};
 
-/// What every check receives: the input and the regions computed from it.
+/// What every check receives: the input and the tables swept from it.
 #[derive(Clone, Copy, Debug)]
 pub struct ReviewContext<'a> {
     /// The slicing run under review.
     pub input: &'a ReviewInput<'a>,
-    /// Its layers' regions and links.
+    /// Its layers' tables.
     pub regions: &'a PlateRegions,
 }
 
 impl<'a> ReviewContext<'a> {
-    /// Pairs an input with the regions computed from it.
+    /// Pairs an input with the tables swept from it.
     #[inline]
     pub const fn new(input: &'a ReviewInput<'a>, regions: &'a PlateRegions) -> Self {
         Self { input, regions }
     }
+
+    /// Whether nothing is cured on layer `layer`: no model, and no support
+    /// made here stands on it.
+    pub fn layer_is_empty(&self, layer: usize) -> bool {
+        self.regions.layer(layer).is_empty() && !self.input.has_support_on(layer)
+    }
 }
 
-/// The settings of every check. Each check owns its own options type in its
-/// own module.
+/// The settings of the sweep and of every check. Each check owns its own
+/// options type in its own module.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ReviewOptions {
-    /// Islands (#84).
+    /// How the layers are read (#432).
+    pub sweep: SweepOptions,
+    /// Parts and islands (#84, #432).
     pub islands: IslandOptions,
     /// Resin traps and suction cups (#83).
     pub traps: TrapOptions,
-    /// Features thinner than a pixel (#92).
-    pub thin: ThinFeatureOptions,
     /// Output checks (#93).
     pub output: OutputOptions,
     /// Models inside the supports' raft (#131).
     pub raft: RaftOptions,
 }
 
-/// Wall-clock time spent in each part of a review. The checks run in
-/// parallel, so their times overlap and can add up to more than `checks`.
+/// Wall-clock time spent in each part of a review.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReviewTimings {
-    /// Rasterising, labelling and linking the layers.
-    pub regions: Duration,
+    /// The sweep: rasterising, cleaning, labelling and linking the layers.
+    pub sweep: Duration,
     /// The island check.
     pub islands: Duration,
     /// The resin-trap and suction-cup check.
     pub traps: Duration,
-    /// The thin-feature check.
-    pub thin: Duration,
     /// The output checks.
     pub output: Duration,
-    /// All checks together, from the first start to the last end.
-    pub checks: Duration,
     /// The whole review.
     pub total: Duration,
 }
@@ -79,19 +79,13 @@ pub struct ReviewReport {
     /// The pixels of every small trap, the only cavity offered a fill, by
     /// the index its [`SuggestedFix::Fill`](crate::SuggestedFix::Fill) names.
     pub fills: Vec<CavityFill>,
-    /// The pixels that erase every floating speck, by the index its
-    /// [`SuggestedFix::Erase`](crate::SuggestedFix::Erase) names: erased
-    /// with [`erase_stack`](crate::erase_stack).
-    pub erasures: Vec<CavityFill>,
-    /// The pixels that thicken every thin model feature, by the index its
-    /// [`SuggestedFix::Thicken`](crate::SuggestedFix::Thicken) names: cured
-    /// with [`fill_stack`](crate::fill_stack), as fills are.
-    pub thickenings: Vec<CavityFill>,
-    /// The pixels that join each island to the model just below it, by the
-    /// index its [`SuggestedFix::JoinBelow`](crate::SuggestedFix::JoinBelow)
-    /// names (#235): cured with [`fill_stack`](crate::fill_stack), as
-    /// fills are.
-    pub joins: Vec<CavityFill>,
+    /// What leaves the layers: every stray pixel and all the debris.
+    /// [`erase_stack`](crate::erase_stack) takes it off the plate.
+    pub erased: CavityFill,
+    /// Every island found, whether a raft explains it or not.
+    pub islands: Vec<Island>,
+    /// Every part of the plate, lineages included.
+    pub parts: Vec<Part>,
     /// Where the time went.
     pub timings: ReviewTimings,
 }
@@ -99,64 +93,62 @@ pub struct ReviewReport {
 /// Reviews `input` with the default options and returns the findings in
 /// listing order.
 pub fn review(input: &ReviewInput<'_>) -> Vec<Finding> {
-    review_with(input, &ReviewOptions::default()).findings
+    let regions = PlateRegions::compute(input, &SweepOptions::default());
+    check_regions(
+        &ReviewContext::new(input, &regions),
+        &ReviewOptions::default(),
+    )
+    .findings
 }
 
-/// Reviews `input` with `options`.
-pub fn review_with(input: &ReviewInput<'_>, options: &ReviewOptions) -> ReviewReport {
-    let regions = PlateRegions::compute(input);
-    review_regions(&ReviewContext::new(input, &regions), options)
+/// Reviews `input` with `options`, telling `watch` of every layer swept.
+/// `None` when `watch` stopped it.
+pub fn review_with(
+    input: &ReviewInput<'_>,
+    options: &ReviewOptions,
+    watch: SweepWatch<'_>,
+) -> Option<ReviewReport> {
+    let regions = PlateRegions::sweep(input, &options.sweep, watch)?;
+    Some(check_regions(
+        &ReviewContext::new(input, &regions),
+        options,
+    ))
 }
 
-/// Runs every check on regions already computed, for a frontend that keeps
-/// or inspects them. The report's `regions` time is what
-/// [`PlateRegions::compute`] took, and `total` adds the checks to it.
-pub fn review_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> ReviewReport {
+/// Runs every check on tables already swept, for a frontend that keeps or
+/// inspects them. The report's `sweep` time is what the sweep took, and
+/// `total` adds the checks to it.
+pub fn check_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> ReviewReport {
     let started = Instant::now();
-    let (
-        (((islands, joins), islands_time), ((traps, fills), traps_time)),
-        (((thin, thickenings), thin_time), ((output, erasures), output_time)),
-    ) = rayon::join(
-        || {
-            rayon::join(
-                || timed(|| islands::run_with_joins(ctx, &options.islands)),
-                || timed(|| traps::run_with_fills(ctx, &options.traps)),
-            )
-        },
-        || {
-            rayon::join(
-                || timed(|| thin::run_with_thickenings(ctx, &options.thin)),
-                || timed(|| output::run_with_erasures(ctx, &options.output)),
-            )
-        },
+    let ((islands, islands_time), ((traps, fills), traps_time)) = rayon::join(
+        || timed(|| islands::run(ctx, &options.islands, &options.sweep)),
+        || timed(|| traps::run(ctx, &options.traps, &options.sweep)),
     );
+    let (output, output_time) = timed(|| output::run(ctx, &options.output, &options.sweep));
     // A model in the raft explains the islands it starts there (#131).
     let clashes = raft::clashes(ctx, &options.raft);
     let mut findings: Vec<Finding> = islands
+        .findings
         .into_iter()
         .filter(|finding| !raft::covers(&clashes, finding, options.raft.island_margin_mm))
         .collect();
     findings.extend(clashes.into_iter().map(|clash| clash.finding));
     findings.extend(traps);
-    findings.extend(thin);
     findings.extend(output);
     sort_findings(&mut findings);
-    let checks = started.elapsed();
     let timings = ReviewTimings {
-        regions: ctx.regions.elapsed(),
+        sweep: ctx.regions.elapsed(),
         islands: islands_time,
         traps: traps_time,
-        thin: thin_time,
         output: output_time,
-        checks,
-        total: ctx.regions.elapsed() + checks,
+        total: ctx.regions.elapsed() + started.elapsed(),
     };
     ReviewReport {
         findings,
         fills,
-        erasures,
-        thickenings,
-        joins,
+        erased: islands.erased,
+        islands: islands.islands,
+        parts: islands.parts,
         timings,
     }
 }
@@ -169,33 +161,60 @@ fn timed<T>(f: impl FnOnce() -> T) -> (T, Duration) {
 
 #[cfg(test)]
 mod runner_tests {
+    use sc_sl1cer::CancelToken;
+
     use crate::test_support::{FixtureBuilder, Shape};
 
     use super::*;
 
     #[test]
-    fn the_stub_checks_find_nothing() {
+    fn a_plate_on_the_build_plate_finds_nothing() {
         let fixture = FixtureBuilder::new(6)
             .model(0..6, Shape::rect(20.0, 20.0, 60.0, 50.0))
-            .model(3..6, Shape::rect(120.0, 20.0, 140.0, 40.0))
-            .support(0..3, Shape::circle(130.0, 30.0, 4.0))
+            .model(0..6, Shape::rect(120.0, 20.0, 140.0, 40.0))
             .build();
         let input = fixture.input();
-        let report = review_with(&input, &ReviewOptions::default());
+        let report = fixture.report();
         assert!(report.findings.is_empty(), "{:?}", report.findings);
-        assert!(report.timings.total >= report.timings.regions);
+        assert!(report.timings.total >= report.timings.sweep);
         assert!(review(&input).is_empty());
-        let regions = PlateRegions::compute(&input);
-        let kept = review_regions(
-            &ReviewContext::new(&input, &regions),
-            &ReviewOptions::default(),
-        );
-        assert_eq!(kept.findings, report.findings);
     }
 
     #[test]
     fn an_empty_plate_reviews_without_findings() {
         let fixture = FixtureBuilder::new(3).build();
         assert!(review(&fixture.input()).is_empty());
+    }
+
+    #[test]
+    fn a_tripped_token_stops_the_review() {
+        let fixture = FixtureBuilder::new(6)
+            .model(0..6, Shape::rect(20.0, 20.0, 60.0, 50.0))
+            .build();
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let watch = SweepWatch {
+            cancel: &cancel,
+            on_layer: &|_| {},
+        };
+        assert!(review_with(&fixture.input(), &ReviewOptions::default(), watch).is_none());
+    }
+
+    #[test]
+    fn every_layer_is_reported_once() {
+        let fixture = FixtureBuilder::new(40)
+            .model(0..40, Shape::rect(20.0, 20.0, 60.0, 50.0))
+            .build();
+        let cancel = CancelToken::new();
+        let seen = std::sync::Mutex::new(Vec::new());
+        let on_layer = |done: usize| seen.lock().expect("no panic").push(done);
+        let watch = SweepWatch {
+            cancel: &cancel,
+            on_layer: &on_layer,
+        };
+        review_with(&fixture.input(), &ReviewOptions::default(), watch).expect("not cancelled");
+        let mut seen = seen.into_inner().expect("no panic");
+        seen.sort_unstable();
+        assert_eq!(seen, (1..=40).collect::<Vec<_>>());
     }
 }

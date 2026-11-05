@@ -15,14 +15,14 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use sc_geom::df_supports::{
-    DF_SUPPORT_GENERATOR, DF_SUPPORT_MESH_NAME, DfSupportRequest, DfSupportSession,
+    DF_SUPPORT_GENERATOR, DF_SUPPORT_MESH_NAME, DfSupportRequest, DfSupportSession, SupportContact,
     start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_primitives::BuildVolume;
 use sc_project_formats::SupportDocument;
 use sc_scene::Scene;
-use sc_scene::node::{LeafPayload, SceneMetadata};
+use sc_scene::node::{LeafPayload, NodeId, SceneMetadata};
 
 /// Raises the auto-placed `scene` `lift_mm` off the plate, centred as
 /// `place_on_plate` leaves it, to make room for the supports.
@@ -50,12 +50,13 @@ pub(crate) fn df_raft_top_mm() -> Option<f64> {
 /// Draws the supports a `.bread` project kept as data into their empty
 /// leaves. Supports that cannot be rebuilt are reported to `out` and their
 /// leaves removed, so the scene slices without them rather than with an empty
-/// part.
+/// part. Returns what is known of those drawn, for the review.
 pub(crate) fn restore_df_supports(
     scene: &mut Scene,
     documents: Vec<SupportDocument>,
     out: &mut dyn Write,
-) {
+) -> Vec<SupportSet> {
+    let mut sets = Vec::new();
     for document in documents {
         let restored = if document.generator == DF_SUPPORT_GENERATOR {
             DfSupportSession::restore_sets_into(
@@ -64,7 +65,6 @@ pub(crate) fn restore_df_supports(
                 document.version,
                 &document.document,
             )
-            .map(|_| ())
             .map_err(|e| e.to_string())
         } else {
             Err(format!(
@@ -72,12 +72,40 @@ pub(crate) fn restore_df_supports(
                 document.generator
             ))
         };
-        if let Err(why) = restored {
-            let _ = scene.remove_leaf(document.leaf);
-            let _ = writeln!(
-                out,
-                "WARNING: the project's supports could not be rebuilt ({why}); slicing without them"
-            );
+        match restored {
+            Ok(restored) => sets.extend(
+                restored
+                    .into_iter()
+                    .map(|set| SupportSet::of(set.leaf, &set.session)),
+            ),
+            Err(why) => {
+                let _ = scene.remove_leaf(document.leaf);
+                let _ = writeln!(
+                    out,
+                    "WARNING: the project's supports could not be rebuilt ({why}); slicing without them"
+                );
+            }
+        }
+    }
+    sets
+}
+
+/// A support leaf and where its supports touch the model: all the review
+/// reads of them (#432).
+pub(crate) struct SupportSet {
+    pub(crate) leaf: NodeId,
+    pub(crate) contacts: Vec<SupportContact>,
+}
+
+impl SupportSet {
+    fn of(leaf: NodeId, session: &DfSupportSession) -> Self {
+        Self {
+            leaf,
+            contacts: session
+                .pieces()
+                .into_iter()
+                .flat_map(|piece| piece.contacts)
+                .collect(),
         }
     }
 }
@@ -87,12 +115,13 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// Generates supports for every model of `scene`, the island scan banded by
 /// `layer_height_mm`, the contact tips sunk for a printer of `pixel_pitch_mm`
 /// (X, Y), and adds each model's supports as a root leaf. Reports the run on
-/// stderr; a scene that needs no support is left as it is.
+/// stderr; a scene that needs no support is left as it is. Returns what is
+/// known of the supports added, for the review.
 pub(crate) fn add_df_supports(
     scene: &mut Scene,
     layer_height_mm: f64,
     pixel_pitch_mm: [f64; 2],
-) -> Result<()> {
+) -> Result<Vec<SupportSet>> {
     let request = DfSupportRequest {
         layer_height_mm,
         pixel_pitch_mm: Some(pixel_pitch_mm),
@@ -122,7 +151,12 @@ pub(crate) fn add_df_supports(
         outcome.triangles,
         outcome.timings.total.as_secs_f64() * 1e3,
     );
-    for mesh in outcome.sets.into_iter().filter_map(|set| set.mesh) {
+    let mut sets = Vec::new();
+    for (mesh, session) in outcome
+        .sets
+        .into_iter()
+        .filter_map(|set| Some((set.mesh?, set.session)))
+    {
         let meta = Some(SceneMetadata {
             name: Some(DF_SUPPORT_MESH_NAME.to_string()),
             ..Default::default()
@@ -133,6 +167,7 @@ pub(crate) fn add_df_supports(
             LeafPayload::Mesh(Arc::new(mesh)),
         )?;
         scene.add_root(leaf)?;
+        sets.push(SupportSet::of(leaf, &session));
     }
-    Ok(())
+    Ok(sets)
 }

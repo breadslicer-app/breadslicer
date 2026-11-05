@@ -75,20 +75,46 @@ pub(crate) fn is_identity(scale: ScaleCompensation) -> bool {
 }
 
 /// `scene` with every model and its supports scaled by `scale`, about the
-/// model's footprint centre as `supports` pairs them. `None` when `scale`
-/// changes nothing, or when the scene has no sliceable leaves to scale (the
-/// engine then reports why).
+/// model's footprint centre as `supports` pairs them, with the point each
+/// leaf was scaled about. `None` when `scale` changes nothing, or when the
+/// scene has no sliceable leaves to scale (the engine then reports why).
 pub(crate) fn compensated_scene(
     scene: &Scene,
     scale: ScaleCompensation,
     supports: &SupportOwners,
-) -> Option<Scene> {
+) -> Option<(Scene, Vec<(NodeId, [f64; 2])>)> {
     if is_identity(scale) {
         return None;
     }
     let leaves = sliceable_leaves(scene).ok()?;
     let pivots = pivots(scene, &leaves, supports);
-    scaled_about(scene, &leaves, scale_factors(scale), &pivots)
+    let scaled = scaled_about(scene, &leaves, scale_factors(scale), &pivots)?;
+    Some((scaled, leaves.into_iter().zip(pivots).collect()))
+}
+
+/// The box the support leaves of `scene` take: `[min x, min y, max x, max y,
+/// top]` in world millimetres. `None` when it has none.
+pub(crate) fn support_box_mm(scene: &Scene, supports: &SupportOwners) -> Option<[f64; 5]> {
+    let mut bounds: Option<[f64; 5]> = None;
+    for leaf in sliceable_leaves(scene).ok()? {
+        if supports.get(leaf).is_none() {
+            continue;
+        }
+        let (Ok(world), Ok(mesh)) = (scene.world_transform_of(leaf), scene.mesh_at_leaf(leaf))
+        else {
+            continue;
+        };
+        for &vertex in mesh.vertices() {
+            let [x, y, z] = world.apply_to_vertex(vertex).coords().map(f64::from);
+            bounds = Some(match bounds {
+                None => [x, y, x, y, z],
+                Some([x0, y0, x1, y1, top]) => {
+                    [x0.min(x), y0.min(y), x1.max(x), y1.max(y), top.max(z)]
+                }
+            });
+        }
+    }
+    bounds
 }
 
 /// `scene` with every leaf scaled in Z about the plate, and in X and Y about

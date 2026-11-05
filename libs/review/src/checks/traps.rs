@@ -11,26 +11,13 @@
 //! # Air, and the openings resin flows through
 //!
 //! Layer 0 is cured on the build plate; every later layer is cured against
-//! the film, further from the plate. *Air* is every pixel of a layer that is
-//! not solid, which in the vat is liquid resin.
-//!
-//! Resin needs an opening of some width to flow. The check reads every
-//! layer's air *opened* by a square [`drain_width_px`] pixels on a side:
-//! only the air pixels that such a square of air covers are kept. A crack
-//! narrower than that, through a wall, between two parts or anywhere else,
-//! is a hairline that thick resin barely passes and light bleed tends to
-//! cure shut: it closes, whichever way it runs. Wider air keeps its exact
-//! shape. The opened air is split into 4-connected regions; a region that
-//! reaches the screen edge is *open air*.
-//!
-//! Two air regions of consecutive layers are *connected* when the air they
-//! share straight above one another, opened the same way, holds at least
-//! [`drain_px`] pixels. A smaller link is a pinhole: it neither drains nor
-//! vents a cavity, and it does not join two cavities into one.
-//!
-//! The shared [`PlateRegions`](crate::regions::PlateRegions) join air
-//! through a single pixel, so this check builds its own air map, at about
-//! the cost of the shared regions.
+//! the film, further from the plate. The sweep reads every layer's air
+//! *opened*, so a crack too narrow for resin closes, and links air regions
+//! of consecutive layers through the air they share, opened the same way
+//! (see [`crate::regions`]). Two air regions of consecutive layers are
+//! *connected* when that link holds at least [`drain_px`] pixels. A smaller
+//! link is a pinhole: it neither drains nor vents a cavity, and it does not
+//! join two cavities into one.
 //!
 //! # The rule: a two-pass air map
 //!
@@ -54,27 +41,14 @@
 //!
 //! # Supports
 //!
-//! The air between support trunks reaches the screen edge, so it is open air
-//! and drains whatever sits on it; a pocket that trunks and a model close
-//! only within one layer drains through the open air below it.
-//!
-//! A cup walled by the supports alone is a pocket in the support structure:
-//! a hole in a raft around a model's foot, or a trench between a raft and
-//! the support bases fused on it. Such a *support pocket* is not reported:
-//! every region of it has an outer wall (the solid around it, not the
-//! islands standing in it) at least half support, and its floor is at least
-//! half support or build plate. It comes off with the supports, a drain in
-//! the model cannot reach it, and in a raft it pulls on the film over far
-//! less area than the raft does. A cavity with a region walled by the model
-//! on any layer, such as a recess under a model, even over a raft hole or
-//! among support pads, is reported. Resin traps are always reported.
+//! The review reads no support geometry (#432): air is what the models leave.
+//! A cavity is judged as if the supports were not there, which is what it is
+//! once they come off, and a cup closed only by a raft is no cup.
 //!
 //! # What is not reported
 //!
-//! Real plates hold many cavities too small to matter: on a 1.9-million
-//! triangle miniature with generated supports, over a thousand, nearly all
-//! one or two pixels on a single layer, slivers where support meshes merge.
-//! A cavity is reported only when it holds at least [`drain_px`] pixels on
+//! Real plates hold many cavities too small to matter, nearly all one or two
+//! pixels on a single layer. A cavity is reported only when it holds at least [`drain_px`] pixels on
 //! some layer, and, for a trap, at least
 //! [`min_trap_volume_mm3`](TrapOptions::min_trap_volume_mm3) or, for a cup,
 //! at least [`min_cup_area_mm2`](TrapOptions::min_cup_area_mm2) of
@@ -128,34 +102,22 @@
 //!   the holes. It points at the bottom of the lowest layer, the floor of the
 //!   cavity, the side facing the plate.
 //!
-//! The scope (model, support or both) comes from the roles of the solid
-//! around the cavity on every layer: its walls on all four sides, its floor
-//! and its lid.
-//!
 //! [`drain_px`]: TrapOptions::drain_px
-//! [`drain_width_px`]: TrapOptions::drain_width_px
-
-#[path = "traps_air.rs"]
-mod air;
 
 use std::sync::Arc;
 
-use crate::fill::{CavityFill, FillSlab};
+use crate::fill::{CavityFill, FillLayerRuns, FillSlab};
 use crate::finding::{
     CheckKind, Finding, MAX_FOOTPRINT_LAYERS, PlatePoint, RoleScope, Severity, SuggestedFix,
 };
 use crate::input::ReviewInput;
-use crate::regions::Region;
+use crate::regions::{PlateRegions, Region, SweepOptions, read_layers, runs_in, wanted};
 use crate::runner::ReviewContext;
+use crate::runs::{dilate_square, intersection};
 use crate::union_find::{Groups, RegionRef};
-
-use air::{AirMap, Roles};
 
 /// Default of [`TrapOptions::drain_px`].
 pub const DEFAULT_DRAIN_PX: u64 = 10;
-
-/// Default of [`TrapOptions::drain_width_px`].
-pub const DEFAULT_DRAIN_WIDTH_PX: u32 = 3;
 
 /// Default of [`TrapOptions::min_trap_volume_mm3`].
 pub const DEFAULT_MIN_TRAP_VOLUME_MM3: f64 = 0.01;
@@ -193,13 +155,6 @@ pub struct TrapOptions {
     /// screen. A cavity smaller than this on every layer is not reported
     /// either.
     pub drain_px: u64,
-    /// The narrowest opening, in pixels, that resin flows through, within a
-    /// layer or from one layer to the next: air is kept only where a square
-    /// of air this many pixels on a side covers it. 3 pixels is 57 x 72 µm
-    /// on a 19 x 24 µm screen; a narrower crack is a hairline that thick
-    /// resin barely passes and light bleed tends to cure shut. 0 or 1 keeps
-    /// every air pixel.
-    pub drain_width_px: u32,
     /// Resin traps smaller than this, in cubic millimetres, are not
     /// reported. 0.01 mm³ is a cube about 0.2 mm on a side, ten nanolitres
     /// of resin: rasterisation slivers inside merged supports are smaller.
@@ -238,7 +193,6 @@ impl Default for TrapOptions {
     fn default() -> Self {
         Self {
             drain_px: DEFAULT_DRAIN_PX,
-            drain_width_px: DEFAULT_DRAIN_WIDTH_PX,
             min_trap_volume_mm3: DEFAULT_MIN_TRAP_VOLUME_MM3,
             min_cup_area_mm2: DEFAULT_MIN_CUP_AREA_MM2,
             min_cup_share: DEFAULT_MIN_CUP_SHARE,
@@ -249,37 +203,32 @@ impl Default for TrapOptions {
     }
 }
 
-/// Finds the resin traps and suction cups of the plate.
-pub fn run(ctx: &ReviewContext<'_>, options: &TrapOptions) -> Vec<Finding> {
-    run_with_fills(ctx, options).0
-}
-
 /// Finds the resin traps and suction cups of the plate, with the pixels of
 /// every small trap: a [`SuggestedFix::Fill`] names its [`CavityFill`] by
 /// index in the second list. No other cavity has one (see the module
 /// documentation).
-pub fn run_with_fills(
+pub fn run(
     ctx: &ReviewContext<'_>,
     options: &TrapOptions,
+    sweep: &SweepOptions,
 ) -> (Vec<Finding>, Vec<CavityFill>) {
-    let input = ctx.input;
+    let (input, regions) = (ctx.input, ctx.regions);
     if input.layer_count() == 0 {
         return (Vec::new(), Vec::new());
     }
-    let map = AirMap::compute(input, options.drain_width_px);
-    let drained = drain_pass(&map, options.drain_px);
-    let (groups, vented) = vent_pass(&map, &drained, options.drain_px);
+    let drained = drain_pass(regions, options.drain_px);
+    let (groups, vented) = vent_pass(regions, &drained, options.drain_px);
     let cavities: Vec<Cavity<'_>> = (0..groups.len())
         .filter(|&group| {
             let lowest = groups.members(group)[0];
             !drained[lowest.layer][lowest.index as usize]
         })
-        .map(|group| Cavity::measure(input, &map, groups.members(group), vented[group]))
+        .map(|group| Cavity::measure(input, regions, groups.members(group), vented[group]))
         .filter(|cavity| cavity.is_reported(options) && cavity.pulls(ctx, options))
         .collect();
     // A fill needs every pixel; any other cavity, those it highlights.
     let read: Vec<&[RegionRef]> = cavities.iter().map(Cavity::regions_read).collect();
-    let pixels = air::cavity_runs(input, options.drain_width_px, &read)
+    let pixels = cavity_runs(input, sweep, &read)
         .into_iter()
         .map(|layers| CavityFill::with_rims(input, layers));
     let mut fills = Vec::new();
@@ -310,7 +259,7 @@ pub fn run_with_fills(
         };
         findings.push(
             cavity
-                .finding(input, fix, options)
+                .finding(input, fix, options, sweep)
                 .with_footprint(Arc::new(footprint)),
         );
     }
@@ -318,16 +267,16 @@ pub fn run_with_fills(
 }
 
 /// Pass 1, from the plate up: which air regions of every layer are drained.
-fn drain_pass(map: &AirMap, drain_px: u64) -> Vec<Vec<bool>> {
-    let mut drained: Vec<Vec<bool>> = Vec::with_capacity(map.layers.len());
-    for (layer, air) in map.layers.iter().enumerate() {
-        let mut flags: Vec<bool> = air
-            .regions
+fn drain_pass(regions: &PlateRegions, drain_px: u64) -> Vec<Vec<bool>> {
+    let mut drained: Vec<Vec<bool>> = Vec::with_capacity(regions.layers().len());
+    for (layer, table) in regions.layers().iter().enumerate() {
+        let mut flags: Vec<bool> = table
+            .air
             .iter()
             .map(|region| region.touches_border)
             .collect();
         if let Some(below) = layer.checked_sub(1).map(|lower| &drained[lower]) {
-            for link in &map.links[layer] {
+            for link in regions.air_links(layer) {
                 if link.pixels >= drain_px && below[link.lower as usize] {
                     flags[link.upper as usize] = true;
                 }
@@ -341,16 +290,16 @@ fn drain_pass(map: &AirMap, drain_px: u64) -> Vec<Vec<bool>> {
 /// Pass 2, from the top down: the candidates joined into cavities, and
 /// whether each group is vented (meaningful for cavities only; a drained
 /// region is a group of its own).
-fn vent_pass(map: &AirMap, drained: &[Vec<bool>], drain_px: u64) -> (Groups, Vec<bool>) {
+fn vent_pass(regions: &PlateRegions, drained: &[Vec<bool>], drain_px: u64) -> (Groups, Vec<bool>) {
     let candidate = |layer: usize, index: u32| !drained[layer][index as usize];
-    let groups = map.group(|upper, link| {
+    let groups = regions.group_air(|upper, link| {
         link.pixels >= drain_px && candidate(upper - 1, link.lower) && candidate(upper, link.upper)
     });
     let mut vented = vec![false; groups.len()];
-    let top = map.layers.len() - 1;
+    let top = regions.layers().len() - 1;
     for upper in (1..=top).rev() {
         let lower = upper - 1;
-        for link in &map.links[upper] {
+        for link in regions.air_links(upper) {
             if link.pixels >= drain_px
                 && candidate(lower, link.lower)
                 && !candidate(upper, link.upper)
@@ -363,12 +312,43 @@ fn vent_pass(map: &AirMap, drained: &[Vec<bool>], drain_px: u64) -> (Groups, Vec
             }
         }
     }
-    for index in 0..map.layers[top].regions.len() as u32 {
+    for index in 0..regions.layer(top).air.len() as u32 {
         if candidate(top, index) {
             vented[groups.group_of(RegionRef { layer: top, index })] = true;
         }
     }
     (groups, vented)
+}
+
+/// The opened air runs of each cavity in `cavities` (its member regions),
+/// layer by layer from the plate up, with the model runs of their rim: the
+/// pixels a fill cures (see [`crate::fill`]). Each layer any cavity touches
+/// is rasterised once, in parallel.
+fn cavity_runs(
+    input: &ReviewInput<'_>,
+    sweep: &SweepOptions,
+    cavities: &[&[RegionRef]],
+) -> Vec<Vec<FillLayerRuns>> {
+    let wants = cavities
+        .iter()
+        .enumerate()
+        .flat_map(|(cavity, members)| members.iter().map(move |member| wanted(member, cavity)))
+        .collect();
+    let (width_px, height_px) = (input.width_px(), input.height_px());
+    read_layers(input, sweep, wants, cavities.len(), |pixels, _, regions| {
+        let runs = runs_in(&pixels.air, &pixels.air_labels, regions);
+        // The model pixels touching the cavity, sides or corners.
+        let rim = intersection(&dilate_square(&runs, 1, width_px, height_px), &pixels.model);
+        (runs, rim)
+    })
+    .into_iter()
+    .map(|layers| {
+        layers
+            .into_iter()
+            .map(|(layer, (runs, rim))| (layer, runs, rim))
+            .collect()
+    })
+    .collect()
 }
 
 /// One cavity: a group of candidate air regions.
@@ -389,18 +369,12 @@ struct Cavity<'g> {
     /// Where it is aimed at: the inside pixel of the largest region of its
     /// lowest layer, in raster space.
     floor_px: [u32; 2],
-    /// The solid around it on every layer: walls, floor and lid.
-    around: Roles,
-    /// Whether it is a pocket in the support structure: every region with
-    /// an outer wall at least half support, on a floor at least half
-    /// support or build plate.
-    support_pocket: bool,
 }
 
 impl<'g> Cavity<'g> {
     fn measure(
         input: &ReviewInput<'_>,
-        map: &AirMap,
+        regions: &PlateRegions,
         members: &'g [RegionRef],
         vented: bool,
     ) -> Self {
@@ -410,40 +384,20 @@ impl<'g> Cavity<'g> {
         let mut largest_px = 0u64;
         let mut sections = Vec::new();
         let mut floor: Option<&Region> = None;
-        let mut around = Roles::default();
-        let mut base = Roles::default();
-        let mut outer_support = true;
         for layer_members in members.chunk_by(|a, b| a.layer == b.layer) {
             let layer = layer_members[0].layer;
-            let air = &map.layers[layer];
-            let mut area_px = 0u64;
-            for member in layer_members {
-                let (region, sides) = (
-                    &air.regions[member.index as usize],
-                    &air.sides[member.index as usize],
-                );
-                area_px += region.area_px;
-                around.add(sides.walls);
-                around.add(sides.floor);
-                around.add(sides.lid);
-                base.add(sides.floor);
-                if layer == 0 {
-                    // The build plate under it counts as support.
-                    base.add(Roles {
-                        px: region.area_px,
-                        model: 0,
-                        support: region.area_px,
-                    });
-                }
-                outer_support &= sides.outer.mostly_support();
-            }
+            let air = &regions.layer(layer).air;
+            let area_px: u64 = layer_members
+                .iter()
+                .map(|member| air[member.index as usize].area_px)
+                .sum();
             volume_mm3 += area_px as f64 * pixel_mm2 * input.layers()[layer].height_mm();
             largest_px = largest_px.max(area_px);
             sections.push((layer, area_px));
             if layer == first_layer {
                 floor = layer_members
                     .iter()
-                    .map(|member| &air.regions[member.index as usize])
+                    .map(|member| &air[member.index as usize])
                     .reduce(|best, region| {
                         if region.area_px > best.area_px {
                             region
@@ -461,8 +415,6 @@ impl<'g> Cavity<'g> {
             sections,
             largest_section_mm2: largest_px as f64 * pixel_mm2,
             floor_px: floor.map_or([0, 0], |region| region.inside_px),
-            around,
-            support_pocket: outer_support && base.mostly_support(),
         }
     }
 
@@ -483,13 +435,13 @@ impl<'g> Cavity<'g> {
     }
 
     /// Whether the cavity is worth a finding: as large as a drain on at
-    /// least one layer, and a trap holding enough resin or a cup, other than
-    /// a support pocket, pulling on enough film.
+    /// least one layer, and a trap holding enough resin or a cup pulling on
+    /// enough film.
     fn is_reported(&self, options: &TrapOptions) -> bool {
         self.largest_px >= options.drain_px
             && match self.kind() {
                 CheckKind::ResinTrap => self.volume_mm3 >= options.min_trap_volume_mm3,
-                _ => self.largest_section_mm2 >= options.min_cup_area_mm2 && !self.support_pocket,
+                _ => self.largest_section_mm2 >= options.min_cup_area_mm2,
             }
     }
 
@@ -545,6 +497,7 @@ impl<'g> Cavity<'g> {
         input: &ReviewInput<'_>,
         fix: SuggestedFix,
         options: &TrapOptions,
+        sweep: &SweepOptions,
     ) -> Finding {
         let (first, last) = (self.first_layer(), self.last_layer());
         let layers = input.layers();
@@ -573,7 +526,7 @@ impl<'g> Cavity<'g> {
                 },
                 format!(
                     "A sealed cavity of {volume} mm³ over {span}, up to {section} mm² wide, has no opening at least {} pixels wide and {} pixels in area, so its liquid resin stays inside.",
-                    options.drain_width_px, options.drain_px
+                    sweep.drain_width_px, options.drain_px
                 ),
             ),
             _ if first == 0 => (
@@ -592,12 +545,21 @@ impl<'g> Cavity<'g> {
             ),
         };
         let focus = input.focus(first, self.floor_point());
-        let scope = RoleScope::from_counts(self.around.model, self.around.support);
         let detail = match fix {
             SuggestedFix::AddDrain { .. } => format!("{detail} Add drain holes."),
             _ => detail,
         };
-        Finding::new(kind, severity, first, last, focus, scope, title, detail).with_fix(fix)
+        Finding::new(
+            kind,
+            severity,
+            first,
+            last,
+            focus,
+            RoleScope::Model,
+            title,
+            detail,
+        )
+        .with_fix(fix)
     }
 }
 

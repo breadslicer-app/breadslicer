@@ -100,6 +100,7 @@ fn extract_payload(
                 first_layer_height,
                 output_format,
                 embedded: collect_embedded(package, warnings),
+                review_decisions: Vec::new(),
             }),
             slice_fingerprint,
         )),

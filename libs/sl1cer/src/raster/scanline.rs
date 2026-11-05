@@ -120,14 +120,18 @@ impl EdgeRows {
     }
 }
 
-fn collect_edges(layer: &ContourLayer, pixel_map: &PixelMap) -> Vec<Edge> {
-    let mut edges = Vec::new();
+fn push_layer_edges(layer: &ContourLayer, pixel_map: &PixelMap, edges: &mut Vec<Edge>) {
     for polygon in layer.polygons() {
-        push_ring_edges(polygon.outer(), pixel_map, &mut edges);
+        push_ring_edges(polygon.outer(), pixel_map, edges);
         for hole in polygon.holes() {
-            push_ring_edges(hole, pixel_map, &mut edges);
+            push_ring_edges(hole, pixel_map, edges);
         }
     }
+}
+
+fn collect_edges(layer: &ContourLayer, pixel_map: &PixelMap) -> Vec<Edge> {
+    let mut edges = Vec::new();
+    push_layer_edges(layer, pixel_map, &mut edges);
     edges
 }
 
@@ -137,9 +141,21 @@ fn collect_edges(layer: &ContourLayer, pixel_map: &PixelMap) -> Vec<Edge> {
 /// the centring shift into the pixel grid is `pixel_map`'s job, not
 /// the caller's. The output layer inherits `layer.z_mm()`.
 pub fn rasterize_layer_binary(layer: &ContourLayer, pixel_map: &PixelMap) -> LayerRaster {
+    rasterize_layers_binary(&[layer], pixel_map)
+}
+
+/// [`rasterize_layer_binary`] of `layers` taken as one layer, as if their
+/// polygons were listed together: their windings add up, so a stack merged
+/// into a plate keeps cancelling what it cancels there, and nothing is
+/// copied to get them together. The output layer inherits the first layer's
+/// height, 0 with no layers.
+pub fn rasterize_layers_binary(layers: &[&ContourLayer], pixel_map: &PixelMap) -> LayerRaster {
     let width_px = pixel_map.pixel_resolution().x();
     let height_px = pixel_map.pixel_resolution().y();
-    let edges = collect_edges(layer, pixel_map);
+    let mut edges = Vec::new();
+    for layer in layers {
+        push_layer_edges(layer, pixel_map, &mut edges);
+    }
 
     let mut rows = EdgeRows::new(&edges);
     let mut acc = RleRunAccumulator::new();
@@ -179,7 +195,8 @@ pub fn rasterize_layer_binary(layer: &ContourLayer, pixel_map: &PixelMap) -> Lay
         }
     }
 
-    LayerRaster::new(layer.z_mm(), width_px, height_px, acc.into_runs())
+    let z_mm = layers.first().map_or(0.0, |layer| layer.z_mm());
+    LayerRaster::new(z_mm, width_px, height_px, acc.into_runs())
 }
 
 /// Rasterise `layer` with the chosen anti-aliasing level. As in

@@ -3,173 +3,72 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Islands (#84): parts of the plate that start in mid-air, or rest on too
-//! little cured resin to hold them at the next peel.
+//! Parts and islands (#84, #432): pixels that light with nothing under them.
 //!
-//! Reports [`CheckKind::Island`] findings.
+//! Reports [`CheckKind::Island`], [`CheckKind::SurfaceGrowth`] and the
+//! [`CheckKind::CleanUp`] notes. It reads only the sweep's tables and the
+//! support tips as data ([`crate::tips`]).
 //!
-//! # Pieces
+//! # Parts
 //!
-//! Each layer's solid (model and support merged) is cut at its weak joints,
-//! where it is narrower than [`MIN_JOINT_PX`] pixels between parts at least
-//! [`MIN_ANCHOR_PX`] pixels thick: two parts that meet only through a corner
-//! pixel or a one-pixel neck hold each other no better than two parts apart,
-//! so each is judged on what is below it. Features thinner than that are not
-//! cut. The parts are the layer's *pieces* (see the `pieces` module).
+//! A *part* is a stretch of the model from its first layer until it joins
+//! something else ([`Part`]). Walking the tables from the plate up, a solid
+//! region continues the parts of the regions it stands on, through the links
+//! that hold it. A region no link holds starts a part of its own
+//! ([`PartStart`](crate::regions::PartStart)): size does not matter, and a
+//! neck too fine to hold anything does not count as being held. Where parts
+//! meet, the one that is held goes on, the largest if both or neither are,
+//! and the others end there.
 //!
-//! # What holds a piece
+//! # What holds a part
 //!
-//! A piece on layer `k` rests on its pixels that have solid straight below,
-//! in layer `k - 1`; pixels link across layers only straight up. The first
-//! [`PLATE_LAYERS`] layers rest on the build plate. A piece is *held* when
-//! its contact covers a margin of its area:
+//! Only its first pixels are judged:
 //!
-//! - cured model below must cover [`MIN_SUPPORTED_FRACTION`] (25 %): peel
-//!   force grows with the area of the new layer, and what resists it is the
-//!   cured area below;
-//! - support below a piece that has model is a support tip, placed to hold
-//!   that model and sunk into it, and must cover
-//!   [`MIN_TIP_SUPPORTED_FRACTION`] (5 %). Support below a support-only piece
-//!   is the support's own structure and must cover the full 25 %.
+//! - a part that starts on the first [`PLATE_LAYERS`] layers stands on the
+//!   build plate;
+//! - any other part is held when, on the layer below its first layer, the
+//!   pixels of support tips within [`TIP_REACH_MM`] of its own pixels, and
+//!   outside what the model has on that layer, cover at least
+//!   [`MIN_TIP_CONTACT_MM2`]. Its own pixels decide, never its box: a tip
+//!   under the neighbour a part hangs from does not hold it, and neither
+//!   does a tip that stops under a neck of the model. Tips are read as data,
+//!   whatever piece of the support graph they belong to.
 //!
-//! A mix is held when each pixel of contact covers its share:
-//! `model_px / 25 % + tip_px / 5 % >= area_px`. At exactly the margin a piece
-//! is held.
+//! # What is done with a part nothing holds
 //!
-//! # Sound pieces and islands
+//! - One that lasts fewer than [`MIN_PART_LAYERS`] layers is debris, whatever
+//!   its size: it comes loose in the vat. Its pixels are erased from the
+//!   layers, with the stray pixels of the sweep, and one note reports them.
+//!   A part that a tip too thin to hold it touches stays: erasing it would
+//!   leave the tip short of what comes above.
+//! - Any other is an island, an error with a [`SuggestedFix::AddSupport`] at
+//!   its first pixels. Its [`Island`] tells where to place supports: its
+//!   first pixels, its area layer by layer, and where it joins the rest.
 //!
-//! From the plate up, a piece is *sound* when its contact with sound pieces
-//! below holds it. Every other piece belongs to an island:
+//! # Surface growth
 //!
-//! - a piece that even everything below it does not hold is *weak*. A weak
-//!   piece that rests on sound solid, or on nothing at all, *starts* an
-//!   island, and every start is a finding with its own suggested support:
-//!   two tips that merge higher up are two findings;
-//! - any other piece that rests on island pieces continues their island,
-//!   held or not: the growing layers of a cone tip, or a part that grows on
-//!   an island until something sound holds it. A piece that rests on nothing
-//!   but touches island pieces of the layer below through an edge or a corner
-//!   continues them too, so a thin strand sliding sideways is one island.
-//!
-//! Island pieces that rest on one another are joined with union-find, so the
-//! finding of a start spans the whole part that hangs from it, up to the last
-//! layer before something sound holds it.
-//!
-//! # The finding
-//!
-//! - **Numbers:** the start's area and what it rests on and, when the part
-//!   that hangs from it grows larger, the area that part reaches and whether
-//!   something sound ends up holding it.
-//! - **Severity:** an [`Severity::Error`] when the start has less than
-//!   [`ERROR_SHARE_OF_MARGIN`] (a fifth) of the hold its margin asks for:
-//!   nothing below, a model slab on under 5 % of cured resin, a model on
-//!   support tips covering under 1 %. A [`Severity::Warning`] otherwise.
-//! - **Role:** a start with model pixels is a model island ("Unsupported
-//!   island", "Weakly supported island") with a [`SuggestedFix::AddSupport`].
-//!   A start with support pixels only is a support island ("Floating
-//!   support", "Weakly held support") and suggests nothing: a support's tip
-//!   goes on the model, and a floating support is mended by regenerating or
-//!   editing the supports.
-//! - **Focus and fix:** the pixel of the start that nothing holds, farthest
-//!   from its edge and from what holds it, on the model for a model island
-//!   (see the `focus` module): never on a post or a tip already there.
-//!
-//! # Noise
-//!
-//! A start smaller than [`MIN_ISLAND_AREA_PX`] pixels is not reported on its
-//! own: rasterising a surface that grazes a layer's cutting height can light
-//! a stray pixel or two. When every start of an island is that small but
-//! the island grows to the minimum, its largest start is reported, so a real
-//! tip that starts with a single pixel is found from that pixel.
-//!
-//! # Which islands want a support (#163)
-//!
-//! The thresholds live in [`island_policy`]; every one is on by default.
-//!
-//! - **Cured through (#403):** a pixel with nothing straight below it rests
-//!   on solid as many layers further down as the exposure cures through
-//!   ([`island_policy::CURE_DEPTH_MM`]): one layer of liquid at 0.05 mm.
-//! - **Weak joints (#404):** a piece no larger than a tip's contact is not
-//!   cut off at a weak joint (see the `pieces` module).
-//! - **Minimal islands (#402):** an island that something sound holds within
-//!   [`island_policy::MINIMAL_ISLAND_HEIGHT_MM`] of its first layer, its
-//!   layers included, whose largest section is no larger than a tip's
-//!   contact and that gathers less than
-//!   [`island_policy::MINIMAL_ISLAND_VOLUME_MM3`], is a note with no fix:
-//!   the next layers lift it, and a support there would do more harm than
-//!   good.
-//! - **Join to below (#235):** a model island with model under it across a
-//!   gap no thicker than [`island_policy::JOIN_GAP_MM`], enough of it to
-//!   hold the island, suggests [`SuggestedFix::JoinBelow`]: curing the gap
-//!   on the next slice. No support fits in such a gap.
-//! - **Aim higher (#405):** for a growing model island whose first layer is
-//!   smaller than a tip's contact, the suggested support goes where the
-//!   island first reaches that size, at most
-//!   [`island_policy::SUPPORT_CLIMB_MM`] higher, on the part that grew.
-//!
-//! # Cost
-//!
-//! The check needs every layer cut into pieces, which the shared layer
-//! regions do not keep, so it rasterises the layers again, in parallel, and
-//! cuts in full only the regions with several cores. On a 1.9 M-triangle
-//! miniature (913 layers of 11520 x 5120 pixels, 16 threads) it takes about
-//! 0.33 s, against 0.22 s for the shared regions.
+//! A region at least [`GROWTH_FACTOR`] times as large as what stood under it
+//! is listed on its own, held or not: the peel force of the new surface
+//! comes on all at once. The pixels counted are lit pixels, so it counts from
+//! the first pixel that exists.
 
-use rayon::prelude::*;
-
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::fill::CavityFill;
 use crate::finding::{CheckKind, Finding, MAX_FOOTPRINT_LAYERS, RoleScope, Severity, SuggestedFix};
-use crate::regions::LayerPixels;
+use crate::input::ReviewInput;
+use crate::regions::{
+    PartStart, PlateRegions, Region, SweepOptions, WantedRegions, link_holds, read_layers,
+    runs_in, wanted,
+};
 use crate::runner::ReviewContext;
-use crate::runs::{self, Run};
-use crate::union_find::{Groups, RegionRef, UnionFind};
+use crate::runs::{Run, dilate_square, union};
+use crate::tips::TipIndex;
+use crate::union_find::RegionRef;
 
-#[path = "island_focus.rs"]
-mod focus;
-#[path = "island_policy.rs"]
-pub mod island_policy;
-#[path = "island_pieces.rs"]
-mod pieces;
-
-use pieces::{Contact, LayerPieces, Piece, PieceScan};
-pub use pieces::{MIN_ANCHOR_PX, MIN_JOINT_PX};
-
-/// The fraction of a piece's area that cured model below it must cover for
-/// the piece to count as held: 25 %. It also applies to a support-only piece
-/// resting on support.
-///
-/// Peel force grows with the area of the new layer, and what resists it is
-/// the cured area below, so the ratio of the two is the margin. A quarter is
-/// the usual starting point for resin island detection. It also matches the
-/// commonest real island, a cone tip pointing down: its area grows with the
-/// square of its height, so its second layer rests on at most a quarter of
-/// its area and its third on more than a quarter.
-pub const MIN_SUPPORTED_FRACTION: f64 = 0.25;
-
-/// The fraction of a model piece's area that support below it must cover for
-/// the piece to count as held: 5 %.
-///
-/// That support is a tip, placed to hold the model around it and sunk into
-/// it, so a small contact is the design, not a defect: one 0.4 mm tip
-/// (0.126 mm²) holds up to 2.5 mm² of surface. What a tip really holds
-/// against the peel is what the tip-strength model of #11 will compute;
-/// until then the margin is this area ratio, a fifth of the model margin.
-/// On a 1.9 M-triangle miniature with generated supports (Saturn 3 Ultra,
-/// 0.1 mm layers), wherever a model piece needs its tips (the model below it
-/// would not hold it alone), they cover 10 % of it or more: twice this
-/// margin, so it leaves them alone and flags a piece on a fraction of a
-/// tip.
-pub const MIN_TIP_SUPPORTED_FRACTION: f64 = 0.05;
-
-/// The share of its margin under which an island is an error rather than a
-/// warning: a fifth. A start with nothing below it, a model slab on less than
-/// 5 % of cured resin or a model on tips covering less than 1 % has next to
-/// nothing holding it; above that, it is held, but by less than the margin.
-pub const ERROR_SHARE_OF_MARGIN: f64 = 0.2;
-
-/// The layers that rest on the build plate: 2. Nothing on them is an island.
+/// The layers that rest on the build plate: 2. Nothing that starts on them
+/// is an island.
 ///
 /// Layer 0 lies on the plate. A pixel of layer 1 with nothing below it hangs
 /// one layer above the plate, and the long exposure of the first layers cures
@@ -177,1013 +76,576 @@ pub const ERROR_SHARE_OF_MARGIN: f64 = 0.2;
 /// there either.
 pub const PLATE_LAYERS: usize = 2;
 
-/// The smallest island start reported on its own, in pixels: 4, a 2 x 2
-/// pixel square (38 x 48 µm, 0.0018 mm² on a 19 x 24 µm screen).
-///
-/// Measured on a 1.9 M-triangle miniature with generated supports (Saturn 3
-/// Ultra, 0.1 mm layers): with no minimum at all, the only starts under 67
-/// pixels were support specks of 1 and 2 pixels, and the smallest model
-/// start had 397 pixels, so the minimum costs no real finding there. By geometry, a cone tip's second layer
-/// stays under 4 pixels on that screen only when the cone is sharper than 7
-/// to 13° from its axis (depending on where the layers cut it): a needle
-/// whose first 0.2 mm the printer does not reproduce anyway.
-pub const MIN_ISLAND_AREA_PX: u64 = 4;
+/// The layers a part nothing holds must last to be an island: 3. A shorter
+/// one is debris that comes loose in the vat, whatever its size.
+pub const MIN_PART_LAYERS: usize = 3;
 
-/// Slack on the margin comparisons, so a piece at exactly its margin counts
-/// as held whatever the rounding of the division.
-const TOLERANCE: f64 = 1e-9;
+/// How many times what stood under it a region must be for its growth to be
+/// listed: 10.
+pub const GROWTH_FACTOR: f64 = 10.0;
+
+/// The least contact with a tip that holds a part, in square millimetres:
+/// 0.018, under half of what a 0.24 mm tip was drawn to touch with. Less is
+/// the last sliver of a cone that ends right there, or a tip under a neck of
+/// the model: what the printer cures on it does not hold the part. On one
+/// scene measured in its printer file, the tips that hold touch from 48
+/// pixels of 0.00042 mm² up (0.020 mm²), and the ones that stop short touch
+/// with 38 at most (0.016 mm²).
+pub const MIN_TIP_CONTACT_MM2: f64 = 0.018;
+
+/// How far from a part's pixels a tip's pixels on the layer below still
+/// touch it, in millimetres: 0.07, a tip beside a part's edge cures into it.
+pub const TIP_REACH_MM: f64 = 0.07;
 
 /// Settings of the island check.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IslandOptions {
-    /// The fraction of a piece's area, from 0 to 1, that cured model below it
-    /// must cover (support below a support-only piece counts as model here).
-    /// Default [`MIN_SUPPORTED_FRACTION`]; 0 turns the check off.
-    pub min_supported_fraction: f64,
-    /// The fraction of a model piece's area, from 0 to 1, that support tips
-    /// below it must cover. Default [`MIN_TIP_SUPPORTED_FRACTION`]; 0 makes
-    /// any tip contact enough.
-    pub min_tip_supported_fraction: f64,
-    /// The smallest island start reported on its own, in pixels. Default
-    /// [`MIN_ISLAND_AREA_PX`].
-    pub min_area_px: u64,
-    /// How deep a layer's exposure cures, its own thickness included, in mm:
-    /// solid that deep below a pixel holds it (#403). Default
-    /// [`island_policy::CURE_DEPTH_MM`]; 0 counts only the layer right
-    /// below.
-    pub cure_depth_mm: f64,
-    /// The largest piece kept with what it touches across a weak joint, in
-    /// mm² (#404). Default [`island_policy::WEAK_JOINT_KEEP_MM2`]; 0 cuts
-    /// every weak joint.
-    pub weak_joint_keep_mm2: f64,
-    /// The highest a minimal island grows, its layers included, in mm
-    /// (#402). Default [`island_policy::MINIMAL_ISLAND_HEIGHT_MM`]; 0 makes
-    /// no island minimal.
-    pub minimal_height_mm: f64,
-    /// The resin a minimal island gathers, in mm³: it must gather less.
-    /// Default [`island_policy::MINIMAL_ISLAND_VOLUME_MM3`].
-    pub minimal_volume_mm3: f64,
-    /// The largest section of a minimal island, in mm². Default
-    /// [`island_policy::MINIMAL_ISLAND_SECTION_MM2`].
-    pub minimal_section_mm2: f64,
-    /// The thickest gap over model that "Join to below" closes, in mm
-    /// (#235). Default [`island_policy::JOIN_GAP_MM`]; 0 offers none.
-    pub join_gap_mm: f64,
-    /// How much higher a growing island's support may aim, in mm (#405).
-    /// Default [`island_policy::SUPPORT_CLIMB_MM`]; 0 keeps it at the first
-    /// layer.
-    pub support_climb_mm: f64,
-    /// A tip's contact, in mm²: the section from which an island holds a
-    /// support (#405). Default [`island_policy::TIP_CONTACT_MM2`].
-    pub tip_contact_mm2: f64,
+    /// The layers a part nothing holds must last to be an island. Default
+    /// [`MIN_PART_LAYERS`].
+    pub min_part_layers: usize,
+    /// The growth a region must reach to be listed. Default
+    /// [`GROWTH_FACTOR`].
+    pub growth_factor: f64,
+    /// The least contact with a tip that holds a part, in square
+    /// millimetres. Default [`MIN_TIP_CONTACT_MM2`]; 0 lets any pixel of a
+    /// tip hold it.
+    pub min_tip_contact_mm2: f64,
+    /// How far from a part's pixels a tip's still touch it, in millimetres.
+    /// Default [`TIP_REACH_MM`].
+    pub tip_reach_mm: f64,
 }
 
 impl Default for IslandOptions {
     fn default() -> Self {
         Self {
-            min_supported_fraction: MIN_SUPPORTED_FRACTION,
-            min_tip_supported_fraction: MIN_TIP_SUPPORTED_FRACTION,
-            min_area_px: MIN_ISLAND_AREA_PX,
-            cure_depth_mm: island_policy::CURE_DEPTH_MM,
-            weak_joint_keep_mm2: island_policy::WEAK_JOINT_KEEP_MM2,
-            minimal_height_mm: island_policy::MINIMAL_ISLAND_HEIGHT_MM,
-            minimal_volume_mm3: island_policy::MINIMAL_ISLAND_VOLUME_MM3,
-            minimal_section_mm2: island_policy::MINIMAL_ISLAND_SECTION_MM2,
-            join_gap_mm: island_policy::JOIN_GAP_MM,
-            support_climb_mm: island_policy::SUPPORT_CLIMB_MM,
-            tip_contact_mm2: island_policy::TIP_CONTACT_MM2,
+            min_part_layers: MIN_PART_LAYERS,
+            growth_factor: GROWTH_FACTOR,
+            min_tip_contact_mm2: MIN_TIP_CONTACT_MM2,
+            tip_reach_mm: TIP_REACH_MM,
         }
     }
 }
 
-impl IslandOptions {
-    /// These options with every fraction usable: clamped to 0..=1, and its
-    /// default when it is not a number. [`run`] applies it.
-    #[must_use]
-    pub fn sanitized(&self) -> Self {
-        let fraction = |value: f64, default: f64| {
-            if value.is_nan() {
-                default
-            } else {
-                value.clamp(0.0, 1.0)
-            }
-        };
-        // A length, an area or a volume: 0 or more, its default when it is
-        // not a number.
-        let size = |value: f64, default: f64| {
-            if value.is_nan() {
-                default
-            } else {
-                value.max(0.0)
-            }
-        };
-        Self {
-            min_supported_fraction: fraction(self.min_supported_fraction, MIN_SUPPORTED_FRACTION),
-            min_tip_supported_fraction: fraction(
-                self.min_tip_supported_fraction,
-                MIN_TIP_SUPPORTED_FRACTION,
-            ),
-            min_area_px: self.min_area_px,
-            cure_depth_mm: size(self.cure_depth_mm, island_policy::CURE_DEPTH_MM),
-            weak_joint_keep_mm2: size(self.weak_joint_keep_mm2, island_policy::WEAK_JOINT_KEEP_MM2),
-            minimal_height_mm: size(
-                self.minimal_height_mm,
-                island_policy::MINIMAL_ISLAND_HEIGHT_MM,
-            ),
-            minimal_volume_mm3: size(
-                self.minimal_volume_mm3,
-                island_policy::MINIMAL_ISLAND_VOLUME_MM3,
-            ),
-            minimal_section_mm2: size(
-                self.minimal_section_mm2,
-                island_policy::MINIMAL_ISLAND_SECTION_MM2,
-            ),
-            join_gap_mm: size(self.join_gap_mm, island_policy::JOIN_GAP_MM),
-            support_climb_mm: size(self.support_climb_mm, island_policy::SUPPORT_CLIMB_MM),
-            tip_contact_mm2: size(self.tip_contact_mm2, island_policy::TIP_CONTACT_MM2),
+/// What holds a part's first pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Held {
+    /// The build plate.
+    Plate,
+    /// A support tip under them.
+    Tip,
+    /// Nothing.
+    Nothing,
+}
+
+/// One part of the model: from its first layer until it joins something
+/// else or ends.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Part {
+    /// The layer it starts on.
+    pub first_layer: usize,
+    /// The solid region it starts with, on that layer.
+    pub start: u32,
+    /// What holds it.
+    pub held: Held,
+    /// The pixels of tips it touches on the layer below its first, whether
+    /// they hold it or not.
+    pub tip_contact_px: usize,
+    /// Its pixels on each layer from its first, until it joins something.
+    pub area_px: Vec<u64>,
+    /// The layer it joins another part on and that part's index, when it
+    /// does.
+    pub joined: Option<(usize, usize)>,
+    /// Its regions on its first [`MAX_FOOTPRINT_LAYERS`] layers.
+    pub members: Vec<RegionRef>,
+}
+
+impl Part {
+    /// The layers it lasts on its own.
+    pub fn layers(&self) -> usize {
+        self.area_px.len()
+    }
+
+    /// The last layer it is on, before it joins anything.
+    pub fn last_layer(&self) -> usize {
+        self.first_layer + self.area_px.len().max(1) - 1
+    }
+
+    /// Its largest section, in pixels.
+    pub fn largest_px(&self) -> u64 {
+        self.area_px.iter().copied().max().unwrap_or(0)
+    }
+
+    fn add(&mut self, layer: usize, index: u32, area_px: u64) {
+        let at = layer - self.first_layer;
+        if at >= self.area_px.len() {
+            self.area_px.resize(at + 1, 0);
+        }
+        self.area_px[at] += area_px;
+        if at < MAX_FOOTPRINT_LAYERS {
+            self.members.push(RegionRef { layer, index });
         }
     }
-
-    /// These options with the island policy of #163 off: every pixel rests
-    /// only on the layer right below, every weak joint is cut, no island is
-    /// minimal, none is joined below, and supports aim at the first layer.
-    #[must_use]
-    pub fn without_policy(&self) -> Self {
-        Self {
-            cure_depth_mm: 0.0,
-            weak_joint_keep_mm2: 0.0,
-            minimal_height_mm: 0.0,
-            join_gap_mm: 0.0,
-            support_climb_mm: 0.0,
-            ..self.clone()
-        }
-    }
-
-    /// The piece size kept across a weak joint, in pixels of `input`.
-    fn keep_px(&self, input: &crate::input::ReviewInput<'_>) -> u64 {
-        (self.weak_joint_keep_mm2 / input.pixel_area_mm2() + 1e-9).floor() as u64
-    }
-
-    /// How much of the hold its margin asks for a piece of `area_px` pixels
-    /// gets from `rest`: 1 at exactly the margin, more when held, 0 with
-    /// nothing below. `tips` says whether support below counts as tips (the
-    /// piece has model).
-    fn hold(&self, rest: Rest, area_px: u64, tips: bool) -> f64 {
-        let share = |px: u64, margin: f64| {
-            if px == 0 {
-                0.0
-            } else if margin > 0.0 {
-                px as f64 / margin
-            } else {
-                f64::INFINITY
-            }
-        };
-        let support_margin = if tips {
-            self.min_tip_supported_fraction
-        } else {
-            self.min_supported_fraction
-        };
-        (share(rest.model_px, self.min_supported_fraction) + share(rest.support_px, support_margin))
-            / area_px.max(1) as f64
-    }
 }
 
-/// What a piece rests on, in pixels.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Rest {
-    /// Pixels on model below.
-    model_px: u64,
-    /// Pixels on support (and not model) below.
-    support_px: u64,
-}
+const NO_PART: u32 = u32::MAX;
 
-impl Rest {
-    fn add(&mut self, contact: &Contact) {
-        self.model_px += contact.model_px;
-        self.support_px += contact.support_px;
-    }
-
-    const fn total(&self) -> u64 {
-        self.model_px + self.support_px
-    }
-}
-
-/// A piece that starts an island.
-#[derive(Clone, Copy, Debug)]
-struct Start {
-    /// The piece.
-    at: RegionRef,
-    /// What it rests on.
-    rest: Rest,
-    /// Its hold, under 1 (see [`IslandOptions::hold`]).
-    hold: f64,
-}
-
-/// The island pieces of a plate.
-struct Islands {
-    /// First global id of each layer's pieces, plus the total at the end.
-    offsets: Vec<usize>,
-    /// Whether each piece (by global id) belongs to an island.
-    island: Vec<bool>,
-    /// Island pieces joined by resting on one another.
-    sets: UnionFind,
-    /// The pieces that start islands, lowest layer first.
-    starts: Vec<Start>,
-    /// Island pieces that a sound piece rests on.
-    held_from_above: Vec<usize>,
-}
-
-/// Finds the islands of the plate.
-pub fn run(ctx: &ReviewContext<'_>, options: &IslandOptions) -> Vec<Finding> {
-    run_with_joins(ctx, options).0
-}
-
-/// [`run`], with the pixels that join each island to the model below it:
-/// the cavity fills its [`SuggestedFix::JoinBelow`] fixes name, by index
-/// (#235).
-pub fn run_with_joins(
-    ctx: &ReviewContext<'_>,
+/// The parts of the plate, in the order they start, and what they became.
+fn walk_parts(
+    input: &ReviewInput<'_>,
+    regions: &PlateRegions,
+    tips: &TipIndex,
     options: &IslandOptions,
-) -> (Vec<Finding>, Vec<CavityFill>) {
-    let options = options.sanitized();
-    if options.min_supported_fraction == 0.0 || ctx.input.layer_count() <= PLATE_LAYERS {
-        return (Vec::new(), Vec::new());
-    }
-    let scan = pieces::scan(
-        ctx.input,
-        PLATE_LAYERS,
-        options.keep_px(ctx.input),
-        options.cure_depth_mm,
-    );
-    let islands = classify(&scan, &options);
-    if islands.starts.is_empty() {
-        return (Vec::new(), Vec::new());
-    }
-    report(ctx, &scan, islands, &options)
-}
-
-/// Sorts every piece into sound or island, bottom up, and finds the starts.
-fn classify(scan: &PieceScan, options: &IslandOptions) -> Islands {
-    let mut offsets = Vec::with_capacity(scan.layers.len() + 1);
-    let mut total = 0;
-    offsets.push(0);
-    for layer in &scan.layers {
-        total += layer.len();
-        offsets.push(total);
-    }
-    let mut islands = Islands {
-        offsets,
-        island: vec![false; total],
-        sets: UnionFind::new(total),
-        starts: Vec::new(),
-        held_from_above: Vec::new(),
+    sweep: &SweepOptions,
+) -> Vec<Part> {
+    let min_link_px = sweep.min_link_px(input);
+    let [size_x, size_y] = input.pixel_size_mm();
+    let reach_px = [size_x, size_y].map(|size| (options.tip_reach_mm / size).round() as u32);
+    let min_contact_px = (options.min_tip_contact_mm2 / input.pixel_area_mm2()).ceil() as usize;
+    let contact_of = |layer: usize, start: &PartStart| {
+        tips.contact_px(input, layer - 1, &start.runs, &start.below, reach_px)
     };
-    for layer in PLATE_LAYERS..scan.layers.len() {
-        classify_layer(scan, options, layer, &mut islands);
-    }
-    islands
-}
-
-fn classify_layer(scan: &PieceScan, options: &IslandOptions, layer: usize, islands: &mut Islands) {
-    let pieces = &scan.layers[layer];
-    let contacts = &scan.contacts[layer];
-    let below = islands.offsets[layer - 1];
-    let base = islands.offsets[layer];
-    // A contact's lower piece by global id, on whichever layer it lies.
-    let lower_id = |contact: &Contact| {
-        islands.offsets[layer - contact.below as usize] + contact.lower as usize
-    };
-    let mut all = vec![Rest::default(); pieces.len()];
-    let mut on_sound = vec![Rest::default(); pieces.len()];
-    for contact in contacts {
-        all[contact.upper as usize].add(contact);
-        if !islands.island[lower_id(contact)] {
-            on_sound[contact.upper as usize].add(contact);
+    let mut parts: Vec<Part> = Vec::new();
+    // The part each part went on as, itself while it goes on.
+    let mut went_on: Vec<u32> = Vec::new();
+    fn root(went_on: &mut [u32], mut part: u32) -> u32 {
+        while went_on[part as usize] != part {
+            let next = went_on[went_on[part as usize] as usize];
+            went_on[part as usize] = next;
+            part = next;
         }
+        part
     }
-    for (index, piece) in pieces.iter().enumerate() {
-        let tips = piece.model_px > 0;
-        if options.hold(on_sound[index], piece.area_px, tips) >= 1.0 - TOLERANCE {
-            continue;
-        }
-        islands.island[base + index] = true;
-        let hold = options.hold(all[index], piece.area_px, tips);
-        if hold >= 1.0 - TOLERANCE {
-            continue;
-        }
-        let starts = if on_sound[index].total() > 0 {
-            true
-        } else if all[index].total() > 0 {
-            false
-        } else {
-            // Resting on nothing, it continues the pieces of the layer below
-            // that it touches through an edge or a corner when they are all
-            // island pieces; it starts an island when it touches none, or
-            // touches sound solid.
-            let mut touched = touched(&scan.touches[layer], index as u32).peekable();
-            touched.peek().is_none() || touched.any(|lower| !islands.island[below + lower as usize])
-        };
-        if starts {
-            islands.starts.push(Start {
-                at: RegionRef {
-                    layer,
-                    index: index as u32,
-                },
-                rest: all[index],
-                hold,
-            });
-        }
-    }
-    for contact in contacts {
-        let lower = islands.offsets[layer - contact.below as usize] + contact.lower as usize;
-        let upper = base + contact.upper as usize;
-        match (islands.island[lower], islands.island[upper]) {
-            (true, true) => {
-                islands.sets.union(lower, upper);
-            }
-            (true, false) => islands.held_from_above.push(lower),
-            _ => {}
-        }
-    }
-    for &(upper, lower) in &scan.touches[layer] {
-        let (lower, upper) = (below + lower as usize, base + upper as usize);
-        if islands.island[lower] && islands.island[upper] {
-            islands.sets.union(lower, upper);
-        }
-    }
-}
-
-/// The pieces of the layer below that piece `upper` touches, from `touches`
-/// (sorted `(upper, lower)` pairs).
-fn touched(touches: &[(u32, u32)], upper: u32) -> impl Iterator<Item = u32> + '_ {
-    let start = touches.partition_point(|&(u, _)| u < upper);
-    touches[start..]
-        .iter()
-        .take_while(move |&&(u, _)| u == upper)
-        .map(|&(_, lower)| lower)
-}
-
-/// One start to report, with what the finding needs from its island.
-struct Reported {
-    start: Start,
-    /// The last layer of its island.
-    last_layer: usize,
-    /// The largest piece of its island from its layer up, in pixels.
-    largest_px: u64,
-    /// Whether something sound rests on its island.
-    held_from_above: bool,
-    /// How large its island grows.
-    size: IslandSize,
-    /// Whether its island is minimal (#402).
-    minimal: bool,
-    /// Its island's pieces from its layer up to where a support may aim
-    /// (#405), with the island's section on each of those layers in pixels.
-    climb: Vec<(RegionRef, u64)>,
-    /// Its island's pieces from its layer up, on at most
-    /// [`MAX_FOOTPRINT_LAYERS`] layers: what the finding highlights (#409).
-    footprint: Vec<RegionRef>,
-}
-
-/// How large an island grows before something sound holds it.
-#[derive(Clone, Copy, Debug)]
-struct IslandSize {
-    /// Its layers, its own first and last included.
-    layers: usize,
-    /// From the bottom of its first layer to the top of its last, in mm.
-    height_mm: f64,
-    /// The resin it gathers, in mm³.
-    volume_mm3: f64,
-    /// Its largest section (all its pieces on one layer), in mm².
-    section_mm2: f64,
-}
-
-/// The size of the island of `members` (its pieces, by layer).
-fn island_size(ctx: &ReviewContext<'_>, scan: &PieceScan, members: &[RegionRef]) -> IslandSize {
-    let spans = ctx.input.layers();
-    let pixel_mm2 = ctx.input.pixel_area_mm2();
-    let first = members.iter().map(|m| m.layer).min().unwrap_or(0);
-    let last = members.iter().map(|m| m.layer).max().unwrap_or(0);
-    let mut section_px = vec![0u64; last - first + 1];
-    let mut volume_mm3 = 0.0;
-    for member in members {
-        let area = scan.layers[member.layer][member.index as usize].area_px;
-        section_px[member.layer - first] += area;
-        volume_mm3 += area as f64 * pixel_mm2 * spans[member.layer].height_mm();
-    }
-    IslandSize {
-        layers: last - first + 1,
-        height_mm: spans[last].top_mm - spans[first].bottom_mm,
-        volume_mm3,
-        section_mm2: section_px.iter().copied().max().unwrap_or(0) as f64 * pixel_mm2,
-    }
-}
-
-impl IslandOptions {
-    /// Whether an island of `size` that something sound holds is minimal
-    /// (#402).
-    fn is_minimal(&self, size: &IslandSize) -> bool {
-        self.minimal_height_mm > 0.0
-            && size.height_mm <= self.minimal_height_mm + island_policy::HEIGHT_TOLERANCE_MM
-            && size.volume_mm3 < self.minimal_volume_mm3
-            && size.section_mm2 <= self.minimal_section_mm2 + 1e-12
-    }
-}
-
-/// The findings for the starts worth reporting, and the pixels that join
-/// islands to the model below them, by the index their fixes name.
-fn report(
-    ctx: &ReviewContext<'_>,
-    scan: &PieceScan,
-    mut islands: Islands,
-    options: &IslandOptions,
-) -> (Vec<Finding>, Vec<CavityFill>) {
-    let piece = |at: RegionRef| scan.layers[at.layer][at.index as usize];
-    let groups = Groups::from_union_find(islands.offsets.clone(), &mut islands.sets);
-    let ref_of = |id: usize| {
-        let layer = islands.offsets.partition_point(|&offset| offset <= id) - 1;
-        RegionRef {
-            layer,
-            index: (id - islands.offsets[layer]) as u32,
-        }
-    };
-    let mut held_from_above = vec![false; groups.len()];
-    for &id in &islands.held_from_above {
-        held_from_above[groups.group_of(ref_of(id))] = true;
-    }
-    let mut starts_of: Vec<Vec<Start>> = vec![Vec::new(); groups.len()];
-    for start in &islands.starts {
-        starts_of[groups.group_of(start.at)].push(*start);
-    }
-    let spans = ctx.input.layers();
-    let pixel_mm2 = ctx.input.pixel_area_mm2();
-    let mut reported = Vec::new();
-    for (group, starts) in starts_of.iter().enumerate() {
-        if starts.is_empty() {
-            continue;
-        }
-        let members = groups.members(group);
-        let mut chosen: Vec<Start> = starts
+    let mut below: Vec<u32> = Vec::new();
+    for (layer, table) in regions.layers().iter().enumerate() {
+        let mut by_upper: Vec<(u32, u32, u64)> = regions
+            .solid_links(layer)
             .iter()
-            .filter(|start| piece(start.at).area_px >= options.min_area_px)
-            .copied()
+            .map(|link| (link.upper, link.lower, link.pixels))
             .collect();
-        let largest = members.iter().map(|&m| piece(m).area_px).max().unwrap_or(0);
-        if chosen.is_empty() && largest >= options.min_area_px {
-            // Every start is a speck, yet the island grows: report the
-            // largest start, the lowest on a tie.
-            chosen.extend(
-                starts
-                    .iter()
-                    .max_by(|a, b| {
-                        piece(a.at)
-                            .area_px
-                            .cmp(&piece(b.at).area_px)
-                            .then(b.at.cmp(&a.at))
-                    })
-                    .copied(),
+        by_upper.sort_unstable();
+        let mut here = vec![NO_PART; table.solid.len()];
+        let mut at = 0;
+        for (index, region) in table.solid.iter().enumerate() {
+            let index = index as u32;
+            let from = at;
+            while at < by_upper.len() && by_upper[at].0 == index {
+                at += 1;
+            }
+            let links = &by_upper[from..at];
+            let holding = (layer > 0 && table.start_of(index).is_none())
+                .then(|| holding_links(links, region, min_link_px))
+                .unwrap_or_default();
+            if holding.is_empty() {
+                let start = table.start_of(index);
+                let tip_contact_px = match start {
+                    Some(start) if layer >= PLATE_LAYERS => contact_of(layer, start),
+                    _ => 0,
+                };
+                let held = if layer < PLATE_LAYERS {
+                    Held::Plate
+                } else if tip_contact_px > 0 && tip_contact_px >= min_contact_px {
+                    Held::Tip
+                } else {
+                    Held::Nothing
+                };
+                here[index as usize] = parts.len() as u32;
+                went_on.push(parts.len() as u32);
+                parts.push(Part {
+                    first_layer: layer,
+                    start: index,
+                    held,
+                    tip_contact_px,
+                    area_px: Vec::new(),
+                    joined: None,
+                    members: Vec::new(),
+                });
+                continue;
+            }
+            let mut standing: Vec<u32> = holding
+                .iter()
+                .map(|(_, lower, _)| root(&mut went_on, below[*lower as usize]))
+                .collect();
+            standing.sort_unstable();
+            standing.dedup();
+            let keep = *standing
+                .iter()
+                .max_by_key(|&&p| {
+                    let part = &parts[p as usize];
+                    (
+                        part.held != Held::Nothing,
+                        part.area_px.last().copied().unwrap_or(0),
+                        std::cmp::Reverse(p),
+                    )
+                })
+                .expect("a region held by something");
+            for &other in standing.iter().filter(|&&p| p != keep) {
+                parts[other as usize].joined = Some((layer, keep as usize));
+                went_on[other as usize] = keep;
+            }
+            here[index as usize] = keep;
+        }
+        for (index, region) in table.solid.iter().enumerate() {
+            let part = root(&mut went_on, here[index]);
+            here[index] = part;
+            parts[part as usize].add(layer, index as u32, region.area_px);
+        }
+        below = here;
+    }
+    parts
+}
+
+/// The links of `links` that hold `region`: those that do alone, or all of
+/// them when they only do together.
+fn holding_links<'l>(
+    links: &'l [(u32, u32, u64)],
+    region: &Region,
+    min_link_px: u64,
+) -> Vec<&'l (u32, u32, u64)> {
+    let strong: Vec<_> = links
+        .iter()
+        .filter(|(_, _, px)| link_holds(*px, region.area_px, min_link_px))
+        .collect();
+    if strong.is_empty() {
+        links.iter().collect()
+    } else {
+        strong
+    }
+}
+
+/// An island, as a placement of supports needs it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Island {
+    /// The layer it starts on.
+    pub first_layer: usize,
+    /// The centres of its first pixels, in plate millimetres.
+    pub first_pixels_mm: Vec<[f64; 2]>,
+    /// The area of its first pixels, in square millimetres.
+    pub first_area_mm2: f64,
+    /// Its area on each layer from its first, in square millimetres, until
+    /// it joins the rest of the model.
+    pub growth_mm2: Vec<f64>,
+    /// The layer it joins the rest of the model on, `None` when it never
+    /// does.
+    pub joins_on: Option<usize>,
+}
+
+/// What the check gives: the findings, what they found and what to erase.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct IslandReport {
+    /// Every finding: islands, surface growth and the clean-up notes.
+    pub findings: Vec<Finding>,
+    /// Every island of `findings`, in the same order, whichever findings a
+    /// raft explains later.
+    pub islands: Vec<Island>,
+    /// Every part of the plate.
+    pub parts: Vec<Part>,
+    /// The pixels that leave the layers: every stray pixel and all of the
+    /// debris, as rectangles on each layer.
+    pub erased: CavityFill,
+}
+
+/// Finds the parts and islands of the plate.
+pub fn run(ctx: &ReviewContext<'_>, options: &IslandOptions, sweep: &SweepOptions) -> IslandReport {
+    let (input, regions) = (ctx.input, ctx.regions);
+    if input.layer_count() == 0 {
+        return IslandReport::default();
+    }
+    let tips = TipIndex::new(input.tips());
+    let parts = walk_parts(input, regions, &tips, options, sweep);
+    let unheld = |part: &&Part| part.held == Held::Nothing && !left_to_empty_layer(ctx, part);
+    let islands: Vec<&Part> = parts
+        .iter()
+        .filter(unheld)
+        .filter(|part| part.layers() >= options.min_part_layers)
+        .collect();
+    let debris: Vec<&Part> = parts
+        .iter()
+        .filter(unheld)
+        .filter(|part| is_debris(part, options))
+        .collect();
+    // Who asks for pixels: each island, for its footprint, then the debris.
+    let mut wants: Vec<WantedRegions> = Vec::new();
+    for (asker, part) in islands.iter().enumerate() {
+        wants.extend(part.members.iter().map(|member| wanted(member, asker)));
+    }
+    let debris_asker = islands.len();
+    for part in &debris {
+        wants.extend(part.members.iter().map(|m| wanted(m, debris_asker)));
+    }
+    let pixels = read_layers(input, sweep, wants, islands.len() + 1, |pixels, _, regions| {
+        runs_in(&pixels.solid, &pixels.solid_labels, regions)
+    });
+    let mut findings = Vec::new();
+    let mut reported = Vec::with_capacity(islands.len());
+    for (part, runs) in islands.iter().zip(pixels.iter()) {
+        let footprint = CavityFill::from_runs(input, runs.clone());
+        findings.push(island_finding(input, regions, part).with_footprint(Arc::new(footprint)));
+        reported.push(island_of(input, regions, part));
+    }
+    findings.extend(growth_findings(ctx, options, &parts));
+    let debris_runs = pixels.last().cloned().unwrap_or_default();
+    findings.extend(debris_note(input, regions, &debris));
+    findings.extend(stray_note(input, regions));
+    let erased = erased_pixels(input, regions, debris_runs);
+    IslandReport {
+        findings,
+        islands: reported,
+        parts,
+        erased,
+    }
+}
+
+/// Whether `part` comes loose: it starts on nothing, not even a tip too thin
+/// to hold it, and lasts too little to be an island. What stands on a tip is
+/// never erased: the tip would stop short of what comes above.
+fn is_debris(part: &Part, options: &IslandOptions) -> bool {
+    part.held == Held::Nothing
+        && part.tip_contact_px == 0
+        && part.layers() < options.min_part_layers
+}
+
+/// Whether a start is left to the empty-layer finding: nothing at all is on
+/// the layer below it, not even a support, so it starts over a gap in the
+/// plate.
+fn left_to_empty_layer(ctx: &ReviewContext<'_>, part: &Part) -> bool {
+    part.first_layer > 0 && ctx.layer_is_empty(part.first_layer - 1)
+}
+
+fn plural(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+/// The finding of island `part`.
+fn island_finding(input: &ReviewInput<'_>, regions: &PlateRegions, part: &Part) -> Finding {
+    let pixel_mm2 = input.pixel_area_mm2();
+    let start = regions.layer(part.first_layer).solid[part.start as usize];
+    let focus = input.focus(part.first_layer, start.inside_point());
+    let first_mm2 = start.area_px as f64 * pixel_mm2;
+    let largest_mm2 = part.largest_px() as f64 * pixel_mm2;
+    let last = part.last_layer();
+    let span = plural(part.layers(), "layer", "layers");
+    let detail = match part.joined {
+        Some(_) if largest_mm2 > first_mm2 => format!(
+            "{first_mm2:.3} mm² of model starts with nothing under it and grows to {largest_mm2:.3} mm² over {span} before it joins the rest."
+        ),
+        Some(_) => format!(
+            "{first_mm2:.3} mm² of model starts with nothing under it and lasts {span} before it joins the rest."
+        ),
+        None => format!(
+            "{first_mm2:.3} mm² of model starts with nothing under it, reaches {largest_mm2:.3} mm² over {span} and never joins anything."
+        ),
+    };
+    Finding::new(
+        CheckKind::Island,
+        Severity::Error,
+        part.first_layer,
+        last,
+        focus,
+        RoleScope::Model,
+        "Unsupported island",
+        detail,
+    )
+    .with_fix(SuggestedFix::AddSupport {
+        at: input.underside(part.first_layer, focus),
+    })
+    .with_largest_mm2(largest_mm2)
+}
+
+/// Island `part` as a placement of supports needs it.
+fn island_of(input: &ReviewInput<'_>, regions: &PlateRegions, part: &Part) -> Island {
+    let pixel_mm2 = input.pixel_area_mm2();
+    let table = regions.layer(part.first_layer);
+    let runs = table
+        .start_of(part.start)
+        .map_or(&[][..], |start| start.runs.as_slice());
+    let first_pixels_mm = runs
+        .iter()
+        .flat_map(|run| {
+            (run.x0..run.x1)
+                .map(|x| input.pixel_to_plate([f64::from(x) + 0.5, f64::from(run.row) + 0.5]))
+        })
+        .collect();
+    Island {
+        first_layer: part.first_layer,
+        first_pixels_mm,
+        first_area_mm2: table.solid[part.start as usize].area_px as f64 * pixel_mm2,
+        growth_mm2: part
+            .area_px
+            .iter()
+            .map(|px| *px as f64 * pixel_mm2)
+            .collect(),
+        joins_on: part.joined.map(|(layer, _)| layer),
+    }
+}
+
+/// One finding per region at least `growth_factor` times what stood under
+/// it, leaving out what the list already tells: debris, which leaves the
+/// layers, and the first pixels of an island.
+fn growth_findings(
+    ctx: &ReviewContext<'_>,
+    options: &IslandOptions,
+    parts: &[Part],
+) -> Vec<Finding> {
+    let (input, regions) = (ctx.input, ctx.regions);
+    let pixel_mm2 = input.pixel_area_mm2();
+    let mut left_out: Vec<RegionRef> = parts
+        .iter()
+        .filter(|part| is_debris(part, options))
+        .flat_map(|part| part.members.iter().copied())
+        .chain(
+            parts
+                .iter()
+                .filter(|part| part.held == Held::Nothing)
+                .map(|part| RegionRef {
+                    layer: part.first_layer,
+                    index: part.start,
+                }),
+        )
+        .collect();
+    left_out.sort_unstable();
+    let is_left_out = |layer: usize, index: u32| {
+        left_out
+            .binary_search(&RegionRef { layer, index })
+            .is_ok()
+    };
+    let mut findings = Vec::new();
+    for layer in 1..regions.layers().len() {
+        let table = regions.layer(layer);
+        let lower = regions.layer(layer - 1);
+        let mut links: Vec<(u32, u32)> = regions
+            .solid_links(layer)
+            .iter()
+            .map(|link| (link.upper, link.lower))
+            .collect();
+        links.sort_unstable();
+        for stood in links.chunk_by(|a, b| a.0 == b.0) {
+            let index = stood[0].0;
+            let region = &table.solid[index as usize];
+            let from_px: u64 = stood
+                .iter()
+                .filter(|(_, below)| !is_left_out(layer - 1, *below))
+                .map(|(_, below)| lower.solid[*below as usize].area_px)
+                .sum();
+            if from_px == 0
+                || (region.area_px as f64) < options.growth_factor * from_px as f64
+                || is_left_out(layer, index)
+            {
+                continue;
+            }
+            let (from_mm2, to_mm2) = (
+                from_px as f64 * pixel_mm2,
+                region.area_px as f64 * pixel_mm2,
+            );
+            let focus = input.focus(layer, region.inside_point());
+            findings.push(
+                Finding::new(
+                    CheckKind::SurfaceGrowth,
+                    Severity::Warning,
+                    layer,
+                    layer,
+                    focus,
+                    RoleScope::Model,
+                    "Surface grows at once",
+                    format!(
+                        "The section grows from {from_mm2:.3} mm² to {to_mm2:.3} mm² on one layer (×{:.0}): it wants more support tips.",
+                        region.area_px as f64 / from_px as f64
+                    ),
+                )
+                .with_largest_mm2(to_mm2),
             );
         }
-        if chosen.is_empty() {
-            continue;
-        }
-        let last_layer = members[members.len() - 1].layer;
-        let held = held_from_above[group];
-        let size = island_size(ctx, scan, members);
-        let minimal = held && options.is_minimal(&size);
-        for start in chosen {
-            let largest_px = members
-                .iter()
-                .filter(|m| m.layer >= start.at.layer)
-                .map(|&m| piece(m).area_px)
-                .max()
-                .unwrap_or(0);
-            // The layers a support may climb to, and the island's pieces
-            // on them (#405).
-            let climb: Vec<(RegionRef, u64)> = if !minimal && options.support_climb_mm > 0.0 {
-                let bottom = spans[start.at.layer].bottom_mm;
-                members
-                    .iter()
-                    .filter(|m| {
-                        m.layer > start.at.layer
-                            && spans[m.layer].bottom_mm - bottom
-                                <= options.support_climb_mm + island_policy::HEIGHT_TOLERANCE_MM
-                    })
-                    .map(|&m| {
-                        let section = members
-                            .iter()
-                            .filter(|o| o.layer == m.layer)
-                            .map(|&o| piece(o).area_px)
-                            .sum();
-                        (m, section)
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            let footprint = members
-                .iter()
-                .filter(|m| {
-                    m.layer >= start.at.layer && m.layer < start.at.layer + MAX_FOOTPRINT_LAYERS
-                })
-                .copied()
-                .collect();
-            reported.push(Reported {
-                start,
-                last_layer,
-                largest_px,
-                held_from_above: held,
-                size,
-                minimal,
-                climb,
-                footprint,
-            });
-        }
     }
-    let keep_px = options.keep_px(ctx.input);
-    let mut layers: Vec<usize> = reported.iter().map(|r| r.start.at.layer).collect();
-    layers.sort_unstable();
-    layers.dedup();
-    let described: Vec<(usize, Finding, Option<CavityFill>)> = layers
-        .par_iter()
-        .flat_map_iter(|&layer| {
-            let cut = LayerPieces::compute(ctx.input, layer, keep_px);
-            let below = Below::read(ctx, options, layer);
-            reported
-                .iter()
-                .enumerate()
-                .filter(move |(_, r)| r.start.at.layer == layer)
-                .map(|(i, r)| {
-                    let (finding, join) =
-                        island_finding(ctx, options, r, piece(r.start.at), &cut, &below, pixel_mm2);
-                    (i, finding, join)
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    let mut footprints = footprints(ctx, keep_px, &reported);
-    // The joins, numbered in the order of the findings.
-    let mut joins = Vec::new();
-    let findings = described
-        .into_iter()
-        .map(|(i, finding, join)| {
-            let mut finding = finding.with_largest_mm2(reported[i].size.section_mm2);
-            if let Some(footprint) = footprints[i].take() {
-                finding = finding.with_footprint(Arc::new(footprint));
-            }
-            if let Some(join) = join {
-                if let Some(SuggestedFix::JoinBelow { join: index, .. }) = &mut finding.fix {
-                    *index = joins.len();
-                }
-                joins.push(join);
-            }
-            finding
-        })
-        .collect();
-    (findings, joins)
+    findings
 }
 
-/// The pixels of each reported island's footprint (#409), by its index in
-/// `reported`: its pieces, layer by layer. Each layer is rasterised once,
-/// in parallel.
-fn footprints(
-    ctx: &ReviewContext<'_>,
-    keep_px: u64,
-    reported: &[Reported],
-) -> Vec<Option<CavityFill>> {
-    let mut wanted: Vec<(usize, usize, u32)> = reported
+/// The one note about the debris erased from the layers.
+fn debris_note(
+    input: &ReviewInput<'_>,
+    regions: &PlateRegions,
+    debris: &[&Part],
+) -> Option<Finding> {
+    let first = debris.iter().map(|part| part.first_layer).min()?;
+    let last = debris.iter().map(|part| part.last_layer()).max()?;
+    let lowest = debris.iter().min_by_key(|part| part.first_layer)?;
+    let start = regions.layer(lowest.first_layer).solid[lowest.start as usize];
+    let largest_mm2 = debris
+        .iter()
+        .map(|part| part.largest_px())
+        .max()
+        .map_or(0.0, |px| px as f64 * input.pixel_area_mm2());
+    Some(
+        Finding::new(
+            CheckKind::CleanUp,
+            Severity::Info,
+            first,
+            last,
+            input.focus(lowest.first_layer, start.inside_point()),
+            RoleScope::Model,
+            "Debris removed",
+            format!(
+                "{} that started on nothing and lasted under {MIN_PART_LAYERS} layers removed on layers {}–{}, the largest {largest_mm2:.3} mm²: they would come loose in the vat.",
+                plural(debris.len(), "part", "parts"),
+                first + 1,
+                last + 1,
+            ),
+        )
+        .with_largest_mm2(largest_mm2),
+    )
+}
+
+/// The one note about the stray pixels taken off the layers.
+fn stray_note(input: &ReviewInput<'_>, regions: &PlateRegions) -> Option<Finding> {
+    let layers = regions.layers();
+    let first = layers.iter().position(|layer| !layer.stray.is_empty())?;
+    let last = layers.iter().rposition(|layer| !layer.stray.is_empty())?;
+    let pixels: u64 = layers
+        .iter()
+        .flat_map(|layer| &layer.stray)
+        .map(|run| u64::from(run.len()))
+        .sum();
+    let run = layers[first].stray[0];
+    Some(Finding::new(
+        CheckKind::CleanUp,
+        Severity::Info,
+        first,
+        last,
+        input.focus(first, [f64::from(run.x0) + 0.5, f64::from(run.row) + 0.5]),
+        RoleScope::Model,
+        "Stray pixels removed",
+        format!(
+            "{} removed on layers {}–{}: walls, pins and edges thinner than a pixel, which do not print.",
+            plural(pixels as usize, "stray pixel", "stray pixels"),
+            first + 1,
+            last + 1,
+        ),
+    ))
+}
+
+/// The pixels that leave the layers: the sweep's stray pixels and `debris`,
+/// the layers of the debris with their runs. Debris goes with a pixel around
+/// it: it stands alone on its layer, so that pixel is air or stray, and it
+/// takes the part of its polygons too thin to light a pixel, which an
+/// anti-aliased layer would still grey. Each layer's pixels are one list, so
+/// no rectangle of it overlaps another: a ring would be cancelled twice.
+fn erased_pixels(
+    input: &ReviewInput<'_>,
+    regions: &PlateRegions,
+    debris: Vec<(usize, Vec<Run>)>,
+) -> CavityFill {
+    let (width_px, height_px) = (input.width_px(), input.height_px());
+    let mut by_layer: BTreeMap<usize, Vec<Run>> = regions
+        .layers()
         .iter()
         .enumerate()
-        .flat_map(|(r, island)| island.footprint.iter().map(move |m| (m.layer, r, m.index)))
+        .filter(|(_, table)| !table.stray.is_empty())
+        .map(|(layer, table)| (layer, table.stray.clone()))
         .collect();
-    wanted.sort_unstable();
-    let by_layer: Vec<&[(usize, usize, u32)]> = wanted.chunk_by(|a, b| a.0 == b.0).collect();
-    let found: Vec<Vec<(usize, usize, Vec<Run>)>> = by_layer
-        .par_iter()
-        .map(|pieces| {
-            let layer = pieces[0].0;
-            let cut = LayerPieces::compute(ctx.input, layer, keep_px);
-            pieces
-                .chunk_by(|a, b| a.1 == b.1)
-                .map(|island| {
-                    let runs = island.iter().fold(Vec::new(), |runs, &(_, _, index)| {
-                        runs::union(&runs, &cut.runs_of(index))
-                    });
-                    (layer, island[0].1, runs)
-                })
-                .collect()
-        })
-        .collect();
-    let mut layers: Vec<Vec<(usize, Vec<Run>)>> = vec![Vec::new(); reported.len()];
-    for (layer, r, runs) in found.into_iter().flatten() {
-        layers[r].push((layer, runs));
+    for (layer, runs) in debris {
+        let grown = dilate_square(&runs, 1, width_px, height_px);
+        let layer_runs = by_layer.entry(layer).or_default();
+        *layer_runs = union(layer_runs, &grown);
     }
-    layers
-        .into_iter()
-        .map(|layers| (!layers.is_empty()).then(|| CavityFill::from_runs(ctx.input, layers)))
-        .collect()
-}
-
-/// What lies below one layer, as the islands starting on it need it: the
-/// solid of the layers the exposure cures through to (#403), merged, and
-/// the layers further down within a join's gap (#235), each with its gap.
-struct Below {
-    /// Solid of the layers below that hold a pixel above them.
-    held: Vec<Run>,
-    /// The layers below that, within [`IslandOptions::join_gap_mm`], from
-    /// the nearest: the layer, the gap of liquid above it in mm, its pixels.
-    /// Read the first time a join is looked for: a minimal island, or one
-    /// of support, needs none.
-    deeper: std::cell::OnceCell<Vec<(usize, f64, LayerPixels)>>,
-    /// How many layers below hold a pixel (`held`'s).
-    reach: usize,
-    layer: usize,
-}
-
-impl Below {
-    fn read(ctx: &ReviewContext<'_>, options: &IslandOptions, layer: usize) -> Self {
-        let reach = 1 + pieces::cured_gap_layers(ctx.input, layer, options.cure_depth_mm);
-        let mut held: Vec<Run> = Vec::new();
-        for below in 1..=reach.min(layer) {
-            held = runs::union(&held, &LayerPixels::compute(ctx.input, layer - below).solid);
-        }
-        Self {
-            held,
-            deeper: std::cell::OnceCell::new(),
-            reach,
-            layer,
-        }
-    }
-
-    /// The layers within a join's gap below, read once.
-    fn deeper(
-        &self,
-        ctx: &ReviewContext<'_>,
-        options: &IslandOptions,
-    ) -> &[(usize, f64, LayerPixels)] {
-        self.deeper.get_or_init(|| {
-            let (layer, reach) = (self.layer, self.reach);
-            let spans = ctx.input.layers();
-            let mut deeper = Vec::new();
-            if options.join_gap_mm <= 0.0 {
-                return deeper;
-            }
-            let mut gap: f64 = (1..=reach.min(layer))
-                .map(|below| spans[layer - below].height_mm())
-                .sum();
-            let mut below = reach + 1;
-            while below <= layer && gap <= options.join_gap_mm + island_policy::HEIGHT_TOLERANCE_MM
-            {
-                deeper.push((
-                    layer - below,
-                    gap,
-                    LayerPixels::compute(ctx.input, layer - below),
-                ));
-                gap += spans[layer - below].height_mm();
-                below += 1;
-            }
-            deeper
-        })
-    }
-}
-
-/// The pixels of the model below `unheld` (the pixels of an island's first
-/// layer that nothing holds) across a gap within the join's reach, and the
-/// fill that closes that gap under them: for each layer of the gap, the
-/// pixels whose column reaches model below it (#235). Only model: a pixel
-/// over support first is never joined.
-fn join_below(
-    ctx: &ReviewContext<'_>,
-    options: &IslandOptions,
-    unheld: &[Run],
-    below: &Below,
-    layer: usize,
-) -> Option<(u64, f64, CavityFill)> {
-    let mut open = unheld.to_vec();
-    let mut joined_px = 0u64;
-    let mut widest_gap: f64 = 0.0;
-    // Each layer of the gap, from the nearest: the columns that go through
-    // it to model further down.
-    let mut columns: Vec<(usize, Vec<Run>)> = Vec::new();
-    let mut found: Vec<(usize, Vec<Run>)> = Vec::new();
-    for (lower, gap, pixels) in below.deeper(ctx, options) {
-        if open.is_empty() {
-            break;
-        }
-        let model = pieces::intersect(&open, &pixels.model);
-        if !model.is_empty() {
-            joined_px += runs::area_px(&model);
-            widest_gap = widest_gap.max(*gap);
-            found.push((*lower, model));
-        }
-        open = crate::checks::thin::difference(&open, &pixels.solid);
-    }
-    if joined_px == 0 {
-        return None;
-    }
-    // Every layer between the island and a column's model gets the column.
-    for gap_layer in (0..layer).rev() {
-        let through: Vec<Run> = found
-            .iter()
-            .filter(|(lower, _)| *lower < gap_layer)
-            .fold(Vec::new(), |acc, (_, runs)| runs::union(&acc, runs));
-        if through.is_empty() {
-            break;
-        }
-        columns.push((gap_layer, through));
-    }
-    columns.reverse();
-    Some((
-        joined_px,
-        widest_gap,
-        CavityFill::from_runs(ctx.input, columns),
-    ))
-}
-
-/// The finding for one reported start, whose layer is cut into `cut`, with
-/// what lies `below` that layer; and the fill of its join, when it offers
-/// one (its index is set later).
-fn island_finding(
-    ctx: &ReviewContext<'_>,
-    options: &IslandOptions,
-    reported: &Reported,
-    piece: Piece,
-    cut: &LayerPieces,
-    below: &Below,
-    pixel_mm2: f64,
-) -> (Finding, Option<CavityFill>) {
-    let start = &reported.start;
-    let is_model = piece.model_px > 0;
-    let runs = cut.runs_of(start.at.index);
-    let prefer = is_model.then_some(cut.model.as_slice());
-    let (pixel, on_model) = focus::deepest_unheld(&runs, &below.held, prefer)
-        .unwrap_or(([runs[0].x0, runs[0].row], false));
-    let focus = ctx.input.focus(
-        start.at.layer,
-        [f64::from(pixel[0]) + 0.5, f64::from(pixel[1]) + 0.5],
-    );
-    let scope = if is_model {
-        RoleScope::Model
-    } else {
-        RoleScope::Support
-    };
-    if reported.minimal {
-        let size = reported.size;
-        let title = if is_model {
-            "Minimal island"
-        } else {
-            "Minimal floating support"
-        };
-        let finding = Finding::new(
-            CheckKind::Island,
-            Severity::Info,
-            start.at.layer,
-            reported.last_layer,
-            focus,
-            scope,
-            title,
-            minimal_detail(piece, &size, pixel_mm2, is_model),
-        );
-        return (finding, None);
-    }
-    let severity = if start.hold < ERROR_SHARE_OF_MARGIN - TOLERANCE {
-        Severity::Error
-    } else {
-        Severity::Warning
-    };
-    let title = match (is_model, start.rest.total() == 0) {
-        (true, true) => "Unsupported island",
-        (true, false) => "Weakly supported island",
-        (false, true) => "Floating support",
-        (false, false) => "Weakly held support",
-    };
-    let mut detail = detail(reported, piece, pixel_mm2);
-    let finding = |detail: String| {
-        Finding::new(
-            CheckKind::Island,
-            severity,
-            start.at.layer,
-            reported.last_layer,
-            focus,
-            scope,
-            title,
-            detail,
-        )
-    };
-    if !(is_model && on_model) {
-        return (finding(detail), None);
-    }
-    // A gap thinner than a support over model below: close it (#235).
-    if options.join_gap_mm > 0.0 {
-        let held = pieces::intersect(&runs, &below.held);
-        let unheld = pieces::subtract(&runs, &held);
-        if let Some((joined_px, gap_mm, fill)) =
-            join_below(ctx, options, &unheld, below, start.at.layer)
-        {
-            let rest = Rest {
-                model_px: start.rest.model_px + joined_px,
-                support_px: start.rest.support_px,
-            };
-            if options.hold(rest, piece.area_px, true) >= 1.0 - TOLERANCE {
-                detail.push_str(&format!(
-                    " Model lies {} mm below it, too close for a support: curing that gap joins it to the model.",
-                    significant(gap_mm)
-                ));
-                let finding = finding(detail).with_fix(SuggestedFix::JoinBelow {
-                    at: ctx.input.underside(start.at.layer, focus),
-                    join: 0,
-                });
-                return (finding, Some(fill));
-            }
-        }
-    }
-    let mut at = ctx.input.underside(start.at.layer, focus);
-    // A first layer smaller than a tip: aim where the island has grown
-    // to a tip's size, on the part that grew (#405).
-    let tip_px = options.tip_contact_mm2 / pixel_mm2;
-    if (piece.area_px as f64) < tip_px
-        && let Some((higher, climbed)) = climb_point(ctx, options, reported, tip_px)
-    {
-        at = higher;
-        detail.push_str(&format!(
-            " Its first layer is smaller than a support tip, so the support aims {} higher, where it is large enough.",
-            if climbed == 1 {
-                "one layer".to_string()
-            } else {
-                format!("{climbed} layers")
-            }
-        ));
-    }
-    (
-        finding(detail).with_fix(SuggestedFix::AddSupport { at }),
-        None,
-    )
-}
-
-/// Where a growing island's support goes when its first layer is smaller
-/// than a tip (#405): on the lowest layer within the climb where its
-/// section reaches `tip_px` pixels, at the deepest pixel of its largest
-/// piece there that the layers below leave unheld (the part that grew), at
-/// the bottom of that layer; and how many layers up that is. `None` when it
-/// reaches that size nowhere within the climb, or the part that grew has
-/// no model pixel.
-fn climb_point(
-    ctx: &ReviewContext<'_>,
-    options: &IslandOptions,
-    reported: &Reported,
-    tip_px: f64,
-) -> Option<(crate::finding::PlatePoint, usize)> {
-    let layer = reported
-        .climb
-        .iter()
-        .filter(|(_, section)| *section as f64 >= tip_px)
-        .map(|(m, _)| m.layer)
-        .min()?;
-    let cut = LayerPieces::compute(ctx.input, layer, options.keep_px(ctx.input));
-    // The island's largest piece on that layer, the first on a tie.
-    let index = reported
-        .climb
-        .iter()
-        .filter(|(m, _)| m.layer == layer)
-        .map(|(m, _)| m.index)
-        .max_by(|a, b| {
-            cut.pieces[*a as usize]
-                .area_px
-                .cmp(&cut.pieces[*b as usize].area_px)
-                .then(b.cmp(a))
-        })?;
-    let runs = cut.runs_of(index);
-    let below = Below::read(
-        ctx,
-        &IslandOptions {
-            join_gap_mm: 0.0,
-            ..options.clone()
-        },
-        layer,
-    );
-    let (pixel, on_model) = focus::deepest_unheld(&runs, &below.held, Some(&cut.model))?;
-    if !on_model {
-        return None;
-    }
-    let focus = ctx.input.focus(
-        layer,
-        [f64::from(pixel[0]) + 0.5, f64::from(pixel[1]) + 0.5],
-    );
-    Some((
-        ctx.input.underside(layer, focus),
-        layer - reported.start.at.layer,
-    ))
-}
-
-/// The sentence of a minimal island (#402): how small it is, how soon the
-/// rest of the print holds it, and why it gets no support.
-fn minimal_detail(piece: Piece, size: &IslandSize, pixel_mm2: f64, is_model: bool) -> String {
-    let what = if is_model { "model" } else { "support" };
-    let area = significant(piece.area_px as f64 * pixel_mm2);
-    let within = if size.layers == 1 {
-        format!(
-            "the next layer holds it ({} mm)",
-            significant(size.height_mm)
-        )
-    } else {
-        format!(
-            "the rest of the print holds it within {} layers ({} mm)",
-            size.layers,
-            significant(size.height_mm)
-        )
-    };
-    format!(
-        "{area} mm² of {what} starts with nothing cured below it, but {within}, {} mm³ in all and never larger than {} mm². The next layers lift it with them; a support this small would do more harm than good.",
-        significant(size.volume_mm3),
-        significant(size.section_mm2),
-    )
-}
-
-/// The finding's sentence: the start's area and what it rests on, then how
-/// large the part hanging from it grows.
-fn detail(reported: &Reported, piece: Piece, pixel_mm2: f64) -> String {
-    let start = &reported.start;
-    let is_model = piece.model_px > 0;
-    let what = if is_model { "model" } else { "support" };
-    let area = significant(piece.area_px as f64 * pixel_mm2);
-    let below = start.rest.total();
-    let mut text = if below == 0 {
-        format!("{area} mm² of {what} starts with nothing cured below it (0 % supported)")
-    } else {
-        // The margin this mix of contact asks for: the fraction over the
-        // share of its hold it gets.
-        let margin = below as f64 / piece.area_px as f64 / start.hold;
-        let (supported, margin) = percents(below, piece.area_px, margin);
-        let (kind, whose) = match (is_model, start.rest.model_px, start.rest.support_px) {
-            (true, 0, _) => ("support tips", " for tips"),
-            (true, _, tips) if tips > 0 => ("cured resin and support tips", " for that mix"),
-            _ => ("cured resin", ""),
-        };
-        format!(
-            "{area} mm² of {what} rests on only {} mm² of {kind} ({supported} supported, under the {margin} margin{whose})",
-            significant(below as f64 * pixel_mm2),
-        )
-    };
-    let largest = significant(reported.largest_px as f64 * pixel_mm2);
-    if reported.largest_px > piece.area_px && largest != area {
-        text.push_str(&format!(", and the part it starts grows to {largest} mm²"));
-        text.push_str(if reported.held_from_above {
-            " before the rest of the print holds it"
-        } else {
-            " with nothing else holding it"
-        });
-    }
-    text.push('.');
-    text
-}
-
-/// `value` with three significant digits and no exponent: `0.00456`,
-/// `0.123`, `1.23`, `12.3`, `123`; larger values with no decimals.
-fn significant(value: f64) -> String {
-    if value <= 0.0 || !value.is_finite() {
-        return "0".to_string();
-    }
-    let mut magnitude = value.log10().floor() as i32;
-    // Rounding to three digits can carry into the next power of ten
-    // (9.9996 to 10.00): count the digits of the rounded value.
-    let decimals = |magnitude: i32| (2 - magnitude).max(0);
-    let rounded = |magnitude: i32| {
-        let scale = 10f64.powi(decimals(magnitude));
-        (value * scale).round() / scale
-    };
-    if rounded(magnitude) >= 10f64.powi(magnitude + 1) {
-        magnitude += 1;
-    }
-    let decimals = decimals(magnitude) as usize;
-    format!("{value:.decimals$}")
-}
-
-/// The supported fraction `part / whole` and the `margin` it falls under, as
-/// percentages that read in that order: the fraction rounded down, the
-/// margin to the nearest, both with the fewest decimals (up to 3) that show
-/// the margin and keep the fraction below it. A non-zero fraction under 1 %
-/// of a whole-percent margin reads `"<1 %"`.
-fn percents(part: u64, whole: u64, margin: f64) -> (String, String) {
-    let exact = |decimals: u32| {
-        let scaled = margin * 100.0 * 10f64.powi(decimals as i32);
-        (scaled - scaled.round()).abs() < 1e-6
-    };
-    let mut decimals = (0..2).find(|&d| exact(d)).unwrap_or(2);
-    loop {
-        let scale = 100 * 10u128.pow(decimals);
-        let shown_fraction = u128::from(part) * scale / u128::from(whole.max(1));
-        let shown_margin = (margin * scale as f64).round();
-        if (shown_fraction as f64) < shown_margin || decimals == 3 {
-            let d = decimals as usize;
-            let divisor = 10f64.powi(decimals as i32);
-            let supported = if shown_fraction == 0 && part > 0 && decimals == 0 {
-                "<1 %".to_string()
-            } else {
-                format!("{:.d$} %", shown_fraction as f64 / divisor)
-            };
-            return (supported, format!("{:.d$} %", shown_margin / divisor));
-        }
-        decimals += 1;
-    }
+    CavityFill::from_runs(input, by_layer.into_iter().collect())
 }
 
 #[cfg(test)]

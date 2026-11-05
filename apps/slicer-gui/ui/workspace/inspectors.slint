@@ -39,9 +39,6 @@ export struct ReviewRow {
     leave: bool,
     // The lift button of fix 4 ("Lift 17 layers").
     lift-label: string,
-    // An island just above the model (#235): 0 no join, 1 offered, 2 marked
-    // to join on the next slice. Its button is the fix.
-    join: int,
     // After Fix All (#156): why it left this finding, else empty.
     remains: string,
 }
@@ -229,17 +226,6 @@ component FindingRow inherits VerticalLayout {
                 }
             }
         }
-        if root.finding.join > 0: ScButton {
-            text: root.finding.join == 2 ? @tr("Review" => "Do not join") : @tr("Review" => "Join to below");
-            icon: root.finding.join == 2 ? "" : Icons.check;
-            clicked => {
-                root.fix();
-            }
-        }
-        if root.finding.join == 2: Note {
-            text: @tr("Review" => "Marked: the next slice joins it to the model below.");
-            color: Theme.success;
-        }
         if root.finding.fixed: Note {
             text: root.finding.fix == 1 ? @tr("Review" => "Support added.")
                 : root.finding.fix == 4 ? @tr("Review" => "Done. Generate the supports again, then slice.")
@@ -259,8 +245,12 @@ component FindingRow inherits VerticalLayout {
                     root.fill-toggled();
                 }
             }
-            if root.finding.leave && root.finding.fill == 1: ScButton {
-                text: @tr("Review" => "Leave it");
+        }
+        if root.finding.leave: HorizontalLayout {
+            alignment: start;
+
+            ScButton {
+                text: @tr("Review" => "Ignore");
                 kind: ButtonKind.ghost;
                 clicked => {
                     root.leave();
@@ -2111,8 +2101,7 @@ export component SliceInspector inherits VerticalLayout {
     // cleared.
     in property <string> review-fills-note;
     in property <bool> review-fills-clearable;
-    // The label of the button that clears the marks: "Clear fills", or
-    // "Clear fixes" when Fix All also marked specks or thin features.
+    // The label of the button that clears the marks.
     in property <string> review-fills-clear-label;
     // How many findings Fix All (#156) would fix: 0 hides its button.
     in property <int> review-fix-all;

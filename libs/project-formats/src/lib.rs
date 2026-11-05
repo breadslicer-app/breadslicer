@@ -57,7 +57,7 @@ pub use loader::{
     SUPPORTED_SCENE_FILE_EXTENSIONS, is_supported_scene_file_extension, load_scene,
 };
 pub use messages::{ForeignDialect, ProfileRefWarning, ReadProjectWarning};
-pub use payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
+pub use payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload, ReviewDecision};
 pub use read::{LoadedProject, read_project, read_project_with_progress};
 pub use sc_bread_format::{HollowDocument, SupportDocument};
 pub use slices::PlateSlices;

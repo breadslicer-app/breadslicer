@@ -35,6 +35,7 @@ use sc_print_glue::SupportOwners;
 use sc_project_formats::SupportDocument;
 use sc_scene::{NodeId, Scene};
 
+use crate::review::SupportSet;
 use crate::scene_document::SceneDocument;
 
 /// One drawing of a model's supports: the session that made the mesh a
@@ -236,6 +237,26 @@ pub(crate) fn support_owners(
 ) -> SupportOwners {
     support_leaves(spatial)
         .map(|(id, _)| (id, model_of(sessions, id)))
+        .collect()
+}
+
+/// What the review reads of the supports in force (#432): each leaf a
+/// session drew, and where its supports touch the model.
+pub(crate) fn review_sets(
+    spatial: &SceneSpatial,
+    sessions: &RefCell<SupportSessions>,
+) -> Vec<SupportSet> {
+    sets_in_force(spatial, sessions)
+        .into_iter()
+        .map(|drawn| SupportSet {
+            leaf: drawn.leaf,
+            contacts: drawn
+                .session
+                .pieces()
+                .into_iter()
+                .flat_map(|piece| piece.contacts)
+                .collect(),
+        })
         .collect()
 }
 

@@ -16,8 +16,8 @@
 //!   least [`RaftOptions::min_area_px`] pixels' worth of contour on a layer
 //!   of the raft zone ([`ReviewInput::raft_layers`]), from its first such
 //!   layer to its last, focused on the centre of what it has there. Only
-//!   when the plate has a raft: an input that knows the raft's top, with
-//!   support contour on the first layer. It suggests
+//!   when the plate has a raft: an input that knows the raft's top. It
+//!   suggests
 //!   [`SuggestedFix::ClearRaft`]: lift the model to the recommended support
 //!   lift ([`ReviewInput::recommended_lift_mm`]), or turn the raft off.
 //!   Lifting it only above the raft would leave the supports no room to
@@ -35,7 +35,6 @@
 use sc_sl1cer::contour::Polygon;
 
 use crate::finding::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
-use crate::input::Role;
 use crate::runner::ReviewContext;
 
 /// Settings of the raft check.
@@ -91,25 +90,13 @@ pub fn clashes(ctx: &ReviewContext<'_>, options: &RaftOptions) -> Vec<RaftClash>
         return Vec::new();
     }
     let min_area_mm2 = options.min_area_px * input.pixel_area_mm2();
-    let has_raft = input
-        .leaves()
-        .iter()
-        .filter(|leaf| leaf.role == Role::Support)
-        .any(|leaf| layer_area_mm2(leaf.stack.layers()[0].polygons()) >= min_area_mm2);
-    if !has_raft {
-        return Vec::new();
-    }
     let spans = input.layers();
     let lift_to_mm = input
         .recommended_lift_mm()
         .unwrap_or(spans[zone - 1].top_mm);
     let cover = input.lift_layers().clamp(zone, input.layer_count());
     let mut clashes = Vec::new();
-    for leaf in input
-        .leaves()
-        .iter()
-        .filter(|leaf| leaf.role == Role::Model)
-    {
+    for leaf in input.leaves() {
         let mut range: Option<(usize, usize)> = None;
         let mut footprint = [
             f64::INFINITY,

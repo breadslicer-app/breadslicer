@@ -25,7 +25,7 @@ use std::sync::Arc;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_spatial::{PrimedMesh, SceneSpatial};
 use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
-use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload};
+use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload, ReviewDecision};
 use sc_scene::Scene;
 use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind};
 use sc_scene::{
@@ -200,15 +200,18 @@ pub(crate) enum DocumentOrigin {
     Project,
 }
 
-/// Splits a project payload into the scene's own choices and the embedded
-/// profile documents it carries.
-fn split_payload(payload: ProjectPayload) -> (PrintSelection, Vec<EmbeddedProfile>) {
+/// Splits a project payload into the scene's own choices, the embedded
+/// profile documents it carries and the review decisions kept with it.
+fn split_payload(
+    payload: ProjectPayload,
+) -> (PrintSelection, Vec<EmbeddedProfile>, Vec<ReviewDecision>) {
     let ProjectPayload {
         printer,
         resin,
         first_layer_height,
         output_format,
         embedded,
+        review_decisions,
     } = payload;
     (
         PrintSelection {
@@ -218,6 +221,7 @@ fn split_payload(payload: ProjectPayload) -> (PrintSelection, Vec<EmbeddedProfil
             output_format,
         },
         embedded,
+        review_decisions,
     )
 }
 
@@ -301,6 +305,9 @@ pub(crate) struct SceneDocument {
     /// Bumped by every project-level change, giving those the same comparable
     /// identity committed edits get from their ids.
     project_state_generation: Cell<u64>,
+    /// The findings the person chose to ignore (#432): the Review card
+    /// keeps these up to date, and a project carries them.
+    review_decisions: RefCell<Vec<ReviewDecision>>,
     /// The editable DragonFruit support sessions, one set per model, shared
     /// with the support driver: a save keeps each set's session in force as
     /// data, and opening a `.bread` puts the rebuilt ones here.
@@ -434,6 +441,7 @@ impl SceneDocument {
             slice_generation: Cell::new(0),
             scene_generation: Cell::new(0),
             project_state_generation: Cell::new(0),
+            review_decisions: RefCell::default(),
             support_sessions: Rc::default(),
             support_follow: Cell::new(None),
             hollows: Rc::default(),
@@ -521,18 +529,19 @@ impl SceneDocument {
         self.bump_scene_generation();
         *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
-        let (selection, embedded) = match project_payload {
+        let (selection, embedded, decisions) = match project_payload {
             Some(payload) => {
                 self.origin.set(DocumentOrigin::Project);
                 split_payload(payload)
             }
             None => {
                 self.origin.set(DocumentOrigin::PlainMesh);
-                (PrintSelection::default(), Vec::new())
+                (PrintSelection::default(), Vec::new(), Vec::new())
             }
         };
         *self.print_selection.borrow_mut() = selection;
         *self.embedded_profiles.borrow_mut() = embedded;
+        *self.review_decisions.borrow_mut() = decisions;
         self.selection.set(Selection::None);
         // Object indices in the new scene have no relationship to the outgoing
         // one's, so any pending edits would target the wrong objects on replay.
@@ -637,7 +646,19 @@ impl SceneDocument {
             first_layer_height,
             output_format,
             embedded: self.embedded_profiles.borrow().clone(),
+            review_decisions: self.review_decisions.borrow().clone(),
         }
+    }
+
+    /// The findings the person chose to ignore, as a project keeps them
+    /// (#432).
+    pub(crate) fn review_decisions(&self) -> Vec<ReviewDecision> {
+        self.review_decisions.borrow().clone()
+    }
+
+    /// Keeps `decisions` with the project: the next save writes them.
+    pub(crate) fn set_review_decisions(&self, decisions: Vec<ReviewDecision>) {
+        *self.review_decisions.borrow_mut() = decisions;
     }
 
     /// Reports whether this document is a project: it was opened from a project
@@ -681,9 +702,10 @@ impl SceneDocument {
         if current != prepared {
             return SaveRecorded::Drifted;
         }
-        let (selection, embedded) = split_payload(payload);
+        let (selection, embedded, decisions) = split_payload(payload);
         *self.print_selection.borrow_mut() = selection;
         *self.embedded_profiles.borrow_mut() = embedded;
+        *self.review_decisions.borrow_mut() = decisions;
         self.mark_saved();
         SaveRecorded::Clean
     }

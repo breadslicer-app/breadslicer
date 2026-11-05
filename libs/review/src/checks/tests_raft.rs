@@ -13,8 +13,8 @@
 use super::*;
 use crate::finding::{CheckKind, Finding, RoleScope, Severity, SuggestedFix};
 use crate::input::ReviewInput;
-use crate::regions::PlateRegions;
-use crate::runner::{ReviewOptions, review_with};
+use crate::regions::{PlateRegions, SweepOptions};
+use crate::runner::{ReviewOptions, check_regions};
 use crate::test_support::{Fixture, FixtureBuilder, Shape};
 
 const RAFT_TOP_MM: f64 = 0.25;
@@ -32,7 +32,7 @@ fn rafted(fixture: &Fixture, raft_top_mm: Option<f64>) -> ReviewInput<'_> {
 /// The raft check on `fixture`.
 fn raft(fixture: &Fixture, raft_top_mm: Option<f64>) -> Vec<Finding> {
     let input = rafted(fixture, raft_top_mm);
-    let regions = PlateRegions::compute(&input);
+    let regions = PlateRegions::compute(&input, &SweepOptions::default());
     run(
         &ReviewContext::new(&input, &regions),
         &RaftOptions::default(),
@@ -41,15 +41,19 @@ fn raft(fixture: &Fixture, raft_top_mm: Option<f64>) -> Vec<Finding> {
 
 /// The whole review of `fixture`.
 fn review(fixture: &Fixture, raft_top_mm: Option<f64>) -> Vec<Finding> {
-    review_with(&rafted(fixture, raft_top_mm), &ReviewOptions::default()).findings
+    let input = rafted(fixture, raft_top_mm);
+    let regions = PlateRegions::compute(&input, &SweepOptions::default());
+    check_regions(
+        &ReviewContext::new(&input, &regions),
+        &ReviewOptions::default(),
+    )
+    .findings
 }
 
 /// A model standing on the plate beside a support on its raft.
 fn model_on_the_plate() -> FixtureBuilder {
     FixtureBuilder::new(12)
         .model(0..12, Shape::rect(20.0, 20.0, 60.0, 50.0))
-        .support(0..5, Shape::rect(100.0, 20.0, 160.0, 80.0))
-        .support(5..12, Shape::circle(130.0, 50.0, 3.0))
 }
 
 #[test]
@@ -85,7 +89,7 @@ fn a_model_on_the_plate_is_inside_the_raft() {
 fn without_a_support_lift_the_raft_top_is_recommended() {
     let fixture = model_on_the_plate().build();
     let input = fixture.input().with_raft_top_mm(Some(RAFT_TOP_MM));
-    let regions = PlateRegions::compute(&input);
+    let regions = PlateRegions::compute(&input, &SweepOptions::default());
     let findings = run(
         &ReviewContext::new(&input, &regions),
         &RaftOptions::default(),
@@ -100,8 +104,6 @@ fn without_a_support_lift_the_raft_top_is_recommended() {
 fn a_model_partly_lifted_is_still_in_the_raft() {
     let fixture = FixtureBuilder::new(12)
         .model(3..12, Shape::rect(20.0, 20.0, 60.0, 50.0))
-        .support(0..5, Shape::rect(100.0, 20.0, 160.0, 80.0))
-        .support(0..3, Shape::circle(40.0, 35.0, 3.0))
         .build();
     let findings = raft(&fixture, Some(RAFT_TOP_MM));
     assert_eq!(findings.len(), 1, "{findings:?}");
@@ -117,8 +119,6 @@ fn a_model_lifted_above_the_raft_is_clear() {
     // Above the raft, yet below the support lift: not this check's concern.
     let fixture = FixtureBuilder::new(12)
         .model(5..12, Shape::rect(20.0, 20.0, 60.0, 50.0))
-        .support(0..5, Shape::rect(100.0, 20.0, 160.0, 80.0))
-        .support(0..5, Shape::circle(40.0, 35.0, 3.0))
         .build();
     assert!(raft(&fixture, Some(RAFT_TOP_MM)).is_empty());
 }
@@ -127,26 +127,18 @@ fn a_model_lifted_above_the_raft_is_clear() {
 fn without_a_raft_nothing_is_reported() {
     let fixture = model_on_the_plate().build();
     assert!(raft(&fixture, None).is_empty());
-    // A raft top, but no support on the plate: no raft was generated.
-    let bare = FixtureBuilder::new(12)
-        .model(0..12, Shape::rect(20.0, 20.0, 60.0, 50.0))
-        .support(5..12, Shape::circle(130.0, 50.0, 3.0))
-        .build();
-    assert!(raft(&bare, Some(RAFT_TOP_MM)).is_empty());
 }
 
 #[test]
-fn every_model_in_the_raft_has_its_own_finding() {
+fn every_model_in_the_raft_is_reported() {
     let fixture = model_on_the_plate()
         .shape(
             "Second",
-            Role::Model,
             0..12,
             Shape::rect(20.0, 70.0, 50.0, 100.0),
         )
         .shape(
             "Lifted",
-            Role::Model,
             6..12,
             Shape::rect(170.0, 70.0, 190.0, 100.0),
         )
@@ -215,8 +207,6 @@ fn islands_of_a_model_clear_of_the_raft_are_still_reported() {
     let fixture = FixtureBuilder::new(12)
         .model(5..12, Shape::rect(20.0, 20.0, 60.0, 50.0))
         .model(6..12, Shape::rect(64.0, 20.0, 80.0, 40.0))
-        .support(0..5, Shape::rect(100.0, 20.0, 160.0, 80.0))
-        .support(0..5, Shape::circle(40.0, 35.0, 3.0))
         .build();
     let with = review(&fixture, Some(RAFT_TOP_MM));
     assert_eq!(raft_findings(&with), 0, "{with:?}");
@@ -228,7 +218,7 @@ fn islands_of_a_model_clear_of_the_raft_are_still_reported() {
 fn only_islands_near_the_footprint_and_below_the_lift_are_covered() {
     let fixture = model_on_the_plate().build();
     let input = rafted(&fixture, Some(RAFT_TOP_MM));
-    let regions = PlateRegions::compute(&input);
+    let regions = PlateRegions::compute(&input, &SweepOptions::default());
     let clashes = clashes(
         &ReviewContext::new(&input, &regions),
         &RaftOptions::default(),
@@ -269,6 +259,6 @@ fn only_islands_near_the_footprint_and_below_the_lift_are_covered() {
         1.0
     ));
     let mut not_island = island(3, cx, cy, RoleScope::Model);
-    not_island.check = CheckKind::ThinFeature;
+    not_island.check = CheckKind::ResinTrap;
     assert!(!covers(&clashes, &not_island, 1.0));
 }

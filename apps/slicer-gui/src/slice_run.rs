@@ -18,19 +18,19 @@
 //! in `catch_unwind` so a panic still deposits a result and the modal always
 //! closes.
 //!
-//! Right after the engine finishes, the worker reviews the per-leaf stacks
+//! Right after the engine finishes, the worker reviews the models' stacks
 //! (`crate::review`, #90) before merging them, and the findings travel to
-//! the Review card with the slice. A review that fails leaves the slice as
-//! it is.
+//! the Review card with the slice. The review is part of the run: the
+//! progress bar counts its layers, and Cancel stops it. A review that fails
+//! leaves the slice as it is.
 //!
 //! The cavities marked to fill in the Review card (#132) travel with the run:
 //! the worker cuts them on the run's schedule, reviews them as model and
 //! merges them into the plate, so the preview, the printer file and its
 //! estimates all cure them. A Slice press with fills to change re-slices
-//! even when nothing else changed. Fix All (#156) adds thin features to
-//! thicken, cured the same way, and specks to erase: their stack is cut from
-//! the model leaves and the fills and merged with them, which removes the
-//! specks from all three.
+//! even when nothing else changed. What the review takes off the layers by
+//! itself (#432) is cut from the model leaves and the fills and merged with
+//! them, which removes it from all three.
 //!
 //! A slice the slicer refuses for meshes that are not closed offers Repair on
 //! its card (#407): the Repair driver repairs those objects only and, once they
@@ -63,7 +63,7 @@ use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
 use crate::repair_report::object_names_by_leaf;
 use crate::repair_run::RepairRun;
-use crate::review::{ReviewOutcome, erased_stack, review_slices};
+use crate::review::{ReviewOutcome, SupportSet, erased_stack, review_slices};
 use crate::review_panel::ReviewPanel;
 use crate::scene_document::SceneDocument;
 use crate::slice_projection::{SliceFailure, current_layer_values, load_selected_profiles};
@@ -84,7 +84,7 @@ const UP_TO_DATE_HINT_DURATION: Duration = Duration::from_secs(10);
 /// (one per leaf and layer, #355), so the modal's total is the layer count the
 /// Result card shows. `completed` climbs monotonically (`fetch_max`); `total`
 /// is the run's fixed denominator. `reviewing` is raised once every layer is
-/// cut, while the review runs.
+/// cut, and then `completed` starts over, counting the layers checked (#432).
 #[derive(Default)]
 struct SliceProgressCell {
     completed: AtomicU32,
@@ -99,6 +99,18 @@ impl SliceProgressCell {
         self.completed
             .fetch_max(progress.layers_completed() as u32, Ordering::Relaxed);
         self.total.store(progress.layers as u32, Ordering::Relaxed);
+    }
+
+    /// Starts counting the layers the review checks.
+    fn start_review(&self) {
+        self.completed.store(0, Ordering::Relaxed);
+        self.reviewing.store(true, Ordering::Relaxed);
+    }
+
+    /// Publishes `done` layers checked. They arrive out of order from the
+    /// layer tasks, so the count only ever rises.
+    fn record_review(&self, done: usize) {
+        self.completed.fetch_max(done as u32, Ordering::Relaxed);
     }
 }
 
@@ -305,10 +317,11 @@ impl SliceRun {
             return false;
         };
         let sessions = self.document.support_sessions();
-        let Some((scene, supports)) = self.document.with_scene(|spatial| {
+        let Some((scene, supports, support_sets)) = self.document.with_scene(|spatial| {
             (
                 spatial.graph().clone(),
                 support_persist::support_owners(spatial, &sessions),
+                support_persist::review_sets(spatial, &sessions),
             )
         }) else {
             return false;
@@ -346,8 +359,8 @@ impl SliceRun {
                 aa_level: current.aa_level,
                 raft_top_mm,
                 supports,
+                support_sets,
                 fills: patches.fills,
-                erasures: patches.erasures,
             },
             cancel,
         );
@@ -693,16 +706,16 @@ struct SliceInputs {
     /// The support leaves and the model each stands on, which the scale
     /// compensation scales them with (#227).
     supports: SupportOwners,
-    /// The cavities to fill (#132) and the thin features to thicken (#156).
+    /// What the review reads of the supports made here (#432).
+    support_sets: Vec<SupportSet>,
+    /// The cavities to fill (#132).
     fills: Vec<Arc<CavityFill>>,
-    /// The specks to erase (#156).
-    erasures: Vec<Arc<CavityFill>>,
 }
 
 /// Loads the profiles and runs the shared slicing service, publishing progress
 /// into `progress` as layers complete, then cuts the fills on the run's
-/// schedule and reviews the per-leaf stacks with them before merging them
-/// all. A cancel that arrives during the review still cancels the run.
+/// schedule and reviews the models with them, then merges them all with
+/// what the review took off the layers. Cancel stops the review too.
 fn run_slice(
     scene: &Scene,
     inputs: &SliceInputs,
@@ -729,31 +742,36 @@ fn run_slice(
     match run {
         sc_print_glue::SliceRun::Cancelled => Ok(SliceRunOutcome::Cancelled),
         sc_print_glue::SliceRun::Completed(plate) => {
-            progress.reviewing.store(true, Ordering::Relaxed);
+            progress.start_review();
             let filled = fill_stack(inputs.fills.iter().map(|fill| &**fill), plate.schedule());
-            let erased = erased_stack(
-                plate.leaves(),
-                filled.as_ref(),
-                inputs.erasures.iter().map(|erasure| &**erasure),
-                plate.schedule(),
-            );
             let review = review_slices(
-                plate.leaves(),
+                &plate,
                 filled.as_ref(),
-                erased.as_ref(),
-                plate.profile(),
+                &inputs.support_sets,
                 // The raft is scaled in Z with its supports.
                 inputs
                     .raft_top_mm
                     .map(|top| plate.compensated_height_mm(top)),
+                cancel,
+                &|done| progress.record_review(done),
             );
             crate::breadcrumbs::note(&format!(
                 "slice: reviewed ok={}",
                 matches!(review, ReviewOutcome::Reviewed { .. })
             ));
-            if cancel.is_cancelled() {
+            if review == ReviewOutcome::Cancelled || cancel.is_cancelled() {
                 return Ok(SliceRunOutcome::Cancelled);
             }
+            let erased = match &review {
+                ReviewOutcome::Reviewed { erased, .. } => erased_stack(
+                    plate.leaves(),
+                    &inputs.support_sets,
+                    filled.as_ref(),
+                    erased,
+                    plate.schedule(),
+                ),
+                _ => None,
+            };
             let scale = plate.scale_compensation();
             let contours = plate
                 .merge_with(filled.into_iter().chain(erased))
@@ -828,9 +846,8 @@ mod capture_tests {
         ReviewOutcome::Reviewed {
             findings: Vec::new(),
             fills: Vec::new(),
-            erasures: Vec::new(),
-            thickenings: Vec::new(),
-            joins: Vec::new(),
+            erased: CavityFill::default(),
+            islands: Vec::new(),
             took: Duration::ZERO,
         }
     }
@@ -1050,7 +1067,7 @@ mod progress_tests {
             raft_top_mm: None,
             supports: SupportOwners::new(),
             fills: Vec::new(),
-            erasures: Vec::new(),
+            support_sets: Vec::new(),
         }
     }
 

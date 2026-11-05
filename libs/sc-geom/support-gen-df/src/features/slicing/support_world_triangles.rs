@@ -304,15 +304,18 @@ pub struct TipDrawing {
 /// A contact cone's ends as drawn: its socket, where its tip ends inside
 /// the model, their radii, and the top of its break-point neck (a cylinder
 /// of the tip radius from the surface up to there) when it has one.
-struct ContactEnds {
-    socket: Vec3,
-    tip: Vec3,
-    r_socket: f64,
-    r_tip: f64,
-    neck: Option<Vec3>,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContactEnds {
+    pub socket: Vec3,
+    pub tip: Vec3,
+    pub r_socket: f64,
+    pub r_tip: f64,
+    pub neck: Option<Vec3>,
 }
 
-fn contact_ends(
+/// Where a contact cone ends as the slicer draws it, under the run's
+/// penetration, tip scale and [`TipDrawing`].
+pub fn contact_ends(
     cone: &ContactCone,
     penetration_mm: f64,
     tip_scale: f64,
@@ -391,6 +394,18 @@ pub fn append_contact_cone_with(
     }
 }
 
+/// The thickness and the radius of a contact disk as
+/// [`append_contact_disk_primitive`] draws it.
+pub fn contact_disk_size(disk: &ContactDisk, tip_scale: f64) -> (f64, f64) {
+    let thickness = disk.disk_length_override.unwrap_or_else(|| {
+        calculate_disk_thickness(disk.surface_normal, disk.cone_axis, Some(&disk.profile))
+    });
+    (
+        thickness,
+        js_max(0.01, disk.contact_diameter_mm * 0.5 * tip_scale),
+    )
+}
+
 /// `appendContactDiskPrimitive`: a cylinder through the disk plus a sphere.
 pub fn append_contact_disk_primitive(
     sink: &mut TriangleSink,
@@ -399,10 +414,7 @@ pub fn append_contact_disk_primitive(
     penetration_mm: f64,
     tip_scale: f64,
 ) {
-    let thickness = disk.disk_length_override.unwrap_or_else(|| {
-        calculate_disk_thickness(disk.surface_normal, disk.cone_axis, Some(&disk.profile))
-    });
-    let radius = js_max(0.01, disk.contact_diameter_mm * 0.5 * tip_scale);
+    let (thickness, radius) = contact_disk_size(disk, tip_scale);
     let center = get_disk_center(disk.pos, disk.surface_normal, thickness);
     let rotation = get_disk_rotation(disk.surface_normal);
     let group = Matrix4::compose(center, rotation, Vec3::new(1.0, 1.0, 1.0));

@@ -33,18 +33,19 @@ pub enum CheckKind {
     /// A cavity closed towards the plate and open towards the film, which
     /// pulls on the film at every peel (#83).
     SuctionCup,
-    /// A wall, pin, blade or tip narrower than the printer can resolve (#92).
-    ThinFeature,
+    /// A region that grows many times over what stood under it (#432).
+    SurfaceGrowth,
     /// Solid that reaches the edge of the screen and is cut there (#93).
     PlateEdge,
     /// The plate is taller than the printer's maximum height (#93).
     TooTall,
     /// A layer with no solid pixel (#93).
     EmptyLayer,
-    /// A part with nothing below it in any earlier layer (#93).
-    FloatingPart,
     /// A model that reaches down into the supports' raft (#131).
     ModelInRaft,
+    /// What the review took off the layers by itself: debris and pixels
+    /// thinner than the printer can make (#432). A note, nothing to do.
+    CleanUp,
 }
 
 impl CheckKind {
@@ -53,12 +54,12 @@ impl CheckKind {
         Self::Island,
         Self::ResinTrap,
         Self::SuctionCup,
-        Self::ThinFeature,
+        Self::SurfaceGrowth,
         Self::PlateEdge,
         Self::TooTall,
         Self::EmptyLayer,
-        Self::FloatingPart,
         Self::ModelInRaft,
+        Self::CleanUp,
     ];
 
     /// A stable machine name, as the JSON output spells it
@@ -68,12 +69,12 @@ impl CheckKind {
             Self::Island => "island",
             Self::ResinTrap => "resin-trap",
             Self::SuctionCup => "suction-cup",
-            Self::ThinFeature => "thin-feature",
+            Self::SurfaceGrowth => "surface-growth",
             Self::PlateEdge => "plate-edge",
             Self::TooTall => "too-tall",
             Self::EmptyLayer => "empty-layer",
-            Self::FloatingPart => "floating-part",
             Self::ModelInRaft => "model-in-raft",
+            Self::CleanUp => "clean-up",
         }
     }
 
@@ -83,12 +84,12 @@ impl CheckKind {
             Self::Island => "Island",
             Self::ResinTrap => "Resin trap",
             Self::SuctionCup => "Suction cup",
-            Self::ThinFeature => "Thin feature",
+            Self::SurfaceGrowth => "Surface growth",
             Self::PlateEdge => "Plate edge",
             Self::TooTall => "Too tall",
             Self::EmptyLayer => "Empty layer",
-            Self::FloatingPart => "Floating part",
             Self::ModelInRaft => "Model in raft",
+            Self::CleanUp => "Clean-up",
         }
     }
 }
@@ -213,33 +214,6 @@ pub enum SuggestedFix {
         /// The height the model's lowest point must reach.
         lift_to_mm: f64,
     },
-    /// Erase a floating speck on the next slice (#156): its pixels, with a
-    /// pixel around them, are
-    /// [`ReviewReport::erasures`](crate::runner::ReviewReport::erasures)`[speck]`.
-    Erase {
-        /// The speck, where the camera looks.
-        at: PlatePoint,
-        /// The speck's index among the review's erasures.
-        speck: usize,
-    },
-    /// Thicken a feature thinner than a pixel on the next slice (#156): its
-    /// pixels, grown a pixel on every side, are cured as
-    /// [`ReviewReport::thickenings`](crate::runner::ReviewReport::thickenings)`[feature]`.
-    Thicken {
-        /// The feature, where the camera looks.
-        at: PlatePoint,
-        /// The feature's index among the review's thickenings.
-        feature: usize,
-    },
-    /// Join an island to the model just below it on the next slice (#235):
-    /// the gap between them, thinner than a support, is cured as
-    /// [`ReviewReport::joins`](crate::runner::ReviewReport::joins)`[join]`.
-    JoinBelow {
-        /// The island's underside, where the camera looks.
-        at: PlatePoint,
-        /// The gap's index among the review's joins.
-        join: usize,
-    },
 }
 
 impl SuggestedFix {
@@ -249,9 +223,6 @@ impl SuggestedFix {
             Self::AddDrain { at } => (1, at),
             Self::Fill { at, .. } => (2, at),
             Self::ClearRaft { lift_to_mm } => (3, PlatePoint::new(0.0, 0.0, lift_to_mm)),
-            Self::Erase { at, .. } => (4, at),
-            Self::Thicken { at, .. } => (5, at),
-            Self::JoinBelow { at, .. } => (6, at),
         }
     }
 
@@ -262,10 +233,7 @@ impl SuggestedFix {
             .cmp(&b_rank)
             .then_with(|| a_at.total_cmp(&b_at))
             .then_with(|| match (self, other) {
-                (Self::Fill { cavity: a, .. }, Self::Fill { cavity: b, .. })
-                | (Self::Erase { speck: a, .. }, Self::Erase { speck: b, .. })
-                | (Self::Thicken { feature: a, .. }, Self::Thicken { feature: b, .. })
-                | (Self::JoinBelow { join: a, .. }, Self::JoinBelow { join: b, .. }) => a.cmp(b),
+                (Self::Fill { cavity: a, .. }, Self::Fill { cavity: b, .. }) => a.cmp(b),
                 _ => Ordering::Equal,
             })
     }
@@ -304,7 +272,7 @@ pub struct Finding {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub largest_mm2: Option<f64>,
     /// The pixels it is about, layer by layer, for a frontend to highlight
-    /// (#409): an island's pieces, a thin feature, a speck, a cavity. At
+    /// (#409): an island's pieces or a cavity. At
     /// most [`MAX_FOOTPRINT_LAYERS`] layers from its first; `None` when the
     /// check keeps no pixels.
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -424,7 +392,7 @@ mod finding_tests {
     fn findings_sort_by_layer_then_check() {
         let mut findings = vec![
             at(3, CheckKind::Island),
-            at(1, CheckKind::FloatingPart),
+            at(1, CheckKind::CleanUp),
             at(1, CheckKind::Island),
             at(0, CheckKind::EmptyLayer),
         ];
@@ -436,7 +404,7 @@ mod finding_tests {
             vec![
                 (0, CheckKind::EmptyLayer),
                 (1, CheckKind::Island),
-                (1, CheckKind::FloatingPart),
+                (1, CheckKind::CleanUp),
                 (3, CheckKind::Island),
             ]
         );

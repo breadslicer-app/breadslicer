@@ -35,6 +35,23 @@ pub struct ProjectPayload {
     /// order. Held opaquely: re-saving a project writes these bytes
     /// back unchanged.
     pub embedded: Vec<EmbeddedProfile>,
+    /// What the person decided about the review's findings (#432): the
+    /// list is made again on every slice, and these are what stays.
+    pub review_decisions: Vec<ReviewDecision>,
+}
+
+/// A finding of the review the person chose to ignore, by kind and place, so
+/// the next list that finds it again keeps it out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReviewDecision {
+    /// The finding's kind, by its stable machine name.
+    pub check: String,
+    /// The first layer it shows in, counted from 0.
+    pub first_layer: u64,
+    /// The last layer it shows in.
+    pub last_layer: u64,
+    /// Where it is, in plate micrometres.
+    pub focus_um: [i64; 3],
 }
 
 impl ProjectPayload {
