@@ -232,6 +232,66 @@ pub fn dilate_square(runs: &[Run], r: u32, width: u32, height: u32) -> Vec<Run> 
     out
 }
 
+/// The pixels of `runs`, sorted by row, around which an ellipse of radii `rx`
+/// and `ry` (in pixels, along each axis) lies entirely on `runs`: a pixel
+/// counts as covered when its centre is inside the ellipse.
+pub fn erode_ellipse(runs: &[Run], rx: f64, ry: f64) -> Vec<Run> {
+    let (Some(first), Some(last)) = (runs.first(), runs.last()) else {
+        return Vec::new();
+    };
+    let reach_y = ry.floor() as u32;
+    // Each row's runs, from the first row on.
+    let mut rows = vec![&runs[..0]; (last.row - first.row + 1) as usize];
+    for chunk in runs.chunk_by(|a, b| a.row == b.row) {
+        rows[(chunk[0].row - first.row) as usize] = chunk;
+    }
+    // How far an ellipse reaches along a row `dy` rows from its centre.
+    let reach_x: Vec<u32> = (0..=reach_y)
+        .map(|dy| {
+            let along = if ry > 0.0 { f64::from(dy) / ry } else { 0.0 };
+            (rx * (1.0 - along * along).max(0.0).sqrt()).floor() as u32
+        })
+        .collect();
+    let row_at = |y: i64| -> &[Run] {
+        usize::try_from(y - i64::from(first.row))
+            .ok()
+            .and_then(|at| rows.get(at).copied())
+            .unwrap_or(&[])
+    };
+    let mut out = Vec::new();
+    let (mut kept, mut next): (Vec<(u32, u32)>, Vec<(u32, u32)>) = (Vec::new(), Vec::new());
+    for y in first.row..=last.row {
+        kept.clear();
+        kept.extend(
+            row_at(i64::from(y))
+                .iter()
+                .map(|run| (run.x0 + reach_x[0], run.x1.saturating_sub(reach_x[0])))
+                .filter(|(a, b)| a < b),
+        );
+        for dy in 1..=reach_y {
+            let reach = reach_x[dy as usize];
+            for side in [i64::from(y) - i64::from(dy), i64::from(y) + i64::from(dy)] {
+                if kept.is_empty() {
+                    break;
+                }
+                next.clear();
+                for run in row_at(side) {
+                    let (a, b) = (run.x0 + reach, run.x1.saturating_sub(reach));
+                    next.extend(
+                        kept.iter()
+                            .map(|&(k0, k1)| (k0.max(a), k1.min(b)))
+                            .filter(|(from, to)| from < to),
+                    );
+                }
+                next.sort_unstable();
+                std::mem::swap(&mut kept, &mut next);
+            }
+        }
+        out.extend(kept.iter().map(|&(x0, x1)| Run::new(y, x0, x1)));
+    }
+    out
+}
+
 /// The pixels in both run lists.
 pub fn intersection(a: &[Run], b: &[Run]) -> Vec<Run> {
     let mut out = Vec::new();

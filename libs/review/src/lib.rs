@@ -48,6 +48,7 @@ pub mod runner;
 pub mod runs;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+pub mod tip_plan;
 pub mod tips;
 pub mod union_find;
 
@@ -66,5 +67,6 @@ pub use runner::{
     ReviewContext, ReviewOptions, ReviewReport, ReviewTimings, check_regions, review, review_with,
 };
 pub use runs::Run;
+pub use tip_plan::{IslandLayer, IslandPixels, PlannedTip, TipPlan, TipPlanOptions, plan_tips};
 pub use tips::TipCone;
 pub use union_find::{Groups, RegionRef, UnionFind};
