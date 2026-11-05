@@ -13,6 +13,7 @@ mod df_analytics;
 
 mod bench_real_model;
 mod builders5_df_tests;
+mod cavity_landing;
 mod df_parity_autobrace;
 mod df_parity_autosupport_a;
 mod df_parity_autosupport_b;
@@ -26,7 +27,6 @@ mod df_parity_islands_c;
 mod df_parity_native_islands;
 mod df_parity_primitives;
 mod df_parity_rafts;
-mod cavity_landing;
 mod df_parity_sdf;
 mod df_parity_support_triangles;
 mod df_parity_tip_offset;

@@ -925,6 +925,8 @@ mod fix_all {
         /// How many tips the last project slice had, and how many of them
         /// do not end in the model.
         static TIPS_IN_MODEL: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+        /// The resin of the supports of the last project slice, in mm³.
+        static SUPPORT_RESIN: Cell<f64> = const { Cell::new(0.0) };
     }
 
     /// [`slice_with`], the review given `extra` findings too.
@@ -1738,6 +1740,7 @@ mod fix_all {
             &|_| {},
         );
         TIPS_IN_MODEL.set(crate::review::tips_in_model_for_test(&plate, &sets));
+        SUPPORT_RESIN.set(crate::review::support_resin_for_test(&plate, &sets));
         let erased = match &outcome {
             ReviewOutcome::Reviewed { erased, .. } => erased_stack(
                 plate.leaves(),
@@ -1896,6 +1899,12 @@ mod fix_all {
             resliced,
         };
         slice_project(&w.document, &w.panel, &printer, &resin, false);
+        eprintln!(
+            "{}: COST slice tips {} resin {:.1}",
+            path.display(),
+            TIPS_IN_MODEL.get().0,
+            SUPPORT_RESIN.get()
+        );
         let before = held_islands(&w.panel).len();
         eprintln!(
             "{}: {} islands have a tip that stops short",
@@ -1951,6 +1960,11 @@ mod fix_all {
             .count();
         let off_mesh = depths.iter().filter(|(_, inside)| !inside).count();
         let (tips, off_slice) = TIPS_IN_MODEL.get();
+        eprintln!(
+            "{}: COST end tips {tips} resin {:.1}",
+            path.display(),
+            SUPPORT_RESIN.get()
+        );
         eprintln!(
             "{}: tips {tips}: short of the insertion {shallow}, end off the mesh {off_mesh}, end off the slice {off_slice}",
             path.display()

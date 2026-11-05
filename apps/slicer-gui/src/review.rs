@@ -323,6 +323,43 @@ pub(crate) fn review_bare_for_test(
     review_stacks(leaves, profile, filled, &supports, None, watch)
 }
 
+/// The resin of the leaves of `sets`, in cubic millimetres: what their
+/// sections add up to, layer by layer.
+#[cfg(test)]
+pub(crate) fn support_resin_for_test(plate: &SlicedPlate, sets: &[SupportSet]) -> f64 {
+    let area = |ring: &[sc_sl1cer::geom2d::Point2D]| {
+        let mut twice = 0.0;
+        for (i, a) in ring.iter().enumerate() {
+            let b = &ring[(i + 1) % ring.len()];
+            twice += a.x * b.y - b.x * a.y;
+        }
+        (twice * 0.5).abs()
+    };
+    let tops: Vec<f64> = plate.schedule().iter_slab_tops().collect();
+    plate
+        .leaves()
+        .iter()
+        .filter(|slices| sets.iter().any(|set| set.leaf == slices.leaf()))
+        .flat_map(|slices| slices.stack().layers().iter().enumerate())
+        .map(|(index, layer)| {
+            let height = tops[index] - index.checked_sub(1).map_or(0.0, |below| tops[below]);
+            let section: f64 = layer
+                .polygons()
+                .iter()
+                .map(|polygon| {
+                    area(polygon.outer().vertices())
+                        - polygon
+                            .holes()
+                            .iter()
+                            .map(|hole| area(hole.vertices()))
+                            .sum::<f64>()
+                })
+                .sum();
+            section * height
+        })
+        .sum()
+}
+
 /// How many tips of `sets` there are, and how many do not end in the models
 /// of `plate`: a support always ends in the model.
 #[cfg(test)]

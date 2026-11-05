@@ -282,6 +282,128 @@ fn the_review_of_the_heavy_scene_matches_its_printer_file() {
 /// millimetres: inside the hollow, where no trunk reaches.
 const ISLAND_942_MM: [f64; 3] = [11.886, -12.586, 47.1];
 
+/// An island too small for any tip is a note in the CLI too (#433), as it is
+/// in the app: the 14 pixels of layer 2343 of the project in
+/// `BREADSLICER_BALLENA`.
+#[test]
+#[ignore = "needs a real project, named by BREADSLICER_BALLENA"]
+fn an_island_too_small_for_a_tip_is_a_note() {
+    let project = std::env::var("BREADSLICER_BALLENA").expect("the project");
+    let output = Command::new(env!("CARGO_BIN_EXE_sc-slicer-cli"))
+        .args([
+            "review",
+            &format!("-s={project}"),
+            "--printer-profile=anycubic-photon-mono-m7-pro",
+            "--material-profile=anycubic-standard-resin-grey-50um",
+            "--no-auto-place",
+            "--json",
+        ])
+        .output()
+        .expect("the review runs");
+    assert!(output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).expect("JSON");
+    let islands: Vec<&Value> = report["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|finding| finding["check"] == "island")
+        .collect();
+    assert_eq!(islands.len(), 1, "{islands:?}");
+    assert_eq!(islands[0]["severity"], "info");
+    assert_eq!(islands[0]["title"], "Island too small for a tip");
+}
+
+/// Why no landing takes an island of the project in `BREADSLICER_WORM`, at
+/// `BREADSLICER_ISLAND_AT=x,y,z`: every contact of its underside, and the
+/// refusals of every surface tried from each (#445).
+#[test]
+#[ignore = "needs a real project and BREADSLICER_ISLAND_AT"]
+fn why_an_island_has_no_landing() {
+    let project = std::env::var("BREADSLICER_WORM").expect("BREADSLICER_WORM names the project");
+    let at: Vec<f64> = std::env::var("BREADSLICER_ISLAND_AT")
+        .expect("x,y,z")
+        .split(',')
+        .map(|v| v.parse().expect("a number"))
+        .collect();
+    let loaded = load_scene(Path::new(&project), None, |_| {}).expect("it opens");
+    let LoadedContent::Project(project) = loaded.content else {
+        panic!("a .bread is a project");
+    };
+    let leaves = scene_model_leaves(&project.scene, None).expect("bake");
+    let mut settings = settings_for(&DfSupportRequest::default()).supports;
+    settings.mesh_to_mesh.every_landing = true;
+    let mut next = 0;
+    let mut new_id = || {
+        next += 1;
+        format!("id-{next}")
+    };
+    for (_, model) in &leaves {
+        let soup = world_soup(model);
+        let corners: Vec<[f32; 3]> = soup
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|c| [c[0], c[1], c[2]])
+            .collect();
+        let bvh = Arc::new(MeshBvh::new(corners, None));
+        let matrix = Matrix4::IDENTITY;
+        let sdf = SdfCache::new(bvh.clone(), matrix, Some(0.5));
+        let mesh = ModelMesh {
+            field: &sdf,
+            rays: BvhMesh {
+                bvh: &bvh,
+                matrix_world: &matrix,
+            },
+        };
+        let mut seen = HashSet::new();
+        let mut contacts = Vec::new();
+        for i in -15..=15 {
+            for j in -15..=15 {
+                let near = Vec3::new(
+                    at[0] + f64::from(i) * 0.05,
+                    at[1] + f64::from(j) * 0.05,
+                    at[2],
+                );
+                let Some(hit) = bvh.closest_point_to_point(near, 0.0, 0.5) else {
+                    continue;
+                };
+                let tri = bvh.triangle(hit.face_index);
+                let normal = Vec3::sub_vectors(tri.b, tri.a)
+                    .cross(Vec3::sub_vectors(tri.c, tri.a))
+                    .normalize();
+                if normal.z < -0.1
+                    && (hit.point.z - at[2]).abs() < 0.3
+                    && seen.insert(hit.face_index)
+                {
+                    contacts.push((hit.point, normal));
+                }
+            }
+        }
+        let mut refusals: BTreeMap<String, usize> = BTreeMap::new();
+        let mut landed = 0;
+        for &(tip, normal) in &contacts {
+            let attempt = attempt_cavity_bridge(
+                tip,
+                normal,
+                "m",
+                mesh,
+                Side::Front,
+                None,
+                &settings,
+                &mut new_id,
+            );
+            landed += usize::from(attempt.bridge.is_some());
+            for why in attempt.refusals {
+                *refusals.entry(format!("{why:?}")).or_default() += 1;
+            }
+        }
+        eprintln!(
+            "{} contacts on this model: {landed} land; turned down {refusals:?}",
+            contacts.len()
+        );
+    }
+}
+
 /// Why the cavity bridge turns down the underside of the island at 942, and
 /// whether going on to the other surfaces around each contact lands it (#445).
 /// A step of 0.1 mm over its first pixels, each face once, tried the way a

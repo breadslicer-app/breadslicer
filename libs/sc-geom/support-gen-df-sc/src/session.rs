@@ -3071,6 +3071,16 @@ mod session_tests {
         }
     }
 
+    /// #445: what the app runs goes on to the next landing; the port's own
+    /// defaults, which its parity fixtures read, do not.
+    #[test]
+    fn the_app_runs_every_landing_and_the_port_does_not() {
+        let app = crate::settings_for(&crate::DfSupportRequest::default());
+        assert!(app.supports.mesh_to_mesh.every_landing);
+        let port = PipelineSettings::defaults(0.05);
+        assert!(!port.supports.mesh_to_mesh.every_landing);
+    }
+
     /// #433: a session reopened with settings of old keeps the one insertion.
     #[test]
     fn the_one_insertion_holds_on_any_settings() {

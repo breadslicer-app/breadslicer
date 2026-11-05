@@ -101,7 +101,8 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
         .map_err(|err| anyhow!("internal error: the sliced stacks do not fit the run: {err}"))?;
     let review_options = ReviewOptions::default();
     let regions = PlateRegions::compute(&input, &review_options.sweep);
-    let report = check_regions(&ReviewContext::new(&input, &regions), &review_options);
+    let mut report = check_regions(&ReviewContext::new(&input, &regions), &review_options);
+    note_too_small(&mut report, &sets);
     let stats = RegionStats::of(&input, &regions);
 
     let review_again = |stack: &ContourStack| {
@@ -335,7 +336,8 @@ fn fix_the_list(
         .map_err(|err| anyhow!("internal error: the sliced stacks do not fit the run: {err}"))?;
     let options = ReviewOptions::default();
     let regions = PlateRegions::compute(&input, &options.sweep);
-    let again = check_regions(&ReviewContext::new(&input, &regions), &options);
+    let mut again = check_regions(&ReviewContext::new(&input, &regions), &options);
+    note_too_small(&mut again, &sets);
     Ok(FixedList {
         diameter_mm,
         tips,
@@ -348,6 +350,19 @@ fn fix_the_list(
         reviewing: started.elapsed(),
         report: again,
     })
+}
+
+/// Writes down the islands of `report` too small for any tip as notes, as the
+/// app's list does: the same list, whichever reads it.
+fn note_too_small(report: &mut ReviewReport, sets: &[SupportSet]) {
+    let smallest = sc_geom::df_supports::zone_presets::smallest_size().tip_diameter_mm;
+    let diameter_mm = sets
+        .iter()
+        .map(|set| set.session.tip_diameter_mm())
+        .fold(smallest, f64::max);
+    let options = TipPlanOptions::for_tip(diameter_mm).with_smallest(smallest);
+    let plan = plan_all_tips(&report.islands, &report.growths, &options);
+    plan.note_too_small(&mut report.findings, &report.islands);
 }
 
 /// Places `tip` on the set it falls on, taking only a tip that `start`
