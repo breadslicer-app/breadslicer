@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -92,7 +93,7 @@ fn plate_slices() -> PlateSlices {
     let void = ContourLayer::new(0.075, vec![]);
     let contours = ContourStack::new(vec![solid, void]).expect("z is strictly increasing");
     PlateSlices {
-        contours,
+        contours: Arc::new(contours),
         slab_tops: vec![0.05, 0.10],
     }
 }
@@ -131,7 +132,7 @@ fn write_project_file(
         slices,
         slice_fingerprint,
         ProjectFileType::ThreeMf,
-        &mut bytes,
+        &mut Cursor::new(&mut bytes),
     )
     .expect("project fixture writes");
     std::fs::write(&path, bytes).expect("fixture file writes");

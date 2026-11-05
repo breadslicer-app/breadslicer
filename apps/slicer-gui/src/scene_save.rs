@@ -18,10 +18,11 @@
 //! from the local libraries.
 
 use std::fmt;
+use std::io::{Cursor, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use sc_mesh_formats::scene_writer::write_bytes_atomically;
+use sc_mesh_formats::scene_writer::write_atomically;
 use sc_print_profiles::ProfileLibraries;
 use sc_project_formats::{
     EmbedProfiles, HollowDocument, PlateSlices, ProjectFileType, ProjectPayload, SupportDocument,
@@ -296,26 +297,41 @@ pub(crate) fn supports_as_mesh_texts(why: SupportsAsMesh) -> InfoTexts {
 }
 
 /// Writes a prepared bundle to its target in its format, atomically,
-/// reporting each phase through `progress`. Pure with respect to the document,
-/// so it runs on a worker thread; the caller records success on the UI thread.
+/// reporting each phase through `progress`. The bytes go to a temp file beside
+/// the target as they are made, so the file is never whole in memory, and a
+/// save that cannot finish leaves the target as it was. Pure with respect to the
+/// document, so it runs on a worker thread; the caller records success on the
+/// UI thread.
 pub(crate) fn write_bundle(
     bundle: &SaveBundle,
     mut progress: impl FnMut(SavePhase, u64, u64),
 ) -> Result<()> {
-    let bytes = encode_bundle(bundle, &mut progress)?;
-    progress(SavePhase::Writing, 0, 1);
-    write_bytes_atomically(&bundle.target, &bytes)?;
+    write_atomically::<anyhow::Error, _>(&bundle.target, |file| {
+        encode_bundle_into(bundle, file, &mut progress)?;
+        progress(SavePhase::Writing, 0, 1);
+        Ok(())
+    })?;
     progress(SavePhase::Writing, 1, 1);
     Ok(())
 }
 
 /// The bytes of a prepared bundle in its format, as [`write_bundle`] writes
-/// them; also what a diagnostics file carries as the scene's models.
+/// them, for what a diagnostics file carries as the scene's models.
 pub(crate) fn encode_bundle(
     bundle: &SaveBundle,
-    mut progress: impl FnMut(SavePhase, u64, u64),
+    progress: impl FnMut(SavePhase, u64, u64),
 ) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
+    let mut bytes = Cursor::new(Vec::new());
+    encode_bundle_into(bundle, &mut bytes, progress)?;
+    Ok(bytes.into_inner())
+}
+
+/// Writes a prepared bundle in its format to `out`.
+fn encode_bundle_into<W: Write + Seek>(
+    bundle: &SaveBundle,
+    out: &mut W,
+    mut progress: impl FnMut(SavePhase, u64, u64),
+) -> Result<()> {
     let report = |report| match report {
         WriteProgress::Serialize { done, total } => progress(SavePhase::Serialize, done, total),
         WriteProgress::Compress { done, total } => progress(SavePhase::Compress, done, total),
@@ -328,7 +344,7 @@ pub(crate) fn encode_bundle(
             bundle.slices.as_ref(),
             bundle.slice_fingerprint.as_deref(),
             ProjectFileType::ThreeMf,
-            &mut bytes,
+            out,
             report,
         )?,
         ProjectFormat::Bread => write_bread_project_with_progress(
@@ -337,11 +353,11 @@ pub(crate) fn encode_bundle(
             EmbedProfiles::Yes,
             &bundle.supports,
             &bundle.hollows,
-            &mut bytes,
+            out,
             report,
         )?,
     }
-    Ok(bytes)
+    Ok(())
 }
 
 /// Returns the held slices to persist with the project, or `None` when the
@@ -1225,7 +1241,112 @@ mod scene_save_tests {
     }
 
     mod write_bundle_tests {
+        use std::io::{self, Seek, SeekFrom, Write};
+
         use super::*;
+        use crate::scene_document::SaveRecorded;
+
+        /// A file on a disk with room for `room` more bytes.
+        struct FullDisk<W> {
+            file: W,
+            room: usize,
+        }
+
+        impl<W: Write> Write for FullDisk<W> {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                if buf.len() > self.room {
+                    return Err(io::ErrorKind::StorageFull.into());
+                }
+                self.room -= buf.len();
+                self.file.write(buf)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                self.file.flush()
+            }
+        }
+
+        impl<W: Seek> Seek for FullDisk<W> {
+            fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+                self.file.seek(pos)
+            }
+        }
+
+        fn entries_of(dir: &Path) -> Vec<String> {
+            fs::read_dir(dir)
+                .expect("the folder reads")
+                .map(|entry| {
+                    let entry = entry.expect("the entry");
+                    entry.file_name().to_string_lossy().into_owned()
+                })
+                .collect()
+        }
+
+        /// A save that runs out of disk leaves the old file whole, nothing
+        /// beside it, and the scene open with its unsaved changes; a save with
+        /// room then works.
+        fn a_full_disk_keeps_everything(file_name: &str) {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let target = dir.path().join(file_name);
+            let defaults = defaults(printer_id("held-printer"), material_id("held-resin"));
+
+            let doc = SceneDocument::new();
+            doc.install_project_graph(
+                one_object_graph(),
+                target.clone(),
+                ProjectPayload::default(),
+            );
+            save_project_to(&doc, &target, &defaults).expect("the first save writes");
+            let before = fs::read(&target).expect("the first file");
+
+            make_dirty(&doc);
+            let (bundle, payload, stamp) =
+                prepare_save_for_target(&doc, target.clone(), &defaults).expect("a scene");
+            for room in [0, 64, before.len() / 2] {
+                let result = write_atomically::<anyhow::Error, _>(&target, |file| {
+                    encode_bundle_into(&bundle, &mut FullDisk { file, room }, |_, _, _| {})
+                });
+                let error = result.expect_err("the disk fills up");
+                assert!(!format!("{error:#}").is_empty());
+                assert_eq!(fs::read(&target).expect("the old file"), before);
+                assert_eq!(entries_of(dir.path()), [file_name]);
+                assert!(doc.is_loaded(), "the scene stays open");
+                assert!(doc.is_dirty(), "the changes are still unsaved");
+            }
+
+            write_bundle(&bundle, |_, _, _| {}).expect("with room the same save writes");
+            assert_eq!(
+                doc.record_project_save_for(payload, target.clone(), stamp),
+                SaveRecorded::Clean
+            );
+            assert!(!doc.is_dirty());
+            assert_ne!(fs::read(&target).expect("the new file"), before);
+            assert_eq!(entries_of(dir.path()), [file_name]);
+        }
+
+        #[test]
+        fn a_full_disk_keeps_an_old_3mf_and_the_open_scene() {
+            a_full_disk_keeps_everything("plate.3mf");
+        }
+
+        #[test]
+        fn a_full_disk_keeps_an_old_bread_and_the_open_scene() {
+            a_full_disk_keeps_everything("plate.bread");
+        }
+
+        #[test]
+        fn a_folder_that_is_gone_is_an_error_and_writes_nothing() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let target = dir.path().join("gone").join("plate.3mf");
+
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), dir.path().join("widget.stl"));
+            let bundle = prepare_save(&doc, held_payload(), target)
+                .expect("a loaded document prepares a bundle");
+
+            assert!(write_bundle(&bundle, |_, _, _| {}).is_err());
+            assert!(entries_of(dir.path()).is_empty());
+        }
 
         #[test]
         fn a_prepared_bundle_writes_a_readable_project() {

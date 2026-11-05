@@ -205,7 +205,7 @@ fn the_generic_writer_writes_a_bread_project_without_slices_or_supports() {
         None,
         None,
         ProjectFileType::Bread,
-        &mut bytes,
+        &mut Cursor::new(&mut bytes),
     )
     .unwrap();
     let loaded = read_project(&mut Cursor::new(bytes), ProjectFileType::Bread).unwrap();

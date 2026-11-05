@@ -7,7 +7,7 @@
 
 pub mod progress;
 
-use std::io::Write;
+use std::io::{Seek, Write};
 
 use sc_scene::Scene;
 
@@ -38,7 +38,7 @@ pub fn write_project<W>(
     writer: &mut W,
 ) -> Result<(), WriteProjectError>
 where
-    W: Write,
+    W: Write + Seek,
 {
     write_project_with_progress(
         scene,
@@ -68,7 +68,7 @@ pub fn write_project_with_progress<W>(
     progress: impl FnMut(WriteProgress),
 ) -> Result<(), WriteProjectError>
 where
-    W: Write,
+    W: Write + Seek,
 {
     match file_type {
         ProjectFileType::ThreeMf => write_threemf_project_with_progress(

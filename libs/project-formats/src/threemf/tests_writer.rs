@@ -28,8 +28,15 @@ use crate::write::progress::WriteProgress;
 
 fn write_and_reopen(payload: &ProjectPayload, embed: EmbedProfiles) -> Package {
     let mut bytes = Vec::new();
-    write_threemf_project(&cube_scene(), payload, embed, None, None, &mut bytes)
-        .expect("the project writes cleanly");
+    write_threemf_project(
+        &cube_scene(),
+        payload,
+        embed,
+        None,
+        None,
+        &mut Cursor::new(&mut bytes),
+    )
+    .expect("the project writes cleanly");
     Package::read_from(Cursor::new(bytes)).expect("the written package reopens")
 }
 
@@ -126,7 +133,7 @@ mod package_shape_tests {
             EmbedProfiles::Yes,
             None,
             Some("cafef00d"),
-            &mut bytes,
+            &mut Cursor::new(&mut bytes),
         )
         .expect("the project writes cleanly");
         let package = Package::read_from(Cursor::new(bytes)).expect("the written package reopens");
@@ -251,7 +258,7 @@ mod failure_tests {
             EmbedProfiles::Yes,
             None,
             None,
-            &mut bytes,
+            &mut Cursor::new(&mut bytes),
         )
         .expect_err("duplicate part names are refused");
         assert!(matches!(
@@ -277,7 +284,7 @@ mod slice_part_tests {
             EmbedProfiles::Yes,
             plate,
             None,
-            &mut bytes,
+            &mut Cursor::new(&mut bytes),
         )
         .expect("the project writes cleanly");
         Package::read_from(Cursor::new(bytes)).expect("the written package reopens")
@@ -312,7 +319,7 @@ mod slice_part_tests {
             EmbedProfiles::Yes,
             Some(&plate),
             None,
-            &mut bytes,
+            &mut Cursor::new(&mut bytes),
         )
         .expect("the project writes cleanly");
 
@@ -335,7 +342,7 @@ mod slice_part_tests {
             EmbedProfiles::Yes,
             None,
             None,
-            &mut bytes,
+            &mut Cursor::new(&mut bytes),
         )
         .expect("the project writes cleanly");
 
@@ -393,7 +400,7 @@ mod progress_tests {
             EmbedProfiles::Yes,
             plate,
             None,
-            &mut bytes,
+            &mut Cursor::new(&mut bytes),
             |p| events.push(p),
         )
         .expect("the project writes cleanly");
@@ -421,7 +428,7 @@ mod progress_tests {
             EmbedProfiles::Yes,
             None,
             None,
-            &mut plain,
+            &mut Cursor::new(&mut plain),
         )
         .expect("the project writes cleanly");
         assert_eq!(

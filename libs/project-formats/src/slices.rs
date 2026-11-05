@@ -5,6 +5,8 @@
 
 //! The merged slice result a project persists.
 
+use std::sync::Arc;
+
 use sc_sl1cer::contour::ContourStack;
 
 /// The whole build plate's merged per-layer contours together with the
@@ -15,8 +17,9 @@ use sc_sl1cer::contour::ContourStack;
 /// slices are mapped, not here, so this stays plain transport data.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlateSlices {
-    /// One merged, world-coordinate contour stack for the whole plate.
-    pub contours: ContourStack,
+    /// One merged, world-coordinate contour stack for the whole plate, shared
+    /// with whoever holds it: a save does not copy the slices.
+    pub contours: Arc<ContourStack>,
     /// Per-layer top Z, index-aligned with `contours.layers()`.
     pub slab_tops: Vec<f64>,
 }

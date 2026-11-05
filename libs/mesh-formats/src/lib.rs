@@ -20,6 +20,8 @@ pub mod stl;
 pub mod threemf;
 
 #[cfg(test)]
+mod tests_atomic_write;
+#[cfg(test)]
 mod tests_infer_file_type_error;
 #[cfg(test)]
 mod tests_load_mesh_error;

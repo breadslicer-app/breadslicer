@@ -9,14 +9,20 @@
 //!
 //! Scope notes: content types support both Default (by extension) and Override
 //! (by part) entries in both directions; relationship targets are resolved
-//! against the source part's directory when relative. Interleaved packages and
-//! ZIP64 writing are out of scope (ZIP64 reading comes with the `zip` crate).
+//! against the source part's directory when relative. Interleaved packages are
+//! out of scope. A part stays under 4 GiB, but the `zip` crate adds the ZIP64
+//! records a larger archive needs, and reads them back.
 //!
 //! Reading refuses archives whose decompressed size exceeds fixed ceilings (2
 //! GiB per part, 4 GiB per package) instead of exhausting memory on a crafted
 //! or corrupt file; see `PackageReadLimits`. Reading skips parts that have no
 //! content type, which FDM slicers store for their own settings and pictures,
 //! and keeps their names; see [`Package::untyped_parts`].
+//!
+//! Data too large to hold at once moves through 1 part at a time in both
+//! directions. A deferred part ([`Package::add_deferred_part`]) gets its bytes
+//! as the package is written; a [`PartHandOff`] takes parts as they are read,
+//! outside the package ceiling.
 
 mod fused_writer;
 pub mod static_part_name;
@@ -148,11 +154,60 @@ pub struct Relationship {
     pub target: String,
 }
 
+/// The most bytes a reader accepts for 1 part.
+pub const MAX_PART_BYTES: u64 = 2 * (1 << 30);
+
 #[derive(Debug)]
 struct Part {
     name: PartName,
     content_type: String,
-    data: Vec<u8>,
+    data: PartData,
+}
+
+/// Where the bytes of a part are.
+#[derive(Debug)]
+enum PartData {
+    /// In the package.
+    Held(Vec<u8>),
+    /// Made while the package is written; the estimate is what the part counts
+    /// for in the progress of that write.
+    Deferred { estimated_bytes: u64 },
+}
+
+impl PartData {
+    /// The bytes this part counts for in the progress of a write.
+    fn progress_bytes(&self) -> u64 {
+        match self {
+            Self::Held(data) => data.len() as u64,
+            Self::Deferred { estimated_bytes } => *estimated_bytes,
+        }
+    }
+}
+
+/// Takes parts while a package is read, instead of the package holding them.
+///
+/// A part handed off stays out of the package and out of its total ceiling, so
+/// the caller can read more part data than a package holds, as long as it does
+/// not keep the bytes. The ceiling of 1 part still applies.
+pub trait PartHandOff {
+    /// Whether this part, named as [`PartName::as_str`] gives it, goes to
+    /// [`Self::take`].
+    fn wants(&self, part: &str) -> bool;
+
+    /// Receives the bytes of a part that [`Self::wants`] named, or why they
+    /// could not be read. That failure does not stop the read of the package.
+    fn take(&mut self, part: &str, data: Result<Vec<u8>, PackageReadError>);
+}
+
+/// Takes nothing: every part stays in the package.
+struct NoHandOff;
+
+impl PartHandOff for NoHandOff {
+    fn wants(&self, _: &str) -> bool {
+        false
+    }
+
+    fn take(&mut self, _: &str, _: Result<Vec<u8>, PackageReadError>) {}
 }
 
 /// Ceilings on the decompressed size of a package being read. Every entry
@@ -172,7 +227,7 @@ impl Default for PackageReadLimits {
     fn default() -> Self {
         const GIB: u64 = 1 << 30;
         Self {
-            max_part_bytes: 2 * GIB,
+            max_part_bytes: MAX_PART_BYTES,
             max_total_bytes: 4 * GIB,
         }
     }
@@ -225,6 +280,28 @@ impl Package {
         name: PartName,
         content_type: &str,
         data: Vec<u8>,
+    ) -> Result<(), PackageWriteError> {
+        self.push_part(name, content_type, PartData::Held(data))
+    }
+
+    /// Adds a part whose bytes are made as [`Package::write_deferring_to`]
+    /// reaches it, so a package of any size holds 1 such part at a time. The
+    /// rules of [`Package::add_part`] apply. `estimated_bytes` is what the part
+    /// counts for in the progress of that write.
+    pub fn add_deferred_part(
+        &mut self,
+        name: PartName,
+        content_type: &str,
+        estimated_bytes: u64,
+    ) -> Result<(), PackageWriteError> {
+        self.push_part(name, content_type, PartData::Deferred { estimated_bytes })
+    }
+
+    fn push_part(
+        &mut self,
+        name: PartName,
+        content_type: &str,
+        data: PartData,
     ) -> Result<(), PackageWriteError> {
         if is_reserved_for_relationships(&name) {
             return Err(PackageWriteError::ReservedPartName {
@@ -292,8 +369,13 @@ impl Package {
         self.find_part(name).map(|p| p.content_type.as_str())
     }
 
+    /// Returns the bytes of the part, or `None` for a deferred part, which has
+    /// none until it is written.
     pub fn part_data(&self, name: &PartName) -> Option<&[u8]> {
-        self.find_part(name).map(|p| p.data.as_slice())
+        match &self.find_part(name)?.data {
+            PartData::Held(data) => Some(data),
+            PartData::Deferred { .. } => None,
+        }
     }
 
     /// Returns the names of the parts that reading skipped because they have
@@ -361,6 +443,29 @@ impl Package {
     pub fn write_to_with_progress<W: Write + Seek>(
         &self,
         writer: W,
+        progress: impl FnMut(u64, u64),
+    ) -> Result<(), PackageWriteError> {
+        self.write_deferring_to(
+            writer,
+            |part| {
+                Err(PackageWriteError::PartSource {
+                    part: part.as_str().to_string(),
+                    source: "nothing makes this deferred part".into(),
+                })
+            },
+            progress,
+        )
+    }
+
+    /// Writes as [`Package::write_to_with_progress`] does, asking `make` for
+    /// the bytes of each deferred part when its turn comes and dropping them
+    /// once they are in the archive. Memory holds 1 such part at a time, and
+    /// the archive goes straight to `writer`. A deferred part counts for its
+    /// estimate in the progress, in 1 step when it is done.
+    pub fn write_deferring_to<W: Write + Seek>(
+        &self,
+        writer: W,
+        mut make: impl FnMut(&PartName) -> Result<Vec<u8>, PackageWriteError>,
         mut progress: impl FnMut(u64, u64),
     ) -> Result<(), PackageWriteError> {
         self.ensure_no_derivable_names()?;
@@ -385,32 +490,18 @@ impl Package {
             archive.write_all(&relationships_xml(relationships)?)?;
         }
 
-        let total: u64 = self.parts.iter().map(|p| p.data.len() as u64).sum();
+        let total: u64 = self.parts.iter().map(|p| p.data.progress_bytes()).sum();
         let mut compressed: u64 = 0;
         for part in &self.parts {
-            let len = part.data.len();
-            if (PARALLEL_PART_THRESHOLD..=MAX_PARALLEL_PART).contains(&len) {
-                // Compress the part across threads, then splice the finished
-                // stream in verbatim (no recompression).
-                // #[gamma::skip(try.propagate_to_unwrap, reason = "size fits")]
-                let entry = crate::deflate::parallel_entry(part.name.zip_entry(), &part.data)?;
-                // #[gamma::skip(try.propagate_to_unwrap, reason = "valid ZIP")]
-                let mut source = ZipArchive::new(Cursor::new(entry))?;
-                archive.raw_copy_file(source.by_index(0)?)?;
-                // Report the part's bytes in the same chunk steps the
-                // single-threaded path uses, so the count climbs the same way
-                // regardless of which path compressed the part.
-                for chunk in part.data.chunks(COMPRESS_CHUNK_BYTES) {
-                    compressed += chunk.len() as u64;
+            match &part.data {
+                PartData::Held(data) => write_part(&mut archive, &part.name, data, |chunk| {
+                    compressed += chunk;
                     progress(compressed, total);
-                }
-            } else {
-                archive.start_file(part.name.zip_entry(), options)?;
-                // Feed each part in chunks so a large part still yields
-                // intermediate progress instead of 1 jump from empty to done.
-                for chunk in part.data.chunks(COMPRESS_CHUNK_BYTES) {
-                    archive.write_all(chunk)?;
-                    compressed += chunk.len() as u64;
+                })?,
+                PartData::Deferred { estimated_bytes } => {
+                    let data = make(&part.name)?;
+                    write_part(&mut archive, &part.name, &data, |_| {})?;
+                    compressed += estimated_bytes;
                     progress(compressed, total);
                 }
             }
@@ -427,7 +518,7 @@ impl Package {
     /// ceiling is refused with [`PackageReadError::OversizedPart`] or
     /// [`PackageReadError::OversizedPackage`].
     pub fn read_from<R: Read + Seek>(reader: R) -> Result<Self, PackageReadError> {
-        Self::read_from_impl(reader, PackageReadLimits::default(), |_| {})
+        Self::read_from_impl(reader, PackageReadLimits::default(), &mut NoHandOff, |_| {})
     }
 
     /// Reads as [`Package::read_from`] does, and reports decompression
@@ -440,7 +531,23 @@ impl Package {
         reader: R,
         progress: impl FnMut(DecompressionProgress),
     ) -> Result<Self, PackageReadError> {
-        Self::read_from_impl(reader, PackageReadLimits::default(), progress)
+        Self::read_from_impl(
+            reader,
+            PackageReadLimits::default(),
+            &mut NoHandOff,
+            progress,
+        )
+    }
+
+    /// Reads as [`Package::read_from_with_progress`] does, passing the parts
+    /// that `hand_off` wants to it, 1 at a time, instead of keeping them. See
+    /// [`PartHandOff`]. The progress counts those parts too.
+    pub fn read_handing_off_with_progress<R: Read + Seek>(
+        reader: R,
+        hand_off: &mut impl PartHandOff,
+        progress: impl FnMut(DecompressionProgress),
+    ) -> Result<Self, PackageReadError> {
+        Self::read_from_impl(reader, PackageReadLimits::default(), hand_off, progress)
     }
 
     /// Reads as [`Package::read_from`] does, under caller-chosen size ceilings;
@@ -451,12 +558,24 @@ impl Package {
         reader: R,
         limits: PackageReadLimits,
     ) -> Result<Self, PackageReadError> {
-        Self::read_from_impl(reader, limits, |_| {})
+        Self::read_from_impl(reader, limits, &mut NoHandOff, |_| {})
+    }
+
+    /// Reads as [`Package::read_handing_off_with_progress`] does, under
+    /// caller-chosen size ceilings, for the tests.
+    #[cfg(test)]
+    pub(crate) fn read_handing_off_with_limits<R: Read + Seek>(
+        reader: R,
+        limits: PackageReadLimits,
+        hand_off: &mut impl PartHandOff,
+    ) -> Result<Self, PackageReadError> {
+        Self::read_from_impl(reader, limits, hand_off, |_| {})
     }
 
     fn read_from_impl<R: Read + Seek>(
         reader: R,
         limits: PackageReadLimits,
+        hand_off: &mut impl PartHandOff,
         mut progress: impl FnMut(DecompressionProgress),
     ) -> Result<Self, PackageReadError> {
         let mut archive = ZipArchive::new(reader)?;
@@ -474,6 +593,7 @@ impl Package {
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
         let mut item_by_lowercase_name: BTreeMap<String, String> = BTreeMap::new();
         let mut total_bytes: u64 = 0;
+        let mut handed_off_bytes: u64 = 0;
         for index in 0..archive.len() {
             let mut file = archive.by_index(index)?;
             if file.is_dir() {
@@ -493,11 +613,22 @@ impl Package {
             let claimed_size = file.size();
             let ticking = TickingReader {
                 inner: &mut file,
-                base: total_bytes,
+                base: total_bytes + handed_off_bytes,
                 read: 0,
                 announced_total,
                 progress: &mut progress,
             };
+            if hand_off.wants(&name) {
+                // 1 part at a time: nothing accumulates towards the total.
+                let alone = PackageReadLimits {
+                    max_total_bytes: limits.max_part_bytes,
+                    ..limits
+                };
+                let data = read_part_bytes(ticking, claimed_size, &name, alone, 0);
+                handed_off_bytes += data.as_ref().map_or(0, |bytes| bytes.len() as u64);
+                hand_off.take(&name, data);
+                continue;
+            }
             let data = read_part_bytes(ticking, claimed_size, &name, limits, total_bytes)?;
             total_bytes += data.len() as u64;
             entries.push((name, data));
@@ -547,7 +678,7 @@ impl Package {
             package.parts.push(Part {
                 content_type: content_type.to_string(),
                 name: part_name,
-                data,
+                data: PartData::Held(data),
             });
         }
         Ok(package)
@@ -640,6 +771,41 @@ impl Package {
     fn find_part(&self, name: &PartName) -> Option<&Part> {
         self.parts.iter().find(|p| p.name.is_equivalent(name))
     }
+}
+
+/// Adds `data` to `archive` as the part `name`, reporting the bytes it took in
+/// through `ticked`.
+fn write_part<W: Write + Seek>(
+    archive: &mut ZipWriter<FusedWriter<W>>,
+    name: &PartName,
+    data: &[u8],
+    mut ticked: impl FnMut(u64),
+) -> Result<(), PackageWriteError> {
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    if (PARALLEL_PART_THRESHOLD..=MAX_PARALLEL_PART).contains(&data.len()) {
+        // Compress the part across threads, then splice the finished
+        // stream in verbatim (no recompression).
+        // #[gamma::skip(try.propagate_to_unwrap, reason = "size fits")]
+        let entry = crate::deflate::parallel_entry(name.zip_entry(), data)?;
+        // #[gamma::skip(try.propagate_to_unwrap, reason = "valid ZIP")]
+        let mut source = ZipArchive::new(Cursor::new(entry))?;
+        archive.raw_copy_file(source.by_index(0)?)?;
+        // Report the part's bytes in the same chunk steps the
+        // single-threaded path uses, so the count climbs the same way
+        // regardless of which path compressed the part.
+        for chunk in data.chunks(COMPRESS_CHUNK_BYTES) {
+            ticked(chunk.len() as u64);
+        }
+    } else {
+        archive.start_file(name.zip_entry(), options)?;
+        // Feed each part in chunks so a large part still yields
+        // intermediate progress instead of 1 jump from empty to done.
+        for chunk in data.chunks(COMPRESS_CHUNK_BYTES) {
+            archive.write_all(chunk)?;
+            ticked(chunk.len() as u64);
+        }
+    }
+    Ok(())
 }
 
 /// `Read` wrapper that reports cumulative decompressed byte counts through a

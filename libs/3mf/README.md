@@ -130,12 +130,15 @@ package.write_to(File::create("tetrahedron.3mf")?)?;
 ## Limits
 
 Reading caps the decompressed size of an archive at 2 GiB for any single part
-and 4 GiB for the package.
+and 4 GiB for the package. Data larger than that moves through 1 part at a
+time: a deferred part gets its bytes as the package is written
+(`Package::add_deferred_part`, `Package::write_deferring_to`), and a
+`PartHandOff` takes parts as the package is read, outside the package ceiling.
 
 ## Not supported
 
-Interleaved packages and ZIP64 writing (ZIP64 reading comes from the
-underlying `zip` crate). Of the Production Extension, only `p:path` is read;
+Interleaved packages, and parts of 4 GiB or more (the underlying `zip` crate
+adds the ZIP64 records a larger archive needs). Of the Production Extension, only `p:path` is read;
 a `p:path` anywhere but on a component or build item is refused rather than
 partially read.
 

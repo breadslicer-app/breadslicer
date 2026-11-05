@@ -4975,6 +4975,7 @@ dependencies = [
  "quick-xml",
  "rayon",
  "ryu",
+ "tempfile",
  "zip",
 ]
 
@@ -5167,6 +5168,7 @@ dependencies = [
 name = "sc-project-formats"
 version = "0.2.0"
 dependencies = [
+ "rayon",
  "sc-3mf",
  "sc-bread-format",
  "sc-mesh-core",

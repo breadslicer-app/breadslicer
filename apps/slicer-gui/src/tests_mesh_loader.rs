@@ -8,7 +8,7 @@
 
 use std::any::Any;
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -491,7 +491,7 @@ fn write_project_file(path: &Path, scene: &Scene, payload: &ProjectPayload) {
         None,
         None,
         file_type,
-        &mut bytes,
+        &mut Cursor::new(&mut bytes),
     )
     .expect("project writes");
     std::fs::write(path, bytes).expect("file writes");

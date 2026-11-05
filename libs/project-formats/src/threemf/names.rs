@@ -22,6 +22,14 @@ pub const SLICE_PART_NAME: StaticPartName = match StaticPartName::new("/3D/slice
     Err(_) => panic!("malformed part name"),
 };
 
+/// How the name of a numbered slice part starts: `/3D/slices-1.model` and on.
+/// Slices too large for 1 part go there, and [`SLICE_PART_NAME`] then holds a
+/// slice stack of references to them.
+pub(super) const SLICE_PART_NUMBERED_PREFIX: &str = "/3D/slices-";
+
+/// How the name of a numbered slice part ends.
+pub(super) const SLICE_PART_NUMBERED_SUFFIX: &str = ".model";
+
 /// Relationship type linking the package root to the slice part. An opaque OPC
 /// identifier following the schemas.<domain> shape of the core 3MF relationship
 /// types; it is not meant to resolve.

@@ -280,6 +280,20 @@ fn slices_for_persist_offers_the_slices_when_in_sync() {
 }
 
 #[test]
+fn slices_for_persist_shares_the_held_stack_instead_of_copying_it() {
+    let (doc, _) = loaded_document();
+    let rev = doc.scene_revision();
+    doc.set_slice_result(sample_result(rev));
+    let (first, _) = doc
+        .slices_for_persist(&sample_schedule())
+        .expect("in-sync slices are offered for persistence");
+    let (second, _) = doc
+        .slices_for_persist(&sample_schedule())
+        .expect("in-sync slices are offered for persistence");
+    assert!(std::sync::Arc::ptr_eq(&first.contours, &second.contours));
+}
+
+#[test]
 fn slices_for_persist_is_none_without_a_held_result() {
     let (doc, _) = loaded_document();
     assert!(doc.slices_for_persist(&sample_schedule()).is_none());

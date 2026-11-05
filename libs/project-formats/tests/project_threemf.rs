@@ -75,7 +75,7 @@ fn write_bytes(payload: &ProjectPayload, embed: EmbedProfiles) -> Vec<u8> {
         None,
         None,
         project_file_type(),
-        &mut bytes,
+        &mut Cursor::new(&mut bytes),
     )
     .expect("the project writes cleanly");
     bytes
@@ -320,7 +320,7 @@ mod slice_persistence_tests {
         let void = ContourLayer::new(0.075, vec![]);
         let contours = ContourStack::new(vec![solid, void]).expect("z is strictly increasing");
         PlateSlices {
-            contours,
+            contours: std::sync::Arc::new(contours),
             slab_tops: vec![0.05, 0.10],
         }
     }
@@ -337,7 +337,7 @@ mod slice_persistence_tests {
             slices,
             slice_fingerprint,
             project_file_type(),
-            &mut bytes,
+            &mut Cursor::new(&mut bytes),
         )
         .expect("the project writes cleanly");
         bytes
@@ -393,7 +393,7 @@ mod declared_facet_normals_tests {
             None,
             None,
             project_file_type(),
-            &mut bytes,
+            &mut Cursor::new(&mut bytes),
         )
         .expect("the project writes cleanly");
 
