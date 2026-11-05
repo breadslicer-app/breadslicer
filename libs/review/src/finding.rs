@@ -190,19 +190,15 @@ pub enum SuggestedFix {
         /// Where the tip goes.
         at: PlatePoint,
     },
-    /// Add a drain hole at `at`, or cure the cavity solid on the next
-    /// slice: its pixels are
-    /// [`ReviewReport::fills`](crate::runner::ReviewReport::fills)`[cavity]`
-    /// (#156). A drain suits a model hollowed on purpose; a fill, one whose
-    /// cavity is part of its shape.
+    /// Add drain holes to the cavity whose floor is at `at`: a suction cup or
+    /// a cavity too large to fill (#431). It names no pixels: a cavity like
+    /// this may be a hollow, which is the person's, so nothing can cure it.
     AddDrain {
-        /// Where the hole goes.
+        /// The floor of the cavity, the side facing the plate.
         at: PlatePoint,
-        /// The cavity's index among the review's fills.
-        cavity: usize,
     },
-    /// Cure the cavity solid on the next slice (#132): its pixels are
-    /// [`ReviewReport::fills`](crate::runner::ReviewReport::fills)`[cavity]`.
+    /// Cure a small sealed trap solid on the next slice (#132): its pixels
+    /// are [`ReviewReport::fills`](crate::runner::ReviewReport::fills)`[cavity]`.
     Fill {
         /// The floor of the cavity, where the camera looks.
         at: PlatePoint,
@@ -250,7 +246,7 @@ impl SuggestedFix {
     fn rank(&self) -> (u8, PlatePoint) {
         match *self {
             Self::AddSupport { at } => (0, at),
-            Self::AddDrain { at, .. } => (1, at),
+            Self::AddDrain { at } => (1, at),
             Self::Fill { at, .. } => (2, at),
             Self::ClearRaft { lift_to_mm } => (3, PlatePoint::new(0.0, 0.0, lift_to_mm)),
             Self::Erase { at, .. } => (4, at),

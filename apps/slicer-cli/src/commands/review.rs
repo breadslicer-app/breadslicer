@@ -7,7 +7,7 @@
 //! the pre-flight review (`sc_review`) on the per-leaf contours, knowing which
 //! leaves are models and which are the generated supports.
 //!
-//! With `--fill`, every cavity the review offers to fill is cut on the run's
+//! With `--fill`, every small trap the review offers to fill is cut on the run's
 //! schedule and added to the plate as model, as the app does on the next
 //! slice (#132), and the plate is reviewed again.
 //!
@@ -27,9 +27,9 @@ use anyhow::{Result, anyhow};
 use sc_geom::df_supports::{is_support_mesh_name, recommended_lift_mm};
 use sc_print_profiles::ProfileLibraries;
 use sc_review::{
-    CavityFill, CheckKind, Finding, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf,
-    ReviewOptions, ReviewReport, Role, Severity, SuggestedFix, erase_stack, fill_stack,
-    review_regions, review_with,
+    CavityFill, Finding, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions,
+    ReviewReport, Role, Severity, SuggestedFix, erase_stack, fill_stack, review_regions,
+    review_with,
 };
 use sc_sl1cer::contour::ContourStack;
 
@@ -197,10 +197,9 @@ impl<'r> FixAll<'r> {
         for finding in &report.findings {
             match finding.fix {
                 Some(SuggestedFix::AddSupport { .. }) => plan.supports += 1,
-                // Small traps and suction cups, as the app's Fix All.
-                Some(SuggestedFix::Fill { cavity, .. } | SuggestedFix::AddDrain { cavity, .. })
-                    if fills_unasked(finding) =>
-                {
+                // Small traps, as the app's Fix All. A hollow, a suction cup
+                // or a large cavity has no pixels to fill (#431).
+                Some(SuggestedFix::Fill { cavity, .. }) => {
                     plan.fills.extend(report.fills.get(cavity));
                 }
                 Some(SuggestedFix::Erase { speck, .. }) => {
@@ -249,16 +248,6 @@ fn write_fixed_all(input: &ReviewInput<'_>, fixed: &FixedAll, out: &mut dyn Writ
     }
     writeln!(out, "{}", summary_line(input, &fixed.report.findings))?;
     Ok(())
-}
-
-/// Whether Fix All fills `finding`'s cavity without asking: a small resin
-/// trap (a note or a warning) or a suction cup.
-fn fills_unasked(finding: &Finding) -> bool {
-    match finding.check {
-        CheckKind::ResinTrap => finding.severity != Severity::Error,
-        CheckKind::SuctionCup => true,
-        _ => false,
-    }
 }
 
 /// The fills of every finding that offers one.
@@ -404,8 +393,8 @@ fn finding_line(finding: &Finding) -> String {
             " Fix: add a support at ({:.2}, {:.2}, {:.2}) mm.",
             at.x_mm, at.y_mm, at.z_mm
         ),
-        Some(SuggestedFix::AddDrain { at, .. }) => format!(
-            " Fix: add a drain at ({:.2}, {:.2}, {:.2}) mm, or fill it on the next slice.",
+        Some(SuggestedFix::AddDrain { at }) => format!(
+            " Fix: add drain holes; its floor is at ({:.2}, {:.2}, {:.2}) mm.",
             at.x_mm, at.y_mm, at.z_mm
         ),
         Some(SuggestedFix::Fill { .. }) => " Fix: fill it on the next slice.".to_owned(),
@@ -608,7 +597,7 @@ mod review_output_tests {
 
     #[test]
     fn findings_serialise_with_kebab_case_names() {
-        let finding = island().with_fix(SuggestedFix::AddDrain {
+        let finding = island().with_fix(SuggestedFix::Fill {
             at: PlatePoint::new(0.0, 0.0, 0.0),
             cavity: 2,
         });
@@ -617,8 +606,25 @@ mod review_output_tests {
         assert_eq!(value["severity"], "error");
         assert_eq!(value["scope"], "model");
         assert_eq!(value["first_layer"], 12);
-        assert_eq!(value["fix"]["kind"], "add-drain");
+        assert_eq!(value["fix"]["kind"], "fill");
         assert_eq!(value["fix"]["cavity"], 2);
         assert_eq!(value["focus"]["x_mm"], 1.234);
+    }
+
+    /// Fix All fills what has pixels to fill: a small trap. A hollow, a cup
+    /// or a large cavity asks for drain holes and is left (#431).
+    #[test]
+    fn fix_all_fills_only_the_small_traps() {
+        let at = PlatePoint::new(1.0, 2.0, 3.0);
+        let report = ReviewReport {
+            findings: vec![
+                island().with_fix(SuggestedFix::Fill { at, cavity: 0 }),
+                island().with_fix(SuggestedFix::AddDrain { at }),
+            ],
+            fills: vec![CavityFill { slabs: Vec::new() }],
+            ..ReviewReport::default()
+        };
+        assert_eq!(FixAll::of(&report).fills.len(), 1);
+        assert_eq!(offered_fills(&report).len(), 1);
     }
 }

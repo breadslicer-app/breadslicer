@@ -26,8 +26,8 @@
 //!    [`ReviewContext`] and returns findings; the runner sorts them by
 //!    layer, then check.
 //!
-//! A cavity too small to drain is offered a fill instead (#132): the
-//! report carries its pixels as a [`CavityFill`], and [`fill_stack`] turns
+//! A small sealed trap is offered a fill (#132, #431): the report carries
+//! its pixels as a [`CavityFill`], and [`fill_stack`] turns
 //! the fills kept from one review into a contour stack that cures them solid
 //! on the next slice of the same scene.
 //!

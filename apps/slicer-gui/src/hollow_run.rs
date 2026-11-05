@@ -26,7 +26,8 @@
 //! neutral while that cavity is not computed.
 //!
 //! The Review card (#90) asks which hollow made here holds a resin trap
-//! ([`HollowRun::hollow_at`]) and opens the drain tool on that model (#158).
+//! ([`HollowRun::hollow_at`]), and opens the drain tool on the model holding
+//! a cavity, hollowed here or not ([`HollowRun::model_at`], #158, #431).
 //!
 //! The hollows made here live in the document
 //! ([`SceneDocument::hollows`]), so a `.bread` save keeps them and an open
@@ -206,6 +207,21 @@ impl HollowOptions {
             ..HollowSettings::default()
         }
     }
+}
+
+/// Whether the box around `mesh` posed by `world` holds `at` (world mm).
+fn box_holds(mesh: &IndexedMesh, world: &Transform3D, at: [f32; 3]) -> bool {
+    // A floor on the plate stands on the box's face, within rounding.
+    const SLACK_MM: f32 = 1e-3;
+    let (mut low, mut high) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+    for vertex in mesh.vertices() {
+        let posed = world.apply_to_vertex(*vertex).coords();
+        for axis in 0..3 {
+            low[axis] = low[axis].min(posed[axis]);
+            high[axis] = high[axis].max(posed[axis]);
+        }
+    }
+    (0..3).all(|axis| low[axis] - SLACK_MM <= at[axis] && at[axis] <= high[axis] + SLACK_MM)
 }
 
 /// Where a vertical line down from `at` (world mm) first leaves the solid of
@@ -1001,6 +1017,32 @@ impl HollowRun {
         }
     }
 
+    /// Of the leaves `wanted` takes, the one with its underside nearest below
+    /// `at` (world mm), with that point.
+    fn underside_below(
+        &self,
+        at: [f32; 3],
+        wanted: impl Fn(&Arc<IndexedMesh>) -> bool,
+    ) -> Option<(NodeId, Arc<IndexedMesh>, Transform3D, [f32; 3])> {
+        self.document
+            .with_scene(|spatial| {
+                let scene = spatial.graph();
+                (0..)
+                    .map_while(|i| spatial.leaf_id_at_index(i))
+                    .filter_map(|leaf| {
+                        let mesh = scene.leaf_mesh_arc(leaf)?;
+                        if !wanted(mesh) {
+                            return None;
+                        }
+                        let world = scene.world_transform_of(leaf).ok()?;
+                        let exit = floor_underside(mesh, &world, at)?;
+                        Some((leaf, mesh.clone(), world, exit))
+                    })
+                    .max_by(|a, b| a.3[2].total_cmp(&b.3[2]))
+            })
+            .flatten()
+    }
+
     /// The drain the review suggests for a cavity whose floor is at `at`
     /// (world mm): on a hollow made here, on the underside of that floor
     /// straight below `at`, pointing up into the cavity. Of several hollows,
@@ -1016,27 +1058,10 @@ impl HollowRun {
             .iter()
             .map(|h| h.hollow.clone())
             .collect();
-        self.document
-            .with_scene(|spatial| {
-                let scene = spatial.graph();
-                (0..)
-                    .map_while(|i| spatial.leaf_id_at_index(i))
-                    .filter_map(|leaf| {
-                        let mesh = scene.leaf_mesh_arc(leaf)?;
-                        if !hollows.iter().any(|h| Arc::ptr_eq(h, mesh)) {
-                            return None;
-                        }
-                        let world = scene.world_transform_of(leaf).ok()?;
-                        let exit = floor_underside(mesh, &world, at)?;
-                        Some((leaf, mesh.clone(), world, exit))
-                    })
-                    .max_by(|a, b| a.3[2].total_cmp(&b.3[2]))
-            })
-            .flatten()
-            .and_then(|(leaf, mesh, world, exit)| {
-                let drain = LocalDrain::at(exit, [0.0, 0.0, -1.0], radius_mm, &world)?;
-                Some((leaf, mesh, world, drain))
-            })
+        let (leaf, mesh, world, exit) =
+            self.underside_below(at, |mesh| hollows.iter().any(|h| Arc::ptr_eq(h, mesh)))?;
+        let drain = LocalDrain::at(exit, [0.0, 0.0, -1.0], radius_mm, &world)?;
+        Some((leaf, mesh, world, drain))
     }
 
     /// The model hollowed here whose hollow holds the cavity at `at` (world
@@ -1045,6 +1070,35 @@ impl HollowRun {
     pub(crate) fn hollow_at(&self, at: [f32; 3]) -> Option<(NodeId, usize)> {
         let (leaf, mesh, _, _) = self.drain_target(at)?;
         Some((leaf, self.source_for(&mesh).1.len()))
+    }
+
+    /// The model holding the cavity whose floor is at `at` (world mm): a
+    /// hollow made here, else the model with its underside nearest below
+    /// `at`, else, for a cavity closed by the plate, with nothing under its
+    /// floor, the one whose box holds `at`.
+    pub(crate) fn model_at(&self, at: [f32; 3]) -> Option<NodeId> {
+        if let Some((leaf, _)) = self.hollow_at(at) {
+            return Some(leaf);
+        }
+        let is_model = |mesh: &Arc<IndexedMesh>| !sc_geom::df_supports::is_support_mesh(mesh);
+        if let Some((leaf, ..)) = self.underside_below(at, is_model) {
+            return Some(leaf);
+        }
+        self.document
+            .with_scene(|spatial| {
+                let scene = spatial.graph();
+                (0..)
+                    .map_while(|i| spatial.leaf_id_at_index(i))
+                    .find(|&leaf| {
+                        scene.leaf_mesh_arc(leaf).is_some_and(|mesh| {
+                            is_model(mesh)
+                                && scene
+                                    .world_transform_of(leaf)
+                                    .is_ok_and(|world| box_holds(mesh, &world, at))
+                        })
+                    })
+            })
+            .flatten()
     }
 
     fn launch(
@@ -2318,6 +2372,39 @@ mod tests {
         assert_eq!(notices, vec!["Drain not drilled".to_owned()]);
         assert_eq!(undo_steps, 1);
         assert_eq!(after_click, 1, "the left-out drain added no step");
+    }
+
+    /// The Review's drain button finds the model of any cavity (#431): one
+    /// over its underside, and one closed by the plate, with nothing below.
+    #[test]
+    fn the_model_of_a_cavity_is_found_hollowed_here_or_not() {
+        use crate::test_support::slint_thread::on_fresh_slint_thread;
+        let (over, on_plate, beside, hollow) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 5.0])),
+                    LeafPayload::Mesh(Arc::new(hollow_box())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, std::path::PathBuf::from("imported.stl"));
+            let run = HollowRun::install(&window, document, ctrl.dialogs(), ctrl.clone());
+            (
+                run.model_at([0.0, 0.0, 2.0]) == Some(leaf),
+                run.model_at([0.0, 0.0, 0.0]) == Some(leaf),
+                run.model_at([20.0, 0.0, 2.0]),
+                run.hollow_at([0.0, 0.0, 2.0]),
+            )
+        });
+        assert!(over, "the model above its underside");
+        assert!(on_plate, "the model around a floor on the plate");
+        assert_eq!(beside, None);
+        assert_eq!(hollow, None, "not hollowed here");
     }
 
     /// #264's test piece: a 40 x 30 x 30 mm block with a 3 mm fin 20 mm

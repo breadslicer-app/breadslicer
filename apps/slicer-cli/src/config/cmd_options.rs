@@ -309,7 +309,7 @@ fn get_review_options() -> impl Parser<CmdOptions> {
 
     let fill = long("fill")
         .help(
-            "Fill every cavity the review offers to fill (small resin traps and suction cups), as the app does on the next slice, and review the plate again.",
+            "Fill every small resin trap the review offers to fill (a sealed trap under 1 ml), as the app does on the next slice, and review the plate again.",
         )
         .switch();
 

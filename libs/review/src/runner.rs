@@ -76,8 +76,8 @@ pub struct ReviewTimings {
 pub struct ReviewReport {
     /// Every finding, in listing order.
     pub findings: Vec<Finding>,
-    /// The pixels of every cavity offered a fill, by the index its
-    /// [`SuggestedFix::Fill`](crate::SuggestedFix::Fill) names.
+    /// The pixels of every small trap, the only cavity offered a fill, by
+    /// the index its [`SuggestedFix::Fill`](crate::SuggestedFix::Fill) names.
     pub fills: Vec<CavityFill>,
     /// The pixels that erase every floating speck, by the index its
     /// [`SuggestedFix::Erase`](crate::SuggestedFix::Erase) names: erased

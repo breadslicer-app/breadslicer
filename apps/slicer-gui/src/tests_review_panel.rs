@@ -40,7 +40,7 @@ fn findings() -> Vec<Finding> {
             .with_fix(SuggestedFix::AddSupport { at }),
         finding(CheckKind::EmptyLayer, Severity::Info, 30, 30, "Empty"),
         finding(CheckKind::ResinTrap, Severity::Error, 40, 48, "Trap")
-            .with_fix(SuggestedFix::AddDrain { at, cavity: 9 }),
+            .with_fix(SuggestedFix::AddDrain { at }),
         finding(CheckKind::ThinFeature, Severity::Warning, 50, 52, "Thin"),
     ]
 }
@@ -99,22 +99,46 @@ fn rows_name_their_layers_from_one() {
     assert_eq!(rows[0].detail, "Island on layer 11.");
 }
 
-/// A drain is drilled into a model hollowed here; any other cavity is
-/// offered its fill instead (#156).
+/// A cavity that may be a hollow asks for drain holes and never offers a
+/// fill, in a model hollowed here or not (#431). A hollow made here keeps
+/// even a small trap's volume.
 #[test]
-fn a_drain_is_offered_only_where_it_can_be_drilled() {
+fn a_row_asking_for_drains_never_offers_a_fill() {
     let support = FixKind::AddSupport as i32;
+    let drain = FixKind::AddDrain as i32;
     let rows = review_rows(&findings(), &[None; 5], &BTreeSet::new(), true, false);
     let fixes: Vec<i32> = rows.iter().map(|r| r.fix).collect();
-    assert_eq!(fixes, [support, 0, 0, 0, 0]);
-    let fills: Vec<i32> = rows.iter().map(|r| r.fill).collect();
-    assert_eq!(fills, [0, 1, 0, 0, 0]);
+    assert_eq!(fixes, [support, drain, 0, 0, 0]);
+    assert!(rows.iter().all(|r| r.fill == 0));
+    // It says what the drain tool can do on a model not hollowed here.
+    assert!(
+        rows[1].detail.contains("not hollowed here"),
+        "{:?}",
+        rows[1]
+    );
 
     let drainable = [None, None, None, Some(1), None];
     let rows = review_rows(&findings(), &drainable, &BTreeSet::new(), true, false);
     let fixes: Vec<i32> = rows.iter().map(|r| r.fix).collect();
-    assert_eq!(fixes, [support, FixKind::AddDrain as i32, 0, 0, 0]);
+    assert_eq!(fixes, [support, drain, 0, 0, 0]);
     assert!(rows.iter().all(|r| r.fill == 0));
+    assert!(
+        !rows[1].detail.contains("not hollowed here"),
+        "{:?}",
+        rows[1]
+    );
+
+    let at = PlatePoint::new(1.0, 2.0, 3.0);
+    let small = [
+        finding(CheckKind::ResinTrap, Severity::Warning, 2, 3, "Small")
+            .with_fix(SuggestedFix::Fill { at, cavity: 0 }),
+    ];
+    let rows = review_rows(&small, &[None], &BTreeSet::new(), true, false);
+    assert_eq!((rows[0].fix, rows[0].fill), (0, 1));
+    let rows = review_rows(&small, &[Some(1)], &BTreeSet::new(), true, false);
+    assert_eq!((rows[0].fix, rows[0].fill), (drain, 0));
+    let rows = review_rows(&small, &[Some(0)], &BTreeSet::new(), true, false);
+    assert_eq!(rows[0].title.as_str(), "Hollow without drain holes");
 }
 
 #[test]
@@ -166,30 +190,25 @@ fn rows_offer_no_fix_once_the_models_moved_but_keep_their_marks() {
     assert!(rows[0].fixed);
 }
 
-/// A review with a tiny trap, a medium trap and a cup offering fills, a
-/// large trap with a drain and an empty layer.
+/// A review with a tiny and a medium trap offering fills, a cup and a large
+/// trap asking for drains, and an empty layer.
 fn tiered() -> Vec<Finding> {
     let at = PlatePoint::new(1.0, 2.0, 3.0);
     let fill = |cavity| SuggestedFix::Fill { at, cavity };
     vec![
         finding(CheckKind::ResinTrap, Severity::Info, 2, 3, "Tiny").with_fix(fill(0)),
-        finding(CheckKind::SuctionCup, Severity::Warning, 4, 9, "Cup").with_fix(fill(1)),
-        finding(CheckKind::ResinTrap, Severity::Warning, 12, 20, "Medium").with_fix(fill(2)),
+        finding(CheckKind::SuctionCup, Severity::Warning, 4, 9, "Cup")
+            .with_fix(SuggestedFix::AddDrain { at }),
+        finding(CheckKind::ResinTrap, Severity::Warning, 12, 20, "Medium").with_fix(fill(1)),
         finding(CheckKind::ResinTrap, Severity::Error, 30, 60, "Large")
-            .with_fix(SuggestedFix::AddDrain { at, cavity: 9 }),
+            .with_fix(SuggestedFix::AddDrain { at }),
         finding(CheckKind::EmptyLayer, Severity::Info, 70, 70, "Empty"),
     ]
 }
 
 fn marked(findings: &[Finding], marks: &RowMarks) -> Vec<ReviewRow> {
     mark_rows(
-        review_rows(
-            findings,
-            &[Some(1); 5],
-            &BTreeSet::new(),
-            marks.fixable,
-            false,
-        ),
+        review_rows(findings, &[None; 5], &BTreeSet::new(), marks.fixable, false),
         findings,
         marks,
     )
@@ -228,12 +247,14 @@ fn small_cavities_offer_a_fill_and_tiny_ones_can_be_left() {
     let rows = marked(&tiered(), &open_marks());
     assert_eq!(titles(&rows), ["Large", "Cup", "Medium", "Tiny", "Empty"]);
     let fills: Vec<i32> = rows.iter().map(|r| r.fill).collect();
-    assert_eq!(fills, [0, 1, 1, 1, 0]);
+    assert_eq!(fills, [0, 0, 1, 1, 0]);
     let leave: Vec<bool> = rows.iter().map(|r| r.leave).collect();
     assert_eq!(leave, [false, false, false, true, false]);
-    // A fill is no button of its own; the large trap keeps its drain.
+    // A fill is no button of its own; the large trap and the cup ask for
+    // drains.
+    let drain = FixKind::AddDrain as i32;
     let fixes: Vec<i32> = rows.iter().map(|r| r.fix).collect();
-    assert_eq!(fixes, [FixKind::AddDrain as i32, 0, 0, 0, 0]);
+    assert_eq!(fixes, [drain, drain, 0, 0, 0]);
 }
 
 #[test]
@@ -242,7 +263,7 @@ fn a_marked_fill_shows_even_once_the_models_moved() {
     marks.filled.insert(2);
     let rows = marked(&tiered(), &marks);
     let fills: Vec<i32> = rows.iter().map(|r| r.fill).collect();
-    assert_eq!(fills, [0, 1, 2, 1, 0]);
+    assert_eq!(fills, [0, 0, 2, 1, 0]);
 
     marks.fixable = false;
     let rows = marked(&tiered(), &marks);
@@ -274,8 +295,12 @@ fn left_findings_are_hidden_and_headings_follow() {
 
 #[test]
 fn fill_all_small_traps_takes_the_traps_only() {
-    let small: Vec<usize> = small_traps(&tiered()).collect();
+    let small: Vec<usize> = small_traps(&tiered(), &[None; 5]).collect();
     assert_eq!(small, [0, 2]);
+    // Not one in a hollow made here (#431).
+    let hollows = [None, None, Some(1), None, None];
+    let small: Vec<usize> = small_traps(&tiered(), &hollows).collect();
+    assert_eq!(small, [0]);
 }
 
 #[test]
@@ -345,7 +370,7 @@ fn a_minimal_island_is_a_note_fix_all_leaves() {
         "{}",
         rows[0].remains
     );
-    let plan = plan_fix_all(&findings, &FixPixels::default(), |_| false);
+    let plan = plan_fix_all(&findings, &FixPixels::default(), &[], |_| false);
     assert!(plan.is_empty());
 }
 
@@ -485,7 +510,7 @@ fn a_row_offers_a_support_exactly_when_fix_all_takes_it() {
             .filter(|row| row.fix == FixKind::AddSupport as i32)
             .map(|row| row.id as usize)
             .collect();
-        let plan = plan_fix_all(&findings, &FixPixels::default(), |i| {
+        let plan = plan_fix_all(&findings, &FixPixels::default(), &[], |i| {
             support_held_back(&findings[i], &marks, now)
         });
         let by_fix_all: Vec<usize> = plan.supports.iter().map(|(i, _)| *i).collect();
@@ -605,8 +630,8 @@ mod fix_all {
         }
     }
 
-    /// An island and its floating part at one point, a small trap, a cup, a
-    /// large trap to drain, a speck, two thin model features (the second
+    /// An island and its floating part at one point, a small trap, a cup and
+    /// a large trap to drain, a speck, two thin model features (the second
     /// inside the speck's erasure) and a thin support.
     fn review() -> (
         Vec<Finding>,
@@ -628,16 +653,16 @@ mod fix_all {
             finding(CheckKind::ResinTrap, Severity::Info, 2, 3, "Tiny")
                 .with_fix(SuggestedFix::Fill { at, cavity: 0 }),
             finding(CheckKind::SuctionCup, Severity::Warning, 2, 3, "Cup")
-                .with_fix(SuggestedFix::Fill { at, cavity: 1 }),
+                .with_fix(SuggestedFix::AddDrain { at }),
             finding(CheckKind::ResinTrap, Severity::Error, 4, 9, "Large")
-                .with_fix(SuggestedFix::AddDrain { at, cavity: 9 }),
+                .with_fix(SuggestedFix::AddDrain { at }),
             finding(CheckKind::FloatingPart, Severity::Warning, 6, 6, "Speck")
                 .with_fix(SuggestedFix::Erase { at, speck: 0 }),
             thin(RoleScope::Model).with_fix(SuggestedFix::Thicken { at, feature: 0 }),
             thin(RoleScope::Model).with_fix(SuggestedFix::Thicken { at, feature: 1 }),
             thin(RoleScope::Support),
         ];
-        let fills = vec![pixels(0.0, 1.0), pixels(1.0, 2.0)];
+        let fills = vec![pixels(0.0, 1.0)];
         let erasures = vec![pixels(5.0, 6.0)];
         let thickenings = vec![pixels(8.0, 9.0), pixels(5.5, 6.5)];
         (findings, fills, erasures, thickenings)
@@ -663,6 +688,7 @@ mod fix_all {
         let plan = plan_fix_all(
             &findings,
             &fix_pixels(&fills, &erasures, &thickenings),
+            &[],
             |_| false,
         );
         let supported: Vec<usize> = plan.supports.iter().map(|s| s.0).collect();
@@ -670,25 +696,41 @@ mod fix_all {
         // The island and its floating part share one support.
         assert_eq!(plan.support_points().len(), 1);
         let patches: Vec<(usize, PatchKind)> = plan.patches.iter().map(|p| (p.0, p.1)).collect();
-        // The cup is filled (#156). The large trap and the thin support are
-        // left, and so is the thin feature inside the speck's erasure.
+        // The cup, the large trap and the thin support are left (#431), and
+        // so is the thin feature inside the speck's erasure.
         assert_eq!(
             patches,
             [
                 (2, PatchKind::Fill),
-                (3, PatchKind::Fill),
                 (5, PatchKind::Erase),
                 (6, PatchKind::Thicken)
             ]
         );
-        assert_eq!(plan.len(), 6);
+        assert_eq!(plan.len(), 5);
         // Findings fixed, marked or left alone already are skipped.
         let rest = plan_fix_all(
             &findings,
             &fix_pixels(&fills, &erasures, &thickenings),
+            &[],
             |i| i != 2,
         );
         assert_eq!(rest.len(), 1);
+    }
+
+    /// A small trap in a hollow made here is left: the volume of a hollow
+    /// is the person's, whatever its size (#431).
+    #[test]
+    fn fix_all_fills_no_trap_in_a_hollow_made_here() {
+        let (findings, fills, erasures, thickenings) = review();
+        let mut hollows = [None; 9];
+        hollows[2] = Some(1);
+        let plan = plan_fix_all(
+            &findings,
+            &fix_pixels(&fills, &erasures, &thickenings),
+            &hollows,
+            |_| false,
+        );
+        assert!(plan.patches.iter().all(|p| p.1 != PatchKind::Fill));
     }
 
     /// A speck where an island starts is its first layer: Fix All supports
@@ -704,6 +746,7 @@ mod fix_all {
         let plan = plan_fix_all(
             &findings,
             &fix_pixels(&fills, &erasures, &thickenings),
+            &[],
             |_| false,
         );
         assert!(plan.patches.iter().all(|p| p.1 != PatchKind::Erase));
@@ -711,6 +754,7 @@ mod fix_all {
         let plan = plan_fix_all(
             &findings,
             &fix_pixels(&fills, &erasures, &thickenings),
+            &[],
             |i| i == 0,
         );
         assert!(plan.patches.iter().any(|p| p.1 == PatchKind::Erase));
@@ -725,9 +769,17 @@ mod fix_all {
             "{}",
             why(4, Some(0))
         );
-        // A large trap in a model not hollowed here is filled on request.
-        assert!(why(4, None).contains("too much resin"), "{}", why(4, None));
-        assert!(why(3, None).contains("opening"));
+        // Nothing fills a cup or a large trap, hollowed here or not.
+        assert!(why(4, None).contains("Hollow tab"), "{}", why(4, None));
+        assert!(why(3, None).contains("Hollow tab"), "{}", why(3, None));
+        // A small trap in a hollow made here is left for the same reason; one
+        // anywhere else was filled, and is still there.
+        assert!(
+            why(2, Some(1)).contains("Hollow tab"),
+            "{}",
+            why(2, Some(1))
+        );
+        assert!(why(2, None).contains("opening"), "{}", why(2, None));
         assert!(why(8, None).contains("supports"), "{}", why(8, None));
         assert!(why(0, None).contains("support"), "{}", why(0, None));
         let rows = review_rows(&findings, &[None; 9], &BTreeSet::new(), true, true);
@@ -1283,6 +1335,322 @@ mod fix_all {
             );
         }
         assert!(done.contains("Fix All is done"), "{done}");
+    }
+
+    /// A plate for #431: a closed 20 mm cube around a sealed 14 mm cavity
+    /// (2.7 ml) unless `solid`, a cube around a sealed 5 mm one (125 mm³), an
+    /// open box with a recess of 384 mm³ (a cup, small as it is) and a cube
+    /// in mid air (an island and a floating part).
+    fn hollowed_plate(solid: bool) -> Scene {
+        let scaled = |x: f64, y: f64, z: f64| [[x, 0.0, 0.0], [0.0, y, 0.0], [0.0, 0.0, z]];
+        let mut scene = Scene::new();
+        if solid {
+            add(
+                &mut scene,
+                unit_cube_mesh(),
+                scaled(20.0, 20.0, 20.0),
+                [-22.0, 0.0, 10.0],
+            );
+        } else {
+            hollow_cube(&mut scene, -22.0, 20.0, 14.0);
+        }
+        hollow_cube(&mut scene, 0.0, 8.0, 5.0);
+        let cube = unit_cube_mesh;
+        add(
+            &mut scene,
+            cube(),
+            scaled(12.0, 12.0, 2.0),
+            [15.0, 0.0, 1.0],
+        );
+        add(&mut scene, cube(), scaled(2.0, 12.0, 6.0), [10.0, 0.0, 5.0]);
+        add(&mut scene, cube(), scaled(2.0, 12.0, 6.0), [20.0, 0.0, 5.0]);
+        add(&mut scene, cube(), scaled(8.0, 2.0, 6.0), [15.0, -5.0, 5.0]);
+        add(&mut scene, cube(), scaled(8.0, 2.0, 6.0), [15.0, 5.0, 5.0]);
+        add(&mut scene, cube(), scaled(3.0, 3.0, 3.0), [30.0, 0.0, 14.0]);
+        scene
+    }
+
+    /// An 80 x 80 mm plate of 0.2 mm pixels, 120 layers of 0.2 mm.
+    fn hollowed_profile() -> SliceProfile {
+        SliceProfile::new(
+            BuildVolume::new(80.0, 80.0, 40.0).expect("a valid volume"),
+            PixelResolution::new(400, 400).expect("a valid resolution"),
+            LayerSchedule::uniform(0.2, 0.2, 120).expect("a valid schedule"),
+            Mirror::default(),
+            AaLevel::Off,
+            PackingMode::None,
+        )
+    }
+
+    /// The cavities of the held review: how each is reported and whether
+    /// it is offered a fill, by layer.
+    fn cavities(panel: &ReviewPanel) -> Vec<(CheckKind, usize, usize, String)> {
+        let held = panel.held.borrow();
+        let Some(ReviewOutcome::Reviewed { findings, .. }) = held.as_ref().map(|h| &h.outcome)
+        else {
+            panic!("the review failed");
+        };
+        findings
+            .iter()
+            .filter(|f| matches!(f.check, CheckKind::ResinTrap | CheckKind::SuctionCup))
+            .map(|f| (f.check, f.first_layer, f.last_layer, f.detail.clone()))
+            .collect()
+    }
+
+    /// The review card's rows: its title, drain button and fill offer.
+    fn cavity_rows(window: &MainWindow) -> Vec<(String, i32, i32)> {
+        window
+            .get_review_rows()
+            .iter()
+            .map(|row| (row.title.to_string(), row.fix, row.fill))
+            .collect()
+    }
+
+    /// What Fix All does to [`hollowed_plate`], with the model of the large
+    /// cavity hollowed here or not.
+    struct HollowedRun {
+        before: Vec<(CheckKind, usize, usize, String)>,
+        after: Vec<(CheckKind, usize, usize, String)>,
+        rows: Vec<(String, i32, i32)>,
+        small_traps: i32,
+        fix_all: i32,
+        supports: usize,
+        fills_mm3: Vec<f64>,
+        kept: Vec<(String, String)>,
+        drain_tool: bool,
+        selected: Option<NodeId>,
+        large_leaf: NodeId,
+        fills_after_click: usize,
+    }
+
+    fn fix_all_on_hollowed_plate(hollow_here: bool) -> HollowedRun {
+        on_fresh_slint_thread(move || {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            document.install_graph(hollowed_plate(hollow_here), PathBuf::from("plate.bread"));
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
+            let hollow =
+                HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let large_leaf = document
+                .with_scene(|spatial| spatial.leaf_id_at_index(0))
+                .flatten()
+                .expect("the large model");
+            if hollow_here {
+                document.set_selection(Selection::One(LeafId(large_leaf)));
+                hollow.hollow_now(3.0, &[]);
+                assert_eq!(document.hollows().borrow().len(), 1, "a hollow record");
+            }
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
+            panel.set_reslice(|| true);
+            panel.notes_open.set(true);
+            let profile = hollowed_profile();
+            slice_with(&document, &panel, false, &profile);
+            let before = cavities(&panel);
+            let small_traps = window.get_review_fill_small();
+            let fix_all = window.get_review_fix_all();
+            let supports = panel.fix_all_plan().supports.len();
+            window.invoke_review_fix_all_requested();
+            slice_with(&document, &panel, true, &profile);
+            let after = cavities(&panel);
+            let rows = cavity_rows(&window);
+            let fills_mm3 = panel
+                .fills_for_slice()
+                .fills
+                .iter()
+                .map(|fill| fill.volume_mm3())
+                .collect();
+            let kept = card(&window);
+            // The row of the large cavity opens the drain tool on its model,
+            // and marks nothing.
+            let large = {
+                let held = panel.held.borrow();
+                let Some(ReviewOutcome::Reviewed { findings, .. }) =
+                    held.as_ref().map(|h| &h.outcome)
+                else {
+                    panic!("the review failed");
+                };
+                findings
+                    .iter()
+                    .position(|f| f.check == CheckKind::ResinTrap)
+                    .expect("the large cavity")
+            };
+            panel.toggle_fill(large as i32);
+            panel.apply_fix(large as i32);
+            HollowedRun {
+                before,
+                after,
+                rows,
+                small_traps,
+                fix_all,
+                supports,
+                fills_mm3,
+                kept,
+                drain_tool: window.get_hollow_drain_tool(),
+                selected: document.selection().primary().map(|leaf| leaf.0),
+                large_leaf,
+                fills_after_click: panel.marks.borrow().fill_count(),
+            }
+        })
+    }
+
+    /// The whole rule of #431, on a plate with a hollow, a small trap, a cup
+    /// and an island: Fix All fills the trap and nothing else, the hollow and
+    /// the cup keep every pixel and go on asking for drains, and the island
+    /// is still found and worked on.
+    fn assert_the_hollow_stays(run: &HollowedRun, large_title: &str) {
+        let drain = FixKind::AddDrain as i32;
+        assert_eq!(run.before.len(), 3, "{:?}", run.before);
+        let kinds: Vec<CheckKind> = run.before.iter().map(|c| c.0).collect();
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|k| **k == CheckKind::SuctionCup)
+                .count(),
+            1,
+            "{:?}",
+            run.before
+        );
+        assert_eq!(run.small_traps, 1, "the 125 mm³ trap alone");
+        assert_eq!(run.supports, 2, "the island and its floating part");
+        assert_eq!(run.fix_all, 3, "those two and the trap");
+        // The trap went; the hollow and the cup are exactly as they were:
+        // same layers, same volume, same section.
+        assert_eq!(run.after.len(), 2, "{:?}", run.after);
+        for cavity in &run.after {
+            assert!(run.before.contains(cavity), "{cavity:?}: {:?}", run.before);
+        }
+        // One fill, the trap's.
+        assert_eq!(run.fills_mm3.len(), 1, "{:?}", run.fills_mm3);
+        assert!(run.fills_mm3[0] < 1000.0, "{:?}", run.fills_mm3);
+        let row = |title: &str| {
+            run.rows
+                .iter()
+                .find(|r| r.0 == title)
+                .unwrap_or_else(|| panic!("no {title} in {:?}", run.rows))
+        };
+        assert_eq!(row(large_title).1, drain, "{:?}", run.rows);
+        assert_eq!(row(large_title).2, 0, "{:?}", run.rows);
+        let cup = row("Cavity closed toward the plate");
+        assert_eq!((cup.1, cup.2), (drain, 0), "{:?}", run.rows);
+        for (title, remains) in &run.kept {
+            if *title == large_title {
+                assert!(remains.contains("drain holes"), "{title}: {remains}");
+            }
+        }
+        assert!(
+            run.kept
+                .iter()
+                .any(|(title, _)| title == "Unsupported island"),
+            "{:?}",
+            run.kept
+        );
+        // Its row opens the drain tool on that model and fills nothing.
+        assert!(run.drain_tool);
+        assert_eq!(run.selected, Some(run.large_leaf));
+        assert_eq!(run.fills_after_click, 1);
+    }
+
+    /// An imported hollow carries no record: its size protects it.
+    #[test]
+    fn fix_all_leaves_an_imported_hollow_whole() {
+        let run = fix_all_on_hollowed_plate(false);
+        assert_the_hollow_stays(&run, "Sealed cavity traps resin");
+    }
+
+    /// A hollow made here, with its record.
+    #[test]
+    fn fix_all_leaves_a_hollow_made_here_whole() {
+        let run = fix_all_on_hollowed_plate(true);
+        assert_the_hollow_stays(&run, "Hollow without drain holes");
+    }
+
+    /// A hollow made here under a millilitre: its size does not protect it,
+    /// its record does. No fill, from Fix All or a row, and its row opens
+    /// the drain tool.
+    #[test]
+    fn a_small_hollow_made_here_is_never_filled() {
+        let (rows, small, fix_all, cavities_found, drain_tool, fills) =
+            on_fresh_slint_thread(|| {
+                let window =
+                    MainWindow::new().expect("the headless platform creates a main window");
+                let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+                let ctrl = Rc::new(ViewportController::new_for_test());
+                let document = ctrl.document();
+                let mut scene = Scene::new();
+                let cube = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
+                add(&mut scene, unit_cube_mesh(), cube, [0.0, 0.0, 5.0]);
+                document.install_graph(scene, PathBuf::from("plate.bread"));
+                let supports = DfSupportRun::install(
+                    &window,
+                    bus.clone(),
+                    document.clone(),
+                    ctrl.dialogs(),
+                    ctrl.clone(),
+                );
+                let hollow =
+                    HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+                let leaf = document
+                    .with_scene(|spatial| spatial.leaf_id_at_index(0))
+                    .flatten()
+                    .expect("the model");
+                document.set_selection(Selection::One(LeafId(leaf)));
+                hollow.hollow_now(2.0, &[]);
+                let panel = ReviewPanel::install(
+                    &window,
+                    bus.clone(),
+                    document.clone(),
+                    ctrl.clone(),
+                    supports,
+                    hollow,
+                );
+                panel.set_reslice(|| true);
+                panel.notes_open.set(true);
+                slice_with(&document, &panel, false, &hollowed_profile());
+                let rows = cavity_rows(&window);
+                let found = cavities(&panel);
+                let small = window.get_review_fill_small();
+                let fix_all = window.get_review_fix_all();
+                panel.fill_small();
+                panel.toggle_fill(0);
+                panel.apply_fix(0);
+                (
+                    rows,
+                    small,
+                    fix_all,
+                    found,
+                    window.get_hollow_drain_tool(),
+                    panel.marks.borrow().fill_count(),
+                )
+            });
+        assert_eq!(cavities_found.len(), 1, "{cavities_found:?}");
+        assert_eq!(cavities_found[0].0, CheckKind::ResinTrap);
+        assert_eq!(small, 0, "no small trap to fill");
+        assert_eq!(fix_all, 0, "nothing for Fix All");
+        assert_eq!(
+            rows[0],
+            (
+                "Hollow without drain holes".to_owned(),
+                FixKind::AddDrain as i32,
+                0
+            )
+        );
+        assert!(drain_tool);
+        assert_eq!(fills, 0);
     }
 
     /// The review's findings by title, with why each one is left.
