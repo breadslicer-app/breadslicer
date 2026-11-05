@@ -78,6 +78,12 @@ const ON_BRACE_MM: f64 = 0.1;
 /// How far from a support's axis a point of the brace tool may land and
 /// still take that support (#3): the removal's reach.
 const BRACE_REACH_MM: f64 = REMOVE_REACH_MM;
+/// How far "Add support here", Fix All and the tips of an island may move a
+/// check's point to one the engine can hold
+/// ([`DfSupportSession::add_trunk_near`]). An island is often a fraction of a
+/// millimetre across: the tip has to stay on it.
+pub const REVIEW_NUDGE_MM: f64 = 0.3;
+
 /// How much lower [`DfSupportSession::add_trunk_near`] may move a point the
 /// engine cannot hold: a point a layer or two up the island's underside.
 const NUDGE_DOWN_MM: [f64; 4] = [0.05, 0.1, 0.2, 0.4];
@@ -1872,6 +1878,16 @@ impl DfSupportSession {
             }
         }
         Some((session, report))
+    }
+
+    /// The contact diameter of a tip added to this set without a size, in
+    /// millimetres: its preset's.
+    pub fn tip_diameter_mm(&self) -> f64 {
+        let supports = &self.settings.supports;
+        SizingBands::factory()
+            .with_zone_sizes(supports.auto_support.zone_rules.as_ref())
+            .active(supports)
+            .tip_contact_diameter_mm
     }
 
     /// The tip diameter of support `id`, when it has one.

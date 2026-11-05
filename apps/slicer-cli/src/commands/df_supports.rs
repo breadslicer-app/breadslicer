@@ -76,7 +76,7 @@ pub(crate) fn restore_df_supports(
             Ok(restored) => sets.extend(
                 restored
                     .into_iter()
-                    .map(|set| SupportSet::of(set.leaf, &set.session)),
+                    .map(|set| SupportSet::of(set.leaf, set.session)),
             ),
             Err(why) => {
                 let _ = scene.remove_leaf(document.leaf);
@@ -95,10 +95,12 @@ pub(crate) fn restore_df_supports(
 pub(crate) struct SupportSet {
     pub(crate) leaf: NodeId,
     pub(crate) contacts: Vec<SupportContact>,
+    /// The set as data, to add supports to.
+    pub(crate) session: DfSupportSession,
 }
 
 impl SupportSet {
-    fn of(leaf: NodeId, session: &DfSupportSession) -> Self {
+    fn of(leaf: NodeId, session: DfSupportSession) -> Self {
         Self {
             leaf,
             contacts: session
@@ -106,7 +108,13 @@ impl SupportSet {
                 .into_iter()
                 .flat_map(|piece| piece.contacts)
                 .collect(),
+            session,
         }
+    }
+
+    /// Reads the contacts again, once `session` was edited.
+    pub(crate) fn refreshed(self) -> Self {
+        Self::of(self.leaf, self.session)
     }
 }
 
@@ -167,7 +175,7 @@ pub(crate) fn add_df_supports(
             LeafPayload::Mesh(Arc::new(mesh)),
         )?;
         scene.add_root(leaf)?;
-        sets.push(SupportSet::of(leaf, &session));
+        sets.push(SupportSet::of(leaf, session));
     }
     Ok(sets)
 }

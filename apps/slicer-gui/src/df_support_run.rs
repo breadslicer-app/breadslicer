@@ -48,7 +48,7 @@ use sc_geom::df_supports::zone_presets::{ZonePreset, figures_70, minis_30};
 use sc_geom::df_supports::{
     AddNote, AddOptions, BraceEnd, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
     DfSupportSession, EditError, EditPreview, HandBraceRefusal, HandEditKind, KeptEdits, LostEdit,
-    LostWhy, RaftMode, ScanCache, start_df_prescan, start_df_supports,
+    LostWhy, REVIEW_NUDGE_MM, RaftMode, ScanCache, start_df_prescan, start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
@@ -281,11 +281,6 @@ pub(crate) enum HandEdit {
 
 /// The points of a hand edit the engine refused, by index, with why.
 pub(crate) type Refusals = Vec<(usize, slint::SharedString)>;
-
-/// How far "Add support here" and Fix All may move a check's point to one
-/// the engine can hold (`DfSupportSession::add_trunk_near`). An island is
-/// often a fraction of a millimetre across: the tip has to stay on it.
-const REVIEW_NUDGE_MM: f64 = 0.3;
 
 /// How far outside a set's box (its model's for Add, its supports' for
 /// Remove) a hand tool's point may land and still be asked to that set: past

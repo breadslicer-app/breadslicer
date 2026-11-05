@@ -125,6 +125,7 @@ pub(crate) enum CmdOptions {
         json: bool,
         fill: bool,
         fix_all: bool,
+        add_supports: bool,
     },
     Slice {
         source: OsString,
@@ -319,12 +320,19 @@ fn get_review_options() -> impl Parser<CmdOptions> {
         )
         .switch();
 
+    let add_supports = long("add-supports")
+        .help(
+            "Answer Yes to the app's question after Slice: place tips on the islands without support, slice the plate again and review it.",
+        )
+        .switch();
+
     construct!(CmdOptions::Review {
         source,
         plate,
         json,
         fill,
         fix_all,
+        add_supports,
     })
 }
 

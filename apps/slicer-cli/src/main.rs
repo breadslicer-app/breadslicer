@@ -108,6 +108,7 @@ fn main() -> Result<()> {
             json,
             fill,
             fix_all,
+            add_supports,
         } => review(
             ReviewArgs {
                 source,
@@ -115,6 +116,7 @@ fn main() -> Result<()> {
                 json,
                 fill,
                 fix_all,
+                add_supports,
             },
             &libraries,
         ),
