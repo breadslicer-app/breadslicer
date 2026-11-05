@@ -34,8 +34,8 @@ use std::time::Duration;
 use sc_geom::df_supports::{SupportContact, recommended_lift_mm};
 use sc_print_glue::{PlateFrame, SlicedPlate};
 use sc_review::{
-    CavityFill, Finding, Island, IslandStart, ReviewInput, ReviewLeaf, ReviewOptions, SweepWatch,
-    TipCone, TipPlan, TipPlanOptions, erase_stack, plan_tips, review_with,
+    CavityFill, Finding, Growth, Island, IslandStart, ReviewInput, ReviewLeaf, ReviewOptions,
+    SweepWatch, TipCone, TipPlan, TipPlanOptions, erase_stack, plan_all_tips, review_with,
 };
 use sc_scene::NodeId;
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
@@ -58,7 +58,10 @@ pub(crate) enum ReviewOutcome {
         erased: CavityFill,
         /// Every island, as a placement of supports needs it (#437).
         islands: Vec<Island>,
-        /// The tips those islands need, `None` when no set can take them.
+        /// Every region that grew at once and wants more tips (#437).
+        growths: Vec<Growth>,
+        /// The tips those islands and regions need, `None` when no set can
+        /// take them.
         tips: Option<TipPlan>,
         /// How the slice read the scene's points: a tip placed on this list
         /// is judged where the next slice will see it (#433).
@@ -238,7 +241,8 @@ fn review_stacks(
             match review_with(&input, &ReviewOptions::default(), watch) {
                 None => ReviewOutcome::Cancelled,
                 Some(report) => ReviewOutcome::Reviewed {
-                    tips: tip_plan(&report.islands, supports.sets),
+                    tips: tip_plan(&report.islands, &report.growths, supports.sets),
+                    growths: report.growths,
                     frame: supports.frame.clone(),
                     findings: report.findings,
                     fills: report.fills,
@@ -251,14 +255,19 @@ fn review_stacks(
     })
 }
 
-/// The tips `islands` need, of the widest contact among `sets`, which is
-/// the one that has to fit; `None` without a set to add them to.
-fn tip_plan(islands: &[Island], sets: &[SupportSet]) -> Option<TipPlan> {
+/// The tips `islands` and `growths` need, of the widest contact among
+/// `sets`, which is the one that has to fit; `None` without a set to add them
+/// to.
+fn tip_plan(islands: &[Island], growths: &[Growth], sets: &[SupportSet]) -> Option<TipPlan> {
     let diameter_mm = sets
         .iter()
         .map(|set| set.tip_diameter_mm)
         .reduce(f64::max)?;
-    Some(plan_tips(islands, &TipPlanOptions::for_tip(diameter_mm)))
+    Some(plan_all_tips(
+        islands,
+        growths,
+        &TipPlanOptions::for_tip(diameter_mm),
+    ))
 }
 
 /// [`review_stacks`] for a test that slices with its own profile, nobody

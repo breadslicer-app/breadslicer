@@ -75,6 +75,11 @@
 //! and did not hold, and not where the engine refused one on the scene as
 //! it stands.
 //!
+//! A region that grew at once wants tips on what it gained (#437): it gets
+//! them the same way, each judged as it goes in. The next review does not
+//! list one that has them all; one that got fewer says how many it has and
+//! why not the rest.
+//!
 //! An island gets what [`sc_review::plan_tips`] says, by its row, by Fix All
 //! and by the question that ends a slice (#437): "N islands have no
 //! support. Add supports?". A plan is candidates: each is placed through the
@@ -103,7 +108,7 @@ use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::SceneSpatial;
 use sc_print_glue::PlateFrame;
 use sc_review::{
-    CavityFill, CheckKind, Finding, Island, PlatePoint, Severity, SuggestedFix, TipPlan,
+    CavityFill, CheckKind, Finding, Growth, Island, PlatePoint, Severity, SuggestedFix, TipPlan,
 };
 use sc_scene::NodeId;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -628,6 +633,7 @@ impl ReviewPanel {
             findings,
             fills,
             islands,
+            growths,
             tips,
             frame,
             ..
@@ -639,6 +645,7 @@ impl ReviewPanel {
         let now = self.document.scene_revision();
         let island_tips = IslandTips {
             islands,
+            growths,
             plan: tips.as_ref(),
             frame: Some(frame),
         };
@@ -688,23 +695,27 @@ impl ReviewPanel {
         if self.fixing() || !self.tips_planned() {
             return;
         }
-        let islands = self.islands_plan().first_tips().count();
-        if islands == 0 {
+        let plan = self.islands_plan();
+        let offered = plan.first_tips().count();
+        if offered == 0 {
             return;
         }
-        crate::breadcrumbs::note(&format!("review: {islands} islands, asking for supports"));
+        let regions = plan
+            .first_tips()
+            .filter_map(|(i, _)| self.finding(i as i32))
+            .filter(|finding| finding.check == CheckKind::SurfaceGrowth)
+            .count();
+        let islands = offered - regions;
+        crate::breadcrumbs::note(&format!(
+            "review: {islands} islands, {regions} regions, asking for supports"
+        ));
         let weak = Rc::downgrade(self);
         self.ctrl.dialogs().show_add_supports(
             move || InfoTexts {
-                heading: ctr!(
-                    "AddSupportsDialog",
-                    "One island has no support.",
-                    "{n} islands have no support.",
-                    islands
-                ),
+                heading: question_heading(islands, regions),
                 message: ctr!(
                     "AddSupportsDialog",
-                    "Add supports? The tips go under the islands, the plate is sliced again, and one Undo takes it all back."
+                    "Add supports? The tips go under them, the plate is sliced again, and one Undo takes it all back."
                 ),
                 details: SharedString::new(),
             },
@@ -1056,22 +1067,19 @@ impl ReviewPanel {
                     .find(|(p, _)| same_point(points[*p], at))
                     .map(|(_, why)| why)
             };
-            {
-                let mut marks = self.marks.borrow_mut();
-                for (i, at) in plan.first_tips() {
-                    if let Some(why) = refusal_at(at) {
-                        let key =
-                            FindingKey::of(&self.finding(i as i32).expect("a planned finding"));
-                        marks.refuse(key, why, *revision, &models);
-                    }
-                }
-            }
             // What the rows tell: an extra tip that goes with a first one
             // has no row of its own.
-            let no_tip = plan
-                .first_tips()
-                .filter(|(_, at)| refusal_at(*at).is_some())
-                .count();
+            let no_tip: BTreeMap<usize, SharedString> = plan
+                .row_points()
+                .filter_map(|(i, at)| Some((i, refusal_at(at)?.clone())))
+                .collect();
+            {
+                let mut marks = self.marks.borrow_mut();
+                for (i, why) in &no_tip {
+                    let key = FindingKey::of(&self.finding(*i as i32).expect("a planned finding"));
+                    marks.refuse(key, why, *revision, &models);
+                }
+            }
             // No set took any point (none to edit, a run generating them):
             // another pass would only tell it again.
             let unplaced = match &outcome {
@@ -1085,8 +1093,8 @@ impl ReviewPanel {
                     if let Some(run) = self.run.borrow_mut().as_mut() {
                         run.entry = Some(self.document.scene_revision());
                     }
-                    for (i, at) in plan.first_tips() {
-                        if refusal_at(at).is_none() {
+                    for (i, _) in plan.first_tips() {
+                        if !no_tip.contains_key(&i) {
                             let key =
                                 FindingKey::of(&self.finding(i as i32).expect("a planned finding"));
                             self.marks.borrow_mut().supported(key, &models);
@@ -1098,13 +1106,13 @@ impl ReviewPanel {
                         ctr!("Review", "One support added.", "{n} supports added.", added)
                             .to_string(),
                     );
-                    if no_tip > 0 {
+                    if !no_tip.is_empty() {
                         lines.push(
                             ctr!(
                                 "Review",
                                 "No support can hold one point; its row says why.",
                                 "No support can hold {n} points; their rows say why.",
-                                no_tip
+                                no_tip.len()
                             )
                             .to_string(),
                         );
@@ -1116,7 +1124,7 @@ impl ReviewPanel {
                         "Review",
                         "No support can hold one point; its row says why.",
                         "No support can hold {n} points; their rows say why.",
-                        no_tip
+                        no_tip.len()
                     )
                     .to_string(),
                 ),
@@ -1573,6 +1581,7 @@ impl ReviewPanel {
                     findings,
                     fills,
                     islands,
+                    growths,
                     tips,
                     frame,
                     ..
@@ -1587,10 +1596,12 @@ impl ReviewPanel {
                     );
                     let island_tips = IslandTips {
                         islands,
+                        growths,
                         plan: tips.as_ref(),
                         frame: Some(frame),
                     };
                     row_marks.no_tip = island_tips.too_narrow(findings);
+                    row_marks.growth_tips = island_tips.growth_counts(findings);
                     let findings = &no_support_fits(findings, &row_marks);
                     // A finding fixed since the slice leaves the list (the
                     // next slice shows it again if the fix did not hold).
@@ -1729,12 +1740,13 @@ impl ReviewPanel {
                 };
                 let first = *first;
                 let points: Vec<[f32; 3]> = tips.iter().map(|tip| tip.0).collect();
-                // The first tip holds the island, or none of them goes in.
+                // The first tip holds the island, or none of them goes in;
+                // each tip of a region counts by itself.
                 let plans: Vec<PointPlan> = tips
                     .into_iter()
                     .enumerate()
                     .map(|(k, (_, plan))| PointPlan {
-                        after: (k > 0).then_some(0),
+                        after: (k > 0 && plan.holds.is_none()).then_some(0),
                         ..plan
                     })
                     .collect();
@@ -1825,11 +1837,13 @@ impl ReviewPanel {
         match held.as_ref().map(|held| &held.outcome) {
             Some(ReviewOutcome::Reviewed {
                 islands,
+                growths,
                 tips,
                 frame,
                 ..
             }) => IslandTips {
                 islands,
+                growths,
                 plan: tips.as_ref(),
                 frame: Some(frame),
             }
@@ -2018,7 +2032,9 @@ type FindingTip = ([f32; 3], PointPlan);
 #[derive(Clone, Copy, Debug, Default)]
 struct IslandTips<'r> {
     islands: &'r [Island],
-    /// The tips of `islands`, `None` with no set to add them to.
+    /// The regions of the review that grew at once.
+    growths: &'r [Growth],
+    /// The tips of `islands` and `growths`, `None` with no set to add them to.
     plan: Option<&'r TipPlan>,
     /// How their slice read the scene's points.
     frame: Option<&'r PlateFrame>,
@@ -2033,19 +2049,48 @@ impl IslandTips<'_> {
             .position(|island| island.first_layer == finding.first_layer && island.at == at)
     }
 
-    /// The tips of the finding whose fix points at `at`, the first one
-    /// asked to hold the island: the one point, for a finding of no island
-    /// or a plate with no set.
+    /// The index in `growths` of the region `finding`, whose fix points at
+    /// `at`.
+    fn growth(&self, finding: &Finding, at: PlatePoint) -> Option<usize> {
+        self.growths
+            .iter()
+            .position(|growth| growth.layer == finding.first_layer && growth.at == at)
+    }
+
+    /// What a tip of a region must do, each of them by itself.
+    fn hold(&self, start: &Arc<sc_review::IslandStart>) -> TipHold {
+        TipHold {
+            start: start.clone(),
+            frame: self.frame.cloned().unwrap_or_default(),
+        }
+    }
+
+    /// The tips of the finding whose fix points at `at`: an island's first
+    /// one asked to hold it, a region's each asked to count for it. The one
+    /// point, for a plate with no set.
     fn of(&self, finding: &Finding, at: PlatePoint) -> Vec<FindingTip> {
+        if finding.check == CheckKind::SurfaceGrowth
+            && let (Some(plan), Some(growth)) = (self.plan, self.growth(finding, at))
+        {
+            let hold = self.hold(&self.growths[growth].start);
+            return plan
+                .of_growth(growth)
+                .map(|tip| {
+                    let known = PointPlan {
+                        others: tip.others.iter().copied().map(world).collect(),
+                        holds: Some(hold.clone()),
+                        after: None,
+                    };
+                    (world(tip.at), known)
+                })
+                .collect();
+        }
         match (self.plan, self.island(finding, at)) {
             (Some(plan), Some(island)) => plan
                 .of(island)
                 .enumerate()
                 .map(|(k, tip)| {
-                    let hold = TipHold {
-                        start: self.islands[island].start.clone(),
-                        frame: self.frame.cloned().unwrap_or_default(),
-                    };
+                    let hold = self.hold(&self.islands[island].start);
                     let plan = PointPlan {
                         others: tip.others.iter().copied().map(world).collect(),
                         holds: (k == 0).then_some(hold),
@@ -2056,6 +2101,28 @@ impl IslandTips<'_> {
                 .collect(),
             _ => vec![(world(at), PointPlan::default())],
         }
+    }
+
+    /// What each region of `findings` has and wants: the tips under what it
+    /// gained, the tips it asks for, and whether a tip fits on it at all.
+    fn growth_counts(&self, findings: &[Finding]) -> BTreeMap<usize, GrowthTips> {
+        findings
+            .iter()
+            .enumerate()
+            .filter_map(|(i, finding)| {
+                let Some(SuggestedFix::AddSupport { at }) = finding.fix else {
+                    return None;
+                };
+                let index = self.growth(finding, at)?;
+                let growth = &self.growths[index];
+                let counts = GrowthTips {
+                    has: growth.tips_mm.len(),
+                    wants: growth.wanted,
+                    no_room: self.plan.is_some_and(|plan| plan.no_room.contains(&index)),
+                };
+                Some((i, counts))
+            })
+            .collect()
     }
 
     /// The findings of `findings` whose island no tip fits on.
@@ -2110,19 +2177,33 @@ impl FixAllPlan {
         unique.iter().map(|&k| self.supports[k].1).collect()
     }
 
-    /// What is known of each of [`Self::support_points`]: the tips of a
-    /// finding go with its first one, which holds it or none goes in.
+    /// What is known of each of [`Self::support_points`]: the extra tips
+    /// of an island go with its first one, which holds it or none goes in. A
+    /// tip that must do something itself goes by itself.
     fn support_plans(&self) -> PointPlans {
         let unique = self.unique_supports();
         let of = |place: usize| self.supports[unique[place]].0;
         let plans = (0..unique.len()).map(|place| {
+            let plan = self.plans.get(unique[place]).cloned().unwrap_or_default();
             let first = (0..place).find(|&other| of(other) == of(place));
             PointPlan {
-                after: first,
-                ..self.plans.get(unique[place]).cloned().unwrap_or_default()
+                after: first.filter(|_| plan.holds.is_none()),
+                ..plan
             }
         });
         Arc::new(plans.collect())
+    }
+
+    /// The points that decide for their finding's row: its first one, and
+    /// any other that must do something itself.
+    fn row_points(&self) -> impl Iterator<Item = (usize, [f32; 3])> + '_ {
+        self.supports.iter().enumerate().filter_map(|(k, support)| {
+            let first = !self.supports[..k]
+                .iter()
+                .any(|(other, _)| *other == support.0);
+            let holds = self.plans.get(k).is_some_and(|plan| plan.holds.is_some());
+            (first || holds).then_some(*support)
+        })
     }
 
     /// The first tip of each finding that gets supports: what holds it or
@@ -2285,7 +2366,10 @@ fn no_support_fits(findings: &[Finding], marks: &RowMarks) -> Vec<Finding> {
         .enumerate()
         .map(|(i, finding)| {
             let mut finding = finding.clone();
-            if marks.held_back.contains(&i) && marks.refused.contains_key(&i) {
+            if marks.held_back.contains(&i)
+                && marks.refused.contains_key(&i)
+                && finding.check == CheckKind::Island
+            {
                 finding.title = ctr!("Review", "No support fits here").to_string();
                 finding.severity = if marks.too_small.contains(&i) {
                     Severity::Info
@@ -2315,6 +2399,43 @@ fn hollow_drains(hollows: &[Option<usize>], i: usize) -> Option<usize> {
     hollows.get(i).copied().flatten()
 }
 
+/// The tips of a region that grew at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GrowthTips {
+    has: usize,
+    wants: usize,
+    /// No tip fits on what it gained.
+    no_room: bool,
+}
+
+/// What the question that ends a slice opens with: the islands and the
+/// regions it offers tips for.
+fn question_heading(islands: usize, regions: usize) -> SharedString {
+    let islands = (islands > 0).then(|| {
+        ctr!(
+            "AddSupportsDialog",
+            "One island has no support.",
+            "{n} islands have no support.",
+            islands
+        )
+    });
+    let regions = (regions > 0).then(|| {
+        ctr!(
+            "AddSupportsDialog",
+            "One region grows at once.",
+            "{n} regions grow at once.",
+            regions
+        )
+    });
+    let parts: Vec<SharedString> = islands.into_iter().chain(regions).collect();
+    parts
+        .iter()
+        .map(SharedString::as_str)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .into()
+}
+
 /// What the marks make of each finding of the held review, by index.
 #[derive(Debug, Default)]
 struct RowMarks {
@@ -2334,6 +2455,8 @@ struct RowMarks {
     too_small: BTreeSet<usize>,
     /// Islands that never get as wide as a tip: none goes on them (#437).
     no_tip: BTreeSet<usize>,
+    /// What the regions that grew at once have and want.
+    growth_tips: BTreeMap<usize, GrowthTips>,
     /// Whether fills can be marked: the models stand as sliced.
     fixable: bool,
     /// Whether the notes are unfolded.
@@ -2371,6 +2494,7 @@ impl RowMarks {
             }
             if row_marks.held_back.contains(&i)
                 && row_marks.refused.contains_key(&i)
+                && finding.check == CheckKind::Island
                 && finding
                     .largest_mm2
                     .is_some_and(|mm2| mm2 <= NO_SUPPORT_NOTE_MM2 + 1e-12)
@@ -2418,12 +2542,32 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
                         | CheckKind::SuctionCup
                         | CheckKind::SurfaceGrowth
                 );
-            if (marks.held_back.contains(&i) || marks.no_tip.contains(&i))
+            let growth = marks.growth_tips.get(&i);
+            if (marks.held_back.contains(&i)
+                || marks.no_tip.contains(&i)
+                || growth.is_some_and(|tips| tips.no_room))
                 && row.fix == FixKind::AddSupport as i32
             {
                 row.fix = FixKind::None as i32;
             }
-            if let (true, Some(mm2), Some(why)) = (
+            if let Some(tips) = growth {
+                row.remains = match marks.refused.get(&i) {
+                    Some(why) => ctr!(
+                        "Review",
+                        "It has {} of the {} tips it wants. No support could be added for the rest: {}. Try a point nearby with the Add tool in the Supports tab.",
+                        tips.has,
+                        tips.wants,
+                        why
+                    ),
+                    None if tips.no_room || marks.unheld.contains(&i) => ctr!(
+                        "Review",
+                        "It has {} of the {} tips it wants: no more fit on what it gained. Place them by hand in the Supports tab, or leave it.",
+                        tips.has,
+                        tips.wants
+                    ),
+                    None => row.remains.clone(),
+                };
+            } else if let (true, Some(mm2), Some(why)) = (
                 marks.too_small.contains(&i),
                 finding.largest_mm2,
                 marks.refused.get(&i),

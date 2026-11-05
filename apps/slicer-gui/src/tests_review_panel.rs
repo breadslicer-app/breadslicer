@@ -481,6 +481,62 @@ fn an_island_no_tip_fits_offers_no_support_and_says_why() {
     assert!(rows[0].remains.contains("wide as a support's tip"));
 }
 
+/// #437: the question names the islands and the regions it offers tips for.
+#[test]
+fn the_question_counts_islands_and_regions() {
+    assert_eq!(question_heading(3, 0), "3 islands have no support.");
+    assert_eq!(question_heading(0, 2), "2 regions grow at once.");
+    assert_eq!(
+        question_heading(1, 1),
+        "One island has no support. One region grows at once."
+    );
+}
+
+/// #437: a region that grew offers a support like an island, says how many
+/// tips it has when it has some, and why not the rest.
+#[test]
+fn a_growth_row_offers_tips_and_says_how_many_it_has() {
+    let at = PlatePoint::new(1.0, 2.0, 3.0);
+    let findings = [
+        finding(CheckKind::SurfaceGrowth, Severity::Warning, 6, 6, "Grows")
+            .with_fix(SuggestedFix::AddSupport { at }),
+    ];
+    let tips = |no_room| GrowthTips {
+        has: 1,
+        wants: 2,
+        no_room,
+    };
+    let row = |marks: RowMarks| marked(&findings, &marks).remove(0);
+
+    let mut open = open_marks();
+    open.growth_tips.insert(0, tips(false));
+    let offered = row(open);
+    assert_eq!(offered.fix, FixKind::AddSupport as i32);
+    assert!(offered.remains.is_empty(), "{}", offered.remains);
+
+    let mut full = open_marks();
+    full.growth_tips.insert(0, tips(true));
+    let no_room = row(full);
+    assert_eq!(no_room.fix, FixKind::None as i32);
+    assert!(
+        no_room.remains.contains("1 of the 2"),
+        "{}",
+        no_room.remains
+    );
+    assert!(
+        no_room.remains.contains("no more fit"),
+        "{}",
+        no_room.remains
+    );
+
+    let mut refused = open_marks();
+    refused.growth_tips.insert(0, tips(false));
+    refused.refused.insert(0, "no way there".into());
+    let why = row(refused);
+    assert!(why.remains.contains("1 of the 2"), "{}", why.remains);
+    assert!(why.remains.contains("no way there"), "{}", why.remains);
+}
+
 /// The tips of an island: its first one decides for the finding, and each
 /// point keeps what it can fall back on (#437).
 #[test]
@@ -1703,6 +1759,16 @@ mod fix_all {
         }
     }
 
+    /// The rows of the sudden growths: their layers and what they say.
+    fn growth_rows(w: &IslandWindow) -> Vec<(String, String)> {
+        let rows = w.window.get_review_rows();
+        (0..rows.row_count())
+            .filter_map(|i| rows.row_data(i))
+            .filter(|row| row.title.contains("grows at once"))
+            .map(|row| (row.layers.to_string(), row.remains.to_string()))
+            .collect()
+    }
+
     fn one_cycle(path: &Path) {
         let regenerate = std::env::var("BREADSLICER_CYCLE_REGENERATE").is_ok();
         let fix_all = std::env::var("BREADSLICER_CYCLE_FIX_ALL").is_ok();
@@ -1782,6 +1848,8 @@ mod fix_all {
         };
         slice_project(&w.document, &w.panel, &printer, &resin, false);
         let before = held_islands(&w.panel).len();
+        let growth_before = growth_left(&w.panel).len();
+        let wanted_before: usize = growth_left(&w.panel).iter().map(|g| g.2 - g.1).sum();
         let offered = w.panel.islands_plan().first_tips().count();
         let (panel, document) = (&w.panel, &w.document);
         if offered > 0 {
@@ -1812,6 +1880,22 @@ mod fix_all {
         );
         for (layers, remains) in &why {
             eprintln!("  {layers}: {remains}");
+        }
+        let grown = growth_left(panel);
+        eprintln!(
+            "{}: growth before {growth_before} wanting {wanted_before}, left {} wanting {}",
+            path.display(),
+            grown.len(),
+            grown.iter().map(|g| g.2 - g.1).sum::<usize>()
+        );
+        for (layer, remains) in growth_rows(&w) {
+            eprintln!("  growth {layer}: {remains}");
+            if offered > 0 {
+                assert!(!remains.is_empty(), "layer {layer} says why it is left");
+            }
+        }
+        for (_, has, wanted, _) in &grown {
+            assert!(has < wanted, "a region with its tips is not listed");
         }
         assert_eq!(tipped_and_listed(panel), [], "{}", path.display());
         if offered > 0 {
@@ -2696,6 +2780,27 @@ mod fix_all {
         });
         assert!(planned > 0, "the plate has islands to hold");
         assert!(left.is_empty(), "{left:?}");
+    }
+
+    /// #437: the rows of the regions that grew at once, as a test reads them.
+    fn growth_left(panel: &ReviewPanel) -> Vec<(usize, usize, usize, bool)> {
+        let held = panel.held.borrow();
+        match held.as_ref().map(|h| &h.outcome) {
+            Some(ReviewOutcome::Reviewed { growths, tips, .. }) => growths
+                .iter()
+                .enumerate()
+                .map(|(i, growth)| {
+                    let no_room = tips.as_ref().is_some_and(|plan| plan.no_room.contains(&i));
+                    (
+                        growth.layer + 1,
+                        growth.tips_mm.len(),
+                        growth.wanted,
+                        no_room,
+                    )
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// The islands of the held review that got a tip: there must be none.

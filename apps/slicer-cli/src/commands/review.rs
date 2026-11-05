@@ -34,9 +34,9 @@ use sc_print_glue::{PlateFrame, SlicedPlate};
 use sc_print_profiles::ProfileLibraries;
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile};
 use sc_review::{
-    CavityFill, Finding, Held, Part, PlannedTip, PlateRegions, ReviewContext, ReviewInput,
-    ReviewLeaf, ReviewOptions, ReviewReport, Severity, SuggestedFix, TipCone, TipPlan,
-    TipPlanOptions, check_regions, erase_stack, fill_stack, plan_tips,
+    CavityFill, Finding, Held, IslandStart, Part, PlannedTip, PlateRegions, ReviewContext,
+    ReviewInput, ReviewLeaf, ReviewOptions, ReviewReport, Severity, SuggestedFix, TipCone, TipPlan,
+    TipPlanOptions, check_regions, erase_stack, fill_stack, plan_all_tips,
 };
 use sc_scene::{NodeId, Scene};
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
@@ -202,6 +202,8 @@ struct FixedList {
     /// The tips' contact diameter.
     diameter_mm: f64,
     tips: Vec<TipOutcome>,
+    /// The tips of the regions that grew at once.
+    growth_tips: Vec<TipOutcome>,
     /// The small traps filled.
     cavities: usize,
     /// Islands that never get as wide as a contact, by first layer.
@@ -233,7 +235,11 @@ fn fix_the_list(
     let plan = if sets.is_empty() {
         TipPlan::default()
     } else {
-        plan_tips(&report.islands, &TipPlanOptions::for_tip(diameter_mm))
+        plan_all_tips(
+            &report.islands,
+            &report.growths,
+            &TipPlanOptions::for_tip(diameter_mm),
+        )
     };
 
     let started = Instant::now();
@@ -254,44 +260,23 @@ fn fix_the_list(
             });
             continue;
         }
-        let point = [tip.at.x_mm, tip.at.y_mm, tip.at.z_mm];
-        let others: Vec<[f64; 3]> = tip
-            .others
-            .iter()
-            .map(|p| [p.x_mm, p.y_mm, p.z_mm])
-            .collect();
-        let mut placed_at = None;
-        let nearest = sets
-            .iter()
-            .enumerate()
-            .filter_map(|(i, set)| Some((set.session.add_distance(point)?, i)))
-            .min_by(|a, b| a.0.total_cmp(&b.0));
-        let refused = match nearest {
-            None => Some("no model there".to_owned()),
-            Some((_, i)) => {
-                let leaf = sets[i].leaf;
-                let start = &report.islands[tip.island].start;
-                let holds = |contacts: &[SupportContact]| {
-                    !first || start.held_by(&tip_cones(contacts, leaf, &answer.frame))
-                };
-                match sets[i].session.add_tip_among(point, &others, &holds) {
-                    Ok(used) => {
-                        edited[i] = true;
-                        placed_at = Some(used);
-                        None
-                    }
-                    Err(why) => Some(why.to_string()),
-                }
-            }
-        };
+        let start = first.then(|| report.islands[tip.island].start.clone());
+        let outcome = place_tip(&mut sets, &mut edited, tip, start.as_deref(), &answer.frame);
         if first {
-            last = Some((tip.island, refused.clone()));
+            last = Some((outcome.tip.island, outcome.refused.clone()));
         }
-        tips.push(TipOutcome {
+        tips.push(outcome);
+    }
+    let mut growth_tips = Vec::with_capacity(plan.growth.len());
+    for tip in plan.growth {
+        let start = report.growths[tip.island].start.clone();
+        growth_tips.push(place_tip(
+            &mut sets,
+            &mut edited,
             tip,
-            placed_at,
-            refused,
-        });
+            Some(&start),
+            &answer.frame,
+        ));
     }
     let placing = started.elapsed();
 
@@ -313,6 +298,7 @@ fn fix_the_list(
         return Ok(FixedList {
             diameter_mm,
             tips,
+            growth_tips,
             cavities: 0,
             too_narrow,
             placing,
@@ -352,6 +338,7 @@ fn fix_the_list(
     Ok(FixedList {
         diameter_mm,
         tips,
+        growth_tips,
         cavities: fills.len(),
         too_narrow,
         placing,
@@ -360,6 +347,54 @@ fn fix_the_list(
         reviewing: started.elapsed(),
         report: again,
     })
+}
+
+/// Places `tip` on the set it falls on, taking only a tip that `start`
+/// says does its job, when it has one to do.
+fn place_tip(
+    sets: &mut [SupportSet],
+    edited: &mut [bool],
+    tip: PlannedTip,
+    start: Option<&IslandStart>,
+    frame: &PlateFrame,
+) -> TipOutcome {
+    let point = [tip.at.x_mm, tip.at.y_mm, tip.at.z_mm];
+    let others: Vec<[f64; 3]> = tip
+        .others
+        .iter()
+        .map(|p| [p.x_mm, p.y_mm, p.z_mm])
+        .collect();
+    let nearest = sets
+        .iter()
+        .enumerate()
+        .filter_map(|(i, set)| Some((set.session.add_distance(point)?, i)))
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    let Some((_, i)) = nearest else {
+        return TipOutcome {
+            tip,
+            placed_at: None,
+            refused: Some("no model there".to_owned()),
+        };
+    };
+    let leaf = sets[i].leaf;
+    let holds = |contacts: &[SupportContact]| {
+        start.is_none_or(|start| start.held_by(&tip_cones(contacts, leaf, frame)))
+    };
+    match sets[i].session.add_tip_among(point, &others, &holds) {
+        Ok(used) => {
+            edited[i] = true;
+            TipOutcome {
+                tip,
+                placed_at: Some(used),
+                refused: None,
+            }
+        }
+        Err(why) => TipOutcome {
+            tip,
+            placed_at: None,
+            refused: Some(why.to_string()),
+        },
+    }
 }
 
 /// What the tips did, as text.
@@ -763,17 +798,35 @@ fn write_json(
         .map(|leaf| serde_json::json!({ "name": leaf.name }))
         .collect();
     let t = &report.timings;
+    let tip_json = |outcome: &TipOutcome| {
+        serde_json::json!({
+            "island": outcome.tip.island,
+            "layer": outcome.tip.layer,
+            "at_mm": [outcome.tip.at.x_mm, outcome.tip.at.y_mm, outcome.tip.at.z_mm],
+            "placed_at_mm": outcome.placed_at,
+            "refused": outcome.refused,
+        })
+    };
+    let growth_json = |report: &ReviewReport| {
+        report
+            .growths
+            .iter()
+            .map(|growth| {
+                serde_json::json!({
+                    "layer": growth.layer,
+                    "wanted": growth.wanted,
+                    "has": growth.tips_mm.len(),
+                })
+            })
+            .collect::<Vec<_>>()
+    };
     let fixed = passes.fixed.map(|added| {
         serde_json::json!({
             "cavities": added.cavities,
             "diameter_mm": added.diameter_mm,
-            "tips": added.tips.iter().map(|outcome| serde_json::json!({
-                "island": outcome.tip.island,
-                "layer": outcome.tip.layer,
-                "at_mm": [outcome.tip.at.x_mm, outcome.tip.at.y_mm, outcome.tip.at.z_mm],
-                "placed_at_mm": outcome.placed_at,
-                "refused": outcome.refused,
-            })).collect::<Vec<_>>(),
+            "tips": added.tips.iter().map(tip_json).collect::<Vec<_>>(),
+            "growth_tips": added.growth_tips.iter().map(tip_json).collect::<Vec<_>>(),
+            "growths": growth_json(&added.report),
             "too_narrow": added.too_narrow,
             "timings_ms": {
                 "placing": millis(added.placing),
@@ -800,6 +853,7 @@ fn write_json(
             "growth_mm2": island.growth_mm2,
             "joins_on": island.joins_on,
         })).collect::<Vec<_>>(),
+        "growths": growth_json(report),
         "parts": parts_json(&report.parts),
         "erased": report.erased.slabs.iter().map(|slab| serde_json::json!({
             "bottom_mm": slab.bottom_mm,

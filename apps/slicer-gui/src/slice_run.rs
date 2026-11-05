@@ -851,6 +851,7 @@ mod capture_tests {
             islands: Vec::new(),
             took: Duration::ZERO,
             frame: Default::default(),
+            growths: Vec::new(),
         }
     }
 
