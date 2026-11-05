@@ -79,7 +79,7 @@ struct VersionProbe {
 
 /// Serializes `payload` as the settings document. With [`EmbedProfiles::No`]
 /// only the references are written.
-fn serialize_settings(
+pub(crate) fn serialize_settings(
     payload: &ProjectPayload,
     embed: EmbedProfiles,
 ) -> Result<String, WriteBreadProjectError> {
@@ -136,7 +136,7 @@ fn embedded_doc(profile: &EmbeddedProfile) -> Result<EmbeddedDoc, WriteBreadProj
 /// Parses the settings document: `Ok(None)` with a warning for a version this
 /// build does not read. An embedded document whose id is not a valid slug is
 /// reported and left out.
-fn parse_settings(
+pub(crate) fn parse_settings(
     bytes: &[u8],
     warnings: &mut Vec<ReadProjectWarning>,
 ) -> Result<Option<ProjectPayload>, ReadBreadProjectError> {

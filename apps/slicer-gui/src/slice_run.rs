@@ -1071,6 +1071,22 @@ mod progress_tests {
         }
     }
 
+    /// The bar counts the layers again while the review checks them, out of
+    /// order as they come, and it never goes back.
+    #[test]
+    fn the_review_counts_its_layers_from_zero() {
+        let cell = SliceProgressCell::default();
+        cell.total.store(100, Ordering::Relaxed);
+        cell.completed.store(100, Ordering::Relaxed);
+        cell.start_review();
+        assert!(cell.reviewing.load(Ordering::Relaxed));
+        assert_eq!(cell.completed.load(Ordering::Relaxed), 0);
+        cell.record_review(7);
+        cell.record_review(3);
+        assert_eq!(cell.completed.load(Ordering::Relaxed), 7);
+        assert_eq!(cell.total.load(Ordering::Relaxed), 100);
+    }
+
     /// The modal counts the plate's layers, the count the Result card shows,
     /// not one per leaf and layer (#355), and it ends full.
     #[test]

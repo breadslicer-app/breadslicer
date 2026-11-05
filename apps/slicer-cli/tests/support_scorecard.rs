@@ -89,8 +89,8 @@ use sc_print_profiles::{
 };
 use sc_project_formats::{LoadedContent, ProjectContent, load_scene};
 use sc_review::{
-    CheckKind, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions, Role, Severity,
-    review_regions,
+    CheckKind, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions, Severity,
+    SweepOptions, TipCone, check_regions,
 };
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, SceneMetadata};
@@ -1064,6 +1064,7 @@ fn slice_and_review(
     printer: &PrinterProfile,
     material: &EffectiveMaterial,
     raft_top_mm: Option<f64>,
+    tips: Vec<TipCone>,
 ) -> Result<Plate, String> {
     let started = Instant::now();
     let owners: SupportOwners = sliceable_leaves(scene)
@@ -1103,29 +1104,40 @@ fn slice_and_review(
     let slice = started.elapsed();
 
     let started = Instant::now();
-    let leaves: Vec<ReviewLeaf<'_>> = plate
-        .leaves()
-        .iter()
-        .map(|s| {
-            let role = if s.leaf_name().is_some_and(is_support_mesh_name) {
-                Role::Support
-            } else {
-                Role::Model
-            };
-            ReviewLeaf::from_slices(s, role)
-        })
-        .collect();
+    let is_support = |s: &&sc_sl1cer::LeafSlices| s.leaf_name().is_some_and(is_support_mesh_name);
+    let leaves_of = |supports: bool| -> Vec<ReviewLeaf<'_>> {
+        plate
+            .leaves()
+            .iter()
+            .filter(|s| is_support(s) == supports)
+            .map(ReviewLeaf::from_slices)
+            .collect()
+    };
     let raft_top = raft_top_mm.map(|t| plate.compensated_height_mm(t));
-    let input = ReviewInput::from_profile(leaves, plate.profile())
+    let input = ReviewInput::from_profile(leaves_of(false), plate.profile())
         .expect("the stacks fit the run")
         .with_raft_top_mm(raft_top)
-        .with_support_lift_mm(raft_top.map(|_| recommended_lift_mm(None)));
-    let regions = PlateRegions::compute(&input);
-    let report = review_regions(
-        &ReviewContext::new(&input, &regions),
-        &ReviewOptions::default(),
-    );
+        .with_support_lift_mm(raft_top.map(|_| recommended_lift_mm(None)))
+        .with_tips(tips)
+        .with_support_extent(0..plate.profile().layer_schedule().total_layers() as usize, None);
+    let options = ReviewOptions::default();
+    let regions = PlateRegions::compute(&input, &options.sweep);
+    let report = check_regions(&ReviewContext::new(&input, &regions), &options);
     let review = started.elapsed();
+
+    // What each role lights, as rasterised: the review reads the models only.
+    let raw = SweepOptions {
+        min_wall_px: 1,
+        drain_width_px: 1,
+        ..SweepOptions::default()
+    };
+    let swept = |leaves: Vec<ReviewLeaf<'_>>| {
+        let input = ReviewInput::from_profile(leaves, plate.profile()).expect("the stacks fit");
+        PlateRegions::compute(&input, &raw)
+    };
+    let models = swept(leaves_of(false));
+    let supports = swept(leaves_of(true));
+    let solid = swept(plate.leaves().iter().map(ReviewLeaf::from_slices).collect());
 
     let pixel_mm2 = input.pixel_area_mm2();
     let peel = PeelModel::default();
@@ -1136,12 +1148,12 @@ fn slice_and_review(
         ..Default::default()
     };
     let mut z = 0.0;
-    for (k, (layer, span)) in regions.layers().iter().zip(input.layers()).enumerate() {
+    for (k, span) in input.layers().iter().enumerate() {
         let h = span.height_mm();
         z += h;
-        let model_px: u64 = layer.solid.iter().map(|r| r.model_px).sum();
-        let support_px: u64 = layer.solid.iter().map(|r| r.support_px).sum();
-        let solid_px = layer.solid_area_px();
+        let model_px = models.layer(k).solid_area_px();
+        let support_px = supports.layer(k).solid_area_px();
+        let solid_px = solid.layer(k).solid_area_px();
         out.model_mm3 += model_px as f64 * pixel_mm2 * h;
         out.support_mm3 += support_px as f64 * pixel_mm2 * h;
         out.resin_mm3 += solid_px as f64 * pixel_mm2 * h;
@@ -1155,9 +1167,11 @@ fn slice_and_review(
             continue;
         }
         let area = solid_px as f64 * pixel_mm2;
-        let perimeter: f64 = input
-            .polygons(k)
-            .map(|(_, p)| ring_length(p.outer()) + p.holes().iter().map(ring_length).sum::<f64>())
+        let perimeter: f64 = plate
+            .leaves()
+            .iter()
+            .flat_map(|leaf| leaf.stack().layers()[k].polygons())
+            .map(|p| ring_length(p.outer()) + p.holes().iter().map(ring_length).sum::<f64>())
             .sum();
         let force = peel.sigma_n_per_mm2 * area + peel.perimeter_n_per_mm * perimeter;
         if force > out.peak_force_n {
@@ -1173,7 +1187,6 @@ fn slice_and_review(
                 *islands.entry(f.title.clone()).or_default() += 1;
                 out.island_errors += usize::from(f.severity == Severity::Error);
             }
-            CheckKind::FloatingPart => out.floating_parts += 1,
             CheckKind::ModelInRaft => out.model_in_raft += 1,
             _ => {}
         }
@@ -1314,7 +1327,16 @@ fn run_scene(
     }
     let raft_top_mm = request.options.raft_top_mm();
     let measure_before_slice = measuring.elapsed();
-    let plate = slice_and_review(&plate_scene, printer, material, raft_top_mm);
+    let tips: Vec<TipCone> = outcome
+        .sets
+        .iter()
+        .flat_map(|set| set.session.pieces())
+        .flat_map(|piece| piece.contacts)
+        .flat_map(|c| {
+            TipCone::stretches(c.tip, c.tip_radius_mm, c.neck, c.socket, c.socket_radius_mm)
+        })
+        .collect();
+    let plate = slice_and_review(&plate_scene, printer, material, raft_top_mm, tips);
 
     Score {
         name: entry.name.clone(),

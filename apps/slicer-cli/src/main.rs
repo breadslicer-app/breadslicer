@@ -11,6 +11,13 @@
 //! between mesh formats, diagnoses and repairs meshes, and imports, exports and
 //! lists printer and material profiles.
 
+// The review and the slicer's workers allocate and free layer buffers from
+// every core at once, and the Windows heap makes them queue: measured on a
+// 3536-layer plate, the sweep over its layers took 3.3 s on it and 0.6 s on
+// this one (#432).
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod commands;
 mod config;
 mod filesystem;

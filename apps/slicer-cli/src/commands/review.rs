@@ -28,11 +28,11 @@ use anyhow::{Result, anyhow};
 use sc_geom::df_supports::recommended_lift_mm;
 use sc_print_glue::SlicedPlate;
 use sc_print_profiles::ProfileLibraries;
-use sc_review::checks::islands::{Held, MIN_PART_LAYERS};
 use sc_review::{
-    CavityFill, Finding, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions,
-    ReviewReport, Severity, SuggestedFix, TipCone, check_regions, fill_stack,
+    CavityFill, Finding, Held, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions,
+    ReviewReport, Severity, SuggestedFix, TipCone, check_regions, erase_stack, fill_stack,
 };
+use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
 use crate::commands::df_supports::{SupportSet, df_raft_top_mm};
 use crate::commands::slice::{
@@ -92,11 +92,8 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
     let regions = PlateRegions::compute(&input, &review_options.sweep);
     let report = check_regions(&ReviewContext::new(&input, &regions), &review_options);
     let stats = RegionStats::of(&input, &regions);
-    if let Ok(path) = std::env::var("BREADSLICER_PARTS_DUMP") {
-        dump_parts(&path, &input, &regions, &report);
-    }
 
-    let review_again = |stack: &sc_sl1cer::contour::ContourStack| {
+    let review_again = |stack: &ContourStack| {
         let mut leaves = input.leaves().to_vec();
         leaves.push(ReviewLeaf::new(Some("Filled cavities"), stack));
         let again = context
@@ -173,6 +170,28 @@ impl PlateContext<'_> {
     }
 }
 
+/// The stack that takes off `plate` what the review takes off the layers, as
+/// the app does on every slice (#432): merged with the plate, the printer
+/// file does not have those pixels. `None` when nothing goes.
+pub(crate) fn cleaned_stack(plate: &SlicedPlate, sets: &[SupportSet]) -> Result<Option<ContourStack>> {
+    let leaves = model_leaves(plate, sets);
+    let stacks: Vec<&ContourStack> = leaves.iter().map(|leaf| leaf.stack).collect();
+    let context = PlateContext {
+        plate,
+        raft_top_mm: None,
+        support_lift_mm: None,
+        tips: support_tips(plate, sets),
+        support_layers: support_layers(plate, sets),
+    };
+    let input = context
+        .input(leaves)
+        .map_err(|err| anyhow!("internal error: the sliced stacks do not fit the run: {err}"))?;
+    let options = ReviewOptions::default();
+    let regions = PlateRegions::compute(&input, &options.sweep);
+    let report = check_regions(&ReviewContext::new(&input, &regions), &options);
+    Ok(erase_stack([&report.erased], &stacks, plate.schedule()))
+}
+
 /// The leaves the review reads: everything but the supports known as data.
 fn model_leaves<'p>(plate: &'p SlicedPlate, sets: &[SupportSet]) -> Vec<ReviewLeaf<'p>> {
     plate
@@ -209,7 +228,7 @@ fn support_layers(plate: &SlicedPlate, sets: &[SupportSet]) -> Range<usize> {
         .iter()
         .filter(|slices| sets.iter().any(|set| set.leaf == slices.leaf()))
         .filter_map(|slices| {
-            let lit = |layer: &sc_sl1cer::contour::ContourLayer| !layer.polygons().is_empty();
+            let lit = |layer: &ContourLayer| !layer.polygons().is_empty();
             let layers = slices.stack().layers();
             Some((layers.iter().position(lit)?, layers.iter().rposition(lit)?))
         });
@@ -499,6 +518,30 @@ fn write_json(
         "leaves": leaves,
         "findings": report.findings,
         "summary": summary(&report.findings),
+        "islands": report.islands.iter().map(|island| serde_json::json!({
+            "first_layer": island.first_layer,
+            "first_area_mm2": island.first_area_mm2,
+            "growth_mm2": island.growth_mm2,
+            "joins_on": island.joins_on,
+        })).collect::<Vec<_>>(),
+        "parts": report.parts.iter().map(|part| serde_json::json!({
+            "first_layer": part.first_layer,
+            "layers": part.layers(),
+            "held": match part.held {
+                Held::Plate => "plate",
+                Held::Tip => "tip",
+                Held::Nothing => "nothing",
+            },
+            "tip_contact_px": part.tip_contact_px,
+            "largest_px": part.largest_px(),
+            "joined_on": part.joined.map(|(layer, _)| layer),
+        })).collect::<Vec<_>>(),
+        "erased": report.erased.slabs.iter().map(|slab| serde_json::json!({
+            "bottom_mm": slab.bottom_mm,
+            "rects": slab.rects.iter()
+                .map(|r| [r.x0_mm, r.y0_mm, r.x1_mm, r.y1_mm])
+                .collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
         "filled": refilled.map(|refilled| serde_json::json!({
             "cavities": refilled.cavities,
             "volume_mm3": (refilled.volume_mm3 * 1e3).round() / 1e3,
@@ -531,37 +574,6 @@ fn write_json(
     serde_json::to_writer_pretty(&mut *out, &document)?;
     writeln!(out)?;
     Ok(())
-}
-
-/// TEMPORARY rule study.
-fn dump_parts(path: &str, input: &ReviewInput<'_>, regions: &PlateRegions, report: &ReviewReport) {
-    use std::fmt::Write as _;
-    let px = input.pixel_area_mm2();
-    let mut text = String::new();
-    for (i, part) in report.parts.iter().enumerate() {
-        let start = regions.layer(part.first_layer).solid[part.start as usize];
-        let held = match part.held {
-            Held::Plate => "plate",
-            Held::Tip => "tip",
-            Held::Nothing => "NOTHING",
-        };
-        let _ = writeln!(
-            text,
-            "part {i} first {} contact {} layers {} largest {:.4} start {:.4} below {:.4} held {held} joined {:?} inside {:?} bbox {:?}",
-            part.first_layer + 1,
-            part.tip_contact_px,
-            part.layers(),
-            part.largest_px() as f64 * px,
-            start.area_px as f64 * px,
-            start.below_px as f64 * px,
-            part.joined.map(|(l, p)| (l + 1, p)),
-            start.inside_px,
-            start.bbox,
-        );
-    }
-    let _ = writeln!(text, "min layers {MIN_PART_LAYERS}");
-    let _ = writeln!(text, "tips {}", input.tips().len());
-    std::fs::write(path, text).expect("written");
 }
 
 #[cfg(test)]

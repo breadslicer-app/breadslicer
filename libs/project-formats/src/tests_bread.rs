@@ -14,12 +14,14 @@ use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, NodeKind};
 
-use crate::bread::{read_bread_project, write_bread_project_with_progress};
+use crate::bread::{
+    parse_settings, read_bread_project, serialize_settings, write_bread_project_with_progress,
+};
 use crate::error::{ReadProjectError, WriteBreadProjectError};
 use crate::filetypes::{ProjectFileType, infer_project_file_type_from_extension};
 use crate::loader::{LoadedContent, is_supported_scene_file_extension, load_scene};
 use crate::messages::ReadProjectWarning;
-use crate::payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
+use crate::payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload, ReviewDecision};
 use crate::read::read_project;
 use crate::write::write_project;
 
@@ -55,6 +57,7 @@ fn payload() -> ProjectPayload {
                 bytes: b"exposure = 2.5\n".to_vec(),
             },
         ],
+        review_decisions: Vec::new(),
     }
 }
 
@@ -260,4 +263,27 @@ fn a_damaged_file_is_an_error() {
     bytes[middle] ^= 0xff;
     let err = read_project(&mut Cursor::new(bytes), ProjectFileType::Bread).unwrap_err();
     assert!(matches!(err, ReadProjectError::Bread(_)));
+}
+
+#[test]
+fn the_review_decisions_come_back_with_the_settings() {
+    let payload = ProjectPayload {
+        review_decisions: vec![ReviewDecision {
+            check: "suction-cup".to_owned(),
+            first_layer: 249,
+            last_layer: 2317,
+            focus_um: [12_345, -6_789, 12_500],
+        }],
+        ..ProjectPayload::default()
+    };
+    let text = serialize_settings(&payload, EmbedProfiles::No).expect("serialized");
+    let mut warnings = Vec::new();
+    let parsed = parse_settings(text.as_bytes(), &mut warnings)
+        .expect("parsed")
+        .expect("this version");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(parsed.review_decisions, payload.review_decisions);
+    // None: the settings say nothing of them.
+    let none = serialize_settings(&ProjectPayload::default(), EmbedProfiles::No).expect("written");
+    assert!(!none.contains("ignored"), "{none}");
 }

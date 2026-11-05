@@ -17,6 +17,7 @@ name = "breadslicer"
 path = "src/main.rs"
 
 [dependencies]
+mimalloc.workspace = true
 sc-app-paths = { workspace = true }
 sc-arrange = { workspace = true }
 sc-orient = { workspace = true }

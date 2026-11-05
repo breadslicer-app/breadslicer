@@ -252,6 +252,40 @@ fn what_lasts_under_three_layers_is_erased() {
 }
 
 #[test]
+fn what_leaves_the_layers_leaves_the_raster_and_nothing_else() {
+    use crate::fill::erase_stack;
+    use crate::input::ReviewLeaf;
+    use crate::runs::{area_px, runs_from_raster};
+    use sc_sl1cer::raster::rasterize_layers_binary;
+
+    // On layer 4: a spur off the body, and a block of debris on the layer it
+    // leaves: their rectangles must not overlap, or a ring would be
+    // cancelled twice and light what it should clear.
+    let fixture = with_block(
+        body(10).model(4..5, Shape::rect(60.0, 30.0, 90.0, 31.0)),
+        4,
+        6,
+    )
+    .build();
+    let report = report(&fixture);
+    assert!(!report.erased.is_empty());
+    let input = fixture.input();
+    let stacks: Vec<_> = input.leaves().iter().map(|leaf| leaf.stack).collect();
+    let cut = erase_stack([&report.erased], &stacks, fixture.schedule()).expect("a stack");
+    let merged = fixture.input_with(ReviewLeaf::new(Some("Erased"), &cut));
+    for layer in 0..merged.layer_count() {
+        let contours: Vec<_> = merged
+            .leaves()
+            .iter()
+            .map(|leaf| &leaf.stack.layers()[layer])
+            .collect();
+        let runs = runs_from_raster(&rasterize_layers_binary(&contours, merged.pixel_map()));
+        // Only the body is left, on every layer.
+        assert_eq!(area_px(&runs), 40 * 30, "layer {layer}");
+    }
+}
+
+#[test]
 fn three_layers_are_an_island() {
     let fixture = with_block(body(10), 4, 7).build();
     assert_eq!(islands(&fixture), [(4, 6)]);
@@ -328,15 +362,6 @@ fn growth_under_the_factor_is_not_listed() {
         .model(6..10, Shape::rect(100.0, 40.0, 130.0, 70.0))
         .build();
     assert!(findings_of(&fixture, CheckKind::SurfaceGrowth).is_empty());
-}
-
-#[test]
-fn a_start_over_an_empty_layer_is_left_to_the_empty_layer_finding() {
-    let fixture = FixtureBuilder::new(10)
-        .model(0..3, Shape::rect(100.0, 40.0, 130.0, 70.0))
-        .model(4..10, Shape::rect(100.0, 40.0, 130.0, 70.0))
-        .build();
-    assert!(islands(&fixture).is_empty());
 }
 
 #[test]

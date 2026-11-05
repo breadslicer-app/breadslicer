@@ -45,6 +45,7 @@ mod serialize_tests {
             first_layer_height: None,
             output_format: None,
             embedded: Vec::new(),
+            review_decisions: Vec::new(),
         };
         let text = serialize_payload(&payload, None).expect("references serialize");
         assert_eq!(
@@ -146,6 +147,7 @@ mod serialize_tests {
                 id: printer_id("test-printer"),
                 bytes: b"marker-not-expected-in-part = true".to_vec(),
             }],
+            review_decisions: Vec::new(),
         };
         let text = serialize_payload(&payload, None).expect("references serialize");
         assert!(!text.contains("marker-not-expected-in-part"));

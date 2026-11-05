@@ -312,6 +312,30 @@ fn supports_turn_with_their_model_about_the_vertical_axis() {
 
 /// A run made again would not keep hand edits (#153): a session tells
 /// whether it has any, through a move and, for hand additions, a reopen.
+/// The graph as data (#432): every piece with a line, and the contacts it
+/// has where the model is, the tip going into the model past the surface.
+#[test]
+fn every_piece_tells_its_line_and_where_it_touches_the_model() {
+    let (scene, _) = scene_with(vec![(cube(), [0.0, 0.0, 5.0])]);
+    let session = run_on(&scene);
+    let pieces = session.pieces();
+    assert!(!pieces.is_empty());
+    let contacts: Vec<_> = pieces.iter().flat_map(|p| &p.contacts).collect();
+    assert_eq!(contacts.len(), session.tips().len());
+    for contact in &contacts {
+        // The cube's underside.
+        assert!((contact.surface[2] - 5.0).abs() < 0.5, "{contact:?}");
+        assert!(contact.tip[2] >= contact.surface[2] - 1e-9, "{contact:?}");
+        assert!(contact.socket[2] < contact.surface[2], "{contact:?}");
+        assert!(contact.tip_radius_mm > 0.0 && contact.socket_radius_mm > 0.0);
+        let length: f64 = contact.axis.iter().map(|c| c * c).sum();
+        assert!((length - 1.0).abs() < 1e-9, "{contact:?}");
+    }
+    for piece in &pieces {
+        assert!(!piece.line.is_empty(), "{piece:?}");
+    }
+}
+
 #[test]
 fn a_session_knows_it_was_edited_by_hand() {
     let (scene, _) = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);

@@ -418,6 +418,30 @@ mod scanline_tests {
     }
 
     #[test]
+    fn layers_rasterised_together_add_their_windings() {
+        let map = one_mm_per_hundred_pixels();
+        let square = |min, max| Polygon::new(ccw_square(min, max), vec![]).unwrap();
+        let left = ContourLayer::new(0.05, vec![square(p(-0.5, -0.5), p(0.0, 0.5))]);
+        let right = ContourLayer::new(0.05, vec![square(p(0.0, -0.5), p(0.5, 0.5))]);
+        let whole = ContourLayer::new(0.05, vec![square(p(-0.5, -0.5), p(0.5, 0.5))]);
+        let both = rasterize_layers_binary(&[&left, &right], &map);
+        assert_eq!(both, rasterize_layer_binary(&whole, &map));
+
+        // A ring wound the other way cancels what it covers.
+        let hole = Polygon::new_unchecked(cw_square(p(-0.5, -0.5), p(0.0, 0.5)), vec![]);
+        let cut = ContourLayer::new(0.05, vec![hole]);
+        let both = rasterize_layers_binary(&[&whole, &cut], &map);
+        assert_eq!(both, rasterize_layer_binary(&right, &map));
+    }
+
+    #[test]
+    fn no_layers_raster_to_nothing() {
+        let raster = rasterize_layers_binary(&[], &one_mm_per_hundred_pixels());
+        assert_eq!(raster.runs().len(), 1);
+        assert_eq!(raster.runs()[0].value, 0);
+    }
+
+    #[test]
     fn unit_square_fills_every_pixel_with_255() {
         let outer = ccw_square(p(-0.5, -0.5), p(0.5, 0.5));
         let polygon = Polygon::new(outer, vec![]).unwrap();

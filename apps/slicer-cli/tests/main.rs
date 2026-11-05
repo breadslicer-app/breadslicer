@@ -18,6 +18,7 @@ mod repair_corpus;
 mod review_e2e;
 mod slice_e2e;
 mod support_scorecard;
+mod worm_review;
 
 /// A file in `tests/` that is not declared above would never be compiled or
 /// run, because `autotests = false`.

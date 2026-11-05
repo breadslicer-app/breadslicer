@@ -40,6 +40,7 @@ use crate::commands::df_supports::{
 };
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings, show_zero_area_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
+use crate::commands::review::cleaned_stack;
 use crate::config::cmd_options::PlateOptions;
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
 use crate::config::target_format::{
@@ -105,7 +106,7 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         eprintln!("warning: {issue}");
     }
 
-    let SlicedScene { scene, plate, .. } =
+    let SlicedScene { scene, plate, sets } =
         load_and_slice(&source_path, &printer, &material, options)?;
     report_plate_overflow(
         &scene,
@@ -135,7 +136,7 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         SettledTarget::Slices(
             format @ (Format::SvgPerLayer | Format::SvgCombined | Format::PngPerLayer),
         ) => {
-            let contours = merge_plate(plate)?;
+            let contours = merge_plate(plate, &sets)?;
             write_slice(contours.stack(), &target_path, format, &writer_options)?;
         }
         SettledTarget::PrinterFile(format) => {
@@ -145,7 +146,7 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
             };
             let job = prepare_export(
                 &scene,
-                merge_plate(plate)?,
+                merge_plate(plate, &sets)?,
                 &printer,
                 &material,
                 &overrides,
@@ -343,8 +344,9 @@ fn report_plate_overflow(scene: &Scene, volume: &BuildVolume, out: &mut dyn Writ
 
 /// Merges the plate's per-leaf stacks into the contours a file target is
 /// written from.
-fn merge_plate(plate: SlicedPlate) -> Result<PlateContours> {
-    plate.merge().map_err(|err| {
+fn merge_plate(plate: SlicedPlate, sets: &[SupportSet]) -> Result<PlateContours> {
+    let cleaned = cleaned_stack(&plate, sets)?;
+    plate.merge_with(cleaned).map_err(|err| {
         anyhow!(
             "internal error: stacks sliced under one schedule disagree on the layer grid: {err:?}"
         )

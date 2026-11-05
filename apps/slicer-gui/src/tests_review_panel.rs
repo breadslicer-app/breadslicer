@@ -243,13 +243,13 @@ fn a_fixed_finding_leaves_the_list_and_the_summary_counts_it() {
 }
 
 #[test]
-fn small_cavities_offer_a_fill_and_tiny_ones_can_be_left() {
+fn small_cavities_offer_a_fill_and_every_cavity_can_be_ignored() {
     let rows = marked(&tiered(), &open_marks());
     assert_eq!(titles(&rows), ["Large", "Cup", "Medium", "Tiny", "Empty"]);
     let fills: Vec<i32> = rows.iter().map(|r| r.fill).collect();
     assert_eq!(fills, [0, 0, 1, 1, 0]);
     let leave: Vec<bool> = rows.iter().map(|r| r.leave).collect();
-    assert_eq!(leave, [false, false, false, true, false]);
+    assert_eq!(leave, [true, true, true, true, false]);
     // A fill is no button of its own; the large trap and the cup ask for
     // drains.
     let drain = FixKind::AddDrain as i32;
@@ -354,24 +354,6 @@ fn a_model_inside_the_raft_offers_its_lift_and_no_raft() {
     // Once the models moved, the raft fixes are withdrawn too.
     let rows = review_rows(&[raft], &[None], &BTreeSet::new(), false, false);
     assert_eq!(rows[0].fix, FixKind::None as i32);
-}
-
-/// #402: a minimal island is a note with no button, Fix All leaves it,
-/// and its row says why.
-#[test]
-fn a_minimal_island_is_a_note_fix_all_leaves() {
-    let minimal = finding(CheckKind::Island, Severity::Info, 10, 10, "Minimal island");
-    let findings = vec![minimal];
-    let rows = review_rows(&findings, &[None], &BTreeSet::new(), true, true);
-    assert_eq!(rows[0].fix, FixKind::None as i32);
-    assert_eq!(rows[0].severity, 2);
-    assert!(
-        rows[0].remains.contains("too small for a support"),
-        "{}",
-        rows[0].remains
-    );
-    let plan = plan_fix_all(&findings, &[], &[], |_| false);
-    assert!(plan.is_empty());
 }
 
 /// #235: an island whose support the engine refused on the scene as it
@@ -1069,37 +1051,90 @@ mod fix_all {
         titles
     }
 
-    /// A 2 x 2 mm block on the plate up to 1.0 mm, and the same block from
-    /// 1.10 mm up: an island over a 0.10 mm gap (two layers), too thin for
-    /// a support (#235).
-    fn gap_plate() -> Scene {
-        let mut scene = Scene::new();
-        add(
-            &mut scene,
-            unit_cube_mesh(),
-            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]],
-            [0.0, 0.0, 0.5],
-        );
-        add(
-            &mut scene,
-            unit_cube_mesh(),
-            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 0.9]],
-            [0.0, 0.0, 1.55],
-        );
-        scene
-    }
+    /// #432: the list is made again on every slice, and what the person
+    /// ignored stays out of it, in the project too; moving the model drops
+    /// the decision.
+    #[test]
+    fn an_ignored_finding_stays_out_of_every_new_list_until_the_model_moves() {
+        let (first, again, decisions, reopened, moved) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            document.install_graph(plate(), PathBuf::from("plate.bread"));
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
+            let hollow =
+                HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
+            panel.set_reslice(|| true);
+            slice(&document, &panel, false);
+            let first = card(&window);
+            let island = window
+                .get_review_rows()
+                .iter()
+                .find(|row| row.title == "Unsupported island")
+                .expect("the island's row");
+            assert!(island.leave);
+            window.invoke_review_leave_requested(island.id);
+            slice(&document, &panel, false);
+            let again = card(&window);
+            let decisions = document.review_decisions();
 
-    /// The island findings of the panel's review, by title.
-    fn island_titles(panel: &ReviewPanel) -> Vec<String> {
-        held_findings(panel)
-            .into_iter()
-            .filter(|(title, ..)| title.contains("island") || title.contains("Island"))
-            .map(|(title, ..)| title)
-            .collect()
+            // The same scene from its file.
+            document.install_project_graph(
+                plate(),
+                PathBuf::from("plate.bread"),
+                sc_project_formats::ProjectPayload {
+                    review_decisions: decisions.clone(),
+                    ..Default::default()
+                },
+            );
+            slice(&document, &panel, false);
+            let reopened = card(&window);
+
+            // A move of a model drops it.
+            let (leaf, before) = document
+                .with_scene(|spatial| {
+                    let leaf = spatial.leaf_id_at_index(0).expect("a leaf");
+                    (leaf, spatial.graph().node(leaf).expect("a node").local_transform)
+                })
+                .expect("a scene");
+            document
+                .apply_edit(crate::scene_document::SceneEdit::SetLocalTransform {
+                    node_id: leaf,
+                    before,
+                    after: Transform3D::Affine(AffineTransform3D::from_translation([
+                        -4.0, 0.0, 1.0,
+                    ])),
+                })
+                .expect("the edit lands");
+            slice(&document, &panel, false);
+            (first, again, decisions, reopened, card(&window))
+        });
+        let island = "Unsupported island".to_owned();
+        assert!(titles(&first).contains(&island), "{first:?}");
+        assert!(!titles(&again).contains(&island), "{again:?}");
+        assert_eq!(decisions.len(), 1, "{decisions:?}");
+        assert_eq!(decisions[0].check, "island");
+        assert!(!titles(&reopened).contains(&island), "{reopened:?}");
+        assert!(titles(&moved).contains(&island), "{moved:?}");
     }
 
     #[test]
-    fn fix_all_fills_the_trap_erases_the_speck_and_slices_again() {
+    fn fix_all_fills_the_trap_and_slices_again() {
         let (before, fix_all, message, resliced, after, done) = on_fresh_slint_thread(|| {
             let window = MainWindow::new().expect("the headless platform creates a main window");
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
@@ -1150,25 +1185,19 @@ mod fix_all {
         });
         assert_eq!(
             titles(&before),
-            [
-                "Floating part",
-                "Floating speck",
-                "Tiny sealed cavity",
-                "Unsupported island"
-            ],
+            ["Stray pixels removed", "Tiny sealed cavity", "Unsupported island"],
             "{before:?}"
         );
-        assert_eq!(fix_all, 4);
+        assert_eq!(fix_all, 2);
         assert!(message.contains("One cavity to fill."), "{message}");
-        assert!(message.contains("One speck to erase."), "{message}");
         assert!(message.contains("No supports were added"), "{message}");
         assert_eq!(resliced, 1);
         assert_eq!(
             titles(&after),
-            ["Floating part", "Unsupported island"],
+            ["Stray pixels removed", "Unsupported island"],
             "{after:?}"
         );
-        for (title, remains) in &after {
+        for (title, remains) in after.iter().filter(|(title, _)| title.contains("island")) {
             assert!(
                 remains.contains("no support held here"),
                 "{title}: {remains}"
@@ -1366,8 +1395,8 @@ mod fix_all {
             run.before
         );
         assert_eq!(run.small_traps, 1, "the 125 mm³ trap alone");
-        assert_eq!(run.supports, 2, "the island and its floating part");
-        assert_eq!(run.fix_all, 3, "those two and the trap");
+        assert_eq!(run.supports, 1, "the island");
+        assert_eq!(run.fix_all, 2, "the island and the trap");
         // The trap went; the hollow and the cup are exactly as they were:
         // same layers, same volume, same section.
         assert_eq!(run.after.len(), 2, "{:?}", run.after);

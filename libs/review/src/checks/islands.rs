@@ -352,15 +352,12 @@ pub fn run(ctx: &ReviewContext<'_>, options: &IslandOptions, sweep: &SweepOption
     }
     let tips = TipIndex::new(input.tips());
     let parts = walk_parts(input, regions, &tips, options, sweep);
-    let unheld = |part: &&Part| part.held == Held::Nothing && !left_to_empty_layer(ctx, part);
     let islands: Vec<&Part> = parts
         .iter()
-        .filter(unheld)
-        .filter(|part| part.layers() >= options.min_part_layers)
+        .filter(|part| part.held == Held::Nothing && part.layers() >= options.min_part_layers)
         .collect();
     let debris: Vec<&Part> = parts
         .iter()
-        .filter(unheld)
         .filter(|part| is_debris(part, options))
         .collect();
     // Who asks for pixels: each island, for its footprint, then the debris.
@@ -402,13 +399,6 @@ fn is_debris(part: &Part, options: &IslandOptions) -> bool {
     part.held == Held::Nothing
         && part.tip_contact_px == 0
         && part.layers() < options.min_part_layers
-}
-
-/// Whether a start is left to the empty-layer finding: nothing at all is on
-/// the layer below it, not even a support, so it starts over a gap in the
-/// plate.
-fn left_to_empty_layer(ctx: &ReviewContext<'_>, part: &Part) -> bool {
-    part.first_layer > 0 && ctx.layer_is_empty(part.first_layer - 1)
 }
 
 fn plural(count: usize, one: &str, many: &str) -> String {

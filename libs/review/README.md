@@ -1,20 +1,25 @@
 # sc-review
 
-Pre-flight review of a sliced resin plate: reads the contours of one slicing
-run from
+Pre-flight review of a sliced resin plate: reads the models of one slicing run
+from
 [`sc-sl1cer`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/sl1cer/),
-knowing which leaves are models and which are supports, and reports what is
-likely to fail before anything is printed.
+and what the engine knows of its supports as data, and reports what is likely
+to fail before anything is printed. Support geometry is never read, so what a
+review costs grows with the models and not with the supports.
 
 Written for the
 [Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md).
 
 ## Checks
 
-- Islands: regions that start in mid-air.
+- Islands: parts whose first pixels no tip holds and that last.
+- Sudden growth of a section over what stood under it.
 - Resin traps and suction cups: cavities the resin cannot leave.
-- Features thinner than the printer resolves.
-- Output checks: plate edges, maximum height, empty layers, floating parts.
+- Output checks: plate edges, maximum height, empty layers.
+
+Debris (parts that start on nothing and last under 3 layers) and everything
+thinner than a pixel are taken off the layers, and the report tells it in a
+note: `ReviewReport::erased` is what `erase_stack` cancels on the same slice.
 
 Each finding names its layers, a point in plate millimetres to centre the
 camera on, which part of the plate it concerns (model, support or both), a
@@ -31,36 +36,13 @@ reported with a drain to add, and no pixels to fill.
 
 ## How it works
 
-Every layer is rasterised once at the printer's own resolution, kept as row
-runs rather than bitmaps, and split into connected regions: solid regions
-with 8-connectivity and air regions with 4-connectivity (air that reaches
-the screen edge is open air). Regions of consecutive layers are linked by the
-pixels they share, and a union-find groups them into bodies and cavities
-that span layers. The checks read these shared regions. Layers are
-processed in parallel and the output is deterministic.
-
-## Usage
-
-```rust
-use sc_review::{ReviewInput, ReviewLeaf, Role, review};
-
-let leaves = plate
-    .leaves()
-    .iter()
-    .map(|slices| ReviewLeaf::from_slices(slices, role_of(slices)))
-    .collect();
-let input = ReviewInput::from_profile(leaves, plate.profile())?;
-for finding in review(&input) {
-    println!("layer {}: {}. {}", finding.first_layer + 1, finding.title, finding.detail);
-}
-```
-
-From the command line, `sc-slicer-cli review` takes the same options as
-`slice`, writes no file and prints the findings (`--json` for JSON; `--fill`
-fills every cavity offered a fill and reviews again).
-
-## Not included
-
-No I/O and no rendering. The `test-support` feature exposes a builder of
-synthetic plates for other crates' tests; the `serde` feature derives
-`Serialize` on the findings.
+One sweep over the layers, in parallel, keeps small tables and no image: each
+layer is rasterised once at the printer's own resolution, kept as row runs,
+cleaned of what is one pixel wide, and split into solid regions with
+8-connectivity and air regions with 4-connectivity, the air opened by the
+narrowest gap resin flows through (air that reaches the screen edge is open
+air). Regions are linked with the layer below by the pixels they share, and a
+region no link holds keeps its pixels: it starts a part. Memory is two layers
+of runs per thread, however tall the plate. The checks read the tables, the
+output is deterministic and does not depend on the number of threads, and a
+sweep reports every layer and stops within a layer of being cancelled.
