@@ -2487,6 +2487,78 @@ mod fix_all {
         assert!(undo_left, "and leaves the history as it was");
     }
 
+    /// #433: Fix All works on the list it finds, with one slice after its
+    /// fixes and none before them, and it ends on what a fresh review of the
+    /// same scene lists.
+    #[test]
+    fn the_list_fix_all_ends_on_is_a_fresh_review() {
+        let (before, slices_at_press, ended, fresh, resliced) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let before = held_findings(&w.panel);
+            w.window.invoke_review_fix_all_requested();
+            let slices_at_press = w.resliced.get();
+            let _ = wait_fix_all(&w.panel);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            assert!(!w.panel.fixing(), "one pass ends the run");
+            let ended = held_findings(&w.panel);
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            (
+                before,
+                slices_at_press,
+                ended,
+                held_findings(&w.panel),
+                w.resliced.get(),
+            )
+        });
+        assert_eq!(slices_at_press, 0, "no slice before the fixes");
+        assert_eq!(resliced, 1, "one slice after them");
+        assert_ne!(before, ended, "the fixes changed the list");
+        assert_eq!(ended, fresh);
+    }
+
+    /// #433: one Undo takes a finished Fix All back: its supports, the slice
+    /// and the review of before the press, and the fills it marked.
+    #[test]
+    fn one_undo_puts_back_everything_a_finished_fix_all_did() {
+        let (before, after, fills_before, fills_after, stale) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let fills = |w: &IslandWindow| w.panel.marks.borrow().fill_count();
+            let before = before_the_press(&w);
+            let fills_before = fills(&w);
+            w.window.invoke_review_fix_all_requested();
+            let _ = wait_fix_all(&w.panel);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            assert!(w.document.undo().expect("one undo"), "an undo step");
+            (
+                before,
+                before_the_press(&w).replace("redo: true", "redo: false"),
+                fills_before,
+                fills(&w),
+                w.panel.is_stale(),
+            )
+        });
+        assert_eq!(before, after);
+        assert_eq!(fills_before, fills_after);
+        assert!(!stale, "the slice of before the press is back");
+    }
+
+    /// #433: a slice in the making has at most one other beside it to put
+    /// back: what a finished run kept goes when the next slice starts.
+    #[test]
+    fn the_next_slice_lets_go_of_what_a_run_kept() {
+        let (kept, kept_after) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            w.window.invoke_review_fix_all_requested();
+            let _ = wait_fix_all(&w.panel);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            let kept = w.panel.before_run.borrow().is_some();
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            (kept, w.panel.before_run.borrow().is_some())
+        });
+        assert!(kept, "the run keeps it for its Undo");
+        assert!(!kept_after, "and no longer than that");
+    }
+
     /// The state Cancel or Undo must put back: the models' meshes, the
     /// marks, the review held and the history.
     fn before_the_press(w: &IslandWindow) -> String {
@@ -2723,6 +2795,14 @@ mod fix_all {
                 findings.len(),
                 window.get_review_fix_all()
             ));
+            // #433: the list it ended on is what a fresh review lists.
+            let ended = held_findings(&panel);
+            slice_project(&document, &panel, &printer, &resin, false);
+            assert_eq!(
+                ended,
+                held_findings(&panel),
+                "a fresh review lists the same"
+            );
             let mut unheld = 0;
             {
                 let marks = panel.marks.borrow();

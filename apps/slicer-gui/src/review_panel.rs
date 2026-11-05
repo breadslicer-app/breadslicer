@@ -38,8 +38,10 @@
 //! notes (information) are folded until opened. Moving or re-meshing a model
 //! drops every mark, as it withdraws the fixes.
 //!
-//! "Fix all" (#156) resolves in one go every finding the app can fix by
-//! itself, then slices again so the new review shows the result:
+//! "Fix all" (#156) works on the list the held review made (#433): it does
+//! not slice first, and looks for nothing between its fixes. It applies in one
+//! go every fix the app can make by itself, then slices again, and the review
+//! of that slice, whole, is the new list:
 //!
 //! - islands get their tips ([`sc_review::plan_tips`]), all of them in one
 //!   undoable edit ([`DfSupportRun::start_supports_at`]);
@@ -56,14 +58,17 @@
 //! step, the marks are made and the slice starts, as when Fix All ran then
 //! and there.
 //!
-//! With "Repeat until clean" (#163, a setting), a press makes up to
-//! [`REPEAT_PASSES`] passes: once the slice a pass asked for is reviewed,
-//! the next pass fixes what Fix All can fix in that review, and slices
-//! again. The run stops early when the review has nothing left Fix All
-//! fixes, or a pass changes nothing. Every pass's supports go into one undo
-//! step. Cancel (on the card or on the slice), Undo or an edit meanwhile
+//! What the new review finds is listed, and that is the end of a press.
+//! With "Repeat until clean" (#163, a setting), up to [`REPEAT_PASSES`]
+//! passes: the next pass fixes what Fix All can fix in that review, and
+//! slices again. The run stops early when the review has nothing left Fix
+//! All fixes, or a pass changes nothing. Every pass's supports go into one
+//! undo step. Cancel (on the card or on the slice), Undo or an edit meanwhile
 //! ends the run and puts the scene, the marks, the slice and its review back
-//! as they were before the press.
+//! as they were before the press. So does one Undo once the run is over: the
+//! slice of before the press is kept for it until the next slice starts, and
+//! no other slice is ([`BeforeRun`]). A run that added no support left no
+//! undo step: "Clear fills" takes its marks back.
 //!
 //! A row offers "Add support here" exactly when Fix All would add that
 //! support ([`ReviewMarks::support_offered`]): not again where one went in
@@ -74,11 +79,9 @@
 //! and by the question that ends a slice (#437): "N islands have no
 //! support. Add supports?". The question comes only when the list has an
 //! island a set can take tips for. Yes is a Fix All run of the islands alone
-//! ([`RunKind::Islands`]): the tips, then the slice, and Cancel, Undo or an
-//! edit meanwhile take it back the same way. Once it is over, one Undo also
-//! puts back the slice and the review of before the Yes. No leaves the list
-//! as it is. An island that never gets as wide as a tip offers nothing, and
-//! its row says so.
+//! ([`RunKind::Islands`]): the tips, then the slice, and Cancel or Undo take
+//! it back the same way. No leaves the list as it is. An island that never
+//! gets as wide as a tip offers nothing, and its row says so.
 //!
 //! Everything else stays as it is: a hollow, a suction cup or a large cavity,
 //! which only drain holes open, the output checks, a model in the raft and
@@ -132,11 +135,9 @@ const FIX_ALL_POLL: Duration = Duration::from_millis(100);
 const NO_SUPPORT_NOTE_MM2: f64 = 1.0;
 
 /// The most passes a Fix All press makes with "Repeat until clean" (#163).
-/// The first fixes nearly everything; the second what the first one's
-/// fixes uncover (a support that can now hang
-/// from one added) and the islands the first one's supports leave weakly
-/// held; a third rarely finds anything, and each pass slices the plate
-/// again.
+/// The first fixes the list; the second what its review found (a support
+/// that can now hang from one added); a third rarely finds anything, and
+/// each pass slices the plate again.
 pub(crate) const REPEAT_PASSES: usize = 3;
 
 /// The card's state, as the UI's `review-state` reads it.
@@ -238,8 +239,8 @@ pub(crate) struct ReviewPanel {
     /// Fix All's supports being placed off the UI thread (#390): how far
     /// the engine is, and the timer that shows it.
     placing: RefCell<Option<Arc<EditWatch>>>,
-    /// What a Yes to the question replaced, for its Undo (#437).
-    before_yes: RefCell<Option<BeforeYes>>,
+    /// What the last run replaced, for its Undo (#437).
+    before_run: RefCell<Option<BeforeRun>>,
     fix_poll: slint::Timer,
     /// Starts a slice without asking to overwrite the held one, and tells
     /// whether one started: Fix All promises one. Set by the Slice driver.
@@ -260,9 +261,10 @@ enum RunKind {
     Islands,
 }
 
-/// What a Yes to the question replaced, kept once its run is over: Undo puts
-/// it back, on the scene it was made for.
-struct BeforeYes {
+/// What a run that added supports replaced, kept once it is over: Undo puts
+/// it back, on the scene it was made for. Its slice stays until the next one
+/// starts, so a slice in the making never has two others beside it.
+struct BeforeRun {
     slice: SliceResult,
     held: Option<HeldReview>,
     marks: ReviewMarks<Vec<ModelPose>>,
@@ -352,7 +354,7 @@ impl ReviewPanel {
             fix_all_slicing: Cell::new(false),
             run: RefCell::new(None),
             placing: RefCell::new(None),
-            before_yes: RefCell::new(None),
+            before_run: RefCell::new(None),
             fix_poll: slint::Timer::default(),
             reslice: RefCell::new(None),
             bus,
@@ -489,6 +491,9 @@ impl ReviewPanel {
     /// A slice is starting: it is Fix All's when Fix All asked for it.
     pub(crate) fn slice_started(&self, by_fix_all: bool) {
         self.fix_all_slicing.set(by_fix_all);
+        if let Some(before) = self.before_run.borrow_mut().take() {
+            let_go(before.slice);
+        }
     }
 
     /// Records that the slice about to be shown cured the fills `ids`.
@@ -879,16 +884,33 @@ impl ReviewPanel {
     /// Ends the run, keeping what it did, with `message` under the summary.
     fn stop_run(&self, message: Option<SharedString>) {
         self.stop_placing();
-        if let Some(run) = self.run.borrow_mut().take() {
+        let run = self.run.borrow_mut().take();
+        if let Some(run) = run {
             crate::breadcrumbs::note(&format!(
                 "review: fix all ended after {} of {} passes, {:?}",
                 run.pass,
                 run.passes,
                 run.started.elapsed()
             ));
+            self.keep_for_undo(run);
         }
         self.show_pass(None);
         self.push(message);
+    }
+
+    /// A run is over: what it replaced stays for its Undo, when it left one.
+    fn keep_for_undo(&self, run: FixRun) {
+        match (run.entry, run.slice_before) {
+            (Some(_), Some(slice)) => {
+                *self.before_run.borrow_mut() = Some(BeforeRun {
+                    slice,
+                    held: run.held_before,
+                    marks: run.marks_before,
+                });
+            }
+            (None, Some(slice)) => let_go(slice),
+            _ => {}
+        }
     }
 
     /// Ends the run for `reason` and puts back what it changed: its undo
@@ -917,7 +939,9 @@ impl ReviewPanel {
         if let Some(slice) = run.slice_before {
             // The document drops the held review with its slice: the one of
             // before the press comes back with it.
-            self.document.set_slice_result(slice);
+            if let Some(replaced) = self.document.set_slice_result(slice) {
+                let_go(replaced);
+            }
             if let Some(mut held) = run.held_before {
                 held.generation = self.document.slice_generation();
                 *self.held.borrow_mut() = Some(held);
@@ -1184,14 +1208,21 @@ impl ReviewPanel {
         }
     }
 
-    /// The slice a pass asked for replaced `replaced`: the run keeps the one
-    /// of before the press, to put back on Cancel.
+    /// A new slice replaced `replaced`: a run keeps the one of before its
+    /// press, to put back on Cancel. Any other goes now: no pass leaves a
+    /// slice behind.
     pub(crate) fn slice_replaced(&self, replaced: Option<SliceResult>) {
         let mut run = self.run.borrow_mut();
-        if let Some(run) = run.as_mut().filter(|run| run.slicing)
-            && run.slice_before.is_none()
+        match run
+            .as_mut()
+            .filter(|run| run.slicing && run.slice_before.is_none())
         {
-            run.slice_before = replaced;
+            Some(run) => run.slice_before = replaced,
+            None => {
+                if let Some(slice) = replaced {
+                    let_go(slice);
+                }
+            }
         }
     }
 
@@ -1230,18 +1261,13 @@ impl ReviewPanel {
             self.start_pass();
             return AfterPass::Next;
         }
-        if let Some(run) = self.run.borrow_mut().take() {
+        let run = self.run.borrow_mut().take();
+        if let Some(run) = run {
             crate::breadcrumbs::note(&format!(
                 "review: fix all done after {made} passes, {:?}",
                 run.started.elapsed()
             ));
-            if let (RunKind::Islands, Some(slice)) = (run.kind, run.slice_before) {
-                *self.before_yes.borrow_mut() = Some(BeforeYes {
-                    slice,
-                    held: run.held_before,
-                    marks: run.marks_before,
-                });
-            }
+            self.keep_for_undo(run);
         }
         AfterPass::Done(made)
     }
@@ -1289,7 +1315,6 @@ impl ReviewPanel {
     /// slice a Fix All pass asked for, goes on with the run (#163). Any other
     /// slice ends with the question about its islands (#437).
     pub(crate) fn show(self: &Rc<Self>, outcome: ReviewOutcome) {
-        self.before_yes.borrow_mut().take();
         let hollows = match &outcome {
             ReviewOutcome::Reviewed { findings, .. } => findings
                 .iter()
@@ -1408,10 +1433,10 @@ impl ReviewPanel {
         }
     }
 
-    /// Puts back the slice and the review of before a Yes once Undo took its
-    /// supports out of the scene (#437). Says whether it did.
-    fn undo_yes(&self) -> bool {
-        let back = self.before_yes.borrow().as_ref().is_some_and(|before| {
+    /// Puts back the slice, the review and the marks of before a run once
+    /// Undo took its supports out of the scene (#437). Says whether it did.
+    fn undo_run(&self) -> bool {
+        let back = self.before_run.borrow().as_ref().is_some_and(|before| {
             !self
                 .document
                 .slice_geometry_changed(before.slice.params.geometry)
@@ -1419,17 +1444,19 @@ impl ReviewPanel {
         if !back {
             return false;
         }
-        let Some(before) = self.before_yes.borrow_mut().take() else {
+        let Some(before) = self.before_run.borrow_mut().take() else {
             return false;
         };
         *self.marks.borrow_mut() = before.marks;
         // The document drops the held review with its slice.
-        self.document.set_slice_result(before.slice);
+        if let Some(replaced) = self.document.set_slice_result(before.slice) {
+            let_go(replaced);
+        }
         if let Some(mut held) = before.held {
             held.generation = self.document.slice_generation();
             *self.held.borrow_mut() = Some(held);
         }
-        crate::breadcrumbs::note("review: the slice of before the Yes is back");
+        crate::breadcrumbs::note("review: the slice of before the run is back");
         self.push(None);
         true
     }
@@ -1447,7 +1474,7 @@ impl ReviewPanel {
                     // Another scene: nothing of a Fix All run applies to it.
                     self.stop_placing();
                     self.run.borrow_mut().take();
-                    self.before_yes.borrow_mut().take();
+                    self.before_run.borrow_mut().take();
                     self.show_pass(None);
                 }
                 let current = self.document.slice_generation();
@@ -1472,7 +1499,7 @@ impl ReviewPanel {
                 self.push(None);
             }
             SceneEvent::Mutated | SceneEvent::Restructured | SceneEvent::UndoStackChanged => {
-                if self.undo_yes() {
+                if self.undo_run() {
                     return;
                 }
                 // Back on the sliced geometry (an undo of the fixes), the fixes
@@ -1813,6 +1840,15 @@ impl ReviewPanel {
             held.fixed.insert(index);
         }
     }
+}
+
+/// Frees `slice` off the UI thread: the millions of rings of a heavy scene
+/// take some 80 ms to free, and the window would stand still for it.
+fn let_go(slice: SliceResult) {
+    // With no thread to be had it goes here, with the closure.
+    let _ = std::thread::Builder::new()
+        .name("slice-release".to_owned())
+        .spawn(move || drop(slice));
 }
 
 /// A plate point as the scene's world coordinates: the same frame, in single
@@ -2181,10 +2217,6 @@ fn fix_all_leaves(finding: &Finding, drains: Option<usize>) -> SharedString {
         (CheckKind::PlateEdge | CheckKind::TooTall | CheckKind::EmptyLayer, _) => ctr!(
             "Review",
             "Left by Fix All: it does not move or resize models. Arrange the plate by hand."
-        ),
-        _ if finding.scope == sc_review::RoleScope::Support => ctr!(
-            "Review",
-            "Left by Fix All: this is in the supports. Generate them again."
         ),
         (_, Some(SuggestedFix::AddSupport { .. })) => ctr!(
             "Review",
