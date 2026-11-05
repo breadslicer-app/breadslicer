@@ -26,14 +26,13 @@
 //!
 //! - a part that starts on the first [`PLATE_LAYERS`] layers stands on the
 //!   build plate;
-//! - any other part is held when, on the layer below its first layer, a
-//!   support tip reaches it with at least [`MIN_TIP_SHARE`] of its section:
-//!   its pixels within [`TIP_REACH_MM`] of the part's own pixels, outside
-//!   what the model has on that layer. A part smaller than the tip is held
-//!   when tips stand under half of it. Its own pixels decide, never its box:
-//!   a tip under the neighbour a part hangs from does not hold it, and
-//!   neither does a tip that stops under a neck of the model. Tips are read
-//!   as data, whatever piece of the support graph they belong to.
+//! - any other part is held when, on the layer below its first layer, the
+//!   pixels of a support tip lie under it, however few: pixels within
+//!   [`TIP_REACH_MM`] of the part's own pixels, outside what the model has
+//!   on that layer ([`MIN_TIP_SHARE`] can ask for more). Its own pixels
+//!   decide, never its box: a tip under the neighbour a part hangs from does
+//!   not hold it. Tips are read as data, whatever piece of the support graph
+//!   they belong to.
 //!
 //! # What is done with a part nothing holds
 //!
@@ -85,13 +84,17 @@ pub const MIN_PART_LAYERS: usize = 3;
 /// listed: 10.
 pub const GROWTH_FACTOR: f64 = 10.0;
 
-/// The share of its section a tip must reach a part with to hold it: a half.
-/// Less is the last sliver of a cone that ends right there, or a tip that
-/// stops under a neck of the model: what the printer cures on it does not
-/// hold the part. On one scene measured against its printer file, the tips
-/// that hold touch with about 55 % of their section or more, and the ones
-/// that stop short with about 45 % at most.
-pub const MIN_TIP_SHARE: f64 = 0.5;
+/// The share of its section a tip must reach a part with to hold it: 0, any
+/// pixel of a tip under the part's own pixels holds it, however few. A cone
+/// ends in the middle of a layer, so how much of it shows on the layer right
+/// below says where the cut fell, not whether a support is there.
+///
+/// Measured on real scenes, the islands listed with 0 and with a half: a
+/// 171 mm hollowed model, 1 and 8; three well-supported minis, 29 and 175.
+/// Go back to 0.5 if prints show that the last sliver of a tip does not hold
+/// what starts on it: a tip then has to reach a part with half its section,
+/// or a part smaller than the tip has to stand with half of itself on tips.
+pub const MIN_TIP_SHARE: f64 = 0.0;
 
 /// How far from a part's pixels a tip's pixels on the layer below still
 /// touch it, in millimetres: 0.07, a tip beside a part's edge cures into it.

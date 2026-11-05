@@ -22,13 +22,15 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-/// Parts that start on nothing a tip holds and last: what supports must go
-/// under. 1444 is here because it lasts 18 layers and reaches 8.6 mm², though
-/// it touches a 31-pixel sliver beside it on its second layer.
-const ISLANDS: [u64; 8] = [232, 660, 942, 1264, 1422, 1444, 1486, 1501];
+/// Parts that start with no pixel of a tip under them and last: what
+/// supports must go under.
+const ISLANDS: [u64; 1] = [942];
 
-/// Parts a tip holds, with over half of its section.
-const HELD: [u64; 4] = [1230, 1470, 1515, 1526];
+/// Parts a tip holds. On 232 to 1501 only the last slice of a cone shows on
+/// the layer right below, 5 to 40 pixels of it: any pixel holds.
+const HELD: [u64; 11] = [
+    232, 660, 1230, 1264, 1422, 1444, 1470, 1486, 1501, 1515, 1526,
+];
 
 /// Screen pixels of the parts that come loose, each on its first layer, the
 /// floating speck at 2262 among them. All of them leave the layers, as debris
