@@ -158,10 +158,7 @@ pub(crate) struct WrongProjectExtension(pub(crate) ProjectFormat);
 impl fmt::Display for WrongProjectExtension {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&match self.0 {
-            ProjectFormat::Bread => ctr!(
-                "ErrorDialog",
-                "Project files are saved as .bread files."
-            ),
+            ProjectFormat::Bread => ctr!("ErrorDialog", "Project files are saved as .bread files."),
             ProjectFormat::ThreeMf => {
                 ctr!("ErrorDialog", "Project files are saved as .3mf packages.")
             }

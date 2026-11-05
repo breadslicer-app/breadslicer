@@ -48,7 +48,7 @@ use sc_geom::df_supports::zone_presets::{ZonePreset, figures_70, minis_30};
 use sc_geom::df_supports::{
     AddNote, AddOptions, BraceEnd, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
     DfSupportSession, EditError, EditPreview, HandBraceRefusal, HandEditKind, KeptEdits, LostEdit,
-    LostWhy, REVIEW_NUDGE_MM, RaftMode, ScanCache, start_df_prescan, start_df_supports,
+    LostWhy, RaftMode, ScanCache, start_df_prescan, start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
@@ -267,6 +267,10 @@ const HOVER_POLL: Duration = Duration::from_millis(16);
 
 /// A point of a hand edit, with its place among the edit's points.
 type IndexedPoint = (usize, [f32; 3]);
+
+/// The other points that would do for each point of an edit, by its place
+/// among them: the tips of an island (#437). Empty for an edit that has none.
+pub(crate) type OtherPoints = Arc<Vec<Vec<[f32; 3]>>>;
 
 /// How a hand edit of the supports ended.
 #[derive(Clone, Debug, PartialEq)]
@@ -529,6 +533,8 @@ enum EditOp {
 struct EditJob {
     start: EditStart,
     op: EditOp,
+    /// What the points of `op` can fall back on.
+    others: OtherPoints,
 }
 
 /// A hand edit ready for the engine: the sets it edits and, in the same
@@ -693,7 +699,7 @@ fn compute_jobs_at_once(
 /// One set's share of [`compute_edit`]. Stopped through `watch`, it ends
 /// at its next point, and the caller drops what it made.
 fn compute_job(
-    EditJob { start, op }: EditJob,
+    EditJob { start, op, others }: EditJob,
     tool: HandTool,
     how: &AddOptions,
     watch: &EditWatch,
@@ -735,7 +741,15 @@ fn compute_job(
                 let p = point.map(f64::from);
                 let edit = match tool {
                     HandTool::Add => edited.add_at(p, how),
-                    HandTool::AddNear => edited.add_trunk_near(p, REVIEW_NUDGE_MM).map(|_| ()),
+                    HandTool::AddNear => {
+                        let others: Vec<[f64; 3]> = others
+                            .get(*i)
+                            .into_iter()
+                            .flatten()
+                            .map(|other| other.map(f64::from))
+                            .collect();
+                        edited.add_tip_among(p, &others).map(|_| ())
+                    }
                     HandTool::Remove => edited.remove_near(p).map(|_| ()),
                 };
                 watch.tried.fetch_add(1, Ordering::Relaxed);
@@ -2765,7 +2779,7 @@ impl DfSupportRun {
             return;
         }
         let (tool, how) = self.click_tool(&ui, tool, forced);
-        self.hand_edits(&ui, tool, &[point], &how);
+        self.hand_edits(&ui, tool, &[point], &how, OtherPoints::default());
     }
 
     /// A click of the armed tool at `point`, `forced` for a Shift+click of
@@ -2968,7 +2982,11 @@ impl DfSupportRun {
             Some(edited) => EditStart::Previewed(Box::new(edited)),
             None => EditStart::Base(drawn.session.clone()),
         };
-        let jobs = vec![EditJob { start, op }];
+        let jobs = vec![EditJob {
+            start,
+            op,
+            others: OtherPoints::default(),
+        }];
         let _ = self.launch_edit(
             ui,
             vec![drawn],
@@ -3172,11 +3190,23 @@ impl DfSupportRun {
     /// Review card's "Add support here" and Fix All (#156), whose points a
     /// check picked. Points the engine refuses are skipped, and returned by
     /// index with why; the edit fails when none took.
+    #[cfg(test)]
     pub(crate) fn add_supports_at(&self, points: &[[f32; 3]]) -> (HandEdit, Refusals) {
+        self.add_tips_at(points, OtherPoints::default())
+    }
+
+    /// [`Self::add_supports_at`], with what each point can fall back on when
+    /// the engine cannot hold it: the tips of an island (#437).
+    pub(crate) fn add_tips_at(
+        &self,
+        points: &[[f32; 3]],
+        others: OtherPoints,
+    ) -> (HandEdit, Refusals) {
         let Some(ui) = self.ui.upgrade() else {
             return (HandEdit::Notified, Vec::new());
         };
-        self.hand_edits(&ui, HandTool::AddNear, points, &AddOptions::default())
+        let how = AddOptions::default();
+        self.hand_edits(&ui, HandTool::AddNear, points, &how, others)
     }
 
     /// [`Self::add_supports_at`] made off the UI thread, for Fix All
@@ -3194,6 +3224,7 @@ impl DfSupportRun {
     pub(crate) fn start_supports_at(
         self: &Rc<Self>,
         points: &[[f32; 3]],
+        others: OtherPoints,
         join: Option<SceneRevision>,
         landing: impl FnOnce(PointsEdit) + 'static,
     ) -> Result<Arc<EditWatch>, (HandEdit, Refusals)> {
@@ -3215,11 +3246,14 @@ impl DfSupportRun {
         let tool = HandTool::AddNear;
         let how = AddOptions::default();
         let mut refused = Vec::new();
-        let Prepared { sets, jobs } = match self.prepare_edit(&ui, tool, points, &how, &mut refused)
-        {
-            Ok(prepared) => prepared,
-            Err(outcome) => return Err((outcome, refused)),
-        };
+        let Prepared { sets, mut jobs } =
+            match self.prepare_edit(&ui, tool, points, &how, &mut refused) {
+                Ok(prepared) => prepared,
+                Err(outcome) => return Err((outcome, refused)),
+            };
+        for job in &mut jobs {
+            job.others = others.clone();
+        }
         crate::breadcrumbs::note(&format!(
             "supports: {} points made off the UI thread, {} sets",
             points.len(),
@@ -3271,20 +3305,24 @@ impl DfSupportRun {
     /// Edits the supports at every point of `points` with `tool`, an Add
     /// made as `how` says, as one undoable edit, then and there. A point the
     /// engine refuses is skipped and returned, by index, with why; the edit
-    /// fails when none took.
+    /// fails when none took. `others` is what each point can fall back on.
     fn hand_edits(
         &self,
         ui: &MainWindow,
         tool: HandTool,
         points: &[[f32; 3]],
         how: &AddOptions,
+        others: OtherPoints,
     ) -> (HandEdit, Refusals) {
         if points.is_empty() {
             return (HandEdit::Notified, Vec::new());
         }
         let mut refused = Vec::new();
         let outcome = match self.prepare_edit(ui, tool, points, how, &mut refused) {
-            Ok(Prepared { sets, jobs }) => {
+            Ok(Prepared { sets, mut jobs }) => {
+                for job in &mut jobs {
+                    job.others = others.clone();
+                }
                 let computed = compute_edit(jobs, tool, how, &EditWatch::default());
                 self.commit_edit(ui, sets, computed, &mut refused, None)
             }
@@ -3385,6 +3423,7 @@ impl DfSupportRun {
             jobs.push(EditJob {
                 start,
                 op: EditOp::Points(points),
+                others: OtherPoints::default(),
             });
             sets.push(drawn);
         }

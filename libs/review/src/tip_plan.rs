@@ -308,9 +308,10 @@ impl<'i> Placing<'i> {
         }
         let pixels = self.pixels.clone();
         let layer = &pixels.layers[at];
+        // The centre of a pixel: half of it counts towards the contact.
         let [rx, ry] = pixels
             .step_mm
-            .map(|step| 0.5 * self.options.contact_diameter_mm / step.abs());
+            .map(|step| (0.5 * self.options.contact_diameter_mm / step.abs() - 0.5).max(0.0));
         let room = erode_ellipse(&layer.runs, rx, ry);
         let spots = candidates(&room);
         if spots.is_empty() {

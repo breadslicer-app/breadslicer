@@ -250,6 +250,7 @@ pub(crate) fn review_sets(
         .into_iter()
         .map(|drawn| SupportSet {
             leaf: drawn.leaf,
+            tip_diameter_mm: drawn.session.tip_diameter_mm(),
             contacts: drawn
                 .session
                 .pieces()

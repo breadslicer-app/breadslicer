@@ -1328,10 +1328,7 @@ mod dialog_text_tests {
         let texts = save_error_texts(Path::new("/tmp/plate.stl"), &err);
         assert_eq!(texts.heading, "Failed to save");
         assert_eq!(texts.context.as_deref(), Some("File: /tmp/plate.stl"));
-        assert_eq!(
-            texts.message,
-            "Project files are saved as .bread files."
-        );
+        assert_eq!(texts.message, "Project files are saved as .bread files.");
         assert_eq!(texts.details, "");
     }
 

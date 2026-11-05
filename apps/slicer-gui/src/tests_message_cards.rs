@@ -278,6 +278,17 @@ fn slice_overwrite(shown: &Shown) {
     shown.manager.show_slice_overwrite_confirm(|| {});
 }
 
+fn add_supports(shown: &Shown) {
+    shown.manager.show_add_supports(
+        || InfoTexts {
+            heading: "3 islands have no support.".into(),
+            message: "Add supports? The tips go under the islands, the plate is sliced again, and one Undo takes it all back.".into(),
+            details: Default::default(),
+        },
+        || {},
+    );
+}
+
 fn recovery(shown: &Shown) {
     shown.manager.show_recovery(
         vec![
@@ -377,6 +388,11 @@ const CASES: &[Case] = &[
     Case {
         name: "relaminar",
         show: slice_overwrite,
+        primary: true,
+    },
+    Case {
+        name: "agregar-soportes",
+        show: add_supports,
         primary: true,
     },
     Case {
@@ -619,12 +635,13 @@ fn keyboard_answers(case: Show) -> Vec<MessageAnswer> {
 fn the_keyboard_answers_as_before() {
     use MessageAnswer::{Cancel, Confirm, Export};
     // Per message: Enter's answer, then Escape's.
-    let expected: [(&str, Show); 8] = [
+    let expected: [(&str, Show); 9] = [
         ("notice", notice),
         ("error", error),
         ("slice refused, Repair", slice_refused),
         ("scene change", close_scene_unsaved),
         ("slice overwrite", slice_overwrite),
+        ("add supports", add_supports),
         ("recovery", recovery),
         ("diagnostics", diagnostics),
         ("diagnostic log", diagnostic_log),
@@ -633,6 +650,7 @@ fn the_keyboard_answers_as_before() {
         [Cancel, Cancel],
         [Cancel, Cancel],
         [Confirm, Cancel],
+        [Cancel, Cancel],
         [Cancel, Cancel],
         [Cancel, Cancel],
         [Cancel, Cancel],

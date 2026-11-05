@@ -1905,7 +1905,9 @@ impl DfSupportSession {
     }
 
     /// The contact diameter of a tip added to this set without a size, in
-    /// millimetres: its preset's.
+    /// millimetres: its preset's. A tip that hangs from a support gets just
+    /// that; without zone sizes, one on a trunk of its own is sized from it
+    /// by the surface it stands on, so it comes out close to it.
     pub fn tip_diameter_mm(&self) -> f64 {
         let supports = &self.settings.supports;
         SizingBands::factory()
@@ -2877,6 +2879,38 @@ mod session_tests {
             Err(EditError::CannotAttach(AddNote::TooFar))
         );
         assert_eq!(untouched.state, session.state, "nothing placed");
+    }
+
+    #[test]
+    fn a_set_tells_the_diameter_of_the_tips_added_to_it() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        session.add_trunk_at([5.0, 5.0, 12.0]).expect("a trunk");
+        let trunk = session.state.collections.trunks.values().next().unwrap();
+        let cone = trunk.contact_cone.as_ref().unwrap();
+        let drawn = cone.profile.contact_diameter_mm;
+        let preset = session.tip_diameter_mm();
+        assert!((drawn - preset).abs() <= 0.25 * preset, "{drawn} {preset}");
+    }
+
+    #[test]
+    fn a_tip_goes_on_the_first_other_point_the_engine_holds() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        let away = [500.0, 500.0, 12.0];
+        let used = session
+            .add_tip_among(away, &[[600.0, 500.0, 12.0], [5.0, 5.0, 12.0]])
+            .expect("the second one holds");
+        assert_eq!(used, [5.0, 5.0, 12.0]);
+        assert_eq!(session.state.collections.trunks.len(), 1);
+        assert!(session.hand_edited);
+    }
+
+    #[test]
+    fn a_tip_with_nowhere_to_go_tells_why_of_its_point() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        let away = [500.0, 500.0, 12.0];
+        let err = session.add_tip_among(away, &[[600.0, 500.0, 12.0]]);
+        assert!(matches!(err, Err(EditError::NothingThere)), "{err:?}");
+        assert!(session.state.collections.trunks.is_empty());
     }
 
     #[test]

@@ -6523,3 +6523,69 @@ msgstr "Lo hizo la revisión sola: no hay nada que arreglar."
 msgctxt "Review"
 msgid "Left by Fix All: more tips here are placed by hand, in the Supports tab."
 msgstr "Corregir todo lo dejó: las puntas de más se ubican a mano, en la pestaña Soportes."
+
+#: ui/message-layer.slint
+msgctxt "AddSupportsDialog"
+msgid "Yes"
+msgstr "Sí"
+
+#: ui/message-layer.slint
+msgctxt "AddSupportsDialog"
+msgid "No"
+msgstr "No"
+
+#: src/review_panel.rs
+msgctxt "AddSupportsDialog"
+msgid "One island has no support."
+msgid_plural "{n} islands have no support."
+msgstr[0] "Una isla no tiene soporte."
+msgstr[1] "{n} islas no tienen soporte."
+
+#: src/review_panel.rs
+msgctxt "AddSupportsDialog"
+msgid ""
+"Add supports? The tips go under the islands, the plate is sliced again, and "
+"one Undo takes it all back."
+msgstr ""
+"¿Agregar soportes? Las puntas van bajo las islas, se vuelve a laminar y un "
+"solo Deshacer revierte todo."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The supports are in: no island is left without one."
+msgstr "Los soportes están puestos: no queda ninguna isla sin soporte."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The supports are in. One island is still without one; its row says why."
+msgid_plural ""
+"The supports are in. {n} islands are still without one; their rows say why."
+msgstr[0] ""
+"Los soportes están puestos. Una isla sigue sin soporte; su fila dice por qué."
+msgstr[1] ""
+"Los soportes están puestos. {n} islas siguen sin soporte; sus filas dicen por "
+"qué."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Adding supports was cancelled; nothing was changed."
+msgstr "Se canceló agregar soportes; no se cambió nada."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Adding supports was undone before it was done; nothing was changed."
+msgstr "Se deshizo agregar soportes antes de terminar; no se cambió nada."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The scene changed while the supports were added; nothing was changed."
+msgstr "La escena cambió mientras se agregaban los soportes; no se cambió nada."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid ""
+"It never gets as wide as a support's tip, so none goes on it. Place one by "
+"hand in the Supports tab, or leave it."
+msgstr ""
+"Nunca llega al ancho de la punta de un soporte, así que no se le pone ninguna. "
+"Poné una a mano en la pestaña Soportes, o dejala."

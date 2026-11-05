@@ -450,6 +450,53 @@ fn a_refused_island_no_larger_than_a_tip_is_a_note() {
     assert_eq!(rows.iter().map(|row| row.id).collect::<Vec<_>>(), [2]);
 }
 
+/// An island no tip fits on offers no support, and its row says why (#437).
+#[test]
+fn an_island_no_tip_fits_offers_no_support_and_says_why() {
+    let at = PlatePoint::new(1.0, 2.0, 0.5);
+    let findings = vec![
+        Finding::new(
+            CheckKind::Island,
+            Severity::Error,
+            10,
+            20,
+            at,
+            RoleScope::Model,
+            "Island",
+            "Detail.",
+        )
+        .with_fix(SuggestedFix::AddSupport { at }),
+    ];
+    let marks = RowMarks {
+        fixable: true,
+        no_tip: BTreeSet::from([0]),
+        ..RowMarks::default()
+    };
+    let rows = mark_rows(
+        review_rows(&findings, &[None], &BTreeSet::new(), true, false),
+        &findings,
+        &marks,
+    );
+    assert_eq!(rows[0].fix, FixKind::None as i32);
+    assert!(rows[0].remains.contains("wide as a support's tip"));
+}
+
+/// The tips of an island: its first one decides for the finding, and each
+/// point keeps what it can fall back on (#437).
+#[test]
+fn a_plan_counts_findings_and_keeps_the_others_of_each_point() {
+    let (a, b, c) = ([1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]);
+    let plan = FixAllPlan {
+        supports: vec![(0, a), (0, b), (1, c), (1, a)],
+        others: vec![vec![b], vec![], vec![a, b], vec![c]],
+        patches: Vec::new(),
+    };
+    assert_eq!(plan.first_tips().collect::<Vec<_>>(), [(0, a), (1, c)]);
+    assert_eq!(plan.len(), 2);
+    assert_eq!(plan.support_points(), [a, b, c]);
+    assert_eq!(*plan.support_others(), [vec![b], vec![], vec![a, b]]);
+}
+
 /// #163: a row offers "Add support here" exactly when Fix All would add
 /// that support. Before, a row kept the button where Fix All held the
 /// support back (it went in and did not hold, or the engine refused it),
@@ -492,7 +539,7 @@ fn a_row_offers_a_support_exactly_when_fix_all_takes_it() {
             .filter(|row| row.fix == FixKind::AddSupport as i32)
             .map(|row| row.id as usize)
             .collect();
-        let plan = plan_fix_all(&findings, &[], &[], |i| {
+        let plan = plan_fix_all(&findings, &[], &[], IslandTips::default(), |i| {
             support_held_back(&findings[i], &marks, now)
         });
         let by_fix_all: Vec<usize> = plan.supports.iter().map(|(i, _)| *i).collect();
@@ -590,10 +637,12 @@ mod fix_all {
 
     use super::*;
     use crate::df_support_run::DfSupportRun;
+    use crate::error_dialog::MessageClass;
     use crate::hollow_run::HollowRun;
     use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
     use crate::review::{ReviewOutcome, erased_stack, review_for_test, review_slices};
     use crate::slice_result::{SliceParams, SliceResult};
+    use crate::slint_ui::{MessageAnswer, MessageKind};
     use crate::support_persist::review_sets;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
 
@@ -637,7 +686,7 @@ mod fix_all {
     #[test]
     fn fix_all_plans_supports_and_small_traps() {
         let (findings, fills) = review();
-        let plan = plan_fix_all(&findings, &fills, &[], |_| false);
+        let plan = plan_fix_all(&findings, &fills, &[], IslandTips::default(), |_| false);
         let supported: Vec<usize> = plan.supports.iter().map(|s| s.0).collect();
         assert_eq!(supported, [0, 1]);
         // Both islands share one support.
@@ -647,7 +696,7 @@ mod fix_all {
         assert_eq!(patches, [2]);
         assert_eq!(plan.len(), 3);
         // Findings fixed, marked or left alone already are skipped.
-        let rest = plan_fix_all(&findings, &fills, &[], |i| i != 2);
+        let rest = plan_fix_all(&findings, &fills, &[], IslandTips::default(), |i| i != 2);
         assert_eq!(rest.len(), 1);
     }
 
@@ -658,7 +707,9 @@ mod fix_all {
         let (findings, fills) = review();
         let mut hollows = [None; 7];
         hollows[2] = Some(1);
-        let plan = plan_fix_all(&findings, &fills, &hollows, |_| false);
+        let plan = plan_fix_all(&findings, &fills, &hollows, IslandTips::default(), |_| {
+            false
+        });
         assert!(plan.patches.is_empty());
     }
 
@@ -2128,6 +2179,155 @@ mod fix_all {
                 .collect()
         };
         assert_eq!(unchanged(&before), unchanged(&after));
+    }
+
+    /// The list of a window as the question reads it: the islands of the held
+    /// review.
+    fn held_islands(panel: &ReviewPanel) -> Vec<usize> {
+        held_findings(panel)
+            .into_iter()
+            .filter(|(title, ..)| title == "Unsupported island")
+            .map(|(_, first, _)| first)
+            .collect()
+    }
+
+    /// Closes what the run of the supports told, and answers the question
+    /// behind it.
+    fn answer_the_question(w: &IslandWindow, answer: MessageAnswer) {
+        let dialogs = w.panel.ctrl.dialogs();
+        while dialogs
+            .queued_for_test()
+            .first()
+            .is_some_and(|(kind, _)| *kind != MessageKind::AddSupports)
+        {
+            dialogs.answer(MessageAnswer::Close, false);
+        }
+        dialogs.answer(answer, false);
+    }
+
+    /// A slice whose list has islands ends with one question (#437), and No
+    /// leaves everything as it was.
+    #[test]
+    fn a_slice_with_islands_asks_once_and_no_leaves_the_list() {
+        let (queued, heading, before, after, left) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let dialogs = w.panel.ctrl.dialogs();
+            let queued: Vec<_> = dialogs
+                .queued_for_test()
+                .into_iter()
+                .filter(|(kind, _)| *kind != MessageKind::Info)
+                .collect();
+            let islands = w.panel.islands_plan().first_tips().count();
+            let before = (island_state(&w), held_islands(&w.panel));
+            answer_the_question(&w, MessageAnswer::Cancel);
+            let after = (island_state(&w), held_islands(&w.panel));
+            (queued, islands, before, after, dialogs.queued_for_test())
+        });
+        assert_eq!(
+            queued,
+            [(MessageKind::AddSupports, MessageClass::MustAnswer)]
+        );
+        assert!(heading > 0, "islands to ask about");
+        assert!(!before.1.is_empty(), "the list has islands");
+        assert_eq!(before, after);
+        assert!(left.is_empty());
+    }
+
+    /// Yes places the tips and slices again, without asking again; one Undo
+    /// takes the supports, the slice and the review back (#437).
+    #[test]
+    fn a_yes_slices_again_and_one_undo_puts_everything_back() {
+        let (asked_again, message, resliced, supports, stale, list, undone) =
+            on_fresh_slint_thread(|| {
+                let w = island_window();
+                let dialogs = w.panel.ctrl.dialogs();
+                let before = fix_all_fingerprint(&w.document, &w.panel, "");
+                let list = held_islands(&w.panel);
+                answer_the_question(&w, MessageAnswer::Confirm);
+                assert!(w.panel.fixing(), "the run started");
+                let _ = wait_fix_all(&w.panel);
+                let resliced = w.resliced.get();
+                let supports = w
+                    .window
+                    .get_review_message()
+                    .to_string()
+                    .contains("supports added");
+                slice_with(&w.document, &w.panel, true, &island_profile());
+                assert!(!w.panel.fixing(), "the run is over");
+                let asked_again = dialogs.queued_for_test();
+                let message = w.window.get_review_message().to_string();
+                assert!(w.document.undo().expect("one undo"), "an undo step");
+                let stale = w.panel.is_stale();
+                let undone = fix_all_fingerprint(&w.document, &w.panel, "")
+                    .lines()
+                    .filter(|l| l.starts_with("leaf"))
+                    .eq(before.lines().filter(|l| l.starts_with("leaf")));
+                let same_list = held_islands(&w.panel) == list;
+                (
+                    asked_again,
+                    message,
+                    resliced,
+                    supports,
+                    stale,
+                    same_list,
+                    undone,
+                )
+            });
+        assert!(asked_again.is_empty(), "{asked_again:?}");
+        assert!(message.contains("supports are in"), "{message}");
+        assert_eq!(resliced, 1);
+        assert!(supports, "the tips went in");
+        assert!(!stale, "the slice of before the Yes is back");
+        assert!(list, "and its review");
+        assert!(undone, "one undo takes the supports back");
+    }
+
+    /// Cancel on the slice of a Yes puts everything back, and says so.
+    #[test]
+    fn a_cancelled_yes_leaves_the_scene_untouched() {
+        let (before, after, message, fixing) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let before = island_state(&w);
+            answer_the_question(&w, MessageAnswer::Confirm);
+            let _ = wait_fix_all(&w.panel);
+            w.panel.slice_ended_without_result(true);
+            let message = w.window.get_review_message().to_string();
+            let fixing = w.panel.fixing();
+            w.resliced.set(0);
+            (before, island_state(&w), message, fixing)
+        });
+        assert!(!fixing);
+        assert!(
+            message.contains("Adding supports was cancelled"),
+            "{message}"
+        );
+        let unchanged = |state: &str| -> Vec<String> {
+            state
+                .lines()
+                .filter(|l| !l.starts_with("message"))
+                .map(str::to_owned)
+                .collect()
+        };
+        assert_eq!(unchanged(&before), unchanged(&after));
+    }
+
+    /// An ignored island is out of the question, and a slice with nothing
+    /// left to ask about asks nothing.
+    #[test]
+    fn no_island_to_add_supports_to_asks_nothing() {
+        let queued = on_fresh_slint_thread(|| {
+            let w = island_window();
+            let dialogs = w.panel.ctrl.dialogs();
+            answer_the_question(&w, MessageAnswer::Cancel);
+            let plan = w.panel.islands_plan();
+            let found: BTreeSet<usize> = plan.first_tips().map(|(i, _)| i).collect();
+            for i in found {
+                w.panel.leave(i as i32);
+            }
+            w.panel.ask_for_supports();
+            dialogs.queued_for_test()
+        });
+        assert!(queued.is_empty(), "{queued:?}");
     }
 
     /// The scene edited while Fix All's supports are placed: the run is
