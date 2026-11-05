@@ -272,6 +272,43 @@ impl TipIndex {
     }
 }
 
+/// How far apart the ends of two cones must be to be two tips, in
+/// millimetres: a tip with a neck is two cones, and tips placed stand two
+/// contacts apart.
+const SAME_TIP_REACH_MM: f64 = 0.3;
+
+impl TipIndex {
+    /// The ends of the tips at height `z_mm` that touch `start`, as
+    /// [`Self::contact`] reads a touch, added to `found`: a tip counts once,
+    /// on however many layers it touches.
+    pub fn touching(
+        &self,
+        grid: &TipGrid,
+        z_mm: f64,
+        start: &TipTarget<'_>,
+        reach_px: [u32; 2],
+        found: &mut Vec<[f64; 3]>,
+    ) {
+        let reach = [f64::from(reach_px[0]), f64::from(reach_px[1])];
+        for cone in self.at(z_mm) {
+            let mut touches = false;
+            for_each_pixel(grid, cone, z_mm, start.bbox, reach, |x, y| {
+                touches |= near(start.runs, x, y, reach_px) && !lit(start.below, x, y);
+            });
+            let known = found.iter().any(|end| {
+                (0..3)
+                    .map(|i| (end[i] - cone.tip[i]).powi(2))
+                    .sum::<f64>()
+                    .sqrt()
+                    < SAME_TIP_REACH_MM
+            });
+            if touches && !known {
+                found.push(cone.tip);
+            }
+        }
+    }
+}
+
 /// What [`TipIndex::contact`] judges: the first pixels of a part.
 #[derive(Clone, Copy, Debug)]
 pub struct TipTarget<'a> {

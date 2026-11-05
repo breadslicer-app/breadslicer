@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::checks::islands::{self, Island, IslandOptions, Part};
+use crate::checks::islands::{self, Growth, Island, IslandOptions, Part};
 use crate::checks::output::{self, OutputOptions};
 use crate::checks::raft::{self, RaftOptions};
 use crate::checks::traps::{self, TrapOptions};
@@ -84,6 +84,8 @@ pub struct ReviewReport {
     pub erased: CavityFill,
     /// Every island found, whether a raft explains it or not.
     pub islands: Vec<Island>,
+    /// Every region listed for growing at once.
+    pub growths: Vec<Growth>,
     /// Every part of the plate, lineages included.
     pub parts: Vec<Part>,
     /// Where the time went.
@@ -145,6 +147,7 @@ pub fn check_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Review
         fills,
         erased: islands.erased,
         islands: islands.islands,
+        growths: islands.growths,
         parts: islands.parts,
         timings,
     }

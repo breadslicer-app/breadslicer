@@ -416,7 +416,94 @@ fn a_sudden_growth_is_listed_from_the_first_pixels() {
     assert_eq!((growth[0].first_layer, growth[0].last_layer), (6, 6));
     assert_eq!(growth[0].severity, Severity::Warning);
     assert!(growth[0].detail.contains("×14"), "{}", growth[0].detail);
-    assert!(growth[0].fix.is_none());
+    assert!(matches!(
+        growth[0].fix,
+        Some(SuggestedFix::AddSupport { .. })
+    ));
+}
+
+/// 64 pixels, then 900 from layer 6: what a tip of the rim reaches.
+fn grown(builder: FixtureBuilder) -> FixtureBuilder {
+    builder
+        .model(4..6, Shape::rect(111.0, 51.0, 119.0, 59.0))
+        .model(6..10, Shape::rect(100.0, 40.0, 130.0, 70.0))
+}
+
+/// The pillar under the growth has a tip of its own, which holds it.
+fn held_pillar(builder: FixtureBuilder) -> FixtureBuilder {
+    grown(builder).tip(115.0, 55.0, 4, 3.0)
+}
+
+/// #437: a region that has the tips it wants is not listed; one short of them
+/// says how many it has.
+#[test]
+fn a_growth_with_the_tips_it_wants_is_not_listed() {
+    let one = held_pillar(body(10)).tip(104.0, 44.0, 6, 2.0).build();
+    let report_one = report(&one);
+    assert_eq!(report_one.growths.len(), 1);
+    assert_eq!(report_one.growths[0].wanted, GROWTH_TIPS);
+    assert_eq!(report_one.growths[0].tips_mm.len(), 1);
+    let growth = findings_of(&one, CheckKind::SurfaceGrowth);
+    assert!(growth[0].detail.contains("1 stand"), "{}", growth[0].detail);
+
+    let two = held_pillar(body(10))
+        .tip(104.0, 44.0, 6, 2.0)
+        .tip(126.0, 66.0, 6, 2.0)
+        .build();
+    assert!(findings_of(&two, CheckKind::SurfaceGrowth).is_empty());
+    assert!(report(&two).growths.is_empty());
+}
+
+/// A tip under the old section does not count: it stands under what stood
+/// there before, not under what the region gained.
+#[test]
+fn a_tip_under_what_stood_there_does_not_count_for_a_growth() {
+    let fixture = held_pillar(body(10)).build();
+    assert!(report(&fixture).growths[0].tips_mm.is_empty());
+}
+
+/// #433: what a growth says of a tip, once the review is over, is what the
+/// next review counts, wherever the tip stands.
+#[test]
+fn a_growth_judges_a_tip_as_the_next_review_does() {
+    let bare = held_pillar(body(10)).build();
+    let report = report(&bare);
+    let start = &report.growths[0].start;
+    let tips = [
+        (104.0, 44.0, 6, 2.0),
+        (126.0, 66.0, 6, 2.0),
+        (150.0, 44.0, 6, 2.0),
+        (104.0, 44.0, 3, 2.0),
+        (135.0, 44.0, 6, 2.0),
+    ];
+    let mut verdicts = Vec::new();
+    for (x, y, layer, radius) in tips {
+        let tipped = held_pillar(body(10)).tip(x, y, layer, radius).build();
+        let again = tipped.report();
+        let counted = again.growths[0].tips_mm.len() == 1;
+        let alone = with_block(body(10), 8, 10).tip(x, y, layer, radius).build();
+        assert_eq!(
+            start.held_by(alone.input().tips()),
+            counted,
+            "a tip at {x}, {y} up to layer {layer}"
+        );
+        verdicts.push(counted);
+    }
+    assert!(verdicts.contains(&true) && verdicts.contains(&false));
+}
+
+/// #437: a second jump of ×5 on the next layer asks for more tips; one of
+/// ×10 is a growth of its own.
+#[test]
+fn a_growth_the_next_layer_multiplies_wants_more_tips() {
+    let chained = body(10)
+        .model(4..6, Shape::rect(111.0, 51.0, 119.0, 59.0))
+        .model(6..7, Shape::rect(100.0, 40.0, 130.0, 70.0))
+        .model(7..10, Shape::rect(78.0, 18.0, 152.0, 92.0))
+        .tip(115.0, 55.0, 4, 3.0)
+        .build();
+    let wanted: Vec<usize> = report(&chained).growths.iter().map(|g| g.wanted).collect();
+    assert_eq!(wanted, [GROWTH_TIPS + CHAINED_GROWTH_TIPS]);
 }
 
 #[test]

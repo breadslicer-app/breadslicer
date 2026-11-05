@@ -45,6 +45,17 @@
 //! the rim of the first pixels, then the rest of them, then the layers right
 //! above: it stays under what it must hold for as long as it can.
 //!
+//! # The tips of a region that grew at once
+//!
+//! A region held or not that grows at once wants tips of its own
+//! ([`Growth`]). They go on the surface it gained, the pixels with no model
+//! under them: as far from each other and from those it has as they can,
+//! [`SPACING_DIAMETERS`] apart. What does not fit on its layer waits for the
+//! layers above, where it has grown; what never fits is not placed, and a
+//! region with room for none is [`TipPlan::no_room`].
+//!
+//! # Candidates
+//!
 //! A plan is candidates, not tips (#433). Whoever places them takes the first
 //! the engine can reach and [`crate::IslandStart::held_by`] says holds the
 //! island, the very decision the next review makes. An island none of them
@@ -52,7 +63,7 @@
 
 use std::sync::Arc;
 
-use crate::checks::islands::{GROWTH_FACTOR, Island};
+use crate::checks::islands::{GROWTH_FACTOR, Growth, Island};
 use crate::finding::PlatePoint;
 use crate::runs::{Run, difference, erode_ellipse};
 use crate::tips::lit;
@@ -216,12 +227,22 @@ pub struct TipPlan {
     /// The islands that never get as wide as a contact, by index: nothing
     /// goes on them.
     pub too_narrow: Vec<usize>,
+    /// The tips of the regions that grew at once: [`PlannedTip::island`] is
+    /// the region's index in the list planned.
+    pub growth: Vec<PlannedTip>,
+    /// The regions no contact fits on, by index.
+    pub no_room: Vec<usize>,
 }
 
 impl TipPlan {
     /// The tips of island `island`, the one that starts it first.
     pub fn of(&self, island: usize) -> impl Iterator<Item = &PlannedTip> + '_ {
         self.tips.iter().filter(move |tip| tip.island == island)
+    }
+
+    /// The tips of region `growth`.
+    pub fn of_growth(&self, growth: usize) -> impl Iterator<Item = &PlannedTip> + '_ {
+        self.growth.iter().filter(move |tip| tip.island == growth)
     }
 }
 
@@ -241,9 +262,25 @@ pub fn plan_tips(islands: &[Island], options: &TipPlanOptions) -> TipPlan {
     plan
 }
 
-/// One island's tips being worked out.
+/// [`plan_tips`], and the tips of the regions that grew at once.
+pub fn plan_all_tips(islands: &[Island], growths: &[Growth], options: &TipPlanOptions) -> TipPlan {
+    let mut plan = plan_tips(islands, options);
+    for (index, growth) in growths.iter().enumerate() {
+        let tips = Placing::for_growth(growth, options).run_growth();
+        if tips.is_empty() {
+            plan.no_room.push(index);
+        }
+        plan.growth.extend(tips.into_iter().map(|mut tip| {
+            tip.island = index;
+            tip
+        }));
+    }
+    plan
+}
+
+/// One island's tips being worked out, or one region's.
 struct Placing<'i> {
-    island: &'i Island,
+    growth_mm2: &'i [f64],
     pixels: Arc<IslandPixels>,
     options: &'i TipPlanOptions,
     /// The tips it has by now, on the plate: those it came with and those
@@ -260,7 +297,7 @@ struct Placing<'i> {
 impl<'i> Placing<'i> {
     fn new(island: &'i Island, options: &'i TipPlanOptions) -> Self {
         Self {
-            island,
+            growth_mm2: &island.growth_mm2,
             pixels: island.pixels.clone(),
             options,
             standing: island.tips_mm.iter().map(|tip| [tip[0], tip[1]]).collect(),
@@ -270,9 +307,50 @@ impl<'i> Placing<'i> {
         }
     }
 
+    fn for_growth(growth: &'i Growth, options: &'i TipPlanOptions) -> Self {
+        Self {
+            growth_mm2: &[],
+            pixels: growth.pixels.clone(),
+            options,
+            standing: growth.tips_mm.iter().map(|tip| [tip[0], tip[1]]).collect(),
+            spare: 0,
+            placed: Vec::new(),
+            owed: growth.wanted.saturating_sub(growth.tips_mm.len()),
+        }
+    }
+
+    /// What a region's growth is owed, layer by layer until it is paid.
+    fn run_growth(mut self) -> Vec<PlannedTip> {
+        let pixels = self.pixels.clone();
+        for at in 0..pixels.layers.len() {
+            if self.owed == 0 {
+                break;
+            }
+            let spots = self.spots_on(at);
+            if spots.is_empty() {
+                continue;
+            }
+            // A surface with no tip yet: the first goes in the middle of it.
+            if self.standing.is_empty() {
+                let mm = |&(x, y): &(u32, u32)| pixels.centre_mm(x, y);
+                let middle = pixels.middle_mm(&pixels.layers[at].runs);
+                let spot = spots
+                    .iter()
+                    .min_by(|a, b| distance2(mm(a), middle).total_cmp(&distance2(mm(b), middle)))
+                    .copied()
+                    .expect("spots to pick from");
+                let others = self.others_near(spot, &spots, at);
+                self.place(spot, at, others);
+                self.owed -= 1;
+            }
+            self.place_owed(at, &spots);
+        }
+        self.placed
+    }
+
     fn run(mut self) -> Vec<PlannedTip> {
         let pixels = self.pixels.clone();
-        let growth = &self.island.growth_mm2;
+        let growth = self.growth_mm2;
         let first_mm2 = growth.first().copied().unwrap_or(0.0);
         let mut peak_mm2 = first_mm2;
         let mut for_surface = 0;
@@ -311,13 +389,7 @@ impl<'i> Placing<'i> {
             return;
         }
         let pixels = self.pixels.clone();
-        let layer = &pixels.layers[at];
-        // The centre of a pixel: half of it counts towards the contact.
-        let [rx, ry] = pixels
-            .step_mm
-            .map(|step| (0.5 * self.options.contact_diameter_mm / step.abs() - 0.5).max(0.0));
-        let room = erode_ellipse(&layer.runs, rx, ry);
-        let spots = candidates(&room);
+        let spots = self.spots_on(at);
         if spots.is_empty() {
             return;
         }
@@ -332,6 +404,24 @@ impl<'i> Placing<'i> {
             let others = self.first_others(spot, at);
             self.place(spot, at, others);
         }
+        self.place_owed(at, &spots);
+    }
+
+    /// Where a whole contact fits on layer `at`.
+    fn spots_on(&self, at: usize) -> Vec<(u32, u32)> {
+        let pixels = &self.pixels;
+        // The centre of a pixel: half of it counts towards the contact.
+        let [rx, ry] = pixels
+            .step_mm
+            .map(|step| (0.5 * self.options.contact_diameter_mm / step.abs() - 0.5).max(0.0));
+        candidates(&erode_ellipse(&pixels.layers[at].runs, rx, ry))
+    }
+
+    /// Places on `spots`, of layer `at`, what is owed and fits there, as far
+    /// from the tips that stand as it can.
+    fn place_owed(&mut self, at: usize, spots: &[(u32, u32)]) {
+        let pixels = self.pixels.clone();
+        let mm = |&(x, y): &(u32, u32)| pixels.centre_mm(x, y);
         let spacing = self.options.spacing_diameters * self.options.contact_diameter_mm;
         while self.owed > 0 {
             let nearest = |spot: &(u32, u32)| {
@@ -348,20 +438,24 @@ impl<'i> Placing<'i> {
             else {
                 return;
             };
-            let others = spots
+            let free: Vec<(u32, u32)> = spots
                 .iter()
                 .filter(|other| nearest(other) >= spacing * spacing)
                 .copied()
                 .collect();
-            let others = self
-                .nearest_first(spot, others)
-                .into_iter()
-                .take(OTHERS_PER_LAYER as usize)
-                .map(|(x, y)| pixels.aim(at, x, y))
-                .collect();
+            let others = self.others_near(spot, &free, at);
             self.place(spot, at, others);
             self.owed -= 1;
         }
+    }
+
+    /// The spots of `spots`, of layer `at`, that would do for `spot`.
+    fn others_near(&self, spot: (u32, u32), spots: &[(u32, u32)], at: usize) -> Vec<PlatePoint> {
+        self.nearest_first(spot, spots.to_vec())
+            .into_iter()
+            .take(OTHERS_PER_LAYER as usize)
+            .map(|(x, y)| self.pixels.aim(at, x, y))
+            .collect()
     }
 
     /// `spots` without `spot`, the nearest to it first.

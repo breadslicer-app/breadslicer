@@ -16,6 +16,48 @@ fn body(layers: usize) -> FixtureBuilder {
     FixtureBuilder::new(layers).model(0..layers, Shape::rect(20.0, 20.0, 60.0, 50.0))
 }
 
+/// #437: the tips of a region that grew go on the surface it gained, apart
+/// from each other, not on what stood there.
+#[test]
+fn the_tips_of_a_growth_share_out_what_it_gained() {
+    let report = body(10)
+        .model(4..6, Shape::rect(111.0, 51.0, 119.0, 59.0))
+        .model(6..10, Shape::rect(100.0, 40.0, 130.0, 70.0))
+        .tip(115.0, 55.0, 4, 3.0)
+        .build()
+        .report();
+    let plan = plan_all_tips(&[], &report.growths, &TipPlanOptions::for_tip(0.3));
+    let tips: Vec<&PlannedTip> = plan.of_growth(0).collect();
+    assert_eq!(tips.len(), GROWTH_TIPS);
+    assert!(plan.no_room.is_empty());
+    let (a, b) = (tips[0].at, tips[1].at);
+    let apart = (a.x_mm - b.x_mm).hypot(a.y_mm - b.y_mm);
+    assert!(apart >= 0.6, "{apart}");
+    // On the rim the region gained, off the pillar of 111..119, 51..59 in
+    // pixels of 0.1 mm.
+    let pixels = &report.growths[0].pixels;
+    for tip in &tips {
+        assert!(pixels.layers[0].runs.iter().any(|run| {
+            let row_mm = (f64::from(run.row) + 0.5).mul_add(pixels.step_mm[1], pixels.origin_mm[1]);
+            (row_mm - tip.at.y_mm).abs() < pixels.step_mm[1].abs()
+        }));
+    }
+}
+
+/// A region where no contact ever fits gets no tip, and says so.
+#[test]
+fn a_growth_no_contact_fits_on_is_left_with_no_room() {
+    let report = body(10)
+        .model(4..6, Shape::rect(111.0, 51.0, 119.0, 59.0))
+        .model(6..10, Shape::rect(100.0, 40.0, 130.0, 70.0))
+        .tip(115.0, 55.0, 4, 3.0)
+        .build()
+        .report();
+    let plan = plan_all_tips(&[], &report.growths, &TipPlanOptions::for_tip(5.0));
+    assert!(plan.growth.is_empty());
+    assert_eq!(plan.no_room, [0]);
+}
+
 fn islands(builder: FixtureBuilder) -> Vec<Island> {
     builder.build().report().islands
 }
