@@ -41,10 +41,14 @@
 //!
 //! The engine may not reach a point: under the middle of an island the way
 //! down can be blocked where one beside it is clear. So each tip comes with
-//! the other points that would do ([`PlannedTip::others`]), and the engine
-//! takes the first it can hold. A first tip's are the rim of the first pixels,
-//! then the rest of them, then the layers right above: it stays under what it
-//! must hold for as long as it can.
+//! the other points that would do ([`PlannedTip::others`]). A first tip's are
+//! the rim of the first pixels, then the rest of them, then the layers right
+//! above: it stays under what it must hold for as long as it can.
+//!
+//! A plan is candidates, not tips (#433). Whoever places them takes the first
+//! the engine can reach and [`crate::IslandStart::held_by`] says holds the
+//! island, the very decision the next review makes. An island none of them
+//! holds gets no tip at all, and says why.
 
 use std::sync::Arc;
 

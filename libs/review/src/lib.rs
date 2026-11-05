@@ -55,7 +55,7 @@ pub mod tip_plan;
 pub mod tips;
 pub mod union_find;
 
-pub use checks::islands::{Held, Island, Part};
+pub use checks::islands::{Held, Island, IslandStart, Part};
 pub use fill::{CavityFill, FillSlab, PlateRect, erase_stack, fill_stack};
 pub use finding::{
     CheckKind, Finding, MAX_FOOTPRINT_LAYERS, PlatePoint, RoleScope, Severity, SuggestedFix,

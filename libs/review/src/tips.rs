@@ -15,8 +15,9 @@
 //! slicing a triangle of it.
 
 use sc_sl1cer::geom2d::Point2D;
+use sc_sl1cer::raster::pixel_map::PixelMap;
 
-use crate::input::ReviewInput;
+use crate::input::{ReviewInput, pixel_to_plate};
 use crate::regions::PixelBox;
 use crate::runs::Run;
 use crate::tip_plan::IslandPixels;
@@ -148,6 +149,24 @@ impl Placed {
     }
 }
 
+/// The screen a tip's pixels are read on: all of a slice that deciding
+/// whether a tip holds a part needs, once the slice's input is gone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TipGrid {
+    pixel_map: PixelMap,
+    pixel_area_mm2: f64,
+}
+
+impl TipGrid {
+    /// The screen of `input`.
+    pub fn of(input: &ReviewInput<'_>) -> Self {
+        Self {
+            pixel_map: *input.pixel_map(),
+            pixel_area_mm2: input.pixel_area_mm2(),
+        }
+    }
+}
+
 /// The tips of a plate by height.
 #[derive(Clone, Debug, Default)]
 pub struct TipIndex {
@@ -208,27 +227,31 @@ impl TipIndex {
             .filter(move |c| c.high >= z_mm)
     }
 
-    /// How the tips on layer `below` touch a part starting right above it:
-    /// `start` is its first pixels, `solid_below` what the model has on that
-    /// layer, and `reach_px` (columns, rows) how far from the part a tip's
-    /// pixel still touches it. Pixels of the model do not count: a tip
-    /// inside the model holds the model there, not this part.
+    /// How the tips at height `z_mm`, that of the layer below a part, touch
+    /// the part starting right above it: `start` is its first pixels and what
+    /// the model has on that layer, and `reach_px` (columns, rows) how far
+    /// from the part a tip's pixel still touches it. Pixels of the model do
+    /// not count: a tip inside the model holds the model there, not this
+    /// part.
+    ///
+    /// This is the one decision of whether a part is held: the review asks
+    /// it of a plate's tips, and a tip being placed asks it of itself
+    /// ([`crate::IslandStart::held_by`]).
     pub fn contact(
         &self,
-        input: &ReviewInput<'_>,
-        below: usize,
+        grid: &TipGrid,
+        z_mm: f64,
         start: &TipTarget<'_>,
         reach_px: [u32; 2],
         share: f64,
     ) -> TipContact {
-        let z_mm = input.layers()[below].sample_mm;
-        let pixel_mm2 = input.pixel_area_mm2();
+        let pixel_mm2 = grid.pixel_area_mm2;
         let reach = [f64::from(reach_px[0]), f64::from(reach_px[1])];
         let mut touched: Vec<(u32, u32)> = Vec::new();
         let mut reaches_share = false;
         for cone in self.at(z_mm) {
             let from = touched.len();
-            for_each_pixel(input, cone, z_mm, start.bbox, reach, |x, y| {
+            for_each_pixel(grid, cone, z_mm, start.bbox, reach, |x, y| {
                 if near(start.runs, x, y, reach_px) && !lit(start.below, x, y) {
                     touched.push((y, x));
                 }
@@ -294,7 +317,7 @@ fn near(runs: &[Run], x: u32, y: u32, reach_px: [u32; 2]) -> bool {
 /// Calls `visit` with every pixel within `reach` of `bbox` whose centre lies
 /// inside `cone` at height `z_mm`.
 fn for_each_pixel(
-    input: &ReviewInput<'_>,
+    grid: &TipGrid,
     cone: &Placed,
     z_mm: f64,
     bbox: PixelBox,
@@ -302,7 +325,7 @@ fn for_each_pixel(
     mut visit: impl FnMut(u32, u32),
 ) {
     let [x0, y0, x1, y1] = cone.bounds_at(z_mm);
-    let map = input.pixel_map();
+    let map = &grid.pixel_map;
     let a = map.mm_to_pixel(Point2D::new(x0, y0));
     let b = map.mm_to_pixel(Point2D::new(x1, y1));
     // Screen mirrors swap the corners.
@@ -315,7 +338,7 @@ fn for_each_pixel(
     }
     for y in top.max(0.0) as u32..bottom.max(0.0) as u32 {
         for x in left.max(0.0) as u32..right.max(0.0) as u32 {
-            let [px, py] = input.pixel_to_plate([f64::from(x) + 0.5, f64::from(y) + 0.5]);
+            let [px, py] = pixel_to_plate(map, [f64::from(x) + 0.5, f64::from(y) + 0.5]);
             if cone.holds([px, py, z_mm]) {
                 visit(x, y);
             }

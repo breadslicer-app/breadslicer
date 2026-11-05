@@ -54,8 +54,8 @@ pub use projection::{
 };
 pub use scale_compensation::{SupportOwners, scale_factors};
 pub use slice_plate::{
-    MismatchedLayerCount, PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams,
-    schedule_for_selection, slice_plate,
+    MismatchedLayerCount, PlateContours, PlateFrame, SlicePlateError, SliceRun, SlicedPlate,
+    SlicingParams, schedule_for_selection, slice_plate,
 };
 
 #[cfg(test)]

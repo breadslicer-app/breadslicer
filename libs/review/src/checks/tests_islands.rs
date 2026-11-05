@@ -97,6 +97,37 @@ fn a_tip_under_its_own_pixels_holds_a_part() {
     assert!(report.parts[1].tip_contact_px > 0);
 }
 
+/// #433: what an island says of a tip, once the review is over, is what the
+/// next review says of a plate with that tip on it, wherever the tip stands.
+#[test]
+fn an_island_judges_a_tip_as_the_next_review_does() {
+    let bare = with_block(body(10), 4, 10).build();
+    let report = report(&bare);
+    let island = &report.islands[0];
+    // Under it, beside its edge, far from it, stopping short of the layer
+    // below it, and thin at its very edge.
+    let tips = [
+        (115.0, 55.0, 4, 3.0),
+        (129.0, 55.0, 4, 3.0),
+        (136.0, 55.0, 4, 6.0),
+        (150.0, 55.0, 4, 3.0),
+        (115.0, 55.0, 2, 3.0),
+        (131.0, 55.0, 4, 1.0),
+    ];
+    let mut verdicts = Vec::new();
+    for (x, y, layer, radius) in tips {
+        let tipped = with_block(body(10), 4, 10).tip(x, y, layer, radius).build();
+        let reviewed = islands(&tipped).is_empty();
+        assert_eq!(
+            island.start.held_by(tipped.input().tips()),
+            reviewed,
+            "a tip at {x}, {y} up to layer {layer}"
+        );
+        verdicts.push(reviewed);
+    }
+    assert!(verdicts.contains(&true) && verdicts.contains(&false));
+}
+
 #[test]
 fn a_tip_that_stops_short_of_the_layer_below_holds_nothing() {
     let fixture = with_block(body(10), 4, 10).tip(115.0, 55.0, 2, 3.0).build();

@@ -92,6 +92,43 @@ pub struct SlicedPlate {
     pub(crate) support_box_mm: Option<[f64; 5]>,
 }
 
+/// Where a run's scale compensation sends the scene's points: what a tip
+/// placed after the run needs to be read as the run's slices are.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlateFrame {
+    factors: [f64; 3],
+    pivots: LeafPivots,
+}
+
+impl Default for PlateFrame {
+    /// A run that changed no dimension.
+    fn default() -> Self {
+        Self {
+            factors: [1.0; 3],
+            pivots: Vec::new(),
+        }
+    }
+}
+
+impl PlateFrame {
+    /// Return where `point` (millimetres, as the scene has it) of `leaf`
+    /// lands in the sliced leaves, once scaled about that leaf's pivot in X
+    /// and Y and about the plate in Z.
+    pub fn point_mm(&self, leaf: NodeId, point: [f64; 3]) -> [f64; 3] {
+        let [fx, fy, fz] = self.factors;
+        let [cx, cy] = self
+            .pivots
+            .iter()
+            .find(|(id, _)| *id == leaf)
+            .map_or([0.0, 0.0], |(_, pivot)| *pivot);
+        [
+            cx + (point[0] - cx) * fx,
+            cy + (point[1] - cy) * fy,
+            point[2] * fz,
+        ]
+    }
+}
+
 impl SlicedPlate {
     /// Return the per-leaf stacks, in the engine's discovery order.
     pub fn leaves(&self) -> &[LeafSlices] {
@@ -123,17 +160,15 @@ impl SlicedPlate {
     /// lands in the sliced leaves, once scaled about that leaf's pivot in X
     /// and Y and about the plate in Z.
     pub fn compensated_point_mm(&self, leaf: NodeId, point: [f64; 3]) -> [f64; 3] {
-        let [fx, fy, fz] = scale_factors(self.scale);
-        let [cx, cy] = self
-            .pivots
-            .iter()
-            .find(|(id, _)| *id == leaf)
-            .map_or([0.0, 0.0], |(_, pivot)| *pivot);
-        [
-            cx + (point[0] - cx) * fx,
-            cy + (point[1] - cy) * fy,
-            point[2] * fz,
-        ]
+        self.frame().point_mm(leaf, point)
+    }
+
+    /// Return where the run sends the scene's points.
+    pub fn frame(&self) -> PlateFrame {
+        PlateFrame {
+            factors: scale_factors(self.scale),
+            pivots: self.pivots.clone(),
+        }
     }
 
     /// Return the box the support leaves take once scaled, `[min x, min y,

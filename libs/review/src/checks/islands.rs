@@ -61,13 +61,13 @@ use crate::finding::{
 };
 use crate::input::ReviewInput;
 use crate::regions::{
-    LayerRead, PartStart, PlateRegions, Region, SweepOptions, WantedRegions, link_holds,
+    LayerRead, PartStart, PixelBox, PlateRegions, Region, SweepOptions, WantedRegions, link_holds,
     read_layers, runs_in, wanted,
 };
 use crate::runner::ReviewContext;
 use crate::runs::{Run, dilate_square, union};
 use crate::tip_plan::{IslandLayer, IslandPixels};
-use crate::tips::{TipContact, TipIndex, TipTarget};
+use crate::tips::{TipCone, TipContact, TipGrid, TipIndex, TipTarget};
 use crate::union_find::RegionRef;
 
 /// The layers that rest on the build plate: 2. Nothing that starts on them
@@ -198,6 +198,13 @@ impl Part {
 
 const NO_PART: u32 = u32::MAX;
 
+/// How far from a part a tip's pixel still touches it, in columns and rows.
+fn tip_reach_px(input: &ReviewInput<'_>, options: &IslandOptions) -> [u32; 2] {
+    input
+        .pixel_size_mm()
+        .map(|size| (options.tip_reach_mm / size).round() as u32)
+}
+
 /// The parts of the plate, in the order they start, and what they became.
 fn walk_parts(
     input: &ReviewInput<'_>,
@@ -207,8 +214,8 @@ fn walk_parts(
     sweep: &SweepOptions,
 ) -> Vec<Part> {
     let min_link_px = sweep.min_link_px(input);
-    let [size_x, size_y] = input.pixel_size_mm();
-    let reach_px = [size_x, size_y].map(|size| (options.tip_reach_mm / size).round() as u32);
+    let reach_px = tip_reach_px(input, options);
+    let grid = TipGrid::of(input);
     let contact_of = |layer: usize, start: &PartStart, region: &Region| {
         let target = TipTarget {
             runs: &start.runs,
@@ -216,7 +223,8 @@ fn walk_parts(
             bbox: region.bbox,
             below: &start.below,
         };
-        tips.contact(input, layer - 1, &target, reach_px, options.min_tip_share)
+        let z_mm = input.layers()[layer - 1].sample_mm;
+        tips.contact(&grid, z_mm, &target, reach_px, options.min_tip_share)
     };
     let mut parts: Vec<Part> = Vec::new();
     // The part each part went on as, itself while it goes on.
@@ -354,6 +362,40 @@ pub struct Island {
     /// The tips that stand in it already, higher than its first pixels, in
     /// plate millimetres.
     pub tips_mm: Vec<[f64; 3]>,
+    /// What decides whether a tip holds it.
+    pub start: Arc<IslandStart>,
+}
+
+/// An island's first pixels as the review judged them, kept so a tip can be
+/// judged the same way once the review is over, before anything is sliced
+/// again (#433): nothing here is another rule.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IslandStart {
+    grid: TipGrid,
+    /// The height of the layer below the first pixels.
+    z_mm: f64,
+    runs: Vec<Run>,
+    area_px: u64,
+    bbox: PixelBox,
+    below: Vec<Run>,
+    reach_px: [u32; 2],
+    share: f64,
+}
+
+impl IslandStart {
+    /// Whether `tips`, in plate millimetres, hold the island: what the next
+    /// review of the plate says of a plate with them on it.
+    pub fn held_by(&self, tips: &[TipCone]) -> bool {
+        let target = TipTarget {
+            runs: &self.runs,
+            area_px: self.area_px,
+            bbox: self.bbox,
+            below: &self.below,
+        };
+        TipIndex::new(tips)
+            .contact(&self.grid, self.z_mm, &target, self.reach_px, self.share)
+            .holds
+    }
 }
 
 /// What the check gives: the findings, what they found and what to erase.
@@ -410,7 +452,9 @@ pub fn run(ctx: &ReviewContext<'_>, options: &IslandOptions, sweep: &SweepOption
     for (part, runs) in islands.iter().zip(pixels.iter()) {
         let footprint = CavityFill::from_runs(input, runs.clone());
         let finding = island_finding(input, regions, part).with_footprint(Arc::new(footprint));
-        reported.push(island_of(input, regions, part, &finding, runs, &tips));
+        reported.push(island_of(
+            input, regions, part, &finding, runs, &tips, options,
+        ));
         findings.push(finding);
     }
     findings.extend(growth_findings(ctx, options, &parts));
@@ -490,12 +534,23 @@ fn island_of(
     finding: &Finding,
     layers: &[(usize, Vec<Run>)],
     tips: &TipIndex,
+    options: &IslandOptions,
 ) -> Island {
     let pixel_mm2 = input.pixel_area_mm2();
     let table = regions.layer(part.first_layer);
-    let runs = table
-        .start_of(part.start)
-        .map_or(&[][..], |start| start.runs.as_slice());
+    let part_start = table.start_of(part.start);
+    let runs = part_start.map_or(&[][..], |start| start.runs.as_slice());
+    let region = &table.solid[part.start as usize];
+    let start = IslandStart {
+        grid: TipGrid::of(input),
+        z_mm: input.layers()[part.first_layer.saturating_sub(1)].sample_mm,
+        runs: runs.to_vec(),
+        area_px: region.area_px,
+        bbox: region.bbox,
+        below: part_start.map_or_else(Vec::new, |start| start.below.clone()),
+        reach_px: tip_reach_px(input, options),
+        share: options.min_tip_share,
+    };
     let first_pixels_mm = runs
         .iter()
         .flat_map(|run| {
@@ -521,6 +576,7 @@ fn island_of(
         at,
         tips_mm: tips.standing_in(input, &pixels, SAME_TIP_MM),
         pixels: Arc::new(pixels),
+        start: Arc::new(start),
     }
 }
 
