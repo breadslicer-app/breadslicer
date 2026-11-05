@@ -89,8 +89,8 @@ pub const GROWTH_FACTOR: f64 = 10.0;
 /// Less is the last sliver of a cone that ends right there, or a tip that
 /// stops under a neck of the model: what the printer cures on it does not
 /// hold the part. On one scene measured against its printer file, the tips
-/// that hold touch with 55 % of their section or more, and the ones that stop
-/// short with 43 % at most.
+/// that hold touch with about 55 % of their section or more, and the ones
+/// that stop short with about 45 % at most.
 pub const MIN_TIP_SHARE: f64 = 0.5;
 
 /// How far from a part's pixels a tip's pixels on the layer below still
