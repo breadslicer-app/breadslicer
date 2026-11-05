@@ -56,14 +56,17 @@ fn review_writes_json_on_request() {
     let document: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
     assert_eq!(document["layers"], 5);
-    assert_eq!(document["leaves"][0]["role"], "model");
+    assert_eq!(document["leaves"].as_array().unwrap().len(), 1);
     assert!(document["findings"].is_array());
     assert_eq!(
         document["summary"]["findings"],
         document["findings"].as_array().unwrap().len()
     );
     assert_eq!(document["regions"]["solid"], 5);
-    assert!(document["timings_ms"]["regions"].is_number());
+    assert!(document["timings_ms"]["sweep"].is_number());
+    assert!(document["islands"].is_array());
+    assert!(document["parts"].is_array());
+    assert!(document["erased"].is_array());
 }
 
 #[test]
