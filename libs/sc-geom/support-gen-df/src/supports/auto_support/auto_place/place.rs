@@ -13,8 +13,9 @@ use super::fan::{
 use super::helpers::{
     FanShaftPoint, HostedBranchInput, PlanCtx, branch_collides_with_sdf,
     branch_departure_angle_deg, build_hosted_branch, collect_fan_shaft_points,
-    contact_cone_collides, find_merge_host, free_knot_id, host_entity_of, host_segment_span,
-    is_host_at_attachment_capacity, member_max_angle_from_vertical_deg, origin_by_source,
+    collect_fan_shaft_points_near, contact_cone_collides, find_merge_host, free_knot_id,
+    host_entity_of, host_segment_span, is_host_at_attachment_capacity,
+    member_max_angle_from_vertical_deg, origin_by_source,
 };
 use crate::supports::auto_support::constants::{
     CAVITY_FAN_RADIUS_MM, GRID_HOST_FAN_RADIUS_MM, MAX_CAVITY_BRIDGE_MM,
@@ -227,18 +228,27 @@ pub fn place_one_candidate(
         };
 
     let preset = preset_for_area(candidate.island_area_mm2);
-    let mut fan_pool: Option<Vec<FanShaftPoint>> = None;
-    let mut fan_points = || -> Vec<FanShaftPoint> {
-        fan_pool
-            .get_or_insert_with(|| collect_fan_shaft_points(draft))
-            .clone()
-    };
     let fan_max_angle = js_min(
         auto.leaf_fan_max_angle_deg,
         member_max_angle_from_vertical_deg(live),
     );
     // `auto.leafFanRadiusMm ?? LEAF_FAN_RADIUS_MM`: the Rust field is always set.
     let fan_radius = js_max(MIN_LEAF_FAN_RADIUS_MM, auto.leaf_fan_radius_mm);
+    let mut fan_pool: Option<Vec<FanShaftPoint>> = None;
+    let mut fan_points = || -> Vec<FanShaftPoint> {
+        fan_pool
+            .get_or_insert_with(|| {
+                if ctx.near_fans() {
+                    let reach = fan_radius
+                        .max(GRID_HOST_FAN_RADIUS_MM)
+                        .max(CAVITY_FAN_RADIUS_MM);
+                    collect_fan_shaft_points_near(draft, tip_pos, reach)
+                } else {
+                    collect_fan_shaft_points(draft)
+                }
+            })
+            .clone()
+    };
     let fan_ok = |fan: FanLeafResult| -> Result<FanLeafResult, FanLeafResult> {
         match fan {
             FanLeafResult::Ok { .. } => Ok(fan),

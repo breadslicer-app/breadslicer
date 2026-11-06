@@ -3078,9 +3078,11 @@ mod session_tests {
         let app = crate::settings_for(&crate::DfSupportRequest::default());
         assert!(app.supports.mesh_to_mesh.every_landing);
         assert!(app.supports.auto_bracing.exact_clearance);
+        assert!(app.supports.auto_support.near_fans);
         let port = PipelineSettings::defaults(0.05);
         assert!(!port.supports.mesh_to_mesh.every_landing);
         assert!(!port.supports.auto_bracing.exact_clearance);
+        assert!(!port.supports.auto_support.near_fans);
     }
 
     /// #433: a session reopened with settings of old keeps the one insertion.

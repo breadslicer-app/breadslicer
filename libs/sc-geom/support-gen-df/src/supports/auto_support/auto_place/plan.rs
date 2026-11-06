@@ -701,6 +701,7 @@ pub fn compute_auto_support_plan(
             .sum()
     };
 
+    ctx.set_near_fans(live.auto_support.near_fans);
     for candidate in &candidates {
         run.place(candidate, model_ctx.as_ref(), ctx);
     }
