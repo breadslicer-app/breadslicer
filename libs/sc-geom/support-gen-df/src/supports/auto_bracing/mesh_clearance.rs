@@ -50,6 +50,32 @@ const WORLD_RIGHT: Vec3 = Vec3::new(1.0, 0.0, 0.0);
 /// Forward offset so an origin on the surface does not hit itself.
 const RAY_ORIGIN_EPS_MM: f64 = 0.02;
 
+/// How far apart the axis of a brace is read, in millimetres.
+const AXIS_STEP_MM: f64 = 0.2;
+
+/// True when nothing of the model comes nearer the axis from `pos_a` to `pos_b`
+/// than a radius of `diameter_mm` (SoulCrafted, #445): what passes between the
+/// rays of [`line_passes_mesh_clearance`], a spine thinner than their gap.
+pub fn line_stays_off_mesh(
+    pos_a: Vec3,
+    pos_b: Vec3,
+    mesh: Option<&BraceMesh<'_>>,
+    diameter_mm: f64,
+) -> bool {
+    let Some(mesh) = mesh else {
+        return true;
+    };
+    let radius = diameter_mm / 2.0;
+    let into_model = mesh.matrix.invert();
+    let steps = (pos_a.distance_to(pos_b) / AXIS_STEP_MM).ceil().max(1.0);
+    (0..=steps as u32).all(|k| {
+        let at = pos_a.lerp(pos_b, f64::from(k) / steps);
+        mesh.bvh
+            .closest_point_to_point(at.apply_matrix4(&into_model), 0.0, radius)
+            .is_none_or(|hit| hit.distance >= radius)
+    })
+}
+
 /// True when a brace of `diameter_mm` from `pos_a` to `pos_b` clears the
 /// model: a centre ray plus eight whiskers at the brace radius, none hitting.
 /// No mesh registered for the model passes, as in DragonFruit.
@@ -108,4 +134,44 @@ pub fn line_passes_mesh_clearance(
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// A spine ending `reach_mm` from the X axis, between two rays of a brace
+    /// along that axis.
+    fn spine(reach_mm: f32) -> Arc<MeshBvh> {
+        let (sin, cos) = 22.5f32.to_radians().sin_cos();
+        let radial = |r: f32, x: f32| [x, r * cos, r * sin];
+        let tip = radial(reach_mm, 5.0);
+        let (a, b) = (radial(3.0, 4.9), radial(3.0, 5.1));
+        let c = [5.0, 3.0 * cos - 0.1 * sin, 3.0 * sin + 0.1 * cos];
+        let corners = vec![tip, a, b, tip, b, c, tip, c, a, a, c, b];
+        Arc::new(MeshBvh::new(corners, None))
+    }
+
+    fn brace(bvh: &MeshBvh) -> (bool, bool) {
+        let mesh = BraceMesh {
+            bvh,
+            matrix: Matrix4::IDENTITY,
+        };
+        let (a, b) = (Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0));
+        (
+            line_passes_mesh_clearance(a, b, Some(&mesh), 0.7),
+            line_stays_off_mesh(a, b, Some(&mesh), 0.7),
+        )
+    }
+
+    #[test]
+    fn a_spine_between_the_rays_of_a_brace_is_seen_by_its_axis() {
+        assert_eq!(brace(&spine(0.15)), (true, false));
+    }
+
+    #[test]
+    fn a_spine_short_of_the_brace_leaves_it_alone() {
+        assert_eq!(brace(&spine(0.5)), (true, true));
+    }
 }

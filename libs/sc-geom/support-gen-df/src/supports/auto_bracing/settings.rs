@@ -36,6 +36,12 @@ pub struct AutoBracingSettings {
     /// above are not read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stacked: Option<StackedBracing>,
+    /// SoulCrafted (#445): a brace also keeps off what its rays do not see, a
+    /// spine thinner than the gap between two of them
+    /// ([`line_stays_off_mesh`](super::mesh_clearance::line_stays_off_mesh)).
+    /// Off in the port's defaults, so a run reads as DragonFruit's.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub exact_clearance: bool,
 }
 
 /// How the links of a stacked chain are drawn.
@@ -165,6 +171,7 @@ pub fn create_default_auto_bracing_settings() -> AutoBracingSettings {
         debug_voronoi_seeds_enabled: false,
         remove_existing_bracing: true,
         stacked: None,
+        exact_clearance: false,
     }
 }
 
@@ -185,6 +192,7 @@ pub fn normalize_auto_bracing_settings(source: &AutoBracingSettings) -> AutoBrac
         debug_section_colors_enabled: source.debug_section_colors_enabled,
         debug_voronoi_seeds_enabled: source.debug_voronoi_seeds_enabled,
         remove_existing_bracing: source.remove_existing_bracing,
+        exact_clearance: source.exact_clearance,
         stacked: source.stacked.as_ref().map(|st| StackedBracing {
             gap_mm: if st.gap_mm.is_finite() {
                 st.gap_mm.clamp(0.0, 50.0)

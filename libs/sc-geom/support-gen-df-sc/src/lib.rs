@@ -516,6 +516,8 @@ impl SettingsRecipe {
         self.options.apply(&mut settings);
         // An island under a slanted wall lands on the next surface (#445).
         settings.supports.mesh_to_mesh.every_landing = true;
+        // A spine between the rays of a brace is no way through (#445).
+        settings.supports.auto_bracing.exact_clearance = true;
         settings
     }
 }

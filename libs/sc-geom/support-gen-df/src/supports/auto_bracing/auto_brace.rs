@@ -15,7 +15,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::brace_diameter::build_brace_profile;
-use super::mesh_clearance::{BraceMeshes, line_passes_mesh_clearance};
+use super::mesh_clearance::{BraceMeshes, line_passes_mesh_clearance, line_stays_off_mesh};
 use super::patterns::{BracePair, apply_tier_pattern, run_zig_zag_chain};
 use super::settings::{
     AutoBracingPattern, AutoBracingSettings, GridDiagonal, StackedBracing, auto_bracing_hard_rules,
@@ -592,12 +592,12 @@ impl Ladder<'_> {
         if !ignore_max_distance && horizontal_span > self.settings.max_brace_length_mm + EPS {
             return;
         }
-        if !line_passes_mesh_clearance(
-            low_anchor.pos,
-            high_anchor.pos,
-            self.meshes.get(&low_anchor.model_id),
-            self.settings.brace_diameter_mm,
-        ) {
+        let mesh = self.meshes.get(&low_anchor.model_id);
+        let diameter = self.settings.brace_diameter_mm;
+        if !line_passes_mesh_clearance(low_anchor.pos, high_anchor.pos, mesh, diameter)
+            || (self.settings.exact_clearance
+                && !line_stays_off_mesh(low_anchor.pos, high_anchor.pos, mesh, diameter))
+        {
             return;
         }
         self.commit(low, high, section, low_anchor, high_anchor);
@@ -1015,12 +1015,11 @@ pub fn hand_brace(
     if span > settings.max_brace_length_mm + EPS || rise > settings.max_brace_length_mm + EPS {
         why.get_or_insert(HandBraceRefusal::TooLong);
     }
-    if !line_passes_mesh_clearance(
-        low.pos,
-        high.pos,
-        meshes.get(&low.model_id),
-        settings.brace_diameter_mm,
-    ) {
+    let mesh = meshes.get(&low.model_id);
+    if !line_passes_mesh_clearance(low.pos, high.pos, mesh, settings.brace_diameter_mm)
+        || (settings.exact_clearance
+            && !line_stays_off_mesh(low.pos, high.pos, mesh, settings.brace_diameter_mm))
+    {
         why.get_or_insert(HandBraceRefusal::HitsModel);
     }
     // A bracing preset draws its braces at its own diameter, never thicker
