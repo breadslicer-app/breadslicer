@@ -21,6 +21,25 @@ pub fn scan_layer(
     support_buffer_mm: f64,
     connectivity: Connectivity,
 ) -> ScanLayerResult {
+    let (labels, components) =
+        scan_candidates(current, prev, px_mm, support_buffer_mm, connectivity);
+    ScanLayerResult {
+        labels,
+        components,
+        solid_mask: current.clone(),
+    }
+}
+
+/// What [`scan_layer`] labels, without a copy of the layer (SoulCrafted, #445):
+/// a run of the whole model holds every mask already, and a second copy of all
+/// of them is what its memory peaks on.
+pub fn scan_candidates(
+    current: &RleMask,
+    prev: Option<&RleMask>,
+    px_mm: f64,
+    support_buffer_mm: f64,
+    connectivity: Connectivity,
+) -> (RleLabels, Vec<ComponentInfo>) {
     let island_candidates = match prev {
         None => {
             // First layer: everything is a candidate (no support below)
@@ -33,13 +52,7 @@ pub fn scan_layer(
         }
     };
 
-    let (labels, components) = rle_label_components(&island_candidates, connectivity);
-
-    ScanLayerResult {
-        labels,
-        components,
-        solid_mask: current.clone(),
-    }
+    rle_label_components(&island_candidates, connectivity)
 }
 
 #[cfg(test)]
