@@ -185,7 +185,6 @@ fn escape_and_grid_joint_searches_match_dragonfruit() {
                 socket,
                 root_top_z,
                 GridJointSearchOptions {
-                    near_socket_clearance_mm: 0.6,
                     leans_deg: &[],
                     clearance_mm: num(&o["clearanceMm"]),
                     spacing_mm: num(&o["spacingMm"]),
@@ -482,7 +481,6 @@ fn grid_joint_keeps_heading_the_way_the_cone_points() {
             socket,
             0.0,
             GridJointSearchOptions {
-                near_socket_clearance_mm: 0.6,
                 leans_deg: &[],
                 clearance_mm: 0.98,
                 spacing_mm: 4.0,

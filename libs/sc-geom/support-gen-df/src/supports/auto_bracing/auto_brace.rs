@@ -768,7 +768,7 @@ pub fn brace_new_shaft(
 ) -> usize {
     let settings = normalize_auto_bracing_settings(input_settings);
     let grid = GridSnap {
-        enabled: live.grid.enabled,
+        enabled: live.grid.enabled && !live.grid.pillars,
         spacing_mm: live.grid.spacing_mm,
     };
     let c = &state.collections;
@@ -1041,7 +1041,7 @@ pub fn hand_brace(
         arena: &arena,
         settings: &plain,
         grid: GridSnap {
-            enabled: live.grid.enabled,
+            enabled: live.grid.enabled && !live.grid.pillars,
             spacing_mm: live.grid.spacing_mm,
         },
         meshes,
@@ -1182,7 +1182,7 @@ pub fn build_auto_braced_snapshot(
     let c = &snapshot.collections;
     let settings = normalize_auto_bracing_settings(input_settings);
     let grid = GridSnap {
-        enabled: live.grid.enabled,
+        enabled: live.grid.enabled && !live.grid.pillars,
         spacing_mm: live.grid.spacing_mm,
     };
     let max_run = settings.max_brace_length_mm;

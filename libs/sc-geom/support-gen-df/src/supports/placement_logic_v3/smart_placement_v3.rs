@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 
 use super::escape_joint_search::{
     EscapeJointSearchOptions, GridJointSearchOptions, PILLAR_LEANS_DEG, Xy, build_direction_fan,
-    find_escape_joint, find_grid_joint, run_from_socket_blocked,
+    find_escape_joint, find_grid_joint,
 };
 use crate::supports::placement_logic::collision_avoidance::{
     CollisionField, ContactConeSweep, is_contact_cone_blocked,
@@ -149,12 +149,6 @@ const COLLISION_AVOIDANCE_MM: f64 = 0.48;
 /// miss the clearance the hover then asks for and rebuild anyway.
 pub fn column_clearance_mm(shaft_diameter_mm: f64) -> f64 {
     shaft_diameter_mm / 2.0 + COLLISION_AVOIDANCE_MM
-}
-
-/// The clearance of a run's first millimetres off its socket: the shaft itself
-/// and a little more (#464).
-pub fn near_socket_clearance(shaft_diameter_mm: f64) -> f64 {
-    shaft_diameter_mm / 2.0 + 0.05
 }
 
 /// The column map's cell size, shared with the prewarm for the same reason.
@@ -650,11 +644,6 @@ fn route(
     let ignored_grid = settings.grid.enabled && context.ignore_grid;
     let grid_enabled = settings.grid.enabled && !context.ignore_grid;
     let pillars = grid_enabled && settings.grid.pillars;
-    let near_clearance = if pillars {
-        near_socket_clearance(settings.shaft.diameter_mm)
-    } else {
-        clearance_mm
-    };
     let base_rings = if grid_enabled {
         GRID_BASE_SEARCH_RINGS
     } else {
@@ -816,7 +805,6 @@ fn route(
                         // Keep leaving the way the cone points.
                         preferred_direction: outward_xy,
                         base_fits_at: &mut base_fits_at,
-                        near_socket_clearance_mm: near_clearance,
                         leans_deg: if pillars { &PILLAR_LEANS_DEG } else { &[] },
                     },
                 )
@@ -873,18 +861,7 @@ fn route(
         if gates.contact_cone_blocked_at(cone.cone_start_pos, cone.socket_pos) {
             continue;
         }
-        let run_blocked = if pillars {
-            run_from_socket_blocked(
-                &*gates.sdf,
-                cone.socket_pos,
-                joint_pos,
-                clearance_mm,
-                near_clearance,
-            )
-        } else {
-            gates.segment_blocked_between(cone.socket_pos, joint_pos)
-        };
-        if run_blocked {
+        if gates.segment_blocked_between(cone.socket_pos, joint_pos) {
             continue;
         }
         // A deviated cone moved the socket, so its diagonal is judged against the

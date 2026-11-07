@@ -379,48 +379,10 @@ pub struct GridJointSearchOptions<'a> {
     pub preferred_direction: Option<Xy>,
     /// True when the roots volume can sit at this XY.
     pub base_fits_at: &'a mut dyn FnMut(f64, f64) -> bool,
-    /// The clearance of a run's first [`NEAR_SOCKET_RUN_MM`]: the socket stands
-    /// a tip's length off the model and often nearer than the full clearance,
-    /// so the run has to be let out of there.
-    pub near_socket_clearance_mm: f64,
     /// The leans to try; empty tries only `lean_from_vertical_deg`.
     pub leans_deg: &'a [f64],
 }
 
-/// How far from the socket a run keeps the reduced clearance (#464).
-pub const NEAR_SOCKET_RUN_MM: f64 = 2.0;
-
-/// Whether a run from a socket comes too close to the model: within
-/// `near_clearance` on its first [`NEAR_SOCKET_RUN_MM`], and within `clearance`
-/// from there on (#464).
-pub fn run_from_socket_blocked(
-    sdf: &dyn CollisionField,
-    socket: Vec3,
-    joint: Vec3,
-    clearance: f64,
-    near_clearance: f64,
-) -> bool {
-    let length = joint.sub(socket).length();
-    if length <= NEAR_SOCKET_RUN_MM {
-        return sdf.segment_blocked(socket, joint, near_clearance);
-    }
-    let t = NEAR_SOCKET_RUN_MM / length;
-    let out = Vec3::new(
-        socket.x + (joint.x - socket.x) * t,
-        socket.y + (joint.y - socket.y) * t,
-        socket.z + (joint.z - socket.z) * t,
-    );
-    sdf.segment_blocked(socket, out, near_clearance) || sdf.segment_blocked(out, joint, clearance)
-}
-
-/// The grid-mode search: the same gates as [`find_escape_joint`], but the
-/// candidate joints are lattice nodes rather than free points along a ray.
-///
-/// Grid mode has to land the drop on a node, so it chooses the node first and
-/// derives the joint from it: the drop is `lateral / tan(lean)`, which makes the
-/// vertical leg exactly vertical by construction. Nodes are walked
-/// nearest-first, so the joint stays as close to the socket's own column as the
-/// model allows, and the first node that satisfies every gate wins.
 /// The leans a run to a pillar may take, degrees from vertical, in order.
 pub const PILLAR_LEANS_DEG: [f64; 4] = [45.0, 35.0, 25.0, 15.0];
 
@@ -488,18 +450,7 @@ pub fn find_grid_joint(
 
             let joint = Vec3::new(x, y, z);
             *probes += 1;
-            let blocked = if opts.leans_deg.is_empty() {
-                sdf.segment_blocked(socket_pos, joint, clearance)
-            } else {
-                run_from_socket_blocked(
-                    sdf,
-                    socket_pos,
-                    joint,
-                    clearance,
-                    opts.near_socket_clearance_mm,
-                )
-            };
-            if blocked {
+            if sdf.segment_blocked(socket_pos, joint, clearance) {
                 continue;
             }
             *probes += 1;
