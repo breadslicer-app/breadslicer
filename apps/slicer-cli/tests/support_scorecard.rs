@@ -1275,6 +1275,8 @@ fn dump_tips(dir: &Path, name: &str, plan: &PipelineOutput, models: &[ModelInput
     dump_pieces(dir, name, &plan.support.collections);
     dump_feet(dir, name, plan);
     dump_routes(dir, name, &plan.support.collections);
+    dump_shape(dir, name, &plan.support.collections);
+    dump_zones(dir, name, plan);
     let tips: Vec<String> = tips_of(&plan.support.collections)
         .iter()
         .map(|t| {
@@ -1394,6 +1396,97 @@ fn dump_routes(dir: &Path, name: &str, c: &SupportCollections) {
         })
         .collect();
     std::fs::write(dir.join(format!("{name}.routes.tsv")), rows.join("\n")).expect("write them");
+}
+
+/// Writes the shape of the structure, one row per piece: for a trunk where it
+/// stands, how many tips reach the plate through it, how far from its root they
+/// spread, its diameter and its length; for a stick or a twig, its length and
+/// how far it leans (#463).
+fn dump_shape(dir: &Path, name: &str, c: &SupportCollections) {
+    // The trunk under a shaft, going down through the knots.
+    let parent_of = |id: &str| -> Option<String> {
+        let knot = c
+            .branches
+            .get(id)
+            .map(|b| &b.parent_knot_id)
+            .or_else(|| c.leaves.get(id).map(|l| &l.parent_knot_id))?;
+        c.knots.get(knot).map(|k| k.parent_shaft_id.clone())
+    };
+    let trunk_of = |id: &str| -> Option<String> {
+        let mut at = id.to_owned();
+        for _ in 0..64 {
+            if c.trunks.contains_key(&at) {
+                return Some(at);
+            }
+            at = parent_of(&at)?;
+        }
+        None
+    };
+    let mut hanging: HashMap<String, Vec<Vec3>> = HashMap::new();
+    let tips = c
+        .branches
+        .iter()
+        .filter_map(|(id, b)| Some((id, b.contact_cone.as_ref()?.pos)))
+        .chain(c.leaves.iter().map(|(id, l)| (id, l.contact_cone.pos)));
+    for (id, tip) in tips {
+        if let Some(trunk) = trunk_of(id) {
+            hanging.entry(trunk).or_default().push(tip);
+        }
+    }
+    let mut rows: Vec<String> = Vec::new();
+    for (id, t) in &c.trunks {
+        let Some(root) = c.roots.get(&t.root_id).map(|r| r.transform.pos) else {
+            continue;
+        };
+        let mut all = hanging.get(id).cloned().unwrap_or_default();
+        all.extend(t.contact_cone.as_ref().map(|k| k.pos));
+        let spread = all
+            .iter()
+            .map(|p| (p.x - root.x).hypot(p.y - root.y))
+            .fold(0.0f64, f64::max);
+        let mut pts = vec![root];
+        pts.extend(joints(&t.segments));
+        pts.extend(t.contact_cone.as_ref().map(|k| k.pos));
+        let diameter = t.segments.first().map_or(0.0, |s| s.diameter);
+        rows.push(format!(
+            "trunk\t{}\t{}\t{}\t{spread}\t{diameter}\t{}",
+            root.x,
+            root.y,
+            all.len(),
+            path_mm(&pts)
+        ));
+    }
+    let lean = |a: Vec3, b: Vec3| {
+        let d = a.sub(b);
+        d.x.hypot(d.y).atan2(d.z.abs()).to_degrees()
+    };
+    for s in c.sticks.values() {
+        let (a, b) = (s.contact_cone_a.pos, s.contact_cone_b.pos);
+        rows.push(format!("stick\t{}\t{}", a.distance_to(b), lean(a, b)));
+    }
+    for t in c.twigs.values() {
+        let (a, b) = (t.contact_disk_a.pos, t.contact_disk_b.pos);
+        rows.push(format!("twig\t{}\t{}", a.distance_to(b), lean(a, b)));
+    }
+    rows.sort();
+    std::fs::write(dir.join(format!("{name}.shape.tsv")), rows.join("\n")).expect("write them");
+}
+
+/// Writes what went wrong by zone and why the grid let candidates go (#463).
+fn dump_zones(dir: &Path, name: &str, plan: &PipelineOutput) {
+    let plans = plan.models.iter().filter_map(|m| m.plan.as_ref());
+    let reports = plans.filter_map(|p| p.result.analytics.as_ref());
+    let mut rows = Vec::new();
+    for d in reports.filter_map(|a| a.placement.as_ref()) {
+        rows.push(format!("grid_fallbacks\t\t{}", d.grid_fallbacks));
+        for (reason, n) in &d.grid_fallback_reasons {
+            rows.push(format!("grid_fallback\t{reason}\t{n}"));
+        }
+        for (key, n) in &d.rejections_by_zone {
+            rows.push(format!("rejected\t{key}\t{n}"));
+        }
+    }
+    std::fs::write(dir.join(format!("{name}.zones.tsv")), rows.join("\n")).expect("write them");
 }
 
 /// Writes what each kind of piece adds up to: how many, how long, and how much

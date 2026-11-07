@@ -100,6 +100,8 @@ pub struct PlaceOutcome {
     pub merge_refusal: Option<&'static str>,
     pub cavity_fan_refusal: Option<String>,
     pub grid_fallback: bool,
+    /// Why the lattice could not serve this candidate (#463).
+    pub grid_fallback_reason: Option<&'static str>,
 }
 
 impl PlaceOutcome {
@@ -113,6 +115,7 @@ impl PlaceOutcome {
             merge_refusal: None,
             cavity_fan_refusal: None,
             grid_fallback: false,
+            grid_fallback_reason: None,
         }
     }
 
@@ -126,6 +129,7 @@ impl PlaceOutcome {
             merge_refusal: None,
             cavity_fan_refusal: None,
             grid_fallback: false,
+            grid_fallback_reason: None,
         }
     }
 }
@@ -570,6 +574,7 @@ pub fn place_one_candidate(
                 let mut fallback = place_one_candidate(candidate, state, args, ctx, true);
                 if fallback.kind.is_some() {
                     fallback.grid_fallback = true;
+                    fallback.grid_fallback_reason = Some(mapped.as_str());
                 }
                 return fallback;
             }

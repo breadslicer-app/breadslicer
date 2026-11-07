@@ -330,12 +330,27 @@ impl RunState {
                 self.rejected_count += 1;
                 if let Some(reason) = result.rejected_reason {
                     bump_reason(&mut self.rejection_reasons, reason);
+                    let zone = candidate
+                        .zone_size
+                        .map_or("none".to_owned(), |z| z.to_string());
+                    *self
+                        .diagnostics
+                        .rejections_by_zone
+                        .entry(format!("{zone}:{}", reason.as_str()))
+                        .or_insert(0) += 1;
                 }
             }
             Some(kind) => {
                 *self.placed.get_mut(&kind).expect("every type") += 1;
                 if result.grid_fallback {
                     self.diagnostics.grid_fallbacks += 1;
+                    if let Some(reason) = result.grid_fallback_reason {
+                        *self
+                            .diagnostics
+                            .grid_fallback_reasons
+                            .entry(reason.to_owned())
+                            .or_insert(0) += 1;
+                    }
                 }
                 if contact_bridge_types().contains(&kind) {
                     self.diagnostics.cavity_fallbacks.push(CavityFallback {
