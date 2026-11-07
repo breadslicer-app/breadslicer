@@ -43,6 +43,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use sc_geom::df_supports::{DfSupportSession, scene_model_leaves};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_core::indexed_mesh::repair::RepairEnd;
@@ -76,6 +77,27 @@ use crate::workspace_section::allows_repair;
 
 /// How often the card reads the worker's progress.
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// How far, in mm, a support's tip may be from the repaired model and still
+/// hold it (#477). Repair welds within 0.005 mm of the mesh's own units and
+/// moves split copies 0.001 mm; a tip sinks into the model by its radius,
+/// 0.09 mm for the smallest.
+const TIP_STILL_TOUCHES_MM: f64 = 0.02;
+
+/// A support set in force when the run started (#477).
+struct HeldSet {
+    leaf: NodeId,
+    model: NodeId,
+    session: Arc<DfSupportSession>,
+}
+
+/// A set whose model the run mended: its session on the mended model, or
+/// `None` when a support no longer touches it.
+struct MendedSet {
+    leaf: NodeId,
+    model: NodeId,
+    session: Option<Arc<DfSupportSession>>,
+}
 
 /// A mesh the repair run rewrote: the storage place plus the exact Arcs before
 /// and after, ready to become a replace edit.
@@ -119,6 +141,9 @@ struct CompletedRepair {
     marks: Vec<(MeshTarget, Arc<RepairMarks>)>,
     /// How long the whole run took on the worker.
     elapsed: Duration,
+    /// The support sets on the models it mended, made over on their new
+    /// meshes when every support still touches them (#477).
+    mended_sets: Vec<MendedSet>,
 }
 
 /// What the worker deposits: the run, a cancelled run, or a panic.
@@ -326,6 +351,7 @@ impl RepairRun {
     ) {
         let slot: RepairSlot = Arc::new(Mutex::new(None));
         let watch = Arc::new(RunWatch::default());
+        let held = held_sets(&self.document);
         *self.job.borrow_mut() = Some(Job {
             slot: slot.clone(),
             watch: watch.clone(),
@@ -342,7 +368,7 @@ impl RepairRun {
         let ui_weak = self.ui.clone();
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_repair_watched(scene, &targets, watch.as_ref())
+                run_repair_watched(scene, &targets, watch.as_ref(), &held)
             }))
             .map_err(|payload| panic_message(&payload));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
@@ -515,9 +541,26 @@ impl RepairRun {
                 self.marks_shown.set(true);
                 self.refresh_marks(true);
                 let applied = settlement == RepairSettlement::Applied;
+                // The supports whose model the repair moved under their
+                // tips: out of date, which no card says until a hand edit
+                // finds them (#477).
+                let out_of_date = applied
+                    .then(|| out_of_date_names(&self.document, &completed.mended_sets))
+                    .flatten();
                 let CompletedRepair {
                     outcomes, elapsed, ..
                 } = completed;
+                if let Some(names) = out_of_date {
+                    self.dialogs.show_info(move || InfoTexts {
+                        heading: ctr!("RepairDialog", "Supports out of date"),
+                        message: ctr!(
+                            "RepairDialog",
+                            "Repair changed the surface where the supports of {} touch it, so they can no longer be edited by hand. Generate them again to edit them.",
+                            names
+                        ),
+                        details: Default::default(),
+                    });
+                }
                 // Never behind a notice someone may have turned off.
                 if let Some(note) = lost_paint.clone() {
                     self.dialogs.show_info(move || InfoTexts {
@@ -746,7 +789,7 @@ fn names_in_run_order(graph: &Scene, targets: &[MeshTarget]) -> Vec<String> {
 #[cfg(test)]
 fn run_repair(scene: Scene) -> CompletedRepair {
     let targets = scene.mesh_targets();
-    match run_repair_watched(scene, &targets, &NoWatch) {
+    match run_repair_watched(scene, &targets, &NoWatch, &[]) {
         Ok(completed) => completed,
         Err(RepairCancelled) => unreachable!("an unwatched repair was cancelled"),
     }
@@ -771,6 +814,7 @@ fn run_repair_watched(
     mut scene: Scene,
     targets: &[MeshTarget],
     watch: &dyn SceneRepairWatch,
+    held: &[HeldSet],
 ) -> Result<CompletedRepair, RepairCancelled> {
     let start = Instant::now();
     let before: Vec<(MeshTarget, Arc<IndexedMesh>)> = targets
@@ -807,6 +851,7 @@ fn run_repair_watched(
             Some((outcome.target, Arc::new(marks)))
         })
         .collect();
+    let mended_sets = mended_sets(&scene, &replacements, held);
     Ok(CompletedRepair {
         outcomes,
         replacements,
@@ -814,7 +859,85 @@ fn run_repair_watched(
         paint,
         marks,
         elapsed: start.elapsed(),
+        mended_sets,
     })
+}
+
+/// The names of the models of `mended` whose supports no longer touch
+/// them, as the object list names them, joined; `None` when there are none.
+fn out_of_date_names(document: &SceneDocument, mended: &[MendedSet]) -> Option<String> {
+    let models: Vec<NodeId> = mended
+        .iter()
+        .filter(|set| set.session.is_none())
+        .map(|set| set.model)
+        .collect();
+    if models.is_empty() {
+        return None;
+    }
+    let names = document
+        .with_scene(|spatial| object_names_by_leaf(spatial.graph()))
+        .unwrap_or_default();
+    let quoted: Vec<String> = models
+        .iter()
+        .map(|model| format!("“{}”", names.get(model).cloned().unwrap_or_default()))
+        .collect();
+    Some(quoted.join(", "))
+}
+
+/// The support sets in force in `document`'s scene, as a run starts.
+fn held_sets(document: &SceneDocument) -> Vec<HeldSet> {
+    document
+        .with_scene(|spatial| {
+            crate::support_persist::sets_in_force(spatial, &document.support_sessions())
+                .into_iter()
+                .map(|drawn| HeldSet {
+                    leaf: drawn.leaf,
+                    model: drawn.model,
+                    session: drawn.session,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Of `held`, the sets whose model's mesh is among `replacements` while
+/// their own mesh is not, each made over on the model as `scene`, repaired,
+/// holds it (#477): the supports stay where they are, and the set stays in
+/// force when every one of them still touches the model.
+fn mended_sets(
+    scene: &Scene,
+    replacements: &[MeshReplacement],
+    held: &[HeldSet],
+) -> Vec<MendedSet> {
+    let replaced = |leaf: NodeId| {
+        scene
+            .leaf_mesh_target(leaf)
+            .is_some_and(|target| replacements.iter().any(|r| r.target == target))
+    };
+    held.iter()
+        .filter(|set| replaced(set.model) && !replaced(set.leaf))
+        .map(|set| {
+            let now = scene_model_leaves(scene, Some(&[set.model]))
+                .ok()
+                .and_then(|mut models| models.pop())
+                .map(|(_, model)| model);
+            // The port is DragonFruit's code: a panic in it leaves the set
+            // out of date, as before, not a failed repair.
+            let session = now.and_then(|now| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    set.session.rebased(0, now, TIP_STILL_TOUCHES_MM)
+                }))
+                .ok()
+                .flatten()
+                .map(Arc::new)
+            });
+            MendedSet {
+                leaf: set.leaf,
+                model: set.model,
+                session,
+            }
+        })
+        .collect()
 }
 
 /// Whether the slicer takes the mesh an outcome ends with: unlike for the
@@ -853,6 +976,20 @@ fn settle(
     match document.apply_edit_primed(edit.clone(), &completed.primed) {
         Ok(()) => {
             document.push_edit(edit);
+            // The sets still holding their mended models stay in force on
+            // them; Undo brings back the drawings of before (#477).
+            let sessions = document.support_sessions();
+            for set in &completed.mended_sets {
+                if let Some(session) = &set.session {
+                    crate::support_persist::record(
+                        document,
+                        &sessions,
+                        set.leaf,
+                        set.model,
+                        session.clone(),
+                    );
+                }
+            }
             RepairSettlement::Applied
         }
         // The scene disappearing mid-settle is the stale case; the revision
@@ -1452,7 +1589,7 @@ mod repair_run_tests {
         let watch = RunWatch::default();
         watch.cancel.store(true, Ordering::Relaxed);
         let targets = scene.mesh_targets();
-        assert!(run_repair_watched(scene.clone(), &targets, &watch).is_err());
+        assert!(run_repair_watched(scene.clone(), &targets, &watch, &[]).is_err());
         assert!(
             watch.progress.lock().unwrap().is_none(),
             "a stopped run tells no step"
@@ -1461,6 +1598,84 @@ mod repair_run_tests {
 
     /// Pins the card's progress line: the step, and with several objects,
     /// which one.
+    /// A box 20 × 10 × 2 mm, its underside `z` up in its own frame.
+    fn box_at(z: f32) -> IndexedMesh {
+        let cube = unit_cube_mesh();
+        let vertices = cube
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = v.as_array();
+                Vertex::new([
+                    (p[0] + 0.5) * 20.0,
+                    (p[1] + 0.5) * 10.0,
+                    (p[2] + 0.5) * 2.0 + z,
+                ])
+            })
+            .collect();
+        IndexedMesh::new(None, vertices, cube.faces().to_vec())
+    }
+
+    /// The set of a box 9 mm up, and the model's leaf; then the mended sets
+    /// a repair that gave the box `mended` leaves (#477).
+    fn mended_with(mended: IndexedMesh) -> Vec<MendedSet> {
+        let mut graph = Scene::new();
+        let model = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(box_at(9.0))),
+            )
+            .expect("leaf");
+        graph.add_root(model).expect("root");
+        let outcome = sc_geom::df_supports::start_df_supports(
+            &graph,
+            sc_geom::df_supports::DfSupportRequest::default(),
+        )
+        .expect("the run starts")
+        .join()
+        .expect("supports");
+        let session = Arc::new(outcome.sets.into_iter().next().expect("a set").session);
+        let before = graph.leaf_mesh_arc(model).expect("its mesh").clone();
+        let after = Arc::new(mended);
+        let mut repaired = graph.clone();
+        repaired
+            .replace_inline_leaf_mesh(model, &before, after.clone())
+            .expect("the repaired mesh");
+        // The supports' own leaf, which the repair left alone.
+        let supports = repaired
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+            )
+            .expect("leaf");
+        repaired.add_root(supports).expect("root");
+        let replacement = MeshReplacement {
+            target: MeshTarget::InlineLeaf(model),
+            before,
+            after,
+        };
+        let held = [HeldSet {
+            leaf: supports,
+            model,
+            session,
+        }];
+        mended_sets(&repaired, &[replacement], &held)
+    }
+
+    /// #477: a repair that leaves the box where its tips are keeps its set
+    /// in force; one that moves the underside under them does not.
+    #[test]
+    fn a_set_stays_in_force_while_its_tips_still_touch_the_repaired_model() {
+        let kept = mended_with(box_at(9.0));
+        assert_eq!(kept.len(), 1);
+        assert!(kept[0].session.is_some(), "the tips still touch");
+        let moved = mended_with(box_at(9.5));
+        assert_eq!(moved.len(), 1);
+        assert!(moved[0].session.is_none(), "the underside left the tips");
+    }
+
     #[test]
     fn the_progress_line_names_the_step_and_the_object() {
         let at = |target, targets| SceneRepairProgress {

@@ -519,3 +519,58 @@ fn moving_a_real_model_s_supports() {
     println!("largest vertex off its moved place: {off} mm");
     assert!(off < 1e-3);
 }
+
+/// The cube of [`cube`] with its top made of 4 faces around a centre vertex
+/// instead of 2: the same shape in another mesh, as Repair leaves a model
+/// whose holes it filled or whose cracks it welded (#477).
+fn cube_mended() -> IndexedMesh {
+    let mut cube = cube();
+    let mut vertices = cube.vertices().to_vec();
+    vertices.push(Vertex::new([5.0, 5.0, 10.0]));
+    let f = |a, b, c| IndexedTriangle::from_raw_indices([a, b, c]);
+    let mut faces: Vec<IndexedTriangle> = cube.faces().to_vec();
+    faces.splice(2..4, [f(4, 5, 8), f(5, 6, 8), f(6, 7, 8), f(7, 4, 8)]);
+    cube = IndexedMesh::new(Some(MeshMetadata::default()), vertices, faces);
+    cube
+}
+
+/// #477: Repair gives a model a new mesh of the same shape. The session
+/// made over on it keeps every support where it was, fits the mended scene
+/// alone, saves as data and reopens there.
+#[test]
+fn a_mended_model_keeps_its_supports_where_they_are() {
+    let (scene, _) = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let session = run_on(&scene);
+    let (mended, _) = scene_with(vec![(cube_mended(), [0.0, 0.0, 8.0])]);
+    let (_, now) = scene_model_leaves(&mended, None).unwrap().remove(0);
+
+    let rebased = session
+        .rebased(0, now, 0.02)
+        .expect("every tip still touches");
+    assert_eq!(rebased.state(), session.state(), "no support moved");
+    assert_eq!(rebased.tips(), session.tips());
+    let drawn = |s: &DfSupportSession| s.mesh().unwrap().expect("a support mesh");
+    assert_eq!(drawn(&rebased).vertices(), drawn(&session).vertices());
+    assert_eq!(drawn(&rebased).faces(), drawn(&session).faces());
+    assert!(rebased.fits_models_of(&mended));
+    assert!(
+        !rebased.fits_models_of(&scene),
+        "the old mesh is another one"
+    );
+    assert!(!session.fits_models_of(&mended), "the reason it was lost");
+    let document = rebased.to_document().expect("a run from options is data");
+    let reopened = DfSupportSession::from_document(&mended, DF_SUPPORT_DOCUMENT_VERSION, &document)
+        .expect("the mended model");
+    assert_eq!(reopened.state(), rebased.state());
+}
+
+/// #477: a model whose underside is now 0.5 mm higher no longer meets its
+/// tips: the session is not made over, and its supports stay out of date.
+#[test]
+fn a_model_its_tips_no_longer_touch_is_not_rebased() {
+    let (scene, _) = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let session = run_on(&scene);
+    let (raised, _) = scene_with(vec![(cube(), [0.0, 0.0, 8.5])]);
+    let (_, now) = scene_model_leaves(&raised, None).unwrap().remove(0);
+    assert!(session.rebased(0, now, 0.02).is_none());
+}

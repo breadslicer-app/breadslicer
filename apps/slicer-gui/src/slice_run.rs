@@ -1153,3 +1153,7 @@ mod progress_tests {
 #[cfg(test)]
 #[path = "tests_repair_on_slice.rs"]
 mod tests_repair_on_slice;
+
+#[cfg(test)]
+#[path = "tests_repair_keeps_supports.rs"]
+mod tests_repair_keeps_supports;
