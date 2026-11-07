@@ -177,6 +177,9 @@ const WALK_STEP_MM: f64 = 0.5;
 const DIRECTION_COUNT: usize = 12;
 /// How many lattice nodes the grid search may try, nearest first.
 const GRID_JOINT_NODE_BUDGET: u32 = 24;
+/// How far from a tip a pillar may stand, in grid steps: a pillar further out
+/// takes a long diagonal and stretches the raft around it (#464).
+const PILLAR_REACH_STEPS: f64 = 0.75;
 /// The same with pillars on the nodes: the far nodes are worth a look (#464).
 const PILLAR_JOINT_NODE_BUDGET: u32 = 80;
 /// The vertical leg below the joint is the load-bearing span, so it obeys the
@@ -794,7 +797,11 @@ fn route(
                     GridJointSearchOptions {
                         clearance_mm,
                         spacing_mm,
-                        max_lateral_mm,
+                        max_lateral_mm: if pillars {
+                            js_min(max_lateral_mm, spacing_mm * PILLAR_REACH_STEPS)
+                        } else {
+                            max_lateral_mm
+                        },
                         lean_from_vertical_deg: TRUNK_DIAGONAL_LEAN_FROM_VERTICAL_DEG,
                         min_vertical_leg_mm: MIN_VERTICAL_LEG_MM,
                         max_node_count: if pillars {
