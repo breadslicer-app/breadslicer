@@ -899,6 +899,58 @@ impl DfSupportSession {
         self.taken_along(index, now, &PlaneMotion::turn(angle, delta))
     }
 
+    /// The session with model `index` replaced by `now`, the same model
+    /// with its mesh mended by Repair (#477): every support stays where it
+    /// is. `None` when a support no longer touches the models: a point where
+    /// one meets a model further than `tolerance_mm` from the models as they
+    /// now are. `now` is the model as a run makes it from the scene; it
+    /// keeps the session's id. The BVH of the mended model is built here, so
+    /// the next edit finds it ready.
+    pub fn rebased(&self, index: usize, mut now: ModelInput, tolerance_mm: f64) -> Option<Self> {
+        now.id = self.models.get(index)?.id.clone();
+        let rebased = self.taken_along(index, now, &PlaneMotion::shift([0.0, 0.0]));
+        let touches = |p: Vec3| {
+            (0..rebased.models.len()).any(|i| {
+                rebased
+                    .bvh(i)
+                    .closest_point_to_point(p, 0.0, tolerance_mm)
+                    .is_some_and(|hit| hit.distance <= tolerance_mm)
+            })
+        };
+        rebased
+            .model_contacts()
+            .into_iter()
+            .all(touches)
+            .then_some(rebased)
+    }
+
+    /// Every point where a support meets a model (world mm): the tips of
+    /// trunks, branches, leaves and stumps, and both ends of the twigs and
+    /// sticks that join model to model.
+    fn model_contacts(&self) -> Vec<Vec3> {
+        let c = &self.state.collections;
+        let trunks = c.trunks.values().filter_map(|t| t.contact_cone.as_ref());
+        let branches = c.branches.values().filter_map(|b| b.contact_cone.as_ref());
+        let leaves = c.leaves.values().map(|l| &l.contact_cone);
+        let stumps = c.stumps.values().map(|s| &s.contact_cone);
+        let sticks = c
+            .sticks
+            .values()
+            .flat_map(|s| [&s.contact_cone_a, &s.contact_cone_b]);
+        trunks
+            .chain(branches)
+            .chain(leaves)
+            .chain(stumps)
+            .chain(sticks)
+            .map(|cone| cone.pos)
+            .chain(
+                c.twigs
+                    .values()
+                    .flat_map(|t| [t.contact_disk_a.pos, t.contact_disk_b.pos]),
+            )
+            .collect()
+    }
+
     /// The session with model `index` replaced by `model`, its supports
     /// taken along by `motion`.
     fn taken_along(&self, index: usize, model: ModelInput, motion: &PlaneMotion) -> Self {
