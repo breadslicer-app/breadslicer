@@ -45,6 +45,10 @@ pub struct ZonePreset {
     pub bracing: BracingPreset,
     /// How high the model stands above the plate for its supports, mm.
     pub auto_lift_mm: f64,
+    /// The spacing of the pillars' grid, mm; `None` leaves the grid off, and
+    /// a preset saved before the grid existed reads as that (#464).
+    #[serde(default)]
+    pub grid_mm: Option<f64>,
 }
 
 impl Default for ZonePreset {
@@ -283,6 +287,7 @@ pub fn minis_30() -> ZonePreset {
         },
         bracing: auto_support_bracing(),
         auto_lift_mm: 5.0,
+        grid_mm: Some(7.0),
     }
 }
 
@@ -323,6 +328,7 @@ pub fn figures_70() -> ZonePreset {
         },
         bracing: auto_support_bracing(),
         auto_lift_mm: 5.0,
+        grid_mm: Some(4.0),
     }
 }
 

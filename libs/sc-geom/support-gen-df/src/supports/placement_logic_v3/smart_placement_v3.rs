@@ -36,8 +36,8 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::escape_joint_search::{
-    EscapeJointSearchOptions, GridJointSearchOptions, Xy, build_direction_fan, find_escape_joint,
-    find_grid_joint,
+    EscapeJointSearchOptions, GridJointSearchOptions, PILLAR_LEANS_DEG, Xy, build_direction_fan,
+    find_escape_joint, find_grid_joint, run_from_socket_blocked,
 };
 use crate::supports::placement_logic::collision_avoidance::{
     CollisionField, ContactConeSweep, is_contact_cone_blocked,
@@ -151,6 +151,12 @@ pub fn column_clearance_mm(shaft_diameter_mm: f64) -> f64 {
     shaft_diameter_mm / 2.0 + COLLISION_AVOIDANCE_MM
 }
 
+/// The clearance of a run's first millimetres off its socket: the shaft itself
+/// and a little more (#464).
+pub fn near_socket_clearance(shaft_diameter_mm: f64) -> f64 {
+    shaft_diameter_mm / 2.0 + 0.05
+}
+
 /// The column map's cell size, shared with the prewarm for the same reason.
 pub const COLUMN_MAP_CELL_MM: f64 = 0.2;
 
@@ -177,6 +183,8 @@ const WALK_STEP_MM: f64 = 0.5;
 const DIRECTION_COUNT: usize = 12;
 /// How many lattice nodes the grid search may try, nearest first.
 const GRID_JOINT_NODE_BUDGET: u32 = 24;
+/// The same with pillars on the nodes: the far nodes are worth a look (#464).
+const PILLAR_JOINT_NODE_BUDGET: u32 = 80;
 /// The vertical leg below the joint is the load-bearing span, so it obeys the
 /// configured routed-trunk angle (90 minus `grid.minRoutedTrunkAngleDeg`).
 const ROUTED_DETOUR_SLACK_DEG: f64 = 10.0;
@@ -641,6 +649,12 @@ fn route(
     let spacing_mm = settings.grid.spacing_mm;
     let ignored_grid = settings.grid.enabled && context.ignore_grid;
     let grid_enabled = settings.grid.enabled && !context.ignore_grid;
+    let pillars = grid_enabled && settings.grid.pillars;
+    let near_clearance = if pillars {
+        near_socket_clearance(settings.shaft.diameter_mm)
+    } else {
+        clearance_mm
+    };
     let base_rings = if grid_enabled {
         GRID_BASE_SEARCH_RINGS
     } else {
@@ -794,10 +808,16 @@ fn route(
                         max_lateral_mm,
                         lean_from_vertical_deg: TRUNK_DIAGONAL_LEAN_FROM_VERTICAL_DEG,
                         min_vertical_leg_mm: MIN_VERTICAL_LEG_MM,
-                        max_node_count: GRID_JOINT_NODE_BUDGET,
+                        max_node_count: if pillars {
+                            PILLAR_JOINT_NODE_BUDGET
+                        } else {
+                            GRID_JOINT_NODE_BUDGET
+                        },
                         // Keep leaving the way the cone points.
                         preferred_direction: outward_xy,
                         base_fits_at: &mut base_fits_at,
+                        near_socket_clearance_mm: near_clearance,
+                        leans_deg: if pillars { &PILLAR_LEANS_DEG } else { &[] },
                     },
                 )
             } else {
@@ -853,7 +873,18 @@ fn route(
         if gates.contact_cone_blocked_at(cone.cone_start_pos, cone.socket_pos) {
             continue;
         }
-        if gates.segment_blocked_between(cone.socket_pos, joint_pos) {
+        let run_blocked = if pillars {
+            run_from_socket_blocked(
+                &*gates.sdf,
+                cone.socket_pos,
+                joint_pos,
+                clearance_mm,
+                near_clearance,
+            )
+        } else {
+            gates.segment_blocked_between(cone.socket_pos, joint_pos)
+        };
+        if run_blocked {
             continue;
         }
         // A deviated cone moved the socket, so its diagonal is judged against the

@@ -51,6 +51,7 @@ use crate::supports::support_types::trunk::trunk_builder::{
     TrunkBuildInput, TrunkBuildResult, TrunkOverrides, TrunkRouter, build_trunk_data,
     build_trunk_data_routed,
 };
+use crate::supports::support_types::trunk::trunk_route_resolution::get_resolved_snapped_root_pos;
 use crate::supports::types::{Knot, LimitationCode, SupportState, Vec3};
 use crate::three::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
 
@@ -199,6 +200,61 @@ fn build_sized_trunk(input: &TrunkBuildInput<'_>, ctx: &PlanCtx<'_>) -> TrunkBui
         }
         None => build_trunk_data(input, ctx.live(), &mut || ctx.id()).expect("mesh-free build"),
     }
+}
+
+/// How far a tip no node sees looks for something to hang from, in grid steps.
+const GRID_PARENT_REACH_NODES: f64 = 1.5;
+
+/// How high `candidate` joins the pillar of its grid node: where the 45 degree
+/// run from its tip meets that node's vertical. `None` when no node serves it
+/// (#464).
+pub(super) fn grid_join_height(
+    candidate: &CandidatePoint,
+    sizing_ctx: Option<&ModelSizingContext>,
+    ctx: &PlanCtx<'_>,
+) -> Option<f64> {
+    let live = ctx.live();
+    let (tip_pos, tip_normal) =
+        if candidate.grid_point == Some(true) && candidate.tip_normal.z < 0.0 {
+            (candidate.tip_pos, candidate.tip_normal)
+        } else {
+            ctx.contact_at(candidate.tip_pos)
+        };
+    let overrides = size_parameters(
+        candidate,
+        live.auto_support.size_scale,
+        sizing_ctx,
+        live,
+        ctx.bands,
+    );
+    let built = build_sized_trunk(
+        &TrunkBuildInput {
+            tip_pos,
+            tip_normal,
+            model_id: &candidate.model_id,
+            mesh: None,
+            is_preview: Some(true),
+            overrides: Some(TrunkOverrides {
+                roots_diameter_mm: overrides.roots_diameter_mm,
+                roots_disk_height_mm: overrides.roots_disk_height_mm,
+                roots_cone_height_mm: overrides.roots_cone_height_mm,
+                shaft_diameter_mm: overrides.shaft_diameter_mm,
+                tip_contact_diameter_mm: overrides.tip_contact_diameter_mm,
+                tip_body_diameter_mm: overrides.tip_body_diameter_mm,
+                tip_length_mm: overrides.tip_length_mm,
+                tip_disk_length_override_mm: None,
+                tip_penetration_mm: overrides.tip_penetration_mm,
+            }),
+            is_small_island: None,
+            ignore_grid: Some(false),
+        },
+        ctx,
+    );
+    if built.error.is_some() {
+        return None;
+    }
+    let root = get_resolved_snapped_root_pos(&built.route, built.root.transform.pos);
+    Some(tip_pos.z - (tip_pos.x - root.x).hypot(tip_pos.y - root.y))
 }
 
 /// One candidate through the placement pipeline. `ignore_grid` is set only by
@@ -578,6 +634,36 @@ pub fn place_one_candidate(
                 | GridPlacementRejectReason::KnotAboveTip => RejectReason::GridRejectNoAttachment,
                 _ => RejectReason::GridRejectOther,
             };
+            if grid_enabled && live.grid.pillars {
+                // No node sees this tip: hang it from whatever stands near,
+                // pillar or member, before raising anything new (#464).
+                let pool = fan_points();
+                let reach = live.grid.spacing_mm * GRID_PARENT_REACH_NODES;
+                let fan = fan_leaf_to_host(
+                    &FanArgs {
+                        target: tip_pos,
+                        model_id: &candidate.model_id,
+                        shaft_points: &pool,
+                        grid_host_ids: &HashSet::new(),
+                        knot_id_prefix: &format!("auto-parent-{}", candidate.id),
+                        fan_radius_mm: reach,
+                        grid_host_fan_radius_mm: reach,
+                        max_angle_deg: fan_max_angle,
+                        max_attachments: auto.max_attachments_per_trunk,
+                        draft: &*state,
+                        origin: Some(source_as_origin(candidate.source)),
+                        host_order: FanHostOrder::Nearest,
+                        rescue_span_override_mm: None,
+                    },
+                    ctx,
+                );
+                if let Ok(fanned) = fan_ok(fan) {
+                    let mut out = placed_fan(state, preset, fanned);
+                    out.grid_fallback = true;
+                    out.grid_fallback_reason = Some("parented");
+                    return out;
+                }
+            }
             if grid_enabled {
                 // The lattice could not serve this tip: retry with the grid
                 // off for this candidate alone.

@@ -379,6 +379,38 @@ pub struct GridJointSearchOptions<'a> {
     pub preferred_direction: Option<Xy>,
     /// True when the roots volume can sit at this XY.
     pub base_fits_at: &'a mut dyn FnMut(f64, f64) -> bool,
+    /// The clearance of a run's first [`NEAR_SOCKET_RUN_MM`]: the socket stands
+    /// a tip's length off the model and often nearer than the full clearance,
+    /// so the run has to be let out of there.
+    pub near_socket_clearance_mm: f64,
+    /// The leans to try; empty tries only `lean_from_vertical_deg`.
+    pub leans_deg: &'a [f64],
+}
+
+/// How far from the socket a run keeps the reduced clearance (#464).
+pub const NEAR_SOCKET_RUN_MM: f64 = 2.0;
+
+/// Whether a run from a socket comes too close to the model: within
+/// `near_clearance` on its first [`NEAR_SOCKET_RUN_MM`], and within `clearance`
+/// from there on (#464).
+pub fn run_from_socket_blocked(
+    sdf: &dyn CollisionField,
+    socket: Vec3,
+    joint: Vec3,
+    clearance: f64,
+    near_clearance: f64,
+) -> bool {
+    let length = joint.sub(socket).length();
+    if length <= NEAR_SOCKET_RUN_MM {
+        return sdf.segment_blocked(socket, joint, near_clearance);
+    }
+    let t = NEAR_SOCKET_RUN_MM / length;
+    let out = Vec3::new(
+        socket.x + (joint.x - socket.x) * t,
+        socket.y + (joint.y - socket.y) * t,
+        socket.z + (joint.z - socket.z) * t,
+    );
+    sdf.segment_blocked(socket, out, near_clearance) || sdf.segment_blocked(out, joint, clearance)
 }
 
 /// The grid-mode search: the same gates as [`find_escape_joint`], but the
@@ -389,6 +421,9 @@ pub struct GridJointSearchOptions<'a> {
 /// vertical leg exactly vertical by construction. Nodes are walked
 /// nearest-first, so the joint stays as close to the socket's own column as the
 /// model allows, and the first node that satisfies every gate wins.
+/// The leans a run to a pillar may take, degrees from vertical, in order.
+pub const PILLAR_LEANS_DEG: [f64; 4] = [45.0, 35.0, 25.0, 15.0];
+
 pub fn find_grid_joint(
     sdf: &dyn CollisionField,
     socket_pos: Vec3,
@@ -434,36 +469,58 @@ pub fn find_grid_joint(
         }
 
         // The joint sits where the shape's ray from the socket passes this
-        // node's column, so the drop follows from the lean.
-        let lean_deg = opts.lean_from_vertical_deg;
-        let drop_mm = lateral_mm / js_tan(lean_deg * DEG);
-        let z = socket_pos.z - drop_mm;
-        if z <= root_top_z + opts.min_vertical_leg_mm {
-            return None;
-        }
+        // node's column, so the drop follows from the lean. The full lean
+        // first; a steeper run reaches the same column lower down, past what
+        // stood in the way (#464).
+        let own_lean = [opts.lean_from_vertical_deg];
+        let leans = if opts.leans_deg.is_empty() {
+            &own_lean[..]
+        } else {
+            opts.leans_deg
+        };
+        for &lean_deg in leans {
+            let lean_deg = lean_deg.min(opts.lean_from_vertical_deg);
+            let drop_mm = lateral_mm / js_tan(lean_deg * DEG);
+            let z = socket_pos.z - drop_mm;
+            if z <= root_top_z + opts.min_vertical_leg_mm {
+                continue;
+            }
 
-        let joint = Vec3::new(x, y, z);
-        *probes += 1;
-        if sdf.segment_blocked(socket_pos, joint, clearance) {
-            return None;
+            let joint = Vec3::new(x, y, z);
+            *probes += 1;
+            let blocked = if opts.leans_deg.is_empty() {
+                sdf.segment_blocked(socket_pos, joint, clearance)
+            } else {
+                run_from_socket_blocked(
+                    sdf,
+                    socket_pos,
+                    joint,
+                    clearance,
+                    opts.near_socket_clearance_mm,
+                )
+            };
+            if blocked {
+                continue;
+            }
+            *probes += 1;
+            if sdf.segment_blocked(joint, Vec3::new(x, y, root_top_z), clearance) {
+                continue;
+            }
+            if !(opts.base_fits_at)(x, y) {
+                return None;
+            }
+            return Some(EscapeJointSearchResult {
+                joint: Some(EscapeJoint {
+                    joint,
+                    lean_from_vertical_deg: lean_deg,
+                    lateral_mm,
+                    direction_index: None,
+                }),
+                probes: *probes,
+                outcome: EscapeOutcome::Found,
+            });
         }
-        *probes += 1;
-        if sdf.segment_blocked(joint, Vec3::new(x, y, root_top_z), clearance) {
-            return None;
-        }
-        if !(opts.base_fits_at)(x, y) {
-            return None;
-        }
-        Some(EscapeJointSearchResult {
-            joint: Some(EscapeJoint {
-                joint,
-                lean_from_vertical_deg: lean_deg,
-                lateral_mm,
-                direction_index: None,
-            }),
-            probes: *probes,
-            outcome: EscapeOutcome::Found,
-        })
+        None
     };
 
     // Square rings outwards from the socket's own node, so the nearest node that

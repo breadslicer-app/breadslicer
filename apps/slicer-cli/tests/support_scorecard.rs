@@ -29,6 +29,7 @@
 //! - `SUPPORT_SCORECARD_PRESET`: `minis` or `figures` runs the zone preset
 //!   "Minis 30 mm+" or "Figures 70 mm+" (#360) instead of the default
 //!   options.
+//! - `SUPPORT_SCORECARD_GRID`: `off` or a spacing in mm, over the preset's.
 //! - `SUPPORT_SCORECARD_STOP_AFTER_GEN`: ends the process right after the
 //!   support job of the first scene, for whoever measures its memory.
 //! - `SUPPORT_SCORECARD_DUMP`: a folder for each scene's tips, islands left and
@@ -1494,6 +1495,17 @@ fn dump_zones(dir: &Path, name: &str, plan: &PipelineOutput) {
         for (key, n) in &d.rejections_by_zone {
             rows.push(format!("rejected\t{key}\t{n}"));
         }
+        let mut refusals: HashMap<String, usize> = HashMap::new();
+        for f in &d.cavity_fallbacks {
+            let reason = f.fan_refusal.as_deref().unwrap_or("none");
+            let short = reason.split(' ').next().unwrap_or(reason).to_owned();
+            *refusals.entry(format!("{:?}:{short}", f.kind)).or_insert(0) += 1;
+        }
+        let mut sorted: Vec<_> = refusals.into_iter().collect();
+        sorted.sort();
+        for (key, n) in sorted {
+            rows.push(format!("bridge\t{key}\t{n}"));
+        }
     }
     std::fs::write(dir.join(format!("{name}.zones.tsv")), rows.join("\n")).expect("write them");
 }
@@ -1635,6 +1647,13 @@ fn run_scene(
         Ok("figures") => request.options.zones = Some(zone_presets::figures_70()),
         Ok(other) => panic!("SUPPORT_SCORECARD_PRESET: unknown preset {other:?}"),
         Err(_) => {}
+    }
+    // `off` or a spacing in mm, over what the preset says.
+    if let (Ok(grid), Some(zones)) = (
+        std::env::var("SUPPORT_SCORECARD_GRID"),
+        request.options.zones.as_mut(),
+    ) {
+        zones.grid_mm = grid.parse().ok();
     }
 
     // The job the Supports tab runs, `runs` times.

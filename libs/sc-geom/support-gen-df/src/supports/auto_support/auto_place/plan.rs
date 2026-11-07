@@ -28,7 +28,7 @@ use super::helpers::{
     member_max_angle_from_vertical_deg, rehost_legacy_knots, resolve_surface_normal,
     sync_contact_cone_diameters_with, validate_and_cull_orphans,
 };
-use super::place::{PlaceArgs, PlaceOutcome, RejectReason, place_one_candidate};
+use super::place::{PlaceArgs, PlaceOutcome, RejectReason, grid_join_height, place_one_candidate};
 use super::report::{
     BySource, CavityFallback, ForestLedgerEntry, ForestReport, ForestScanMetrics,
     PlacementDiagnostics, ReportDiagnostics, build_forest_report, bump, fan_key,
@@ -702,6 +702,22 @@ pub fn compute_auto_support_plan(
     };
 
     ctx.set_near_fans(live.auto_support.near_fans);
+    // A node's pillar has to reach its highest join: with the grid on, the
+    // candidates go highest join first, and the lower ones hang from what the
+    // first one raised (#464).
+    if live.grid.enabled && live.grid.pillars {
+        let mut keyed: Vec<(f64, CandidatePoint)> = candidates
+            .drain(..)
+            .map(|c| {
+                ctx.set_zone(c.zone_size);
+                let join = grid_join_height(&c, model_ctx.as_ref(), ctx);
+                ctx.set_zone(None);
+                (join.unwrap_or(f64::NEG_INFINITY), c)
+            })
+            .collect();
+        keyed.sort_by(|a, b| b.0.total_cmp(&a.0));
+        candidates = keyed.into_iter().map(|(_, c)| c).collect();
+    }
     for candidate in &candidates {
         run.place(candidate, model_ctx.as_ref(), ctx);
     }
@@ -733,10 +749,25 @@ pub fn compute_auto_support_plan(
                 continue;
             }
             let grid_infill = run.grid_infill_ids.contains(&host_id);
-            let is_convertible = is_origin_convertible_to_tree(entity.base.origin)
-                && (grid_infill
-                    || entity.base.origin == Some(SupportOriginId::Standalone)
-                    || entity.base.origin == Some(SupportOriginId::Reinforcement));
+            // With the grid on, a trunk off every node hangs from a neighbour
+            // if it can: only nodes keep pillars of their own (#464).
+            let off_node = live.grid.enabled
+                && live.grid.pillars
+                && run
+                    .draft
+                    .collections
+                    .roots
+                    .get(&entity.root_id)
+                    .is_some_and(|r| {
+                        let step = live.grid.spacing_mm;
+                        let off = |v: f64| (v - (v / step).round() * step).abs() > 0.01;
+                        off(r.transform.pos.x) || off(r.transform.pos.y)
+                    });
+            let is_convertible = off_node
+                || (is_origin_convertible_to_tree(entity.base.origin)
+                    && (grid_infill
+                        || entity.base.origin == Some(SupportOriginId::Standalone)
+                        || entity.base.origin == Some(SupportOriginId::Reinforcement)));
             if !is_convertible {
                 continue;
             }
