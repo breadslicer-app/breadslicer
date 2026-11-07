@@ -959,6 +959,7 @@ fn placement(
             },
             |sdfs, (kind, id)| {
                 let (mini, model) = alone(c, kind, id);
+                let owner = model.clone();
                 let visible: HashSet<String> = [model].into_iter().collect();
                 let Ok(sink) = build_support_and_raft_world_parts(&SupportSliceInput {
                     state: &mini,
@@ -1010,6 +1011,12 @@ fn placement(
                 let confirmed = |w: &(f64, Vec3, usize), tol: f64| {
                     w.0 > tol && w.2 != usize::MAX && parity_inside(&geoms[w.2].bvh, w.1)
                 };
+                if confirmed(&worst_body, SHAFT_TOLERANCE_MM) {
+                    eprintln!(
+                        "  through the model: {kind} of {owner}, {} deep at ({:.2}, {:.2}, {:.2}) in model {}",
+                        worst_body.0, worst_body.1.x, worst_body.1.y, worst_body.1.z, worst_body.2
+                    );
+                }
                 (
                     confirmed(&worst_body, SHAFT_TOLERANCE_MM),
                     confirmed(&worst_tip, tip_tol),
