@@ -103,10 +103,10 @@ pub struct PlacementDiagnostics {
     pub grid_fallbacks: usize,
     pub cavity_fallbacks: Vec<CavityFallback>,
     /// Why the lattice could not serve each fallback (#463).
-    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    #[serde(skip)]
     pub grid_fallback_reasons: IndexMap<String, usize>,
     /// Rejections by zone size and reason, as `<size>:<reason>` (#463).
-    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    #[serde(skip)]
     pub rejections_by_zone: IndexMap<String, usize>,
 }
 
