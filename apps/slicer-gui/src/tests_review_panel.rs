@@ -1786,7 +1786,8 @@ mod fix_all {
     /// `BREADSLICER_CYCLE_REGENERATE`, the supports are generated again, as
     /// the app's default does; with `BREADSLICER_CYCLE_MOVE=x,y`, on the
     /// models moved that far first. `BREADSLICER_CYCLE_FIX_ALL` presses Fix
-    /// All instead of answering Yes. `BREADSLICER_CYCLE_HELD_LAYER` names a
+    /// All instead of answering Yes. `BREADSLICER_CYCLE_PRESET` generates with
+    /// `minis` or `figures`. `BREADSLICER_CYCLE_HELD_LAYER` names a
     /// layer no island may be left on.
     #[test]
     #[ignore = "needs BREADSLICER_CYCLE_BREAD"]
@@ -1875,7 +1876,16 @@ mod fix_all {
             ctrl.clone(),
         );
         if regenerate {
-            supports.generate_now(Default::default());
+            let mut options = sc_geom::df_supports::DfSupportOptions::default();
+            match std::env::var("BREADSLICER_CYCLE_PRESET").as_deref() {
+                Ok("minis") => options.zones = Some(sc_geom::df_supports::zone_presets::minis_30()),
+                Ok("figures") => {
+                    options.zones = Some(sc_geom::df_supports::zone_presets::figures_70())
+                }
+                Ok(other) => panic!("BREADSLICER_CYCLE_PRESET: unknown preset {other:?}"),
+                Err(_) => {}
+            }
+            supports.generate_now(options);
         }
         let hollow = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
         let panel = ReviewPanel::install(
