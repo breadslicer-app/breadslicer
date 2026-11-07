@@ -29,6 +29,10 @@
 //! - `SUPPORT_SCORECARD_PRESET`: `minis` or `figures` runs the zone preset
 //!   "Minis 30 mm+" or "Figures 70 mm+" (#360) instead of the default
 //!   options.
+//! - `SUPPORT_SCORECARD_STOP_AFTER_GEN`: ends the process right after the
+//!   support job of the first scene, for whoever measures its memory.
+//! - `SUPPORT_SCORECARD_DUMP`: a folder for each scene's tips, islands left and
+//!   triangles, to look at them.
 //!
 //! Every scene is prepared as the app and `slice --df-supports` prepare it:
 //! centred on the plate of the Anycubic Photon Mono M7 Pro, lifted by the
@@ -110,7 +114,7 @@ use support_gen_df::supports::auto_support::coverage::{
 use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use support_gen_df::supports::support_primitives::contact_cone::types::ContactCone;
-use support_gen_df::supports::types::{SupportCollections, SupportState, Vec3};
+use support_gen_df::supports::types::{Segment, SupportCollections, SupportState, Vec3};
 use support_gen_df::three::Matrix4;
 use support_gen_df::three::ray::Ray;
 use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
@@ -422,6 +426,8 @@ struct Tip {
     pos: Vec3,
     body_d: f64,
     length: f64,
+    contact_d: f64,
+    axis: Vec3,
 }
 
 fn tips_of(c: &SupportCollections) -> Vec<Tip> {
@@ -434,6 +440,8 @@ fn tips_of(c: &SupportCollections) -> Vec<Tip> {
             pos: k.pos,
             body_d: k.profile.body_diameter_mm,
             length: k.profile.length_mm,
+            contact_d: k.profile.contact_diameter_mm,
+            axis: k.normal,
         });
     };
     for t in c.trunks.values() {
@@ -465,6 +473,8 @@ fn tips_of(c: &SupportCollections) -> Vec<Tip> {
                 pos: d.pos,
                 body_d: 0.0,
                 length: 0.5,
+                contact_d: d.contact_diameter_mm,
+                axis: d.surface_normal,
             });
         }
     }
@@ -643,7 +653,7 @@ fn path_mm(points: &[Vec3]) -> f64 {
     points.windows(2).map(|w| w[0].distance_to(w[1])).sum()
 }
 
-fn joints(segments: &[support_gen_df::supports::types::Segment]) -> Vec<Vec3> {
+fn joints(segments: &[Segment]) -> Vec<Vec3> {
     let mut pts = Vec::new();
     for s in segments {
         if let Some(j) = &s.bottom_joint {
@@ -1032,6 +1042,13 @@ struct Plate {
     /// Island findings by title ("Unsupported island", ...), errors and
     /// warnings.
     islands: Vec<(String, usize)>,
+    /// Each island finding: its title, layers and where it is on the plate.
+    island_list: Vec<String>,
+    /// Each island: its first layer, where it is, its first pixels and how
+    /// many of them stand over what the review erased from the layer below.
+    erased_under: Vec<String>,
+    /// Each layer: its height, and the pixels of the model and the supports.
+    layer_list: Vec<String>,
     island_errors: usize,
     floating_parts: usize,
     model_in_raft: usize,
@@ -1159,6 +1176,8 @@ fn slice_and_review(
         let solid_px = solid.layer(k).solid_area_px();
         out.model_mm3 += model_px as f64 * pixel_mm2 * h;
         out.support_mm3 += support_px as f64 * pixel_mm2 * h;
+        out.layer_list
+            .push(format!("{k}	{}	{model_px}	{support_px}", span.sample_mm));
         out.resin_mm3 += solid_px as f64 * pixel_mm2 * h;
         if solid_px > 0 {
             out.height_mm = z;
@@ -1189,13 +1208,263 @@ fn slice_and_review(
             CheckKind::Island => {
                 *islands.entry(f.title.clone()).or_default() += 1;
                 out.island_errors += usize::from(f.severity == Severity::Error);
+                out.island_list.push(format!(
+                    "{}\t{}\t{}\t{}\t{}\t{}",
+                    f.title, f.first_layer, f.last_layer, f.focus.x_mm, f.focus.y_mm, f.focus.z_mm
+                ));
             }
             CheckKind::ModelInRaft => out.model_in_raft += 1,
             _ => {}
         }
     }
     out.islands = sorted_counts(islands);
+    let (mut erased_mm3, mut erased_layers) = (0.0, 0_usize);
+    for slab in &report.erased.slabs {
+        let area_mm2: f64 = slab
+            .rects
+            .iter()
+            .map(|r| (r.x1_mm - r.x0_mm).abs() * (r.y1_mm - r.y0_mm).abs())
+            .sum();
+        erased_mm3 += area_mm2 * (slab.top_mm - slab.bottom_mm);
+        erased_layers += usize::from(area_mm2 > 0.0);
+    }
+    out.erased_under
+        .push(format!("erased\t{erased_mm3}\t{erased_layers}"));
+    for island in &report.islands {
+        let Some(below) = island.first_layer.checked_sub(1) else {
+            continue;
+        };
+        let bottom = input.layers()[below].bottom_mm;
+        let slab = report
+            .erased
+            .slabs
+            .iter()
+            .find(|s| (s.bottom_mm - bottom).abs() < 1e-6);
+        let over = island
+            .first_pixels_mm
+            .iter()
+            .filter(|p| {
+                slab.is_some_and(|s| {
+                    s.rects.iter().any(|r| {
+                        r.x0_mm.min(r.x1_mm) - ERASED_REACH_MM <= p[0]
+                            && p[0] <= r.x0_mm.max(r.x1_mm) + ERASED_REACH_MM
+                            && r.y0_mm.min(r.y1_mm) - ERASED_REACH_MM <= p[1]
+                            && p[1] <= r.y0_mm.max(r.y1_mm) + ERASED_REACH_MM
+                    })
+                })
+            })
+            .count();
+        out.erased_under.push(format!(
+            "{}\t{}\t{}\t{}\t{over}",
+            island.first_layer,
+            island.at.x_mm,
+            island.at.y_mm,
+            island.first_pixels_mm.len()
+        ));
+    }
     Ok(out)
+}
+
+/// How near a pixel of the layer below an island's first pixel stands over it,
+/// in millimetres: a pixel of a screen, at most.
+const ERASED_REACH_MM: f64 = 0.03;
+
+/// Writes what a scene's review needs to be looked at: its tips, one per line,
+/// and its triangles, as floats, once.
+fn dump_tips(dir: &Path, name: &str, plan: &PipelineOutput, models: &[ModelInput]) {
+    dump_pieces(dir, name, &plan.support.collections);
+    dump_feet(dir, name, plan);
+    dump_routes(dir, name, &plan.support.collections);
+    let tips: Vec<String> = tips_of(&plan.support.collections)
+        .iter()
+        .map(|t| {
+            format!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                t.kind, t.pos.x, t.pos.y, t.pos.z, t.contact_d, t.axis.x, t.axis.y, t.axis.z
+            )
+        })
+        .collect();
+    std::fs::write(dir.join(format!("{name}.tips.tsv")), tips.join("\n")).expect("write the tips");
+    let soup = dir.join(format!("{name}.soup"));
+    if !soup.exists() {
+        let bytes: Vec<u8> = models
+            .iter()
+            .flat_map(world_soup)
+            .flat_map(f32::to_le_bytes)
+            .collect();
+        std::fs::write(soup, bytes).expect("write the triangles");
+    }
+}
+
+/// How many directions a foot is looked at from.
+const FOOT_DIRECTIONS: usize = 64;
+
+/// The share of the half sphere over `at` that reaches out of every model: 0 at
+/// the bottom of a hollow, and about 1 on open surface.
+fn open_share(plan: &PipelineOutput, at: Vec3, normal: Vec3) -> f64 {
+    let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+    let origin = at.add(normal.multiply_scalar(0.1));
+    let open = (0..FOOT_DIRECTIONS)
+        .filter(|&i| {
+            let z = 1.0 - (2.0 * i as f64 + 1.0) / FOOT_DIRECTIONS as f64;
+            let r = (1.0 - z * z).sqrt();
+            let (sin, cos) = (golden * i as f64).sin_cos();
+            let d = Vec3::new(r * cos, r * sin, z);
+            let direction = if d.dot(normal) < 0.0 {
+                d.multiply_scalar(-1.0)
+            } else {
+                d
+            };
+            plan.bvhs.iter().all(|bvh| {
+                bvh.raycast(&Ray { origin, direction }, Side::Double, 0.0, f64::INFINITY)
+                    .is_empty()
+            })
+        })
+        .count();
+    open as f64 / FOOT_DIRECTIONS as f64
+}
+
+/// Writes every foot on the model, the lower end of a piece that stands on it:
+/// where it is, and how open the surface around it is.
+fn dump_feet(dir: &Path, name: &str, plan: &PipelineOutput) {
+    let c = &plan.support.collections;
+    let lower = |a: (Vec3, Vec3), b: (Vec3, Vec3)| {
+        let d = a.0.sub(b.0);
+        let lean = d.x.hypot(d.y).atan2(d.z.abs()).to_degrees();
+        (if a.0.z < b.0.z { a } else { b }, lean)
+    };
+    let feet = c
+        .sticks
+        .values()
+        .map(|s| {
+            let (a, b) = (&s.contact_cone_a, &s.contact_cone_b);
+            ("stick", lower((a.pos, a.normal), (b.pos, b.normal)))
+        })
+        .chain(c.twigs.values().map(|t| {
+            let (a, b) = (&t.contact_disk_a, &t.contact_disk_b);
+            (
+                "twig",
+                lower((a.pos, a.surface_normal), (b.pos, b.surface_normal)),
+            )
+        }));
+    let rows: Vec<String> = feet
+        .map(|(kind, ((at, normal), lean))| {
+            let share = open_share(plan, at, normal);
+            format!("{kind}\t{}\t{}\t{}\t{share}\t{lean}", at.x, at.y, at.z)
+        })
+        .collect();
+    std::fs::write(dir.join(format!("{name}.feet.tsv")), rows.join("\n")).expect("write them");
+}
+
+/// Writes how every trunk runs: its length, how much of it leans off vertical,
+/// how far it leans there in degrees, the height of its tip, where it stands and
+/// its diameter.
+fn dump_routes(dir: &Path, name: &str, c: &SupportCollections) {
+    let rows: Vec<String> = c
+        .trunks
+        .values()
+        .map(|t| {
+            let mut pts: Vec<Vec3> = c
+                .roots
+                .get(&t.root_id)
+                .map(|r| r.transform.pos)
+                .into_iter()
+                .collect();
+            pts.extend(joints(&t.segments));
+            pts.extend(t.contact_cone.as_ref().map(|k| k.pos));
+            let (mut slanted, mut tilt) = (0.0f64, 0.0f64);
+            for pair in pts.windows(2) {
+                let d = pair[1].sub(pair[0]);
+                let run = d.x.hypot(d.y);
+                let lean = run.atan2(d.z.abs()).to_degrees();
+                if lean >= 5.0 {
+                    slanted += d.length();
+                    tilt = tilt.max(lean);
+                }
+            }
+            let (root, tip) = (pts[0], pts[pts.len() - 1]);
+            let diameter = t.segments.first().map_or(0.0, |s| s.diameter);
+            format!(
+                "{}\t{slanted}\t{tilt}\t{}\t{}\t{}\t{diameter}",
+                path_mm(&pts),
+                tip.z,
+                root.x,
+                root.y
+            )
+        })
+        .collect();
+    std::fs::write(dir.join(format!("{name}.routes.tsv")), rows.join("\n")).expect("write them");
+}
+
+/// Writes what each kind of piece adds up to: how many, how long, and how much
+/// by its section, overlaps counted twice.
+fn dump_pieces(dir: &Path, name: &str, c: &SupportCollections) {
+    let knot = |id: &str| c.knots.get(id).map(|k| k.pos);
+    let mean = |segments: &[Segment]| {
+        segments.iter().map(|s| s.diameter).sum::<f64>() / segments.len().max(1) as f64
+    };
+    let section = |diameter: f64| std::f64::consts::PI * diameter * diameter / 4.0;
+    let mut rows = Vec::new();
+    let mut add = |kind: &str, pieces: Vec<(f64, f64)>| {
+        let length: f64 = pieces.iter().map(|p| p.0).sum();
+        let volume: f64 = pieces.iter().map(|p| p.0 * section(p.1)).sum();
+        rows.push(format!(
+            "{kind}\t{}\t{length:.1}\t{volume:.1}",
+            pieces.len()
+        ));
+    };
+    add(
+        "trunk",
+        c.trunks
+            .values()
+            .map(|t| {
+                let mut pts: Vec<Vec3> = c
+                    .roots
+                    .get(&t.root_id)
+                    .map(|r| r.transform.pos)
+                    .into_iter()
+                    .collect();
+                pts.extend(joints(&t.segments));
+                pts.extend(t.contact_cone.as_ref().map(|k| k.pos));
+                (path_mm(&pts), mean(&t.segments))
+            })
+            .collect(),
+    );
+    add(
+        "branch",
+        c.branches
+            .values()
+            .map(|b| {
+                let mut pts: Vec<Vec3> = knot(&b.parent_knot_id).into_iter().collect();
+                pts.extend(joints(&b.segments));
+                pts.extend(b.contact_cone.as_ref().map(|k| k.pos));
+                (path_mm(&pts), mean(&b.segments))
+            })
+            .collect(),
+    );
+    add(
+        "brace",
+        c.braces
+            .values()
+            .filter_map(|b| {
+                let (a, z) = (knot(&b.start_knot_id)?, knot(&b.end_knot_id)?);
+                Some((a.distance_to(z), b.profile.diameter))
+            })
+            .collect(),
+    );
+    add(
+        "stick",
+        c.sticks
+            .values()
+            .map(|s| {
+                let mut pts = vec![s.contact_cone_a.pos];
+                pts.extend(joints(&s.segments));
+                pts.push(s.contact_cone_b.pos);
+                (path_mm(&pts), mean(&s.segments))
+            })
+            .collect(),
+    );
+    std::fs::write(dir.join(format!("{name}.pieces.tsv")), rows.join("\n")).expect("write them");
 }
 
 // ------------------------------------------------------------------ scene
@@ -1274,7 +1543,12 @@ fn run_scene(
             .expect("start the support run")
             .join()
             .expect("the support run");
+        eprintln!("job {:.0} ms", ms(t.elapsed()));
         outcomes.push((ms(t.elapsed()), outcome));
+    }
+    // What the job alone takes: whoever ran this reads the process's peak.
+    if std::env::var("SUPPORT_SCORECARD_STOP_AFTER_GEN").is_ok() {
+        std::process::exit(0);
     }
     let digests: Vec<(u64, u64)> = outcomes
         .iter()
@@ -1320,6 +1594,9 @@ fn run_scene(
     let plan_digest = state_digest(&plan.support.collections);
     let deterministic = digests.iter().all(|d| *d == digests[0]) && plan_digest == digests[0].0;
     let placement = placement(&plan, &models, &settings);
+    if let Ok(dir) = std::env::var("SUPPORT_SCORECARD_DUMP") {
+        dump_tips(Path::new(&dir), &entry.name, &plan, &models);
+    }
 
     // The plate as it prints: the models and their supports.
     let mut plate_scene = scene.clone();
@@ -1340,6 +1617,29 @@ fn run_scene(
         })
         .collect();
     let plate = slice_and_review(&plate_scene, printer, material, raft_top_mm, tips);
+    if let (Ok(dir), Ok(plate)) = (std::env::var("SUPPORT_SCORECARD_DUMP"), &plate) {
+        let text = plate.island_list.join("\n");
+        std::fs::write(
+            Path::new(&dir).join(format!("{}.islands.tsv", entry.name)),
+            text,
+        )
+        .expect("write the islands");
+        let text = plate.erased_under.join("\n");
+        std::fs::write(
+            Path::new(&dir).join(format!("{}.erased.tsv", entry.name)),
+            text,
+        )
+        .expect("write what stands over the erased");
+        let text = plate.layer_list.join(
+            "
+",
+        );
+        std::fs::write(
+            Path::new(&dir).join(format!("{}.layers.tsv", entry.name)),
+            text,
+        )
+        .expect("write the layers");
+    }
 
     Score {
         name: entry.name.clone(),
@@ -1696,9 +1996,9 @@ fn support_scorecard() {
         .filter(|s| {
             let p = &s.placement;
             let reasons: usize = p.rejection_reasons.iter().map(|(_, n)| n).sum();
-            p.islands_uncovered != p.recount_uncovered
+            reasons != p.rejected
+                || p.islands_uncovered != p.recount_uncovered
                 || (p.area_coverage - p.recount_coverage).abs() > 1e-9
-                || reasons != p.rejected
         })
         .map(|s| s.name.as_str())
         .collect();
