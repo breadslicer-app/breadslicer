@@ -1403,6 +1403,14 @@ fn dump_routes(dir: &Path, name: &str, c: &SupportCollections) {
 /// spread, its diameter and its length; for a stick or a twig, its length and
 /// how far it leans (#463).
 fn dump_shape(dir: &Path, name: &str, c: &SupportCollections) {
+    // A knot names the segment it sits on: who owns each segment.
+    let mut owner: HashMap<&str, &str> = HashMap::new();
+    for (id, t) in &c.trunks {
+        owner.extend(t.segments.iter().map(|s| (s.id.as_str(), id.as_str())));
+    }
+    for (id, b) in &c.branches {
+        owner.extend(b.segments.iter().map(|s| (s.id.as_str(), id.as_str())));
+    }
     // The trunk under a shaft, going down through the knots.
     let parent_of = |id: &str| -> Option<String> {
         let knot = c
@@ -1410,7 +1418,8 @@ fn dump_shape(dir: &Path, name: &str, c: &SupportCollections) {
             .get(id)
             .map(|b| &b.parent_knot_id)
             .or_else(|| c.leaves.get(id).map(|l| &l.parent_knot_id))?;
-        c.knots.get(knot).map(|k| k.parent_shaft_id.clone())
+        let host = c.knots.get(knot)?.parent_shaft_id.as_str();
+        Some(owner.get(host).copied().unwrap_or(host).to_owned())
     };
     let trunk_of = |id: &str| -> Option<String> {
         let mut at = id.to_owned();
