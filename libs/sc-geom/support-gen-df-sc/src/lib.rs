@@ -42,7 +42,7 @@ pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{
     AddNote, AddOptions, BraceEnd, DfSupportSession, EditError, EditPreview, REVIEW_NUDGE_MM,
-    SupportContact, SupportJoint, SupportPiece, SupportPieceKind, TIP_INSERTION_MM,
+    SupportContact, SupportJoint, SupportPiece, SupportPieceKind,
 };
 pub use support_gen_df::native::overhang::{
     is_overhang_normal_z, overhang_and_stability_from_soup, overhang_normal_z_limit,

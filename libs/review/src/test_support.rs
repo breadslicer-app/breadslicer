@@ -349,6 +349,7 @@ impl FixtureBuilder {
                     tip_radius_mm: radius,
                     base_mm: [x, y, 0.0],
                     base_radius_mm: radius,
+                    round_end: false,
                 }
             })
             .collect();

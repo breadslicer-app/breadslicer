@@ -1734,7 +1734,14 @@ fn run_scene(
         .flat_map(|set| set.session.pieces())
         .flat_map(|piece| piece.contacts)
         .flat_map(|c| {
-            TipCone::stretches(c.tip, c.tip_radius_mm, c.neck, c.socket, c.socket_radius_mm)
+            TipCone::stretches(
+                c.tip,
+                c.ball,
+                c.tip_radius_mm,
+                c.neck,
+                c.socket,
+                c.socket_radius_mm,
+            )
         })
         .collect();
     let plate = slice_and_review(&plate_scene, printer, material, raft_top_mm, tips);

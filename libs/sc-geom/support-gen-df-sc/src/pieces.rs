@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use support_gen_df::features::slicing::support_world_triangles::{
-    TipDrawing, contact_disk_size, contact_ends, resolve_support_slice_tessellation,
+    TipDrawing, contact_disk_size, contact_ends, resolve_support_slice_tessellation, tip_sink_mm,
 };
 use support_gen_df::supports::support_primitives::contact_cone::types::ContactCone;
 use support_gen_df::supports::types::{ContactDisk, Segment};
@@ -57,6 +57,9 @@ pub struct SupportContact {
     /// radius of the circle with the area they enclose, and so are the other
     /// radii here.
     pub tip_radius_mm: f64,
+    /// The centre of its round end, of the tip's radius, when it has one: the
+    /// contact point, where the cone starts.
+    pub ball: Option<[f64; 3]>,
     /// The top of its break-point neck, a cylinder of the tip's radius, when
     /// it has one.
     pub neck: Option<[f64; 3]>,
@@ -87,6 +90,7 @@ impl SupportContact {
             inserted_mm: cone.pos.distance_to(ends.tip),
             tip: at(ends.tip),
             tip_radius_mm: ends.r_tip * sides,
+            ball: ends.ball.map(at),
             neck: ends.neck.map(at),
             socket: at(ends.socket),
             socket_radius_mm: ends.r_socket * sides,
@@ -95,15 +99,27 @@ impl SupportContact {
 
     /// A contact disk, read as a cylinder from inside the model to the top
     /// of the ball that closes it.
-    fn of_disk(disk: &ContactDisk, penetration_mm: f64, tip_scale: f64, sides: f64) -> Self {
+    fn of_disk(
+        disk: &ContactDisk,
+        penetration_mm: f64,
+        tip_scale: f64,
+        drawing: TipDrawing,
+        sides: f64,
+    ) -> Self {
         let (thickness, radius) = contact_disk_size(disk, tip_scale);
         let n = disk.surface_normal;
+        let sunk_mm = if drawing.round_tip {
+            tip_sink_mm(radius)
+        } else {
+            penetration_mm
+        };
         Self {
             surface: at(disk.pos),
             axis: at(n),
-            inserted_mm: penetration_mm,
-            tip: at(disk.pos.sub(n.multiply_scalar(penetration_mm))),
+            inserted_mm: sunk_mm,
+            tip: at(disk.pos.sub(n.multiply_scalar(sunk_mm))),
             tip_radius_mm: radius * sides,
+            ball: drawing.round_tip.then(|| at(disk.pos)),
             neck: None,
             socket: at(disk.pos.add(n.multiply_scalar(thickness + radius))),
             socket_radius_mm: radius * sides,
@@ -189,8 +205,9 @@ impl DfSupportSession {
         let cone = |cone: &ContactCone| {
             SupportContact::of_cone(cone, penetration_mm, tip_scale, settings.tip_drawing, sides)
         };
-        let disk =
-            |disk: &ContactDisk| SupportContact::of_disk(disk, penetration_mm, tip_scale, sides);
+        let disk = |disk: &ContactDisk| {
+            SupportContact::of_disk(disk, penetration_mm, tip_scale, settings.tip_drawing, sides)
+        };
         let knot = |id: &str| {
             c.knots.get(id).map(|k| SupportJoint {
                 at: at(k.pos),

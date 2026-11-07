@@ -11,6 +11,9 @@ use sc_review::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFi
 
 use super::*;
 
+/// How far the smallest tip goes into the model: its radius.
+const SMALLEST_TIP_SINK_MM: f64 = 0.09;
+
 fn finding(
     check: CheckKind,
     severity: Severity,
@@ -1956,7 +1959,7 @@ mod fix_all {
         };
         let shallow = depths
             .iter()
-            .filter(|(inserted, _)| *inserted < sc_geom::df_supports::TIP_INSERTION_MM - 1e-9)
+            .filter(|(inserted, _)| *inserted < SMALLEST_TIP_SINK_MM - 1e-9)
             .count();
         let off_mesh = depths.iter().filter(|(_, inside)| !inside).count();
         let (tips, off_slice) = TIPS_IN_MODEL.get();

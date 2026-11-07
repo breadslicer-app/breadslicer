@@ -111,19 +111,13 @@ mod pieces;
 
 pub use pieces::{SupportContact, SupportJoint, SupportPiece, SupportPieceKind};
 
-/// How far every tip goes into the model past the surface it touches, in
-/// millimetres: 0.2, added to the tip's length and not taken from it. A support
-/// always ends in the model, whatever made it (a run, a click, a tip moved,
-/// Fix All) and whatever its size says: this is the only such number. It is
-/// what the drawing and [`DfSupportSession::pieces`] read, so the review sees
-/// the tip the printer cures.
-pub const TIP_INSERTION_MM: f64 = 0.2;
-
-/// `settings`, with every tip sinking by [`TIP_INSERTION_MM`]. A session
-/// always runs on this, so it holds for one reopened from a file too.
-fn with_one_insertion(mut settings: PipelineSettings) -> PipelineSettings {
-    settings.tip_penetration_mm = TIP_INSERTION_MM;
-    settings.tip_drawing.one_insertion = true;
+/// `settings`, with every tip ending in a ball on its contact point, so it goes
+/// into the model by its radius, whatever made it (a run, a click, a tip moved,
+/// Fix All): what the drawing and [`DfSupportSession::pieces`] read, so the
+/// review sees the tip the printer cures. A session always runs on this, so it
+/// holds for one reopened from a file too.
+fn with_round_tips(mut settings: PipelineSettings) -> PipelineSettings {
+    settings.tip_drawing.round_tip = true;
     settings
 }
 
@@ -787,7 +781,7 @@ impl DfSupportSession {
         DfSupportSession {
             removal_index: Arc::default(),
             models: models.into(),
-            settings: Arc::new(with_one_insertion(settings)),
+            settings: Arc::new(with_round_tips(settings)),
             recipe: recipe.map(Arc::new),
             state,
             bvhs,
@@ -3050,11 +3044,10 @@ mod session_tests {
         assert!(!session.hand_edited);
     }
 
-    /// #433: every tip ends in the model by the one insertion, whatever made
-    /// it and whatever its size asks for, and it sinks past the surface
-    /// without losing its length.
+    /// #466: every tip ends in the model by its own radius, whatever made it,
+    /// and the ball that closes it stands on the contact point.
     #[test]
-    fn every_tip_goes_into_the_model_by_the_one_insertion() {
+    fn every_tip_goes_into_the_model_by_its_radius() {
         let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
         session.add_trunk_at([5.0, 5.0, 12.0]).expect("a trunk");
         session
@@ -3065,9 +3058,17 @@ mod session_tests {
             .expect("a heavy tip");
         let depths = session.tip_depths();
         assert_eq!(depths.len(), 3);
-        for (inserted, inside) in depths {
-            assert!((inserted - TIP_INSERTION_MM).abs() < 1e-9, "{inserted}");
-            assert!(inside, "the tip ends in the model");
+        assert!(
+            depths.iter().all(|(_, inside)| *inside),
+            "ends in the model"
+        );
+        let pieces = session.pieces();
+        let contacts: Vec<_> = pieces.iter().flat_map(|p| &p.contacts).collect();
+        assert_eq!(contacts.len(), 3);
+        for contact in contacts {
+            assert_eq!(contact.ball, Some(contact.surface));
+            let ratio = contact.inserted_mm / contact.tip_radius_mm;
+            assert!((ratio - 1.0).abs() < 0.1, "{contact:?}");
         }
     }
 
@@ -3085,14 +3086,13 @@ mod session_tests {
         assert!(!port.supports.auto_support.near_fans);
     }
 
-    /// #433: a session reopened with settings of old keeps the one insertion.
+    /// #466: a session reopened with settings of old draws round tips too, and
+    /// the port's defaults do not.
     #[test]
-    fn the_one_insertion_holds_on_any_settings() {
-        let mut settings = PipelineSettings::defaults(0.05);
-        settings.tip_penetration_mm = 0.0;
-        let fixed = with_one_insertion(settings);
-        assert_eq!(fixed.tip_penetration_mm, TIP_INSERTION_MM);
-        assert!(fixed.tip_drawing.one_insertion);
+    fn round_tips_hold_on_any_settings_of_a_session() {
+        let port = PipelineSettings::defaults(0.05);
+        assert!(!port.tip_drawing.round_tip);
+        assert!(with_round_tips(port).tip_drawing.round_tip);
     }
 
     /// #444: a set can start from nothing: a session with no support takes

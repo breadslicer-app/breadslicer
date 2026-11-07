@@ -312,9 +312,17 @@ pub struct TipDrawing {
     /// instead of the run's; a tip resting on the model below keeps at least
     /// the run's.
     pub per_support_penetration: bool,
-    /// Every tip sinks by the run's penetration, whatever its profile says:
-    /// it is added past the surface, and no tip ends short of the model.
-    pub one_insertion: bool,
+    /// Every tip ends in a ball of its contact radius, part of the same piece,
+    /// whose centre is the contact point on the face (#445). It sinks by that
+    /// radius ([`tip_sink_mm`]), whatever its profile says, and being round it
+    /// meets the face at any angle.
+    pub round_tip: bool,
+}
+
+/// How far a round tip goes into the model: its radius, as its centre stands on
+/// the surface. The one definition of how deep a tip goes (#445).
+pub fn tip_sink_mm(contact_radius_mm: f64) -> f64 {
+    contact_radius_mm
 }
 
 /// A contact cone's ends as drawn: its socket, where its tip ends inside
@@ -327,6 +335,9 @@ pub struct ContactEnds {
     pub r_socket: f64,
     pub r_tip: f64,
     pub neck: Option<Vec3>,
+    /// The centre of a round end, of radius `r_tip`: the cone starts here, and
+    /// `tip` is where the ball ends inside the model.
+    pub ball: Option<Vec3>,
 }
 
 /// Where a contact cone ends as the slicer draws it, under the run's
@@ -343,8 +354,9 @@ pub fn contact_ends(
     // stick's base tip): it keeps the run's sink, or its apex would cure on
     // nothing. A tip holding the model takes its own (its normal leads to a
     // socket below it).
-    let penetration = if drawing.one_insertion {
-        penetration_mm
+    let r_contact = js_max(0.05, cone.profile.contact_diameter_mm * 0.5 * tip_scale);
+    let penetration = if drawing.round_tip {
+        tip_sink_mm(r_contact)
     } else if drawing.per_support_penetration && cone.normal.z <= 0.0 {
         js_max(0.0, cone.profile.penetration_mm)
     } else if drawing.per_support_penetration {
@@ -354,13 +366,13 @@ pub fn contact_ends(
     };
     let tip = cone.pos.sub(n.multiply_scalar(penetration));
     let r_socket = js_max(0.05, cone.profile.body_diameter_mm * 0.5);
-    let r_contact = js_max(0.05, cone.profile.contact_diameter_mm * 0.5 * tip_scale);
     let mut ends = ContactEnds {
         socket,
         tip,
         r_socket,
         r_tip: r_contact,
         neck: None,
+        ball: drawing.round_tip.then_some(cone.pos),
     };
     let length = cone.pos.distance_to(socket);
     if !(length > 1e-9) {
@@ -374,7 +386,7 @@ pub fn contact_ends(
     if let Some(neck) = neck {
         let axis = socket.sub(cone.pos).multiply_scalar(1.0 / length);
         ends.neck = Some(cone.pos.add(axis.multiply_scalar(neck)));
-    } else if drawing.exact_contact {
+    } else if drawing.exact_contact && !drawing.round_tip {
         let slope = (r_socket - r_contact) / length;
         ends.r_tip = js_max(0.005, r_contact - slope * penetration);
     }
@@ -390,38 +402,42 @@ pub fn append_contact_cone_with(
     tip_scale: f64,
     drawing: TipDrawing,
 ) {
-    let shaped = TipDrawing {
-        one_insertion: false,
-        ..drawing
-    };
-    if shaped == TipDrawing::default() {
-        // The primitive sinks along the normal as it comes, which a smoothed
-        // surface leaves shorter than a millimetre.
-        let length = cone.surface_normal.unwrap_or(cone.normal).length();
-        let sink_mm = if drawing.one_insertion && length > 1e-9 {
-            penetration_mm / length
-        } else {
-            penetration_mm
-        };
-        append_contact_cone_primitive(sink, cone, radial_segments, sink_mm, tip_scale);
+    if drawing == TipDrawing::default() {
+        append_contact_cone_primitive(sink, cone, radial_segments, penetration_mm, tip_scale);
         return;
     }
     let ends = contact_ends(cone, penetration_mm, tip_scale, drawing);
     let segments = radial_segments.max(4);
+    let from = ends.ball.unwrap_or(ends.tip);
     match ends.neck {
         Some(neck) => {
-            append_frustum(sink, ends.tip, neck, ends.r_tip, ends.r_tip, segments);
+            append_frustum(sink, from, neck, ends.r_tip, ends.r_tip, segments);
             append_frustum(sink, neck, ends.socket, ends.r_tip, ends.r_socket, segments);
         }
-        None => append_frustum(
-            sink,
-            ends.tip,
-            ends.socket,
-            ends.r_tip,
-            ends.r_socket,
-            segments,
-        ),
+        None => append_frustum(sink, from, ends.socket, ends.r_tip, ends.r_socket, segments),
     }
+    if let Some(ball) = ends.ball {
+        append_joint_sphere(sink, ball, ends.r_tip * 2.0, segments);
+    }
+}
+
+/// [`append_contact_disk_primitive`] drawn as `drawing` says: a round end is a
+/// ball on the contact point, and the disk goes no further in.
+pub fn append_contact_disk_with(
+    sink: &mut TriangleSink,
+    disk: &ContactDisk,
+    radial_segments: u32,
+    penetration_mm: f64,
+    tip_scale: f64,
+    drawing: TipDrawing,
+) {
+    if !drawing.round_tip {
+        append_contact_disk_primitive(sink, disk, radial_segments, penetration_mm, tip_scale);
+        return;
+    }
+    append_contact_disk_primitive(sink, disk, radial_segments, 0.0, tip_scale);
+    let (_, radius) = contact_disk_size(disk, tip_scale);
+    append_joint_sphere(sink, disk.pos, radius * 2.0, radial_segments.max(4));
 }
 
 /// The thickness and the radius of a contact disk as
@@ -889,12 +905,13 @@ pub fn build_support_and_raft_world_parts(
                 // declared `Disk` and every cone field `Cone`.
                 if let Some((_, disk)) = entity.disks.iter().find(|(f, _)| f == field) {
                     debug_assert_eq!(kind, SupportEndpointKind::Disk);
-                    append_contact_disk_primitive(
+                    append_contact_disk_with(
                         &mut sink,
                         disk,
                         tessellation.contact_cone_radial_segments,
                         input.tip_penetration_mm,
                         tip_scale,
+                        input.tip_drawing,
                     );
                 } else if let Some((_, cone)) = entity.cones.iter().find(|(f, _)| f == field) {
                     debug_assert_ne!(kind, SupportEndpointKind::Disk);
@@ -1109,7 +1126,9 @@ fn append_smooth_shaft(
             r_socket,
             r_tip,
             neck,
+            ball,
         } = cone_ends(cone);
+        let tip = ball.unwrap_or(tip);
         let shaft_r = radii.last().map_or(r_socket, |r| r.1);
         if points
             .last()
@@ -1148,7 +1167,9 @@ fn append_smooth_shaft(
             r_socket,
             r_tip,
             neck,
+            ball,
         } = cone_ends(cone);
+        let tip = ball.unwrap_or(tip);
         let shaft_r = radii.first().map_or(r_socket, |r| r.0);
         if points
             .first()
@@ -1201,6 +1222,13 @@ fn append_smooth_shaft(
                 tessellation.shaft_radial_segments,
                 params,
             );
+        }
+    }
+    for cone in [cones.0, cones.1].into_iter().flatten() {
+        let ends = cone_ends(cone);
+        if let Some(ball) = ends.ball {
+            let segments = tessellation.contact_cone_radial_segments.max(4);
+            append_joint_sphere(sink, ball, ends.r_tip * 2.0, segments);
         }
     }
     true
