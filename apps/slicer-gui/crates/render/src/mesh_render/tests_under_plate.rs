@@ -204,3 +204,56 @@ fn the_plate_fades_in_step_with_the_camera() {
     let floor = middle(&mut renderer, &empty, &above(), 0.0);
     assert!(!is_background(floor), "{floor:?}");
 }
+
+/// A closed box from `lo` to `hi` (world mm), its faces turned outwards.
+fn closed_box(lo: [f32; 3], hi: [f32; 3]) -> IndexedMesh {
+    let cube = sc_mesh_fixtures::unit_cube_mesh();
+    let (clo, chi) = cube
+        .vertices()
+        .iter()
+        .fold(([f32::MAX; 3], [f32::MIN; 3]), |(a, b), v| {
+            let p = v.as_array();
+            (
+                std::array::from_fn(|k| a[k].min(p[k])),
+                std::array::from_fn(|k| b[k].max(p[k])),
+            )
+        });
+    let vertices = cube
+        .vertices()
+        .iter()
+        .map(|v| {
+            let p = v.as_array();
+            Vertex::new(std::array::from_fn(|k| {
+                lo[k] + (p[k] - clo[k]) / (chi[k] - clo[k]) * (hi[k] - lo[k])
+            }))
+        })
+        .collect();
+    IndexedMesh::new(None, vertices, cube.faces().to_vec())
+}
+
+/// A shaft standing in the raft, opened from under the plate where the raft
+/// faded, reads solid: its inside is drawn as the face of the cut, in the
+/// shade its own underside takes drawn whole, not the background through it.
+#[test]
+fn from_under_the_plate_a_shaft_the_raft_opened_reads_solid() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let graph = scene_of(vec![supports(closed_box(
+        [-10.0, -10.0, 0.0],
+        [10.0, 10.0, 20.0],
+    ))]);
+    let cut = middle(&mut renderer, &graph, &under(), RAFT_TOP_MM);
+    assert!(!is_background(cut), "{cut:?}");
+    let whole = middle(&mut renderer, &graph, &under(), 0.0);
+    assert!(
+        cut.iter()
+            .zip(whole)
+            .all(|(c, w)| (i32::from(*c) - i32::from(w)).abs() <= 16),
+        "the cut {cut:?}, the underside {whole:?}"
+    );
+    // From above, the shaft is as ever.
+    let above_box = middle(&mut renderer, &graph, &above(), RAFT_TOP_MM);
+    assert!(!is_background(above_box), "{above_box:?}");
+}

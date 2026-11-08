@@ -37,13 +37,21 @@ pub(super) struct GpuVertex {
 /// Per-object entry in the model uniform buffer. Mirrors the WGSL `ModelEntry`
 /// struct field by field. `flags.x` is the selection bit (1 for the selected
 /// object, 0 otherwise), `flags.y` the envelope-breach bit and `flags.z` what
-/// the object is drawn as (an overlay tint, or [`MODEL_OVERHANG_MAP`]); the
-/// last lane is unused.
+/// the object is drawn as (an overlay tint, or [`MODEL_OVERHANG_MAP`]) and
+/// `flags.w` is 1 for a support mesh (#481).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug)]
 pub(super) struct ModelEntry {
     model: [[f32; 4]; 4],
     flags: [u32; 4],
+}
+
+impl ModelEntry {
+    /// Whether the object is a support mesh, whose raft hides from under
+    /// the plate (#481).
+    pub(super) fn is_supports(&self) -> bool {
+        self.flags[3] == 1
+    }
 }
 
 pub(super) const MODEL_ENTRY_SIZE: u64 = size_of::<ModelEntry>() as u64;

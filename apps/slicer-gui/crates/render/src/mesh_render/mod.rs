@@ -984,6 +984,9 @@ impl Renderer {
         // grounds: the partial entry list would leave the model buffer's tail
         // slots holding stale matrices that the draw loop would render against
         // the current frame's geometry.
+        // Which objects are support meshes, for the cuts their hidden rafts
+        // leave (#481).
+        let mut support_objects: Vec<bool> = Vec::new();
         let scene_for_draws = if let (Some(inst), Some(graph_data)) = (installed, graph) {
             match build_model_entries(
                 graph_data,
@@ -998,6 +1001,7 @@ impl Renderer {
                     // uniform offset alignment (typically 256 bytes), so
                     // consecutive entries are not contiguous and must be
                     // written individually.
+                    support_objects = entries.iter().map(|e| e.is_supports()).collect();
                     for (i, entry) in entries.iter().enumerate() {
                         let offset = i as u64 * inst.gpu.model_stride();
                         self.core.queue.write_buffer(
@@ -1124,6 +1128,9 @@ impl Renderer {
 
             if scene_for_draws && let Some(inst) = installed {
                 self.record_mesh_objects(&mut pass, inst, selection);
+                if under_plate > 0.0 && raft_top_mm > 0.0 {
+                    self.record_support_cuts(&mut pass, inst, selection, &support_objects);
+                }
                 if contents == FrameContents::Workspace {
                     self.surface_paint
                         .record(&mut pass, &self.pipelines.surface_paint, inst);
@@ -1276,6 +1283,41 @@ impl Renderer {
             } else {
                 0
             });
+            pass.draw_indexed(0..obj.index_count(), 0, 0..1);
+        }
+    }
+
+    /// The cuts the hidden rafts leave (#481): the support meshes again, with
+    /// their back faces only, through the cap pipeline. A back face shows
+    /// only where the front faces before it were dropped with the raft, so
+    /// this fills each opened shaft with the flat face of its cut. Same
+    /// stencil as the object, so a selected set's outline takes its cuts in.
+    fn record_support_cuts(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        inst: &InstalledScene,
+        selection: &[NodeId],
+        support_objects: &[bool],
+    ) {
+        pass.set_pipeline(&self.pipelines.mesh.cap_pipeline);
+        pass.set_bind_group(
+            MeshBindGroup::Uniforms.idx(),
+            &self.pipelines.mesh.uniforms_bind_group,
+            &[],
+        );
+        for (i, obj) in inst.gpu.objects().iter().enumerate() {
+            if !support_objects.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let offset = (i as u64 * inst.gpu.model_stride()) as u32;
+            pass.set_bind_group(
+                MeshBindGroup::Models.idx(),
+                &inst.models_bind_group,
+                &[offset],
+            );
+            pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
+            pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_stencil_reference(u32::from(selection.binary_search(&obj.node_id()).is_ok()));
             pass.draw_indexed(0..obj.index_count(), 0, 0..1);
         }
     }

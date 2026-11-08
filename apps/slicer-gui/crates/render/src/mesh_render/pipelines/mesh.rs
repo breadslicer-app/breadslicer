@@ -39,6 +39,10 @@ impl MeshBindGroup {
 
 pub(in crate::mesh_render) struct MeshPipeline {
     pub(in crate::mesh_render) pipeline: wgpu::RenderPipeline,
+    /// The cuts the hidden rafts leave in the support meshes (#481): the
+    /// main pipeline with the front faces culled, so a support mesh's
+    /// inside draws through `fs_cap` where the raft no longer covers it.
+    pub(in crate::mesh_render) cap_pipeline: wgpu::RenderPipeline,
     /// Preview overlays: the mesh shader's `fs_overlay`, no culling, depth
     /// neither tested nor written, stencil untouched, alpha-blended.
     pub(in crate::mesh_render) overlay_pipeline: wgpu::RenderPipeline,
@@ -111,75 +115,83 @@ impl MeshPipeline {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<GpuVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                // Every fragment that passes depth replaces the stencil
-                // with the per-draw `stencil_reference` value (set by
-                // the render loop to 1 for the selected object and 0
-                // otherwise). This means after the main pass the
-                // stencil holds 1 only over the selected object's
-                // visible silhouette, exactly what the outline
-                // post-pass dilates.
-                stencil: wgpu::StencilState {
-                    front: wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Always,
-                        fail_op: wgpu::StencilOperation::Keep,
-                        depth_fail_op: wgpu::StencilOperation::Keep,
-                        pass_op: wgpu::StencilOperation::Replace,
-                    },
-                    back: wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Always,
-                        fail_op: wgpu::StencilOperation::Keep,
-                        depth_fail_op: wgpu::StencilOperation::Keep,
-                        pass_op: wgpu::StencilOperation::Replace,
-                    },
-                    read_mask: 0xFF,
-                    write_mask: 0xFF,
+        let solid_pipeline = |label: &'static str, cull: wgpu::Face, fragment: &'static str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<GpuVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    })],
                 },
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: SAMPLE_COUNT,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: TEXTURE_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(cull),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    // Every fragment that passes depth replaces the stencil
+                    // with the per-draw `stencil_reference` value (set by
+                    // the render loop to 1 for the selected object and 0
+                    // otherwise). This means after the main pass the
+                    // stencil holds 1 only over the selected object's
+                    // visible silhouette, exactly what the outline
+                    // post-pass dilates.
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Replace,
+                        },
+                        back: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Replace,
+                        },
+                        read_mask: 0xFF,
+                        write_mask: 0xFF,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: SAMPLE_COUNT,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fragment),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: TEXTURE_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipeline = solid_pipeline("mesh-viewer pipeline", wgpu::Face::Back, "fs_main");
+        let cap_pipeline = solid_pipeline(
+            "mesh-viewer support cap pipeline",
+            wgpu::Face::Front,
+            "fs_cap",
+        );
 
         let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("mesh-viewer overlay pipeline"),
@@ -252,6 +264,7 @@ impl MeshPipeline {
 
         Self {
             pipeline,
+            cap_pipeline,
             overlay_pipeline,
             uniform_buffer,
             uniforms_bind_group,

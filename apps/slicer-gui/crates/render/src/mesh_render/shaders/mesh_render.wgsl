@@ -186,6 +186,29 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(final_color * intensity, 1.0);
 }
 
+// The cut a hidden raft leaves in a support mesh (#481). From under the
+// plate the raft fades out and the shafts open where it stood; their
+// insides, the back faces this pass draws, take the look of the flat face
+// the cut would leave, so a shaft reads solid. Only for a support mesh, and
+// only above what fades: the rest is left to the main pass.
+@fragment
+fn fs_cap(in: VsOut) -> @location(0) vec4<f32> {
+    if (in.supports != 1u || in.world_pos.z > u.light_dir.w) {
+        discard;
+    }
+    if (in.world_pos.z < u.env_max.w && screen_door(in.clip_pos.xy) < u.env_min.w) {
+        discard;
+    }
+    // The cut faces down, toward the camera under the plate.
+    let n = vec3<f32>(0.0, 0.0, -1.0);
+    let lambert = abs(dot(n, normalize(u.light_dir.xyz)));
+    let intensity = 0.25 + 0.75 * lambert;
+    let unselected = vec3<f32>(0.75, 0.78, 0.85);
+    let highlighted = vec3<f32>(1.00, 0.78, 0.42);
+    let base_color = mix(unselected, highlighted, f32(in.selected));
+    return vec4<f32>(base_color * intensity, 1.0);
+}
+
 // Preview overlays (a support before it is placed, a hollow cavity, a drain):
 // drawn over the scene without depth, translucent, so what lies inside or
 // behind the model still shows. Lit like the models so its shape reads.
