@@ -257,3 +257,22 @@ fn from_under_the_plate_a_shaft_the_raft_opened_reads_solid() {
     let above_box = middle(&mut renderer, &graph, &above(), RAFT_TOP_MM);
     assert!(!is_background(above_box), "{above_box:?}");
 }
+
+/// Zoomed in, an orthographic view looking up steeply had its eye just under
+/// the plate, the fade barely begun, and drew most of a raft's pixels: the
+/// scattered marks Damian saw. Its rays decide now, and the raft is gone.
+#[test]
+fn an_orthographic_view_from_under_the_plate_hides_the_raft_zoomed_in() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let graph = scene_of(vec![supports(square(60.0, 0.4))]);
+    let mut close = camera(-40.0);
+    close.distance = 16.0;
+    close.orthographic = true;
+    let eye = close.eye().z;
+    assert!(eye < 0.0 && eye > -0.05 * close.distance, "{eye}");
+    let pixel = middle(&mut renderer, &graph, &close, RAFT_TOP_MM);
+    assert!(is_background(pixel), "{pixel:?}");
+}

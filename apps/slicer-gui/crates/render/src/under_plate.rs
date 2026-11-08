@@ -18,9 +18,19 @@ pub const UNDER_PLATE_FADE_SPAN: f32 = 0.1;
 /// How far the plate and the rafts have faded for `camera`: 0 with the camera
 /// above the plate, 1 once it is [`UNDER_PLATE_FADE_SPAN`] under it, eased in
 /// between.
+///
+/// A perspective camera sees the plate from under it once its eye is below
+/// it. An orthographic one looks along parallel rays and has no eye to speak
+/// of: its distance only sets the zoom, and zoomed in, the eye stayed above the
+/// plate, or just under it, half faded, while the rays climbed steeply, which
+/// left a raft's pixels scattered on screen. It sees the plate from under it
+/// once its rays climb.
 pub fn under_plate_fade(camera: &OrbitCamera) -> f32 {
-    let distance = camera.distance.max(f32::EPSILON);
-    let below = -camera.eye().z / distance;
+    let below = if camera.orthographic {
+        -camera.pitch.sin()
+    } else {
+        -camera.eye().z / camera.distance.max(f32::EPSILON)
+    };
     let x = (below / UNDER_PLATE_FADE_SPAN).clamp(0.0, 1.0);
     x * x * (3.0 - 2.0 * x)
 }
@@ -60,6 +70,26 @@ mod tests {
         assert_eq!(under_plate_fade(&camera_at(-45.0, 20.0)), 1.0);
         assert_eq!(under_plate_fade(&camera_at(-89.0, 0.0)), 1.0);
         assert!(sees_through_the_plate(&camera_at(-45.0, 20.0)));
+    }
+
+    /// Zoomed in, an orthographic camera's eye stands close to what it
+    /// orbits: looking up steeply it can still be above the plate. Its rays
+    /// decide, not its eye.
+    #[test]
+    fn an_orthographic_camera_fades_by_how_steeply_its_rays_climb() {
+        let mut camera = camera_at(-40.0, 10.0);
+        camera.distance = 12.0;
+        assert!(camera.eye().z > 0.0, "the eye above the plate");
+        assert_eq!(under_plate_fade(&camera), 0.0, "in perspective, from above");
+        camera.orthographic = true;
+        assert_eq!(under_plate_fade(&camera), 1.0);
+        for (pitch, fade) in [(30.0, 0.0), (0.0, 0.0), (-89.0, 1.0)] {
+            camera.pitch = f32::to_radians(pitch);
+            assert_eq!(under_plate_fade(&camera), fade, "{pitch}");
+        }
+        // Past the span below the horizon the fade is whole.
+        camera.pitch = (-UNDER_PLATE_FADE_SPAN).asin() - 0.01;
+        assert_eq!(under_plate_fade(&camera), 1.0);
     }
 
     #[test]
