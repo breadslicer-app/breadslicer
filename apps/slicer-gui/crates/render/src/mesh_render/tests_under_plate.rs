@@ -293,3 +293,91 @@ fn from_under_the_plate_a_raft_topping_out_at_the_cut_leaves_no_rim() {
     let pixel = middle(&mut renderer, &graph, &under(), RAFT_TOP_MM);
     assert!(is_background(pixel), "{pixel:?}");
 }
+
+/// A round raft `radius` mm wide reaching `top` mm, closed, in `sides` walls.
+fn round_raft(radius: f32, top: f32, sides: u32) -> IndexedMesh {
+    let mut vertices = vec![Vertex::new([0.0, 0.0, 0.0]), Vertex::new([0.0, 0.0, top])];
+    for k in 0..sides {
+        let a = k as f32 / sides as f32 * std::f32::consts::TAU;
+        let (x, y) = (radius * a.cos(), radius * a.sin());
+        vertices.push(Vertex::new([x, y, 0.0]));
+        vertices.push(Vertex::new([x, y, top]));
+    }
+    let mut faces = Vec::new();
+    for k in 0..sides {
+        let (b0, t0) = (2 + 2 * k, 3 + 2 * k);
+        let (b1, t1) = (2 + 2 * ((k + 1) % sides), 3 + 2 * ((k + 1) % sides));
+        faces.push([0, b1, b0]);
+        faces.push([1, t0, t1]);
+        faces.push([b0, b1, t1]);
+        faces.push([b0, t1, t0]);
+    }
+    let faces = faces
+        .into_iter()
+        .map(IndexedTriangle::from_raw_indices)
+        .collect();
+    IndexedMesh::new(None, vertices, faces)
+}
+
+/// How many pixels of the workspace frame `graph` changes from the empty
+/// one, seen by `camera` with the rafts reaching `raft_top_mm`.
+fn pixels_drawn(
+    renderer: &mut Renderer,
+    graph: &Scene,
+    camera: &OrbitCamera,
+    raft_top_mm: f32,
+    side: u32,
+) -> usize {
+    let mut frame_of = |graph: &Scene| {
+        renderer.upload_scene(graph).expect("upload the scene");
+        renderer.set_raft_top(raft_top_mm);
+        renderer
+            .workspace_pixels_for_test(
+                SceneRender {
+                    graph,
+                    selection: &[],
+                    gizmo: None,
+                    clip_z: None,
+                },
+                BV,
+                camera,
+                side,
+                side,
+            )
+            .expect("the frame is not refused")
+            .expect("a sized frame")
+    };
+    let empty = frame_of(&scene_of(Vec::new()));
+    let drawn = frame_of(graph);
+    empty
+        .rgba
+        .chunks_exact(4)
+        .zip(drawn.rgba.chunks_exact(4))
+        .filter(|(e, d)| e.iter().zip(d.iter()).any(|(a, b)| a.abs_diff(*b) > 2))
+        .count()
+}
+
+/// A raft's wall seen almost edge on, at the left and right of a round raft
+/// from under the plate, covers some of a pixel's samples but not its
+/// centre: the height there, read at the centre, ran far past the wall's top
+/// and the cut kept the pixel, a speck on the raft's rim.
+#[test]
+fn from_under_the_plate_a_round_raft_leaves_no_specks_on_its_rim() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let graph = scene_of(vec![supports(round_raft(30.0, RAFT_TOP_MM, 96))]);
+    let mut found = Vec::new();
+    for (pitch, orthographic) in [(-30.0, true), (-60.0, true), (-30.0, false), (-60.0, false)] {
+        let mut camera = camera(pitch);
+        camera.orthographic = orthographic;
+        assert_eq!(under_plate_fade(&camera), 1.0);
+        let specks = pixels_drawn(&mut renderer, &graph, &camera, RAFT_TOP_MM, 512);
+        // With nothing to hide, the raft shows.
+        let whole = pixels_drawn(&mut renderer, &graph, &camera, 0.0, 512);
+        assert!(whole > 10_000, "{whole}");
+        found.push((pitch, orthographic, specks));
+    }
+    assert!(found.iter().all(|f| f.2 == 0), "{found:?}");
+}

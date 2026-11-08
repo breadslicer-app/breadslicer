@@ -74,6 +74,13 @@ struct VsOut {
     @location(3) @interpolate(flat) tint: u32,
     @location(4) normal: vec3<f32>,
     @location(5) @interpolate(flat) supports: u32,
+    // The world height the raft's cut reads (#481), at the centroid of the
+    // samples the triangle covers. A raft wall seen near edge on covers a
+    // few samples of a pixel and not its centre, and read there its height
+    // runs on far past the wall's top: the cut kept such a pixel, a speck on
+    // the raft's rim. `world_pos` stays at the centre, where its screen
+    // derivatives are taken.
+    @location(6) @interpolate(perspective, centroid) cut_z: f32,
 };
 
 @vertex
@@ -82,6 +89,7 @@ fn vs_main(in: VsIn) -> VsOut {
     let world = model_entry.model * vec4<f32>(in.position, 1.0);
     out.clip_pos = u.view_proj * world;
     out.world_pos = world.xyz;
+    out.cut_z = world.z;
     out.selected = model_entry.flags.x;
     out.breaches = model_entry.flags.y;
     out.tint = model_entry.flags.z;
@@ -211,7 +219,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     // From under the plate (#481), a support mesh's raft fades with the
     // plate, so the tips above it show.
-    if (in.supports == 1u && in.world_pos.z < u.env_max.w
+    if (in.supports == 1u && in.cut_z < u.env_max.w
         && screen_door(in.clip_pos.xy) < u.env_min.w) {
         discard;
     }
@@ -256,7 +264,7 @@ fn fs_cap(in: VsOut) -> @location(0) vec4<f32> {
     if (in.supports != 1u || in.world_pos.z > u.light_dir.w) {
         discard;
     }
-    if (in.world_pos.z < u.env_max.w && screen_door(in.clip_pos.xy) < u.env_min.w) {
+    if (in.cut_z < u.env_max.w && screen_door(in.clip_pos.xy) < u.env_min.w) {
         discard;
     }
     // The cut faces down, toward the camera under the plate.
