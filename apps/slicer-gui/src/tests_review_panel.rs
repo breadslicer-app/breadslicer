@@ -1938,10 +1938,41 @@ mod fix_all {
             .collect();
         let press = Instant::now();
         if offered > 0 {
+            // What the press does on the UI thread, before the placing goes
+            // to its worker (#476): the window waits that long.
+            let held = Instant::now();
             if fix_all {
                 w.window.invoke_review_fix_all_requested();
             } else {
                 answer_the_question(&w, MessageAnswer::Confirm);
+            }
+            eprintln!(
+                "{}: the press held the UI thread {:?}",
+                path.display(),
+                held.elapsed()
+            );
+            // A model with no set asks which preset its first tips start one
+            // with (#444): the one in force, as Enter picks.
+            let dialogs = panel.ctrl.dialogs();
+            if dialogs
+                .queued_for_test()
+                .iter()
+                .any(|(kind, _)| *kind == MessageKind::ChoosePreset)
+            {
+                while dialogs
+                    .queued_for_test()
+                    .first()
+                    .is_some_and(|(kind, _)| *kind != MessageKind::ChoosePreset)
+                {
+                    dialogs.answer(MessageAnswer::Close, false);
+                }
+                let held = Instant::now();
+                dialogs.answer(MessageAnswer::Confirm, false);
+                eprintln!(
+                    "{}: the preset held the UI thread {:?}",
+                    path.display(),
+                    held.elapsed()
+                );
             }
             let _ = wait_fix_all(panel);
             let placed = w.window.get_review_message().to_string();
