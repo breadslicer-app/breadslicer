@@ -321,6 +321,10 @@ mod options_tests {
                 zones: Some(crate::zone_presets::figures_70()),
                 ..Default::default()
             },
+            DfSupportOptions {
+                zones: Some(crate::zone_presets::figures_150()),
+                ..Default::default()
+            },
         ];
         for options in cases {
             let mut settings = PipelineSettings::defaults(0.05);

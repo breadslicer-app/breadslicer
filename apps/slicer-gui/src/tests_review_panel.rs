@@ -1879,8 +1879,11 @@ mod fix_all {
             let mut options = sc_geom::df_supports::DfSupportOptions::default();
             match std::env::var("BREADSLICER_CYCLE_PRESET").as_deref() {
                 Ok("minis") => options.zones = Some(sc_geom::df_supports::zone_presets::minis_30()),
-                Ok("figures") => {
+                Ok("figures70") => {
                     options.zones = Some(sc_geom::df_supports::zone_presets::figures_70())
+                }
+                Ok("figures") => {
+                    options.zones = Some(sc_geom::df_supports::zone_presets::figures_150())
                 }
                 Ok(other) => panic!("BREADSLICER_CYCLE_PRESET: unknown preset {other:?}"),
                 Err(_) => {}

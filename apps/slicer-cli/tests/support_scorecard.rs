@@ -26,9 +26,9 @@
 //! - `SUPPORT_SCORECARD_ONLY`: comma-separated scene names to measure.
 //! - `SUPPORT_SCORECARD_RUNS`: support runs per scene (default 2). The
 //!   generation time is the fastest run, and the runs must agree.
-//! - `SUPPORT_SCORECARD_PRESET`: `minis` or `figures` runs the zone preset
-//!   "Minis 30 mm+" or "Figures 70 mm+" (#360) instead of the default
-//!   options.
+//! - `SUPPORT_SCORECARD_PRESET`: `minis`, `figures70` or `figures` runs the
+//!   zone preset "Minis 30 mm+", "Figures 70 mm+" or "Figures 150 mm+"
+//!   (#360, #479) instead of the default options.
 //! - `SUPPORT_SCORECARD_GRID`: `off` or a spacing in mm, over the preset's.
 //! - `SUPPORT_SCORECARD_STOP_AFTER_GEN`: ends the process right after the
 //!   support job of the first scene, for whoever measures its memory.
@@ -1767,7 +1767,8 @@ fn run_scene(
     };
     match std::env::var("SUPPORT_SCORECARD_PRESET").as_deref() {
         Ok("minis") => request.options.zones = Some(zone_presets::minis_30()),
-        Ok("figures") => request.options.zones = Some(zone_presets::figures_70()),
+        Ok("figures70") => request.options.zones = Some(zone_presets::figures_70()),
+        Ok("figures") => request.options.zones = Some(zone_presets::figures_150()),
         Ok(other) => panic!("SUPPORT_SCORECARD_PRESET: unknown preset {other:?}"),
         Err(_) => {}
     }

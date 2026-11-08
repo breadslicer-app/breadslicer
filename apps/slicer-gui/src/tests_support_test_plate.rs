@@ -15,7 +15,7 @@
 //! otherwise.
 
 use super::*;
-use sc_geom::df_supports::zone_presets::figures_70;
+use sc_geom::df_supports::zone_presets::figures_150;
 use sc_geom::df_supports::{DF_SUPPORT_DOCUMENT_VERSION, DfSupportSession};
 use sc_mesh_core::transform::Transform3D;
 use serde_json::{Value, json};
@@ -196,7 +196,7 @@ fn support_test_plate() {
         let run =
             DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
         let options = DfSupportOptions {
-            zones: Some(figures_70()),
+            zones: Some(figures_150()),
             ..DfSupportOptions::default()
         };
         run.generate_now(options);
