@@ -5368,6 +5368,7 @@ dependencies = [
  "sc-slicer-gui-render",
  "sc-slicer-gui-ui",
  "serde",
+ "serde_json",
  "slint",
  "swash",
  "sys-locale",

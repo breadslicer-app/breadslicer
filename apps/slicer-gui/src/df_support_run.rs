@@ -9297,4 +9297,8 @@ mod hand_edit_tests {
     // Braces laid by hand (#3), through the viewport.
     #[path = "../../tests_hand_braces.rs"]
     mod hand_braces;
+
+    // The support test plate (#464), written on request.
+    #[path = "../../tests_support_test_plate.rs"]
+    mod support_test_plate;
 }
