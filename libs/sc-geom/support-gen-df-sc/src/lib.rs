@@ -520,6 +520,8 @@ impl SettingsRecipe {
         settings.supports.auto_support.near_fans = true;
         // A spine between the rays of a brace is no way through (#445).
         settings.supports.auto_bracing.exact_clearance = true;
+        // A tall or bent shaft is braced where it stands above the rest (#464).
+        settings.supports.auto_bracing.brace_tall_shafts = true;
         settings
     }
 }

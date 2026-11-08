@@ -667,6 +667,89 @@ fn joints(segments: &[Segment]) -> Vec<Vec3> {
     pts
 }
 
+/// How far up the shafts are braced (#464): each peel levers the tall and
+/// bent ones against the raft, and a brace shares that force out.
+#[derive(Default, Clone, Copy)]
+struct Bracing {
+    /// Trunks and branches.
+    shafts: usize,
+    /// Of them, those whose top stands more than [`UNBRACED_TOP_MM`] above
+    /// their highest brace, or above where they start when none holds them.
+    unbraced_tops: usize,
+    /// Shaft segments at least [`LONG_SEGMENT_MM`] long leaning at least
+    /// [`DIAGONAL_DEG`] off vertical, and those with no brace on them.
+    diagonal: usize,
+    diagonal_unbraced: usize,
+    /// The other segments at least [`LONG_SEGMENT_MM`] long, and those with
+    /// no brace on them.
+    vertical: usize,
+    vertical_unbraced: usize,
+}
+
+const UNBRACED_TOP_MM: f64 = 10.0;
+const LONG_SEGMENT_MM: f64 = 15.0;
+const DIAGONAL_DEG: f64 = 20.0;
+
+fn bracing(c: &SupportCollections) -> Bracing {
+    let mut braced_z: HashMap<&str, f64> = HashMap::new();
+    for b in c.braces.values() {
+        for id in [&b.start_knot_id, &b.end_knot_id] {
+            if let Some(k) = c.knots.get(id) {
+                let z = braced_z
+                    .entry(k.parent_shaft_id.as_str())
+                    .or_insert(f64::NEG_INFINITY);
+                *z = z.max(k.pos.z);
+            }
+        }
+    }
+    let mut out = Bracing::default();
+    let mut shaft = |start: Option<Vec3>, segments: &[Segment]| {
+        let Some(mut below) = start else {
+            return;
+        };
+        out.shafts += 1;
+        let base = below.z;
+        let mut top = below.z;
+        let mut highest = f64::NEG_INFINITY;
+        for s in segments {
+            let Some(up) = s.top_joint.as_ref().map(|j| j.pos) else {
+                continue;
+            };
+            let from = s.bottom_joint.as_ref().map_or(below, |j| j.pos);
+            let (dx, dy, dz) = (up.x - from.x, up.y - from.y, up.z - from.z);
+            let length = (dx * dx + dy * dy + dz * dz).sqrt();
+            let lean = dx.hypot(dy).atan2(dz.abs()).to_degrees();
+            let on = braced_z.get(s.id.as_str()).copied();
+            if let Some(z) = on {
+                highest = highest.max(z);
+            }
+            if length >= LONG_SEGMENT_MM {
+                if lean >= DIAGONAL_DEG {
+                    out.diagonal += 1;
+                    out.diagonal_unbraced += usize::from(on.is_none());
+                } else {
+                    out.vertical += 1;
+                    out.vertical_unbraced += usize::from(on.is_none());
+                }
+            }
+            top = top.max(up.z);
+            below = up;
+        }
+        let held = if highest.is_finite() { highest } else { base };
+        out.unbraced_tops += usize::from(top - held > UNBRACED_TOP_MM);
+    };
+    for t in c.trunks.values() {
+        shaft(
+            c.roots.get(&t.root_id).map(|r| r.transform.pos),
+            &t.segments,
+        );
+    }
+    for b in c.branches.values() {
+        shaft(c.knots.get(&b.parent_knot_id).map(|k| k.pos), &b.segments);
+    }
+    out
+}
+
 /// Total length of every support member, from where it stands to its tip,
 /// mm.
 fn support_length_mm(c: &SupportCollections) -> f64 {
@@ -794,6 +877,7 @@ struct Placement {
     through_model: usize,
     buried_tips: usize,
     tessellation_errors: usize,
+    bracing: Bracing,
 }
 
 /// The share of an island the tips cover, by the engine's rule: its contact
@@ -839,6 +923,7 @@ fn placement(
         close_pairs: close_tip_pairs(&tips),
         on_model: c.sticks.len() + c.stumps.len() + c.twigs.len(),
         length_mm: support_length_mm(c),
+        bracing: bracing(c),
         overhang_mm2: geoms.iter().map(|g| g.overhang_mm2).sum(),
         counts: vec![
             ("roots", c.roots.len()),
@@ -2065,6 +2150,16 @@ fn support_scorecard() {
             "  supports: {}; length {:.0} mm",
             joined(&p.counts),
             p.length_mm
+        );
+        let b = p.bracing;
+        eprintln!(
+            "  bracing: {} of {} shafts stand > {UNBRACED_TOP_MM} mm above their highest brace; segments >= {LONG_SEGMENT_MM} mm: diagonal {} ({} unbraced), vertical {} ({} unbraced)",
+            b.unbraced_tops,
+            b.shafts,
+            b.diagonal,
+            b.diagonal_unbraced,
+            b.vertical,
+            b.vertical_unbraced
         );
         match &score.plate {
             Ok(q) => {
