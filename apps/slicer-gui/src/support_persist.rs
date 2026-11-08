@@ -284,6 +284,16 @@ pub(crate) fn review_sets(
         .collect()
 }
 
+/// How high the rafts of the scene's support sets reach, mm: the highest raft
+/// top of their latest drawings, so a set a move has left behind still counts.
+/// 0 without a raft. What the view from under the plate hides (#481).
+pub(crate) fn raft_top_mm(spatial: &SceneSpatial, sessions: &RefCell<SupportSessions>) -> f32 {
+    support_leaves(spatial)
+        .filter_map(|(id, _)| latest_drawing(sessions, id))
+        .map(|drawn| drawn.session.raft_top_mm())
+        .fold(0.0, f64::max) as f32
+}
+
 /// The scene's first support leaf, in row order, and its mesh.
 pub(crate) fn support_leaf(spatial: &SceneSpatial) -> Option<(NodeId, Arc<IndexedMesh>)> {
     support_leaves(spatial).next()

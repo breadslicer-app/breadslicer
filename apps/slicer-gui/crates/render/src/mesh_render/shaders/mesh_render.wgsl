@@ -6,8 +6,9 @@
 struct Uniforms {
     view_proj: mat4x4<f32>,
     light_dir: vec4<f32>,
-    // World-space mm envelope corners. .xyz hold the values, .w is
-    // padding for std140-style 16-byte alignment.
+    // World-space mm envelope corners in .xyz. From under the plate
+    // (#481), env_min.w is how far the plate and the rafts have faded
+    // (0 to 1) and env_max.w the rafts' top, mm.
     env_min: vec4<f32>,
     env_max: vec4<f32>,
     // face_breach_mask.x is a 5-bit field consumed by the plate
@@ -34,7 +35,8 @@ struct ModelEntry {
     //             object under the overhang map (read by `fs_main`); overlay
     //             tints, read by `fs_overlay`: 1 valid preview, 2 invalid
     //             preview, 3 hollow cavity, 4 drain, 5 preview not known yet
-    // Remaining lanes are free for later phases (hover, gizmo focus, ...).
+    //   flags.w = 1 for a support mesh, whose raft fades from under the
+    //             plate (#481)
     flags: vec4<u32>,
 };
 
@@ -62,6 +64,7 @@ struct VsOut {
     @location(2) @interpolate(flat) breaches: u32,
     @location(3) @interpolate(flat) tint: u32,
     @location(4) normal: vec3<f32>,
+    @location(5) @interpolate(flat) supports: u32,
 };
 
 @vertex
@@ -73,6 +76,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.selected = model_entry.flags.x;
     out.breaches = model_entry.flags.y;
     out.tint = model_entry.flags.z;
+    out.supports = model_entry.flags.w;
     // Direction only: the model matrix's linear part. Non-uniform scale
     // bends it slightly; the shading tolerates that.
     out.normal = (model_entry.model * vec4<f32>(in.normal, 0.0)).xyz;
@@ -129,11 +133,26 @@ fn overhang_paint(base: vec3<f32>, face_n: vec3<f32>, world_z: f32) -> vec3<f32>
     return base;
 }
 
+// A threshold in (0, 1) for each pixel of a 4 x 4 tile, every sixteenth
+// once: a fade that has reached f drops about f of the pixels, spread
+// evenly, so an opaque mesh fades without blending.
+fn screen_door(pixel: vec2<f32>) -> f32 {
+    var tile = array<u32, 16>(0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
+    let at = vec2<u32>(pixel) % 4u;
+    return (f32(tile[at.y * 4u + at.x]) + 0.5) / 16.0;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Slice clip: drop fragments above the selected layer's top Z. The
     // clip height rides in light_dir.w; f32::MAX (no clip) discards none.
     if (in.world_pos.z > u.light_dir.w) {
+        discard;
+    }
+    // From under the plate (#481), a support mesh's raft fades with the
+    // plate, so the tips above it show.
+    if (in.supports == 1u && in.world_pos.z < u.env_max.w
+        && screen_door(in.clip_pos.xy) < u.env_min.w) {
         discard;
     }
     // The interpolated smooth normal; a vertex without one shades flat from

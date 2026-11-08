@@ -682,7 +682,9 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
 /// driving the mild interior wash that marks the whole object as "offending"
 /// even where individual fragments are still inside the envelope. With
 /// `overhang_map`, `flags.z` marks every model for it; supports and rafts stay
-/// out, being the answer to an overhang rather than one.
+/// out, being the answer to an overhang rather than one. `flags.w` is 1 for a
+/// support mesh: from under the plate, what of it lies below the rafts' top
+/// fades with the plate (#481).
 pub(super) fn build_model_entries(
     graph: &Scene,
     selection: &[NodeId],
@@ -705,14 +707,20 @@ pub(super) fn build_model_entries(
                 shared_mesh(graph, node_id, mesh),
                 &transform_mat,
             ));
-            let drawn_as = if overhang_map && !sc_geom::df_supports::is_support_mesh(mesh) {
+            let supports = sc_geom::df_supports::is_support_mesh(mesh);
+            let drawn_as = if overhang_map && !supports {
                 MODEL_OVERHANG_MAP
             } else {
                 0
             };
             entries.push(ModelEntry {
                 model: transform_mat.to_cols_array_2d(),
-                flags: [u32::from(selected), u32::from(breaches), drawn_as, 0],
+                flags: [
+                    u32::from(selected),
+                    u32::from(breaches),
+                    drawn_as,
+                    u32::from(supports),
+                ],
             });
             Ok(())
         },

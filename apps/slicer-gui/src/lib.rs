@@ -138,7 +138,9 @@ pub use sc_slicer_gui_ui::*;
 // (#361). The integration tests reach the view's modules through this crate.
 use sc_slicer_gui_base::{breadcrumbs, startup_timing};
 pub use sc_slicer_gui_render::{build_volume, camera, graphics_adapter, mesh_render};
-use sc_slicer_gui_render::{front_label, gizmo, picking, print_file_preview, slice_cap};
+use sc_slicer_gui_render::{
+    front_label, gizmo, picking, print_file_preview, slice_cap, under_plate,
+};
 
 use crate::app_state::AppState;
 use crate::i18n::ctr;

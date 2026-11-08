@@ -37,6 +37,7 @@ use support_gen_df::supports::auto_support::types::{CandidatePoint, CandidateSou
 use support_gen_df::supports::auto_support::zone_rules::ZoneRules;
 use support_gen_df::supports::placement_logic::cone_axis_policy::is_side_wall_contact;
 use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
+use support_gen_df::supports::rafts::crenelated::geometry::compute_raft_footprint::raft_band_top_mm;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use support_gen_df::supports::support_type_registry::{
     SupportOriginId, SupportTypeId, near_plate_origin,
@@ -2070,6 +2071,18 @@ impl DfSupportSession {
         tip_contact_diameter(&self.settings)
     }
 
+    /// How high this set's raft reaches over the plate, in millimetres: the
+    /// top of its plate or lines and of its wall, as the mesh draws it. 0
+    /// without a raft (#481).
+    pub fn raft_top_mm(&self) -> f64 {
+        let raft = &self.settings.rafts.global;
+        if raft.bottom_mode == RaftBottomMode::Off {
+            0.0
+        } else {
+            raft_band_top_mm(raft)
+        }
+    }
+
     /// The tip diameter of support `id`, when it has one.
     fn tip_diameter(&self, id: &str) -> Option<f64> {
         let c = &self.state.collections;
@@ -3034,6 +3047,29 @@ mod session_tests {
         );
         assert_eq!(untouched.state, session.state, "nothing placed");
     }
+
+    /// #481: a set tells how high its raft reaches, its plate and its wall,
+    /// and 0 without a raft.
+    #[test]
+    fn a_set_tells_how_high_its_raft_reaches() {
+        use crate::options::RaftMode;
+        let with = |raft: RaftMode, thickness: f64, wall: bool| {
+            let mut request = crate::DfSupportRequest::default();
+            request.options.raft = raft;
+            request.options.raft_thickness_mm = thickness;
+            request.options.raft_wall = wall;
+            bare_slab(12.0, request).raft_top_mm()
+        };
+        let wall = DEFAULT_RAFT_WALL_HEIGHT_MM;
+        assert!((with(RaftMode::Solid, 0.5, true) - (0.5 + wall)).abs() < 1e-9);
+        assert!((with(RaftMode::Solid, 1.2, false) - 1.2).abs() < 1e-9);
+        assert!(with(RaftMode::Lines, 0.5, false) > 0.0);
+        assert_eq!(with(RaftMode::Off, 0.5, true), 0.0);
+    }
+
+    /// The wall a raft gets by default, mm.
+    const DEFAULT_RAFT_WALL_HEIGHT_MM: f64 =
+        support_gen_df::supports::rafts::crenelated::raft_types::DEFAULT_RAFT_SETTINGS.wall_height;
 
     #[test]
     fn a_set_tells_the_diameter_of_the_tips_added_to_it() {

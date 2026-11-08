@@ -149,6 +149,7 @@ fn draw(
             FrameLook {
                 contents: FrameContents::ModelsOnly,
                 overhang_map: map,
+                raft_top_mm: 0.0,
             },
         )
         .expect("the frame is not refused")

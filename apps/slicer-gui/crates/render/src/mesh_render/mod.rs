@@ -42,6 +42,8 @@ mod targets;
 mod tests_gpu;
 #[cfg(test)]
 mod tests_overhang_map;
+#[cfg(test)]
+mod tests_under_plate;
 
 pub use device_loss::DeviceLoss;
 use device_ops::scoped;
@@ -112,12 +114,14 @@ enum FrameContents {
     ModelsOnly,
 }
 
-/// How a frame is dressed: what goes around the models, and whether the
-/// overhang map goes over them.
+/// How a frame is dressed: what goes around the models, whether the
+/// overhang map goes over them, and how high the rafts reach, for the view
+/// from under the plate to hide them (#481; 0 without rafts).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct FrameLook {
     contents: FrameContents,
     overhang_map: Option<OverhangMap>,
+    raft_top_mm: f32,
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -321,6 +325,9 @@ pub struct Renderer {
     surface_paint: surface_paint::PaintSlot,
     /// The overhang map over the models of a workspace frame, when on.
     overhang_map: Option<OverhangMap>,
+    /// How high the rafts of the scene reach, mm: what of a support mesh
+    /// the view from under the plate hides (#481).
+    raft_top_mm: f32,
     target_manager: TargetManager,
 }
 
@@ -405,6 +412,7 @@ impl Renderer {
             overlay: overlay::OverlaySlot::default(),
             surface_paint: surface_paint::PaintSlot::default(),
             overhang_map: None,
+            raft_top_mm: 0.0,
             target_manager: TargetManager {
                 msaa: None,
                 targets: None,
@@ -826,6 +834,7 @@ impl Renderer {
             FrameLook {
                 contents: FrameContents::Workspace,
                 overhang_map: self.overhang_map,
+                raft_top_mm: self.raft_top_mm,
             },
         )
     }
@@ -835,6 +844,13 @@ impl Renderer {
     /// carries it.
     pub fn set_overhang_map(&mut self, map: Option<OverhangMap>) {
         self.overhang_map = map;
+    }
+
+    /// How high the rafts of the scene reach, mm (0 without one): what of
+    /// the support meshes fades with the plate when the camera goes under
+    /// it (#481).
+    pub fn set_raft_top(&mut self, mm: f32) {
+        self.raft_top_mm = mm.max(0.0);
     }
 
     /// Blocks until the GPU has finished the work submitted so far. A poll
@@ -873,6 +889,7 @@ impl Renderer {
             FrameLook {
                 contents: FrameContents::ModelsOnly,
                 overhang_map: None,
+                raft_top_mm: 0.0,
             },
         )
     }
@@ -931,6 +948,7 @@ impl Renderer {
         let FrameLook {
             contents,
             overhang_map,
+            raft_top_mm,
         } = look;
         if self.core.device_loss.is_lost() {
             return Err(RenderError::DeviceLost);
@@ -1029,11 +1047,18 @@ impl Renderer {
         let face_breach_mask = graph
             .and_then(|g| build_envelope_warning_mask(g, build_volume, &mut self.world_boxes).ok())
             .unwrap_or(0);
+        // From under the plate, the plate and the rafts fade out (#481); a
+        // picture of the print has neither.
+        let under_plate = if contents == FrameContents::Workspace {
+            crate::under_plate::under_plate_fade(camera)
+        } else {
+            0.0
+        };
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             light_dir: frame::pack_light_dir(clip_z),
-            env_min: [env_min.x, env_min.y, env_min.z, 0.0],
-            env_max: [env_max.x, env_max.y, env_max.z, 0.0],
+            env_min: [env_min.x, env_min.y, env_min.z, under_plate],
+            env_max: [env_max.x, env_max.y, env_max.z, raft_top_mm],
             face_breach_mask: [face_breach_mask, 0, 0, 0],
             overhang: overhang_map.map_or([0.0; 4], |map| map.uniform(env_min.z)),
         };

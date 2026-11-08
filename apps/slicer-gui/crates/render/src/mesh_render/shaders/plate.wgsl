@@ -26,7 +26,8 @@ struct Uniforms {
     view_proj: mat4x4<f32>,
     light_dir: vec4<f32>,
     // env_min / env_max are shared with the mesh pipeline; the plate
-    // shader does not read them today. face_breach_mask.x is a 6-bit
+    // shader reads only env_min.w, how far the plate has faded from
+    // under it (#481). face_breach_mask.x is a 6-bit
     // bitfield with layout
     //   0 = -X wall, 1 = +X wall, 2 = -Y wall, 3 = +Y wall,
     //   4 = +Z top, 5 = -Z floor (Z = 0)
@@ -135,6 +136,17 @@ fn wall_stripe_coord(kind: u32, world_pos: vec3<f32>) -> f32 {
     return world_pos.x + world_pos.y;
 }
 
+// The plate's own faces (floor, border, sides, bottom) with `colour`, as
+// far as the view from under the plate has faded them (#481). The cage and
+// the warning walls stay: they keep the view's bearings.
+fn plate_face(colour: vec3<f32>, alpha: f32) -> vec4<f32> {
+    let shown = alpha * (1.0 - u.env_min.w);
+    if shown <= 0.004 {
+        discard;
+    }
+    return vec4<f32>(colour, shown);
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if in.kind == 0u {
@@ -148,19 +160,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             let s = in.world_pos.x + in.world_pos.y;
             let phase = fract(s / WALL_STRIPE_PERIOD_MM);
             if phase < WALL_STRIPE_DUTY {
-                return vec4<f32>(WALL_WARNING_COLOUR, 1.0);
+                return plate_face(WALL_WARNING_COLOUR, 1.0);
             }
         }
-        return vec4<f32>(grid, 1.0);
+        return plate_face(grid, 1.0);
     }
     if in.kind == 2u {
-        return vec4<f32>(PLATE_TOP_BORDER_COLOUR, 1.0);
+        return plate_face(PLATE_TOP_BORDER_COLOUR, 1.0);
     }
     if in.kind == 3u {
-        return vec4<f32>(PLATE_SIDE_COLOUR, 1.0);
+        return plate_face(PLATE_SIDE_COLOUR, 1.0);
     }
     if in.kind == 4u {
-        return vec4<f32>(PLATE_SIDE_COLOUR, PLATE_BOTTOM_ALPHA);
+        return plate_face(PLATE_SIDE_COLOUR, PLATE_BOTTOM_ALPHA);
     }
     if in.kind >= 5u && in.kind <= 9u {
         // Walls 5..9 map to bits 0..4 of face_breach_mask.x. Discard
