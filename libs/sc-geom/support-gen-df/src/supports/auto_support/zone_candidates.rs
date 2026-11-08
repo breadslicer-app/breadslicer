@@ -491,15 +491,26 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
         p.candidate.priority = zone + (1.0 - p.candidate.z_height / max_z) * 0.5;
     }
     pending.sort_by(|a, b| js_compare(b.candidate.priority - a.candidate.priority));
-    thin(pending)
+    let anchors: HashSet<String> = input
+        .islands
+        .iter()
+        .map(|island| format!("zi-{}", island.id))
+        .collect();
+    thin(pending, &anchors)
 }
 
-/// Drops every candidate closer to a more urgent one than half the coarser
-/// of their spacings.
-fn thin(pending: Vec<Pending>) -> Vec<CandidatePoint> {
+/// How much further than [`ZoneRules::dedup_radius_mm`] a candidate that is
+/// not an island's first point stands off: the whole spacing the preset asks
+/// for. The tips of the reference prints stand that far apart (#465).
+const THINNING_SPREAD: f64 = 2.0;
+
+/// Drops every candidate closer to a more urgent one than the coarser of their
+/// spacings. `anchors`, the first point of each island, only give way at half
+/// that: every island keeps its tip.
+fn thin(pending: Vec<Pending>, anchors: &HashSet<String>) -> Vec<CandidatePoint> {
     let cell = pending
         .iter()
-        .map(|p| ZoneRules::dedup_radius_mm(p.spacing_mm, p.spacing_mm))
+        .map(|p| ZoneRules::dedup_radius_mm(p.spacing_mm, p.spacing_mm) * THINNING_SPREAD)
         .fold(0.2f64, f64::max);
     let key = |v: Vec3| {
         (
@@ -521,7 +532,12 @@ fn thin(pending: Vec<Pending>) -> Vec<CandidatePoint> {
                     };
                     for &k in bucket {
                         let q = &kept[k];
-                        let r = ZoneRules::dedup_radius_mm(p.spacing_mm, q.spacing_mm);
+                        let r = ZoneRules::dedup_radius_mm(p.spacing_mm, q.spacing_mm)
+                            * if anchors.contains(&p.candidate.id) {
+                                1.0
+                            } else {
+                                THINNING_SPREAD
+                            };
                         let d = p.candidate.tip_pos.sub(q.candidate.tip_pos);
                         if d.length_sq() < r * r {
                             close = true;
@@ -598,7 +614,10 @@ mod tests {
                 spacing_mm: 0.8,
             },
         ];
-        let kept: Vec<String> = thin(pending).into_iter().map(|c| c.id).collect();
+        let kept: Vec<String> = thin(pending, &HashSet::new())
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
         assert_eq!(kept, ["island", "overhang-far"]);
     }
 }

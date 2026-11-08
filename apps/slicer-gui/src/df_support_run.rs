@@ -44,7 +44,7 @@ use std::time::{Duration, Instant};
 
 use sc_geom::JobError;
 use sc_geom::JobHandle;
-use sc_geom::df_supports::zone_presets::{ZonePreset, figures_70, minis_30};
+use sc_geom::df_supports::zone_presets::{ZonePreset, figures_70, figures_150, minis_30};
 use sc_geom::df_supports::{
     AddNote, AddOptions, BraceEnd, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
     DfSupportSession, EditError, EditPreview, HandBraceRefusal, HandEditKind, KeptEdits, LostEdit,
@@ -1201,7 +1201,7 @@ struct Preset {
 }
 
 /// The presets that ship with SoulCrafted: DragonFruit's three sizing
-/// tiers, then the two zone presets (#360).
+/// tiers, then the three zone presets (#360, #479).
 fn built_in_presets() -> Vec<Preset> {
     let tier = |name: slint::SharedString, sizing: &str| Preset {
         name: name.to_string(),
@@ -1225,6 +1225,7 @@ fn built_in_presets() -> Vec<Preset> {
         tier(ctr!("Inspector", "Anchor (heavy parts)"), "anchor"),
         zones(ctr!("Inspector", "Minis 30 mm+"), minis_30()),
         zones(ctr!("Inspector", "Figures 70 mm+"), figures_70()),
+        zones(ctr!("Inspector", "Figures 150 mm+"), figures_150()),
     ]
 }
 
@@ -7477,9 +7478,10 @@ mod hand_edit_tests {
             .iter()
             .filter(|p| p.options.zones.is_some())
             .collect();
-        assert_eq!(zoned.len(), 2);
+        assert_eq!(zoned.len(), 3);
         assert_eq!(zoned[0].name, "Minis 30 mm+");
         assert_eq!(zoned[1].name, "Figures 70 mm+");
+        assert_eq!(zoned[2].name, "Figures 150 mm+");
         for preset in zoned {
             let text = toml::to_string_pretty(&preset.options).expect("a preset saves");
             let back: DfSupportOptions = toml::from_str(&text).expect("a preset reads back");
@@ -9297,4 +9299,8 @@ mod hand_edit_tests {
     // Braces laid by hand (#3), through the viewport.
     #[path = "../../tests_hand_braces.rs"]
     mod hand_braces;
+
+    // The support test plate (#464), written on request.
+    #[path = "../../tests_support_test_plate.rs"]
+    mod support_test_plate;
 }

@@ -92,6 +92,8 @@ pub struct PlanCtx<'a> {
     /// SoulCrafted (#3): a contact placed by hand, its point and its face's
     /// normal. Its tip goes there and nowhere else ([`Self::contact_at`]).
     exact_contact: Cell<Option<(Vec3, Vec3)>>,
+    /// SoulCrafted (#445): a fan reads only the shafts in its reach.
+    near_fans: Cell<bool>,
 }
 
 impl<'a> PlanCtx<'a> {
@@ -110,6 +112,7 @@ impl<'a> PlanCtx<'a> {
             zone_lives: zone_lives(live),
             active_zone: Cell::new(None),
             exact_contact: Cell::new(None),
+            near_fans: Cell::new(false),
         }
     }
 
@@ -127,6 +130,18 @@ impl<'a> PlanCtx<'a> {
     /// every contact find its surface as a run's does.
     pub fn set_exact_contact(&self, contact: Option<(Vec3, Vec3)>) {
         self.exact_contact.set(contact);
+    }
+
+    /// With `near`, a fan reads only the shafts in its reach
+    /// ([`collect_fan_shaft_points_near`]): it takes the same host, and its
+    /// refusal no longer tells how far the nearest one out of reach stands.
+    pub fn set_near_fans(&self, near: bool) {
+        self.near_fans.set(near);
+    }
+
+    /// Whether a fan reads only the shafts in its reach.
+    pub fn near_fans(&self) -> bool {
+        self.near_fans.get()
     }
 
     /// The surface point and normal a tip aimed at `tip_pos` takes: the
@@ -841,6 +856,17 @@ pub fn leaf_path_crosses_supports(
                 continue;
             };
             let clearance = leaf_radius_mm + seg.diameter / 2.0;
+            // SoulCrafted (#445): further apart than the clearance along one
+            // axis is further apart than that, and most shafts are.
+            let apart = |p: f64, q: f64, r: f64, s: f64| {
+                p.min(q) > r.max(s) + clearance || r.min(s) > p.max(q) + clearance
+            };
+            if apart(knot_pos.x, tip_pos.x, a.pos.x, b.pos.x)
+                || apart(knot_pos.y, tip_pos.y, a.pos.y, b.pos.y)
+                || apart(knot_pos.z, tip_pos.z, a.pos.z, b.pos.z)
+            {
+                continue;
+            }
             if segment_distance_sq(knot_pos, tip_pos, a.pos, b.pos) < clearance * clearance {
                 return true;
             }
@@ -857,6 +883,26 @@ pub const MAX_FANNING_PASSES: usize = 5;
 /// The fanning host pool: every host segment with both joints, sampled 11
 /// times. Near-plate hosts never host fan leaves.
 pub fn collect_fan_shaft_points(draft: &SupportState) -> Vec<FanShaftPoint> {
+    shaft_points_of(draft, |_, _| true)
+}
+
+/// [`collect_fan_shaft_points`] of the segments that pass within `reach_mm` of
+/// `target` on the plate, in the same order: a sample further than that on the
+/// plate is out of a fan's reach. Sampling every shaft for each candidate is
+/// what grows with the square of the supports.
+pub fn collect_fan_shaft_points_near(
+    draft: &SupportState,
+    target: Vec3,
+    reach_mm: f64,
+) -> Vec<FanShaftPoint> {
+    let apart = |a: f64, b: f64, at: f64| at < a.min(b) - reach_mm || at > a.max(b) + reach_mm;
+    shaft_points_of(draft, |start, end| {
+        !apart(start.x, end.x, target.x) && !apart(start.y, end.y, target.y)
+    })
+}
+
+/// The samples of the shafts of `draft` whose segments `keep` takes.
+fn shaft_points_of(draft: &SupportState, keep: impl Fn(Vec3, Vec3) -> bool) -> Vec<FanShaftPoint> {
     let near_plate = near_plate_origin();
     let mut points = Vec::new();
     for HostEntry {
@@ -873,6 +919,9 @@ pub fn collect_fan_shaft_points(draft: &SupportState) -> Vec<FanShaftPoint> {
                 continue;
             };
             let (start, end) = (a.pos, b.pos);
+            if !keep(start, end) {
+                continue;
+            }
             for i in 0..=SHAFT_SAMPLES_PER_SEGMENT {
                 let t = f64::from(i) / f64::from(SHAFT_SAMPLES_PER_SEGMENT);
                 points.push(FanShaftPoint {

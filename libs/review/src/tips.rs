@@ -35,27 +35,40 @@ pub struct TipCone {
     pub base_mm: [f64; 3],
     /// Its radius.
     pub base_radius_mm: f64,
+    /// The end at `tip_mm` is a ball of its radius, centred there, and not a
+    /// flat circle (#445).
+    pub round_end: bool,
 }
 
 impl TipCone {
     /// The stretches of a tip that ends at `tip_mm`, inside the model, and
     /// meets its shaft at `socket_mm`, with a neck of its tip's radius up to
-    /// `neck_mm` when it has one.
+    /// `neck_mm` when it has one. With `ball_mm` it ends in a ball of its tip's
+    /// radius centred there, and the cone starts at that centre.
     pub fn stretches(
         tip_mm: [f64; 3],
+        ball_mm: Option<[f64; 3]>,
         tip_radius_mm: f64,
         neck_mm: Option<[f64; 3]>,
         socket_mm: [f64; 3],
         socket_radius_mm: f64,
     ) -> impl Iterator<Item = Self> {
-        let cone = |from: [f64; 3], base_mm: [f64; 3], base_radius_mm: f64| Self {
+        let start = ball_mm.unwrap_or(tip_mm);
+        let cone = |from: [f64; 3], base_mm: [f64; 3], base_radius_mm: f64, round: bool| Self {
             tip_mm: from,
             tip_radius_mm,
             base_mm,
             base_radius_mm,
+            round_end: round,
         };
-        let neck = neck_mm.map(|neck| cone(tip_mm, neck, tip_radius_mm));
-        let body = cone(neck_mm.unwrap_or(tip_mm), socket_mm, socket_radius_mm);
+        let round = ball_mm.is_some();
+        let neck = neck_mm.map(|neck| cone(start, neck, tip_radius_mm, round));
+        let body = cone(
+            neck_mm.unwrap_or(start),
+            socket_mm,
+            socket_radius_mm,
+            round && neck_mm.is_none(),
+        );
         neck.into_iter().chain(std::iter::once(body))
     }
 }
@@ -74,6 +87,7 @@ struct Placed {
     /// The heights it spans.
     low: f64,
     high: f64,
+    round_end: bool,
 }
 
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
@@ -97,7 +111,12 @@ impl Placed {
         // `radius * sin(tilt)` above and below their centres.
         let lean = (1.0 - axis[2] * axis[2]).max(0.0).sqrt();
         let reach = |z: f64, radius: f64| (z - radius * lean, z + radius * lean);
-        let (a_low, a_high) = reach(cone.tip_mm[2], cone.tip_radius_mm);
+        let (a_low, a_high) = if cone.round_end {
+            let radius = cone.tip_radius_mm;
+            (cone.tip_mm[2] - radius, cone.tip_mm[2] + radius)
+        } else {
+            reach(cone.tip_mm[2], cone.tip_radius_mm)
+        };
         let (b_low, b_high) = reach(cone.base_mm[2], cone.base_radius_mm);
         Some(Self {
             tip: cone.tip_mm,
@@ -108,12 +127,25 @@ impl Placed {
             widest,
             low: a_low.min(b_low),
             high: a_high.max(b_high),
+            round_end: cone.round_end,
         })
+    }
+
+    /// Where it ends inside the model.
+    fn end(&self) -> [f64; 3] {
+        if self.round_end {
+            [0, 1, 2].map(|i| self.axis[i].mul_add(-self.tip_radius, self.tip[i]))
+        } else {
+            self.tip
+        }
     }
 
     fn holds(&self, point: [f64; 3]) -> bool {
         let d = [0, 1, 2].map(|i| point[i] - self.tip[i]);
         let along = dot(d, self.axis);
+        if along < 0.0 && self.round_end {
+            return dot(d, d) <= self.tip_radius * self.tip_radius;
+        }
         if along < 0.0 || along > self.length {
             return false;
         }
@@ -230,7 +262,7 @@ impl TipIndex {
         apart_mm: f64,
     ) -> Vec<[f64; 3]> {
         let mut found: Vec<[f64; 3]> = Vec::new();
-        for end in self.cones.iter().map(|cone| cone.tip) {
+        for end in self.cones.iter().map(Placed::end) {
             let Some(layer) = pixels
                 .layers
                 .iter()
@@ -467,6 +499,7 @@ mod tips_tests {
             tip_radius_mm: radius,
             base_mm: [1.0, 2.0, 2.0],
             base_radius_mm: 3.0 * radius,
+            round_end: false,
         }
     }
 
@@ -488,6 +521,7 @@ mod tips_tests {
             tip_radius_mm: 0.1,
             base_mm: [2.0, 0.0, 2.0],
             base_radius_mm: 0.1,
+            round_end: false,
         })
         .expect("a cone");
         assert!(cone.holds([1.0, 0.0, 3.0]));
@@ -503,6 +537,7 @@ mod tips_tests {
             tip_radius_mm: 0.1,
             base_mm: [1.0, 1.0, 1.0],
             base_radius_mm: 0.2,
+            round_end: false,
         };
         assert!(Placed::new(&cone).is_none());
     }

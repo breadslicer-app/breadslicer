@@ -12,7 +12,9 @@ use indexmap::IndexMap;
 use super::kickstand_builder::{KickstandBuildInput, build_kickstand_data};
 use super::types::{KickstandBuildResult, KickstandHostTarget};
 use crate::supports::auto_bracing::auto_brace::store_type_of;
-use crate::supports::auto_bracing::mesh_clearance::{BraceMeshes, line_passes_mesh_clearance};
+use crate::supports::auto_bracing::mesh_clearance::{
+    BraceMesh, BraceMeshes, line_passes_mesh_clearance,
+};
 use crate::supports::auto_bracing::settings::{AutoBracingSettings, auto_bracing_hard_rules};
 use crate::supports::auto_bracing::two_axis_detection::{
     additional_axes_needed_for_two_axis_bracing, has_qualified_two_axis_bracing,
@@ -216,25 +218,33 @@ pub fn generate_required_kickstands(
         }
     }
 
-    let check_slanted_collision = |top: Vec3, bottom: Vec3, model_id: &str, radius: f64| -> bool {
-        let Some(entry) = meshes.get(model_id) else {
-            return false;
-        };
-        let inverse = entry.matrix.invert();
-        let start = top.apply_matrix4(&inverse);
-        let end = bottom.apply_matrix4(&inverse);
-        for i in 0..=DROP_COLLISION_SAMPLES {
-            let t = i as f64 / DROP_COLLISION_SAMPLES as f64;
-            let p = start.lerp(end, t);
-            if entry
-                .bvh
-                .closest_point_to_point(p, 0.0, f64::INFINITY)
-                .is_some_and(|r| r.distance < radius)
-            {
-                return true;
-            }
+    // DragonFruit reads the trunk's own model. SoulCrafted (#445): with exact
+    // clearance, every model on the plate, since a drop can land by a neighbour.
+    let meshes_to_clear = |model_id: &str| -> Vec<&BraceMesh<'_>> {
+        if settings.exact_clearance {
+            meshes.values().collect()
+        } else {
+            meshes.get(model_id).into_iter().collect()
         }
-        false
+    };
+    let check_slanted_collision = |top: Vec3, bottom: Vec3, model_id: &str, radius: f64| -> bool {
+        meshes_to_clear(model_id).into_iter().any(|entry| {
+            let inverse = entry.matrix.invert();
+            let start = top.apply_matrix4(&inverse);
+            let end = bottom.apply_matrix4(&inverse);
+            (0..=DROP_COLLISION_SAMPLES).any(|i| {
+                let t = i as f64 / DROP_COLLISION_SAMPLES as f64;
+                entry
+                    .bvh
+                    .closest_point_to_point(start.lerp(end, t), 0.0, f64::INFINITY)
+                    .is_some_and(|r| r.distance < radius)
+            })
+        })
+    };
+    let line_clears = |a: Vec3, b: Vec3, model_id: &str, diameter_mm: f64| -> bool {
+        meshes_to_clear(model_id)
+            .into_iter()
+            .all(|mesh| line_passes_mesh_clearance(a, b, Some(mesh), diameter_mm))
     };
     let built_passes_clearance = |build: &KickstandBuildResult, model_id: &str| -> bool {
         let body = js_max(0.001, build.kickstand.profile.body_diameter_mm);
@@ -253,11 +263,10 @@ pub fn generate_required_kickstands(
             }
         }
         path.push(build.host_knot.pos);
-        let mesh = meshes.get(model_id);
         path.windows(2).all(|w| {
             let (a, b) = (w[0], w[1]);
             let (dx, dy, dz) = (b.x - a.x, b.y - a.y, b.z - a.z);
-            dx * dx + dy * dy + dz * dz < 0.000001 || line_passes_mesh_clearance(a, b, mesh, body)
+            dx * dx + dy * dy + dz * dz < 0.000001 || line_clears(a, b, model_id, body)
         })
     };
 
@@ -495,10 +504,10 @@ pub fn generate_required_kickstands(
                             continue;
                         }
                         let top_anchor_pos = Vec3::new(top_anchor_x, top_anchor_y, anchor.pos.z);
-                        if !line_passes_mesh_clearance(
+                        if !line_clears(
                             top_anchor_pos,
                             anchor.pos,
-                            meshes.get(&trunk.base.model_id),
+                            &trunk.base.model_id,
                             anchor.diameter_mm,
                         ) {
                             continue;
@@ -594,4 +603,123 @@ pub fn generate_required_kickstands(
         }
     }
     generated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::supports::support_type_registry::SupportTypeId;
+    use crate::supports::types::{Joint, Segment, SupportEntity, Transform, Trunk};
+    use crate::three::Matrix4;
+    use crate::three_mesh_bvh::MeshBvh;
+
+    /// A closed box.
+    fn block(min: [f32; 3], max: [f32; 3]) -> MeshBvh {
+        let corner = |i: usize| {
+            [
+                if i & 1 == 0 { min[0] } else { max[0] },
+                if i & 2 == 0 { min[1] } else { max[1] },
+                if i & 4 == 0 { min[2] } else { max[2] },
+            ]
+        };
+        let faces = [
+            [0, 2, 3, 1],
+            [4, 5, 7, 6],
+            [0, 1, 5, 4],
+            [2, 6, 7, 3],
+            [0, 4, 6, 2],
+            [1, 3, 7, 5],
+        ];
+        let corners = faces
+            .iter()
+            .flat_map(|[a, b, c, d]| [*a, *b, *c, *a, *c, *d])
+            .map(corner)
+            .collect();
+        MeshBvh::new(corners, None)
+    }
+
+    /// Where the kickstands of a tall trunk land, with another model standing
+    /// to its +X.
+    fn roots_beside_a_neighbour(exact_clearance: bool) -> Vec<Vec3> {
+        let base = |id: &str| SupportEntity {
+            id: id.to_owned(),
+            model_id: "own".to_owned(),
+            type_id: Some(SupportTypeId::Trunk),
+            ..SupportEntity::default()
+        };
+        let mut segment = Segment::straight("segment", 1.0);
+        segment.top_joint = Some(Joint {
+            id: "top".to_owned(),
+            pos: Vec3::new(0.0, 0.0, 20.0),
+            diameter: 1.0,
+        });
+        let mut state = SupportState::default();
+        state.collections.roots.insert(
+            "root".to_owned(),
+            Roots {
+                base: base("root"),
+                transform: Transform::default(),
+                diameter: 3.0,
+                disk_height: 0.5,
+                cone_height: 1.0,
+                ..Roots::default()
+            },
+        );
+        state.collections.trunks.insert(
+            "trunk".to_owned(),
+            Trunk {
+                base: base("trunk"),
+                root_id: "root".to_owned(),
+                segments: vec![segment],
+                ..Trunk::default()
+            },
+        );
+        let neighbour = block([3.0, -30.0, 0.0], [7.0, 30.0, 30.0]);
+        let meshes: BraceMeshes<'_> = [(
+            "neighbour".to_owned(),
+            BraceMesh {
+                bvh: &neighbour,
+                matrix: Matrix4::IDENTITY,
+            },
+        )]
+        .into();
+        let settings = AutoBracingSettings {
+            exact_clearance,
+            ..AutoBracingSettings::default()
+        };
+        let mut next = 0;
+        generate_required_kickstands(
+            &state,
+            &StabiliserState::default(),
+            &settings,
+            &[],
+            GridSnap {
+                enabled: false,
+                spacing_mm: 0.0,
+            },
+            &meshes,
+            &SupportSettings::default(),
+            &state,
+            &mut || {
+                next += 1;
+                format!("id-{next}")
+            },
+        )
+        .iter()
+        .map(|build| build.root.transform.pos)
+        .collect()
+    }
+
+    #[test]
+    fn a_kickstand_keeps_off_the_model_next_door() {
+        let roots = roots_beside_a_neighbour(true);
+        assert!(!roots.is_empty());
+        assert!(roots.iter().all(|root| root.x < 2.0), "{roots:?}");
+    }
+
+    #[test]
+    fn the_port_reads_only_the_trunks_own_model() {
+        let roots = roots_beside_a_neighbour(false);
+        assert!(roots.iter().any(|root| root.x > 3.0), "{roots:?}");
+    }
 }

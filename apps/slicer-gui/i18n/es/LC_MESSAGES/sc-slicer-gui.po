@@ -4920,6 +4920,11 @@ msgid "Figures 70 mm+"
 msgstr "Figuras 70 mm+"
 
 #: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Figures 150 mm+"
+msgstr "Figuras 150 mm+"
+
+#: src/df_support_run.rs
 #, rust-format
 msgctxt "Inspector"
 msgid "This preset sets the size and spacing of every support by zone: island first layers, their reinforcement, overhangs past {}° and stabilization."

@@ -102,6 +102,12 @@ pub struct PlacementDiagnostics {
     pub merge_refusals: IndexMap<String, usize>,
     pub grid_fallbacks: usize,
     pub cavity_fallbacks: Vec<CavityFallback>,
+    /// Why the lattice could not serve each fallback (#463).
+    #[serde(skip)]
+    pub grid_fallback_reasons: IndexMap<String, usize>,
+    /// Rejections by zone size and reason, as `<size>:<reason>` (#463).
+    #[serde(skip)]
+    pub rejections_by_zone: IndexMap<String, usize>,
 }
 
 /// The report's diagnostics block (placement's, plus consolidation refusals).

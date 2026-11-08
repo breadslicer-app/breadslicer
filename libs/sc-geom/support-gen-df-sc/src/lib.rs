@@ -42,7 +42,7 @@ pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{
     AddNote, AddOptions, BraceEnd, DfSupportSession, EditError, EditPreview, REVIEW_NUDGE_MM,
-    SupportContact, SupportJoint, SupportPiece, SupportPieceKind, TIP_INSERTION_MM,
+    SupportContact, SupportJoint, SupportPiece, SupportPieceKind,
 };
 pub use support_gen_df::native::overhang::{
     is_overhang_normal_z, overhang_and_stability_from_soup, overhang_normal_z_limit,
@@ -516,6 +516,14 @@ impl SettingsRecipe {
         self.options.apply(&mut settings);
         // An island under a slanted wall lands on the next surface (#445).
         settings.supports.mesh_to_mesh.every_landing = true;
+        // A fan looks near its tip, not through every shaft of the run (#445).
+        settings.supports.auto_support.near_fans = true;
+        // A long island branch hangs from a neighbour when it can (#464).
+        settings.supports.auto_support.rehang_island_branches = true;
+        // A spine between the rays of a brace is no way through (#445).
+        settings.supports.auto_bracing.exact_clearance = true;
+        // A tall or bent shaft is braced where it stands above the rest (#464).
+        settings.supports.auto_bracing.brace_tall_shafts = true;
         settings
     }
 }

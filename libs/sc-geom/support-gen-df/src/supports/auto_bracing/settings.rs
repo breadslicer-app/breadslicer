@@ -36,6 +36,19 @@ pub struct AutoBracingSettings {
     /// above are not read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stacked: Option<StackedBracing>,
+    /// SoulCrafted (#445): a brace also keeps off what its rays do not see, a
+    /// spine thinner than the gap between two of them
+    /// ([`line_stays_off_mesh`](super::mesh_clearance::line_stays_off_mesh)).
+    /// Off in the port's defaults, so a run reads as DragonFruit's.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub exact_clearance: bool,
+    /// SoulCrafted (#464): a trunk or branch that stands well above the
+    /// braces holding it, tall or bent away from its neighbours, is braced
+    /// up there too, to the shafts nearest it at that height: every peel
+    /// levers it against the raft, and braces share that force out. Off in
+    /// the port's defaults; Breadslicer's runs turn it on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub brace_tall_shafts: bool,
 }
 
 /// How the links of a stacked chain are drawn.
@@ -165,6 +178,8 @@ pub fn create_default_auto_bracing_settings() -> AutoBracingSettings {
         debug_voronoi_seeds_enabled: false,
         remove_existing_bracing: true,
         stacked: None,
+        exact_clearance: false,
+        brace_tall_shafts: false,
     }
 }
 
@@ -185,6 +200,8 @@ pub fn normalize_auto_bracing_settings(source: &AutoBracingSettings) -> AutoBrac
         debug_section_colors_enabled: source.debug_section_colors_enabled,
         debug_voronoi_seeds_enabled: source.debug_voronoi_seeds_enabled,
         remove_existing_bracing: source.remove_existing_bracing,
+        exact_clearance: source.exact_clearance,
+        brace_tall_shafts: source.brace_tall_shafts,
         stacked: source.stacked.as_ref().map(|st| StackedBracing {
             gap_mm: if st.gap_mm.is_finite() {
                 st.gap_mm.clamp(0.0, 50.0)

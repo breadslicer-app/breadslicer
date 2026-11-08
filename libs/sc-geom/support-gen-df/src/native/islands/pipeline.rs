@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use rayon::prelude::*;
 
 use crate::native::islands::model::*;
-use crate::native::islands::scan::scan_layer;
+use crate::native::islands::scan::scan_candidates;
 use crate::native::islands::tracker::IslandTracker;
 
 /// Run the full island detection pipeline.
@@ -30,11 +30,11 @@ pub fn run_island_scan(
     // Phase 1: Per-layer scan — embarrassingly parallel.
     // Each layer only reads masks[i] and masks[i-1] (immutable input).
     let progress = AtomicU32::new(0);
-    let layer_results: Vec<ScanLayerResult> = (0..num_layers)
+    let layer_results: Vec<(RleLabels, Vec<ComponentInfo>)> = (0..num_layers)
         .into_par_iter()
         .map(|i| {
             let prev = if i > 0 { Some(&masks[i - 1]) } else { None };
-            let result = scan_layer(
+            let result = scan_candidates(
                 &masks[i],
                 prev,
                 job.px_mm,
@@ -63,10 +63,10 @@ pub fn run_island_scan(
 
         let island_labels = tracker.process_layer(
             l as u32,
-            &lr.labels,
-            &lr.components,
+            &lr.0,
+            &lr.1,
             prev_labels,
-            &lr.solid_mask,
+            &masks[l],
             job.candidate_only,
         );
         island_labels_per_layer.push(island_labels);

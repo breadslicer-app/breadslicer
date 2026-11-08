@@ -637,6 +637,9 @@ fn key_part(part: Option<&str>) -> f64 {
     }
 }
 
+/// How many rings of nodes a tip looks through for a pillar to hang from.
+const GRID_NEIGHBOR_RINGS: i64 = 3;
+
 fn find_neighbor_attachment(
     node_key: &str,
     hosts_by_node: &IndexMap<String, Vec<GridHostEntry<'_>>>,
@@ -645,29 +648,62 @@ fn find_neighbor_attachment(
     let mut parts = node_key.split(',');
     let gx = key_part(parts.next());
     let gy = key_part(parts.next());
-    // Cardinals, then diagonals.
-    const OFFSETS: [(f64, f64); 8] = [
-        (0.0, 1.0),
-        (0.0, -1.0),
-        (1.0, 0.0),
-        (-1.0, 0.0),
-        (1.0, 1.0),
-        (1.0, -1.0),
-        (-1.0, 1.0),
-        (-1.0, -1.0),
-    ];
-    for (dx, dy) in OFFSETS {
-        let neighbor_key = format!(
-            "{},{}",
-            js_number_to_string(gx + dx),
-            js_number_to_string(gy + dy)
-        );
-        let hosts = hosts_by_node
-            .get(&neighbor_key)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        if let Some(decision) = attach_to_host(hosts, &neighbor_key, ctx, false) {
-            return Some(decision);
+    if !ctx.settings.grid.pillars {
+        // Cardinals, then diagonals.
+        const OFFSETS: [(f64, f64); 8] = [
+            (0.0, 1.0),
+            (0.0, -1.0),
+            (1.0, 0.0),
+            (-1.0, 0.0),
+            (1.0, 1.0),
+            (1.0, -1.0),
+            (-1.0, 1.0),
+            (-1.0, -1.0),
+        ];
+        for (dx, dy) in OFFSETS {
+            let neighbor_key = format!(
+                "{},{}",
+                js_number_to_string(gx + dx),
+                js_number_to_string(gy + dy)
+            );
+            let hosts = hosts_by_node
+                .get(&neighbor_key)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            if let Some(decision) = attach_to_host(hosts, &neighbor_key, ctx, false) {
+                return Some(decision);
+            }
+        }
+        return None;
+    }
+    // Ring by ring outwards, nearest node first: the model can stand between a
+    // tip and its own node, and a node further on may see it (#464). Each ring
+    // opens only while a 45 degree run from the tip could still reach it.
+    let reach_rings = ((ctx.tip_pos.z / ctx.settings.grid.spacing_mm).ceil() as i64)
+        .clamp(1, GRID_NEIGHBOR_RINGS);
+    for ring in 1..=reach_rings {
+        let mut offsets: Vec<(i64, i64)> = Vec::new();
+        for ix in -ring..=ring {
+            for iy in -ring..=ring {
+                if ix.abs() == ring || iy.abs() == ring {
+                    offsets.push((ix, iy));
+                }
+            }
+        }
+        offsets.sort_by_key(|(ix, iy)| ix * ix + iy * iy);
+        for (dx, dy) in offsets {
+            let neighbor_key = format!(
+                "{},{}",
+                js_number_to_string(gx + dx as f64),
+                js_number_to_string(gy + dy as f64)
+            );
+            let hosts = hosts_by_node
+                .get(&neighbor_key)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            if let Some(decision) = attach_to_host(hosts, &neighbor_key, ctx, false) {
+                return Some(decision);
+            }
         }
     }
     None

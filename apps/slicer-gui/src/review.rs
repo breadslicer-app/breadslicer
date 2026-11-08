@@ -105,6 +105,7 @@ fn contact_cones(
 ) -> impl Iterator<Item = TipCone> {
     TipCone::stretches(
         at(contact.tip),
+        contact.ball.map(at),
         contact.tip_radius_mm,
         contact.neck.map(at),
         at(contact.socket),

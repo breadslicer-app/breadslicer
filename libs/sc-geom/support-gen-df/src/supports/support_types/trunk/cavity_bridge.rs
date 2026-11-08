@@ -200,7 +200,38 @@ pub fn attempt_cavity_bridge(
         (first_below, false)
     };
 
-    let (mut chosen, mut reached_sideways) = run_search(&NEAR_RADII_MM);
+    // Over a gap narrower than `OFFSET_MM` the search starts inside the floor,
+    // and that floor is the landing: it is looked for from the tip (#445). A
+    // gap under `NARROWEST_GAP_MM` is a slot of the model, and it stays one.
+    let under_the_tip = || -> Option<Candidate> {
+        let ray = Ray {
+            origin: tip_pos,
+            direction: Vec3::new(0.0, 0.0, -1.0),
+        };
+        mesh.rays
+            .intersect_object(&ray, side, 0.0, OFFSET_MM + BELOW_EPS_MM, false)
+            .into_iter()
+            .find(|hit| hit.point.z < tip_pos.z - BELOW_EPS_MM)
+            .filter(|hit| hit.point.z <= tip_pos.z - NARROWEST_GAP_MM)
+            .map(|hit| Candidate {
+                point: hit.point,
+                normal: hit
+                    .face
+                    .normal
+                    .apply_normal_matrix(&normal_matrix)
+                    .normalize(),
+            })
+            .filter(|landing| landing.normal.z >= FLOOR_Z_MIN)
+    };
+    let narrow = settings
+        .mesh_to_mesh
+        .every_landing
+        .then(under_the_tip)
+        .flatten();
+    let (mut chosen, mut reached_sideways) = match narrow {
+        Some(floor) => (Some(floor), false),
+        None => run_search(&NEAR_RADII_MM),
+    };
     if chosen.is_none() {
         // Nothing straight down: a TWIG may still prop the contact off a
         // neighbouring surface, so the search may reach that far sideways.
@@ -352,6 +383,11 @@ pub fn attempt_cavity_bridge(
         refusals,
     }
 }
+
+/// The least air a bridge goes into from the tip down, in millimetres: what its
+/// two tips sink into the model. In less than that it would be no bridge but a
+/// filling of the gap, and the model is not touched.
+const NARROWEST_GAP_MM: f64 = 0.4;
 
 /// Whether the normal of a contact at `tip_pos` looks into the model: from a
 /// step along it, the way back to the contact goes out through the back of

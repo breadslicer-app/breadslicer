@@ -140,6 +140,11 @@ pub struct GridSettings {
     pub min_branch_angle_deg: f64,
     pub attach_search_step_mm: f64,
     pub min_routed_trunk_angle_deg: f64,
+    /// SoulCrafted (#464): pillars on the nodes carry what hangs from them:
+    /// highest join first, a wider search, and neighbours for what no node
+    /// sees. Off is DragonFruit's grid.
+    #[serde(skip)]
+    pub pillars: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -305,6 +310,7 @@ impl Default for GridSettings {
         GridSettings {
             enabled: DEFAULT_GRID_ENABLED,
             spacing_mm: DEFAULT_GRID_SPACING_MM,
+            pillars: false,
             min_branch_angle_deg: DEFAULT_GRID_MIN_BRANCH_ANGLE_DEG,
             attach_search_step_mm: DEFAULT_GRID_ATTACH_SEARCH_STEP_MM,
             min_routed_trunk_angle_deg: DEFAULT_GRID_MIN_ROUTED_TRUNK_ANGLE_DEG,

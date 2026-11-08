@@ -11,6 +11,9 @@ use sc_review::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFi
 
 use super::*;
 
+/// How far the smallest tip goes into the model: its radius.
+const SMALLEST_TIP_SINK_MM: f64 = 0.09;
+
 fn finding(
     check: CheckKind,
     severity: Severity,
@@ -1783,7 +1786,8 @@ mod fix_all {
     /// `BREADSLICER_CYCLE_REGENERATE`, the supports are generated again, as
     /// the app's default does; with `BREADSLICER_CYCLE_MOVE=x,y`, on the
     /// models moved that far first. `BREADSLICER_CYCLE_FIX_ALL` presses Fix
-    /// All instead of answering Yes. `BREADSLICER_CYCLE_HELD_LAYER` names a
+    /// All instead of answering Yes. `BREADSLICER_CYCLE_PRESET` generates with
+    /// `minis` or `figures`. `BREADSLICER_CYCLE_HELD_LAYER` names a
     /// layer no island may be left on.
     #[test]
     #[ignore = "needs BREADSLICER_CYCLE_BREAD"]
@@ -1872,7 +1876,19 @@ mod fix_all {
             ctrl.clone(),
         );
         if regenerate {
-            supports.generate_now(Default::default());
+            let mut options = sc_geom::df_supports::DfSupportOptions::default();
+            match std::env::var("BREADSLICER_CYCLE_PRESET").as_deref() {
+                Ok("minis") => options.zones = Some(sc_geom::df_supports::zone_presets::minis_30()),
+                Ok("figures70") => {
+                    options.zones = Some(sc_geom::df_supports::zone_presets::figures_70())
+                }
+                Ok("figures") => {
+                    options.zones = Some(sc_geom::df_supports::zone_presets::figures_150())
+                }
+                Ok(other) => panic!("BREADSLICER_CYCLE_PRESET: unknown preset {other:?}"),
+                Err(_) => {}
+            }
+            supports.generate_now(options);
         }
         let hollow = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
         let panel = ReviewPanel::install(
@@ -1956,7 +1972,7 @@ mod fix_all {
         };
         let shallow = depths
             .iter()
-            .filter(|(inserted, _)| *inserted < sc_geom::df_supports::TIP_INSERTION_MM - 1e-9)
+            .filter(|(inserted, _)| *inserted < SMALLEST_TIP_SINK_MM - 1e-9)
             .count();
         let off_mesh = depths.iter().filter(|(_, inside)| !inside).count();
         let (tips, off_slice) = TIPS_IN_MODEL.get();

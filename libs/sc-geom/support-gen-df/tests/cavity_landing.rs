@@ -100,3 +100,27 @@ fn a_bridge_the_first_landing_turns_down_lands_on_the_ground_beside_it() {
     let foot = stick.contact_cone_a.pos.z.min(stick.contact_cone_b.pos.z);
     assert!(foot.abs() < 1e-6, "it stands on the ground, at {foot}");
 }
+
+/// Over a gap narrower than where the search starts, that start is under the
+/// ground: the ground right under the tip is the landing.
+#[test]
+fn a_bridge_over_a_narrow_gap_lands_right_under_the_tip() {
+    let tip = Vec3::new(3.0, 0.0, 0.45);
+    assert!(attempt_at(tip, false).bridge.is_none());
+    let bridge = attempt_at(tip, true)
+        .bridge
+        .expect("a landing under the tip");
+    let BridgeEntity::Twig(twig) = bridge.entity else {
+        panic!("a span this short is a twig");
+    };
+    let (a, b) = (twig.contact_disk_a.pos, twig.contact_disk_b.pos);
+    let foot = if a.z < b.z { a } else { b };
+    assert!(foot.z.abs() < 1e-6, "it stands on the ground, at {foot:?}");
+    assert!((foot.x - tip.x).abs() < 1e-6 && (foot.y - tip.y).abs() < 1e-6);
+}
+
+/// In less air than the two tips of a bridge sink, a bridge would fill the gap.
+#[test]
+fn a_slot_of_the_model_takes_no_bridge() {
+    assert!(attempt_at(Vec3::new(3.0, 0.0, 0.3), true).bridge.is_none());
+}

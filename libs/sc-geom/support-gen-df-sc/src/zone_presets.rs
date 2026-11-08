@@ -1,7 +1,8 @@
 //! Zone presets (#360): support setups that size every support by the zone
 //! it lands in (see `support_gen_df::supports::auto_support::zone_rules`),
-//! with their bracing, and the two that ship: "Minis 30 mm+" and
-//! "Figures 70 mm+", Damian's setups tuned over many prints, value for value.
+//! with their bracing. Three ship: "Minis 30 mm+" and "Figures 150 mm+",
+//! Damian's setups tuned over many prints, value for value, and "Figures
+//! 70 mm+" between them (#479).
 
 use serde::{Deserialize, Serialize};
 use support_gen_df::supports::auto_bracing::settings::{
@@ -45,6 +46,10 @@ pub struct ZonePreset {
     pub bracing: BracingPreset,
     /// How high the model stands above the plate for its supports, mm.
     pub auto_lift_mm: f64,
+    /// The spacing of the pillars' grid, mm; `None` leaves the grid off, and
+    /// a preset saved before the grid existed reads as that (#464).
+    #[serde(default)]
+    pub grid_mm: Option<f64>,
 }
 
 impl Default for ZonePreset {
@@ -283,11 +288,13 @@ pub fn minis_30() -> ZonePreset {
         },
         bracing: auto_support_bracing(),
         auto_lift_mm: 5.0,
+        grid_mm: Some(7.0),
     }
 }
 
-/// "Figures 70 mm+".
-pub fn figures_70() -> ZonePreset {
+/// "Figures 150 mm+": Damian's setup for figures. Its overhang tips hold
+/// a figure that big and are too thick on a smaller one (#479).
+pub fn figures_150() -> ZonePreset {
     ZonePreset {
         rules: ZoneRules {
             sizes: support_sizes(),
@@ -323,7 +330,19 @@ pub fn figures_70() -> ZonePreset {
         },
         bracing: auto_support_bracing(),
         auto_lift_mm: 5.0,
+        grid_mm: Some(4.0),
     }
+}
+
+/// "Figures 70 mm+": "Figures 150 mm+" with thinner overhang tips, the
+/// largest J3D tip 2.4 mm apart instead of the 0.60 mm factory tip 2.8 mm
+/// apart, so each overhang tip carries a load for its contact between
+/// those of the two other setups (#479).
+pub fn figures_70() -> ZonePreset {
+    let mut preset = figures_150();
+    preset.rules.overhang.size = "large".to_owned();
+    preset.rules.overhang.spacing_mm = 2.4;
+    preset
 }
 
 #[cfg(test)]
@@ -332,7 +351,7 @@ mod tests {
 
     #[test]
     fn every_band_names_a_size_that_exists() {
-        for preset in [minis_30(), figures_70()] {
+        for preset in [minis_30(), figures_70(), figures_150()] {
             let r = &preset.rules;
             let names = r
                 .first_layer
@@ -345,6 +364,18 @@ mod tests {
             }
             assert_eq!(r.clamped(), *r, "the setups are inside every bound");
         }
+    }
+
+    #[test]
+    fn the_figures_setups_differ_in_their_overhang_tips_alone() {
+        let (mid, big) = (figures_70(), figures_150());
+        let overhang =
+            |p: &ZonePreset| (p.rules.overhang.size.clone(), p.rules.overhang.spacing_mm);
+        assert_eq!(overhang(&mid), ("large".to_owned(), 2.4));
+        assert_eq!(overhang(&big), ("factory-medium".to_owned(), 2.8));
+        let mut back = mid;
+        back.rules.overhang = big.rules.overhang.clone();
+        assert_eq!(back, big);
     }
 
     #[test]

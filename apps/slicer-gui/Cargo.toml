@@ -97,6 +97,8 @@ sc-print-primitives = { workspace = true }
 sc-scene-fixtures = { workspace = true }
 
 float-cmp = { workspace = true }
+# The support test plate (#464) edits a support document as JSON.
+serde_json = { workspace = true }
 # Slint's element queries (positions and sizes of laid-out elements) for
 # layout tests; the same version as `slint`.
 i-slint-backend-testing = "=1.18.1"

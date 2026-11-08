@@ -138,6 +138,7 @@ impl DfSupportOptions {
                 rules: z.rules.clamped(),
                 auto_lift_mm: clamp(z.auto_lift_mm, 0.0, 50.0, DEFAULT_SUPPORT_LIFT_MM),
                 bracing: z.bracing.clone(),
+                grid_mm: z.grid_mm.map(|mm| clamp(mm, 1.0, 50.0, 7.0)),
             }),
             ..self.clone()
         }
@@ -234,6 +235,13 @@ fn apply_zones(zones: &ZonePreset, settings: &mut PipelineSettings) {
         apply_zone_size(supports, &rules, i);
     }
     supports.dev_tools.max_lateral_mm = rules.search_ground_mm;
+    if let Some(spacing_mm) = zones.grid_mm {
+        supports.grid.enabled = true;
+        supports.grid.spacing_mm = spacing_mm;
+        supports.grid.pillars = true;
+        // A pillar takes all that hangs from its node.
+        supports.auto_support.max_attachments_per_trunk = f64::MAX;
+    }
     zones.bracing.apply(&mut supports.auto_bracing);
     settings.tip_drawing.per_support_penetration = true;
     settings.scan.island_bodies = Some(IslandBodyScan::new(
@@ -311,6 +319,10 @@ mod options_tests {
             },
             DfSupportOptions {
                 zones: Some(crate::zone_presets::figures_70()),
+                ..Default::default()
+            },
+            DfSupportOptions {
+                zones: Some(crate::zone_presets::figures_150()),
                 ..Default::default()
             },
         ];

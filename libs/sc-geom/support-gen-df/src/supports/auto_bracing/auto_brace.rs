@@ -15,7 +15,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::brace_diameter::build_brace_profile;
-use super::mesh_clearance::{BraceMeshes, line_passes_mesh_clearance};
+use super::mesh_clearance::{BraceMeshes, line_passes_mesh_clearance, line_stays_off_mesh};
 use super::patterns::{BracePair, apply_tier_pattern, run_zig_zag_chain};
 use super::settings::{
     AutoBracingPattern, AutoBracingSettings, GridDiagonal, StackedBracing, auto_bracing_hard_rules,
@@ -592,12 +592,12 @@ impl Ladder<'_> {
         if !ignore_max_distance && horizontal_span > self.settings.max_brace_length_mm + EPS {
             return;
         }
-        if !line_passes_mesh_clearance(
-            low_anchor.pos,
-            high_anchor.pos,
-            self.meshes.get(&low_anchor.model_id),
-            self.settings.brace_diameter_mm,
-        ) {
+        let mesh = self.meshes.get(&low_anchor.model_id);
+        let diameter = self.settings.brace_diameter_mm;
+        if !line_passes_mesh_clearance(low_anchor.pos, high_anchor.pos, mesh, diameter)
+            || (self.settings.exact_clearance
+                && !line_stays_off_mesh(low_anchor.pos, high_anchor.pos, mesh, diameter))
+        {
             return;
         }
         self.commit(low, high, section, low_anchor, high_anchor);
@@ -768,7 +768,7 @@ pub fn brace_new_shaft(
 ) -> usize {
     let settings = normalize_auto_bracing_settings(input_settings);
     let grid = GridSnap {
-        enabled: live.grid.enabled,
+        enabled: live.grid.enabled && !live.grid.pillars,
         spacing_mm: live.grid.spacing_mm,
     };
     let c = &state.collections;
@@ -1015,12 +1015,11 @@ pub fn hand_brace(
     if span > settings.max_brace_length_mm + EPS || rise > settings.max_brace_length_mm + EPS {
         why.get_or_insert(HandBraceRefusal::TooLong);
     }
-    if !line_passes_mesh_clearance(
-        low.pos,
-        high.pos,
-        meshes.get(&low.model_id),
-        settings.brace_diameter_mm,
-    ) {
+    let mesh = meshes.get(&low.model_id);
+    if !line_passes_mesh_clearance(low.pos, high.pos, mesh, settings.brace_diameter_mm)
+        || (settings.exact_clearance
+            && !line_stays_off_mesh(low.pos, high.pos, mesh, settings.brace_diameter_mm))
+    {
         why.get_or_insert(HandBraceRefusal::HitsModel);
     }
     // A bracing preset draws its braces at its own diameter, never thicker
@@ -1042,7 +1041,7 @@ pub fn hand_brace(
         arena: &arena,
         settings: &plain,
         grid: GridSnap {
-            enabled: live.grid.enabled,
+            enabled: live.grid.enabled && !live.grid.pillars,
             spacing_mm: live.grid.spacing_mm,
         },
         meshes,
@@ -1168,6 +1167,168 @@ fn lay_ladder(
     }
 }
 
+/// How far, in mm, a shaft may stand above its highest brace before it is
+/// braced higher up (#464).
+const UNBRACED_TOP_MM: f64 = 10.0;
+
+/// SoulCrafted (#464): braces every trunk and branch among the first `shafts`
+/// of `arena` that stands more than [`UNBRACED_TOP_MM`] above its highest
+/// brace (or above where it starts, when none holds it) to the shafts nearest
+/// it up there: shafts that rise beside it more than [`UNBRACED_TOP_MM`]
+/// above that brace. A pair is measured at the middle of the heights both
+/// span there, not where they stand, so a trunk that bends away from its
+/// neighbours finds the ones it runs beside. Each shaft takes the
+/// nearest, and a second on another axis, as the pairs below do; the links
+/// climb from that brace by the run's chain, without its reinforcement rings,
+/// each one held to the ladder's length and clearance. `held` are the knots
+/// of the braces kept from before the run.
+fn brace_tall_shafts<'k>(
+    ladder: &mut Ladder<'_>,
+    arena: &[SupportSample],
+    shafts: usize,
+    settings: &AutoBracingSettings,
+    held: impl Iterator<Item = &'k Knot>,
+) {
+    let is_shaft = |i: usize| {
+        matches!(
+            arena[i].support_kind,
+            SupportTypeId::Trunk | SupportTypeId::Branch
+        )
+    };
+    let owner: HashMap<&str, usize> = (0..shafts)
+        .flat_map(|i| {
+            arena[i]
+                .segments
+                .iter()
+                .map(move |g| (g.segment_id.as_str(), i))
+        })
+        .collect();
+    let mut braced = vec![f64::NEG_INFINITY; shafts];
+    let note = |knot: &Knot, braced: &mut Vec<f64>| {
+        if let Some(&i) = owner.get(knot.parent_shaft_id.as_str()) {
+            braced[i] = js_max(braced[i], knot.pos.z);
+        }
+    };
+    for knot in held {
+        note(knot, &mut braced);
+    }
+    // Where each shaft reaches in the plane, to skip pairs far apart.
+    let reach: Vec<[f64; 4]> = (0..shafts)
+        .map(|i| {
+            arena[i].segments.iter().fold(
+                [
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ],
+                |r, g| {
+                    [
+                        r[0].min(g.start.x).min(g.end.x),
+                        r[1].min(g.start.y).min(g.end.y),
+                        r[2].max(g.start.x).max(g.end.x),
+                        r[3].max(g.start.y).max(g.end.y),
+                    ]
+                },
+            )
+        })
+        .collect();
+    let apart = |a: usize, b: usize| {
+        let (p, q) = (reach[a], reach[b]);
+        let dx = js_max(0.0, js_max(q[0] - p[2], p[0] - q[2]));
+        let dy = js_max(0.0, js_max(q[1] - p[3], p[1] - q[3]));
+        (dx * dx + dy * dy).sqrt()
+    };
+    let stack = StackedBracing {
+        reinforcement_heights_mm: Vec::new(),
+        ..settings.stacked.clone().unwrap_or_default()
+    };
+    let min_rise = auto_bracing_hard_rules::MIN_ZIG_ZAG_RISE_MM;
+    let min_span = min_pair_span_mm(settings);
+    let max_len = settings.max_brace_length_mm;
+    let mut seen = 0;
+    for s in 0..shafts {
+        // The braces the shafts before this one were given count too.
+        for knot in ladder.generated_knots.values().skip(seen) {
+            note(knot, &mut braced);
+        }
+        seen = ladder.generated_knots.len();
+        if !is_shaft(s) {
+            continue;
+        }
+        let sample = &arena[s];
+        let from = if braced[s].is_finite() {
+            braced[s]
+        } else {
+            sample.bottom_reference_z
+        };
+        let from = js_max(from, settings.initial_distance_mm);
+        if sample.top_reference_z - from <= UNBRACED_TOP_MM {
+            continue;
+        }
+        let mut near: Vec<(Edge, f64)> = Vec::new();
+        for (t, other) in arena.iter().enumerate().take(shafts) {
+            if t == s || !is_shaft(t) || other.model_id != sample.model_id || apart(s, t) > max_len
+            {
+                continue;
+            }
+            let low = js_max(from, other.bottom_reference_z);
+            let high = js_min(sample.top_reference_z, other.top_reference_z) - 0.1;
+            // Only a shaft that rises beside it through the part left bare.
+            if high - low <= UNBRACED_TOP_MM {
+                continue;
+            }
+            let Some((h_dist, angle_rad)) =
+                horizontal_distance_at_z(sample, other, (low + high) / 2.0)
+            else {
+                continue;
+            };
+            if h_dist < min_span || h_dist > max_len || high <= low + js_max(h_dist, min_rise) {
+                continue;
+            }
+            near.push((
+                Edge {
+                    a: s,
+                    b: t,
+                    h_dist,
+                    angle_rad,
+                },
+                low,
+            ));
+        }
+        near.sort_by(|x, y| js_compare(x.0.h_dist - y.0.h_dist));
+        let Some(&first) = near.first() else {
+            continue;
+        };
+        // The second: the one nearest a right angle to the first.
+        let off_square =
+            |e: &Edge| (90.0 - axis_separation_deg(first.0.angle_rad, e.angle_rad)).abs();
+        let second = near
+            .iter()
+            .filter(|(e, _)| {
+                axis_separation_deg(first.0.angle_rad, e.angle_rad)
+                    >= auto_bracing_hard_rules::MIN_AXIS_SEPARATION_DEG
+            })
+            .min_by(|(x, _), (y, _)| js_compare(off_square(x) - off_square(y)))
+            .copied();
+        for (edge, low) in std::iter::once(first).chain(second) {
+            run_stacked_chain(
+                &[BracePair {
+                    a: edge.a,
+                    b: edge.b,
+                    h_dist: edge.h_dist,
+                }],
+                &stack,
+                low,
+                arena,
+                ladder,
+                min_rise,
+                settings.brace_diameter_mm,
+            );
+        }
+    }
+}
+
 /// `buildAutoBracedSnapshot`. `live` is `getSettings()` (grid, kickstand
 /// sizing); `store` is the committed store, which resolves the type of an
 /// unstamped entity; ids are drawn by the kickstand builds.
@@ -1183,7 +1344,7 @@ pub fn build_auto_braced_snapshot(
     let c = &snapshot.collections;
     let settings = normalize_auto_bracing_settings(input_settings);
     let grid = GridSnap {
-        enabled: live.grid.enabled,
+        enabled: live.grid.enabled && !live.grid.pillars,
         spacing_mm: live.grid.spacing_mm,
     };
     let max_run = settings.max_brace_length_mm;
@@ -1680,6 +1841,13 @@ pub fn build_auto_braced_snapshot(
             });
         lay_ladder(&mut ladder, pairs, &settings, &arena, max_z);
     }
+    if settings.brace_tall_shafts {
+        let kept_knots = kept_braces
+            .values()
+            .flat_map(|b| [&b.start_knot_id, &b.end_knot_id])
+            .filter_map(|id| next_knots.get(id));
+        brace_tall_shafts(&mut ladder, &arena, trunk_count, &settings, kept_knots);
+    }
     let Ladder {
         mut generated_braces,
         mut generated_knots,
@@ -1789,4 +1957,120 @@ pub fn build_auto_braced_snapshot(
             },
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::supports::types::{Joint, Roots, Transform, Trunk};
+
+    /// A trunk standing at `(x, y)`, through `joints` (its segments' tops,
+    /// in order), its segment ids `{id}-0`, `{id}-1`, ...
+    fn trunk(state: &mut SupportState, id: &str, x: f64, y: f64, joints: &[[f64; 3]]) {
+        let base = |id: String| SupportEntity {
+            id,
+            model_id: "model".to_owned(),
+            type_id: Some(SupportTypeId::Trunk),
+            ..SupportEntity::default()
+        };
+        let root = format!("{id}-root");
+        state.collections.roots.insert(
+            root.clone(),
+            Roots {
+                base: base(root.clone()),
+                transform: Transform {
+                    pos: Vec3::new(x, y, 0.0),
+                    ..Transform::default()
+                },
+                diameter: 3.0,
+                disk_height: 0.5,
+                cone_height: 1.0,
+                ..Roots::default()
+            },
+        );
+        let mut below: Option<Joint> = None;
+        let segments = joints
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let mut segment = Segment::straight(format!("{id}-{i}"), 1.0);
+                let top = Joint {
+                    id: format!("{id}-joint-{i}"),
+                    pos: Vec3::new(p[0], p[1], p[2]),
+                    diameter: 1.1,
+                };
+                segment.bottom_joint = below.replace(top.clone());
+                segment.top_joint = Some(top);
+                segment
+            })
+            .collect();
+        state.collections.trunks.insert(
+            id.to_owned(),
+            Trunk {
+                base: base(id.to_owned()),
+                root_id: root,
+                segments,
+                ..Trunk::default()
+            },
+        );
+    }
+
+    /// A row of trunks along X: two tall ones 4 mm apart, a short one
+    /// between them and one beyond each, the short ones 8 mm high. The tall
+    /// ones bend at 15 mm and lean side by side towards +Y up to 29 mm, as
+    /// the two long diagonals up a mini's staff: how many braces end on
+    /// their bent segments. The pairs below join each tall trunk to the
+    /// short ones next to it, along the row, and never the two tall ones.
+    fn braces_on_the_bends(brace_tall_shafts: bool) -> usize {
+        let mut state = SupportState::default();
+        trunk(&mut state, "short-a", 0.0, 0.0, &[[0.0, 0.0, 8.0]]);
+        trunk(
+            &mut state,
+            "tall-a",
+            2.5,
+            0.0,
+            &[[2.5, 0.0, 15.0], [2.5, 14.0, 29.0]],
+        );
+        trunk(&mut state, "short-m", 4.5, 0.0, &[[4.5, 0.0, 8.0]]);
+        trunk(
+            &mut state,
+            "tall-b",
+            6.5,
+            0.0,
+            &[[6.5, 0.0, 15.0], [6.5, 14.0, 29.0]],
+        );
+        trunk(&mut state, "short-b", 9.0, 0.0, &[[9.0, 0.0, 8.0]]);
+        let settings = AutoBracingSettings {
+            brace_tall_shafts,
+            ..AutoBracingSettings::default()
+        };
+        let mut next = 0;
+        let (braced, _) = build_auto_braced_snapshot(
+            &state,
+            &settings,
+            &SupportSettings::default(),
+            &BraceMeshes::default(),
+            &state,
+            &mut || {
+                next += 1;
+                format!("id-{next}")
+            },
+        );
+        let c = &braced.collections;
+        c.braces
+            .values()
+            .flat_map(|b| [&b.start_knot_id, &b.end_knot_id])
+            .filter_map(|id| c.knots.get(id))
+            .filter(|k| k.parent_shaft_id == "tall-a-1" || k.parent_shaft_id == "tall-b-1")
+            .count()
+    }
+
+    /// #464: the bent tops of two tall trunks, held only by short ones, are
+    /// braced to each other where they run side by side; the port's rule
+    /// leaves them bare.
+    #[test]
+    fn tall_bent_trunks_are_braced_where_they_run_side_by_side() {
+        assert_eq!(braces_on_the_bends(false), 0, "the port's rule");
+        assert!(braces_on_the_bends(true) >= 2, "braced up there");
+    }
 }

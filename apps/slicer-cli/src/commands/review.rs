@@ -503,6 +503,7 @@ fn tip_cones(contacts: &[SupportContact], leaf: NodeId, frame: &PlateFrame) -> V
         .flat_map(|contact| {
             TipCone::stretches(
                 at(contact.tip),
+                contact.ball.map(at),
                 contact.tip_radius_mm,
                 contact.neck.map(at),
                 at(contact.socket),
@@ -520,6 +521,7 @@ fn support_tips(plate: &SlicedPlate, sets: &[SupportSet]) -> Vec<TipCone> {
             set.contacts.iter().flat_map(move |contact| {
                 TipCone::stretches(
                     at(contact.tip),
+                    contact.ball.map(at),
                     contact.tip_radius_mm,
                     contact.neck.map(at),
                     at(contact.socket),

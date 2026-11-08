@@ -36,8 +36,8 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::escape_joint_search::{
-    EscapeJointSearchOptions, GridJointSearchOptions, Xy, build_direction_fan, find_escape_joint,
-    find_grid_joint,
+    EscapeJointSearchOptions, GridJointSearchOptions, PILLAR_LEANS_DEG, Xy, build_direction_fan,
+    find_escape_joint, find_grid_joint,
 };
 use crate::supports::placement_logic::collision_avoidance::{
     CollisionField, ContactConeSweep, is_contact_cone_blocked,
@@ -177,6 +177,11 @@ const WALK_STEP_MM: f64 = 0.5;
 const DIRECTION_COUNT: usize = 12;
 /// How many lattice nodes the grid search may try, nearest first.
 const GRID_JOINT_NODE_BUDGET: u32 = 24;
+/// How far from a tip a pillar may stand, in grid steps: a pillar further out
+/// takes a long diagonal and stretches the raft around it (#464).
+const PILLAR_REACH_STEPS: f64 = 0.75;
+/// The same with pillars on the nodes: the far nodes are worth a look (#464).
+const PILLAR_JOINT_NODE_BUDGET: u32 = 80;
 /// The vertical leg below the joint is the load-bearing span, so it obeys the
 /// configured routed-trunk angle (90 minus `grid.minRoutedTrunkAngleDeg`).
 const ROUTED_DETOUR_SLACK_DEG: f64 = 10.0;
@@ -641,6 +646,7 @@ fn route(
     let spacing_mm = settings.grid.spacing_mm;
     let ignored_grid = settings.grid.enabled && context.ignore_grid;
     let grid_enabled = settings.grid.enabled && !context.ignore_grid;
+    let pillars = grid_enabled && settings.grid.pillars;
     let base_rings = if grid_enabled {
         GRID_BASE_SEARCH_RINGS
     } else {
@@ -791,13 +797,22 @@ fn route(
                     GridJointSearchOptions {
                         clearance_mm,
                         spacing_mm,
-                        max_lateral_mm,
+                        max_lateral_mm: if pillars {
+                            js_min(max_lateral_mm, spacing_mm * PILLAR_REACH_STEPS)
+                        } else {
+                            max_lateral_mm
+                        },
                         lean_from_vertical_deg: TRUNK_DIAGONAL_LEAN_FROM_VERTICAL_DEG,
                         min_vertical_leg_mm: MIN_VERTICAL_LEG_MM,
-                        max_node_count: GRID_JOINT_NODE_BUDGET,
+                        max_node_count: if pillars {
+                            PILLAR_JOINT_NODE_BUDGET
+                        } else {
+                            GRID_JOINT_NODE_BUDGET
+                        },
                         // Keep leaving the way the cone points.
                         preferred_direction: outward_xy,
                         base_fits_at: &mut base_fits_at,
+                        leans_deg: if pillars { &PILLAR_LEANS_DEG } else { &[] },
                     },
                 )
             } else {

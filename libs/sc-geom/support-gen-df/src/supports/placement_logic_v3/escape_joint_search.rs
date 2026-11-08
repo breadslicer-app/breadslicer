@@ -379,16 +379,13 @@ pub struct GridJointSearchOptions<'a> {
     pub preferred_direction: Option<Xy>,
     /// True when the roots volume can sit at this XY.
     pub base_fits_at: &'a mut dyn FnMut(f64, f64) -> bool,
+    /// The leans to try; empty tries only `lean_from_vertical_deg`.
+    pub leans_deg: &'a [f64],
 }
 
-/// The grid-mode search: the same gates as [`find_escape_joint`], but the
-/// candidate joints are lattice nodes rather than free points along a ray.
-///
-/// Grid mode has to land the drop on a node, so it chooses the node first and
-/// derives the joint from it: the drop is `lateral / tan(lean)`, which makes the
-/// vertical leg exactly vertical by construction. Nodes are walked
-/// nearest-first, so the joint stays as close to the socket's own column as the
-/// model allows, and the first node that satisfies every gate wins.
+/// The leans a run to a pillar may take, degrees from vertical, in order.
+pub const PILLAR_LEANS_DEG: [f64; 4] = [45.0, 35.0, 25.0, 15.0];
+
 pub fn find_grid_joint(
     sdf: &dyn CollisionField,
     socket_pos: Vec3,
@@ -434,36 +431,47 @@ pub fn find_grid_joint(
         }
 
         // The joint sits where the shape's ray from the socket passes this
-        // node's column, so the drop follows from the lean.
-        let lean_deg = opts.lean_from_vertical_deg;
-        let drop_mm = lateral_mm / js_tan(lean_deg * DEG);
-        let z = socket_pos.z - drop_mm;
-        if z <= root_top_z + opts.min_vertical_leg_mm {
-            return None;
-        }
+        // node's column, so the drop follows from the lean. The full lean
+        // first; a steeper run reaches the same column lower down, past what
+        // stood in the way (#464).
+        let own_lean = [opts.lean_from_vertical_deg];
+        let leans = if opts.leans_deg.is_empty() {
+            &own_lean[..]
+        } else {
+            opts.leans_deg
+        };
+        for &lean_deg in leans {
+            let lean_deg = lean_deg.min(opts.lean_from_vertical_deg);
+            let drop_mm = lateral_mm / js_tan(lean_deg * DEG);
+            let z = socket_pos.z - drop_mm;
+            if z <= root_top_z + opts.min_vertical_leg_mm {
+                continue;
+            }
 
-        let joint = Vec3::new(x, y, z);
-        *probes += 1;
-        if sdf.segment_blocked(socket_pos, joint, clearance) {
-            return None;
+            let joint = Vec3::new(x, y, z);
+            *probes += 1;
+            if sdf.segment_blocked(socket_pos, joint, clearance) {
+                continue;
+            }
+            *probes += 1;
+            if sdf.segment_blocked(joint, Vec3::new(x, y, root_top_z), clearance) {
+                continue;
+            }
+            if !(opts.base_fits_at)(x, y) {
+                return None;
+            }
+            return Some(EscapeJointSearchResult {
+                joint: Some(EscapeJoint {
+                    joint,
+                    lean_from_vertical_deg: lean_deg,
+                    lateral_mm,
+                    direction_index: None,
+                }),
+                probes: *probes,
+                outcome: EscapeOutcome::Found,
+            });
         }
-        *probes += 1;
-        if sdf.segment_blocked(joint, Vec3::new(x, y, root_top_z), clearance) {
-            return None;
-        }
-        if !(opts.base_fits_at)(x, y) {
-            return None;
-        }
-        Some(EscapeJointSearchResult {
-            joint: Some(EscapeJoint {
-                joint,
-                lean_from_vertical_deg: lean_deg,
-                lateral_mm,
-                direction_index: None,
-            }),
-            probes: *probes,
-            outcome: EscapeOutcome::Found,
-        })
+        None
     };
 
     // Square rings outwards from the socket's own node, so the nearest node that
