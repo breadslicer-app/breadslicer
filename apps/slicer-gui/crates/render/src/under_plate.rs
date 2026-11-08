@@ -35,6 +35,22 @@ pub fn under_plate_fade(camera: &OrbitCamera) -> f32 {
     x * x * (3.0 - 2.0 * x)
 }
 
+/// How far over the rafts' top the view from under the plate cuts a support
+/// mesh, mm. A raft's wall tops out at that height to the last bit: cut right
+/// there, its top face was kept in some pixels and dropped in others, a dotted
+/// rim along every raft.
+pub const RAFT_CUT_MARGIN_MM: f32 = 0.05;
+
+/// The height below which the view from under the plate hides a support mesh
+/// whose rafts reach `raft_top_mm`; 0 without a raft.
+pub fn hidden_below_mm(raft_top_mm: f32) -> f32 {
+    if raft_top_mm > 0.0 {
+        raft_top_mm + RAFT_CUT_MARGIN_MM
+    } else {
+        0.0
+    }
+}
+
 /// Whether the plate and the rafts are hidden enough, for `camera`, that a
 /// click goes through them: from past half the fade.
 pub fn sees_through_the_plate(camera: &OrbitCamera) -> bool {

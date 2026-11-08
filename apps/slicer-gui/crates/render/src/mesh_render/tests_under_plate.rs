@@ -276,3 +276,20 @@ fn an_orthographic_view_from_under_the_plate_hides_the_raft_zoomed_in() {
     let pixel = middle(&mut renderer, &graph, &close, RAFT_TOP_MM);
     assert!(is_background(pixel), "{pixel:?}");
 }
+
+/// A raft's wall tops out at the rafts' top to the last bit: its top face,
+/// drawn by the cut pass from under the plate, left marks along each raft's
+/// rim. The cut stands a hair over the rafts' top, and the raft is gone.
+#[test]
+fn from_under_the_plate_a_raft_topping_out_at_the_cut_leaves_no_rim() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let graph = scene_of(vec![supports(closed_box(
+        [-30.0, -30.0, 0.0],
+        [30.0, 30.0, RAFT_TOP_MM],
+    ))]);
+    let pixel = middle(&mut renderer, &graph, &under(), RAFT_TOP_MM);
+    assert!(is_background(pixel), "{pixel:?}");
+}

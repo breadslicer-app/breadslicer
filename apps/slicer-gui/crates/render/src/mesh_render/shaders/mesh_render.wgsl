@@ -8,7 +8,8 @@ struct Uniforms {
     light_dir: vec4<f32>,
     // World-space mm envelope corners in .xyz. From under the plate
     // (#481), env_min.w is how far the plate and the rafts have faded
-    // (0 to 1) and env_max.w the rafts' top, mm.
+    // (0 to 1) and env_max.w the height below which a support mesh hides
+    // with them, mm: the rafts' top and a hair.
     env_min: vec4<f32>,
     env_max: vec4<f32>,
     // face_breach_mask.x is a 5-bit field consumed by the plate

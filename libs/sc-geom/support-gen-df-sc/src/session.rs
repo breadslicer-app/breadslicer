@@ -3107,6 +3107,41 @@ mod session_tests {
         );
     }
 
+    /// #481: nothing of the raft the mesh draws reaches past the height the
+    /// view from under the plate hides, with every preset's feet on it: the
+    /// raft is the soup's tail, past the pieces the supports alone draw.
+    #[test]
+    fn the_raft_drawn_stays_under_the_height_it_tells() {
+        for zones in [
+            None,
+            Some(crate::zone_presets::minis_30()),
+            Some(crate::zone_presets::figures_150()),
+        ] {
+            let mut request = crate::DfSupportRequest::default();
+            request.options.zones = zones;
+            let mut session = bare_slab(12.0, request);
+            session.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+            session.add_trunk_at([10.0, 5.0, 12.0]).expect("another");
+            let with = support_soup(&session.state, &session.models, &session.settings).unwrap();
+            let mut off = (*session.settings).clone();
+            off.rafts.global.bottom_mode = RaftBottomMode::Off;
+            off.rafts.per_model.clear();
+            let alone = support_soup(&session.state, &session.models, &off).unwrap();
+            let raft_from = with.parts[alone.parts.len() - 1];
+            assert!(raft_from < with.floats.len(), "a raft is drawn");
+            let raft_top = with.floats[raft_from..]
+                .iter()
+                .skip(2)
+                .step_by(3)
+                .fold(f32::MIN, |a, z| a.max(*z));
+            let told = session.raft_top_mm();
+            assert!(
+                f64::from(raft_top) <= told + 1e-4,
+                "the raft reaches {raft_top}, past {told}"
+            );
+        }
+    }
+
     /// The wall a raft gets by default, mm.
     const DEFAULT_RAFT_WALL_HEIGHT_MM: f64 =
         support_gen_df::supports::rafts::crenelated::raft_types::DEFAULT_RAFT_SETTINGS.wall_height;

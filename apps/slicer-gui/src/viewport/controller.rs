@@ -75,7 +75,7 @@ use crate::scene_loader::{Finished, LoadTicket, PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
 use crate::support_persist::install_sets;
 use crate::surface_brush::{BrushAim, SurfaceBrush, View, aim};
-use crate::under_plate::{sees_through_the_plate, under_plate_fade};
+use crate::under_plate::{hidden_below_mm, sees_through_the_plate, under_plate_fade};
 use sc_scene::SceneError;
 use sc_sla_formats::{PrintPreviews, PrinterFileFormat};
 
@@ -2584,7 +2584,7 @@ impl ViewportController {
                     // From under the plate the rafts are hidden: the
                     // camera sees past them (#481).
                     let raft_top = if through_rafts {
-                        crate::support_persist::raft_top_mm(spatial, &sessions)
+                        hidden_below_mm(crate::support_persist::raft_top_mm(spatial, &sessions))
                     } else {
                         0.0
                     };
@@ -2763,7 +2763,7 @@ impl ViewportController {
                 // Add and the drain look through the supports to the model.
                 let hit = if on_supports {
                     let raft_top = if through_rafts {
-                        crate::support_persist::raft_top_mm(spatial, &sessions)
+                        hidden_below_mm(crate::support_persist::raft_top_mm(spatial, &sessions))
                     } else {
                         0.0
                     };

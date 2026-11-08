@@ -1062,7 +1062,12 @@ impl Renderer {
             view_proj: view_proj.to_cols_array_2d(),
             light_dir: frame::pack_light_dir(clip_z),
             env_min: [env_min.x, env_min.y, env_min.z, under_plate],
-            env_max: [env_max.x, env_max.y, env_max.z, raft_top_mm],
+            env_max: [
+                env_max.x,
+                env_max.y,
+                env_max.z,
+                crate::under_plate::hidden_below_mm(raft_top_mm),
+            ],
             face_breach_mask: [face_breach_mask, 0, 0, 0],
             overhang: overhang_map.map_or([0.0; 4], |map| map.uniform(env_min.z)),
         };
