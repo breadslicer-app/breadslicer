@@ -46,10 +46,13 @@ pub(crate) fn allows_repair(section: WorkspaceSection) -> bool {
 }
 
 /// Whether the overhang map shows in `section`: Transform, where the pose is
-/// set. Past it the supports themselves answer the question, and a colour on
-/// the model would fight the marks those tabs draw.
+/// set; Supports, where tips are placed and what they hold shows plain; and
+/// Slice, beside the review (#484).
 pub(crate) fn shows_overhang_map(section: WorkspaceSection) -> bool {
-    matches!(section, WorkspaceSection::Transform)
+    matches!(
+        section,
+        WorkspaceSection::Transform | WorkspaceSection::Supports | WorkspaceSection::Slice
+    )
 }
 
 /// The slice-view clip height for `section`, given the selected layer's
@@ -86,7 +89,17 @@ mod workspace_section_tests {
             assert_eq!(allows_layout_tools(section), transform, "{section:?}");
             assert_eq!(allows_transform_gizmo(section), transform, "{section:?}");
             assert_eq!(allows_repair(section), transform, "{section:?}");
-            assert_eq!(shows_overhang_map(section), transform, "{section:?}");
+        }
+    }
+
+    #[test]
+    fn the_overhang_map_shows_where_poses_tips_and_the_review_are() {
+        for section in ALL {
+            let shows = matches!(
+                section,
+                WorkspaceSection::Transform | WorkspaceSection::Supports | WorkspaceSection::Slice
+            );
+            assert_eq!(shows_overhang_map(section), shows, "{section:?}");
         }
     }
 

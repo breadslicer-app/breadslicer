@@ -16,6 +16,7 @@ use slint::wgpu_30::wgpu;
 use super::super::device_ops::scoped;
 use super::super::frame::Uniforms;
 use super::super::scene_upload::{GpuVertex, MODEL_ENTRY_SIZE};
+use super::super::tip_coverage::{CoverageGrid, CoverageTextures};
 use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
 
 const MESH_SHADER_SOURCE: &str = include_str!("../shaders/mesh_render.wgsl");
@@ -48,6 +49,10 @@ pub(in crate::mesh_render) struct MeshPipeline {
     pub(in crate::mesh_render) overlay_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) uniform_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) uniforms_bind_group: wgpu::BindGroup,
+    /// Group 0's layout: the uniforms and the support tips' data textures,
+    /// which [`Self::set_tip_coverage`] binds anew when the tips change
+    /// (#484).
+    uniforms_bind_group_layout: wgpu::BindGroupLayout,
     /// Layout of the per-draw-call dynamic-offset models bind group.
     /// Held by the pipeline because every newly attached `GpuScene`
     /// needs a fresh bind group built against this layout (the scene's
@@ -56,11 +61,14 @@ pub(in crate::mesh_render) struct MeshPipeline {
 }
 
 impl MeshPipeline {
-    pub(in crate::mesh_render) fn create(device: &wgpu::Device) -> Result<Self, wgpu::Error> {
-        scoped(device, || Self::create_unscoped(device))
+    pub(in crate::mesh_render) fn create(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<Self, wgpu::Error> {
+        scoped(device, || Self::create_unscoped(device, queue))
     }
 
-    fn create_unscoped(device: &wgpu::Device) -> Self {
+    fn create_unscoped(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh-viewer shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(MESH_SHADER_SOURCE)),
@@ -69,16 +77,20 @@ impl MeshPipeline {
         let uniforms_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("mesh-viewer uniforms bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(size_of::<Uniforms>() as u64),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(size_of::<Uniforms>() as u64),
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    data_texture_entry(1, wgpu::TextureSampleType::Uint),
+                    data_texture_entry(2, wgpu::TextureSampleType::Float { filterable: false }),
+                ],
             });
 
         let models_bind_group_layout =
@@ -253,14 +265,12 @@ impl MeshPipeline {
             mapped_at_creation: false,
         });
 
-        let uniforms_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mesh-viewer uniforms bg"),
-            layout: &uniforms_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-        });
+        let uniforms_bind_group = uniforms_bind_group(
+            device,
+            &uniforms_bind_group_layout,
+            &uniform_buffer,
+            &CoverageTextures::create(device, queue, None),
+        );
 
         Self {
             pipeline,
@@ -268,9 +278,69 @@ impl MeshPipeline {
             overlay_pipeline,
             uniform_buffer,
             uniforms_bind_group,
+            uniforms_bind_group_layout,
             models_bind_group_layout,
         }
     }
+
+    /// Binds the support tips of `grid` for the overhang map to read (#484);
+    /// no tip for `None`.
+    pub(in crate::mesh_render) fn set_tip_coverage(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        grid: Option<&CoverageGrid>,
+    ) {
+        self.uniforms_bind_group = uniforms_bind_group(
+            device,
+            &self.uniforms_bind_group_layout,
+            &self.uniform_buffer,
+            &CoverageTextures::create(device, queue, grid),
+        );
+    }
+}
+
+/// A data texture read with `textureLoad` in the fragment stage.
+fn data_texture_entry(
+    binding: u32,
+    sample_type: wgpu::TextureSampleType,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn uniforms_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniform_buffer: &wgpu::Buffer,
+    coverage: &CoverageTextures,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("mesh-viewer uniforms bg"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&coverage.slots),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&coverage.tips),
+            },
+        ],
+    })
 }
 
 #[cfg(test)]

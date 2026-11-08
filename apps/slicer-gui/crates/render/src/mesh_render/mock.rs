@@ -97,6 +97,8 @@ pub struct MockRendererState {
     pub next_preview_frames: VecDeque<Result<Option<FramePixels>, RenderError>>,
     /// What the last `set_overhang_map` asked for.
     pub overhang_map: Option<super::OverhangMap>,
+    /// What the last `set_support_tips` asked for.
+    pub support_tips: Vec<super::SupportTip>,
 }
 
 impl MockRendererState {
@@ -115,6 +117,7 @@ impl MockRendererState {
             next_preview_frames: VecDeque::new(),
             front_label_calls: Vec::new(),
             overhang_map: None,
+            support_tips: Vec::new(),
         }))
     }
 }
@@ -136,6 +139,10 @@ impl MockRenderer {
 impl MeshRenderer for MockRenderer {
     fn set_overhang_map(&mut self, map: Option<super::OverhangMap>) {
         self.state.borrow_mut().overhang_map = map;
+    }
+
+    fn set_support_tips(&mut self, tips: &[super::SupportTip]) {
+        self.state.borrow_mut().support_tips = tips.to_vec();
     }
 
     fn upload_scene(&mut self, graph: &Scene) -> Result<()> {

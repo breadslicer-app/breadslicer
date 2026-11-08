@@ -98,6 +98,10 @@ pub trait MeshRenderer {
     /// turns the map off).
     fn set_overhang_map(&mut self, _map: Option<super::OverhangMap>) {}
 
+    /// The support tips the overhang map counts as holding the faces around
+    /// them (#484): what they reach, it leaves plain.
+    fn set_support_tips(&mut self, _tips: &[super::SupportTip]) {}
+
     /// How high the rafts of the scene reach, mm (0 without one), for the
     /// view from under the plate to hide them (#481).
     fn set_raft_top(&mut self, _mm: f32) {}
@@ -196,6 +200,10 @@ impl MeshRenderer for Renderer {
 
     fn set_overhang_map(&mut self, map: Option<super::OverhangMap>) {
         Renderer::set_overhang_map(self, map);
+    }
+
+    fn set_support_tips(&mut self, tips: &[super::SupportTip]) {
+        Renderer::set_support_tips(self, tips);
     }
 
     fn set_raft_top(&mut self, mm: f32) {

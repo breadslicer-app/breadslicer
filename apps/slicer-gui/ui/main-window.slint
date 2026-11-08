@@ -1742,6 +1742,11 @@ export component MainWindow inherits Window {
                     padding: 12px;
 
                     SliceInspector {
+                        overhang-map-on <=> root.overhang-map-on;
+                        overhang-map-limit: root.overhang-map-limit;
+                        overhang-map-toggled(on) => {
+                            root.overhang-map-toggled(on);
+                        }
                         printer-options: root.slice-printer-options;
                         printer-current-index <=> root.slice-printer-current-index;
                         resin-options: root.slice-resin-options;
@@ -2029,6 +2034,11 @@ export component MainWindow inherits Window {
                             }
                         }
                         if root.workspace-section == WorkspaceSection.Supports: SupportsInspector {
+                            overhang-map-on <=> root.overhang-map-on;
+                            overhang-map-limit: root.overhang-map-limit;
+                            overhang-map-toggled(on) => {
+                                root.overhang-map-toggled(on);
+                            }
                             has-scene: root.has-scene && !root.loading;
                             running: root.support-gen-in-progress;
                             phase: root.support-gen-phase;

@@ -1314,7 +1314,11 @@ const DEFAULT_GRID_MM: f64 = 7.0;
 /// no built-in preset does.
 fn grid_hint(options: &DfSupportOptions) -> slint::SharedString {
     recommended_grid_mm(options).map_or_else(slint::SharedString::default, |mm| {
-        ctr!("Inspector", "Recommended for this preset: {} mm.", mm_text(mm))
+        ctr!(
+            "Inspector",
+            "Recommended for this preset: {} mm.",
+            mm_text(mm)
+        )
     })
 }
 
@@ -2186,6 +2190,8 @@ impl DfSupportRun {
     fn push_overhang_limit(&self, ui: &MainWindow) {
         let degrees = self.options.borrow().self_support_angle_deg();
         self.ctrl.set_overhang_angle(degrees as f32);
+        self.ctrl
+            .set_tip_reach(self.options.borrow().tip_reach_mm());
         ui.set_overhang_map_limit(format!("{}°", mm_text(degrees)).into());
     }
 
@@ -7190,7 +7196,7 @@ mod hand_edit_tests {
 
     /// #91: the box is a setting shared with every window, and the map paints
     /// by the angle the engine is set to, a zone preset's read from vertical
-    /// turned around; only the Transform tab shows it.
+    /// turned around; Transform, Supports and Slice show it (#484).
     #[test]
     fn the_overhang_map_follows_its_box_the_active_preset_and_the_tab() {
         on_fresh_slint_thread(|| {
@@ -7225,15 +7231,88 @@ mod hand_edit_tests {
             });
             assert_eq!(shown(), Some(55.0));
 
-            run.ctrl.set_section(WorkspaceSection::Supports);
-            assert_eq!(shown(), None);
-            run.ctrl.set_section(WorkspaceSection::Transform);
-            assert_eq!(shown(), Some(55.0));
+            // Supports and Slice show it too (#484); Hollow and Export not.
+            for (section, on) in [
+                (WorkspaceSection::Supports, true),
+                (WorkspaceSection::Slice, true),
+                (WorkspaceSection::Hollow, false),
+                (WorkspaceSection::Export, false),
+                (WorkspaceSection::Transform, true),
+            ] {
+                run.ctrl.set_section(section);
+                assert_eq!(shown(), on.then_some(55.0), "{section:?}");
+            }
 
             window.invoke_overhang_map_toggled(false);
             assert!(!bus.snapshot().overhang_map);
             assert!(!window.get_overhang_map_on());
             assert_eq!(shown(), None);
+        });
+    }
+
+    /// #484: the overhang map counts every tip of the scene's sets, where
+    /// each set is drawn, with the reach of the options that set was made
+    /// with, whatever the tab holds now.
+    #[test]
+    fn the_overhang_map_counts_each_sets_tips_with_its_own_reach() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, _, leaves) =
+                cubes_on(&window, &[[20.0, 20.0, 8.0], [40.0, 20.0, 8.0]]);
+            run.generate_now(DfSupportOptions {
+                zones: Some(minis_30()),
+                ..Default::default()
+            });
+            let reaches = || {
+                let tips = run.ctrl.support_tips_for_test();
+                let count = |mm: f32| tips.iter().filter(|t| t.reach_mm == mm).count();
+                (tips.len(), count(1.8), count(2.8))
+            };
+            let in_sets = || -> usize {
+                run.sets_in_force()
+                    .iter()
+                    .map(|set| set.session.tips().len())
+                    .sum()
+            };
+            let all = in_sets();
+            assert!(all > 0, "the cubes get tips");
+            assert_eq!(
+                reaches(),
+                (all, all, 0),
+                "Minis spaces overhang tips 1.8 mm"
+            );
+            let first = run.ctrl.support_tips_for_test();
+            let session_tips: Vec<[f32; 3]> = run
+                .sets_in_force()
+                .iter()
+                .flat_map(|set| set.session.tips())
+                .map(|(_, p)| p.map(|v| v as f32))
+                .collect();
+            assert_eq!(
+                first.iter().map(|t| t.pos).collect::<Vec<_>>(),
+                session_tips,
+                "each tip where its set draws it"
+            );
+
+            // The second cube's set made again with Figures 150 mm+: its
+            // tips reach 2.8 mm, the first cube's keep 1.8.
+            document.set_selection(crate::selection::Selection::of(
+                [leaves[1]].map(crate::selection::LeafId),
+            ));
+            run.set_options(DfSupportOptions {
+                zones: Some(figures_150()),
+                ..Default::default()
+            });
+            window.invoke_df_support_requested();
+            until_generated(&window, &run);
+            let (count, short, long) = reaches();
+            assert_eq!(count, in_sets());
+            assert!(short > 0 && long > 0, "{short} at 1.8 mm, {long} at 2.8 mm");
+            assert_eq!(short + long, count);
+
+            // With no set left, no tip.
+            while document.undo().unwrap() {}
+            assert_eq!(reaches(), (0, 0, 0));
         });
     }
 

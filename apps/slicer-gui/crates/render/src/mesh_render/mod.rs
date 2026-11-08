@@ -30,6 +30,7 @@ mod overhang_map;
 mod overlay;
 mod smooth_shading;
 mod surface_paint;
+mod tip_coverage;
 pub use smooth_shading::set_smooth_models;
 mod pipelines;
 mod prepared;
@@ -83,6 +84,7 @@ use scene_upload::{
 };
 pub use surface_paint::{BrushRing, PaintLayer};
 use targets::{MsaaTargets, TargetPool};
+pub use tip_coverage::SupportTip;
 
 /// Scene-dependent inputs to [`Renderer::render`]. The selection drives the
 /// outline post-pass and the gizmo overlay drives the gizmo pass; both are
@@ -220,7 +222,7 @@ impl Pipelines {
     /// Builds every pipeline of the viewport against `device`.
     fn create(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, RendererInitError> {
         let at = |stage: RendererStage| move |source| RendererInitError { stage, source };
-        let mesh = MeshPipeline::create(device).map_err(at(RendererStage::Mesh))?;
+        let mesh = MeshPipeline::create(device, queue).map_err(at(RendererStage::Mesh))?;
         let outline = OutlinePipeline::create(device).map_err(at(RendererStage::Outline))?;
         let gizmo_buffers =
             GizmoBuffers::create(device, queue).map_err(at(RendererStage::GizmoBuffers))?;
@@ -325,6 +327,11 @@ pub struct Renderer {
     surface_paint: surface_paint::PaintSlot,
     /// The overhang map over the models of a workspace frame, when on.
     overhang_map: Option<OverhangMap>,
+    /// The support tips the map counts as holding the faces around them,
+    /// as last given, and the side of the cells they are hashed in (0
+    /// without one) (#484).
+    support_tips: Vec<SupportTip>,
+    tip_cell_mm: f32,
     /// How high the rafts of the scene reach, mm: what of a support mesh
     /// the view from under the plate hides (#481).
     raft_top_mm: f32,
@@ -412,6 +419,8 @@ impl Renderer {
             overlay: overlay::OverlaySlot::default(),
             surface_paint: surface_paint::PaintSlot::default(),
             overhang_map: None,
+            support_tips: Vec::new(),
+            tip_cell_mm: 0.0,
             raft_top_mm: 0.0,
             target_manager: TargetManager {
                 msaa: None,
@@ -846,6 +855,20 @@ impl Renderer {
         self.overhang_map = map;
     }
 
+    /// The support tips the overhang map counts as holding the faces around
+    /// them (#484). The same tips as last time upload nothing.
+    pub fn set_support_tips(&mut self, tips: &[SupportTip]) {
+        if self.support_tips == tips {
+            return;
+        }
+        self.support_tips = tips.to_vec();
+        let grid = tip_coverage::CoverageGrid::build(tips);
+        self.tip_cell_mm = grid.as_ref().map_or(0.0, |g| g.cell_mm);
+        self.pipelines
+            .mesh
+            .set_tip_coverage(&self.core.device, &self.core.queue, grid.as_ref());
+    }
+
     /// How high the rafts of the scene reach, mm (0 without one): what of
     /// the support meshes fades with the plate when the camera goes under
     /// it (#481).
@@ -950,6 +973,7 @@ impl Renderer {
             overhang_map,
             raft_top_mm,
         } = look;
+        let tip_cell_mm = self.tip_cell_mm;
         if self.core.device_loss.is_lost() {
             return Err(RenderError::DeviceLost);
         }
@@ -1069,7 +1093,10 @@ impl Renderer {
                 crate::under_plate::hidden_below_mm(raft_top_mm),
             ],
             face_breach_mask: [face_breach_mask, 0, 0, 0],
-            overhang: overhang_map.map_or([0.0; 4], |map| map.uniform(env_min.z)),
+            overhang: overhang_map.map_or([0.0; 4], |map| {
+                let [limit, radians, contact, _] = map.uniform(env_min.z);
+                [limit, radians, contact, tip_cell_mm]
+            }),
         };
         self.core.queue.write_buffer(
             &self.pipelines.mesh.uniform_buffer,

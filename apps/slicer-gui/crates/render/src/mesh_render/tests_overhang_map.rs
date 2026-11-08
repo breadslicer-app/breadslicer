@@ -402,6 +402,93 @@ fn a_face_past_the_build_volume_stays_amber_under_the_map() {
     assert_eq!(centre_pixel(&mapped), [r, g, b]);
 }
 
+fn red_pixels(frame: &FramePixels) -> usize {
+    frame
+        .rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|[r, g, b, _]| is_overhang_red([*r, *g, *b]))
+        .count()
+}
+
+/// What a tip reaches the map leaves plain, and only that (#484): through the
+/// real shader, its two data textures and the hashed lookup.
+#[test]
+fn a_tip_clears_the_map_within_its_reach() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mesh = down_facing_quad();
+    let pose = tilted(0.0, 0.0, 1.0);
+    let soup = posed_soup(&mesh, &pose);
+    let (graph, _) = scene_of(vec![(mesh, pose)]);
+    renderer.upload_scene(&graph).expect("upload the quad");
+    let camera = camera_facing(&soup);
+    let map = Some(OverhangMap::new(45.0));
+    let centre = CENTRE.map(|v| v as f32);
+    let tip = |pos: [f32; 3], reach_mm: f32| SupportTip { pos, reach_mm };
+    let mut drawn = |tips: &[SupportTip]| {
+        renderer.set_support_tips(tips);
+        draw(&mut renderer, &graph, &[], &camera, map)
+    };
+
+    let bare = drawn(&[]);
+    let all_red = red_pixels(&bare);
+    assert!(is_overhang_red(centre_pixel(&bare)));
+    assert!(all_red > 0);
+
+    // A tip in the middle, reaching 2 mm of the 10 mm square: the middle is
+    // plain, about an eighth of the red goes, the rest stays.
+    let held = drawn(&[tip(centre, 2.0)]);
+    assert!(!is_overhang_red(centre_pixel(&held)));
+    let left = red_pixels(&held) as f32 / all_red as f32;
+    let expected = 1.0 - std::f32::consts::PI * 4.0 / 100.0;
+    assert!(
+        (left - expected).abs() < 0.03,
+        "{left} of the red left, not {expected}"
+    );
+
+    // One far off holds nothing here; one reaching past the corners, all.
+    let far = drawn(&[tip([centre[0] + 40.0, centre[1], centre[2]], 2.8)]);
+    assert_eq!(red_pixels(&far), all_red);
+    assert_eq!(red_pixels(&drawn(&[tip(centre, 7.5)])), 0);
+
+    // Many tips in the scene, a short and a long reach among them: the
+    // ones around the square clear it, the others change nothing.
+    let mut tips: Vec<SupportTip> = (0..2000)
+        .map(|k| {
+            tip(
+                [
+                    -200.0 + (k % 50) as f32 * 4.0,
+                    80.0 + (k / 50) as f32 * 4.0,
+                    30.0,
+                ],
+                2.8,
+            )
+        })
+        .collect();
+    tips.push(tip(centre, 1.8));
+    let crowded = drawn(&tips);
+    assert!(!is_overhang_red(centre_pixel(&crowded)));
+    let left = red_pixels(&crowded) as f32 / all_red as f32;
+    let expected = 1.0 - std::f32::consts::PI * 1.8 * 1.8 / 100.0;
+    assert!(
+        (left - expected).abs() < 0.03,
+        "{left} of the red left, not {expected}"
+    );
+
+    // Without the map, the tips paint nothing.
+    renderer.set_support_tips(&[tip(centre, 7.5)]);
+    let plain = draw(&mut renderer, &graph, &[], &camera, None);
+    assert_eq!(red_pixels(&plain), 0);
+    assert_eq!(
+        centre_pixel(&plain),
+        centre_pixel(&draw(&mut renderer, &graph, &[], &camera, None))
+    );
+}
+
 #[test]
 fn a_picture_of_the_print_never_carries_the_map() {
     let Some(mut renderer) = renderer() else {
@@ -509,6 +596,7 @@ fn frame_cost_while_turning() {
         return;
     };
     println!("triangles: {}", mesh.faces().len());
+    let tip_mesh = mesh.clone();
     let (mut graph, leaves) = scene_of(vec![(mesh, place)]);
     renderer.upload_scene(&graph).expect("upload the model");
     let mut camera = framing_camera(&renderer);
@@ -519,6 +607,15 @@ fn frame_cost_while_turning() {
     let selection = [leaves[0]];
     let map = std::env::var_os("BREADSLICER_OVERHANG_MAP").is_some();
     renderer.set_overhang_map(map.then(|| OverhangMap::new(45.0)));
+    // `BREADSLICER_OVERHANG_TIPS=1`: a tip every 1.8 mm or so over the
+    // down-facing faces of the model as it first stands, reaching 1.8 mm
+    // (#484), so most red fragments look tips up.
+    let tips = if std::env::var_os("BREADSLICER_OVERHANG_TIPS").is_some() {
+        tips_under(&tip_mesh, &place, 1.8)
+    } else {
+        Vec::new()
+    };
+    renderer.set_support_tips(&tips);
 
     let mut samples = Vec::new();
     for frame in 0..(60 + 960) {
@@ -543,13 +640,45 @@ fn frame_cost_while_turning() {
     samples.sort_unstable();
     let mean = samples.iter().sum::<Duration>().as_secs_f64() * 1000.0 / samples.len() as f64;
     println!(
-        "map {}: mean {mean:.3} ms, p50 {:.3} ms, p95 {:.3} ms, p99 {:.3} ms ({} frames)",
+        "map {}, {} tips: mean {mean:.3} ms, p50 {:.3} ms, p95 {:.3} ms, p99 {:.3} ms ({} frames)",
         if map { "on" } else { "off" },
+        tips.len(),
         percentile(&samples, 0.5),
         percentile(&samples, 0.95),
         percentile(&samples, 0.99),
         samples.len(),
     );
+}
+
+/// A tip about every `spacing` mm over the faces of `mesh` that face down,
+/// posed by `place`: the centre of the first such face in each cell of
+/// that side.
+fn tips_under(mesh: &IndexedMesh, place: &AffineTransform3D, spacing: f32) -> Vec<SupportTip> {
+    let at = |index: sc_mesh_core::primitives::VertexIndex| {
+        Vec3::from(
+            place
+                .apply_to_vertex(mesh.vertices()[u32::from(index) as usize])
+                .coords(),
+        )
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut tips = Vec::new();
+    for face in mesh.faces() {
+        let [a, b, c] = face.vertices.map(at);
+        let normal = (b - a).cross(c - a).normalize_or_zero();
+        if normal.z > -0.3 {
+            continue;
+        }
+        let centre = (a + b + c) / 3.0;
+        let cell = (centre / spacing).floor().as_ivec3();
+        if seen.insert(cell) {
+            tips.push(SupportTip {
+                pos: centre.into(),
+                reach_mm: spacing,
+            });
+        }
+    }
+    tips
 }
 
 /// Pictures of a real model under the map, for looking at the colours.

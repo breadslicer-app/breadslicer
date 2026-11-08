@@ -115,6 +115,10 @@ pub(crate) struct ViewportController {
     /// The overhang map's box, and the self-support angle it paints by.
     overhang_map_on: Cell<bool>,
     overhang_angle_deg: Cell<f32>,
+    /// The support tips the map leaves what they hold plain by (#484), and
+    /// the reach of the Supports tab's options, for a set that records none.
+    overhang_tips: crate::overhang_tips::TipCache,
+    tab_tip_reach_mm: Cell<f64>,
     /// The performance test while it runs. It owns the renderer's scene
     /// meanwhile, so the frame pass waits until it ends.
     probe: RefCell<Option<ProbeRun>>,
@@ -208,6 +212,8 @@ impl ViewportController {
             repair_marks: Default::default(),
             overhang_map_on: Cell::new(false),
             overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
+            overhang_tips: Default::default(),
+            tab_tip_reach_mm: Cell::new(default_tip_reach_mm()),
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
             orbit_marker_timer: slint::Timer::default(),
@@ -261,6 +267,8 @@ impl ViewportController {
             repair_marks: Default::default(),
             overhang_map_on: Cell::new(false),
             overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
+            overhang_tips: Default::default(),
+            tab_tip_reach_mm: Cell::new(default_tip_reach_mm()),
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
             orbit_marker_timer: slint::Timer::default(),
@@ -999,6 +1007,25 @@ impl ViewportController {
         if self.overhang_angle_deg.replace(degrees) != degrees {
             self.mark_dirty();
         }
+    }
+
+    /// How far around itself a tip of a set that records no options holds
+    /// an overhang, mm: the Supports tab's options' (#484).
+    pub(crate) fn set_tip_reach(&self, mm: f64) {
+        if self.tab_tip_reach_mm.replace(mm) != mm {
+            self.mark_dirty();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn support_tips_for_test(&self) -> Rc<[crate::mesh_render::SupportTip]> {
+        self.support_tips()
+    }
+
+    /// The support tips of the scene, for the overhang map (#484).
+    fn support_tips(&self) -> Rc<[crate::mesh_render::SupportTip]> {
+        self.overhang_tips
+            .tips(self.session.document(), self.tab_tip_reach_mm.get())
     }
 
     /// What the overhang map shows in the current section, if anything.
@@ -3645,7 +3672,11 @@ impl ViewportController {
             .repair_marks
             .over(self.overlay.borrow().as_ref(), marks_shown);
         renderer.set_overlay(overlay.as_ref());
-        renderer.set_overhang_map(self.overhang_map());
+        let overhang_map = self.overhang_map();
+        renderer.set_overhang_map(overhang_map);
+        if overhang_map.is_some() {
+            renderer.set_support_tips(&self.support_tips());
+        }
         renderer.set_raft_top(self.raft_top_under_plate());
 
         let Some(ui) = self.ui.upgrade() else {
@@ -3866,6 +3897,10 @@ fn surface_paint_tint(ui: &MainWindow) -> [f32; 4] {
 }
 
 /// The engine's self-support angle before a window's options reach it.
+fn default_tip_reach_mm() -> f64 {
+    sc_geom::df_supports::DfSupportOptions::default().tip_reach_mm()
+}
+
 fn default_overhang_angle_deg() -> f32 {
     sc_geom::df_supports::DfSupportOptions::default().self_support_angle_deg() as f32
 }
