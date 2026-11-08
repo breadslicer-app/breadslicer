@@ -518,6 +518,8 @@ impl SettingsRecipe {
         settings.supports.mesh_to_mesh.every_landing = true;
         // A fan looks near its tip, not through every shaft of the run (#445).
         settings.supports.auto_support.near_fans = true;
+        // A long island branch hangs from a neighbour when it can (#464).
+        settings.supports.auto_support.rehang_island_branches = true;
         // A spine between the rays of a brace is no way through (#445).
         settings.supports.auto_bracing.exact_clearance = true;
         // A tall or bent shaft is braced where it stands above the rest (#464).

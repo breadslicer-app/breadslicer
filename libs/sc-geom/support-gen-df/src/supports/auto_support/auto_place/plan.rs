@@ -23,10 +23,10 @@ use super::fan::{
 use super::helpers::{
     HostedBranchInput, MAX_FANNING_PASSES, OrphanInfo, OrphanReason, PlanCtx,
     branch_collides_with_sdf, build_hosted_branch, collect_contact_positions,
-    collect_fan_shaft_points, collect_host_entities, compute_mesh_volume_mm3,
-    count_attachments_on_host, filter_already_supported, is_host_at_attachment_capacity,
-    member_max_angle_from_vertical_deg, rehost_legacy_knots, resolve_surface_normal,
-    sync_contact_cone_diameters_with, validate_and_cull_orphans,
+    collect_fan_shaft_points, collect_fan_shaft_points_near, collect_host_entities,
+    compute_mesh_volume_mm3, count_attachments_on_host, filter_already_supported,
+    is_host_at_attachment_capacity, member_max_angle_from_vertical_deg, rehost_legacy_knots,
+    resolve_surface_normal, sync_contact_cone_diameters_with, validate_and_cull_orphans,
 };
 use super::place::{PlaceArgs, PlaceOutcome, RejectReason, grid_join_height, place_one_candidate};
 use super::report::{
@@ -436,6 +436,124 @@ impl RunState {
 }
 
 /// `computeAutoSupportPlan`. `None` when auto-support is disabled.
+/// How long, in mm, an island branch has to be before it is hung from a
+/// neighbour instead (#464).
+const REHANG_MIN_BRANCH_MM: f64 = 8.0;
+
+/// SoulCrafted (#464): every island branch of `model_id` at least
+/// [`REHANG_MIN_BRANCH_MM`] long with nothing hanging from it is taken out
+/// and its tip fanned to the shafts within `fan_radius_mm` of it, as the
+/// trunk consolidation does: the same contact, the same tip size, the nearest
+/// host first. The fanned member takes its place when it is shorter than the
+/// branch; otherwise the branch goes back where it was. A parent knot nothing
+/// else hangs from leaves with the branch.
+fn rehang_island_branches(
+    run: &mut RunState,
+    model_id: &str,
+    fan_radius_mm: f64,
+    max_angle_deg: f64,
+    max_attachments: f64,
+    ctx: &PlanCtx<'_>,
+) {
+    let ids: Vec<String> = run
+        .draft
+        .collections
+        .branches
+        .iter()
+        .filter(|(_, b)| {
+            b.base.model_id == model_id && b.base.origin == Some(SupportOriginId::Island)
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    let no_grid_hosts: HashSet<String> = HashSet::new();
+    for id in ids {
+        let Some(branch) = run.draft.collections.branches.get(&id).cloned() else {
+            continue;
+        };
+        if count_attachments_on_host(SupportTypeId::Branch, &id, &run.draft) > 0 {
+            continue;
+        }
+        let Some(cone) = &branch.contact_cone else {
+            continue;
+        };
+        let Some(start) = run
+            .draft
+            .collections
+            .knots
+            .get(&branch.parent_knot_id)
+            .map(|k| k.pos)
+        else {
+            continue;
+        };
+        let tip = cone.pos;
+        let mut length = 0.0;
+        let mut at = start;
+        for joint in branch.segments.iter().filter_map(|s| s.top_joint.as_ref()) {
+            length += joint.pos.sub(at).length();
+            at = joint.pos;
+        }
+        length += tip.sub(at).length();
+        if length < REHANG_MIN_BRANCH_MM {
+            continue;
+        }
+        let zone = ctx.zone_of_tip(cone.profile.contact_diameter_mm);
+        let pruned = run.draft.collections.branches.shift_remove_full(&id);
+        let pool = collect_fan_shaft_points_near(&run.draft, tip, fan_radius_mm);
+        ctx.set_zone(zone);
+        let fan = fan_leaf_to_host(
+            &FanArgs {
+                target: tip,
+                model_id,
+                shaft_points: &pool,
+                grid_host_ids: &no_grid_hosts,
+                knot_id_prefix: &format!("auto-rehang-{id}"),
+                fan_radius_mm,
+                grid_host_fan_radius_mm: GRID_HOST_FAN_RADIUS_MM,
+                max_angle_deg,
+                max_attachments,
+                draft: &run.draft,
+                origin: branch.base.origin,
+                host_order: FanHostOrder::Nearest,
+                rescue_span_override_mm: None,
+            },
+            ctx,
+        );
+        ctx.set_zone(None);
+        match fan {
+            FanLeafResult::Ok {
+                kind,
+                parent_knot,
+                member,
+                ..
+            } if parent_knot.pos.sub(tip).length() < length => {
+                add_fanned(&mut run.draft, kind, *parent_knot, *member);
+                let c = &run.draft.collections;
+                let used = c
+                    .branches
+                    .values()
+                    .map(|b| &b.parent_knot_id)
+                    .chain(c.leaves.values().map(|l| &l.parent_knot_id))
+                    .chain(c.kickstands.values().map(|k| &k.host_knot_id))
+                    .any(|k| *k == branch.parent_knot_id);
+                if !used {
+                    run.draft
+                        .collections
+                        .knots
+                        .shift_remove(&branch.parent_knot_id);
+                }
+            }
+            _ => {
+                if let Some((index, key, branch)) = pruned {
+                    run.draft
+                        .collections
+                        .branches
+                        .shift_insert(index, key, branch);
+                }
+            }
+        }
+    }
+}
+
 pub fn compute_auto_support_plan(
     input: &PlanInput<'_>,
     ctx: &PlanCtx<'_>,
@@ -875,6 +993,16 @@ pub fn compute_auto_support_plan(
     }
 
     ctx.set_zone(None);
+    if live.auto_support.rehang_island_branches {
+        rehang_island_branches(
+            &mut run,
+            model_id,
+            con_fan_radius_mm,
+            con_fan_max_angle_deg,
+            auto.max_attachments_per_trunk,
+            ctx,
+        );
+    }
     perf::measure("auto:consolidation");
     perf::mark("auto:gap-fill");
     // ── Coverage convergence (gap-fill) ─────────────────────────────

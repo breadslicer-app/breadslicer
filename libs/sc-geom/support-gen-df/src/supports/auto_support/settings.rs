@@ -98,6 +98,12 @@ pub struct AutoSupportSettings {
     /// out of reach stands, which the port's parity fixtures read.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub near_fans: bool,
+    /// SoulCrafted (#464): a branch an island point ran up from far below,
+    /// with nothing hanging from it, is hung instead from the shaft nearest
+    /// its tip when that is shorter, with the same contact: a long branch
+    /// for a speck is more lever than hold.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rehang_island_branches: bool,
     pub enabled: bool,
     pub min_island_area_mm2: f64,
     pub tip_influence_radius_mm: f64,
@@ -221,6 +227,7 @@ pub fn create_default_auto_support_settings() -> AutoSupportSettings {
     use auto_support_constraints as c;
     AutoSupportSettings {
         near_fans: false,
+        rehang_island_branches: false,
         enabled: true,
         min_island_area_mm2: c::MIN_ISLAND_AREA_MM2.default_value,
         tip_influence_radius_mm: c::TIP_INFLUENCE_RADIUS_MM.default_value,
@@ -273,6 +280,7 @@ pub fn normalize_auto_support_settings(source: &AutoSupportSettings) -> AutoSupp
     let clamp = |value: f64, constraint: NumericConstraint| clamp_numeric(Some(value), constraint);
     AutoSupportSettings {
         near_fans: source.near_fans,
+        rehang_island_branches: source.rehang_island_branches,
         enabled: source.enabled,
         min_island_area_mm2: clamp(source.min_island_area_mm2, c::MIN_ISLAND_AREA_MM2),
         tip_influence_radius_mm: clamp(source.tip_influence_radius_mm, c::TIP_INFLUENCE_RADIUS_MM),
