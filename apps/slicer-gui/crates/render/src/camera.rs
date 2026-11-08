@@ -37,7 +37,6 @@ pub struct OrbitCamera {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
-    pub up: Vec3,
     pub orthographic: bool,
 
     scene_center: Vec3,
@@ -79,7 +78,6 @@ impl OrbitCamera {
             yaw: DEFAULT_YAW,
             pitch: DEFAULT_PITCH,
             distance: view_radius * DEFAULT_DISTANCE_FACTOR,
-            up: Vec3::Z,
             orthographic: false,
             scene_center,
             view_radius,
@@ -200,21 +198,14 @@ impl OrbitCamera {
         )
     }
 
+    /// The screen's right and up directions in the world. The orbit turns
+    /// about the world's Z, so the right direction is level and set by the
+    /// yaw alone, at any pitch: the frame stays continuous all the way to
+    /// both poles, and looking straight up or down never flips the view.
     pub fn right_and_up(&self) -> (Vec3, Vec3) {
         let forward = (self.target - self.eye()).normalize_or_zero();
-        // When `forward` is nearly parallel to `self.up`, the cross product
-        // `forward.cross(self.up)` collapses toward zero; its sign is then
-        // dominated by f32 round-off in `cos(pitch)` near +/- pi/2, which
-        // silently flips the basis from the well-behaved orientation just below
-        // the `clamp_pitch` limit. Substitute a perpendicular world axis as the
-        // cross-product reference so the basis stays continuous through the
-        // pole.
-        let up_ref = if forward.dot(self.up).abs() > 0.99 {
-            Vec3::Y
-        } else {
-            self.up
-        };
-        let right = forward.cross(up_ref).normalize_or_zero();
+        let (sin_yaw, cos_yaw) = self.yaw.sin_cos();
+        let right = Vec3::new(-sin_yaw, cos_yaw, 0.0);
         let cam_up = right.cross(forward).normalize_or_zero();
         (right, cam_up)
     }
@@ -568,6 +559,74 @@ mod tests {
             "pan direction flipped at pitch = -pi/2: \
              reference_dx={reference_dx}, pole_dx={pole_dx}",
         );
+    }
+
+    #[test]
+    fn orbiting_to_either_pole_never_turns_the_view() {
+        // Dragging up or down in small steps from the side view to the
+        // clamp: the screen frame may only tilt by about the step, never jump.
+        // The frame used to swap its reference axis at ~82 degrees from the
+        // horizon, which turned the view by the yaw (from above) or flipped
+        // it upside down (from below).
+        let limit = std::f32::consts::FRAC_PI_2 - PITCH_EPSILON;
+        let step = 0.25_f32.to_radians();
+        for yaw_deg in [-180.0_f32, -135.0, -90.0, -30.0, 0.0, 45.0, 90.0, 160.0] {
+            for direction in [1.0_f32, -1.0] {
+                let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+                cam.yaw = yaw_deg.to_radians();
+                cam.pitch = 0.0;
+                let (mut right, mut up) = cam.right_and_up();
+                while cam.pitch.abs() < limit {
+                    cam.turn(0.0, direction * step);
+                    let (next_right, next_up) = cam.right_and_up();
+                    let turned = right
+                        .angle_between(next_right)
+                        .max(up.angle_between(next_up));
+                    assert!(
+                        turned <= step * 1.01,
+                        "yaw {yaw_deg}, pitch {}: the view turned {} degrees in one step",
+                        cam.pitch.to_degrees(),
+                        turned.to_degrees()
+                    );
+                    (right, up) = (next_right, next_up);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn from_below_the_front_edge_is_at_the_top_of_the_view() {
+        // Orbiting down from the front view, the plate's front edge (-Y) ends
+        // at the top of the view and +X stays to the right; the underside
+        // copy of the FRONT label is drawn for that view.
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+        cam.set_axis_view(AxisView::Bottom);
+        let (right, up) = cam.right_and_up();
+        assert!(right.dot(Vec3::X) > 0.999, "right = {right}");
+        assert!(up.dot(-Vec3::Y) > 0.999, "up = {up}");
+    }
+
+    #[test]
+    fn the_frame_is_level_and_square_at_every_pitch() {
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+        cam.yaw = 0.7;
+        for pitch in [
+            -std::f32::consts::FRAC_PI_2,
+            -1.4,
+            -0.3,
+            0.0,
+            0.9,
+            1.5,
+            std::f32::consts::FRAC_PI_2,
+        ] {
+            cam.pitch = pitch;
+            let (right, up) = cam.right_and_up();
+            let forward = (cam.target - cam.eye()).normalize();
+            assert!(right.z.abs() < 1e-6, "pitch {pitch}: right is level");
+            assert!(right.dot(up).abs() < 1e-5 && right.dot(forward).abs() < 1e-5);
+            assert!(up.dot(forward).abs() < 1e-5, "pitch {pitch}");
+            assert!((up.length() - 1.0).abs() < 1e-5, "pitch {pitch}");
+        }
     }
 
     #[test]
