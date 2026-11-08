@@ -9,9 +9,10 @@ const PITCH_EPSILON: f32 = 1e-3;
 /// How far from a pole (radians of pitch) an orbit starts turning the view
 /// square with the plate, finishing exactly at the pole.
 const POLE_ALIGN_BAND: f32 = 10.0 * std::f32::consts::PI / 180.0;
-/// At a pole, how far (radians of yaw) a sideways drag goes before the view
-/// leaves a turn square with the plate: the view holds there that long, then
-/// follows the drag with no jump.
+/// At a pole, how far (radians) a drag goes before the view moves: sideways
+/// before it leaves a turn square with the plate, up or down before it leaves
+/// the pole. The view holds there that long, then follows the drag with no
+/// jump.
 const POLE_HOLD: f32 = 5.0 * std::f32::consts::PI / 180.0;
 const MIN_DISTANCE_FACTOR: f32 = 0.05;
 const MAX_DISTANCE_FACTOR: f32 = 50.0;
@@ -59,6 +60,9 @@ pub struct OrbitCamera {
     /// At a pole, the yaw a sideways drag has asked for and the yaw it shows
     /// for it (see [`held_yaw`]). Any other change of the yaw starts afresh.
     pole_drag: Option<(f32, f32)>,
+    /// At a pole, how far a drag has pulled away from it while the view held,
+    /// and which pole (+1 up, -1 down).
+    pole_pull: Option<(f32, f32)>,
 }
 
 impl OrbitCamera {
@@ -93,6 +97,7 @@ impl OrbitCamera {
             view_radius,
             detail_radius,
             pole_drag: None,
+            pole_pull: None,
         }
     }
 
@@ -130,9 +135,29 @@ impl OrbitCamera {
     /// view about the vertical, in step with the climb, so that it reaches the
     /// pole square with the plate (its edges level and upright on screen).
     /// Turning sideways at the pole is free; a drag (`held`) holds a moment
-    /// at each turn square with the plate before it goes on.
+    /// at each turn square with the plate before it goes on, and at the pole
+    /// before it leaves it.
     fn turn(&mut self, yaw: f32, pitch: f32, held: bool) {
         let before = self.pitch;
+        let pitch = if held && at_pole(before) {
+            let side = before.signum();
+            let pulled = match self.pole_pull {
+                Some((pulled, pole)) if pole == side => pulled,
+                _ => 0.0,
+            };
+            // Away from the pole counts up; back toward it, down to nothing.
+            let pulled = (pulled - pitch * side).max(0.0);
+            if pulled <= POLE_HOLD {
+                self.pole_pull = Some((pulled, side));
+                0.0
+            } else {
+                self.pole_pull = None;
+                -side * (pulled - POLE_HOLD)
+            }
+        } else {
+            self.pole_pull = None;
+            pitch
+        };
         if held && at_pole(before) && at_pole(before + pitch) {
             let asked = match self.pole_drag {
                 Some((asked, shown)) if shown.to_bits() == self.yaw.to_bits() => asked,
@@ -809,6 +834,74 @@ mod tests {
                 assert_eq!(cam.yaw, square, "yaw {yaw}, way {way}");
             }
         }
+    }
+
+    #[test]
+    fn at_the_pole_a_drag_holds_a_moment_before_it_leaves() {
+        // Up or down, a short drag away from the pole leaves the view there;
+        // a longer one leaves it with no jump; dragging back holds again.
+        let height = 900.0;
+        let px_per_rad = height / std::f32::consts::PI;
+        let hold_px = POLE_HOLD * px_per_rad;
+        for pole in [1.0_f32, -1.0] {
+            let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+            cam.orbit(0.0, pole * 1e6, height);
+            let at = cam.pitch;
+            assert!(at_pole(at));
+            // Away in little steps, then back: it stays.
+            for _ in 0..10 {
+                cam.orbit(0.0, -pole * hold_px * 0.09, height);
+            }
+            for _ in 0..10 {
+                cam.orbit(0.0, pole * hold_px * 0.09, height);
+            }
+            assert_eq!(cam.pitch, at);
+            for _ in 0..10 {
+                cam.orbit(0.0, -pole * hold_px * 0.09, height);
+            }
+            assert_eq!(cam.pitch, at, "pole {pole}: still inside the hold");
+            // Out of it, a pixel at a time, never more than a pixel's turn.
+            let mut last = cam.pitch;
+            for _ in 0..(3.0 * hold_px) as usize {
+                cam.orbit(0.0, -pole, height);
+                assert!(
+                    (cam.pitch - last).abs() <= 1.01 / px_per_rad,
+                    "{last} -> {}",
+                    cam.pitch
+                );
+                last = cam.pitch;
+            }
+            assert!(!at_pole(cam.pitch), "pole {pole}: it left");
+            // Off the pole a drag turns at once.
+            let off = cam.pitch;
+            cam.orbit(0.0, -pole, height);
+            assert!((cam.pitch - off).abs() > 0.5 / px_per_rad);
+        }
+    }
+
+    #[test]
+    fn at_the_pole_a_small_drag_any_way_leaves_the_view_alone() {
+        let height = 900.0;
+        let hold_px = POLE_HOLD * height / std::f32::consts::PI;
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+        cam.yaw = 1.0;
+        cam.orbit(0.0, -1e6, height);
+        let (yaw, pitch) = (cam.yaw, cam.pitch);
+        for (dx, dy) in [(0.7, 0.7), (-0.7, 0.7), (0.7, 0.0), (0.0, 0.9), (-0.9, 0.0)] {
+            cam.orbit(dx * hold_px, dy * hold_px, height);
+            assert_eq!((cam.yaw, cam.pitch), (yaw, pitch), "({dx}, {dy})");
+            cam.orbit(-dx * hold_px, -dy * hold_px, height);
+            assert_eq!((cam.yaw, cam.pitch), (yaw, pitch), "back from ({dx}, {dy})");
+        }
+    }
+
+    #[test]
+    fn a_keyed_step_leaves_the_pole_by_its_full_step() {
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+        cam.set_axis_view(AxisView::Top);
+        let pitch = cam.pitch;
+        cam.turn_around(Vec3::ZERO, 0.0, -15.0_f32.to_radians());
+        assert!((pitch - cam.pitch - 15.0_f32.to_radians()).abs() < 1e-5);
     }
 
     #[test]
