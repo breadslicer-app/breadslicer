@@ -1365,6 +1365,37 @@ const ERASED_REACH_MM: f64 = 0.03;
 /// Writes what a scene's review needs to be looked at: its tips, one per line,
 /// and its triangles, as floats, once.
 fn dump_tips(dir: &Path, name: &str, plan: &PipelineOutput, models: &[ModelInput]) {
+    // The whole forest, and every island the plans held up with its size.
+    std::fs::write(
+        dir.join(format!("{name}.state.json")),
+        serde_json::to_vec(&plan.support).expect("the state as json"),
+    )
+    .expect("write it");
+    let islands: Vec<String> = plan
+        .models
+        .iter()
+        .flat_map(|m| &m.islands.filtered)
+        .map(|i| {
+            format!(
+                "{}	{}	{}	{}	{}	{}	{}",
+                i.id,
+                i.contact.x,
+                i.contact.y,
+                i.contact.z,
+                i.base_z,
+                i.area_mm2.unwrap_or(f64::NAN),
+                i.max_z.unwrap_or(f64::NAN)
+            )
+        })
+        .collect();
+    std::fs::write(
+        dir.join(format!("{name}.held-islands.tsv")),
+        islands.join(
+            "
+",
+        ),
+    )
+    .expect("write them");
     dump_pieces(dir, name, &plan.support.collections);
     dump_feet(dir, name, plan);
     dump_routes(dir, name, &plan.support.collections);
