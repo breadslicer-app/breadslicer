@@ -17,6 +17,7 @@ use std::sync::{Arc, OnceLock};
 
 use sc_mesh_core::IndexedMesh;
 use serde_json::Value;
+use support_gen_df::features::slicing::support_world_triangles::raft_and_feet_top_mm;
 use support_gen_df::pipeline::{ModelInput, PipelineSettings, support_soup, world_soup};
 use support_gen_df::supports::auto_bracing::auto_brace::{
     HandBrace, HandBraceRefusal, brace_new_shaft, hand_brace,
@@ -37,7 +38,6 @@ use support_gen_df::supports::auto_support::types::{CandidatePoint, CandidateSou
 use support_gen_df::supports::auto_support::zone_rules::ZoneRules;
 use support_gen_df::supports::placement_logic::cone_axis_policy::is_side_wall_contact;
 use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_gen_df::supports::rafts::crenelated::geometry::compute_raft_footprint::raft_band_top_mm;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use support_gen_df::supports::support_type_registry::{
     SupportOriginId, SupportTypeId, near_plate_origin,
@@ -2071,16 +2071,12 @@ impl DfSupportSession {
         tip_contact_diameter(&self.settings)
     }
 
-    /// How high this set's raft reaches over the plate, in millimetres: the
-    /// top of its plate or lines and of its wall, as the mesh draws it. 0
-    /// without a raft (#481).
+    /// How high this set's raft and the feet of its supports on it reach over
+    /// the plate, in millimetres, as the mesh draws them: the raft's plate or
+    /// lines and its wall, each root's disk and its cone. What the view from
+    /// under the plate hides (#481); 0 with neither.
     pub fn raft_top_mm(&self) -> f64 {
-        let raft = &self.settings.rafts.global;
-        if raft.bottom_mode == RaftBottomMode::Off {
-            0.0
-        } else {
-            raft_band_top_mm(raft)
-        }
+        raft_and_feet_top_mm(&self.state.collections, &self.settings.rafts.global)
     }
 
     /// The tip diameter of support `id`, when it has one.
@@ -3065,6 +3061,50 @@ mod session_tests {
         assert!((with(RaftMode::Solid, 1.2, false) - 1.2).abs() < 1e-9);
         assert!(with(RaftMode::Lines, 0.5, false) > 0.0);
         assert_eq!(with(RaftMode::Off, 0.5, true), 0.0);
+
+        // The feet count too: a zone preset's join cone stands on the raft's
+        // plate and reaches past its wall, the ring seen from under the plate.
+        let mut request = crate::DfSupportRequest::default();
+        request.options.zones = Some(crate::zone_presets::minis_30());
+        let mut zoned = bare_slab(12.0, request);
+        zoned.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+        let root = zoned
+            .state
+            .collections
+            .roots
+            .values()
+            .next()
+            .expect("its root");
+        let join = root.join_cone_mm.expect("a join cone");
+        let foot = root.transform.pos.z + root.disk_height.max(0.5) + join;
+        let top = zoned.raft_top_mm();
+        assert!((top - foot).abs() < 1e-9, "{top} {foot}");
+        assert!(top > 0.5 + wall, "past the raft's wall");
+        let mesh = zoned.mesh().unwrap().expect("drawn");
+        assert!(
+            mesh.vertices()
+                .iter()
+                .any(|v| (f64::from(v.as_array()[2]) - top).abs() < 1e-3),
+            "the mesh reaches that height"
+        );
+
+        // A root's own cone, without a zone preset.
+        let mut plain = bare_slab(12.0, crate::DfSupportRequest::default());
+        plain.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+        let root = plain
+            .state
+            .collections
+            .roots
+            .values()
+            .next()
+            .expect("its root");
+        let cone_top =
+            root.transform.pos.z + root.disk_height.max(0.01) + root.cone_height.max(0.01);
+        let top = plain.raft_top_mm();
+        assert!(
+            (top - cone_top.max(0.5 + wall)).abs() < 1e-9,
+            "{top} {cone_top}"
+        );
     }
 
     /// The wall a raft gets by default, mm.
