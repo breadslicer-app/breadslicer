@@ -6163,6 +6163,17 @@ msgid "Still can't slice"
 msgstr "Todavía no se puede laminar"
 
 #: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Supports out of date"
+msgstr "Soportes desactualizados"
+
+#: src/repair_run.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Repair changed the surface where the supports of {} touch it, so they can no longer be edited by hand. Generate them again to edit them."
+msgstr "La reparación cambió la superficie donde tocan los soportes de {}, así que ya no se pueden editar a mano. Generalos de nuevo para editarlos."
+
+#: src/repair_run.rs
 #, rust-format
 msgctxt "RepairDialog"
 msgid "Repair couldn't fix everything, so slicing didn't start again. {}"
