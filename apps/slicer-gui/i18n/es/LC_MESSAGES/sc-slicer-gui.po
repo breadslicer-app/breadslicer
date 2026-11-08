@@ -5351,6 +5351,11 @@ msgstr "Sigue el ángulo de voladizo de la pestaña Soportes, medido desde la pl
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
+msgid "What a support tip holds shows plain: as far around it as its preset spaces overhang tips."
+msgstr "Lo que sostiene una punta se ve sin color: tan lejos de ella como su preset separa las puntas de voladizo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
 msgid "Size scale"
 msgstr "Escala de tamaño"
 

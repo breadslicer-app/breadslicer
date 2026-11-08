@@ -169,7 +169,7 @@ fn two_group_pipelines_are_refused_on_a_one_bind_group_device_and_one_group_ones
         eprintln!("skipping: no wgpu adapter available in this environment");
         return;
     };
-    assert!(MeshPipeline::create(&device).is_err());
+    assert!(MeshPipeline::create(&device, &queue).is_err());
     assert!(OutlinePipeline::create(&device).is_ok());
     let gizmo_buffers = GizmoBuffers::create(&device, &queue).expect("buffers need no bind groups");
     assert!(GizmoPipeline::create(&device, &gizmo_buffers).is_err());

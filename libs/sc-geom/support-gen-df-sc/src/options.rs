@@ -163,6 +163,20 @@ impl DfSupportOptions {
         })
     }
 
+    /// How far around itself a tip holds an overhang, mm (#484): the
+    /// spacing these options keep between overhang tips. A zone preset
+    /// samples an overhang that far apart and keeps no two of its points
+    /// closer than 0.9 of it, so every point of the region lies within it of
+    /// a tip; without zones it is the side of the area each support carries,
+    /// the spacing of the engine's overhang grid.
+    pub fn tip_reach_mm(&self) -> f64 {
+        let o = self.clamped();
+        o.zones.as_ref().map_or_else(
+            || o.area_per_support_mm2.sqrt(),
+            |z| z.rules.clamped().overhang.spacing_mm,
+        )
+    }
+
     /// Writes these options into `settings`.
     pub fn apply(&self, settings: &mut PipelineSettings) {
         let o = self.clamped();
@@ -371,6 +385,33 @@ mod options_tests {
             assert!(on.supports.grid.enabled && on.supports.grid.pillars);
             assert_eq!(on.supports.grid.spacing_mm, spacing, "{asked}");
         }
+    }
+
+    /// A tip holds the overhang around it as far as its options space
+    /// overhang tips (#484): a zone preset's overhang spacing, else the side
+    /// of the area each support carries.
+    #[test]
+    fn a_tip_reaches_as_far_as_its_options_space_overhang_tips() {
+        let zoned = |preset: crate::zone_presets::ZonePreset| DfSupportOptions {
+            zones: Some(preset),
+            ..Default::default()
+        };
+        assert_eq!(zoned(crate::zone_presets::minis_30()).tip_reach_mm(), 1.8);
+        assert_eq!(zoned(crate::zone_presets::figures_70()).tip_reach_mm(), 2.4);
+        assert_eq!(
+            zoned(crate::zone_presets::figures_150()).tip_reach_mm(),
+            2.8
+        );
+        let classic = DfSupportOptions {
+            area_per_support_mm2: 16.0,
+            ..Default::default()
+        };
+        assert_eq!(classic.tip_reach_mm(), 4.0);
+        let wild = DfSupportOptions {
+            area_per_support_mm2: 1000.0,
+            ..Default::default()
+        };
+        assert_eq!(wild.tip_reach_mm(), 30f64.sqrt());
     }
 
     #[test]

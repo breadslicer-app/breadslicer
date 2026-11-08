@@ -44,6 +44,7 @@ mod mesh_health;
 mod mesh_loader;
 mod model_import;
 mod orient_run;
+mod overhang_tips;
 mod pending_load;
 mod preferences_bus;
 mod preferences_filters;

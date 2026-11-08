@@ -867,6 +867,43 @@ component OverhangKey inherits HorizontalLayout {
     }
 }
 
+// The overhang map's card (#91): its box, the colours it paints and what it
+// follows. In Transform, Supports and Slice, one box for the three (#484).
+export component OverhangCard inherits Card {
+    in-out property <bool> on;
+    in property <string> limit;
+    callback toggled(bool);
+
+    title: @tr("Inspector" => "OVERHANGS");
+    note: root.on ? root.limit : "";
+
+    CheckBox {
+        text: @tr("Inspector" => "Show overhang map");
+        checked <=> root.on;
+        toggled => {
+            root.toggled(self.checked);
+        }
+    }
+    if root.on: HorizontalLayout {
+        spacing: 14px;
+
+        OverhangKey {
+            tint: #ed4d40;
+            text: @tr("Inspector" => "Needs supports");
+        }
+        OverhangKey {
+            tint: #e67a85;
+            text: @tr("Inspector" => "Close to the limit");
+        }
+    }
+    if root.on: Note {
+        text: @tr("Inspector" => "Follows the overhang angle of the Supports tab, measured from the plate.");
+    }
+    if root.on: Note {
+        text: @tr("Inspector" => "What a support tip holds shows plain: as far around it as its preset spaces overhang tips.");
+    }
+}
+
 // One row of the SIZE card: the world box and, when `split`, the size along
 // the object's own axes beside it (BS-393).
 component SizeRow inherits HorizontalLayout {
@@ -1236,31 +1273,11 @@ export component TransformInspector inherits VerticalLayout {
         }
     }
 
-    if root.objects.length > 0: Card {
-        title: @tr("Inspector" => "OVERHANGS");
-        note: root.overhang-map-on ? root.overhang-map-limit : "";
-
-        CheckBox {
-            text: @tr("Inspector" => "Show overhang map");
-            checked <=> root.overhang-map-on;
-            toggled => {
-                root.overhang-map-toggled(self.checked);
-            }
-        }
-        if root.overhang-map-on: HorizontalLayout {
-            spacing: 14px;
-
-            OverhangKey {
-                tint: #ed4d40;
-                text: @tr("Inspector" => "Needs supports");
-            }
-            OverhangKey {
-                tint: #e67a85;
-                text: @tr("Inspector" => "Close to the limit");
-            }
-        }
-        if root.overhang-map-on: Note {
-            text: @tr("Inspector" => "Follows the overhang angle of the Supports tab, measured from the plate.");
+    if root.objects.length > 0: OverhangCard {
+        on <=> root.overhang-map-on;
+        limit: root.overhang-map-limit;
+        toggled(on) => {
+            root.overhang-map-toggled(on);
         }
     }
 
@@ -1736,6 +1753,10 @@ export component SupportsInspector inherits VerticalLayout {
     callback raft-lift();
     callback raft-off();
     callback raft-ignore();
+    // The overhang map (#91, #484): its box, and the angle it paints by.
+    in-out property <bool> overhang-map-on;
+    in property <string> overhang-map-limit;
+    callback overhang-map-toggled(bool);
 
     spacing: 12px;
 
@@ -1887,6 +1908,14 @@ export component SupportsInspector inherits VerticalLayout {
         if root.add-note != "": Note {
             text: root.add-note;
             color: root.add-note-warns ? Theme.danger : Theme.text-soft;
+        }
+    }
+
+    OverhangCard {
+        on <=> root.overhang-map-on;
+        limit: root.overhang-map-limit;
+        toggled(on) => {
+            root.overhang-map-toggled(on);
         }
     }
 
@@ -2142,6 +2171,10 @@ export component SliceInspector inherits VerticalLayout {
     // "Repeat until clean" next to Fix all (#163): a setting.
     in property <bool> review-fix-repeat;
     callback review-fix-repeat-toggled(bool);
+    // The overhang map (#91, #484): its box, and the angle it paints by.
+    in-out property <bool> overhang-map-on;
+    in property <string> overhang-map-limit;
+    callback overhang-map-toggled(bool);
     callback printer-picked(int);
     callback resin-picked(int);
     callback first-layer-height-edited(string);
@@ -2271,6 +2304,15 @@ export component SliceInspector inherits VerticalLayout {
                 source: root.layer-image;
                 image-fit: contain;
             }
+        }
+    }
+
+    OverhangCard {
+        vertical-stretch: 0;
+        on <=> root.overhang-map-on;
+        limit: root.overhang-map-limit;
+        toggled(on) => {
+            root.overhang-map-toggled(on);
         }
     }
 

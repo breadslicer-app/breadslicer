@@ -20,7 +20,9 @@ struct Uniforms {
     // The overhang map's terms, read only for an object whose flags.z asks
     // for it: x = the world normal Z under which the support engine calls a
     // face an overhang, y = its self-support angle in radians from horizontal,
-    // z = the world height up to which a face rests on the plate.
+    // z = the world height up to which a face rests on the plate, w = the
+    // side of the cells the support tips are hashed in, mm (0 without
+    // tips): what a tip holds, the map leaves plain (#484).
     overhang: vec4<f32>,
 };
 
@@ -42,6 +44,12 @@ struct ModelEntry {
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
+// The support tips the overhang map counts as holding a face (#484), as
+// data textures, which every backend allows where storage buffers are not:
+// per hash slot, where its tips start and how many there are; and each tip's
+// centre with its reach squared, sorted by slot.
+@group(0) @binding(1) var tip_slots: texture_2d<u32>;
+@group(0) @binding(2) var tip_points: texture_2d<f32>;
 // One uniform window per draw call. The CPU side binds the matching object's
 // slot via a dynamic offset on this binding before each draw, so we read a
 // plain ModelEntry here (not an array, no instance_index lookup); that keeps
@@ -66,6 +74,13 @@ struct VsOut {
     @location(3) @interpolate(flat) tint: u32,
     @location(4) normal: vec3<f32>,
     @location(5) @interpolate(flat) supports: u32,
+    // The world height the raft's cut reads (#481), at the centroid of the
+    // samples the triangle covers. A raft wall seen near edge on covers a
+    // few samples of a pixel and not its centre, and read there its height
+    // runs on far past the wall's top: the cut kept such a pixel, a speck on
+    // the raft's rim. `world_pos` stays at the centre, where its screen
+    // derivatives are taken.
+    @location(6) @interpolate(perspective, centroid) cut_z: f32,
 };
 
 @vertex
@@ -74,6 +89,7 @@ fn vs_main(in: VsIn) -> VsOut {
     let world = model_entry.model * vec4<f32>(in.position, 1.0);
     out.clip_pos = u.view_proj * world;
     out.world_pos = world.xyz;
+    out.cut_z = world.z;
     out.selected = model_entry.flags.x;
     out.breaches = model_entry.flags.y;
     out.tint = model_entry.flags.z;
@@ -117,22 +133,73 @@ const OVERHANG_SELECTED_TINT: f32 = 0.30;
 // the plate is left alone: the plate holds it, and the engine's supports could
 // not go under it anyway. A degenerate face has a NaN normal, and every
 // comparison below is false for it.
-fn overhang_paint(base: vec3<f32>, face_n: vec3<f32>, world_z: f32) -> vec3<f32> {
-    if (world_z <= u.overhang.z) {
+fn overhang_paint(base: vec3<f32>, face_n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
+    if (p.z <= u.overhang.z) {
         return base;
     }
     let limit = u.overhang.y;
     let from_horizontal = acos(clamp(-face_n.z, -1.0, 1.0));
+    let near = 1.0 - (from_horizontal - limit) / OVERHANG_NEAR_BAND_RAD;
+    if ((face_n.z < u.overhang.x || near > 0.0) && held_by_a_tip(p)) {
+        return base;
+    }
     if (face_n.z < u.overhang.x) {
         let ceiling = saturate(1.0 - from_horizontal / limit);
         return mix(base, mix(OVERHANG_EDGE, OVERHANG_CEILING, ceiling), OVERHANG_STRENGTH);
     }
-    let near = 1.0 - (from_horizontal - limit) / OVERHANG_NEAR_BAND_RAD;
     if (near > 0.0) {
         return mix(base, OVERHANG_NEAR, near * near * OVERHANG_NEAR_STRENGTH);
     }
     return base;
 }
+
+// The hash of a tip cell; `tip_coverage::cell_hash` on the CPU.
+fn tip_cell_hash(cell: vec3<i32>) -> u32 {
+    let c = bitcast<vec3<u32>>(cell);
+    return (c.x * 73856093u) ^ (c.y * 19349663u) ^ (c.z * 83492791u);
+}
+
+// Whether a support tip holds the point `p` (#484): one of the tips hashed in
+// the cells within the longest reach of it stands within its own reach. The
+// cells are twice that reach wide, so at most two per axis.
+// `CoverageGrid::holds` does the same on the CPU.
+fn held_by_a_tip(p: vec3<f32>) -> bool {
+    let cell = u.overhang.w;
+    if (!(cell > 0.0)) {
+        return false;
+    }
+    let slots_size = textureDimensions(tip_slots);
+    let mask = slots_size.x * slots_size.y - 1u;
+    let tips_width = textureDimensions(tip_points).x;
+    let look = cell * 0.5 / (1.0 + TIP_CELL_MARGIN) * (1.0 + TIP_LOOK_MARGIN);
+    let lo = vec3<i32>(floor((p - vec3<f32>(look)) / cell));
+    let hi = min(vec3<i32>(floor((p + vec3<f32>(look)) / cell)), lo + vec3<i32>(1));
+    for (var x = lo.x; x <= hi.x; x = x + 1) {
+        for (var y = lo.y; y <= hi.y; y = y + 1) {
+            for (var z = lo.z; z <= hi.z; z = z + 1) {
+                let slot = tip_cell_hash(vec3<i32>(x, y, z)) & mask;
+                let range = textureLoad(
+                    tip_slots,
+                    vec2<u32>(slot % slots_size.x, slot / slots_size.x),
+                    0,
+                ).xy;
+                for (var k = 0u; k < range.y; k = k + 1u) {
+                    let j = range.x + k;
+                    let tip = textureLoad(tip_points, vec2<u32>(j % tips_width, j / tips_width), 0);
+                    let d = p - tip.xyz;
+                    if (dot(d, d) <= tip.w) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// `tip_coverage::CELL_MARGIN` and `LOOK_MARGIN`.
+const TIP_CELL_MARGIN: f32 = 0.001;
+const TIP_LOOK_MARGIN: f32 = 0.0005;
 
 // A threshold in (0, 1) for each pixel of a 4 x 4 tile, every sixteenth
 // once: a fade that has reached f drops about f of the pixels, spread
@@ -152,7 +219,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     // From under the plate (#481), a support mesh's raft fades with the
     // plate, so the tips above it show.
-    if (in.supports == 1u && in.world_pos.z < u.env_max.w
+    if (in.supports == 1u && in.cut_z < u.env_max.w
         && screen_door(in.clip_pos.xy) < u.env_min.w) {
         discard;
     }
@@ -175,7 +242,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (mapped) {
         // `flat_n` runs right-to-down across the screen, into it: the face
         // normal, seen from its front, is the opposite way.
-        washed = overhang_paint(washed, -flat_n, in.world_pos.z);
+        washed = overhang_paint(washed, -flat_n, in.world_pos);
     }
     // Componentwise envelope test: a fragment outside on any axis
     // is painted in the full warning amber instead of the wash.
@@ -197,7 +264,7 @@ fn fs_cap(in: VsOut) -> @location(0) vec4<f32> {
     if (in.supports != 1u || in.world_pos.z > u.light_dir.w) {
         discard;
     }
-    if (in.world_pos.z < u.env_max.w && screen_door(in.clip_pos.xy) < u.env_min.w) {
+    if (in.cut_z < u.env_max.w && screen_door(in.clip_pos.xy) < u.env_min.w) {
         discard;
     }
     // The cut faces down, toward the camera under the plate.
