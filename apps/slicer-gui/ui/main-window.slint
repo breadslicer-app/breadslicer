@@ -82,7 +82,6 @@ export component MainWindow inherits Window {
     in-out property <bool> message-silence: false;
     // Help > Export Diagnostics: whether the scene's models go in the file.
     in-out property <bool> message-include-models: false;
-    in-out property <int> message-choice: 0;
     // Heading of an error message that brings none of its own.
     out property <string> message-default-heading: @tr("ErrorDialog" => "An error occurred");
     callback message-answered(MessageAnswer);
@@ -2761,7 +2760,6 @@ export component MainWindow inherits Window {
         default-heading: root.message-default-heading;
         silence <=> root.message-silence;
         include-models <=> root.message-include-models;
-        choice <=> root.message-choice;
         answered(answer) => {
             root.message-answered(answer);
         }

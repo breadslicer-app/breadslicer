@@ -181,9 +181,6 @@ pub(crate) struct DfSupportRun {
     options: RefCell<DfSupportOptions>,
     /// Built-in presets first, then the person's own.
     presets: RefCell<Vec<Preset>>,
-    /// What the sets born from the edit under way are made with, when the
-    /// person picked it for them (#444); the tab's otherwise.
-    born_options: RefCell<Option<DfSupportOptions>>,
     /// The last run's supports and every hand edit since, each with the scene
     /// revision it was drawn into. A click edits the entry matching the
     /// current scene, so Undo and Redo keep the editor in step; a scene that
@@ -1435,7 +1432,6 @@ impl DfSupportRun {
             _scene_events: scene_events,
             options: RefCell::new(load_saved_options()),
             presets: RefCell::new(Vec::new()),
-            born_options: RefCell::new(None),
             sessions,
             ctrl,
             hover_worker: HoverWorker::spawn(),
@@ -3731,9 +3727,8 @@ impl DfSupportRun {
                 Arc::new(edited),
             );
         }
-        let options = self.born_options_now();
+        let options = self.options.borrow().clone();
         self.generated_raft_top.set(Some(options.raft_top_mm()));
-        self.born_options.borrow_mut().take();
         refused.sort_by_key(|(i, _)| *i);
         ui.set_supports_last_run(ctr!(
             "Inspector",
@@ -3745,12 +3740,11 @@ impl DfSupportRun {
         HandEdit::Applied
     }
 
-    /// What a set born now is made with.
+    /// What a set born now is made with: the options the Supports tab has
+    /// in force. A model with no set of its own takes them as they stand,
+    /// nothing asked; the ones with a set keep theirs.
     fn born_options_now(&self) -> DfSupportOptions {
-        self.born_options
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| self.options.borrow().clone())
+        self.options.borrow().clone()
     }
 
     /// The contact diameter of the tips of a set born now: what the review
@@ -3785,34 +3779,6 @@ impl DfSupportRun {
                     .then_some(nearest.1)
             })
             .flatten()
-    }
-
-    /// Whether any of `points` falls on a model with no set: adding there
-    /// makes one, with a preset someone has to name.
-    pub(crate) fn makes_a_set(&self, points: &[[f32; 3]]) -> bool {
-        points
-            .iter()
-            .any(|point| self.bare_model_at(*point, HandTool::AddNear).is_some())
-    }
-
-    /// The names of the presets, and which one is in force in the tab.
-    pub(crate) fn preset_choice(&self) -> (Vec<slint::SharedString>, usize) {
-        let presets = self.presets.borrow();
-        let options = self.options.borrow();
-        let names = presets.iter().map(|p| p.name.as_str().into()).collect();
-        let current = presets.iter().position(|p| p.options == *options);
-        (names, current.unwrap_or(0))
-    }
-
-    /// Whether a preset was named for the sets of the next edit.
-    pub(crate) fn preset_named(&self) -> bool {
-        self.born_options.borrow().is_some()
-    }
-
-    /// Makes the sets the next edit starts with preset `index`.
-    pub(crate) fn use_preset_for_new_sets(&self, index: usize) {
-        let options = self.presets.borrow().get(index).map(|p| p.options.clone());
-        *self.born_options.borrow_mut() = options;
     }
 
     /// The set `model`'s first tip makes: an empty session, of the options
