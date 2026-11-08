@@ -173,6 +173,55 @@ mod object_query_binding {
         );
     }
 
+    /// Copies of one mesh turned and sized differently (#476): their world
+    /// boxes, asked in turn and again, past the cache's slots, are each the
+    /// box a first lookup walks.
+    #[test]
+    fn copies_of_one_mesh_turned_differently_keep_their_own_boxes() {
+        let (mut graph, root) = graph_with_group_root();
+        let mesh = IndexedMesh::new(
+            None,
+            vec![
+                vertex(-1.0, -2.0, 0.0),
+                vertex(3.0, -1.0, 0.5),
+                vertex(0.5, 2.5, 1.0),
+                vertex(-0.5, 0.5, 4.0),
+            ],
+            vec![
+                IndexedTriangle::from_raw_indices([0, 2, 1]),
+                IndexedTriangle::from_raw_indices([0, 1, 3]),
+                IndexedTriangle::from_raw_indices([1, 2, 3]),
+                IndexedTriangle::from_raw_indices([2, 0, 3]),
+            ],
+        );
+        let rid = graph.add_mesh_resource(mesh);
+        let copies = 20;
+        for k in 0..copies {
+            let turn = AffineTransform3D::from_rotation_z(0.3 * k as f64);
+            let scale = 1.0 + 0.1 * k as f64;
+            let linear = turn.linear().map(|row| row.map(|c| c * scale));
+            let placed = AffineTransform3D::from_linear_and_translation(
+                linear,
+                [10.0 * k as f64, 0.0, 0.0],
+            );
+            add_resource_leaf(&mut graph, root, rid, Transform3D::Affine(placed));
+        }
+        let first_lookup = |k: usize| {
+            let spatial = SceneSpatial::from_graph(graph.clone());
+            let leaf = spatial.leaf(nth_leaf(&spatial, k)).unwrap();
+            leaf.transformed_aabb(leaf.world_transform()).unwrap()
+        };
+        let expected: Vec<_> = (0..copies).map(first_lookup).collect();
+        let spatial = SceneSpatial::from_graph(graph.clone());
+        for round in 0..3 {
+            for k in (0..copies).chain((0..copies).rev()) {
+                let leaf = spatial.leaf(nth_leaf(&spatial, k)).unwrap();
+                let aabb = leaf.transformed_aabb(leaf.world_transform()).unwrap();
+                assert_eq!(aabb, expected[k], "copy {k}, round {round}");
+            }
+        }
+    }
+
     #[test]
     fn repeated_lookups_are_cache_stable() {
         let (mut graph, root) = graph_with_group_root();

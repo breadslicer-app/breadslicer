@@ -29,13 +29,20 @@ pub(crate) struct MeshSpatial {
     /// meshes are never painted.
     adjacency: OnceLock<FaceAdjacency>,
     /// Cache for the AABB of the mesh's vertices under a fixed
-    /// linear transform (translation excluded). One slot, keyed by
-    /// bit-equal match on the linear part: hit when the next query
-    /// uses the same rotation/scale, miss otherwise. The clamp helper
-    /// in the GUI hits this slot every tick of a translate-mode drag,
-    /// where the linear part stays constant.
-    linear_aabb: Mutex<Option<LinearAabbEntry>>,
+    /// linear transform (translation excluded), keyed by bit-equal
+    /// match on the linear part, the latest first. The clamp helper in
+    /// the GUI hits it every tick of a translate-mode drag, where the
+    /// linear part stays constant. It keeps [`LINEAR_AABB_SLOTS`]
+    /// transforms: a mesh several objects share at different sizes or
+    /// turns used to evict one for the other at every query, each a
+    /// walk of every vertex (#476).
+    linear_aabb: Mutex<Vec<LinearAabbEntry>>,
 }
+
+/// How many linear transforms [`MeshSpatial::linear_aabb`] remembers per
+/// mesh: more than the copies of one mesh a plate holds turned or sized
+/// differently, as a rule.
+pub(crate) const LINEAR_AABB_SLOTS: usize = 16;
 
 struct LinearAabbEntry {
     linear: [[f64; 3]; 3],
@@ -84,17 +91,16 @@ impl MeshSpatial {
     /// AABB of `mesh.vertices` after applying `linear` (no
     /// translation). Tight: walks vertices directly rather than
     /// passing the local AABB through Arvo, so it does not inherit
-    /// Arvo's slack on rotated non-box meshes. Cached in the single
-    /// `linear_aabb` slot, replacing the cached entry when the
-    /// caller's `linear` differs from the cached one. `None` for
-    /// empty meshes.
+    /// Arvo's slack on rotated non-box meshes. Cached among the last
+    /// [`LINEAR_AABB_SLOTS`] linear parts asked, the oldest leaving for
+    /// a new one. `None` for empty meshes.
     pub(crate) fn linear_aabb(&self, mesh: &IndexedMesh, linear: &[[f64; 3]; 3]) -> Option<Aabb> {
         {
-            let guard = self.linear_aabb.lock().expect("linear_aabb poisoned");
-            if let Some(entry) = guard.as_ref()
-                && &entry.linear == linear
-            {
-                return Some(entry.aabb);
+            let mut guard = self.linear_aabb.lock().expect("linear_aabb poisoned");
+            if let Some(at) = guard.iter().position(|entry| &entry.linear == linear) {
+                let aabb = guard[at].aabb;
+                guard[..=at].rotate_right(1);
+                return Some(aabb);
             }
         }
         let mut iter = mesh.vertices.iter();
@@ -104,10 +110,16 @@ impl MeshSpatial {
             aabb.extend(apply_linear(linear, *v));
         }
         let mut guard = self.linear_aabb.lock().expect("linear_aabb poisoned");
-        *guard = Some(LinearAabbEntry {
-            linear: *linear,
-            aabb,
-        });
+        if !guard.iter().any(|entry| &entry.linear == linear) {
+            guard.insert(
+                0,
+                LinearAabbEntry {
+                    linear: *linear,
+                    aabb,
+                },
+            );
+            guard.truncate(LINEAR_AABB_SLOTS);
+        }
         Some(aabb)
     }
 

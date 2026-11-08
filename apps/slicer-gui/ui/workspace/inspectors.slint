@@ -1692,6 +1692,11 @@ export component SupportsInspector inherits VerticalLayout {
     // A zone preset's summary (#360), empty without one: the preset sizes
     // and spaces the supports itself, so the placement knobs give way to it.
     in property <string> zone-summary;
+    // The zone preset's pillar grid (#464): on or off, its spacing, and the
+    // spacing the preset recommends in words, empty when none does.
+    in property <bool> grid-on;
+    in property <float> grid-spacing: 7;
+    in property <string> grid-hint;
     // The raft would take the models' first layers (#131): the warning, empty
     // when it does not, and the label of its lift button.
     in property <string> raft-clash-message;
@@ -1911,8 +1916,32 @@ export component SupportsInspector inherits VerticalLayout {
         title: @tr("Inspector" => "PLACEMENT");
         collapsible: true;
 
-        if root.zone-summary != "": Note {
-            text: root.zone-summary;
+        if root.zone-summary != "": VerticalLayout {
+            spacing: 10px;
+
+            Note {
+                text: root.zone-summary;
+            }
+            CheckBox {
+                text: @tr("Inspector" => "Pillars on a grid");
+                checked: root.grid-on;
+                toggled => {
+                    root.option-changed(12, self.checked ? root.grid-spacing : 0);
+                }
+            }
+            NumberField {
+                label: @tr("Inspector" => "Grid spacing");
+                unit: "mm";
+                decimals: 1;
+                enabled: root.grid-on;
+                value: root.grid-spacing;
+                committed(v) => {
+                    root.option-changed(13, v);
+                }
+            }
+            if root.grid-hint != "": Note {
+                text: root.grid-hint;
+            }
         }
         if root.zone-summary == "": VerticalLayout {
             spacing: 10px;

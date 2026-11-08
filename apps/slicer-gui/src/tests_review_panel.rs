@@ -1938,11 +1938,19 @@ mod fix_all {
             .collect();
         let press = Instant::now();
         if offered > 0 {
+            // What the press does on the UI thread, before the placing goes
+            // to its worker (#476): the window waits that long.
+            let held = Instant::now();
             if fix_all {
                 w.window.invoke_review_fix_all_requested();
             } else {
                 answer_the_question(&w, MessageAnswer::Confirm);
             }
+            eprintln!(
+                "{}: the press held the UI thread {:?}",
+                path.display(),
+                held.elapsed()
+            );
             let _ = wait_fix_all(panel);
             let placed = w.window.get_review_message().to_string();
             if panel.fixing() {
@@ -2927,17 +2935,23 @@ mod fix_all {
         }
     }
 
-    /// Picks the preset in force on the card that asks for one, Enter's
-    /// answer.
-    fn pick_the_preset(w: &IslandWindow) {
-        let dialogs = w.panel.ctrl.dialogs();
-        let queued = dialogs.queued_for_test();
-        assert_eq!(
-            queued.first().map(|(kind, _)| *kind),
-            Some(MessageKind::ChoosePreset),
-            "{queued:?}"
-        );
-        dialogs.answer(MessageAnswer::Confirm, false);
+    /// The options each support set of the scene was made with.
+    fn set_options(w: &IslandWindow) -> Vec<sc_geom::df_supports::DfSupportOptions> {
+        let sessions = w.document.support_sessions();
+        w.document
+            .with_scene(|spatial| {
+                crate::support_persist::sets_in_force(spatial, &sessions)
+                    .iter()
+                    .filter_map(|drawn| drawn.session.options().cloned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Nothing waits for an answer: no card is left once the ones a slice
+    /// brings are closed.
+    fn no_card_asks(w: &IslandWindow) -> bool {
+        w.panel.ctrl.dialogs().queued_for_test().is_empty()
     }
 
     /// How many support leaves the scene holds.
@@ -2949,51 +2963,50 @@ mod fix_all {
     }
 
     /// #444: a plate sliced with no supports gets the question like any
-    /// other. Yes asks once for the preset, and the tips start the set; one
-    /// Undo takes the set out of the scene again.
+    /// other. Yes starts the set with the preset the Supports tab has
+    /// picked, nothing asked; one Undo takes the set out of the scene again.
     #[test]
-    fn a_yes_on_a_plate_with_no_set_asks_for_a_preset_and_starts_the_set() {
-        let (before, born, left, after_undo) = on_fresh_slint_thread(|| {
+    fn a_yes_on_a_plate_with_no_set_starts_the_set_with_the_tabs_preset() {
+        let (before, asked, born, left, after_undo) = on_fresh_slint_thread(|| {
             let w = bare_window();
+            // "Detail" is the second preset: not the one a test starts with.
+            w.window.invoke_support_preset_picked(1);
             let before = support_sets(&w);
             answer_the_question(&w, MessageAnswer::Confirm);
-            pick_the_preset(&w);
+            let asked = !no_card_asks(&w);
             let _ = wait_fix_all(&w.panel);
-            let born = support_sets(&w);
+            let born = set_options(&w);
             slice_with(&w.document, &w.panel, true, &island_profile());
             let left = tipped_and_listed(&w.panel);
             assert!(w.document.undo().expect("one undo"), "an undo step");
-            (before, born, left, support_sets(&w))
+            (before, asked, born, left, support_sets(&w))
         });
         assert_eq!(before, 0, "no set to begin with");
-        assert!(born >= 1, "the tips started a set");
+        assert!(!asked, "Yes asks nothing more");
+        assert!(!born.is_empty(), "the tips started a set");
+        assert!(
+            born.iter().all(|o| o.sizing == "detail" && o.zones.is_none()),
+            "with the tab's preset: {born:?}"
+        );
         assert!(left.is_empty(), "{left:?}");
         assert_eq!(after_undo, 0, "one undo takes the set out");
     }
 
-    /// #444: Fix All does the same, and a dismissed card leaves all as it
-    /// was.
+    /// #444: Fix All does the same, and asks nothing either.
     #[test]
-    fn fix_all_on_a_plate_with_no_set_asks_for_a_preset() {
-        let (dismissed, born, resliced) = on_fresh_slint_thread(|| {
+    fn fix_all_on_a_plate_with_no_set_starts_the_set() {
+        let (asked, born, resliced) = on_fresh_slint_thread(|| {
             let w = bare_window();
             let dialogs = w.panel.ctrl.dialogs();
-            while dialogs
-                .queued_for_test()
-                .first()
-                .is_some_and(|(kind, _)| *kind != MessageKind::ChoosePreset)
-            {
+            while !dialogs.queued_for_test().is_empty() {
                 dialogs.answer(MessageAnswer::Close, false);
             }
             w.window.invoke_review_fix_all_requested();
-            dialogs.answer(MessageAnswer::Cancel, false);
-            let dismissed = (support_sets(&w), w.panel.fixing());
-            w.window.invoke_review_fix_all_requested();
-            pick_the_preset(&w);
+            let asked = !no_card_asks(&w);
             let _ = wait_fix_all(&w.panel);
-            (dismissed, support_sets(&w), w.resliced.get())
+            (asked, support_sets(&w), w.resliced.get())
         });
-        assert_eq!(dismissed, (0, false), "Cancel starts nothing");
+        assert!(!asked, "Fix All asks nothing");
         assert!(born >= 1, "the tips started a set");
         assert_eq!(resliced, 1, "and the plate is sliced again");
     }
@@ -3020,7 +3033,7 @@ mod fix_all {
                     .expect("an island") as i32
             };
             w.window.invoke_review_fix_requested(id);
-            pick_the_preset(&w);
+            assert!(no_card_asks(&w), "the row asks nothing");
             (support_sets(&w), w.panel.is_stale())
         });
         assert_eq!(born, 1, "the set of that model");

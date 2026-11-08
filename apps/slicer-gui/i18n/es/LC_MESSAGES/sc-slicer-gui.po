@@ -5369,6 +5369,22 @@ msgctxt "Inspector"
 msgid "Stabilize poses on a point or edge"
 msgstr "Estabilizar poses sobre un punto o borde"
 
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Recommended for this preset: {} mm."
+msgstr "Recomendado para este preset: {} mm."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pillars on a grid"
+msgstr "Pilares en grilla"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Grid spacing"
+msgstr "Separación de la grilla"
+
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "Cross-bracing"
@@ -6512,22 +6528,6 @@ msgid ""
 msgstr ""
 "Tiene {} de las {} puntas que pide: no entran más en lo que ganó. Ponelas a "
 "mano en la pestaña Soportes, o dejala."
-
-msgctxt "ChoosePresetDialog"
-msgid "Which supports?"
-msgstr "¿Qué soportes?"
-
-msgctxt "ChoosePresetDialog"
-msgid ""
-"This model has no supports yet. Its tips start a set with the preset you pick "
-"here."
-msgstr ""
-"Este modelo todavía no tiene soportes. Sus puntas arrancan un juego con el "
-"preset que elijas acá."
-
-msgctxt "ChoosePresetDialog"
-msgid "Cancel"
-msgstr "Cancelar"
 
 msgctxt "DfSupportDialog"
 msgid "The scene rejected the new supports; nothing was changed."
