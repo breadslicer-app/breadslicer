@@ -643,6 +643,33 @@ pub fn build_support_and_raft_world_triangles(
     build_support_and_raft_world_parts(input).map(|sink| sink.floats)
 }
 
+/// How high the raft and the feet the roots of `state` stand on reach over the
+/// plate, in millimetres, as [`build_support_and_raft_world_parts`] draws
+/// them: the raft's plate or lines and its wall, each root's disk, and its
+/// cone or its join cone; the neck above, as wide as the shaft, does not count
+/// (SoulCrafted, #481: what the view from under the plate hides).
+pub fn raft_and_feet_top_mm(state: &SupportCollections, raft: &RaftSettings) -> f64 {
+    let raft_on = raft.bottom_mode != RaftBottomMode::Off;
+    let raft_top = if raft_on { raft_band_top_mm(raft) } else { 0.0 };
+    let plate_top = if raft_on {
+        js_max(0.0, raft.thickness)
+    } else {
+        0.0
+    };
+    state
+        .roots
+        .values()
+        .map(|root| {
+            let disk_height = js_max(0.01, root.disk_height);
+            let foot = match root.join_cone_mm.filter(|j| *j > 0.0) {
+                Some(join) => js_max(disk_height, plate_top) + join,
+                None => disk_height + js_max(0.01, root.cone_height),
+            };
+            root.transform.pos.z + foot
+        })
+        .fold(raft_top, js_max)
+}
+
 /// [`build_support_and_raft_world_triangles`] with the soup split into its
 /// closed pieces (SoulCrafted's: the slicer needs each piece welded apart).
 pub fn build_support_and_raft_world_parts(

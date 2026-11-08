@@ -98,6 +98,10 @@ pub trait MeshRenderer {
     /// turns the map off).
     fn set_overhang_map(&mut self, _map: Option<super::OverhangMap>) {}
 
+    /// How high the rafts of the scene reach, mm (0 without one), for the
+    /// view from under the plate to hide them (#481).
+    fn set_raft_top(&mut self, _mm: f32) {}
+
     /// Blocks until the GPU has finished the work submitted so far, so a
     /// caller can time a frame end to end (the performance test).
     fn wait_for_gpu(&self) {}
@@ -192,6 +196,10 @@ impl MeshRenderer for Renderer {
 
     fn set_overhang_map(&mut self, map: Option<super::OverhangMap>) {
         Renderer::set_overhang_map(self, map);
+    }
+
+    fn set_raft_top(&mut self, mm: f32) {
+        Renderer::set_raft_top(self, mm);
     }
 
     fn wait_for_gpu(&self) {

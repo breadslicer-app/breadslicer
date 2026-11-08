@@ -25,7 +25,11 @@ use crate::camera::OrbitCamera;
 /// which walls' warning stripes to draw; the other lanes are
 /// vec4-alignment padding. `overhang` carries the overhang map's terms
 /// ([`super::overhang_map::OverhangMap::uniform`]), read only for the
-/// objects the map paints.
+/// objects the map paints. The view from under the plate (#481) rides in
+/// the `.w` lanes of the envelope corners: `env_min[3]` is how far the
+/// plate and the rafts have faded ([`crate::under_plate::under_plate_fade`]),
+/// `env_max[3]` the height below which a support mesh fades with them
+/// ([`crate::under_plate::hidden_below_mm`]).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(super) struct Uniforms {

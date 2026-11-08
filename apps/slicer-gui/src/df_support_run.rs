@@ -8735,6 +8735,62 @@ mod hand_edit_tests {
         });
     }
 
+    /// #481: from under the plate the raft fades out, and Remove sees past it
+    /// to the supports above, where the plain first hit would be the raft.
+    #[test]
+    fn from_under_the_plate_remove_sees_past_the_raft() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let place = AffineTransform3D::from_translation([25.0, 22.0, 12.0]);
+            let camera = camera_at([35.0, 27.0, 12.0], 0.4, -1.2, 60.0);
+            assert!(crate::under_plate::sees_through_the_plate(&camera));
+            let (ctrl, document, run) =
+                wired_slab(&window, Transform3D::Affine(place), camera.clone());
+            let session = in_force_session(&run).unwrap();
+            let top = session.raft_top_mm();
+            assert!(top > 0.0, "the default run lays a raft");
+
+            // A point of a shaft well above the raft whose pixel's ray meets
+            // the raft first.
+            let raft_first = |at: [f32; 2]| {
+                let ray = crate::picking::ray_from_pixel(
+                    &camera,
+                    crate::mesh_render::default_fov_y(),
+                    800.0,
+                    600.0,
+                    at[0],
+                    at[1],
+                );
+                document
+                    .with_scene(|spatial| crate::picking::pick_face_where(&ray, spatial, |_| true))
+                    .flatten()
+                    .is_some_and(|hit| (ray.origin + ray.direction * hit.t).z <= top as f32 + 1e-3)
+            };
+            let (at, aimed) = session
+                .support_paths()
+                .iter()
+                .flat_map(|(_, path)| path.iter().copied())
+                .filter(|p| p[2] > top + 4.0 && p[2] < 10.0)
+                .find_map(|p| {
+                    let at = ctrl.project_for_test(p.map(|c| c as f32))?;
+                    raft_first(at).then_some((at, p))
+                })
+                .expect("a shaft seen through the raft");
+
+            let hit = ctrl
+                .support_hit_for_test(crate::viewport::ScreenPoint::new(at[0], at[1]))
+                .expect("a support under the cursor");
+            assert!(
+                f64::from(hit[2]) > top + 1.0,
+                "past the raft: {hit:?}, aimed {aimed:?}"
+            );
+            assert!(
+                far(hit, aimed) < 2.0,
+                "on the shaft: {hit:?}, aimed {aimed:?}"
+            );
+        });
+    }
+
     /// A box mesh from `lo` to `hi` (world mm).
     fn box_mesh(lo: [f32; 3], hi: [f32; 3]) -> sc_mesh_core::IndexedMesh {
         let cube = sc_mesh_fixtures::unit_cube_mesh();

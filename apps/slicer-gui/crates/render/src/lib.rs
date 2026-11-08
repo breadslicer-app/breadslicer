@@ -26,5 +26,6 @@ pub mod slice_cap;
 pub mod test_support;
 #[cfg(test)]
 mod tests_print_file_preview;
+pub mod under_plate;
 
 use sc_slicer_gui_base::{breadcrumbs, startup_timing};

@@ -75,6 +75,7 @@ use crate::scene_loader::{Finished, LoadTicket, PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
 use crate::support_persist::install_sets;
 use crate::surface_brush::{BrushAim, SurfaceBrush, View, aim};
+use crate::under_plate::{hidden_below_mm, sees_through_the_plate, under_plate_fade};
 use sc_scene::SceneError;
 use sc_sla_formats::{PrintPreviews, PrinterFileFormat};
 
@@ -1001,6 +1002,25 @@ impl ViewportController {
     }
 
     /// What the overhang map shows in the current section, if anything.
+    /// How high the rafts reach while the camera is under the plate, for the
+    /// view to fade them with it (#481); 0 with the camera above it.
+    fn raft_top_under_plate(&self) -> f32 {
+        let under = self
+            .camera
+            .camera_cell()
+            .borrow()
+            .as_ref()
+            .is_some_and(|camera| under_plate_fade(camera) > 0.0);
+        if !under {
+            return 0.0;
+        }
+        let document = self.session.document();
+        let sessions = document.support_sessions();
+        document
+            .with_scene(|spatial| crate::support_persist::raft_top_mm(spatial, &sessions))
+            .unwrap_or(0.0)
+    }
+
     fn overhang_map(&self) -> Option<crate::mesh_render::OverhangMap> {
         (self.overhang_map_on.get()
             && crate::workspace_section::shows_overhang_map(self.session.section()))
@@ -2556,16 +2576,31 @@ impl ViewportController {
         // millisecond on a big model and a box asks hundreds: they share
         // the cores.
         let document = self.session.document();
+        let sessions = document.support_sessions();
+        let through_rafts = sees_through_the_plate(&camera);
         let hits = |pixels: &[[f32; 2]]| -> Vec<Option<super::support_drag::ScreenHit>> {
             document
                 .with_scene(|spatial| {
+                    // From under the plate the rafts are hidden: the
+                    // camera sees past them (#481).
+                    let raft_top = if through_rafts {
+                        hidden_below_mm(crate::support_persist::raft_top_mm(spatial, &sessions))
+                    } else {
+                        0.0
+                    };
                     let one = |at: &[f32; 2]| {
                         let ray =
                             picking::ray_from_pixel(&camera, fov, width, height, at[0], at[1]);
-                        let (leaf, t) = picking::pick_object_where(&ray, spatial, |_| true)?;
+                        let hit = picking::pick_face_past_rafts(
+                            &ray,
+                            spatial,
+                            |_| true,
+                            |id| shows_supports(spatial, id),
+                            raft_top,
+                        )?;
                         Some(super::support_drag::ScreenHit {
-                            leaf,
-                            point: (ray.origin + ray.direction * t).into(),
+                            leaf: hit.leaf,
+                            point: (ray.origin + ray.direction * hit.t).into(),
                         })
                     };
                     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -2701,30 +2736,45 @@ impl ViewportController {
         cursor: ScreenPoint,
     ) -> Option<(sc_scene::NodeId, glam::Vec3, glam::Vec3)> {
         let vp = self.render.viewport()?;
-        let ray = {
+        let (ray, through_rafts) = {
             let camera_slot = self.camera.camera_cell().borrow();
-            picking::ray_from_pixel(
-                camera_slot.as_ref()?,
+            let camera = camera_slot.as_ref()?;
+            let ray = picking::ray_from_pixel(
+                camera,
                 crate::mesh_render::default_fov_y(),
                 vp.width(),
                 vp.height(),
                 cursor.x,
                 cursor.y,
-            )
+            );
+            (ray, sees_through_the_plate(camera))
         };
-        self.session
-            .document()
+        let document = self.session.document();
+        let sessions = document.support_sessions();
+        document
             .with_scene(|spatial| {
                 let on_supports = matches!(
                     tool,
                     TabTool::RemoveSupport | TabTool::MoveTip | TabTool::Brace
                 );
                 // Remove and Move tip take only a support in sight (#3): the
-                // nearest hit among every leaf, model or supports, is one.
+                // nearest hit among every leaf, model or supports, is one;
+                // from under the plate, past the hidden rafts (#481).
                 // Add and the drain look through the supports to the model.
                 let hit = if on_supports {
-                    picking::pick_face_where(&ray, spatial, |_| true)
-                        .filter(|hit| shows_supports(spatial, hit.leaf))?
+                    let raft_top = if through_rafts {
+                        hidden_below_mm(crate::support_persist::raft_top_mm(spatial, &sessions))
+                    } else {
+                        0.0
+                    };
+                    picking::pick_face_past_rafts(
+                        &ray,
+                        spatial,
+                        |_| true,
+                        |id| shows_supports(spatial, id),
+                        raft_top,
+                    )
+                    .filter(|hit| shows_supports(spatial, hit.leaf))?
                 } else {
                     picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id))?
                 };
@@ -3596,6 +3646,7 @@ impl ViewportController {
             .over(self.overlay.borrow().as_ref(), marks_shown);
         renderer.set_overlay(overlay.as_ref());
         renderer.set_overhang_map(self.overhang_map());
+        renderer.set_raft_top(self.raft_top_under_plate());
 
         let Some(ui) = self.ui.upgrade() else {
             return;

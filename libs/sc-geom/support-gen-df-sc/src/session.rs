@@ -17,6 +17,7 @@ use std::sync::{Arc, OnceLock};
 
 use sc_mesh_core::IndexedMesh;
 use serde_json::Value;
+use support_gen_df::features::slicing::support_world_triangles::raft_and_feet_top_mm;
 use support_gen_df::pipeline::{ModelInput, PipelineSettings, support_soup, world_soup};
 use support_gen_df::supports::auto_bracing::auto_brace::{
     HandBrace, HandBraceRefusal, brace_new_shaft, hand_brace,
@@ -2070,6 +2071,14 @@ impl DfSupportSession {
         tip_contact_diameter(&self.settings)
     }
 
+    /// How high this set's raft and the feet of its supports on it reach over
+    /// the plate, in millimetres, as the mesh draws them: the raft's plate or
+    /// lines and its wall, each root's disk and its cone. What the view from
+    /// under the plate hides (#481); 0 with neither.
+    pub fn raft_top_mm(&self) -> f64 {
+        raft_and_feet_top_mm(&self.state.collections, &self.settings.rafts.global)
+    }
+
     /// The tip diameter of support `id`, when it has one.
     fn tip_diameter(&self, id: &str) -> Option<f64> {
         let c = &self.state.collections;
@@ -3034,6 +3043,108 @@ mod session_tests {
         );
         assert_eq!(untouched.state, session.state, "nothing placed");
     }
+
+    /// #481: a set tells how high its raft reaches, its plate and its wall,
+    /// and 0 without a raft.
+    #[test]
+    fn a_set_tells_how_high_its_raft_reaches() {
+        use crate::options::RaftMode;
+        let with = |raft: RaftMode, thickness: f64, wall: bool| {
+            let mut request = crate::DfSupportRequest::default();
+            request.options.raft = raft;
+            request.options.raft_thickness_mm = thickness;
+            request.options.raft_wall = wall;
+            bare_slab(12.0, request).raft_top_mm()
+        };
+        let wall = DEFAULT_RAFT_WALL_HEIGHT_MM;
+        assert!((with(RaftMode::Solid, 0.5, true) - (0.5 + wall)).abs() < 1e-9);
+        assert!((with(RaftMode::Solid, 1.2, false) - 1.2).abs() < 1e-9);
+        assert!(with(RaftMode::Lines, 0.5, false) > 0.0);
+        assert_eq!(with(RaftMode::Off, 0.5, true), 0.0);
+
+        // The feet count too: a zone preset's join cone stands on the raft's
+        // plate and reaches past its wall, the ring seen from under the plate.
+        let mut request = crate::DfSupportRequest::default();
+        request.options.zones = Some(crate::zone_presets::minis_30());
+        let mut zoned = bare_slab(12.0, request);
+        zoned.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+        let root = zoned
+            .state
+            .collections
+            .roots
+            .values()
+            .next()
+            .expect("its root");
+        let join = root.join_cone_mm.expect("a join cone");
+        let foot = root.transform.pos.z + root.disk_height.max(0.5) + join;
+        let top = zoned.raft_top_mm();
+        assert!((top - foot).abs() < 1e-9, "{top} {foot}");
+        assert!(top > 0.5 + wall, "past the raft's wall");
+        let mesh = zoned.mesh().unwrap().expect("drawn");
+        assert!(
+            mesh.vertices()
+                .iter()
+                .any(|v| (f64::from(v.as_array()[2]) - top).abs() < 1e-3),
+            "the mesh reaches that height"
+        );
+
+        // A root's own cone, without a zone preset.
+        let mut plain = bare_slab(12.0, crate::DfSupportRequest::default());
+        plain.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+        let root = plain
+            .state
+            .collections
+            .roots
+            .values()
+            .next()
+            .expect("its root");
+        let cone_top =
+            root.transform.pos.z + root.disk_height.max(0.01) + root.cone_height.max(0.01);
+        let top = plain.raft_top_mm();
+        assert!(
+            (top - cone_top.max(0.5 + wall)).abs() < 1e-9,
+            "{top} {cone_top}"
+        );
+    }
+
+    /// #481: nothing of the raft the mesh draws reaches past the height the
+    /// view from under the plate hides, with every preset's feet on it: the
+    /// raft is the soup's tail, past the pieces the supports alone draw.
+    #[test]
+    fn the_raft_drawn_stays_under_the_height_it_tells() {
+        for zones in [
+            None,
+            Some(crate::zone_presets::minis_30()),
+            Some(crate::zone_presets::figures_150()),
+        ] {
+            let mut request = crate::DfSupportRequest::default();
+            request.options.zones = zones;
+            let mut session = bare_slab(12.0, request);
+            session.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+            session.add_trunk_at([10.0, 5.0, 12.0]).expect("another");
+            let with = support_soup(&session.state, &session.models, &session.settings).unwrap();
+            let mut off = (*session.settings).clone();
+            off.rafts.global.bottom_mode = RaftBottomMode::Off;
+            off.rafts.per_model.clear();
+            let alone = support_soup(&session.state, &session.models, &off).unwrap();
+            let raft_from = with.parts[alone.parts.len() - 1];
+            assert!(raft_from < with.floats.len(), "a raft is drawn");
+            let raft_top = with.floats[raft_from..]
+                .iter()
+                .skip(2)
+                .step_by(3)
+                .fold(f32::MIN, |a, z| a.max(*z));
+            let told = session.raft_top_mm();
+            assert!(
+                f64::from(raft_top) <= told + 1e-4,
+                "the raft reaches {raft_top}, past {told}"
+            );
+        }
+    }
+
+    /// The wall a raft gets by default, mm.
+    const DEFAULT_RAFT_WALL_HEIGHT_MM: f64 =
+        support_gen_df::supports::rafts::crenelated::raft_types::DEFAULT_RAFT_SETTINGS.wall_height;
 
     #[test]
     fn a_set_tells_the_diameter_of_the_tips_added_to_it() {

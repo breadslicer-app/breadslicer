@@ -42,6 +42,8 @@ mod targets;
 mod tests_gpu;
 #[cfg(test)]
 mod tests_overhang_map;
+#[cfg(test)]
+mod tests_under_plate;
 
 pub use device_loss::DeviceLoss;
 use device_ops::scoped;
@@ -112,12 +114,14 @@ enum FrameContents {
     ModelsOnly,
 }
 
-/// How a frame is dressed: what goes around the models, and whether the
-/// overhang map goes over them.
+/// How a frame is dressed: what goes around the models, whether the
+/// overhang map goes over them, and how high the rafts reach, for the view
+/// from under the plate to hide them (#481; 0 without rafts).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct FrameLook {
     contents: FrameContents,
     overhang_map: Option<OverhangMap>,
+    raft_top_mm: f32,
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -321,6 +325,9 @@ pub struct Renderer {
     surface_paint: surface_paint::PaintSlot,
     /// The overhang map over the models of a workspace frame, when on.
     overhang_map: Option<OverhangMap>,
+    /// How high the rafts of the scene reach, mm: what of a support mesh
+    /// the view from under the plate hides (#481).
+    raft_top_mm: f32,
     target_manager: TargetManager,
 }
 
@@ -405,6 +412,7 @@ impl Renderer {
             overlay: overlay::OverlaySlot::default(),
             surface_paint: surface_paint::PaintSlot::default(),
             overhang_map: None,
+            raft_top_mm: 0.0,
             target_manager: TargetManager {
                 msaa: None,
                 targets: None,
@@ -826,6 +834,7 @@ impl Renderer {
             FrameLook {
                 contents: FrameContents::Workspace,
                 overhang_map: self.overhang_map,
+                raft_top_mm: self.raft_top_mm,
             },
         )
     }
@@ -835,6 +844,13 @@ impl Renderer {
     /// carries it.
     pub fn set_overhang_map(&mut self, map: Option<OverhangMap>) {
         self.overhang_map = map;
+    }
+
+    /// How high the rafts of the scene reach, mm (0 without one): what of
+    /// the support meshes fades with the plate when the camera goes under
+    /// it (#481).
+    pub fn set_raft_top(&mut self, mm: f32) {
+        self.raft_top_mm = mm.max(0.0);
     }
 
     /// Blocks until the GPU has finished the work submitted so far. A poll
@@ -873,6 +889,7 @@ impl Renderer {
             FrameLook {
                 contents: FrameContents::ModelsOnly,
                 overhang_map: None,
+                raft_top_mm: 0.0,
             },
         )
     }
@@ -931,6 +948,7 @@ impl Renderer {
         let FrameLook {
             contents,
             overhang_map,
+            raft_top_mm,
         } = look;
         if self.core.device_loss.is_lost() {
             return Err(RenderError::DeviceLost);
@@ -966,6 +984,9 @@ impl Renderer {
         // grounds: the partial entry list would leave the model buffer's tail
         // slots holding stale matrices that the draw loop would render against
         // the current frame's geometry.
+        // Which objects are support meshes, for the cuts their hidden rafts
+        // leave (#481).
+        let mut support_objects: Vec<bool> = Vec::new();
         let scene_for_draws = if let (Some(inst), Some(graph_data)) = (installed, graph) {
             match build_model_entries(
                 graph_data,
@@ -980,6 +1001,7 @@ impl Renderer {
                     // uniform offset alignment (typically 256 bytes), so
                     // consecutive entries are not contiguous and must be
                     // written individually.
+                    support_objects = entries.iter().map(|e| e.is_supports()).collect();
                     for (i, entry) in entries.iter().enumerate() {
                         let offset = i as u64 * inst.gpu.model_stride();
                         self.core.queue.write_buffer(
@@ -1029,11 +1051,23 @@ impl Renderer {
         let face_breach_mask = graph
             .and_then(|g| build_envelope_warning_mask(g, build_volume, &mut self.world_boxes).ok())
             .unwrap_or(0);
+        // From under the plate, the plate and the rafts fade out (#481); a
+        // picture of the print has neither.
+        let under_plate = if contents == FrameContents::Workspace {
+            crate::under_plate::under_plate_fade(camera)
+        } else {
+            0.0
+        };
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             light_dir: frame::pack_light_dir(clip_z),
-            env_min: [env_min.x, env_min.y, env_min.z, 0.0],
-            env_max: [env_max.x, env_max.y, env_max.z, 0.0],
+            env_min: [env_min.x, env_min.y, env_min.z, under_plate],
+            env_max: [
+                env_max.x,
+                env_max.y,
+                env_max.z,
+                crate::under_plate::hidden_below_mm(raft_top_mm),
+            ],
             face_breach_mask: [face_breach_mask, 0, 0, 0],
             overhang: overhang_map.map_or([0.0; 4], |map| map.uniform(env_min.z)),
         };
@@ -1099,6 +1133,9 @@ impl Renderer {
 
             if scene_for_draws && let Some(inst) = installed {
                 self.record_mesh_objects(&mut pass, inst, selection);
+                if under_plate > 0.0 && raft_top_mm > 0.0 {
+                    self.record_support_cuts(&mut pass, inst, selection, &support_objects);
+                }
                 if contents == FrameContents::Workspace {
                     self.surface_paint
                         .record(&mut pass, &self.pipelines.surface_paint, inst);
@@ -1251,6 +1288,41 @@ impl Renderer {
             } else {
                 0
             });
+            pass.draw_indexed(0..obj.index_count(), 0, 0..1);
+        }
+    }
+
+    /// The cuts the hidden rafts leave (#481): the support meshes again, with
+    /// their back faces only, through the cap pipeline. A back face shows
+    /// only where the front faces before it were dropped with the raft, so
+    /// this fills each opened shaft with the flat face of its cut. Same
+    /// stencil as the object, so a selected set's outline takes its cuts in.
+    fn record_support_cuts(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        inst: &InstalledScene,
+        selection: &[NodeId],
+        support_objects: &[bool],
+    ) {
+        pass.set_pipeline(&self.pipelines.mesh.cap_pipeline);
+        pass.set_bind_group(
+            MeshBindGroup::Uniforms.idx(),
+            &self.pipelines.mesh.uniforms_bind_group,
+            &[],
+        );
+        for (i, obj) in inst.gpu.objects().iter().enumerate() {
+            if !support_objects.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let offset = (i as u64 * inst.gpu.model_stride()) as u32;
+            pass.set_bind_group(
+                MeshBindGroup::Models.idx(),
+                &inst.models_bind_group,
+                &[offset],
+            );
+            pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
+            pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_stencil_reference(u32::from(selection.binary_search(&obj.node_id()).is_ok()));
             pass.draw_indexed(0..obj.index_count(), 0, 0..1);
         }
     }

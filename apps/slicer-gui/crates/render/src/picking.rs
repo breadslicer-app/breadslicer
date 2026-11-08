@@ -214,6 +214,34 @@ pub fn pick_face_where(
     best
 }
 
+/// [`pick_face_where`] through the rafts while the view from under the plate
+/// hides them (#481): a first hit on a leaf `is_supports` takes, below
+/// `raft_top_mm`, is passed by, and the ray goes on from the rafts' top. The
+/// hit's `t` still counts from `ray`'s origin. With `raft_top_mm` at 0, or a
+/// ray that does not climb, it is [`pick_face_where`].
+pub fn pick_face_past_rafts(
+    ray: &Ray,
+    spatial: &SceneSpatial,
+    keep: impl Fn(NodeId) -> bool,
+    is_supports: impl Fn(NodeId) -> bool,
+    raft_top_mm: f32,
+) -> Option<FaceHit> {
+    let hit = pick_face_where(ray, spatial, &keep)?;
+    let z = ray.origin.z + ray.direction.z * hit.t;
+    if raft_top_mm <= 0.0 || ray.direction.z <= 0.0 || z >= raft_top_mm || !is_supports(hit.leaf) {
+        return Some(hit);
+    }
+    let skip = (raft_top_mm - ray.origin.z) / ray.direction.z;
+    let past = Ray {
+        origin: ray.origin + ray.direction * skip,
+        direction: ray.direction,
+    };
+    pick_face_where(&past, spatial, keep).map(|hit| FaceHit {
+        t: hit.t + skip,
+        ..hit
+    })
+}
+
 /// Tests the ray against an axis-aligned box with the slab method. A box
 /// entirely behind the ray origin is a miss.
 pub(crate) fn ray_hits_aabb(ray: &Ray, min: Vec3, max: Vec3) -> bool {
@@ -743,6 +771,44 @@ mod pick_object_tests {
         assert!(
             ray_hits_object_query(&ray, &shifted_spatial.leaf(shifted_leaf).unwrap()).is_some()
         );
+    }
+
+    /// #481: from under the plate, with the rafts hidden, a ray passes by a
+    /// raft below its top and reaches the supports and models above it.
+    #[test]
+    fn a_ray_from_under_the_plate_passes_by_the_rafts() {
+        // Facing down, the side a ray from under the plate meets.
+        let facing_down = || {
+            IndexedMesh::new(
+                None,
+                vec![
+                    Vertex::new([-0.5, -0.5, 0.0]),
+                    Vertex::new([0.0, 0.5, 0.0]),
+                    Vertex::new([0.5, -0.5, 0.0]),
+                ],
+                vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
+            )
+        };
+        let (mut g, root) = graph_with_group_root();
+        add_leaf_under(&mut g, root, facing_down(), translated([0.0, 0.0, 0.5]));
+        add_leaf_under(&mut g, root, facing_down(), translated([0.0, 0.0, 10.0]));
+        let spatial = SceneSpatial::from_graph(g);
+        let raft = spatial.leaf_id_at_index(0).unwrap();
+        let above = spatial.leaf_id_at_index(1).unwrap();
+        let up = Ray {
+            origin: Vec3::new(0.0, 0.0, -20.0),
+            direction: Vec3::Z,
+        };
+
+        let past = pick_face_past_rafts(&up, &spatial, |_| true, |_| true, 0.85).unwrap();
+        assert_eq!(past.leaf, above, "supports above the raft's top are hit");
+        assert!((past.t - 30.0).abs() < 1e-4, "{}", past.t);
+
+        // A model is never passed by, nor anything with no raft hidden.
+        let model = pick_face_past_rafts(&up, &spatial, |_| true, |_| false, 0.85).unwrap();
+        assert_eq!(model.leaf, raft);
+        let shown = pick_face_past_rafts(&up, &spatial, |_| true, |_| true, 0.0).unwrap();
+        assert_eq!(shown.leaf, raft);
     }
 
     #[test]
