@@ -6,6 +6,9 @@
 use glam::{Mat3, Mat4, Vec3};
 
 const PITCH_EPSILON: f32 = 1e-3;
+/// How far from a pole (radians of pitch) an orbit starts turning the view
+/// square with the plate, finishing exactly at the pole.
+const POLE_ALIGN_BAND: f32 = 10.0 * std::f32::consts::PI / 180.0;
 const MIN_DISTANCE_FACTOR: f32 = 0.05;
 const MAX_DISTANCE_FACTOR: f32 = 50.0;
 /// Floor on the zoom-in distance expressed as a fraction of `view_radius`.
@@ -114,9 +117,22 @@ impl OrbitCamera {
     /// Turns the camera about its target by `yaw` and `pitch` radians. A
     /// positive yaw moves the eye to its right (the scene turns as under a
     /// drag to the left); a positive pitch raises the eye (as a drag down).
+    ///
+    /// Climbing toward a pole, the last [`POLE_ALIGN_BAND`] also turns the
+    /// view about the vertical, in step with the climb, so that it reaches the
+    /// pole square with the plate (its edges level and upright on screen).
+    /// Turning sideways at the pole is free.
     fn turn(&mut self, yaw: f32, pitch: f32) {
         self.yaw += yaw;
+        let before = self.pitch;
         self.pitch = clamp_pitch(self.pitch + pitch);
+        let limit = std::f32::consts::FRAC_PI_2 - PITCH_EPSILON;
+        let left_before = (limit - before.abs()).min(POLE_ALIGN_BAND);
+        let left_after = limit - self.pitch.abs();
+        if self.pitch.abs() > before.abs() && left_before > 0.0 && left_after < left_before {
+            let share = (left_before - left_after) / left_before;
+            self.yaw += share * to_nearest_quarter_turn(self.yaw);
+        }
     }
 
     /// Orbits like [`Self::orbit`], but about `pivot` instead of the target:
@@ -300,6 +316,13 @@ impl OrbitCamera {
     fn max_distance(&self) -> f32 {
         self.view_radius * MAX_DISTANCE_FACTOR
     }
+}
+
+/// The turn (radians, either way) that brings `yaw` to the nearest quarter
+/// turn, where the plate's edges are level and upright on screen.
+fn to_nearest_quarter_turn(yaw: f32) -> f32 {
+    let quarter = std::f32::consts::FRAC_PI_2;
+    (yaw / quarter).round() * quarter - yaw
 }
 
 fn clamp_pitch(pitch: f32) -> f32 {
@@ -564,13 +587,15 @@ mod tests {
     #[test]
     fn orbiting_to_either_pole_never_turns_the_view() {
         // Dragging up or down in small steps from the side view to the
-        // clamp: the screen frame may only tilt by about the step, never jump.
-        // The frame used to swap its reference axis at ~82 degrees from the
-        // horizon, which turned the view by the yaw (from above) or flipped
-        // it upside down (from below).
+        // clamp: the screen frame tilts with the step and, near the pole,
+        // turns square with the plate a little at a time (at most 45 degrees
+        // over the last 10), never in a jump. The frame used to swap its
+        // reference axis at ~82 degrees from the horizon, which turned the
+        // view by the yaw (from above) or flipped it upside down (from below).
         let limit = std::f32::consts::FRAC_PI_2 - PITCH_EPSILON;
         let step = 0.25_f32.to_radians();
-        for yaw_deg in [-180.0_f32, -135.0, -90.0, -30.0, 0.0, 45.0, 90.0, 160.0] {
+        let most = step * (1.0 + 45.0 / 10.0) * 1.01;
+        for yaw_deg in [-180.0_f32, -135.0, -90.0, -30.0, 0.0, 44.0, 90.0, 160.0] {
             for direction in [1.0_f32, -1.0] {
                 let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
                 cam.yaw = yaw_deg.to_radians();
@@ -583,7 +608,7 @@ mod tests {
                         .angle_between(next_right)
                         .max(up.angle_between(next_up));
                     assert!(
-                        turned <= step * 1.01,
+                        turned <= most,
                         "yaw {yaw_deg}, pitch {}: the view turned {} degrees in one step",
                         cam.pitch.to_degrees(),
                         turned.to_degrees()
@@ -592,6 +617,65 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn an_orbit_reaches_either_pole_square_with_the_plate() {
+        // From any side, dragging up or down to the clamp turns the view so
+        // the plate's edges end level and upright on screen; a jump straight
+        // to the pole (a numpad step) does the same.
+        for yaw_deg in [-170.0_f32, -100.0, -60.0, -12.0, 20.0, 44.0, 46.0, 130.0] {
+            for direction in [1.0_f32, -1.0] {
+                for step_deg in [0.25_f32, 15.0, 180.0] {
+                    let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+                    cam.yaw = yaw_deg.to_radians();
+                    cam.pitch = 0.3 * direction;
+                    for _ in 0..1000 {
+                        cam.turn(0.0, direction * step_deg.to_radians());
+                    }
+                    let (right, _) = cam.right_and_up();
+                    let square = right.x.abs().max(right.y.abs());
+                    assert!(
+                        square > 1.0 - 1e-5,
+                        "yaw {yaw_deg}, step {step_deg}, direction {direction}: right = {right}"
+                    );
+                    assert!(
+                        to_nearest_quarter_turn(cam.yaw).abs() < 1e-5,
+                        "the yaw lands on a quarter turn: {}",
+                        cam.yaw.to_degrees()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn at_the_pole_a_sideways_drag_still_turns_the_view() {
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+        cam.yaw = 0.4;
+        cam.orbit(0.0, 1e6, 100.0);
+        let (before, _) = cam.right_and_up();
+        cam.orbit(30.0, 0.0, 100.0);
+        let (after, _) = cam.right_and_up();
+        assert!(
+            before.angle_between(after) > 0.5,
+            "the view turned about the vertical"
+        );
+        // Pushing on into the pole leaves that turn alone.
+        cam.orbit(0.0, 50.0, 100.0);
+        let (pushed, _) = cam.right_and_up();
+        assert!(after.angle_between(pushed) < 1e-5);
+    }
+
+    #[test]
+    fn far_from_the_poles_an_orbit_keeps_its_yaw() {
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+        cam.yaw = 0.4;
+        cam.pitch = 0.0;
+        cam.turn(0.0, 70.0_f32.to_radians());
+        assert_eq!(cam.yaw, 0.4);
+        cam.turn(0.0, -140.0_f32.to_radians());
+        assert_eq!(cam.yaw, 0.4);
     }
 
     #[test]
