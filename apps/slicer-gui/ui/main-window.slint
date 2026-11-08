@@ -257,6 +257,11 @@ export component MainWindow inherits Window {
     in property <bool> support-raft-wall: true;
     // The zone preset's summary (#360), empty without one.
     in property <string> support-zone-summary;
+    // A zone preset's pillar grid (#464): on or off, its spacing, and the
+    // spacing its preset recommends in words, empty when none does.
+    in property <bool> support-grid-on;
+    in property <float> support-grid-spacing: 7;
+    in property <string> support-grid-hint;
     callback support-option-changed(int, float);
     // The raft would take the models' first layers (#131): the warning and
     // the label of its lift button, both empty when it does not.
@@ -2052,6 +2057,9 @@ export component MainWindow inherits Window {
                             raft-thickness: root.support-raft-thickness;
                             raft-wall: root.support-raft-wall;
                             zone-summary: root.support-zone-summary;
+                            grid-on: root.support-grid-on;
+                            grid-spacing: root.support-grid-spacing;
+                            grid-hint: root.support-grid-hint;
                             raft-clash-message: root.support-raft-clash-message;
                             raft-lift-label: root.support-raft-lift-label;
                             lift-on-plate: root.support-lift-on-plate;

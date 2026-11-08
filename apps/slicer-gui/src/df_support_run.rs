@@ -1283,6 +1283,44 @@ fn zone_summary(options: &DfSupportOptions) -> slint::SharedString {
     lines.join("\n").into()
 }
 
+/// The grid spacing the built-in preset of `options` recommends, mm (#464):
+/// the preset with the same zones but for the grid. `None` when no built-in
+/// preset has those zones, or it leaves the grid off.
+fn recommended_grid_mm(options: &DfSupportOptions) -> Option<f64> {
+    let zones = options.zones.as_ref()?;
+    [minis_30(), figures_70(), figures_150()]
+        .into_iter()
+        .find(|preset| {
+            ZonePreset {
+                grid_mm: preset.grid_mm,
+                ..zones.clone()
+            } == *preset
+        })
+        .and_then(|preset| preset.grid_mm)
+}
+
+/// The spacing the grid of `options` shows, mm: its own, else the one its
+/// preset recommends, else the grid's fallback.
+fn shown_grid_mm(options: &DfSupportOptions) -> f64 {
+    options
+        .zones
+        .as_ref()
+        .and_then(|z| z.grid_mm)
+        .or_else(|| recommended_grid_mm(options))
+        .unwrap_or(DEFAULT_GRID_MM)
+}
+
+/// The grid spacing of a zone preset that names none, mm: the small models'.
+const DEFAULT_GRID_MM: f64 = 7.0;
+
+/// The Supports tab's line on the spacing the preset recommends, empty when
+/// no built-in preset does.
+fn grid_hint(options: &DfSupportOptions) -> slint::SharedString {
+    recommended_grid_mm(options).map_or_else(slint::SharedString::default, |mm| {
+        ctr!("Inspector", "Recommended for this preset: {} mm.", mm_text(mm))
+    })
+}
+
 /// Where the options and presets live: the app's local data folder. Tests
 /// never touch it.
 fn support_data_dir() -> Option<std::path::PathBuf> {
@@ -2123,6 +2161,9 @@ impl DfSupportRun {
         ui.set_support_raft_thickness(o.raft_thickness_mm as f32);
         ui.set_support_raft_wall(o.raft_wall);
         ui.set_support_zone_summary(zone_summary(&o));
+        ui.set_support_grid_on(o.zones.as_ref().is_some_and(|z| z.grid_mm.is_some()));
+        ui.set_support_grid_spacing(shown_grid_mm(&o) as f32);
+        ui.set_support_grid_hint(grid_hint(&o));
         ui.set_support_lift_on_plate_label(lift_on_plate_label(support_lift_mm(
             &o,
             self.raft_layer_height_mm.get(),
@@ -2338,7 +2379,8 @@ impl DfSupportRun {
     /// An option edited in the Supports tab (codes in the order of its
     /// fields: sizing, density, angle, size scale, smallest island,
     /// coverage, stabilization, bracing, smooth, raft bottom, raft
-    /// thickness, raft wall).
+    /// thickness, raft wall), then a zone preset's grid (#464): 12 turns it
+    /// on at the spacing `value` (off at 0), 13 sets its spacing.
     fn on_option(&self, code: i32, value: f32) {
         let mut o = self.options.borrow().clone();
         let v = f64::from(value);
@@ -2367,6 +2409,17 @@ impl DfSupportRun {
             }
             10 => o.raft_thickness_mm = v,
             11 => o.raft_wall = on,
+            12 | 13 => {
+                let shown = shown_grid_mm(&o);
+                let Some(zones) = o.zones.as_mut() else {
+                    return;
+                };
+                zones.grid_mm = match code {
+                    12 if on => Some(if v > 0.0 { v } else { shown }),
+                    12 => None,
+                    _ => zones.grid_mm.map(|_| v),
+                };
+            }
             _ => return,
         }
         self.set_options(o);

@@ -345,6 +345,34 @@ mod options_tests {
         assert_eq!(minis.self_support_angle_deg(), 52.0);
     }
 
+    /// A zone preset's grid (#464) is the person's to turn off or space
+    /// out: off, the scans get no grid and trunks keep their cap of members;
+    /// on, its spacing, kept inside its bounds.
+    #[test]
+    fn a_zone_presets_grid_goes_off_or_takes_its_spacing() {
+        let with = |grid_mm| DfSupportOptions {
+            zones: Some(crate::zone_presets::ZonePreset {
+                grid_mm,
+                ..crate::zone_presets::minis_30()
+            }),
+            ..Default::default()
+        };
+        let base = PipelineSettings::defaults(0.05);
+        let mut off = base.clone();
+        with(None).apply(&mut off);
+        assert_eq!(off.supports.grid, base.supports.grid);
+        assert_eq!(
+            off.supports.auto_support.max_attachments_per_trunk,
+            base.supports.auto_support.max_attachments_per_trunk
+        );
+        for (asked, spacing) in [(5.0, 5.0), (0.2, 1.0), (80.0, 50.0)] {
+            let mut on = base.clone();
+            with(Some(asked)).apply(&mut on);
+            assert!(on.supports.grid.enabled && on.supports.grid.pillars);
+            assert_eq!(on.supports.grid.spacing_mm, spacing, "{asked}");
+        }
+    }
+
     #[test]
     fn out_of_range_values_are_clamped() {
         let wild = DfSupportOptions {

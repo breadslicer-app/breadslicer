@@ -5369,6 +5369,22 @@ msgctxt "Inspector"
 msgid "Stabilize poses on a point or edge"
 msgstr "Estabilizar poses sobre un punto o borde"
 
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Recommended for this preset: {} mm."
+msgstr "Recomendado para este preset: {} mm."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pillars on a grid"
+msgstr "Pilares en grilla"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Grid spacing"
+msgstr "Separación de la grilla"
+
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "Cross-bracing"
