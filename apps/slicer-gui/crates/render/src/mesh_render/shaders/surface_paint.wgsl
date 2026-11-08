@@ -42,6 +42,9 @@ struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    // The height the slice view's layer cut reads, at the centroid of the
+    // samples the triangle covers (see `cut_z` in mesh_render.wgsl).
+    @location(2) @interpolate(perspective, centroid) cut_z: f32,
 };
 
 @vertex
@@ -50,6 +53,7 @@ fn vs_main(in: VsIn) -> VsOut {
     let world = model_entry.model * vec4<f32>(in.position, 1.0);
     out.clip_pos = u.view_proj * world;
     out.world_pos = world.xyz;
+    out.cut_z = world.z;
     out.normal = (model_entry.model * vec4<f32>(in.normal, 0.0)).xyz;
     return out;
 }
@@ -67,7 +71,7 @@ fn lit(in: VsOut) -> f32 {
 @fragment
 fn fs_tint(in: VsOut) -> @location(0) vec4<f32> {
     let intensity = lit(in);
-    if (in.world_pos.z > u.light_dir.w) {
+    if (in.cut_z > u.light_dir.w) {
         discard;
     }
     return vec4<f32>(paint.tint.rgb * intensity, paint.tint.a);
@@ -82,7 +86,7 @@ const RING_FILL: f32 = 0.10;
 fn fs_ring(in: VsOut) -> @location(0) vec4<f32> {
     let d = distance(in.world_pos, paint.ring.xyz);
     let per_pixel = max(fwidth(d), 1e-6);
-    if (in.world_pos.z > u.light_dir.w) {
+    if (in.cut_z > u.light_dir.w) {
         discard;
     }
     let from_line = abs(d - paint.ring.w) / per_pixel;

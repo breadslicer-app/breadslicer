@@ -74,12 +74,13 @@ struct VsOut {
     @location(3) @interpolate(flat) tint: u32,
     @location(4) normal: vec3<f32>,
     @location(5) @interpolate(flat) supports: u32,
-    // The world height the raft's cut reads (#481), at the centroid of the
-    // samples the triangle covers. A raft wall seen near edge on covers a
-    // few samples of a pixel and not its centre, and read there its height
-    // runs on far past the wall's top: the cut kept such a pixel, a speck on
-    // the raft's rim. `world_pos` stays at the centre, where its screen
-    // derivatives are taken.
+    // The world height the cuts read (the raft's, #481, and the slice
+    // view's layer), at the centroid of the samples the triangle covers. A
+    // wall seen near edge on covers a few samples of a pixel and not its
+    // centre, and read there its height runs on far past the wall: a cut
+    // kept such a pixel, a speck on the raft's rim or of the part above the
+    // layer. `world_pos` stays at the centre, where its screen derivatives
+    // are taken.
     @location(6) @interpolate(perspective, centroid) cut_z: f32,
 };
 
@@ -214,7 +215,7 @@ fn screen_door(pixel: vec2<f32>) -> f32 {
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Slice clip: drop fragments above the selected layer's top Z. The
     // clip height rides in light_dir.w; f32::MAX (no clip) discards none.
-    if (in.world_pos.z > u.light_dir.w) {
+    if (in.cut_z > u.light_dir.w) {
         discard;
     }
     // From under the plate (#481), a support mesh's raft fades with the
@@ -261,7 +262,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 // only above what fades: the rest is left to the main pass.
 @fragment
 fn fs_cap(in: VsOut) -> @location(0) vec4<f32> {
-    if (in.supports != 1u || in.world_pos.z > u.light_dir.w) {
+    if (in.supports != 1u || in.cut_z > u.light_dir.w) {
         discard;
     }
     if (in.cut_z < u.env_max.w && screen_door(in.clip_pos.xy) < u.env_min.w) {

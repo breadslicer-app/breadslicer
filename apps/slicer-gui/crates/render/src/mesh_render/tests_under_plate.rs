@@ -328,6 +328,18 @@ fn pixels_drawn(
     raft_top_mm: f32,
     side: u32,
 ) -> usize {
+    pixels_drawn_cut(renderer, graph, camera, raft_top_mm, None, side)
+}
+
+/// Like [`pixels_drawn`], with the slice view cut at `clip_z`.
+fn pixels_drawn_cut(
+    renderer: &mut Renderer,
+    graph: &Scene,
+    camera: &OrbitCamera,
+    raft_top_mm: f32,
+    clip_z: Option<f32>,
+    side: u32,
+) -> usize {
     let mut frame_of = |graph: &Scene| {
         renderer.upload_scene(graph).expect("upload the scene");
         renderer.set_raft_top(raft_top_mm);
@@ -337,7 +349,7 @@ fn pixels_drawn(
                     graph,
                     selection: &[],
                     gizmo: None,
-                    clip_z: None,
+                    clip_z,
                 },
                 BV,
                 camera,
@@ -378,6 +390,55 @@ fn from_under_the_plate_a_round_raft_leaves_no_specks_on_its_rim() {
         let specks = pixels_drawn(&mut renderer, &graph, &camera, RAFT_TOP_MM, 512);
         // With nothing to hide, the raft shows.
         let whole = pixels_drawn(&mut renderer, &graph, &camera, 0.0, 512);
+        assert!(whole > 10_000, "{whole}");
+        found.push((pitch, orthographic, specks));
+    }
+    assert!(found.iter().all(|f| f.2 == 0), "{found:?}");
+}
+
+/// A closed round post `radius` mm wide from `bottom` to `top` mm, in
+/// `sides` walls.
+fn round_post(radius: f32, bottom: f32, top: f32, sides: u32) -> IndexedMesh {
+    let mut post = round_raft(radius, top - bottom, sides);
+    let lifted = post
+        .vertices()
+        .iter()
+        .map(|v| {
+            let [x, y, z] = v.coords();
+            Vertex::new([x, y, z + bottom])
+        })
+        .collect();
+    let faces = post.faces().to_vec();
+    post = IndexedMesh::new(None, lifted, faces);
+    post
+}
+
+/// The slice view (Slice tab) hides what stands above the layer. A wall of
+/// a part above the cut, seen almost edge on, covers some of a pixel's
+/// samples but not its centre; the height read at the centre must not let
+/// that pixel through as a speck of the hidden part.
+#[test]
+fn the_slice_view_leaves_no_specks_of_what_stands_above_the_layer() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    const CUT_MM: f32 = 5.0;
+    let graph = scene_of(vec![round_post(20.0, CUT_MM + 2.0, CUT_MM + 22.0, 96)]);
+    let mut found = Vec::new();
+    for (pitch, orthographic) in [
+        (30.0, true),
+        (60.0, true),
+        (85.0, true),
+        (30.0, false),
+        (60.0, false),
+        (85.0, false),
+    ] {
+        let mut camera = camera(pitch);
+        camera.orthographic = orthographic;
+        let specks = pixels_drawn_cut(&mut renderer, &graph, &camera, 0.0, Some(CUT_MM), 512);
+        // Without the cut, the post shows.
+        let whole = pixels_drawn_cut(&mut renderer, &graph, &camera, 0.0, None, 512);
         assert!(whole > 10_000, "{whole}");
         found.push((pitch, orthographic, specks));
     }
