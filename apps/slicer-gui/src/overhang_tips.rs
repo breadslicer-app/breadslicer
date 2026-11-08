@@ -4,9 +4,10 @@
  */
 
 //! The support tips the overhang map counts as holding the faces around them
-//! (#484): every tip of every support set the scene shows, where the set is
-//! drawn now, with the reach of the options the set was made with (the
-//! Supports tab's for a set that does not record them).
+//! (#484): every place a support of a set the scene shows touches the model,
+//! where the set is drawn now, with the reach of the options the set was made
+//! with (the Supports tab's for a set that does not record them). Each end of
+//! a twig or a stick holds the face it touches, as a tip does.
 //!
 //! Gathered again only when a set, its drawing or where its leaf stands
 //! changes: a frame otherwise hands the renderer the tips it already has.
@@ -95,7 +96,8 @@ fn shown_sets(document: &SceneDocument) -> Vec<ShownSet> {
         .unwrap_or_default()
 }
 
-/// The tips of `sets`, each where its leaf draws it and with its set's reach.
+/// Where the supports of `sets` touch the model, each where its leaf draws
+/// it and with its set's reach.
 fn tips_of(sets: &[ShownSet], fallback_reach_mm: f64) -> Vec<SupportTip> {
     sets.iter()
         .flat_map(|set| {
@@ -104,14 +106,18 @@ fn tips_of(sets: &[ShownSet], fallback_reach_mm: f64) -> Vec<SupportTip> {
                 .options()
                 .map_or(fallback_reach_mm, |o| o.tip_reach_mm()) as f32;
             set.session
-                .tips()
+                .pieces()
                 .into_iter()
-                .map(move |(_, [x, y, z])| SupportTip {
-                    pos: set
-                        .world
-                        .apply_to_vertex(Vertex::new([x as f32, y as f32, z as f32]))
-                        .coords(),
-                    reach_mm,
+                .flat_map(|piece| piece.contacts)
+                .map(move |contact| {
+                    let [x, y, z] = contact.surface;
+                    SupportTip {
+                        pos: set
+                            .world
+                            .apply_to_vertex(Vertex::new([x as f32, y as f32, z as f32]))
+                            .coords(),
+                        reach_mm,
+                    }
                 })
         })
         .collect()

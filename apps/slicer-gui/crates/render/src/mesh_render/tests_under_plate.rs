@@ -351,8 +351,10 @@ fn pixels_drawn(
     let drawn = frame_of(graph);
     empty
         .rgba
-        .chunks_exact(4)
-        .zip(drawn.rgba.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(drawn.rgba.as_chunks::<4>().0)
         .filter(|(e, d)| e.iter().zip(d.iter()).any(|(a, b)| a.abs_diff(*b) > 2))
         .count()
 }
