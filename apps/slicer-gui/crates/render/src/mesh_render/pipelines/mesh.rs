@@ -53,6 +53,10 @@ pub(in crate::mesh_render) struct MeshPipeline {
     /// the scene's depth without writing it, and blended over it.
     pub(in crate::mesh_render) line_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) ball_pipeline: wgpu::RenderPipeline,
+    /// What of the support meshes fades from under the plate, while the
+    /// plate fades (#481, #493): back faces culled, tested against the
+    /// scene's depth without writing it or the stencil, blended over.
+    pub(in crate::mesh_render) fade_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) uniform_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) uniforms_bind_group: wgpu::BindGroup,
     /// Group 0's layout: the uniforms and the support tips' data textures,
@@ -341,9 +345,33 @@ impl MeshPipeline {
                 })],
             },
             primitive: open,
-            depth_stencil: Some(depth_tested),
+            depth_stencil: Some(depth_tested.clone()),
             multisample,
             fragment: Some(blended("fs_support_ball")),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let fade_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer support fade pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<GpuVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                cull_mode: Some(wgpu::Face::Back),
+                ..open
+            },
+            depth_stencil: Some(depth_tested),
+            multisample,
+            fragment: Some(blended("fs_support_fade")),
             multiview_mask: None,
             cache: None,
         });
@@ -368,6 +396,7 @@ impl MeshPipeline {
             overlay_pipeline,
             line_pipeline,
             ball_pipeline,
+            fade_pipeline,
             uniform_buffer,
             uniforms_bind_group,
             uniforms_bind_group_layout,

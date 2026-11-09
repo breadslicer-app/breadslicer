@@ -1206,6 +1206,17 @@ impl Renderer {
                 if under_plate > 0.0 && raft_top_mm > 0.0 {
                     self.record_support_cuts(&mut pass, inst, selection, &support_objects);
                 }
+                // While the plate fades, what of the supports fades with it
+                // goes translucent (#481, #493).
+                let fading = raft_top_mm > 0.0 || supports_shown_up_to_mm < f32::MAX;
+                if under_plate > 0.0 && under_plate < 1.0 && fading {
+                    self.record_supports(
+                        &mut pass,
+                        &self.pipelines.mesh.fade_pipeline,
+                        inst,
+                        &support_objects,
+                    );
+                }
                 if under_plate > 0.0 && !self.support_lines.is_empty() {
                     self.support_lines.record(
                         &mut pass,
@@ -1401,6 +1412,36 @@ impl Renderer {
             pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
             pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
             pass.set_stencil_reference(u32::from(selection.binary_search(&obj.node_id()).is_ok()));
+            pass.draw_indexed(0..obj.index_count(), 0, 0..1);
+        }
+    }
+
+    /// The support meshes alone through `pipeline`, which writes no stencil.
+    fn record_supports(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        pipeline: &wgpu::RenderPipeline,
+        inst: &InstalledScene,
+        support_objects: &[bool],
+    ) {
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(
+            MeshBindGroup::Uniforms.idx(),
+            &self.pipelines.mesh.uniforms_bind_group,
+            &[],
+        );
+        for (i, obj) in inst.gpu.objects().iter().enumerate() {
+            if !support_objects.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let offset = (i as u64 * inst.gpu.model_stride()) as u32;
+            pass.set_bind_group(
+                MeshBindGroup::Models.idx(),
+                &inst.models_bind_group,
+                &[offset],
+            );
+            pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
+            pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..obj.index_count(), 0, 0..1);
         }
     }

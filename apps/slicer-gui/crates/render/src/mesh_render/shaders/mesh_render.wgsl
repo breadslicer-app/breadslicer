@@ -207,22 +207,55 @@ fn held_by_a_tip(p: vec3<f32>) -> bool {
 const TIP_CELL_MARGIN: f32 = 0.001;
 const TIP_LOOK_MARGIN: f32 = 0.0005;
 
-// A threshold in (0, 1) for each pixel of a 4 x 4 tile, every sixteenth
-// once: a fade that has reached f drops about f of the pixels, spread
-// evenly, so an opaque mesh fades without blending.
-fn screen_door(pixel: vec2<f32>) -> f32 {
-    var tile = array<u32, 16>(0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
-    let at = vec2<u32>(pixel) % 4u;
-    return (f32(tile[at.y * 4u + at.x]) + 0.5) / 16.0;
-}
-
 // Whether a support mesh's fragment fades out from under the plate: its
 // raft, below env_max.w, so the tips above it show (#481), and the rest
-// above under_plate.x, where the supports are drawn as lines (#493).
-fn hidden_under_plate(supports: u32, cut_z: f32, pixel: vec2<f32>) -> bool {
-    return supports == 1u
-        && (cut_z < u.env_max.w || cut_z > u.under_plate.x)
-        && screen_door(pixel) < u.env_min.w;
+// above under_plate.x, where the supports are drawn as lines (#493). While
+// the plate fades (env_min.w between 0 and 1) such a fragment is drawn
+// translucent by `fs_support_fade`, not by the opaque passes: a pattern of
+// dropped pixels flickered, and a selected set's outline ran round every
+// one of them.
+fn fades_under_plate(supports: u32, cut_z: f32) -> bool {
+    return u.env_min.w > 0.0 && supports == 1u
+        && (cut_z < u.env_max.w || cut_z > u.under_plate.x);
+}
+
+// A fragment of a model or a support as the main pass paints it: lit, with
+// the selection's highlight, the overhang map and the envelope's warnings.
+fn surface_color(
+    world_pos: vec3<f32>,
+    normal: vec3<f32>,
+    selected: u32,
+    breaches: u32,
+    tint: u32,
+) -> vec3<f32> {
+    // The interpolated smooth normal; a vertex without one shades flat from
+    // screen-space derivatives.
+    let flat_n = normalize(cross(dpdx(world_pos), dpdy(world_pos)));
+    let has_normal = dot(normal, normal) > 1e-12;
+    let n = select(flat_n, normalize(normal), has_normal);
+    let l = normalize(u.light_dir.xyz);
+    // abs() makes lighting orientation-agnostic, safe for any winding.
+    let lambert = abs(dot(n, l));
+    let ambient = 0.25;
+    let intensity = ambient + (1.0 - ambient) * lambert;
+    let unselected = vec3<f32>(0.75, 0.78, 0.85);
+    let highlighted = vec3<f32>(1.00, 0.78, 0.42);
+    let mapped = tint == MODEL_OVERHANG_MAP;
+    let selection_tint = select(1.0, OVERHANG_SELECTED_TINT, mapped);
+    let base_color = mix(unselected, highlighted, f32(selected) * selection_tint);
+    var washed = mix(base_color, WARNING_WASH, f32(breaches) * WARNING_WASH_STRENGTH);
+    if (mapped) {
+        // `flat_n` runs right-to-down across the screen, into it: the face
+        // normal, seen from its front, is the opposite way.
+        washed = overhang_paint(washed, -flat_n, world_pos);
+    }
+    // Componentwise envelope test: a fragment outside on any axis
+    // is painted in the full warning amber instead of the wash.
+    let lo = u.env_min.xyz;
+    let hi = u.env_max.xyz;
+    let outside = any(world_pos < lo) || any(world_pos > hi);
+    let final_color = select(washed, WARNING_OUTSIDE, outside);
+    return final_color * intensity;
 }
 
 @fragment
@@ -232,38 +265,24 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (in.cut_z > u.light_dir.w) {
         discard;
     }
-    if (hidden_under_plate(in.supports, in.cut_z, in.clip_pos.xy)) {
+    if (fades_under_plate(in.supports, in.cut_z)) {
         discard;
     }
-    // The interpolated smooth normal; a vertex without one shades flat from
-    // screen-space derivatives.
-    let flat_n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
-    let has_normal = dot(in.normal, in.normal) > 1e-12;
-    let n = select(flat_n, normalize(in.normal), has_normal);
-    let l = normalize(u.light_dir.xyz);
-    // abs() makes lighting orientation-agnostic, safe for any winding.
-    let lambert = abs(dot(n, l));
-    let ambient = 0.25;
-    let intensity = ambient + (1.0 - ambient) * lambert;
-    let unselected = vec3<f32>(0.75, 0.78, 0.85);
-    let highlighted = vec3<f32>(1.00, 0.78, 0.42);
-    let mapped = in.tint == MODEL_OVERHANG_MAP;
-    let selection_tint = select(1.0, OVERHANG_SELECTED_TINT, mapped);
-    let base_color = mix(unselected, highlighted, f32(in.selected) * selection_tint);
-    var washed = mix(base_color, WARNING_WASH, f32(in.breaches) * WARNING_WASH_STRENGTH);
-    if (mapped) {
-        // `flat_n` runs right-to-down across the screen, into it: the face
-        // normal, seen from its front, is the opposite way.
-        washed = overhang_paint(washed, -flat_n, in.world_pos);
+    let color = surface_color(in.world_pos, in.normal, in.selected, in.breaches, in.tint);
+    return vec4<f32>(color, 1.0);
+}
+
+// What of a support mesh fades from under the plate, while the plate fades
+// (#481, #493): drawn after the opaque passes, as the main pass would paint
+// it, as opaque as the plate still is. It writes neither depth nor stencil,
+// so a selected set's outline keeps to what stays.
+@fragment
+fn fs_support_fade(in: VsOut) -> @location(0) vec4<f32> {
+    if (in.cut_z > u.light_dir.w || !fades_under_plate(in.supports, in.cut_z)) {
+        discard;
     }
-    // Componentwise envelope test: a fragment outside on any axis
-    // is painted in the full warning amber instead of the wash.
-    let p = in.world_pos;
-    let lo = u.env_min.xyz;
-    let hi = u.env_max.xyz;
-    let outside = any(p < lo) || any(p > hi);
-    let final_color = select(washed, WARNING_OUTSIDE, outside);
-    return vec4<f32>(final_color * intensity, 1.0);
+    let color = surface_color(in.world_pos, in.normal, in.selected, in.breaches, in.tint);
+    return vec4<f32>(color, 1.0 - u.env_min.w);
 }
 
 // The cut a hidden raft leaves in a support mesh (#481). From under the
@@ -276,7 +295,7 @@ fn fs_cap(in: VsOut) -> @location(0) vec4<f32> {
     if (in.supports != 1u || in.cut_z > u.light_dir.w) {
         discard;
     }
-    if (hidden_under_plate(in.supports, in.cut_z, in.clip_pos.xy)) {
+    if (fades_under_plate(in.supports, in.cut_z)) {
         discard;
     }
     // The cut faces down, toward the camera under the plate.

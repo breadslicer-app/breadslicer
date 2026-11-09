@@ -548,3 +548,76 @@ fn a_support_line_behind_the_model_does_not_show() {
     let below = frame_of(&mut renderer, &graph, &under(), 128);
     assert!(amber_pixels(&below) > 20, "{}", amber_pixels(&below));
 }
+
+/// While the plate fades, what of a support fades with it goes evenly
+/// translucent, selected or not: every pixel it covers shows it, none
+/// dropped in a pattern for the selection's outline to run round (#493).
+#[test]
+fn a_support_fading_with_the_plate_goes_evenly_translucent() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    // A support 40 mm up, seen steeply from 2.5 mm under the plate: half
+    // faded, with the supports drawn as lines (fading whole).
+    let target = Vec3::new(0.0, 0.0, 40.0);
+    let mut camera = OrbitCamera::new(target, 50.0);
+    camera.target = target;
+    camera.distance = 50.0;
+    camera.pitch = (-0.85f32).asin();
+    camera.yaw = 0.3;
+    let fade = under_plate_fade(&camera);
+    assert!(fade > 0.3 && fade < 0.7, "{fade}");
+    let mut graph = Scene::new();
+    let root = graph.add_group(None, Transform3D::Identity);
+    graph.add_root(root).expect("group root");
+    let leaf = graph
+        .add_leaf(
+            None,
+            Transform3D::Affine(AffineTransform3D::identity()),
+            LeafPayload::Mesh(Arc::new(supports(square(60.0, 40.0)))),
+        )
+        .expect("add leaf");
+    graph.add_child(root, leaf).expect("attach leaf");
+    let empty = scene_of(Vec::new());
+    renderer.set_support_lines(-1.0, None);
+    for selection in [&[][..], &[leaf][..]] {
+        let mut frame = |graph: &Scene| {
+            renderer.upload_scene(graph).expect("upload the scene");
+            renderer
+                .workspace_pixels_for_test(
+                    SceneRender {
+                        graph,
+                        selection,
+                        gizmo: None,
+                        clip_z: None,
+                    },
+                    BV,
+                    &camera,
+                    SIZE,
+                    SIZE,
+                )
+                .expect("the frame is not refused")
+                .expect("a sized frame")
+        };
+        let bare = frame(&empty);
+        let drawn = frame(&graph);
+        // The middle of the frame, all support.
+        let mut kept = Vec::new();
+        for y in SIZE / 2 - 8..SIZE / 2 + 8 {
+            for x in SIZE / 2 - 8..SIZE / 2 + 8 {
+                let i = ((y * SIZE + x) * 4) as usize;
+                let shows = (0..3).any(|k| bare.rgba[i + k].abs_diff(drawn.rgba[i + k]) > 2);
+                if !shows {
+                    kept.push((x, y));
+                }
+            }
+        }
+        assert!(
+            kept.is_empty(),
+            "selected {}: {} pixels show no support: {kept:?}",
+            !selection.is_empty(),
+            kept.len()
+        );
+    }
+}
