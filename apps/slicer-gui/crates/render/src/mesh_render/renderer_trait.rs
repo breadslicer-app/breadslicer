@@ -102,6 +102,17 @@ pub trait MeshRenderer {
     /// them (#484): what they reach, it leaves plain.
     fn set_support_tips(&mut self, _tips: &[super::SupportTip]) {}
 
+    /// Whether a model under the overhang map waits for the surface around
+    /// its vertices (#498): a frame drawn once it is ready shows it.
+    fn overhang_map_pending(&self) -> bool {
+        false
+    }
+
+    /// Whether a surface the last frame waited for is ready (#498).
+    fn overhang_map_arrived(&self) -> bool {
+        false
+    }
+
     /// How high the rafts of the scene reach, mm (0 without one), for the
     /// view from under the plate to hide them (#481).
     fn set_raft_top(&mut self, _mm: f32) {}
@@ -214,6 +225,14 @@ impl MeshRenderer for Renderer {
 
     fn set_support_tips(&mut self, tips: &[super::SupportTip]) {
         Renderer::set_support_tips(self, tips);
+    }
+
+    fn overhang_map_pending(&self) -> bool {
+        Renderer::overhang_map_pending(self)
+    }
+
+    fn overhang_map_arrived(&self) -> bool {
+        Renderer::overhang_map_arrived(self)
     }
 
     fn set_raft_top(&mut self, mm: f32) {

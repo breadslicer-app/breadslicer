@@ -71,12 +71,12 @@ const ADD_REACH_MM: f64 = 2.0;
 /// that looks down at the size of a tip and its cone. 0.4 mm is the
 /// narrowest gap a support goes into: a surface closer than that across a
 /// gap holds no support either way.
-const COVERED_SURFACE_MM: f64 = 0.4;
+pub const COVERED_SURFACE_MM: f64 = 0.4;
 /// How much the faces within [`COVERED_SURFACE_MM`] have to agree, the length
 /// of their mean normal over their weight, for that mean to stand for the
 /// surface: below it (a strand thinner than the ball, a sharp ridge) the
 /// face itself does.
-const COVERED_AGREEMENT: f64 = 0.25;
+pub const COVERED_AGREEMENT: f64 = 0.25;
 /// How far a hand-placed support reaches for a support to hang from.
 const MANUAL_ATTACH_REACH_MM: f64 = 15.0;
 /// How far from vertical a hand-placed support may lean to hang from

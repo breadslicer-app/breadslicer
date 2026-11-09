@@ -41,6 +41,9 @@ impl MeshBindGroup {
 
 pub(in crate::mesh_render) struct MeshPipeline {
     pub(in crate::mesh_render) pipeline: wgpu::RenderPipeline,
+    /// A model under the overhang map whose surface is read (#498): the main
+    /// pipeline with a second vertex buffer, the surface around each vertex.
+    pub(in crate::mesh_render) map_pipeline: wgpu::RenderPipeline,
     /// The cuts the hidden rafts leave in the support meshes (#481): the
     /// main pipeline with the front faces culled, so a support mesh's
     /// inside draws through `fs_cap` where the raft no longer covers it.
@@ -141,19 +144,31 @@ impl MeshPipeline {
             immediate_size: 0,
         });
 
-        let solid_pipeline = |label: &'static str, cull: wgpu::Face, fragment: &'static str| {
+        let vertices = wgpu::VertexBufferLayout {
+            array_stride: size_of::<GpuVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+        };
+        let surfaces = wgpu::VertexBufferLayout {
+            array_stride: size_of::<[f32; 4]>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![2 => Float32x4],
+        };
+        let plain_buffers = [Some(vertices.clone())];
+        let mapped_buffers = [Some(vertices), Some(surfaces)];
+        let solid_pipeline = |label: &'static str,
+                              cull: wgpu::Face,
+                              vertex: &'static str,
+                              buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+                              fragment: &'static str| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("vs_main"),
+                    entry_point: Some(vertex),
                     compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: size_of::<GpuVertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                    })],
+                    buffers,
                 },
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -212,10 +227,25 @@ impl MeshPipeline {
                 cache: None,
             })
         };
-        let pipeline = solid_pipeline("mesh-viewer pipeline", wgpu::Face::Back, "fs_main");
+        let pipeline = solid_pipeline(
+            "mesh-viewer pipeline",
+            wgpu::Face::Back,
+            "vs_main",
+            &plain_buffers,
+            "fs_main",
+        );
+        let map_pipeline = solid_pipeline(
+            "mesh-viewer overhang map pipeline",
+            wgpu::Face::Back,
+            "vs_mapped",
+            &mapped_buffers,
+            "fs_main",
+        );
         let cap_pipeline = solid_pipeline(
             "mesh-viewer support cap pipeline",
             wgpu::Face::Front,
+            "vs_main",
+            &plain_buffers,
             "fs_cap",
         );
 
@@ -455,6 +485,7 @@ impl MeshPipeline {
 
         Self {
             pipeline,
+            map_pipeline,
             cap_pipeline,
             overlay_pipeline,
             line_pipeline,

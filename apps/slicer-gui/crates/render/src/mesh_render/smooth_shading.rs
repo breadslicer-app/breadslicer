@@ -35,6 +35,8 @@ pub(super) const CREASE_DEG: f32 = 60.0;
 pub(super) struct SmoothMesh {
     pub vertices: Vec<GpuVertex>,
     pub indices: Vec<u32>,
+    /// The source vertex of each GPU vertex.
+    pub source: Vec<u32>,
 }
 
 /// What tells two meshes apart for the cache: where the mesh lives and a few
@@ -157,6 +159,7 @@ pub(super) fn build(mesh: &IndexedMesh, crease_deg: f32) -> SmoothMesh {
 
     let cos_crease = crease_deg.to_radians().cos();
     let mut vertices: Vec<GpuVertex> = Vec::with_capacity(positions.len());
+    let mut source: Vec<u32> = Vec::with_capacity(positions.len());
     // The first GPU vertex made for each source vertex, and the extra ones a
     // crease split off.
     let mut first: Vec<u32> = vec![u32::MAX; positions.len()];
@@ -179,19 +182,25 @@ pub(super) fn build(mesh: &IndexedMesh, crease_deg: f32) -> SmoothMesh {
                 first[v] = vertices.len() as u32;
                 first_normal[v] = bits;
                 vertices.push(GpuVertex::with_normal(positions[v], n));
+                source.push(v as u32);
                 first[v]
             } else if first_normal[v] == bits {
                 first[v]
             } else {
                 *extra.entry((v, bits)).or_insert_with(|| {
                     vertices.push(GpuVertex::with_normal(positions[v], n));
+                    source.push(v as u32);
                     (vertices.len() - 1) as u32
                 })
             };
             indices.push(index);
         }
     }
-    SmoothMesh { vertices, indices }
+    SmoothMesh {
+        vertices,
+        indices,
+        source,
+    }
 }
 
 #[cfg(test)]

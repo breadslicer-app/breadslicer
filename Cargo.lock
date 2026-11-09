@@ -5401,6 +5401,7 @@ dependencies = [
  "harfrust 0.8.4",
  "image",
  "pollster",
+ "rayon",
  "sc-geom",
  "sc-mesh-core",
  "sc-mesh-fixtures",

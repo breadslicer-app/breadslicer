@@ -52,6 +52,16 @@ impl ModelEntry {
     pub(super) fn is_supports(&self) -> bool {
         self.flags[3] == 1
     }
+
+    /// Whether the overhang map paints the object.
+    pub(super) fn is_mapped(&self) -> bool {
+        self.flags[2] == MODEL_OVERHANG_MAP
+    }
+
+    /// The world matrix the object is drawn with.
+    pub(super) fn matrix(&self) -> Mat4 {
+        Mat4::from_cols_array_2d(&self.model)
+    }
 }
 
 pub(super) const MODEL_ENTRY_SIZE: u64 = size_of::<ModelEntry>() as u64;
