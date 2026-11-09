@@ -114,6 +114,10 @@ pub(crate) struct ViewportController {
     repair_marks: crate::repair_marks::MarksLayer,
     /// The overhang map's box, and the self-support angle it paints by.
     overhang_map_on: Cell<bool>,
+    /// The Supports tab's box (#492): whether the rafts fade out with the
+    /// plate when the camera goes under it (#481), and the hand tools reach
+    /// past them.
+    hide_rafts_under_plate: Cell<bool>,
     overhang_angle_deg: Cell<f32>,
     /// The support tips the map leaves what they hold plain by (#484), and
     /// the reach of the Supports tab's options, for a set that records none.
@@ -211,6 +215,7 @@ impl ViewportController {
             overlay: RefCell::new(None),
             repair_marks: Default::default(),
             overhang_map_on: Cell::new(false),
+            hide_rafts_under_plate: Cell::new(true),
             overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
             overhang_tips: Default::default(),
             tab_tip_reach_mm: Cell::new(default_tip_reach_mm()),
@@ -266,6 +271,7 @@ impl ViewportController {
             overlay: RefCell::new(None),
             repair_marks: Default::default(),
             overhang_map_on: Cell::new(false),
+            hide_rafts_under_plate: Cell::new(true),
             overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
             overhang_tips: Default::default(),
             tab_tip_reach_mm: Cell::new(default_tip_reach_mm()),
@@ -1001,6 +1007,21 @@ impl ViewportController {
         }
     }
 
+    /// Whether the rafts fade out with the plate when the camera goes under
+    /// it (#492). Off, they stay drawn from under the plate and the hand
+    /// tools stop on them; the plate still fades.
+    pub(crate) fn set_hide_rafts_under_plate(&self, on: bool) {
+        if self.hide_rafts_under_plate.replace(on) != on {
+            self.mark_dirty();
+        }
+    }
+
+    /// Whether `camera` sees past the rafts: under the plate, with the
+    /// Supports tab's box on (#481, #492).
+    fn sees_past_rafts(&self, camera: &crate::camera::OrbitCamera) -> bool {
+        self.hide_rafts_under_plate.get() && sees_through_the_plate(camera)
+    }
+
     /// The self-support angle the overhang map paints by, degrees from
     /// horizontal: the one the support engine is set to.
     pub(crate) fn set_overhang_angle(&self, degrees: f32) {
@@ -1028,10 +1049,18 @@ impl ViewportController {
             .tips(self.session.document(), self.tab_tip_reach_mm.get())
     }
 
+    #[cfg(test)]
+    pub(crate) fn raft_top_under_plate_for_test(&self) -> f32 {
+        self.raft_top_under_plate()
+    }
+
     /// What the overhang map shows in the current section, if anything.
     /// How high the rafts reach while the camera is under the plate, for the
     /// view to fade them with it (#481); 0 with the camera above it.
     fn raft_top_under_plate(&self) -> f32 {
+        if !self.hide_rafts_under_plate.get() {
+            return 0.0;
+        }
         let under = self
             .camera
             .camera_cell()
@@ -2604,7 +2633,7 @@ impl ViewportController {
         // the cores.
         let document = self.session.document();
         let sessions = document.support_sessions();
-        let through_rafts = sees_through_the_plate(&camera);
+        let through_rafts = self.sees_past_rafts(&camera);
         let hits = |pixels: &[[f32; 2]]| -> Vec<Option<super::support_drag::ScreenHit>> {
             document
                 .with_scene(|spatial| {
@@ -2774,7 +2803,7 @@ impl ViewportController {
                 cursor.x,
                 cursor.y,
             );
-            (ray, sees_through_the_plate(camera))
+            (ray, self.sees_past_rafts(camera))
         };
         let document = self.session.document();
         let sessions = document.support_sessions();

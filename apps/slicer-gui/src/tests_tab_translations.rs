@@ -493,6 +493,58 @@ fn the_overhang_card_shows_in_spanish_and_its_key_follows_the_box() {
     assert_eq!(shown(true), (true, true, true, true));
 }
 
+/// The top and bottom of the drawn element labelled `label`.
+fn span(window: &MainWindow, label: &str) -> Option<(f32, f32)> {
+    ElementHandle::find_by_accessible_label(window, label)
+        .find(|e| e.size().height > 0.0)
+        .map(|e| {
+            let at = e.absolute_position();
+            (at.y, at.y + e.size().height)
+        })
+}
+
+/// The PLACEMENT card holds every row it draws with a zone preset, whose
+/// summary wraps on several lines: its height once left the last rows under
+/// the RAFT card (#492), the Cross-bracing box cut and the Shape row hidden.
+#[test]
+fn the_placement_card_holds_its_last_rows_under_a_zone_preset() {
+    let (bracing, shape, raft) = in_language(
+        "en",
+        WorkspaceSection::Supports,
+        |window| {
+            window.set_support_zone_summary(
+                "This preset sets the size and spacing of every support by zone: island                  first layers, their reinforcement, overhangs past 38° and stabilization.
+                 Tips: 0.18, 0.24, 0.3, 0.4 mm.
+Bracing: 0.7 mm, from 5 mm up."
+                    .into(),
+            );
+            window.set_support_grid_on(true);
+            window.set_support_grid_hint("Recommended for this preset: 7 mm.".into());
+        },
+        |window| {
+            (
+                span(window, "Cross-bracing"),
+                span(window, "Shape"),
+                span(window, "RAFT"),
+            )
+        },
+    );
+    let (bracing, shape, raft) = (
+        bracing.expect("the Cross-bracing box"),
+        shape.expect("the Shape row"),
+        raft.expect("the RAFT card"),
+    );
+    assert!(
+        bracing.1 < shape.0,
+        "Cross-bracing {bracing:?} over Shape {shape:?}"
+    );
+    // The card's bottom padding and the gap between cards lie between them.
+    assert!(
+        shape.1 + 12.0 < raft.0,
+        "Shape {shape:?} under the RAFT title {raft:?}"
+    );
+}
+
 #[test]
 fn a_tilted_model_shows_world_and_model_sizes_side_by_side() {
     for t in [

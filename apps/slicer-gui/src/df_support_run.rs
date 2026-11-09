@@ -164,6 +164,9 @@ pub(crate) struct DfSupportRun {
     /// box (#389) in step with the settings, shared by every window.
     lift_pref: RefCell<Option<Subscription>>,
     overhang_pref: RefCell<Option<Subscription>>,
+    /// Keeps the Supports tab's raft-under-the-plate box (#492) following the
+    /// shared setting.
+    raft_under_plate_pref: RefCell<Option<Subscription>>,
     /// For the run in flight that regenerates supports (#153): the scene
     /// revision that left its models waiting, and the models.
     regenerating: RefCell<Option<(SceneRevision, SupportsWanted)>>,
@@ -1433,6 +1436,7 @@ impl DfSupportRun {
             cancelled: Cell::new(false),
             lift_pref: RefCell::new(None),
             overhang_pref: RefCell::new(None),
+            raft_under_plate_pref: RefCell::new(None),
             regenerating: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
@@ -1632,7 +1636,37 @@ impl DfSupportRun {
         }
         run.show_overhang_map(run.bus.snapshot().overhang_map);
         run.push_overhang_limit(ui);
+        {
+            let bus = run.bus.clone();
+            ui.on_support_hide_rafts_under_plate_toggled(move |on| {
+                bus.update(move |snap| {
+                    snap.hide_rafts_under_plate = on;
+                    PreferencesChange::HideRaftsUnderPlate
+                });
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            let subscription = run.bus.subscribe(move |snap, change| {
+                if matches!(change, PreferencesChange::HideRaftsUnderPlate)
+                    && let Some(run) = weak.upgrade()
+                {
+                    run.hide_rafts_under_plate(snap.hide_rafts_under_plate);
+                }
+            });
+            *run.raft_under_plate_pref.borrow_mut() = Some(subscription);
+        }
+        run.hide_rafts_under_plate(run.bus.snapshot().hide_rafts_under_plate);
         run
+    }
+
+    /// Whether the rafts fade out with the plate from under it in this window
+    /// (#492).
+    fn hide_rafts_under_plate(&self, on: bool) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_hide_rafts_under_plate(on);
+        }
+        self.ctrl.set_hide_rafts_under_plate(on);
     }
 
     /// Turns the overhang map on or off in this window (#91).
@@ -8996,6 +9030,26 @@ mod hand_edit_tests {
                 far(hit, aimed) < 2.0,
                 "on the shaft: {hit:?}, aimed {aimed:?}"
             );
+            assert!((ctrl.raft_top_under_plate_for_test() - top as f32).abs() < 1e-3);
+
+            // With the Supports tab's box off (#492) the raft stays drawn and
+            // the tool stops on it; back on, it sees past it again.
+            assert!(window.get_support_hide_rafts_under_plate());
+            window.invoke_support_hide_rafts_under_plate_toggled(false);
+            assert!(!window.get_support_hide_rafts_under_plate());
+            assert_eq!(ctrl.raft_top_under_plate_for_test(), 0.0);
+            let on_raft = ctrl
+                .support_hit_for_test(crate::viewport::ScreenPoint::new(at[0], at[1]))
+                .expect("the raft under the cursor");
+            assert!(
+                f64::from(on_raft[2]) <= top + 1e-3,
+                "on the raft: {on_raft:?}"
+            );
+            window.invoke_support_hide_rafts_under_plate_toggled(true);
+            let again = ctrl
+                .support_hit_for_test(crate::viewport::ScreenPoint::new(at[0], at[1]))
+                .expect("a support under the cursor");
+            assert!(far(again, aimed) < 2.0, "past the raft again: {again:?}");
         });
     }
 

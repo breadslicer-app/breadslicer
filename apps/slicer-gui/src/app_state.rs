@@ -361,6 +361,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_lift_models_on_plate(snap.lift_models_on_plate);
     settings.set_overhang_map(snap.overhang_map);
     settings.set_fix_all_repeat(snap.fix_all_repeat);
+    settings.set_hide_rafts_under_plate(snap.hide_rafts_under_plate);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
@@ -518,6 +519,7 @@ impl AppState {
             lift_models_on_plate: settings.lift_models_on_plate(),
             overhang_map: settings.overhang_map(),
             fix_all_repeat: settings.fix_all_repeat(),
+            hide_rafts_under_plate: settings.hide_rafts_under_plate(),
             // Never stored: the log runs until the app closes and every launch
             // starts with it off (#74).
             diagnostic_log: false,
@@ -2258,6 +2260,16 @@ mod settings_saver_tests {
     }
 
     #[test]
+    fn saver_mapping_carries_the_rafts_under_the_plate() {
+        let mut settings = AppSettings::default();
+        let mut snap = snapshot_with(ThemePreference::System);
+        assert!(snap.hide_rafts_under_plate);
+        snap.hide_rafts_under_plate = false;
+        apply_snapshot_to_settings(&mut settings, &snap);
+        assert!(!settings.hide_rafts_under_plate());
+    }
+
+    #[test]
     fn saver_mapping_carries_the_lift_of_models_on_the_plate() {
         let mut settings = AppSettings::default();
         let mut snap = snapshot_with(ThemePreference::System);
@@ -2558,6 +2570,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::LiftModelsOnPlate,
             PreferencesChange::OverhangMap,
             PreferencesChange::FixAllRepeat,
+            PreferencesChange::HideRaftsUnderPlate,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,

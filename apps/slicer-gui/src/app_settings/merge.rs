@@ -35,6 +35,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         lift_models_on_plate,
         overhang_map,
         fix_all_repeat,
+        hide_rafts_under_plate,
         silenced_messages,
         object_list,
         slice_panel,
@@ -89,6 +90,11 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         ),
         overhang_map: pick(&base.overhang_map, &ours.overhang_map, overhang_map),
         fix_all_repeat: pick(&base.fix_all_repeat, &ours.fix_all_repeat, fix_all_repeat),
+        hide_rafts_under_plate: pick(
+            &base.hide_rafts_under_plate,
+            &ours.hide_rafts_under_plate,
+            hide_rafts_under_plate,
+        ),
         silenced_messages: merge_set(
             &base.silenced_messages,
             &ours.silenced_messages,
