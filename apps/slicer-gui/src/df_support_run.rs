@@ -2397,8 +2397,10 @@ impl DfSupportRun {
     /// support (mm²) the engine is set to: the Orient tool (#182) counts tips
     /// as the engine places them.
     pub(crate) fn overhang_terms(&self) -> (f64, f64) {
+        // As the engine reads them (#422): a zone preset's own angle, and
+        // the area around each tip its spacing holds.
         let o = self.options.borrow();
-        (o.overhang_angle_deg, o.area_per_support_mm2)
+        (o.self_support_angle_deg(), o.tip_reach_mm().powi(2))
     }
 
     /// Whether models wait for supports the last edit took away, or a run
@@ -7436,6 +7438,12 @@ mod hand_edit_tests {
             });
             assert_eq!(shown(), Some(52.0));
             assert_eq!(window.get_overhang_map_limit(), "52°");
+            // Orient scores by the angle the engine gets (#422), and by the
+            // area each tip of the preset holds.
+            let (angle, area) = run.overhang_terms();
+            assert_eq!(angle, run.options.borrow().self_support_angle_deg());
+            assert_eq!(angle, 52.0);
+            assert!((area - run.options.borrow().tip_reach_mm().powi(2)).abs() < 1e-9);
             run.set_options(DfSupportOptions {
                 zones: Some(figures_70()),
                 ..Default::default()
