@@ -40,13 +40,18 @@ use support_gen_df::supports::placement_logic::cone_axis_policy::is_side_wall_co
 use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use support_gen_df::supports::support_type_registry::{
-    SupportOriginId, SupportTypeId, near_plate_origin,
+    SupportOriginId, SupportPlacementMetric, SupportPlacementSettingPath, SupportTypeId,
+    near_plate_origin, select_type_for_placement,
+};
+use support_gen_df::supports::support_types::contact_bridge::{
+    BridgeEntity, ContactBridgeRequest, build_contact_bridge,
 };
 use support_gen_df::supports::support_types::trunk::trunk_builder::{
     TrunkBuildInput, build_trunk_data,
 };
 use support_gen_df::supports::types::LimitationCode;
 use support_gen_df::supports::types::{Knot, SupportCollections, SupportState};
+use support_gen_df::three::ray::Ray;
 use support_gen_df::three::{Matrix4, Vec3};
 use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
 
@@ -60,6 +65,18 @@ use crate::{DF_SUPPORT_MESH_NAME, SettingsRecipe, weld_parts};
 
 /// How far from the model surface a click may land and still place a support.
 const ADD_REACH_MM: f64 = 2.0;
+/// How far around a point the surface a tip sits on is read (#491): the
+/// faces of a detailed sculpt are a few hundredths of a millimetre, smaller
+/// than a pixel, and the one under the cursor may look up inside a surface
+/// that looks down at the size of a tip and its cone. 0.4 mm is the
+/// narrowest gap a support goes into: a surface closer than that across a
+/// gap holds no support either way.
+const COVERED_SURFACE_MM: f64 = 0.4;
+/// How much the faces within [`COVERED_SURFACE_MM`] have to agree, the length
+/// of their mean normal over their weight, for that mean to stand for the
+/// surface: below it (a strand thinner than the ball, a sharp ridge) the
+/// face itself does.
+const COVERED_AGREEMENT: f64 = 0.25;
 /// How far a hand-placed support reaches for a support to hang from.
 const MANUAL_ATTACH_REACH_MM: f64 = 15.0;
 /// How far from vertical a hand-placed support may lean to hang from
@@ -1130,6 +1147,69 @@ impl DfSupportSession {
         best.map(|(i, _, p, n)| (i, p, n))
     }
 
+    /// Why a tip may not touch a surface of normal `n`: it looks up, or it
+    /// is a wall, which a run keeps its trunks off and a tip placed by hand
+    /// keeps off too.
+    fn untouchable(&self, n: Vec3) -> Option<AddNote> {
+        let tip = &self.settings.supports.tip;
+        if n.z > 0.0 {
+            Some(AddNote::FacesUp)
+        } else if is_side_wall_contact(
+            n,
+            tip.cone_angle_mode.unwrap_or_default(),
+            tip.adaptive_cone_angle_offset_deg,
+        ) {
+            Some(AddNote::SteepSurface)
+        } else {
+            None
+        }
+    }
+
+    /// Where a tip aimed at `point` touches the model: [`Self::contact`],
+    /// and the normal it takes there, or why it may not touch. The face's,
+    /// when a tip may touch it; else the surface the tip covers
+    /// ([`Self::covered_normal`]), when a tip may touch that (#491): on a
+    /// detailed sculpt the face under the cursor is a facet smaller than a
+    /// pixel that may look up, or sideways, inside a surface that looks
+    /// down. A refusal tells of the surface.
+    fn tip_contact(&self, point: [f64; 3]) -> Option<(usize, Vec3, Result<Vec3, AddNote>)> {
+        let (i, at, face) = self.contact(point)?;
+        if self.untouchable(face).is_none() {
+            return Some((i, at, Ok(face)));
+        }
+        let covered = self.covered_normal(i, at, face);
+        Some((i, at, self.untouchable(covered).map_or(Ok(covered), Err)))
+    }
+
+    /// The normal of the surface around `at` on model `i`, a point on a face
+    /// of normal `face` (#491): the mean of the faces within
+    /// [`COVERED_SURFACE_MM`], each weighted by its area inside that ball. A
+    /// face counts at most the disc the ball cuts from its plane, so the big
+    /// faces of a plain model weigh what a fine mesh's would. `face` itself
+    /// when they disagree too much to stand for one surface.
+    fn covered_normal(&self, i: usize, at: Vec3, face: Vec3) -> Vec3 {
+        let bvh = self.bvh(i);
+        let reach_sq = COVERED_SURFACE_MM * COVERED_SURFACE_MM;
+        let mut sum = Vec3::ZERO;
+        let mut weight = 0.0;
+        bvh.faces_within(at, COVERED_SURFACE_MM, |f, d| {
+            let tri = bvh.triangle(f);
+            let n = Vec3::sub_vectors(tri.b, tri.a).cross(Vec3::sub_vectors(tri.c, tri.a));
+            let area = n.length() / 2.0;
+            if area <= 1e-18 {
+                return;
+            }
+            let w = area.min(std::f64::consts::PI * (reach_sq - d * d).max(0.0));
+            sum = sum.add_scaled_vector(n, w / (2.0 * area));
+            weight += w;
+        });
+        if weight > 0.0 && sum.length() >= COVERED_AGREEMENT * weight {
+            sum.normalize()
+        } else {
+            face
+        }
+    }
+
     fn id_source(&mut self) -> impl FnMut() -> String + '_ {
         let prefix = self.id_prefix.clone();
         let next = &mut self.next_id;
@@ -1159,35 +1239,28 @@ impl DfSupportSession {
         at: At,
         how: &AddOptions,
     ) -> Result<Placed, (EditError, Option<AddNote>)> {
+        // The tip goes exactly where the person points (#3): a surface that
+        // looks up is no place for one, nor is a wall (a run keeps its
+        // trunks off one), and that is said rather than the tip going to
+        // some other surface near it.
+        let refused = |note: AddNote| {
+            let why = match note {
+                AddNote::FacesUp => "the surface faces up".to_owned(),
+                _ => RejectReason::SideWallContact.as_str().to_owned(),
+            };
+            Err((EditError::NoRoute(why), Some(note)))
+        };
         let (i, tip, normal) = match at {
-            At::Point(point) => match self.contact(point) {
-                Some(contact) => contact,
+            At::Point(point) => match self.tip_contact(point) {
+                Some((i, tip, Ok(normal))) => (i, tip, normal),
+                Some((_, _, Err(note))) => return refused(note),
                 None => return Err((EditError::NothingThere, None)),
             },
-            At::Contact(i, tip, normal) => (i, tip, normal),
+            At::Contact(i, tip, normal) => match self.untouchable(normal) {
+                Some(note) => return refused(note),
+                None => (i, tip, normal),
+            },
         };
-        // The tip goes exactly where the person points (#3): a face that
-        // looks up is no place for one, and says so, rather than the tip
-        // going to some other surface near it.
-        if normal.z > 0.0 {
-            return Err((
-                EditError::NoRoute("the surface faces up".to_owned()),
-                Some(AddNote::FacesUp),
-            ));
-        }
-        // Nor is a wall: a run keeps its trunks off one, and a tip placed
-        // by hand keeps to the same rule whatever holds it.
-        let tip_settings = &self.settings.supports.tip;
-        if is_side_wall_contact(
-            normal,
-            tip_settings.cone_angle_mode.unwrap_or_default(),
-            tip_settings.adaptive_cone_angle_offset_deg,
-        ) {
-            return Err((
-                EditError::NoRoute(RejectReason::SideWallContact.as_str().to_owned()),
-                Some(AddNote::SteepSurface),
-            ));
-        }
         let bvh = self.bvh(i);
         let mut settings = (*self.settings).clone();
         let zone = hand_settings(&mut settings, how);
@@ -1561,7 +1634,7 @@ impl DfSupportSession {
             }
             Err((EditError::NoRoute(_) | EditError::CannotAttach(_), note)) => {
                 let preview = EditPreview {
-                    mesh: self.straight_trunk(point)?,
+                    mesh: self.refused_at(point, note)?,
                     valid: false,
                     attached: false,
                     note,
@@ -1574,16 +1647,91 @@ impl DfSupportSession {
         }
     }
 
-    /// A straight trunk from the model surface at `point` to the plate,
-    /// drawn on its own: what a preview shows red where nothing can hold
-    /// that point.
-    fn straight_trunk(&self, point: [f64; 3]) -> Result<IndexedMesh, EditError> {
-        let (i, tip, normal) = self.contact(point).ok_or(EditError::NothingThere)?;
+    /// What a preview shows red where nothing can hold `point`, refused as
+    /// `note` says (#491). A surface no tip may touch (it looks up, or it is
+    /// a wall) shows no support: none was tried. Otherwise the support
+    /// straight down to what lies under the point ([`Self::straight_drop`]).
+    fn refused_at(&self, point: [f64; 3], note: Option<AddNote>) -> Result<IndexedMesh, EditError> {
+        match note {
+            Some(AddNote::FacesUp | AddNote::SteepSurface) => {
+                self.contact(point).ok_or(EditError::NothingThere)?;
+                Ok(IndexedMesh::new(None, Vec::new(), Vec::new()))
+            }
+            _ => self.straight_drop(point),
+        }
+    }
+
+    /// The support straight down from the model surface at `point` to what
+    /// lies under it, drawn on its own (#491): to the model right below, a
+    /// support from one surface to the other, as the placement tries there;
+    /// else a trunk to the plate. A red preview drawn as a trunk to the
+    /// plate through the model below read as a support sent to the plate.
+    fn straight_drop(&self, point: [f64; 3]) -> Result<IndexedMesh, EditError> {
+        let (i, tip, face) = self.contact(point).ok_or(EditError::NothingThere)?;
+        let normal = match self.tip_contact(point) {
+            Some((_, _, Ok(n))) => n,
+            _ => face,
+        };
         let mut n = 0;
         let mut new_id = || {
             n += 1;
             format!("preview-{n}")
         };
+        let bvh = self.bvh(i);
+        // Past the tip's own surface: the bridge looks from a tenth of a
+        // millimetre under the contact.
+        let below = bvh.raycast_first(
+            &Ray {
+                origin: tip,
+                direction: Vec3::new(0.0, 0.0, -1.0),
+            },
+            Side::Double,
+            0.1,
+            f64::INFINITY,
+        );
+        if let Some(hit) = below {
+            let tri = bvh.triangle(hit.face_index);
+            let up = Vec3::sub_vectors(tri.b, tri.a)
+                .cross(Vec3::sub_vectors(tri.c, tri.a))
+                .normalize();
+            let span = tip.distance_to(hit.point);
+            let cutoff = self.settings.supports.mesh_to_mesh.stick_vs_twig_cutoff_mm;
+            let read_setting = |path: SupportPlacementSettingPath| match path {
+                SupportPlacementSettingPath::MeshToMeshStickVsTwigCutoffMm => Some(cutoff),
+            };
+            let kind =
+                select_type_for_placement(SupportPlacementMetric::ContactSpan, span, &read_setting)
+                    .unwrap_or(SupportTypeId::Stick);
+            let bridge = build_contact_bridge(
+                kind,
+                &ContactBridgeRequest {
+                    model_id: &self.models[i].id,
+                    a_pos: tip,
+                    a_normal: normal,
+                    b_pos: hit.point,
+                    b_normal: up,
+                    shaft_diameter_mm: None,
+                    tip_contact_diameter_mm: None,
+                    mesh: None,
+                    manual: Some(true),
+                },
+                &self.settings.supports,
+                &mut new_id,
+            );
+            if let Some(bridge) = bridge {
+                let mut state = SupportState::default();
+                let c = &mut state.collections;
+                match bridge.entity {
+                    BridgeEntity::Twig(t) => {
+                        c.twigs.insert(t.base.id.clone(), t);
+                    }
+                    BridgeEntity::Stick(s) => {
+                        c.sticks.insert(s.base.id.clone(), s);
+                    }
+                }
+                return self.draw_alone(&state);
+            }
+        }
         let built = build_trunk_data(
             &TrunkBuildInput {
                 tip_pos: tip,
@@ -1887,7 +2035,8 @@ impl DfSupportSession {
     /// `tip`, facing the way it did (`normal`), as a click at `aim` finds
     /// it; `None` when the surface there moved or turned.
     fn surface_holds(&self, aim: [f64; 3], tip: [f64; 3], normal: [f64; 3]) -> Option<usize> {
-        let (model, at, n) = self.contact(aim)?;
+        let (model, at, n) = self.tip_contact(aim)?;
+        let n = n.ok()?;
         let was = Vec3::new(normal[0], normal[1], normal[2]);
         let len = was.length();
         (len > 1e-12
@@ -1912,7 +2061,8 @@ impl DfSupportSession {
             if !is_hand_id(&id) || logged.contains(id.as_str()) {
                 continue;
             }
-            let (Some((_, at, n)), Some((_, model))) = (self.contact(tip), self.support_tip(&id))
+            let (Some((_, at, Ok(n))), Some((_, model))) =
+                (self.tip_contact(tip), self.support_tip(&id))
             else {
                 continue;
             };
@@ -2253,7 +2403,7 @@ impl DfSupportSession {
             }
             Err((EditError::NoRoute(_) | EditError::CannotAttach(_), note)) => {
                 let preview = EditPreview {
-                    mesh: self.straight_trunk(to)?,
+                    mesh: self.refused_at(to, note)?,
                     valid: false,
                     attached: false,
                     note,
@@ -3628,6 +3778,82 @@ mod session_tests {
             .expect("a preview");
         assert!(!top.valid);
         assert_eq!(top.note, Some(AddNote::FacesUp));
+        // No support was tried there, and none is drawn (#491).
+        assert!(top.mesh.faces().is_empty());
+    }
+
+    /// One model of boxes, each `(min, max)` in world mm, run with no
+    /// options and its supports then cleared.
+    fn bare_boxes(boxes: &[([f32; 3], [f32; 3])]) -> DfSupportSession {
+        let mut session = crate::start_df_supports(&boxes_scene(boxes), Default::default())
+            .unwrap()
+            .join()
+            .unwrap()
+            .sets
+            .remove(0)
+            .session;
+        session.state = SupportState::default();
+        session.removal_index = Arc::default();
+        session
+    }
+
+    #[test]
+    fn a_facet_that_looks_up_on_an_underside_takes_the_tip_of_the_underside() {
+        // A shelf 0.2 mm wide and 0.03 mm thick hangs 0.03 mm under a slab:
+        // its top, a facet looking up, lies inside the underside a tip there
+        // covers, as the facets of a detailed sculpt do (#491).
+        let mut session = bare_boxes(&[
+            ([0.0, 0.0, 25.0], [50.0, 10.0, 27.0]),
+            ([20.0, 4.9, 24.94], [20.2, 5.1, 24.97]),
+        ]);
+        let on_facet = [20.1, 5.0, 24.97];
+        let (_, _, face) = session.contact(on_facet).unwrap();
+        assert!(face.z > 0.99, "the facet looks up");
+        let (preview, edited) = session
+            .preview_add_with(on_facet, &AddOptions::default())
+            .expect("a preview");
+        assert!(preview.valid, "{:?}", preview.note);
+        let before = session.clone();
+        session.add_trunk_at(on_facet).expect("held");
+        assert!(dist(new_tip(&before, &session), on_facet) < 0.01);
+        assert!(edited.is_some());
+
+        // A slab's top seen as a facet is no place for a tip all the same.
+        let (top, _) = session
+            .preview_add_with([30.0, 5.0, 27.0], &AddOptions::default())
+            .expect("a preview");
+        assert_eq!(top.note, Some(AddNote::FacesUp));
+    }
+
+    #[test]
+    fn a_tip_no_way_reaches_draws_its_drop_to_the_model_below() {
+        // A slab 0.3 mm over a block: nothing fits in the gap, and the red
+        // preview stops on the block instead of running through it to the
+        // plate as a trunk would (#491).
+        let session = bare_boxes(&[
+            ([0.0, 0.0, 25.0], [50.0, 10.0, 27.0]),
+            ([15.0, 0.0, 0.0], [35.0, 10.0, 24.7]),
+        ]);
+        let (preview, edited) = session
+            .preview_add_with([25.0, 5.0, 25.0], &AddOptions::default())
+            .expect("a preview");
+        assert!(!preview.valid && edited.is_none());
+        assert!(!preview.mesh.faces().is_empty());
+        let lowest = preview
+            .mesh
+            .vertices()
+            .iter()
+            .map(|v| v.as_array()[2])
+            .fold(f32::INFINITY, f32::min);
+        assert!(lowest > 24.0, "drawn down to {lowest}");
+
+        // Beside the block, a red trunk still goes to the plate where one
+        // would stand.
+        let open = bare_boxes(&[([0.0, 0.0, 25.0], [50.0, 10.0, 27.0])]);
+        assert!(
+            open.straight_drop([25.0, 5.0, 25.0])
+                .is_ok_and(|mesh| { mesh.vertices().iter().any(|v| v.as_array()[2] < 1.0) })
+        );
     }
 
     #[test]

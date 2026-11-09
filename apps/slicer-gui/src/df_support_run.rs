@@ -2818,7 +2818,10 @@ impl DfSupportRun {
                 _ if preview.valid => OverlayTint::Valid,
                 _ => OverlayTint::Invalid,
             };
-            pieces.push(Arc::new(overlay_of(&preview.mesh, tint)));
+            // A surface no tip may touch draws no support (#491).
+            if !preview.mesh.faces().is_empty() {
+                pieces.push(Arc::new(overlay_of(&preview.mesh, tint)));
+            }
             if let Some(taken) = &preview.taken {
                 pieces.push(Arc::new(overlay_of(taken, OverlayTint::Invalid)));
             }
