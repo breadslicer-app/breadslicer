@@ -20,7 +20,7 @@
 use std::cell::RefCell;
 
 use glam::Vec3;
-use sc_geom::df_supports::is_support_mesh;
+use sc_geom::df_supports::is_any_support_mesh;
 use sc_mesh_core::primitives::Vertex;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_spatial::{ObjectQuery, SceneSpatial};
@@ -127,8 +127,13 @@ impl GroupMove {
                 let Some(query) = spatial.leaf(id) else {
                     continue;
                 };
-                if is_support_mesh(query.mesh())
-                    && model_of(&sessions, id).is_some_and(|model| ids.contains(&model))
+                let owner = if sc_geom::df_supports::is_imported_supports(query.mesh()) {
+                    crate::imported_supports::owner_of(spatial, id, None)
+                } else {
+                    model_of(&sessions, id)
+                };
+                if is_any_support_mesh(query.mesh())
+                    && owner.is_some_and(|model| ids.contains(&model))
                 {
                     continue;
                 }
@@ -150,18 +155,24 @@ impl GroupMove {
             for (model, member) in members.iter().enumerate() {
                 let is_model = spatial
                     .leaf(member.node_id)
-                    .is_some_and(|q| !is_support_mesh(q.mesh()));
+                    .is_some_and(|q| !is_any_support_mesh(q.mesh()));
                 if !is_model {
                     continue;
                 }
-                for leaf in sets_of_model(spatial, &sessions, member.node_id) {
+                let imported = crate::imported_supports::imported_of(spatial, member.node_id, None);
+                for leaf in sets_of_model(spatial, &sessions, member.node_id)
+                    .into_iter()
+                    .chain(imported.iter().copied())
+                {
                     let Some(query) = spatial.leaf(leaf) else {
                         continue;
                     };
+                    // Imported supports (#259) are never drawn by a session.
                     if members.iter().any(|m| m.node_id == leaf)
                         || riders.iter().any(|r| r.node_id == leaf)
                         || !query.parent_world().is_identity()
-                        || in_force(spatial, &sessions, leaf).is_none()
+                        || (!imported.contains(&leaf)
+                            && in_force(spatial, &sessions, leaf).is_none())
                     {
                         continue;
                     }

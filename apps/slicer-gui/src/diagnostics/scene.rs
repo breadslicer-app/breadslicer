@@ -10,7 +10,7 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use sc_geom::df_supports::is_support_mesh;
+use sc_geom::df_supports::is_any_support_mesh;
 
 use crate::scene_document::SceneDocument;
 
@@ -26,7 +26,7 @@ pub(crate) fn report(doc: &SceneDocument) -> String {
                 continue;
             };
             let triangles = mesh.faces().len();
-            if is_support_mesh(mesh) {
+            if is_any_support_mesh(mesh) {
                 supports.push(triangles);
             } else {
                 let hollowed = hollows.iter().any(|h| Arc::ptr_eq(&h.hollow, mesh));

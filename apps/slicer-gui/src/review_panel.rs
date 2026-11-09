@@ -200,7 +200,7 @@ fn model_poses(spatial: &SceneSpatial) -> Vec<ModelPose> {
         .map_while(|i| spatial.leaf_id_at_index(i))
         .filter_map(|leaf| {
             let mesh = scene.leaf_mesh_arc(leaf)?;
-            if sc_geom::df_supports::is_support_mesh(mesh) {
+            if sc_geom::df_supports::is_any_support_mesh(mesh) {
                 return None;
             }
             Some(ModelPose {

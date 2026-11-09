@@ -109,7 +109,7 @@ pub(crate) fn model_bottoms(spatial: &SceneSpatial) -> Vec<(NodeId, f64)> {
         .map_while(|i| spatial.leaf_id_at_index(i))
         .filter_map(|id| {
             let mesh = scene.leaf_mesh_arc(id)?;
-            if sc_geom::df_supports::is_support_mesh(mesh) {
+            if sc_geom::df_supports::is_any_support_mesh(mesh) {
                 return None;
             }
             let query = spatial.leaf(id)?;

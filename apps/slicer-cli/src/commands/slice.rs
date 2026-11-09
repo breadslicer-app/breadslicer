@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use sc_geom::df_supports::is_support_mesh_name;
+use sc_geom::df_supports::is_any_support_mesh_name;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
 use sc_mesh_core::primitives::CoordAxis;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
@@ -283,7 +283,9 @@ fn is_support_leaf(scene: &Scene, leaf: NodeId) -> bool {
         .ok()
         .and_then(|mesh| mesh.meta.as_ref())
         .and_then(|meta| meta.name.as_deref());
-    node_name.or(mesh_name).is_some_and(is_support_mesh_name)
+    node_name
+        .or(mesh_name)
+        .is_some_and(is_any_support_mesh_name)
 }
 
 /// Warns, on `out`, about what of `scene` lies outside `volume` and so does not

@@ -28,25 +28,40 @@
 //! the same undo entry, and the model waits for new supports, which the
 //! support driver generates and adds to that entry
 //! ([`SceneDocument::supports_wanted`]).
+//!
+//! The supports a pre-supported file came with (#258) follow their model the
+//! same way (#259): a move in the plate plane takes their leaf along on its
+//! transform, and any other move removes them in the same entry and leaves
+//! the model waiting for supports made here
+//! ([`crate::imported_supports`]).
 
 use std::sync::Arc;
 
-use sc_geom::df_supports::{DfSupportSession, is_support_mesh, scene_model_leaves};
+use sc_geom::df_supports::{DfSupportSession, is_any_support_mesh, scene_model_leaves};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
 
+use crate::imported_supports::imported_of;
 use crate::scene_document::{SceneDocument, SceneEdit, SceneRevision, leaf_mesh_swap};
 use crate::support_persist::{in_force, in_force_at, sets_of_model};
 
 /// Where a model and its supports stood when it started to move: the scene
-/// as last committed.
+/// as last committed. The supports are its set in force, its imported
+/// supports (#259), or both.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Anchor {
     revision: SceneRevision,
     model: NodeId,
     model_start: Transform3D,
-    supports: NodeId,
-    supports_start: Transform3D,
+    supports: Option<(NodeId, Transform3D)>,
+    imported: Option<(NodeId, Transform3D)>,
+}
+
+impl Anchor {
+    /// Each support leaf that rides along, with where it started.
+    fn riders(&self) -> impl Iterator<Item = (NodeId, Transform3D)> {
+        self.supports.into_iter().chain(self.imported)
+    }
 }
 
 /// The leaf a transform edit moves; `None` for any other edit.
@@ -177,26 +192,35 @@ pub(crate) fn anchor(doc: &SceneDocument, leaf: NodeId) {
     }
     // A live move of another model may have left its supports moved.
     settle(doc);
-    if doc.support_sessions().borrow().is_empty() {
-        return;
-    }
-    let model = doc
+    let Some((model_start, imported)) = doc
         .with_scene(|spatial| {
             let query = spatial.leaf(leaf)?;
-            (!is_support_mesh(query.mesh())).then(|| query.local_transform())
+            if is_any_support_mesh(query.mesh()) {
+                return None;
+            }
+            let imported = imported_of(spatial, leaf, None)
+                .first()
+                .and_then(|&set| Some((set, spatial.leaf(set)?.local_transform())));
+            Some((query.local_transform(), imported))
         })
-        .flatten();
-    let (Some(model_start), Some((supports, _, supports_start))) =
-        (model, model_set(doc, leaf, None))
+        .flatten()
     else {
         return;
     };
+    let supports = if doc.support_sessions().borrow().is_empty() {
+        None
+    } else {
+        model_set(doc, leaf, None).map(|(supports, _, start)| (supports, start))
+    };
+    if supports.is_none() && imported.is_none() {
+        return;
+    }
     slot.set(Some(Anchor {
         revision,
         model: leaf,
         model_start,
         supports,
-        supports_start,
+        imported,
     }));
 }
 
@@ -219,11 +243,13 @@ pub(crate) fn follow_live(doc: &SceneDocument, leaf: NodeId) {
             )
         })
         .flatten();
-    let target = match moved {
-        Some(motion) => Transform3D::Affine(motion.affine()).compose(&anchor.supports_start),
-        None => anchor.supports_start,
-    };
-    set_supports_transform(doc, anchor.supports, target);
+    for (supports, start) in anchor.riders() {
+        let target = match moved {
+            Some(motion) => Transform3D::Affine(motion.affine()).compose(&start),
+            None => start,
+        };
+        set_supports_transform(doc, supports, target);
+    }
 }
 
 /// Ends a live move: the support leaf goes back where the history has it.
@@ -233,7 +259,9 @@ pub(crate) fn settle(doc: &SceneDocument) {
     if let Some(anchor) = doc.support_follow().take()
         && anchor.revision == doc.scene_revision()
     {
-        set_supports_transform(doc, anchor.supports, anchor.supports_start);
+        for (supports, start) in anchor.riders() {
+            set_supports_transform(doc, supports, start);
+        }
     }
 }
 
@@ -316,13 +344,21 @@ pub(crate) fn commit(doc: &SceneDocument, edit: SceneEdit) -> Committed {
             moved.push(set);
         }
     }
-    let (regenerate, hand_edits_lost) = match take_commit(doc, &edit) {
+    let (mut regenerate, hand_edits_lost) = match take_commit(doc, &edit) {
         Some((removal, regenerate, hand_edits_lost)) => {
             parts.push(removal);
             (regenerate, hand_edits_lost)
         }
         None => (Vec::new(), false),
     };
+    if let Some((imported, wanting)) = imported_commit(doc, &edit) {
+        parts.extend(imported);
+        for model in wanting {
+            if !regenerate.contains(&model) {
+                regenerate.push(model);
+            }
+        }
+    }
     let edit = if parts.is_empty() {
         edit
     } else {
@@ -359,6 +395,91 @@ fn transform_edits(edit: &SceneEdit) -> Vec<(NodeId, &Transform3D, &Transform3D)
         .unwrap_or_default()
 }
 
+/// For each committed move of a model with imported supports (#259): in the
+/// plate plane, the edits that take their leaves along; otherwise the edit
+/// that removes them, and the model, which waits for supports made here.
+/// All applied. `None` when no model moved has imported supports. A set the
+/// edit moves itself (selected with its model) is left to the edit.
+fn imported_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(Vec<SceneEdit>, Vec<NodeId>)> {
+    let moves = transform_edits(edit);
+    let moved_by_edit: Vec<NodeId> = moves.iter().map(|m| m.0).collect();
+    let (mut follow, mut removed, mut wanting) = (Vec::new(), Vec::new(), Vec::new());
+    for (node_id, before, after) in moves {
+        if before == after {
+            continue;
+        }
+        let found = doc
+            .with_scene(|spatial| {
+                let query = spatial.leaf(node_id)?;
+                if is_any_support_mesh(query.mesh()) {
+                    return None;
+                }
+                let parent = query.parent_world();
+                let from = parent.compose(before);
+                // The edit is already live: the sets stood under the model
+                // where it came from.
+                let sets: Vec<(NodeId, Transform3D)> = imported_of(spatial, node_id, Some(&from))
+                    .into_iter()
+                    .filter(|set| !moved_by_edit.contains(set))
+                    .filter_map(|set| Some((set, spatial.leaf(set)?.local_transform())))
+                    .collect();
+                Some((plane_motion(&from, &parent.compose(after)), sets))
+            })
+            .flatten();
+        let Some((motion, sets)) = found else {
+            continue;
+        };
+        if sets.is_empty() {
+            continue;
+        }
+        match motion {
+            Some(motion) => {
+                follow.extend(
+                    sets.into_iter()
+                        .map(|(set, start)| SceneEdit::SetLocalTransform {
+                            node_id: set,
+                            before: start,
+                            after: Transform3D::Affine(motion.affine()).compose(&start),
+                        }),
+                );
+            }
+            None => {
+                removed.extend(sets.into_iter().map(|(set, _)| set));
+                wanting.push(node_id);
+            }
+        }
+    }
+    if follow.is_empty() && removed.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for part in follow {
+        doc.apply_edit_unfollowed(part.clone()).ok()?;
+        parts.push(part);
+    }
+    if !removed.is_empty() {
+        let mut graph = doc.with_scene(|spatial| spatial.graph().clone())?;
+        let mut removals = Vec::new();
+        // Each removal is worked out on the scene the ones before it leave.
+        for set in &removed {
+            if let Some(remove) = SceneEdit::remove_leaf_with_gc(&graph, *set) {
+                remove.apply_to_scene(&mut graph).ok()?;
+                removals.push(remove);
+            }
+        }
+        if !removals.is_empty() {
+            let removal = SceneEdit::Compound(removals);
+            doc.apply_edit_unfollowed(removal.clone()).ok()?;
+            parts.push(removal);
+        }
+        crate::breadcrumbs::note(&format!(
+            "supports: {} imported set(s) removed to generate supports here",
+            removed.len()
+        ));
+    }
+    Some((parts, wanting))
+}
+
 /// For a committed move of models other than in the plate plane: the edit
 /// that removes the support sets in force where they came from, applied,
 /// the models whose sets it removes, and whether any of them was edited by
@@ -376,7 +497,7 @@ fn take_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, Vec<
         let from = doc
             .with_scene(|spatial| {
                 let query = spatial.leaf(node_id)?;
-                if is_support_mesh(query.mesh()) {
+                if is_any_support_mesh(query.mesh()) {
                     return None;
                 }
                 let parent = query.parent_world();
@@ -441,7 +562,7 @@ fn follow_commit(
     let (motion, from) = doc
         .with_scene(|spatial| {
             let query = spatial.leaf(node_id)?;
-            if is_support_mesh(query.mesh()) {
+            if is_any_support_mesh(query.mesh()) {
                 return None;
             }
             let parent = query.parent_world();

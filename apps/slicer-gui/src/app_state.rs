@@ -232,6 +232,8 @@ struct WindowDrivers {
     _repair_run: Rc<RepairRun>,
     _arrange_run: Rc<ArrangeRun>,
     _orient_run: Rc<OrientRun>,
+    /// Asks about the supports a file came with (#258).
+    _presupported_import: Rc<crate::presupported_import::PresupportedImport>,
     /// The Tools > "Generate Support (trivial for test)" action driver. Held so
     /// its Slint callbacks live as long as the window.
     _support_gen_run: Rc<GenSupportRun>,
@@ -784,9 +786,15 @@ impl AppState {
             repair_run.clone(),
         );
         let split_bodies = SplitBodies::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+        let presupported_import = crate::presupported_import::PresupportedImport::install(
+            ui,
+            ctrl.document(),
+            ctrl.dialogs(),
+        );
         WindowDrivers {
             _hollow_run: hollow_run,
             _split_bodies: split_bodies,
+            _presupported_import: presupported_import,
             _slice_panel: slice_panel,
             _slice_run: slice_run,
             _review_panel: review_panel,

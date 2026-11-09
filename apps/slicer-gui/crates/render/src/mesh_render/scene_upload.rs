@@ -725,7 +725,7 @@ pub(super) fn build_model_entries(
                 shared_mesh(graph, node_id, mesh),
                 &transform_mat,
             ));
-            let supports = sc_geom::df_supports::is_support_mesh(mesh);
+            let supports = sc_geom::df_supports::is_any_support_mesh(mesh);
             let drawn_as = if overhang_map && !supports {
                 MODEL_OVERHANG_MAP
             } else {

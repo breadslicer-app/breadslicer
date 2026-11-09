@@ -730,7 +730,7 @@ impl HollowRun {
 
     /// 0 a solid model, 1 a hollow this driver made, 2 the support mesh.
     fn model_state(&self, mesh: &Arc<IndexedMesh>) -> i32 {
-        if sc_geom::df_supports::is_support_mesh(mesh) {
+        if sc_geom::df_supports::is_any_support_mesh(mesh) {
             2
         } else if self.entry_for(mesh).is_some() {
             1
@@ -1080,7 +1080,7 @@ impl HollowRun {
         if let Some((leaf, _)) = self.hollow_at(at) {
             return Some(leaf);
         }
-        let is_model = |mesh: &Arc<IndexedMesh>| !sc_geom::df_supports::is_support_mesh(mesh);
+        let is_model = |mesh: &Arc<IndexedMesh>| !sc_geom::df_supports::is_any_support_mesh(mesh);
         if let Some((leaf, ..)) = self.underside_below(at, is_model) {
             return Some(leaf);
         }

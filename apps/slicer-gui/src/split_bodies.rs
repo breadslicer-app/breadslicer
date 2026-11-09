@@ -32,7 +32,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sc_geom::df_supports::is_support_mesh;
+use sc_geom::df_supports::is_any_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::shells::{Bodies, BodyKind};
 use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind, SceneMetadata};
@@ -116,7 +116,7 @@ fn shifted(attachment: LeafAttachment, by: usize) -> LeafAttachment {
 
 /// The edit that removes the leaves `leaves` of `graph`, and the mesh
 /// resources only they use, as 1 entry; `None` when none of them is a leaf.
-fn removal_edit(graph: &Scene, leaves: &[NodeId]) -> Option<SceneEdit> {
+pub(crate) fn removal_edit(graph: &Scene, leaves: &[NodeId]) -> Option<SceneEdit> {
     let mut graph = graph.clone();
     let mut edits = Vec::new();
     // Each removal is worked out on the scene the ones before it leave, so
@@ -133,7 +133,7 @@ fn removal_edit(graph: &Scene, leaves: &[NodeId]) -> Option<SceneEdit> {
 
 /// The name a leaf shows in the object list, without the `(2)` the list
 /// adds to repeats: its own, its mesh's, or none.
-fn leaf_name(graph: &Scene, leaf: NodeId) -> Option<String> {
+pub(crate) fn leaf_name(graph: &Scene, leaf: NodeId) -> Option<String> {
     let node = graph.node(leaf)?;
     if let Some(name) = node.meta.as_ref().and_then(|m| m.name.clone()) {
         return Some(name);
@@ -283,7 +283,7 @@ impl SplitBodies {
         else {
             return;
         };
-        if is_support_mesh(&source.mesh) {
+        if is_any_support_mesh(&source.mesh) {
             self.dialogs.show_info(|| InfoTexts {
                 heading: ctr!("SplitBodies", "Split into bodies"),
                 message: ctr!(

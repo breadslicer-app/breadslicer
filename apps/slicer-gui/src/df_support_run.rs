@@ -2673,6 +2673,14 @@ impl DfSupportRun {
         self.hover_at.set(point.map(|p| (p, shift)));
         let generation = self.hover_generation.get() + 1;
         self.hover_generation.set(generation);
+        if let Some(point) = point
+            && self.imported_body_hover(point)
+        {
+            // What the worker answers for the points before is stale.
+            self.hover_shown.set(generation);
+            self.hover_poll.stop();
+            return;
+        }
         let bracing = self
             .ui
             .upgrade()
@@ -2708,6 +2716,105 @@ impl DfSupportRun {
                     run.take_hover_answer();
                 }
             });
+    }
+
+    /// The body of the imported supports (#260) the Remove tool would take
+    /// at `point`, among the sets it may take from, with the leaf's mesh.
+    fn imported_body_at(
+        &self,
+        point: [f32; 3],
+    ) -> Option<(
+        crate::imported_supports::ImportedBody,
+        Arc<sc_mesh_core::IndexedMesh>,
+    )> {
+        let ui = self.ui.upgrade()?;
+        if ui.get_support_tool() != 2
+            || self.handle.borrow().is_some()
+            || self.drag.borrow().is_some()
+        {
+            return None;
+        }
+        let selected = self.document.selection_primary_node_id();
+        self.document
+            .with_scene(|spatial| {
+                let sets = crate::imported_supports::removable_sets(spatial, selected);
+                if sets.is_empty() {
+                    return None;
+                }
+                let body = crate::imported_supports::body_at(spatial, &sets, point.map(f64::from))?;
+                let mesh = spatial.graph().leaf_mesh_arc(body.leaf)?.clone();
+                Some((body, mesh))
+            })
+            .flatten()
+    }
+
+    /// The Remove tool's hover over a body of imported supports (#260): it
+    /// shows red. Whether there was one.
+    fn imported_body_hover(&self, point: [f32; 3]) -> bool {
+        let Some((body, _)) = self.imported_body_at(point) else {
+            return false;
+        };
+        let drawn = self
+            .document
+            .with_scene(|spatial| crate::imported_supports::body_in_world(spatial, &body))
+            .flatten();
+        let Some((positions, indices)) = drawn else {
+            return false;
+        };
+        let piece = Arc::new(OverlayMesh {
+            positions,
+            indices,
+            tint: OverlayTint::Invalid,
+        });
+        *self.last_ghost.borrow_mut() = vec![piece];
+        self.show_hover_overlay();
+        self.show_add_note((
+            ctr!(
+                "DfSupportDialog",
+                "A click removes this body of the imported supports."
+            ),
+            false,
+        ));
+        true
+    }
+
+    /// A click of the Remove tool on a body of imported supports (#260): the
+    /// body goes, in one undo entry, and the model stays as it is. Whether
+    /// there was one.
+    fn remove_imported_body(&self, point: [f32; 3]) -> bool {
+        let Some((body, mesh)) = self.imported_body_at(point) else {
+            return false;
+        };
+        let edit = self
+            .document
+            .with_scene(|spatial| {
+                match crate::imported_supports::without_faces(&mesh, &body.faces) {
+                    Some(rest) => leaf_mesh_swap(spatial.graph(), body.leaf, Arc::new(rest)),
+                    None => crate::split_bodies::removal_edit(spatial.graph(), &[body.leaf]),
+                }
+            })
+            .flatten();
+        let Some(edit) = edit else {
+            return false;
+        };
+        if self.document.apply_edit(edit.clone()).is_err() {
+            return false;
+        }
+        self.document.push_edit(edit);
+        self.last_ghost.borrow_mut().clear();
+        self.ctrl.set_preview_overlay(None);
+        self.show_add_note(Default::default());
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "Removed 1 body of the imported supports."
+            ));
+        }
+        crate::breadcrumbs::note(&format!(
+            "supports: imported body removed ({} faces)",
+            body.faces.len()
+        ));
+        true
     }
 
     /// The brace tool's preview at `point` (#3): before the first click, the
@@ -2956,7 +3063,7 @@ impl DfSupportRun {
             return;
         };
         let tool = ui.get_support_tool();
-        if tool == 0 {
+        if tool == 0 || self.remove_imported_body(point) {
             return;
         }
         let (tool, how) = self.click_tool(&ui, tool, forced);
@@ -2977,6 +3084,9 @@ impl DfSupportRun {
         }
         if tool == 4 {
             self.brace_click(&ui, point);
+            return;
+        }
+        if self.pending_click.borrow().is_none() && self.remove_imported_body(point) {
             return;
         }
         let (tool, how) = self.click_tool(&ui, tool, forced);
@@ -4203,19 +4313,29 @@ impl DfSupportRun {
         // Generating again replaces the supports already there (#152), in the
         // same undoable step as the paste: the sets of the models the run
         // covered, and, from a run over every model, supports no session drew.
+        // The supports a model came with go too (#259): it gets these
+        // instead.
         let replaced: Vec<NodeId> = self
             .document
             .with_scene(|spatial| {
                 let every = crate::raft_clash::model_bottoms(spatial)
                     .iter()
                     .all(|(id, _)| covered.contains(id));
-                support_leaves(spatial)
+                let mut replaced: Vec<NodeId> = support_leaves(spatial)
                     .map(|(id, _)| id)
                     .filter(|id| match model_of(&self.sessions, *id) {
                         Some(model) => covered.contains(&model),
                         None => every,
                     })
-                    .collect()
+                    .collect();
+                for model in covered.iter() {
+                    for set in crate::imported_supports::imported_of(spatial, *model, None) {
+                        if !replaced.contains(&set) {
+                            replaced.push(set);
+                        }
+                    }
+                }
+                replaced
             })
             .unwrap_or_default();
         // Generating again over the same models and settings draws the same

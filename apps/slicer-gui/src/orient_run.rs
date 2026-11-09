@@ -37,7 +37,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use sc_geom::df_supports::is_support_mesh;
+use sc_geom::df_supports::is_any_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_orient::{
@@ -152,7 +152,7 @@ impl Target {
         document
             .with_scene(|spatial| {
                 let query = spatial.leaf(leaf)?;
-                if is_support_mesh(query.mesh()) {
+                if is_any_support_mesh(query.mesh()) {
                     return None;
                 }
                 Some(Target {
@@ -1192,7 +1192,11 @@ impl OrientRun {
             .with_scene(|spatial| {
                 (0..)
                     .map_while(|i| spatial.leaf_id_at_index(i))
-                    .filter(|&id| spatial.leaf(id).is_some_and(|q| !is_support_mesh(q.mesh())))
+                    .filter(|&id| {
+                        spatial
+                            .leaf(id)
+                            .is_some_and(|q| !is_any_support_mesh(q.mesh()))
+                    })
                     .count()
             })
             .unwrap_or(0)

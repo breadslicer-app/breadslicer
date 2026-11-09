@@ -1126,7 +1126,20 @@ impl SceneDocument {
     /// Paint left on a mesh the edit replaced goes to the new mesh in the same
     /// entry ([`Self::with_paint_carried`]).
     pub(crate) fn push_edit(&self, edit: SceneEdit) {
-        let committed = crate::support_follow::commit(self, edit);
+        self.push_edit_wanting(edit, &[]);
+    }
+
+    /// [`Self::push_edit`], with the models `wanting` also left waiting for
+    /// supports made here ([`Self::supports_wanted`]): Replace with
+    /// Breadslicer supports removes a model's imported supports in an entry
+    /// that its new supports then complete (#259).
+    pub(crate) fn push_edit_wanting(&self, edit: SceneEdit, wanting: &[NodeId]) {
+        let mut committed = crate::support_follow::commit(self, edit);
+        for model in wanting {
+            if !committed.regenerate.contains(model) {
+                committed.regenerate.push(*model);
+            }
+        }
         let (edit, moved) = (committed.edit, committed.moved);
         if edit.is_noop() {
             return;
