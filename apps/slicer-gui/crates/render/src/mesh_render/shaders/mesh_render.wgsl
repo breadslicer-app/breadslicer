@@ -68,6 +68,15 @@ struct VsIn {
     @location(1) normal: vec3<f32>,
 };
 
+// A model under the overhang map whose mesh is fine enough to carry the
+// surface around each vertex (#498): xyz that surface's normal in the leaf
+// frame, w 1 where the map reads it and 0 where it keeps the facet's.
+struct VsMappedIn {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) surface: vec4<f32>,
+};
+
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
@@ -87,12 +96,43 @@ struct VsOut {
     // layer. `world_pos` stays at the centre, where its screen derivatives
     // are taken.
     @location(6) @interpolate(perspective, centroid) cut_z: f32,
+    // The surface the overhang map reads (#498), in the world: xyz its unit
+    // normal and w 1 where it is read, all 0 to read the facet.
+    @location(7) surface: vec4<f32>,
 };
 
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
+    return placed(in.position, in.normal);
+}
+
+@vertex
+fn vs_mapped(in: VsMappedIn) -> VsOut {
+    var out = placed(in.position, in.normal);
+    let n = normal_to_world(in.surface.xyz);
+    let len = length(n);
+    out.surface = select(
+        vec4<f32>(0.0),
+        vec4<f32>(n / len, in.surface.w),
+        len > 0.0 && in.surface.w > 0.0,
+    );
+    return out;
+}
+
+// A normal of the leaf frame in the world, by the cofactors of the model
+// matrix: they carry the normal of an area through any linear map, a scale
+// that is not the same on every axis and a mirror included.
+fn normal_to_world(n: vec3<f32>) -> vec3<f32> {
+    let a = model_entry.model[0].xyz;
+    let b = model_entry.model[1].xyz;
+    let c = model_entry.model[2].xyz;
+    let cofactors = mat3x3<f32>(cross(b, c), cross(c, a), cross(a, b));
+    return cofactors * n * sign(dot(a, cross(b, c)));
+}
+
+fn placed(position: vec3<f32>, normal: vec3<f32>) -> VsOut {
     var out: VsOut;
-    let world = model_entry.model * vec4<f32>(in.position, 1.0);
+    let world = model_entry.model * vec4<f32>(position, 1.0);
     out.clip_pos = u.view_proj * world;
     out.world_pos = world.xyz;
     out.cut_z = world.z;
@@ -102,7 +142,8 @@ fn vs_main(in: VsIn) -> VsOut {
     out.supports = model_entry.flags.w;
     // Direction only: the model matrix's linear part. Non-uniform scale
     // bends it slightly; the shading tolerates that.
-    out.normal = (model_entry.model * vec4<f32>(in.normal, 0.0)).xyz;
+    out.normal = (model_entry.model * vec4<f32>(normal, 0.0)).xyz;
+    out.surface = vec4<f32>(0.0);
     return out;
 }
 
@@ -133,8 +174,9 @@ const OVERHANG_NEAR_BAND_RAD: f32 = 0.17453292; // 10°
 const OVERHANG_SELECTED_TINT: f32 = 0.30;
 
 // `base` with the overhang map over it. `face_n` is the true face normal, the
-// one the support engine classifies: the smooth shading normal rounds a facet
-// off and would disagree with it, and the screen derivatives it comes from
+// one the support engine classifies, or on a fine mesh the surface around the
+// fragment (#498): the smooth shading normal rounds a facet off and would
+// disagree with both, and the screen derivatives the face normal comes from
 // hold under any model matrix, a non-uniform scale included. A face resting on
 // the plate is left alone: the plate holds it, and the engine's supports could
 // not go under it anyway. A degenerate face has a NaN normal, and every
@@ -227,6 +269,7 @@ fn surface_color(
     selected: u32,
     breaches: u32,
     tint: u32,
+    surface: vec4<f32>,
 ) -> vec3<f32> {
     // The interpolated smooth normal; a vertex without one shades flat from
     // screen-space derivatives.
@@ -246,8 +289,14 @@ fn surface_color(
     var washed = mix(base_color, WARNING_WASH, f32(breaches) * WARNING_WASH_STRENGTH);
     if (mapped) {
         // `flat_n` runs right-to-down across the screen, into it: the face
-        // normal, seen from its front, is the opposite way.
-        washed = overhang_paint(washed, -flat_n, world_pos);
+        // normal, seen from its front, is the opposite way. Where the three
+        // corners of the facet read the surface around them, the map reads
+        // that instead (#498): a fine facet tilting down on a surface that
+        // faces up is no overhang, nor one tilting up inside an overhang
+        // anything else.
+        let reads_surface = surface.w > 0.999 && dot(surface.xyz, surface.xyz) > 1e-6;
+        let map_n = select(-flat_n, normalize(surface.xyz), reads_surface);
+        washed = overhang_paint(washed, map_n, world_pos);
     }
     // Componentwise envelope test: a fragment outside on any axis
     // is painted in the full warning amber instead of the wash.
@@ -268,7 +317,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (fades_under_plate(in.supports, in.cut_z)) {
         discard;
     }
-    let color = surface_color(in.world_pos, in.normal, in.selected, in.breaches, in.tint);
+    let color = surface_color(
+        in.world_pos,
+        in.normal,
+        in.selected,
+        in.breaches,
+        in.tint,
+        in.surface,
+    );
     return vec4<f32>(color, 1.0);
 }
 
@@ -292,7 +348,14 @@ fn fs_support_fade(in: VsOut) -> @location(0) vec4<f32> {
     if (in.cut_z > u.light_dir.w || !fades_under_plate(in.supports, in.cut_z)) {
         discard;
     }
-    let color = surface_color(in.world_pos, in.normal, in.selected, in.breaches, in.tint);
+    let color = surface_color(
+        in.world_pos,
+        in.normal,
+        in.selected,
+        in.breaches,
+        in.tint,
+        in.surface,
+    );
     return vec4<f32>(color, 1.0 - u.env_min.w);
 }
 

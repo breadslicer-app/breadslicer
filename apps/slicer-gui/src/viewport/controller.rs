@@ -79,6 +79,10 @@ use crate::under_plate::{hidden_below_mm, sees_through_the_plate, under_plate_fa
 use sc_scene::SceneError;
 use sc_sla_formats::{PrintPreviews, PrinterFileFormat};
 
+/// How often the window is pinged while the overhang map waits for the
+/// surface around a model's vertices, read on a worker (#498).
+const MAP_WAIT_PING_MS: u64 = 100;
+
 pub(crate) struct ViewportController {
     ui: slint::Weak<MainWindow>,
     session: SessionState,
@@ -136,6 +140,11 @@ pub(crate) struct ViewportController {
     probe_timer: slint::Timer,
     /// Hides the pivot marker a moment after a numpad orbit step (#348).
     orbit_marker_timer: slint::Timer,
+    /// While a model under the overhang map waits for the surface read on a
+    /// worker (#498), a ping of the window now and then, for a frame to show
+    /// it once it is ready.
+    map_waits: Cell<bool>,
+    map_wait_timer: slint::Timer,
     /// The Supports tab's drags (#3): who handles them, where a press of a
     /// drag tool stands, and a right press that dropped one (it opens no
     /// menu).
@@ -229,6 +238,8 @@ impl ViewportController {
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
             orbit_marker_timer: slint::Timer::default(),
+            map_waits: Cell::new(false),
+            map_wait_timer: slint::Timer::default(),
             support_drag_handler: RefCell::new(None),
             support_drag: Cell::new(DragPhase::Idle),
             right_dropped_drag: Cell::new(false),
@@ -287,6 +298,8 @@ impl ViewportController {
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
             orbit_marker_timer: slint::Timer::default(),
+            map_waits: Cell::new(false),
+            map_wait_timer: slint::Timer::default(),
             support_drag_handler: RefCell::new(None),
             support_drag: Cell::new(DragPhase::Idle),
             right_dropped_drag: Cell::new(false),
@@ -844,6 +857,50 @@ impl ViewportController {
 
     fn request_redraw(&self) {
         self.render.request_redraw();
+    }
+
+    /// Pings the window in a moment, to see whether the surface a model under
+    /// the overhang map waits for is ready (#498).
+    fn arm_map_wait(&self) {
+        self.map_waits.set(true);
+        let ui = self.ui.clone();
+        self.map_wait_timer.start(
+            slint::TimerMode::SingleShot,
+            std::time::Duration::from_millis(MAP_WAIT_PING_MS),
+            move || {
+                if let Some(ui) = ui.upgrade() {
+                    ui.window().request_redraw();
+                }
+            },
+        );
+    }
+
+    /// While the overhang map waits for a surface: a frame once it is ready,
+    /// another ping until then, and no more once the last frame waited for
+    /// none (the map off, the model gone).
+    fn settle_map_wait(&self) {
+        if !self.map_waits.get() {
+            return;
+        }
+        let (pending, arrived) =
+            self.render
+                .renderer_cell()
+                .borrow()
+                .as_ref()
+                .map_or((false, false), |renderer| {
+                    (
+                        renderer.overhang_map_pending(),
+                        renderer.overhang_map_arrived(),
+                    )
+                });
+        if !pending {
+            self.map_waits.set(false);
+        } else if arrived {
+            self.map_waits.set(false);
+            self.mark_dirty();
+        } else {
+            self.arm_map_wait();
+        }
     }
 
     pub(crate) fn build_volume(&self) -> BuildVolume {
@@ -3912,6 +3969,9 @@ impl ViewportController {
         self.render.note_render_ok();
         self.session.loader().note_render_success();
         self.render.update_frame(FrameState::after_render);
+        if renderer.overhang_map_pending() {
+            self.arm_map_wait();
+        }
         match slint::Image::try_from(texture) {
             Ok(image) => ui.set_mesh_rendering(image),
             Err(err) => self
@@ -3954,6 +4014,7 @@ impl ViewportController {
         if self.probe.borrow().is_some() {
             return;
         }
+        self.settle_map_wait();
         self.refresh_readout();
         if !self.on_scene_change() {
             return;

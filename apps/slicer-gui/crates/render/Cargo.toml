@@ -28,6 +28,7 @@ bytemuck = { version = "1.18", features = ["derive"] }
 glam = "0.32.1"
 harfrust = "0.8"
 pollster = "0.4"
+rayon = { workspace = true }
 serde = { version = "1.0.228", features = ["derive"] }
 slint = { workspace = true }
 swash = { version = "0.2.10", default-features = false, features = [

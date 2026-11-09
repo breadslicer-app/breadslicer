@@ -748,3 +748,304 @@ fn pictures_of_the_map() {
     camera.pitch = 0.35;
     save("turned-above", &[], map, &camera, &graph);
 }
+
+/// A sheet of fine scales 3 mm a side, like a sculpted texture: each scale
+/// rises 0.02 mm over 0.1 mm along Y and then folds back under itself, its
+/// underside tilting 63° down. Facets of 0.025 to 0.1 mm, the sheet as a
+/// whole facing up.
+fn scaled_sheet() -> IndexedMesh {
+    const COLUMNS: usize = 120;
+    const PERIODS: usize = 50;
+    let mut profile = vec![[0.0f32, 0.0]];
+    for k in 0..PERIODS {
+        let start = k as f32 * 0.06;
+        profile.push([start + 0.1, 0.02]);
+        profile.push([start + 0.06, 0.0]);
+    }
+    let mut vertices = Vec::new();
+    for [y, z] in &profile {
+        for i in 0..=COLUMNS {
+            vertices.push(Vertex::new([i as f32 * 0.025 - 1.5, y - 1.5, *z]));
+        }
+    }
+    let at = |i: usize, j: usize| (j * (COLUMNS + 1) + i) as u32;
+    let mut faces = Vec::new();
+    for j in 0..profile.len() - 1 {
+        for i in 0..COLUMNS {
+            faces.push(IndexedTriangle::from_raw_indices([
+                at(i, j),
+                at(i + 1, j),
+                at(i + 1, j + 1),
+            ]));
+            faces.push(IndexedTriangle::from_raw_indices([
+                at(i, j),
+                at(i + 1, j + 1),
+                at(i, j + 1),
+            ]));
+        }
+    }
+    IndexedMesh::new(None, vertices, faces)
+}
+
+/// Draws `graph` from `camera` until the surface the map reads is ready
+/// (#498): the first frame, painted by facet, and the last.
+fn by_facet_then_by_surface(
+    renderer: &mut Renderer,
+    graph: &Scene,
+    camera: &OrbitCamera,
+) -> (FramePixels, FramePixels) {
+    const SIDE: u32 = 256;
+    let map = Some(OverhangMap::new(45.0));
+    let draw = |renderer: &mut Renderer| {
+        let scene_render = SceneRender {
+            graph,
+            selection: &[],
+            gizmo: None,
+            clip_z: None,
+        };
+        let look = FrameLook {
+            contents: FrameContents::ModelsOnly,
+            overhang_map: map,
+            raft_top_mm: 0.0,
+            supports_shown_up_to_mm: f32::MAX,
+        };
+        let texture = renderer
+            .render_frame(Some(scene_render), BV, camera, SIDE, SIDE, look)
+            .expect("the frame is not refused")
+            .expect("a sized frame");
+        readback::read_target_rgba(&renderer.core.device, &renderer.core.queue, &texture)
+            .expect("read the frame back")
+    };
+    let first = draw(renderer);
+    assert!(
+        renderer.overhang_map_pending(),
+        "the surface is read on a worker"
+    );
+    let start = Instant::now();
+    loop {
+        let frame = draw(renderer);
+        if !renderer.overhang_map_pending() {
+            return (first, frame);
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "the surface never came"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// The pixels of the frame the sheet covers: not the clear colour.
+fn sheet_pixels(frame: &FramePixels) -> usize {
+    let clear = frame::CLEAR_COLOR;
+    let clear = [clear.r, clear.g, clear.b].map(|c| (c * 255.0).round() as i32);
+    frame
+        .rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|[r, g, b, _]| {
+            [*r, *g, *b]
+                .iter()
+                .zip(clear)
+                .any(|(&c, k)| (i32::from(c) - k).abs() > 3)
+        })
+        .count()
+}
+
+fn camera_at(yaw_deg: f32, pitch_deg: f32) -> OrbitCamera {
+    let target = Vec3::new(CENTRE[0] as f32, CENTRE[1] as f32, CENTRE[2] as f32);
+    let mut camera = OrbitCamera::new(target, 30.0);
+    camera.target = target;
+    camera.distance = 4.0;
+    camera.yaw = yaw_deg.to_radians();
+    camera.pitch = pitch_deg.to_radians();
+    camera
+}
+
+/// The fine scales of a surface that faces up tilt down past the limit: by
+/// facet the map spatters them red, reading the surface around them it
+/// leaves the sheet plain (#498).
+#[test]
+fn fine_scales_on_a_surface_facing_up_leave_no_red_specks() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let (graph, _) = scene_of(vec![(
+        scaled_sheet(),
+        AffineTransform3D::from_translation(CENTRE),
+    )]);
+    renderer.upload_scene(&graph).expect("upload the sheet");
+    // From the side the scales open to, a little above the sheet: their
+    // folds and their backs both face the camera.
+    let (by_facet, by_surface) =
+        by_facet_then_by_surface(&mut renderer, &graph, &camera_at(90.0, 18.0));
+    let sheet = sheet_pixels(&by_surface);
+    assert!(sheet > 8_000, "the sheet fills the frame ({sheet} pixels)");
+    let specks = red_pixels(&by_facet);
+    assert!(
+        specks > sheet / 20,
+        "by facet the folds show red: {specks} of {sheet}"
+    );
+    assert_eq!(red_pixels(&by_surface), 0);
+}
+
+/// Turned over, the same sheet is an overhang whose fine scales tilt up: by
+/// facet they leave plain specks in its red, reading the surface it is red
+/// throughout (#498).
+#[test]
+fn fine_scales_inside_an_overhang_leave_no_plain_specks() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let over =
+        AffineTransform3D::from_axis_angle([1.0, 0.0, 0.0], std::f64::consts::PI).expect("an axis");
+    let pose = AffineTransform3D::from_translation(CENTRE).compose(&over);
+    let (graph, _) = scene_of(vec![(scaled_sheet(), pose)]);
+    renderer.upload_scene(&graph).expect("upload the sheet");
+    let (by_facet, by_surface) =
+        by_facet_then_by_surface(&mut renderer, &graph, &camera_at(-90.0, -18.0));
+    let sheet = sheet_pixels(&by_surface);
+    assert!(sheet > 8_000, "the sheet fills the frame ({sheet} pixels)");
+    let plain = |frame: &FramePixels| sheet_pixels(frame) - red_pixels(frame);
+    assert!(
+        plain(&by_facet) > sheet / 20,
+        "by facet: {} plain",
+        plain(&by_facet)
+    );
+    // The rim of the sheet blends into the background on a few pixels.
+    assert!(
+        plain(&by_surface) < sheet / 100,
+        "{} plain of {sheet}",
+        plain(&by_surface)
+    );
+}
+
+/// Manual (#498): how long the surface of `BREADSLICER_OVERHANG_STL`, scaled
+/// by `BREADSLICER_OVERHANG_SCALE`, takes to read, and the map by facet and
+/// by surface from a few sides, counted and saved in
+/// `BREADSLICER_OVERHANG_PNG_DIR`. Run with `--ignored --nocapture`.
+#[test]
+#[ignore = "manual measure of a large model"]
+fn surface_of_a_real_model() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let Some((mesh, _)) = model_from_env() else {
+        eprintln!("skipping: BREADSLICER_OVERHANG_STL is not set");
+        return;
+    };
+    let scale: f64 = std::env::var("BREADSLICER_OVERHANG_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1.0);
+    let dir = std::env::var_os("BREADSLICER_OVERHANG_PNG_DIR").map(std::path::PathBuf::from);
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for vertex in mesh.vertices() {
+        let c = vertex.coords();
+        for axis in 0..3 {
+            lo[axis] = lo[axis].min(c[axis]);
+            hi[axis] = hi[axis].max(c[axis]);
+        }
+    }
+    let centred = [0, 1, 2].map(|a| -f64::from(lo[a] + hi[a]) / 2.0);
+    let height = f64::from(hi[2] - lo[2]) * scale;
+    let place = AffineTransform3D::from_translation([0.0, 0.0, height / 2.0 + 5.0])
+        .compose(&AffineTransform3D::from_non_uniform_scale([scale; 3]))
+        .compose(&AffineTransform3D::from_translation(centred));
+    let matrix = Mat4::from_scale(Vec3::splat(scale as f32));
+    let reach = surface_normals::reach_for_test(&matrix).expect("a reach");
+    let start = Instant::now();
+    let surface = surface_normals::read_surface(&mesh, reach);
+    let read = start.elapsed();
+    let reading = surface
+        .as_ref()
+        .map_or(0, |s| s.iter().filter(|v| v[3] > 0.0).count());
+    eprintln!(
+        "{} vertices, {} facets, height {height:.1} mm, reach {reach:.4} in the model's frame: \
+         read in {:.0} ms, {reading} vertices read the surface",
+        mesh.vertices().len(),
+        mesh.faces().len(),
+        read.as_secs_f64() * 1000.0
+    );
+
+    let (graph, _) = scene_of(vec![(mesh, place)]);
+    renderer.upload_scene(&graph).expect("upload the model");
+    let base = framing_camera(&renderer);
+    let map = Some(OverhangMap::new(45.0));
+    let views = [
+        ("low", -1.2, -0.25, 1.0),
+        ("above", 0.5, 0.45, 1.0),
+        ("side", 2.5, 0.1, 1.0),
+        ("base-close", 0.9, 0.6, 0.45),
+        ("staff-close", -1.6, 0.2, 0.4),
+    ];
+    for (name, yaw, pitch, zoom) in views {
+        // A renderer of its own, for its first frame to paint by facet.
+        let Some(fresh) = self::renderer() else {
+            return;
+        };
+        renderer = fresh;
+        renderer.upload_scene(&graph).expect("upload the model");
+        let mut camera = base.clone();
+        camera.distance *= zoom;
+        camera.yaw = yaw;
+        camera.pitch = pitch;
+        let mut frames = Vec::new();
+        let start = Instant::now();
+        loop {
+            let scene_render = SceneRender {
+                graph: &graph,
+                selection: &[],
+                gizmo: None,
+                clip_z: None,
+            };
+            let look = FrameLook {
+                contents: FrameContents::ModelsOnly,
+                overhang_map: map,
+                raft_top_mm: 0.0,
+                supports_shown_up_to_mm: f32::MAX,
+            };
+            let texture = renderer
+                .render_frame(Some(scene_render), BV, &camera, 1100, 900, look)
+                .expect("the frame is not refused")
+                .expect("a sized frame");
+            let frame =
+                readback::read_target_rgba(&renderer.core.device, &renderer.core.queue, &texture)
+                    .expect("read the frame back");
+            let pending = renderer.overhang_map_pending();
+            if frames.is_empty() || !pending {
+                frames.push(frame);
+            }
+            if !pending {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let waited = start.elapsed();
+        let first = frames.first().expect("a frame");
+        let last = frames.last().expect("a frame");
+        eprintln!(
+            "{name}: red by facet {}, by surface {} ({} frames, shown after {:.0} ms)",
+            red_pixels(first),
+            red_pixels(last),
+            frames.len(),
+            waited.as_secs_f64() * 1000.0
+        );
+        if let Some(dir) = &dir {
+            for (frame, kind) in [(first, "facet"), (last, "surface")] {
+                image::save_buffer(
+                    dir.join(format!("{name}-{kind}.png")),
+                    &frame.rgba,
+                    frame.width,
+                    frame.height,
+                    image::ExtendedColorType::Rgba8,
+                )
+                .expect("save the picture");
+            }
+        }
+    }
+}

@@ -30,6 +30,7 @@ mod overhang_map;
 mod overlay;
 mod smooth_shading;
 mod support_lines;
+mod surface_normals;
 mod surface_paint;
 mod tip_coverage;
 pub use smooth_shading::set_smooth_models;
@@ -348,6 +349,8 @@ pub struct Renderer {
     /// without one) (#484).
     support_tips: Vec<SupportTip>,
     tip_cell_mm: f32,
+    /// The surface the map reads around each vertex of a fine mesh (#498).
+    surface_normals: surface_normals::SurfaceNormals,
     /// How high the rafts of the scene reach, mm: what of a support mesh
     /// the view from under the plate hides (#481).
     raft_top_mm: f32,
@@ -442,6 +445,7 @@ impl Renderer {
             overhang_map: None,
             support_tips: Vec::new(),
             tip_cell_mm: 0.0,
+            surface_normals: surface_normals::SurfaceNormals::default(),
             raft_top_mm: 0.0,
             supports_shown_up_to_mm: f32::MAX,
             support_lines: support_lines::LinesSlot::default(),
@@ -893,6 +897,19 @@ impl Renderer {
             .set_tip_coverage(&self.core.device, &self.core.queue, grid.as_ref());
     }
 
+    /// Whether a model under the overhang map waits for the surface around
+    /// its vertices, read on a worker (#498): the map paints it by facet
+    /// until a frame drawn after it is ready.
+    pub fn overhang_map_pending(&self) -> bool {
+        self.surface_normals.pending()
+    }
+
+    /// Whether a surface the last frame waited for is ready, for the next
+    /// frame to show (#498).
+    pub fn overhang_map_arrived(&self) -> bool {
+        self.surface_normals.arrived()
+    }
+
     /// How high the rafts of the scene reach, mm (0 without one): what of
     /// the support meshes fades with the plate when the camera goes under
     /// it (#481).
@@ -1055,6 +1072,7 @@ impl Renderer {
         // Which objects are support meshes, for the cuts their hidden rafts
         // leave (#481).
         let mut support_objects: Vec<bool> = Vec::new();
+        self.surface_normals.clear_frame();
         let scene_for_draws = if let (Some(inst), Some(graph_data)) = (installed, graph) {
             match build_model_entries(
                 graph_data,
@@ -1076,6 +1094,15 @@ impl Renderer {
                             inst.gpu.model_buffer(),
                             offset,
                             bytemuck::bytes_of(entry),
+                        );
+                    }
+                    if overhang_map.is_some() {
+                        self.surface_normals.prepare(
+                            &self.core.device,
+                            &self.core.queue,
+                            graph_data,
+                            &entries,
+                            inst.gpu.objects(),
                         );
                     }
                     !entries.is_empty()
@@ -1363,12 +1390,15 @@ impl Renderer {
     /// The stencil reference is `1` only for the selected object, so after this
     /// pass the stencil holds 1 over its visible silhouette and 0 everywhere
     /// else, what the outline post-pass dilates.
+    /// A model under the overhang map whose surface is read (#498) goes
+    /// through the map pipeline, with that surface as a second vertex buffer.
     fn record_mesh_objects(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         inst: &InstalledScene,
         selection: &[NodeId],
     ) {
+        let mut mapped = false;
         pass.set_pipeline(&self.pipelines.mesh.pipeline);
         pass.set_bind_group(
             MeshBindGroup::Uniforms.idx(),
@@ -1382,7 +1412,19 @@ impl Renderer {
                 &inst.models_bind_group,
                 &[offset],
             );
+            let surface = self.surface_normals.drawn(i);
+            if surface.is_some() != mapped {
+                mapped = surface.is_some();
+                pass.set_pipeline(if mapped {
+                    &self.pipelines.mesh.map_pipeline
+                } else {
+                    &self.pipelines.mesh.pipeline
+                });
+            }
             pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
+            if let Some(surface) = surface {
+                pass.set_vertex_buffer(1, surface.slice(..));
+            }
             pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
             pass.set_stencil_reference(if selection.binary_search(&obj.node_id()).is_ok() {
                 1
