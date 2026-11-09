@@ -397,3 +397,159 @@ fn one_body_of_imported_supports_comes_off_alone() {
         assert_eq!(moved.faces, body.faces);
     });
 }
+
+fn select(document: &SceneDocument, leaf: NodeId) {
+    document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+        leaf,
+    )));
+}
+
+/// Where the leaf's origin stands in the world.
+fn origin(document: &SceneDocument, leaf: NodeId) -> [f32; 3] {
+    world(document, leaf)
+        .apply_to_vertex(Vertex::new([0.0; 3]))
+        .coords()
+}
+
+#[test]
+fn a_model_deleted_takes_its_imported_supports_along() {
+    on_fresh_slint_thread(|| {
+        let opened = open();
+        let (model, supports) = separate(&opened);
+        let doc = &opened.document;
+        // The supports by themselves go by themselves.
+        select(doc, supports);
+        assert!(doc.delete_selected_leaf().expect("deletes"));
+        assert_eq!(scene_leaves(doc).len(), 1);
+        assert!(doc.undo().expect("undoes"));
+        // The model takes them along, in one undo step.
+        select(doc, model);
+        assert!(doc.delete_selected_leaf().expect("deletes"));
+        assert!(scene_leaves(doc).is_empty(), "nothing is left behind");
+        assert!(doc.undo().expect("undoes"));
+        assert_eq!(scene_leaves(doc).len(), 2);
+        let owned = doc
+            .with_scene(|spatial| imported_of(spatial, model, None))
+            .expect("a scene");
+        assert_eq!(owned, [supports], "back with their model");
+    });
+}
+
+#[test]
+fn a_copy_of_the_model_takes_its_imported_supports_along() {
+    on_fresh_slint_thread(|| {
+        let opened = open();
+        let (model, _) = separate(&opened);
+        let doc = &opened.document;
+        select(doc, model);
+        let clipboard =
+            crate::clipboard::clipboard_from_document_selection(doc).expect("a clipboard");
+        let copy = crate::clipboard::paste(doc, &clipboard, [80.0, 0.0], 0.0)
+            .expect("pastes")
+            .expect("a copy");
+        assert_eq!(scene_leaves(doc).len(), 4);
+        let theirs = doc
+            .with_scene(|spatial| imported_of(spatial, copy, None))
+            .expect("a scene");
+        assert_eq!(theirs.len(), 1, "the copy has supports of its own");
+        // Under the copy, as the model's are under it: the copy keeps the
+        // model's height, so they still hold it.
+        let (o_copy, o_set) = (origin(doc, copy), origin(doc, theirs[0]));
+        for k in 0..3 {
+            assert!((o_copy[k] - o_set[k]).abs() < 1e-4, "{o_copy:?} {o_set:?}");
+        }
+        assert!(o_copy[0] > 20.0, "away from the model: {o_copy:?}");
+        assert!(o_copy[2].abs() < 1e-4);
+        // One undo step takes both.
+        assert!(doc.undo().expect("undoes"));
+        assert_eq!(scene_leaves(doc).len(), 2);
+    });
+}
+
+#[test]
+fn fill_bed_copies_take_the_imported_supports_along() {
+    on_fresh_slint_thread(|| {
+        let opened = open();
+        let (model, _) = separate(&opened);
+        let doc = &opened.document;
+        select(doc, model);
+        let plate = sc_arrange::Plate {
+            min: [-25.0, -25.0],
+            max: [200.0, 25.0],
+            floor: 0.0,
+        };
+        let options = crate::arrange_run::ArrangeOptions {
+            max_copies: 2,
+            ..Default::default()
+        };
+        let (filled, _) = crate::arrange_run::fill_now(doc, &plate, options).expect("filled");
+        assert_eq!(filled.copies.len(), 2);
+        let leaves = scene_leaves(doc);
+        let models: Vec<NodeId> = leaves
+            .iter()
+            .filter(|(_, mesh)| !is_imported_supports(mesh))
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(models.len(), 3);
+        assert_eq!(leaves.len(), 6, "each model with its supports");
+        for &m in &models {
+            let theirs = doc
+                .with_scene(|spatial| imported_of(spatial, m, None))
+                .expect("a scene");
+            assert_eq!(theirs.len(), 1, "each model has its own");
+            let (o_model, o_set) = (origin(doc, m), origin(doc, theirs[0]));
+            for k in 0..3 {
+                assert!(
+                    (o_model[k] - o_set[k]).abs() < 1e-3,
+                    "{o_model:?} {o_set:?}"
+                );
+            }
+        }
+        assert!(doc.undo().expect("undoes"));
+        assert_eq!(scene_leaves(doc).len(), 2);
+    });
+}
+
+/// A pre-supported file already separated: the model and its imported
+/// supports (the raft and the 12 pieces of [`presupported_mesh`]), each a
+/// root leaf standing where the file had it.
+pub(crate) fn separated_scene() -> (Scene, NodeId, NodeId) {
+    let mut model = Builder::default();
+    model.cuboid([-10.0, -10.0, 5.0], [10.0, 10.0, 25.0]);
+    model.frustum(0.0, 0.0, 25.0, 30.0, 1.5, 0.2);
+    let mut supports = Builder::default();
+    supports.cuboid([-15.0, -15.0, 0.0], [15.0, 15.0, 1.0]);
+    for [x, y] in SPOTS {
+        supports.frustum(x, y, 1.0, 4.2, 0.5, 0.5);
+        supports.frustum(x, y, 4.2, 5.0, 0.5, 0.15);
+    }
+    let named = |name: &str| {
+        Some(MeshMetadata {
+            name: Some(name.to_owned()),
+            ..Default::default()
+        })
+    };
+    let model = IndexedMesh::new(named("werewolf"), model.vertices, model.faces);
+    let supports = IndexedMesh::new(
+        named(sc_mesh_core::presupported::IMPORTED_SUPPORTS_NAME),
+        supports.vertices,
+        supports.faces,
+    );
+    let mut graph = Scene::new();
+    let mut leaf = |mesh: IndexedMesh| {
+        let leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
+            .expect("leaf");
+        graph.add_root(leaf).expect("root");
+        leaf
+    };
+    let (model, supports) = (leaf(model), leaf(supports));
+    (graph, model, supports)
+}
+
+/// Where the shafts stand on the plate, for other modules' tests.
+pub(crate) const SHAFT_SPOTS: [[f64; 2]; 6] = SPOTS;

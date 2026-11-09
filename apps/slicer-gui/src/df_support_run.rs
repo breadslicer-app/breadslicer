@@ -58,6 +58,7 @@ use slint::ComponentHandle;
 
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey, StaleSupportsChoice};
 use crate::i18n::ctr;
+use crate::imported_supports::ImportedBody;
 use crate::mesh_render::{OverlayMesh, OverlayTint};
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::print_selection::PrintDefaults;
@@ -912,6 +913,34 @@ enum DragState {
         press: [f32; 2],
         brush: Option<[f32; 2]>,
     },
+    /// Remove's box or brush over the supports a pre-supported file came
+    /// with (#260): their bodies, each with points over it in the world,
+    /// looked for on screen as the supports of a set are.
+    RemoveImported {
+        bodies: Vec<ImportedBody>,
+        points: Vec<(String, Vec<[f32; 3]>)>,
+        corner: [f32; 2],
+        owed: bool,
+        seen_from: SeenFrom,
+        looked: HashMap<(usize, (i32, i32)), bool>,
+        picked: Vec<String>,
+        press: [f32; 2],
+        brush: Option<[f32; 2]>,
+    },
+}
+
+/// What a box's step picked, to be drawn red.
+enum Picks {
+    Set(DrawnSet, Vec<String>),
+    Imported(Vec<ImportedBody>),
+}
+
+/// The bodies of `bodies` whose ids (their place in it) `picked` names.
+fn picked_bodies(bodies: &[ImportedBody], picked: &[String]) -> Vec<ImportedBody> {
+    picked
+        .iter()
+        .filter_map(|id| bodies.get(id.parse::<usize>().ok()?).cloned())
+        .collect()
 }
 
 /// The side of a cell of the screen along a support's line, in logical
@@ -2725,10 +2754,7 @@ impl DfSupportRun {
     fn imported_body_at(
         &self,
         point: [f32; 3],
-    ) -> Option<(
-        crate::imported_supports::ImportedBody,
-        Arc<sc_mesh_core::IndexedMesh>,
-    )> {
+    ) -> Option<(ImportedBody, Arc<sc_mesh_core::IndexedMesh>)> {
         let ui = self.ui.upgrade()?;
         if ui.get_support_tool() != 2
             || self.handle.borrow().is_some()
@@ -2784,17 +2810,19 @@ impl DfSupportRun {
     /// body goes, in one undo entry, and the model stays as it is. Whether
     /// there was one.
     fn remove_imported_body(&self, point: [f32; 3]) -> bool {
-        let Some((body, mesh)) = self.imported_body_at(point) else {
+        let Some((body, _)) = self.imported_body_at(point) else {
             return false;
         };
+        self.remove_imported_bodies(&[body])
+    }
+
+    /// Takes the bodies `bodies` of imported supports off (#260), in one
+    /// undo entry; the model stays as it is. Whether anything went.
+    fn remove_imported_bodies(&self, bodies: &[ImportedBody]) -> bool {
+        let taken: Vec<&ImportedBody> = bodies.iter().collect();
         let edit = self
             .document
-            .with_scene(|spatial| {
-                match crate::imported_supports::without_faces(&mesh, &body.faces) {
-                    Some(rest) => leaf_mesh_swap(spatial.graph(), body.leaf, Arc::new(rest)),
-                    None => crate::split_bodies::removal_edit(spatial.graph(), &[body.leaf]),
-                }
-            })
+            .with_scene(|spatial| crate::imported_supports::removal_of_bodies(spatial, &taken))
             .flatten();
         let Some(edit) = edit else {
             return false;
@@ -2809,14 +2837,149 @@ impl DfSupportRun {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_supports_last_run(ctr!(
                 "DfSupportDialog",
-                "Removed 1 body of the imported supports."
+                "Removed {n} body of the imported supports.",
+                "Removed {n} bodies of the imported supports.",
+                bodies.len()
             ));
         }
         crate::breadcrumbs::note(&format!(
-            "supports: imported body removed ({} faces)",
-            body.faces.len()
+            "supports: {} imported bod(ies) removed ({} faces)",
+            bodies.len(),
+            bodies.iter().map(|b| b.faces.len()).sum::<usize>()
         ));
         true
+    }
+
+    /// A box or a brush of Remove over the selection's imported supports
+    /// (#260): the drag's state, with what a brush takes where it is
+    /// pressed. `None` when the selection has none.
+    fn imported_sweep(
+        &self,
+        ui: &MainWindow,
+        kind: SupportDragKind,
+        press: &DragPoint,
+        project: Project<'_>,
+    ) -> Option<DragState> {
+        let selected = self.document.selection_primary_node_id();
+        let found = self.document.with_scene(|spatial| {
+            let sets = crate::imported_supports::removable_sets(spatial, selected);
+            crate::imported_supports::bodies_of(spatial, &sets)
+        })?;
+        if found.is_empty() {
+            return None;
+        }
+        // Each body is named by its place among them, as a support by its id.
+        let mut bodies = Vec::with_capacity(found.len());
+        let mut points = Vec::with_capacity(found.len());
+        for (k, (body, over)) in found.into_iter().enumerate() {
+            bodies.push(body);
+            points.push((k.to_string(), over));
+        }
+        let seen_from = SeenFrom::new(&points, project);
+        let mut looked = HashMap::new();
+        let brush = (kind == SupportDragKind::Brush).then_some(press.cursor);
+        let picked = match brush {
+            Some(at) => {
+                let radius = ui.get_support_brush_radius();
+                let locate = self.body_locator(&bodies);
+                Self::taken(
+                    &seen_from,
+                    &locate,
+                    &mut looked,
+                    &|_| false,
+                    &|q| screen_segment_distance(q, at, at) <= radius,
+                    project,
+                    usize::MAX,
+                )
+                .0
+                .into_iter()
+                .map(|k| points[k].0.clone())
+                .collect()
+            }
+            None => Vec::new(),
+        };
+        crate::breadcrumbs::note(&format!(
+            "supports: {kind:?} started over {} imported bodies",
+            bodies.len()
+        ));
+        Some(DragState::RemoveImported {
+            bodies,
+            points,
+            corner: press.cursor,
+            owed: false,
+            seen_from,
+            looked,
+            picked,
+            press: press.cursor,
+            brush,
+        })
+    }
+
+    /// Which of `bodies` a ray hit: the body under the hit, when it is one
+    /// of them; `None` for a hit on the model or anything else.
+    fn body_locator<'a>(
+        &'a self,
+        bodies: &'a [ImportedBody],
+    ) -> impl Fn(ScreenHit) -> Option<usize> + 'a {
+        move |hit: ScreenHit| {
+            if !bodies.iter().any(|b| b.leaf == hit.leaf) {
+                return None;
+            }
+            let found = self
+                .document
+                .with_scene(|spatial| {
+                    crate::imported_supports::body_at(
+                        spatial,
+                        &[hit.leaf],
+                        hit.point.map(f64::from),
+                    )
+                })
+                .flatten()?;
+            bodies
+                .iter()
+                .position(|b| b.leaf == found.leaf && b.faces.first() == found.faces.first())
+        }
+    }
+
+    /// A box's or a brush's picks over imported supports changed: the
+    /// bodies they take are drawn red (#260).
+    fn imported_picks_changed(&self, bodies: &[ImportedBody]) {
+        if bodies.is_empty() {
+            self.last_ghost.borrow_mut().clear();
+            self.ctrl.set_preview_overlay(None);
+            self.show_add_note(Default::default());
+            return;
+        }
+        let drawn = self
+            .document
+            .with_scene(|spatial| {
+                let (mut positions, mut indices) = (Vec::new(), Vec::new());
+                for body in bodies {
+                    let Some((p, i)) = crate::imported_supports::body_in_world(spatial, body)
+                    else {
+                        continue;
+                    };
+                    let base = positions.len() as u32;
+                    positions.extend(p);
+                    indices.extend(i.into_iter().map(|v| v + base));
+                }
+                (positions, indices)
+            })
+            .unwrap_or_default();
+        *self.last_ghost.borrow_mut() = vec![Arc::new(OverlayMesh {
+            positions: drawn.0,
+            indices: drawn.1,
+            tint: OverlayTint::Invalid,
+        })];
+        self.show_hover_overlay();
+        self.show_add_note((
+            ctr!(
+                "DfSupportDialog",
+                "Bodies of the imported supports to remove: {}.",
+                bodies.len()
+            ),
+            true,
+        ));
     }
 
     /// The brace tool's preview at `point` (#3): before the first click, the
@@ -4807,7 +4970,7 @@ impl DfSupportRun {
     fn boxed(
         tips: &[(String, Vec<[f32; 3]>)],
         seen_from: &SeenFrom,
-        locate: &SupportLocator,
+        locate: &dyn Fn(ScreenHit) -> Option<usize>,
         looked: &mut HashMap<(usize, (i32, i32)), bool>,
         press: [f32; 2],
         corner: [f32; 2],
@@ -4855,38 +5018,76 @@ impl DfSupportRun {
     fn box_step(self: &Rc<Self>, budget: usize) -> bool {
         let stepped = self.ctrl.with_drag_view(|view| {
             let mut drag = self.drag.borrow_mut();
-            let Some(DragState::Remove {
-                drawn,
-                tips,
-                locate,
-                seen_from,
-                looked,
-                picked,
-                press,
-                corner,
-                owed,
-                brush: None,
-            }) = drag.as_mut()
-            else {
-                return None;
-            };
-            if !*owed {
-                return None;
+            match drag.as_mut() {
+                Some(DragState::Remove {
+                    drawn,
+                    tips,
+                    locate,
+                    seen_from,
+                    looked,
+                    picked,
+                    press,
+                    corner,
+                    owed,
+                    brush: None,
+                }) => {
+                    if !*owed {
+                        return None;
+                    }
+                    let (ids, more) = Self::boxed(
+                        tips,
+                        seen_from,
+                        &|hit| locate.support_at(hit),
+                        looked,
+                        *press,
+                        *corner,
+                        view,
+                        budget,
+                    );
+                    *owed = more;
+                    let changed = ids != *picked;
+                    *picked = ids;
+                    Some((Picks::Set(drawn.clone(), picked.clone()), changed, more))
+                }
+                Some(DragState::RemoveImported {
+                    bodies,
+                    points,
+                    seen_from,
+                    looked,
+                    picked,
+                    press,
+                    corner,
+                    owed,
+                    brush: None,
+                }) => {
+                    if !*owed {
+                        return None;
+                    }
+                    let locate = self.body_locator(bodies);
+                    let (ids, more) = Self::boxed(
+                        points, seen_from, &locate, looked, *press, *corner, view, budget,
+                    );
+                    *owed = more;
+                    let changed = ids != *picked;
+                    *picked = ids;
+                    Some((
+                        Picks::Imported(picked_bodies(bodies, picked)),
+                        changed,
+                        more,
+                    ))
+                }
+                _ => None,
             }
-            let (ids, more) = Self::boxed(
-                tips, seen_from, locate, looked, *press, *corner, view, budget,
-            );
-            *owed = more;
-            let changed = ids != *picked;
-            *picked = ids;
-            Some((drawn.clone(), picked.clone(), changed, more))
         });
-        let Some(Some((drawn, picked, changed, more))) = stepped else {
+        let Some(Some((picks, changed, more))) = stepped else {
             self.box_poll.stop();
             return false;
         };
         if changed {
-            self.picks_changed(&drawn, &picked);
+            match picks {
+                Picks::Set(drawn, picked) => self.picks_changed(&drawn, &picked),
+                Picks::Imported(bodies) => self.imported_picks_changed(&bodies),
+            }
         }
         if !more {
             self.box_poll.stop();
@@ -4905,7 +5106,7 @@ impl DfSupportRun {
     /// looked at.
     fn taken(
         seen_from: &SeenFrom,
-        locate: &SupportLocator,
+        locate: &dyn Fn(ScreenHit) -> Option<usize>,
         looked: &mut HashMap<(usize, (i32, i32)), bool>,
         skip: &dyn Fn(usize) -> bool,
         inside: &dyn Fn([f32; 2]) -> bool,
@@ -4953,7 +5154,7 @@ impl DfSupportRun {
         let mut ask = |asks: Vec<(usize, (i32, i32), [f32; 2])>, taken: &mut Vec<usize>| {
             let pixels: Vec<[f32; 2]> = asks.iter().map(|(_, _, q)| *q).collect();
             for ((k, c, _), hit) in asks.into_iter().zip(view.hits(&pixels)) {
-                let seen = hit.is_some_and(|hit| locate.support_at(hit) == Some(k));
+                let seen = hit.is_some_and(|hit| locate(hit) == Some(k));
                 looked.insert((k, c), seen);
                 if seen && !taken.contains(&k) {
                     taken.push(k);
@@ -4995,6 +5196,16 @@ impl SupportDragHandler for DfSupportRun {
         if self.handle.borrow().is_some() {
             return false;
         }
+        // With no set in force selected, a box or a brush takes the bodies of
+        // the selection's imported supports (#260).
+        let mut imported = match kind {
+            SupportDragKind::Box | SupportDragKind::Brush
+                if self.selected_set_in_force().is_none() =>
+            {
+                run.imported_sweep(&ui, kind, press, project)
+            }
+            _ => None,
+        };
         let state = match kind {
             SupportDragKind::MoveTip => {
                 let Some(at) = press.support else {
@@ -5012,6 +5223,9 @@ impl SupportDragHandler for DfSupportRun {
                     tip,
                     to: None,
                 }
+            }
+            SupportDragKind::Box | SupportDragKind::Brush if imported.is_some() => {
+                imported.take().expect("the guard saw it")
             }
             SupportDragKind::Box | SupportDragKind::Brush => {
                 let Some(drawn) = self.selected_set_in_force() else {
@@ -5037,7 +5251,7 @@ impl SupportDragHandler for DfSupportRun {
                         let radius = ui.get_support_brush_radius();
                         Self::taken(
                             &seen_from,
-                            &locate,
+                            &|hit| locate.support_at(hit),
                             &mut looked,
                             &|_| false,
                             &|q| screen_segment_distance(q, at, at) <= radius,
@@ -5072,10 +5286,14 @@ impl SupportDragHandler for DfSupportRun {
         self.end_previews();
         self.last_ghost.borrow_mut().clear();
         self.ctrl.set_preview_overlay(None);
-        if let DragState::Remove { drawn, picked, .. } = &state
-            && !picked.is_empty()
-        {
-            run.picks_changed(drawn, picked);
+        match &state {
+            DragState::Remove { drawn, picked, .. } if !picked.is_empty() => {
+                run.picks_changed(drawn, picked);
+            }
+            DragState::RemoveImported { bodies, picked, .. } if !picked.is_empty() => {
+                run.imported_picks_changed(&picked_bodies(bodies, picked));
+            }
+            _ => {}
         }
         *self.drag.borrow_mut() = Some(state);
         true
@@ -5138,7 +5356,7 @@ impl SupportDragHandler for DfSupportRun {
                         next.extend(
                             Self::taken(
                                 seen_from,
-                                locate,
+                                &|hit| locate.support_at(hit),
                                 looked,
                                 &|k| already.contains(&k),
                                 &|q| screen_segment_distance(q, from, to) <= radius,
@@ -5155,7 +5373,14 @@ impl SupportDragHandler for DfSupportRun {
                     None => {
                         *corner = at.cursor;
                         let (ids, more) = Self::boxed(
-                            tips, seen_from, locate, looked, *press, *corner, project, BOX_RAYS,
+                            tips,
+                            seen_from,
+                            &|hit| locate.support_at(hit),
+                            looked,
+                            *press,
+                            *corner,
+                            project,
+                            BOX_RAYS,
                         );
                         *owed = more;
                         ids
@@ -5171,6 +5396,67 @@ impl SupportDragHandler for DfSupportRun {
                 let (drawn, picked) = (drawn.clone(), picked.clone());
                 drop(drag);
                 run.picks_changed(&drawn, &picked);
+                run.keep_looking(more);
+            }
+            Some(DragState::RemoveImported {
+                bodies,
+                points,
+                seen_from,
+                looked,
+                picked,
+                press,
+                corner,
+                owed,
+                brush,
+            }) => {
+                if seen_from.refresh(points, project) {
+                    looked.clear();
+                }
+                let locate = run.body_locator(bodies);
+                let next: Vec<String> = match brush {
+                    Some(last) => {
+                        let (from, to) = (*last, at.cursor);
+                        let already: Vec<usize> = (0..points.len())
+                            .filter(|&k| picked.contains(&points[k].0))
+                            .collect();
+                        let mut next = picked.clone();
+                        next.extend(
+                            Self::taken(
+                                seen_from,
+                                &locate,
+                                looked,
+                                &|k| already.contains(&k),
+                                &|q| screen_segment_distance(q, from, to) <= radius,
+                                project,
+                                usize::MAX,
+                            )
+                            .0
+                            .into_iter()
+                            .map(|k| points[k].0.clone()),
+                        );
+                        *last = at.cursor;
+                        next
+                    }
+                    None => {
+                        *corner = at.cursor;
+                        let (ids, more) = Self::boxed(
+                            points, seen_from, &locate, looked, *press, *corner, project, BOX_RAYS,
+                        );
+                        *owed = more;
+                        ids
+                    }
+                };
+                drop(locate);
+                let more = *owed;
+                if next == *picked {
+                    drop(drag);
+                    run.keep_looking(more);
+                    return;
+                }
+                *picked = next;
+                let shown = picked_bodies(bodies, picked);
+                drop(drag);
+                run.imported_picks_changed(&shown);
                 run.keep_looking(more);
             }
             None => {}
@@ -5243,6 +5529,14 @@ impl SupportDragHandler for DfSupportRun {
                     return;
                 }
                 run.start_gesture(&ui, drawn, EditOp::RemoveTips(picked), None);
+            }
+            DragState::RemoveImported { bodies, picked, .. } => {
+                self.show_add_note(Default::default());
+                drop_it();
+                let picked = picked_bodies(&bodies, &picked);
+                if !picked.is_empty() {
+                    self.remove_imported_bodies(&picked);
+                }
             }
         }
     }
@@ -8839,25 +9133,7 @@ mod hand_edit_tests {
         camera: crate::camera::OrbitCamera,
     ) -> (Rc<ViewportController>, Rc<SceneDocument>, Rc<DfSupportRun>) {
         let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-        let ctrl = Rc::new(ViewportController::new_for_test_with_ui(window));
-        {
-            let ctrl = ctrl.clone();
-            window.on_viewport_pointer_down(move |x, y, m| {
-                ctrl.on_pointer_down(crate::viewport::ScreenPoint::new(x, y), m)
-            });
-        }
-        {
-            let ctrl = ctrl.clone();
-            window.on_viewport_pointer_move(move |x, y, m| {
-                ctrl.on_pointer_move(crate::viewport::ScreenPoint::new(x, y), m)
-            });
-        }
-        {
-            let ctrl = ctrl.clone();
-            window.on_viewport_pointer_up(move |x, y, m| {
-                ctrl.on_pointer_up(crate::viewport::ScreenPoint::new(x, y), m)
-            });
-        }
+        let ctrl = wired_viewport(window);
         let document = ctrl.document();
         let mut graph = Scene::new();
         let leaf = graph
@@ -8880,6 +9156,166 @@ mod hand_edit_tests {
         ctrl.set_viewport_for_test(800.0, 600.0);
         ctrl.set_camera_for_test(camera);
         (ctrl, document, run)
+    }
+
+    /// A viewport controller the window's pointer callbacks drive.
+    fn wired_viewport(window: &MainWindow) -> Rc<ViewportController> {
+        let ctrl = Rc::new(ViewportController::new_for_test_with_ui(window));
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_down(move |x, y, m| {
+                ctrl.on_pointer_down(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_move(move |x, y, m| {
+                ctrl.on_pointer_move(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        {
+            let ctrl = ctrl.clone();
+            window.on_viewport_pointer_up(move |x, y, m| {
+                ctrl.on_pointer_up(crate::viewport::ScreenPoint::new(x, y), m)
+            });
+        }
+        ctrl
+    }
+
+    /// Remove's brush and box over the supports a pre-supported file came
+    /// with (#260), through the window's own viewport callbacks: each takes
+    /// the bodies in sight it passes over, in one undo step, and leaves the
+    /// model as it is.
+    #[test]
+    fn the_brush_and_the_box_take_bodies_of_imported_supports() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = wired_viewport(&window);
+            let document = ctrl.document();
+            let (graph, model, set) = crate::tests_presupported_import::separated_scene();
+            document.install_graph(graph, PathBuf::from("werewolf.stl"));
+            let _run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                model,
+            )));
+            ctrl.set_section(WorkspaceSection::Supports);
+            ctrl.set_viewport_for_test(800.0, 600.0);
+            ctrl.set_camera_for_test(camera_at([0.0, 0.0, 3.0], 0.3, 0.2, 70.0));
+            window.set_support_tool(2);
+            let faces = |leaf: NodeId| {
+                document
+                    .with_scene(|s| s.graph().leaf_mesh_arc(leaf).map(|m| m.faces().len()))
+                    .flatten()
+                    .unwrap_or(0)
+            };
+            let (all, model_faces) = (faces(set), faces(model));
+            // Each shaft where it is seen: halfway up, in sight there.
+            let on_screen: Vec<[f32; 2]> = crate::tests_presupported_import::SHAFT_SPOTS
+                .iter()
+                .filter_map(|&[x, y]| {
+                    let mid = [x as f32, y as f32, 2.6];
+                    let p = ctrl.project_for_test(mid)?;
+                    let first = ctrl.first_hit_for_test(p)?;
+                    let near = (0..3)
+                        .map(|k| (first.point[k] - mid[k]).powi(2))
+                        .sum::<f32>()
+                        < 1.0;
+                    (first.leaf == set
+                        && near
+                        && (40.0..760.0).contains(&p[0])
+                        && (40.0..560.0).contains(&p[1]))
+                    .then_some(p)
+                })
+                .collect();
+            assert!(on_screen.len() >= 2, "{} shafts in sight", on_screen.len());
+
+            // The brush: pressed on a shaft, dragged along it.
+            window.set_support_remove_mode(1);
+            let at = on_screen[0];
+            window.invoke_viewport_pointer_down(at[0], at[1], no_keys());
+            for k in 1..=6 {
+                window.invoke_viewport_pointer_move(at[0], at[1] - 2.0 * k as f32, no_keys());
+            }
+            window.invoke_viewport_pointer_up(at[0], at[1] - 12.0, no_keys());
+            assert!(
+                faces(set) < all,
+                "the brush took bodies: {}",
+                window.get_supports_last_run()
+            );
+            assert_eq!(faces(model), model_faces, "the model is as it was");
+            assert!(document.undo().unwrap(), "one undo");
+            assert_eq!(faces(set), all);
+
+            // The box: around another shaft.
+            window.set_support_remove_mode(0);
+            let at = on_screen[1];
+            window.invoke_viewport_pointer_down(at[0] - 8.0, at[1] - 8.0, no_keys());
+            for k in 1..=4 {
+                let d = 4.0 * k as f32;
+                window.invoke_viewport_pointer_move(at[0] - 8.0 + d, at[1] - 8.0 + d, no_keys());
+            }
+            window.invoke_viewport_pointer_up(at[0] + 8.0, at[1] + 8.0, no_keys());
+            assert!(
+                faces(set) < all,
+                "the box took bodies: {}",
+                window.get_supports_last_run()
+            );
+            assert_eq!(faces(model), model_faces);
+            assert!(document.undo().unwrap(), "one undo");
+            assert_eq!(faces(set), all);
+        });
+    }
+
+    /// A model deleted takes its support set along, in the same undo step;
+    /// the set by itself goes by itself.
+    #[test]
+    fn a_model_deleted_takes_its_supports_along() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            let (supports, _) = run.support_leaf().expect("the supports");
+            let leaves = || {
+                document
+                    .with_scene(|s| (0..).map_while(|i| s.leaf_id_at_index(i)).count())
+                    .unwrap_or(0)
+            };
+            assert_eq!(leaves(), 2);
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                supports,
+            )));
+            assert!(document.delete_selected_leaf().unwrap());
+            assert_eq!(leaves(), 1, "the set by itself");
+            assert!(document.undo().unwrap());
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                leaf,
+            )));
+            assert!(document.delete_selected_leaf().unwrap());
+            assert_eq!(leaves(), 0, "the model took its set along");
+            assert!(document.undo().unwrap(), "one undo step");
+            assert_eq!(leaves(), 2);
+            assert!(in_force_session(&run).is_some(), "editable as it was");
+        });
     }
 
     /// A slab 20 x 10 x 2 mm, its corner at the origin.

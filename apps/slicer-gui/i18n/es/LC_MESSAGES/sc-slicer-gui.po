@@ -6650,6 +6650,15 @@ msgid "A click removes this body of the imported supports."
 msgstr "Un clic quita este cuerpo de los soportes importados."
 
 #: src/df_support_run.rs
+#, rust-format
 msgctxt "DfSupportDialog"
-msgid "Removed 1 body of the imported supports."
-msgstr "Se quitó 1 cuerpo de los soportes importados."
+msgid "Removed {n} body of the imported supports."
+msgid_plural "Removed {n} bodies of the imported supports."
+msgstr[0] "Se quitó {n} cuerpo de los soportes importados."
+msgstr[1] "Se quitaron {n} cuerpos de los soportes importados."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "Bodies of the imported supports to remove: {}."
+msgstr "Cuerpos de los soportes importados a quitar: {}."

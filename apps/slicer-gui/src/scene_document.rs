@@ -1500,10 +1500,13 @@ impl SceneDocument {
     /// its place. Inline-mesh leaves carry their own `Arc`, so removal of a
     /// lone inline-mesh leaf never produces a Compound.
     ///
+    /// A model goes with its supports: its sets made here (#197) and the
+    /// supports its file came with (#259), in the same entry.
+    ///
     /// Returns `Ok(true)` on a successful deletion. Selection clearing and the
     /// `Restructured` event are handled by [`Self::apply_edit`].
     pub(crate) fn delete_selected_leaf(&self) -> Result<bool, SceneError> {
-        let ids = self.selection_node_ids();
+        let ids = self.with_their_supports(self.selection_node_ids());
         if ids.is_empty() {
             return Ok(false);
         }
@@ -1540,6 +1543,32 @@ impl SceneDocument {
             Err(EditNotApplied::NoSceneLoaded) => Ok(false),
             Err(EditNotApplied::Rejected(error)) => Err(error),
         }
+    }
+
+    /// `ids`, followed by the supports of each model among them that are not
+    /// among them already: its support sets and its imported supports.
+    fn with_their_supports(&self, ids: Vec<NodeId>) -> Vec<NodeId> {
+        let sessions = self.support_sessions();
+        self.with_scene(|spatial| {
+            let mut all = ids.clone();
+            for &id in &ids {
+                let Some(query) = spatial.leaf(id) else {
+                    continue;
+                };
+                if sc_geom::df_supports::is_any_support_mesh(query.mesh()) {
+                    continue;
+                }
+                let sets = crate::support_persist::sets_of_model(spatial, &sessions, id);
+                let imported = crate::imported_supports::imported_of(spatial, id, None);
+                for rider in sets.into_iter().chain(imported) {
+                    if !all.contains(&rider) {
+                        all.push(rider);
+                    }
+                }
+            }
+            all
+        })
+        .unwrap_or(ids)
     }
 
     /// Pastes a [`SceneFragment`] into the current scene as a new root.

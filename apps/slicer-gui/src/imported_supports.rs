@@ -29,6 +29,8 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_spatial::{ObjectQuery, SceneSpatial};
 use sc_scene::NodeId;
 
+use crate::scene_document::{SceneEdit, leaf_mesh_swap};
+
 /// A footprint on the plate: `[x0, y0, x1, y1]`, mm.
 type Footprint = [f64; 4];
 
@@ -376,6 +378,105 @@ pub(crate) fn without_faces(mesh: &IndexedMesh, faces: &[usize]) -> Option<Index
         kept.push(IndexedTriangle::from_raw_indices(v));
     }
     (!kept.is_empty()).then(|| IndexedMesh::new(mesh.meta().clone(), vertices, kept))
+}
+
+/// At most this many points of a body stand for it on screen: a box or a
+/// brush looks for it through them (#260).
+const SWEEP_POINTS_MAX: usize = 400;
+/// The points over a body's faces are about this far apart, mm, before
+/// the cap: a long shaft has some along its middle, not only at its ends.
+const SWEEP_POINT_STEP_MM: f64 = 0.5;
+
+/// Points over the triangle `a b c` about [`SWEEP_POINT_STEP_MM`] apart,
+/// its corners among them.
+fn points_over(a: [f64; 3], b: [f64; 3], c: [f64; 3], out: &mut Vec<[f64; 3]>) {
+    let length = |p: [f64; 3], q: [f64; 3]| dot(sub(p, q), sub(p, q)).sqrt();
+    let longest = length(a, b).max(length(b, c)).max(length(c, a));
+    let n = ((longest / SWEEP_POINT_STEP_MM).ceil() as usize).clamp(1, 64);
+    for i in 0..=n {
+        for j in 0..=(n - i) {
+            let (u, v) = (i as f64 / n as f64, j as f64 / n as f64);
+            let w = 1.0 - u - v;
+            out.push([
+                a[0] * w + b[0] * u + c[0] * v,
+                a[1] * w + b[1] * u + c[1] * v,
+                a[2] * w + b[2] * u + c[2] * v,
+            ]);
+        }
+    }
+}
+
+/// Every body of the imported sets `sets`, each with points over its faces
+/// in the world (at most [`SWEEP_POINTS_MAX`] of them): what a box or a
+/// brush of the Remove tool looks for on screen.
+pub(crate) fn bodies_of(
+    spatial: &SceneSpatial,
+    sets: &[NodeId],
+) -> Vec<(ImportedBody, Vec<[f32; 3]>)> {
+    let mut bodies = Vec::new();
+    for &leaf in sets {
+        let (Some(query), Some(mesh)) = (spatial.leaf(leaf), spatial.graph().leaf_mesh_arc(leaf))
+        else {
+            continue;
+        };
+        let world = affine(&query.world_transform());
+        let index = index_of(mesh);
+        let mut faces: Vec<Vec<usize>> = vec![Vec::new(); index.shells.count() as usize];
+        for (f, &shell) in index.shells.labels().iter().enumerate() {
+            faces[shell as usize].push(f);
+        }
+        for faces in faces.into_iter().filter(|f| !f.is_empty()) {
+            let mut over = Vec::new();
+            for &f in &faces {
+                let [a, b, c] = mesh.faces()[f]
+                    .vertices
+                    .map(|v| xyz(&world.apply_to_vertex(mesh.vertices()[v.get() as usize])));
+                points_over(a, b, c, &mut over);
+            }
+            let stride = over.len().div_ceil(SWEEP_POINTS_MAX).max(1);
+            let points = over
+                .iter()
+                .step_by(stride)
+                .map(|p| p.map(|c| c as f32))
+                .collect();
+            bodies.push((ImportedBody { leaf, faces }, points));
+        }
+    }
+    bodies
+}
+
+/// The edit that takes the bodies `bodies` off their sets, in one entry: a
+/// set left with others keeps them, one left with none goes. `None` when
+/// nothing would change.
+pub(crate) fn removal_of_bodies(
+    spatial: &SceneSpatial,
+    bodies: &[&ImportedBody],
+) -> Option<SceneEdit> {
+    let mut by_leaf: Vec<(NodeId, Vec<usize>)> = Vec::new();
+    for body in bodies {
+        match by_leaf.iter_mut().find(|(leaf, _)| *leaf == body.leaf) {
+            Some((_, faces)) => faces.extend(&body.faces),
+            None => by_leaf.push((body.leaf, body.faces.clone())),
+        }
+    }
+    let mut graph = spatial.graph().clone();
+    let mut edits = Vec::new();
+    for (leaf, mut faces) in by_leaf {
+        faces.sort_unstable();
+        faces.dedup();
+        let mesh = graph.leaf_mesh_arc(leaf)?.clone();
+        let edit = match without_faces(&mesh, &faces) {
+            Some(rest) => leaf_mesh_swap(&graph, leaf, Arc::new(rest))?,
+            None => crate::split_bodies::removal_edit(&graph, &[leaf])?,
+        };
+        edit.apply_to_scene(&mut graph).ok()?;
+        edits.push(edit);
+    }
+    match edits.len() {
+        0 => None,
+        1 => edits.pop(),
+        _ => Some(SceneEdit::Compound(edits)),
+    }
 }
 
 /// The body `body` drawn in the world: what the Remove tool's hover shows
