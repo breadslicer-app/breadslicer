@@ -4911,18 +4911,18 @@ msgstr "Revisá: lo tapado cubre el {} % de su superficie. Si está abierto a pr
 
 #: src/df_support_run.rs
 msgctxt "Inspector"
-msgid "Minis 30 mm+"
-msgstr "Minis 30 mm+"
+msgid "Miniatures 20~65 mm"
+msgstr "Miniaturas 20~65 mm"
 
 #: src/df_support_run.rs
 msgctxt "Inspector"
-msgid "Figures 70 mm+"
-msgstr "Figuras 70 mm+"
+msgid "Figures 65~150 mm"
+msgstr "Figuras 65~150 mm"
 
 #: src/df_support_run.rs
 msgctxt "Inspector"
-msgid "Figures 150 mm+"
-msgstr "Figuras 150 mm+"
+msgid "Statues 150 mm+"
+msgstr "Estatuas 150 mm+"
 
 #: src/df_support_run.rs
 #, rust-format
@@ -5529,21 +5529,6 @@ msgstr "Agregar soporte (clic en el modelo)"
 msgctxt "Inspector"
 msgid "Remove support (click it)"
 msgstr "Quitar soporte (clic en él)"
-
-#: src/df_support_run.rs
-msgctxt "Inspector"
-msgid "Structure (default)"
-msgstr "Estructura (normal)"
-
-#: src/df_support_run.rs
-msgctxt "Inspector"
-msgid "Detail (small miniatures)"
-msgstr "Detalle (minis)"
-
-#: src/df_support_run.rs
-msgctxt "Inspector"
-msgid "Anchor (heavy parts)"
-msgstr "Anclaje (pesadas)"
 
 #: src/df_support_run.rs
 msgctxt "Inspector"

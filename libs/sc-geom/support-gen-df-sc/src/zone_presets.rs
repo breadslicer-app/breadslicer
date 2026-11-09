@@ -1,8 +1,8 @@
 //! Zone presets (#360): support setups that size every support by the zone
 //! it lands in (see `support_gen_df::supports::auto_support::zone_rules`),
-//! with their bracing. Three ship: "Minis 30 mm+" and "Figures 150 mm+",
-//! Damian's setups tuned over many prints, value for value, and "Figures
-//! 70 mm+" between them (#479).
+//! with their bracing. Three ship: "Miniatures 20~65 mm" and "Statues
+//! 150 mm+", Damian's setups tuned over many prints, value for value, and
+//! "Figures 65~150 mm" between them (#479, names #490).
 
 use serde::{Deserialize, Serialize};
 use support_gen_df::supports::auto_bracing::settings::{
@@ -251,7 +251,7 @@ fn volume(min_volume_mm3: f64, height_mm: f64, spacing_mm: f64, size: &str) -> V
     }
 }
 
-/// "Minis 30 mm+".
+/// "Miniatures 20~65 mm".
 pub fn minis_30() -> ZonePreset {
     ZonePreset {
         rules: ZoneRules {
@@ -292,7 +292,7 @@ pub fn minis_30() -> ZonePreset {
     }
 }
 
-/// "Figures 150 mm+": Damian's setup for figures. Its overhang tips hold
+/// "Statues 150 mm+": Damian's setup for figures. Its overhang tips hold
 /// a figure that big and are too thick on a smaller one (#479).
 pub fn figures_150() -> ZonePreset {
     ZonePreset {
@@ -334,7 +334,7 @@ pub fn figures_150() -> ZonePreset {
     }
 }
 
-/// "Figures 70 mm+": "Figures 150 mm+" with thinner overhang tips, the
+/// "Figures 65~150 mm": "Statues 150 mm+" with thinner overhang tips, the
 /// largest J3D tip 2.4 mm apart instead of the 0.60 mm factory tip 2.8 mm
 /// apart, so each overhang tip carries a load for its contact between
 /// those of the two other setups (#479).
