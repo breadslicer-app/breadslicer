@@ -57,9 +57,15 @@ impl Builder {
         self
     }
 
-    /// A closed frustum standing on `(x, y)` from `z0` (radius `r0`) to `z1`
+    /// A closed frustum standing on `[x, y]` from `z0` (radius `r0`) to `z1`
     /// (radius `r1`), with `n` sides.
-    fn frustum(&mut self, x: f64, y: f64, z0: f64, z1: f64, r0: f64, r1: f64, n: usize) -> &mut Self {
+    fn frustum(
+        &mut self,
+        [x, y]: [f64; 2],
+        [z0, z1]: [f64; 2],
+        [r0, r1]: [f64; 2],
+        n: usize,
+    ) -> &mut Self {
         let ring = |b: &mut Self, z: f64, r: f64| -> Vec<u32> {
             (0..n)
                 .map(|i| {
@@ -134,13 +140,13 @@ const SUPPORT_SPOTS: [[f64; 2]; 6] = [
 fn presupported() -> (IndexedMesh, usize) {
     let mut b = Builder::default();
     b.cuboid([-10.0, -10.0, 5.0], [10.0, 10.0, 25.0]);
-    b.frustum(0.0, 0.0, 25.0, 30.0, 1.5, 0.2, 12);
+    b.frustum([0.0, 0.0], [25.0, 30.0], [1.5, 0.2], 12);
     b.cuboid([10.0, -4.0, 10.0], [10.4, 4.0, 22.0]);
     let model_faces = b.faces.len();
     b.cuboid([-15.0, -15.0, 0.0], [15.0, 15.0, 1.0]);
     for [x, y] in SUPPORT_SPOTS {
-        b.frustum(x, y, 1.0, 4.2, 0.5, 0.5, 8);
-        b.frustum(x, y, 4.2, 5.0, 0.5, 0.15, 8);
+        b.frustum([x, y], [1.0, 4.2], [0.5, 0.5], 8);
+        b.frustum([x, y], [4.2, 5.0], [0.5, 0.15], 8);
     }
     (b.mesh(), model_faces)
 }
@@ -151,11 +157,11 @@ fn the_eigenvectors_of_a_symmetric_matrix_come_ascending() {
     let (values, vectors) = symmetric_eigen(m);
     assert!(values[0] <= values[1] && values[1] <= values[2]);
     assert!((values[0] - 1.0).abs() < 1e-9);
-    for k in 0..3 {
+    for (k, value) in values.iter().enumerate() {
         let v = column(&vectors, k);
-        let mv = [0, 1, 2].map(|i| dot(m[i], v));
-        for i in 0..3 {
-            assert!((mv[i] - values[k] * v[i]).abs() < 1e-9, "{k}: {mv:?} {v:?}");
+        let mv = m.map(|row| dot(row, v));
+        for (a, b) in mv.iter().zip(v) {
+            assert!((a - value * b).abs() < 1e-9, "{k}: {mv:?} {v:?}");
         }
     }
 }
@@ -167,16 +173,20 @@ fn pieces_fit_as_the_primitives_they_are() {
         revolution_fit(&points).as_ref().and_then(primitive_kind)
     };
     let mut b = Builder::default();
-    b.frustum(0.0, 0.0, 0.0, 4.0, 0.5, 0.5, 8);
+    b.frustum([0.0, 0.0], [0.0, 4.0], [0.5, 0.5], 8);
     assert_eq!(kind(&b), Some(Primitive::Cylinder));
     let mut b = Builder::default();
-    b.frustum(3.0, 1.0, 2.0, 2.8, 0.5, 0.15, 8);
-    assert_eq!(kind(&b), Some(Primitive::Cone), "a short wide cone, about its short axis");
+    b.frustum([3.0, 1.0], [2.0, 2.8], [0.5, 0.15], 8);
+    assert_eq!(
+        kind(&b),
+        Some(Primitive::Cone),
+        "a short wide cone, about its short axis"
+    );
     let mut b = Builder::default();
     b.sphere([1.0, 2.0, 3.0], 0.6, 8, 6);
     assert_eq!(kind(&b), Some(Primitive::Sphere));
     let mut b = Builder::default();
-    b.frustum(0.0, 0.0, 0.0, 0.3, 4.0, 4.0, 16);
+    b.frustum([0.0, 0.0], [0.0, 0.3], [4.0, 4.0], 16);
     assert_eq!(kind(&b), Some(Primitive::Disc));
     let mut b = Builder::default();
     b.cuboid([0.0, 0.0, 0.0], [3.0, 2.0, 1.0]);
@@ -187,8 +197,15 @@ fn pieces_fit_as_the_primitives_they_are() {
 fn a_presupported_file_comes_apart_into_its_model_and_its_supports() {
     let (mesh, model_faces) = presupported();
     let found = find_supports(&mesh).expect("supports found");
-    assert_eq!(found.model.faces().len(), model_faces, "the box, its horn and its blade");
-    assert_eq!(found.supports.faces().len(), mesh.faces().len() - model_faces);
+    assert_eq!(
+        found.model.faces().len(),
+        model_faces,
+        "the box, its horn and its blade"
+    );
+    assert_eq!(
+        found.supports.faces().len(),
+        mesh.faces().len() - model_faces
+    );
     assert_eq!(found.support_shells, 2 * SUPPORT_SPOTS.len());
     assert!(found.raft);
     assert_eq!(found.model_shells, 3);
@@ -216,7 +233,7 @@ fn a_model_without_supports_is_left_alone() {
     // A model in a few pieces is not even read.
     let mut b = Builder::default();
     b.cuboid([0.0, 0.0, 0.0], [20.0, 20.0, 20.0]);
-    b.frustum(10.0, 10.0, 20.0, 25.0, 1.0, 0.2, 12);
+    b.frustum([10.0, 10.0], [20.0, 25.0], [1.0, 0.2], 12);
     assert!(find_supports(&b.mesh()).is_none());
 }
 
@@ -228,7 +245,7 @@ fn supports_that_stand_on_nothing_but_the_model_stay_with_it() {
     b.cuboid([-10.0, -10.0, 5.0], [10.0, 10.0, 25.0]);
     b.cuboid([-15.0, -15.0, 0.0], [15.0, 15.0, 1.0]);
     for [x, y] in SUPPORT_SPOTS {
-        b.frustum(x, y, 25.5, 28.0, 0.5, 0.5, 8);
+        b.frustum([x, y], [25.5, 28.0], [0.5, 0.5], 8);
     }
     b.cuboid([30.0, 0.0, 0.0], [31.0, 1.0, 1.0]);
     let found = find_supports(&b.mesh());
@@ -242,7 +259,7 @@ fn supports_fused_into_the_model_are_told_by_the_pillars_above_its_base() {
     for i in 0..5 {
         for j in 0..5 {
             let (x, y) = (-10.0 + 5.0 * i as f64, -10.0 + 5.0 * j as f64);
-            b.frustum(x, y, 1.0, 8.0, 0.5, 0.5, 8);
+            b.frustum([x, y], [1.0, 8.0], [0.5, 0.5], 8);
         }
     }
     b.cuboid([-12.0, -12.0, 8.0], [12.0, 12.0, 20.0]);

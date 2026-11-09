@@ -336,7 +336,10 @@ fn revolution_fit(points: &[V3]) -> Option<Fit> {
     if n == 0 {
         return None;
     }
-    let centre = scale(points.iter().fold([0.0; 3], |s, p| add(s, *p)), 1.0 / n as f64);
+    let centre = scale(
+        points.iter().fold([0.0; 3], |s, p| add(s, *p)),
+        1.0 / n as f64,
+    );
     let mut cov = [[0.0; 3]; 3];
     for p in points {
         let q = sub(*p, centre);
@@ -390,7 +393,11 @@ fn revolution_fit(points: &[V3]) -> Option<Fit> {
                 on_rings += end - start;
                 let mut radii: Vec<f64> = by_ring[start..end].iter().map(|&(_, i)| r[i]).collect();
                 let ring_median = median(&mut radii);
-                deviations.extend(by_ring[start..end].iter().map(|&(_, i)| (r[i] - ring_median).abs()));
+                deviations.extend(
+                    by_ring[start..end]
+                        .iter()
+                        .map(|&(_, i)| (r[i] - ring_median).abs()),
+                );
             }
             start = end;
         }
@@ -555,8 +562,8 @@ fn link_pairs(segments: &[Segment]) -> Vec<(usize, usize)> {
             if bounds[b].0[0] > bounds[a].1[0] {
                 break;
             }
-            let apart = (0..3)
-                .any(|k| bounds[b].0[k] > bounds[a].1[k] || bounds[a].0[k] > bounds[b].1[k]);
+            let apart =
+                (0..3).any(|k| bounds[b].0[k] > bounds[a].1[k] || bounds[a].0[k] > bounds[b].1[k]);
             if apart {
                 continue;
             }
@@ -624,13 +631,13 @@ fn edge_pieces(faces: &[IndexedTriangle]) -> (Vec<u32>, usize) {
     let mut label = vec![u32::MAX; faces.len()];
     let mut root_label = vec![u32::MAX; faces.len()];
     let mut count = 0u32;
-    for f in 0..faces.len() {
+    for (f, label) in label.iter_mut().enumerate() {
         let root = groups.find(f as u32) as usize;
         if root_label[root] == u32::MAX {
             root_label[root] = count;
             count += 1;
         }
-        label[f] = root_label[root];
+        *label = root_label[root];
     }
     (label, count as usize)
 }
@@ -739,9 +746,9 @@ fn vertices_of(mesh: &IndexedMesh, faces: &[u32]) -> Vec<V3> {
 }
 
 fn piece_area_volume(mesh: &IndexedMesh, faces: &[u32]) -> (f64, f64) {
-    let origin = faces
-        .first()
-        .map_or([0.0; 3], |&f| point(&mesh.vertices()[mesh.faces()[f as usize].vertices[0].get() as usize]));
+    let origin = faces.first().map_or([0.0; 3], |&f| {
+        point(&mesh.vertices()[mesh.faces()[f as usize].vertices[0].get() as usize])
+    });
     let (mut area, mut volume6) = (0.0, 0.0);
     for &f in faces {
         let [a, b, c] = mesh.faces()[f as usize]
@@ -774,7 +781,8 @@ fn sort(mesh: &IndexedMesh, shells: &FaceShells) -> Sorted {
         }
         let inside = (0..nb).any(|j| {
             m[j].volume > avol[i]
-                && (0..3).all(|k| m[j].min[k] <= m[i].min[k] + 1e-3 && m[j].max[k] >= m[i].max[k] - 1e-3)
+                && (0..3)
+                    .all(|k| m[j].min[k] <= m[i].min[k] + 1e-3 && m[j].max[k] >= m[i].max[k] - 1e-3)
         });
         if inside {
             cls[i] = Class::Cavity;
@@ -805,7 +813,11 @@ fn sort(mesh: &IndexedMesh, shells: &FaceShells) -> Sorted {
             && foot[i] >= raft_width
         {
             cls[i] = Class::Raft;
-            raft_top = if any_raft { raft_top.max(m[i].max[2]) } else { m[i].max[2] };
+            raft_top = if any_raft {
+                raft_top.max(m[i].max[2])
+            } else {
+                m[i].max[2]
+            };
             any_raft = true;
         }
     }
@@ -840,7 +852,11 @@ fn sort(mesh: &IndexedMesh, shells: &FaceShells) -> Sorted {
         if let Some((kind, fit)) = &fits[p] {
             let s = piece_shell[p];
             primitive_faces[s] += piece_faces(p);
-            let r = if *kind == Primitive::Sphere { fit.radius } else { fit.rmax };
+            let r = if *kind == Primitive::Sphere {
+                fit.radius
+            } else {
+                fit.rmax
+            };
             primitive_rmax[s] = primitive_rmax[s].max(r);
         }
     }
@@ -885,7 +901,10 @@ fn sort(mesh: &IndexedMesh, shells: &FaceShells) -> Sorted {
         })
         .collect();
     for (a, b) in link_pairs(&segments) {
-        groups.join(piece_shell[cand_pieces[a]] as u32, piece_shell[cand_pieces[b]] as u32);
+        groups.join(
+            piece_shell[cand_pieces[a]] as u32,
+            piece_shell[cand_pieces[b]] as u32,
+        );
     }
     // A thin shell no axis fits joins the support whose shaft (not a tip)
     // holds its lowest point.
@@ -924,7 +943,9 @@ fn sort(mesh: &IndexedMesh, shells: &FaceShells) -> Sorted {
             cls[i] = Class::Support;
         }
     }
-    let stray: Vec<bool> = (0..nb).map(|i| cand[i] && cls[i] == Class::Unsorted).collect();
+    let stray: Vec<bool> = (0..nb)
+        .map(|i| cand[i] && cls[i] == Class::Unsorted)
+        .collect();
 
     // Model: the biggest of what is left, and any with a fair share of it.
     let top = (0..nb)
@@ -964,10 +985,18 @@ fn sort(mesh: &IndexedMesh, shells: &FaceShells) -> Sorted {
     let models: Vec<usize> = (0..nb).filter(|&i| cls[i] == Class::Model).collect();
     if !models.is_empty() {
         let lo = [0, 1, 2].map(|k| {
-            models.iter().map(|&i| m[i].min[k]).fold(f64::INFINITY, f64::min) - MODEL_BOX_SLACK_MM
+            models
+                .iter()
+                .map(|&i| m[i].min[k])
+                .fold(f64::INFINITY, f64::min)
+                - MODEL_BOX_SLACK_MM
         });
         let hi = [0, 1, 2].map(|k| {
-            models.iter().map(|&i| m[i].max[k]).fold(f64::NEG_INFINITY, f64::max) + MODEL_BOX_SLACK_MM
+            models
+                .iter()
+                .map(|&i| m[i].max[k])
+                .fold(f64::NEG_INFINITY, f64::max)
+                + MODEL_BOX_SLACK_MM
         });
         for i in 0..nb {
             if cls[i] != Class::Unsorted || m[i].min[2] <= raft_top + BASE_REACH_MM {
@@ -994,7 +1023,10 @@ fn sort(mesh: &IndexedMesh, shells: &FaceShells) -> Sorted {
         .par_iter()
         .filter(|ps| ps.len() >= 2)
         .flat_map_iter(|ps| {
-            let main = *ps.iter().max_by_key(|&&p| piece_faces(p)).expect("two pieces");
+            let main = *ps
+                .iter()
+                .max_by_key(|&&p| piece_faces(p))
+                .expect("two pieces");
             let limit = (MAX_FITTED_PIECE_FACES as f64).min(0.05 * piece_faces(main) as f64);
             ps.iter()
                 .copied()
@@ -1050,8 +1082,14 @@ pub fn fused_supports(mesh: &IndexedMesh) -> bool {
     };
     let steps = ((FUSED_CUT_LAST_MM - FUSED_CUT_FIRST_MM) / FUSED_CUT_STEP_MM).round() as usize;
     (0..=steps).any(|k| {
-        let loops = cut_loops(mesh, zmin + FUSED_CUT_FIRST_MM + k as f64 * FUSED_CUT_STEP_MM);
-        let pillars: Vec<&CutLoop> = loops.iter().filter(|l| l.width() <= PILLAR_WIDTH_MM).collect();
+        let loops = cut_loops(
+            mesh,
+            zmin + FUSED_CUT_FIRST_MM + k as f64 * FUSED_CUT_STEP_MM,
+        );
+        let pillars: Vec<&CutLoop> = loops
+            .iter()
+            .filter(|l| l.width() <= PILLAR_WIDTH_MM)
+            .collect();
         let round = pillars.iter().filter(|l| l.round()).count();
         let total: f64 = loops.iter().map(|l| l.area).sum();
         let held: f64 = pillars.iter().map(|l| l.area).sum();
@@ -1134,10 +1172,8 @@ fn cut_loops(mesh: &IndexedMesh, z: f64) -> Vec<CutLoop> {
     for (i, p) in points.iter().enumerate() {
         let root = groups.find(i as u32);
         let e = loops.entry(root).or_insert((*p, *p, 0.0));
-        for k in 0..2 {
-            e.0[k] = e.0[k].min(p[k]);
-            e.1[k] = e.1[k].max(p[k]);
-        }
+        e.0 = [e.0[0].min(p[0]), e.0[1].min(p[1])];
+        e.1 = [e.1[0].max(p[0]), e.1[1].max(p[1])];
     }
     for &(p, q) in &links {
         let (pp, qq) = (points[p as usize], points[q as usize]);

@@ -60,7 +60,10 @@ fn presupported_corpus() {
         .filter_map(|(name, path)| name.strip_suffix("--unsupported").map(|base| (base, *path)))
         .collect();
     println!("file\tfaces\tmodel\tsupports\tsupport shells\traft\tfused\ttwin model\tms");
-    for (name, path) in entries.iter().filter(|(n, _)| !n.ends_with("--unsupported")) {
+    for (name, path) in entries
+        .iter()
+        .filter(|(n, _)| !n.ends_with("--unsupported"))
+    {
         let Some(mesh) = read(path) else {
             println!("{name}\tunreadable");
             continue;
@@ -73,10 +76,17 @@ fn presupported_corpus() {
             .get(name)
             .and_then(|p| read(p))
             .map_or(String::from("-"), |t| t.faces().len().to_string());
-        let (model, supports, shells, raft) = found.as_ref().map_or(
-            (mesh.faces().len(), 0, 0, false),
-            |f| (f.model.faces().len(), f.supports.faces().len(), f.support_shells, f.raft),
-        );
+        let (model, supports, shells, raft) =
+            found
+                .as_ref()
+                .map_or((mesh.faces().len(), 0, 0, false), |f| {
+                    (
+                        f.model.faces().len(),
+                        f.supports.faces().len(),
+                        f.support_shells,
+                        f.raft,
+                    )
+                });
         let total = mesh.faces().len().max(1) as f64;
         println!(
             "{name}\t{}\t{model} ({:.1} %)\t{supports} ({:.1} %)\t{shells}\t{raft}\t{fused}\t{twin}\t{ms:.0}",
