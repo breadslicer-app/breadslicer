@@ -15,6 +15,7 @@
 
 mod build;
 mod closest_point_to_point;
+mod faces_within;
 mod raycast;
 
 pub use build::MeshBvhOptions;
