@@ -534,7 +534,10 @@ Bracing: 0.7 mm, from 5 mm up."
         shape.expect("the Shape row"),
         raft.expect("the RAFT card"),
     );
-    assert!(bracing.1 < shape.0, "Cross-bracing {bracing:?} over Shape {shape:?}");
+    assert!(
+        bracing.1 < shape.0,
+        "Cross-bracing {bracing:?} over Shape {shape:?}"
+    );
     // The card's bottom padding and the gap between cards lie between them.
     assert!(
         shape.1 + 12.0 < raft.0,
