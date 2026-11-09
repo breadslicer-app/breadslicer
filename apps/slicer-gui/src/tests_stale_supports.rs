@@ -250,6 +250,27 @@ fn regenerate_makes_the_set_again_in_one_undo_step() {
     });
 }
 
+/// A set out of date is made again with the preset it was made with, not
+/// the one the Supports tab has now (#490): the slab's set comes from the
+/// classic options and the tab starts on "Miniatures 20~65 mm", and both
+/// Regenerate and Recalculate keep the set's own.
+#[test]
+fn a_set_out_of_date_is_made_again_with_its_own_preset() {
+    for answer in [MessageAnswer::Regenerate, MessageAnswer::KeepEdits] {
+        on_fresh_slint_thread(move || {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_, run, edited, _) = stale_slab(&window, true, same_shape);
+            let own = edited.options().cloned().expect("the set says its options");
+            assert_ne!(own, *run.options.borrow(), "the tab has another preset");
+            card_on_click(&window, &run, true);
+            window.invoke_message_answered(answer);
+            until_generated(&window, &run);
+            let made = in_force_session(&run).expect("in force again");
+            assert_eq!(made.options(), Some(&own), "{answer:?}");
+        });
+    }
+}
+
 /// "Recalculate, keeping my edits": the set made again with the tip moved,
 /// the support removed and the one added put back, the same supports the
 /// edited set had; the card says so. One undo step, Cancel changes nothing,

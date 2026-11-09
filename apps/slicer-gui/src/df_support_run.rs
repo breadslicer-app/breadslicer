@@ -247,6 +247,10 @@ struct Redo {
     /// "Recalculate, keeping my edits": the session whose hand edits go
     /// back on the new set. `None` for "Regenerate".
     keep: Option<Arc<DfSupportSession>>,
+    /// The options the set out of date was made with: it is made again with
+    /// its own preset, not the one the tab has now (#490). `None` for a set
+    /// that does not say, which takes the tab's.
+    options: Option<DfSupportOptions>,
 }
 
 /// Why no set in force takes a hand tool at a point.
@@ -1197,17 +1201,10 @@ struct Preset {
     built_in: bool,
 }
 
-/// The presets that ship with SoulCrafted: DragonFruit's three sizing
-/// tiers, then the three zone presets (#360, #479).
+/// The presets that ship: the three zone presets (#360, #479). The
+/// classic sizing tiers left the list (#490); a project saved with one
+/// still reopens with it, and a person's own presets still show.
 fn built_in_presets() -> Vec<Preset> {
-    let tier = |name: slint::SharedString, sizing: &str| Preset {
-        name: name.to_string(),
-        options: DfSupportOptions {
-            sizing: sizing.to_owned(),
-            ..Default::default()
-        },
-        built_in: true,
-    };
     let zones = |name: slint::SharedString, zones: ZonePreset| Preset {
         name: name.to_string(),
         options: DfSupportOptions {
@@ -1217,12 +1214,9 @@ fn built_in_presets() -> Vec<Preset> {
         built_in: true,
     };
     vec![
-        tier(ctr!("Inspector", "Structure (default)"), "structure"),
-        tier(ctr!("Inspector", "Detail (small miniatures)"), "detail"),
-        tier(ctr!("Inspector", "Anchor (heavy parts)"), "anchor"),
-        zones(ctr!("Inspector", "Minis 30 mm+"), minis_30()),
-        zones(ctr!("Inspector", "Figures 70 mm+"), figures_70()),
-        zones(ctr!("Inspector", "Figures 150 mm+"), figures_150()),
+        zones(ctr!("Inspector", "Miniatures 20~65 mm"), minis_30()),
+        zones(ctr!("Inspector", "Figures 65~150 mm"), figures_70()),
+        zones(ctr!("Inspector", "Statues 150 mm+"), figures_150()),
     ]
 }
 
@@ -1335,12 +1329,24 @@ fn support_data_dir() -> Option<std::path::PathBuf> {
     )
 }
 
+/// The options the Supports tab starts with: the ones it was left with,
+/// when they carry a zone preset; else Miniatures 20~65 mm (#490), the first of
+/// the presets that ship.
 fn load_saved_options() -> DfSupportOptions {
     support_data_dir()
         .and_then(|d| std::fs::read_to_string(d.join("options.toml")).ok())
         .and_then(|text| toml::from_str::<DfSupportOptions>(&text).ok())
         .map(|o| o.clamped())
-        .unwrap_or_default()
+        .filter(|o| o.zones.is_some())
+        .unwrap_or_else(starting_options)
+}
+
+/// Miniatures 20~65 mm (#490): what the Supports tab starts with.
+fn starting_options() -> DfSupportOptions {
+    DfSupportOptions {
+        zones: Some(minis_30()),
+        ..Default::default()
+    }
 }
 
 fn load_user_presets() -> Vec<Preset> {
@@ -1699,6 +1705,9 @@ impl DfSupportRun {
         // edits put back when asked.
         if let Some(redo) = self.redo.borrow_mut().take() {
             request.models = Some(vec![redo.model]);
+            if let Some(options) = redo.options {
+                request.options = options;
+            }
             request.keep_edits = redo
                 .keep
                 .map(|session| vec![(redo.model, (*session).clone())])
@@ -3940,8 +3949,8 @@ impl DfSupportRun {
                     return;
                 };
                 match choice {
-                    StaleSupportsChoice::Regenerate => run.make_set_again(model, None),
-                    StaleSupportsChoice::KeepEdits => run.make_set_again(model, Some(session)),
+                    StaleSupportsChoice::Regenerate => run.make_set_again(model, session, false),
+                    StaleSupportsChoice::KeepEdits => run.make_set_again(model, session, true),
                     StaleSupportsChoice::Leave => {}
                 }
             },
@@ -3950,10 +3959,16 @@ impl DfSupportRun {
 
     /// A row of the card of supports out of date (#408): the supports of
     /// `model` made again as a Generate press makes them for it alone
-    /// (progress, Cancel, one undo step, its own set), with the edits made by
-    /// hand in `keep` put back where they still fit when given. A model gone
-    /// since is left alone; with a run in flight, the press is refused.
-    fn make_set_again(self: &Rc<Self>, model: NodeId, keep: Option<Arc<DfSupportSession>>) {
+    /// (progress, Cancel, one undo step, its own set), with the preset of
+    /// `stale`, the set out of date (#490), and with its edits made by hand
+    /// put back where they still fit when `keep_edits`. A model gone since is
+    /// left alone; with a run in flight, the press is refused.
+    fn make_set_again(
+        self: &Rc<Self>,
+        model: NodeId,
+        stale: Arc<DfSupportSession>,
+        keep_edits: bool,
+    ) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -3976,10 +3991,15 @@ impl DfSupportRun {
             return;
         }
         crate::breadcrumbs::note(&format!(
-            "supports: made again from the card, keeping edits {}",
-            keep.is_some()
+            "supports: made again from the card, keeping edits {keep_edits}"
         ));
-        *self.redo.borrow_mut() = Some(Redo { model, keep });
+        let options = stale.options().cloned();
+        let keep = keep_edits.then_some(stale);
+        *self.redo.borrow_mut() = Some(Redo {
+            model,
+            keep,
+            options,
+        });
         self.start();
     }
 
@@ -7381,7 +7401,7 @@ mod hand_edit_tests {
                 "each tip where its set draws it"
             );
 
-            // The second cube's set made again with Figures 150 mm+: its
+            // The second cube's set made again with Statues 150 mm+: its
             // tips reach 2.8 mm, the first cube's keep 1.8.
             document.set_selection(crate::selection::Selection::of(
                 [leaves[1]].map(crate::selection::LeafId),
@@ -7664,9 +7684,9 @@ mod hand_edit_tests {
             .filter(|p| p.options.zones.is_some())
             .collect();
         assert_eq!(zoned.len(), 3);
-        assert_eq!(zoned[0].name, "Minis 30 mm+");
-        assert_eq!(zoned[1].name, "Figures 70 mm+");
-        assert_eq!(zoned[2].name, "Figures 150 mm+");
+        assert_eq!(zoned[0].name, "Miniatures 20~65 mm");
+        assert_eq!(zoned[1].name, "Figures 65~150 mm");
+        assert_eq!(zoned[2].name, "Statues 150 mm+");
         for preset in zoned {
             let text = toml::to_string_pretty(&preset.options).expect("a preset saves");
             let back: DfSupportOptions = toml::from_str(&text).expect("a preset reads back");

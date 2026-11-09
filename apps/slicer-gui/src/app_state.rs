@@ -2914,8 +2914,8 @@ mod window_wiring_tests {
 
     /// A zone preset's grid (#464) shows on at its preset's spacing, turns
     /// off and back on at the spacing shown, takes another one, and picking
-    /// the preset again brings its own back. Without a zone preset there is
-    /// none to show.
+    /// the preset again brings its own back. The tab starts on the first
+    /// preset, "Miniatures 20~65 mm" (#490).
     #[test]
     fn a_zone_presets_grid_turns_off_and_takes_a_spacing_in_the_tab() {
         let steps = on_fresh_slint_thread(|| {
@@ -2930,9 +2930,9 @@ mod window_wiring_tests {
                     w.get_support_grid_hint().to_string(),
                 )
             };
-            let mut steps = Vec::new();
-            // "Minis 30 mm+" is the fourth preset, "Figures 150 mm+" the sixth.
-            window.invoke_support_preset_picked(3);
+            let mut steps = vec![read(&window)];
+            // "Miniatures 20~65 mm" is the first preset, "Statues 150 mm+" the third.
+            window.invoke_support_preset_picked(0);
             steps.push(read(&window));
             window.invoke_support_option_changed(12, 0.0);
             steps.push(read(&window));
@@ -2945,32 +2945,30 @@ mod window_wiring_tests {
             steps.push(read(&window));
             window.invoke_support_option_changed(13, 0.2);
             steps.push(read(&window));
-            window.invoke_support_preset_picked(3);
-            steps.push(read(&window));
-            window.invoke_support_preset_picked(5);
-            steps.push(read(&window));
             window.invoke_support_preset_picked(0);
+            steps.push(read(&window));
+            window.invoke_support_preset_picked(2);
             steps.push(read(&window));
             steps
         });
         let hint = |mm| format!("Recommended for this preset: {mm} mm.");
         let expected = [
-            (3, true, 7.0, hint(7)),
+            (0, true, 7.0, hint(7)),
+            (0, true, 7.0, hint(7)),
             (-1, false, 7.0, hint(7)),
             (-1, false, 7.0, hint(7)),
-            (3, true, 7.0, hint(7)),
+            (0, true, 7.0, hint(7)),
             (-1, true, 5.0, hint(7)),
             (-1, true, 1.0, hint(7)),
-            (3, true, 7.0, hint(7)),
-            (5, true, 4.0, hint(4)),
-            (0, false, 7.0, String::new()),
+            (0, true, 7.0, hint(7)),
+            (2, true, 4.0, hint(4)),
         ];
         assert_eq!(steps, expected);
     }
 
     #[test]
     fn support_options_reach_the_tab_clamped_and_presets_apply() {
-        let (density, clamped, preset_index, sizing, names) = on_fresh_slint_thread(|| {
+        let (density, clamped, preset_index, names) = on_fresh_slint_thread(|| {
             let app = test_app(PreferencesSnapshot::for_tests());
             let (window, _pending_load, controller) = new_window(&app);
             let _drivers = app.install_window_drivers(&window, &controller);
@@ -2978,23 +2976,29 @@ mod window_wiring_tests {
             let density = window.get_support_density();
             window.invoke_support_option_changed(1, 999.0);
             let clamped = window.get_support_density();
-            // The built-in "Detail" preset is the second one.
             window.invoke_support_preset_picked(1);
-            (
-                density,
-                clamped,
-                window.get_support_preset_index(),
-                window.get_support_sizing_index(),
-                window.get_support_preset_names().row_count(),
-            )
+            let names: Vec<String> = window
+                .get_support_preset_names()
+                .iter()
+                .map(|n| n.to_string())
+                .collect();
+            (density, clamped, window.get_support_preset_index(), names)
         });
         assert_eq!(density, 20.0);
         assert_eq!(
             clamped, 30.0,
             "DragonFruit caps the area per support at 30 mm2"
         );
-        assert_eq!((preset_index, sizing), (1, 0));
-        assert!(names >= 3, "the three built-in presets are listed");
+        assert_eq!(preset_index, 1);
+        // Only the zone presets ship (#490).
+        assert_eq!(
+            names,
+            [
+                "Miniatures 20~65 mm",
+                "Figures 65~150 mm",
+                "Statues 150 mm+"
+            ]
+        );
     }
 
     #[test]

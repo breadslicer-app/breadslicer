@@ -27,7 +27,7 @@
 //! - `SUPPORT_SCORECARD_RUNS`: support runs per scene (default 2). The
 //!   generation time is the fastest run, and the runs must agree.
 //! - `SUPPORT_SCORECARD_PRESET`: `minis`, `figures70` or `figures` runs the
-//!   zone preset "Minis 30 mm+", "Figures 70 mm+" or "Figures 150 mm+"
+//!   zone preset "Miniatures 20~65 mm", "Figures 65~150 mm" or "Statues 150 mm+"
 //!   (#360, #479) instead of the default options.
 //! - `SUPPORT_SCORECARD_GRID`: `off` or a spacing in mm, over the preset's.
 //! - `SUPPORT_SCORECARD_STOP_AFTER_GEN`: ends the process right after the

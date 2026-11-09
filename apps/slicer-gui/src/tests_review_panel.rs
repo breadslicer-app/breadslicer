@@ -2969,7 +2969,8 @@ mod fix_all {
     fn a_yes_on_a_plate_with_no_set_starts_the_set_with_the_tabs_preset() {
         let (before, asked, born, left, after_undo) = on_fresh_slint_thread(|| {
             let w = bare_window();
-            // "Detail" is the second preset: not the one a test starts with.
+            // "Figures 65~150 mm" is the second preset: not the one a test
+            // starts with.
             w.window.invoke_support_preset_picked(1);
             let before = support_sets(&w);
             answer_the_question(&w, MessageAnswer::Confirm);
@@ -2985,7 +2986,8 @@ mod fix_all {
         assert!(!asked, "Yes asks nothing more");
         assert!(!born.is_empty(), "the tips started a set");
         assert!(
-            born.iter().all(|o| o.sizing == "detail" && o.zones.is_none()),
+            born.iter()
+                .all(|o| o.zones == Some(sc_geom::df_supports::zone_presets::figures_70())),
             "with the tab's preset: {born:?}"
         );
         assert!(left.is_empty(), "{left:?}");
