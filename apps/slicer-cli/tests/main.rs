@@ -12,6 +12,7 @@
 mod bundled_profiles;
 mod cli;
 mod orient_e2e;
+mod presupported_corpus;
 mod printer_orientation;
 mod profiles_e2e;
 mod repair_corpus;
