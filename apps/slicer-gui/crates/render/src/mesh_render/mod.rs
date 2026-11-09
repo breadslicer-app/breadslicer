@@ -29,6 +29,7 @@ pub mod mock;
 mod overhang_map;
 mod overlay;
 mod smooth_shading;
+mod support_lines;
 mod surface_paint;
 mod tip_coverage;
 pub use smooth_shading::set_smooth_models;
@@ -82,6 +83,7 @@ use scene_upload::{
     MODEL_ENTRY_SIZE, WorldBoxes, build_envelope_warning_mask, build_model_entries,
     renderable_leaf_count,
 };
+pub use support_lines::SupportLines;
 pub use surface_paint::{BrushRing, PaintLayer};
 use targets::{MsaaTargets, TargetPool};
 pub use tip_coverage::SupportTip;
@@ -124,9 +126,23 @@ struct FrameLook {
     contents: FrameContents,
     overhang_map: Option<OverhangMap>,
     raft_top_mm: f32,
+    /// From under the plate, the height above which a support mesh fades out
+    /// for its lines (#493); `f32::MAX` keeps it.
+    supports_shown_up_to_mm: f32,
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// The stencil a selected set marks what of it fades from under the plate
+/// with (#493): above 1, the selection's own mark, by how opaque it still
+/// is, so the outline pass (`outline.wgsl`, which reads it back the same
+/// way) fades the outline with it.
+const FADING_STENCIL_BASE: u32 = 2;
+const FADING_STENCIL_LEVELS: f32 = 200.0;
+
+fn fading_stencil(fade: f32) -> u32 {
+    FADING_STENCIL_BASE + ((1.0 - fade).clamp(0.0, 1.0) * FADING_STENCIL_LEVELS).round() as u32
+}
 // Depth24PlusStencil8 carries an 8-bit stencil alongside depth in a single
 // attachment. The selection-outline post-pass writes `1` to stencil for the
 // selected object via per-draw stencil reference, then reads that stencil
@@ -335,6 +351,11 @@ pub struct Renderer {
     /// How high the rafts of the scene reach, mm: what of a support mesh
     /// the view from under the plate hides (#481).
     raft_top_mm: f32,
+    /// From under the plate, the supports as lines (#493): the height above
+    /// which a support mesh fades out (`f32::MAX` keeps it), and the lines
+    /// drawn in its place.
+    supports_shown_up_to_mm: f32,
+    support_lines: support_lines::LinesSlot,
     target_manager: TargetManager,
 }
 
@@ -422,6 +443,8 @@ impl Renderer {
             support_tips: Vec::new(),
             tip_cell_mm: 0.0,
             raft_top_mm: 0.0,
+            supports_shown_up_to_mm: f32::MAX,
+            support_lines: support_lines::LinesSlot::default(),
             target_manager: TargetManager {
                 msaa: None,
                 targets: None,
@@ -844,6 +867,7 @@ impl Renderer {
                 contents: FrameContents::Workspace,
                 overhang_map: self.overhang_map,
                 raft_top_mm: self.raft_top_mm,
+                supports_shown_up_to_mm: self.supports_shown_up_to_mm,
             },
         )
     }
@@ -874,6 +898,24 @@ impl Renderer {
     /// it (#481).
     pub fn set_raft_top(&mut self, mm: f32) {
         self.raft_top_mm = mm.max(0.0);
+    }
+
+    /// From under the plate, the supports drawn as lines (#493): the height
+    /// above which the support meshes fade with the plate (`f32::MAX` keeps
+    /// them, below 0 fades them whole), and the lines drawn in their place
+    /// (`None` none). The same `Arc` as last time uploads nothing.
+    pub fn set_support_lines(
+        &mut self,
+        shown_up_to_mm: f32,
+        lines: Option<&std::sync::Arc<SupportLines>>,
+    ) {
+        self.supports_shown_up_to_mm = shown_up_to_mm;
+        self.support_lines.install(
+            &self.core.device,
+            &self.core.queue,
+            &self.pipelines.mesh.models_bind_group_layout,
+            lines,
+        );
     }
 
     /// Blocks until the GPU has finished the work submitted so far. A poll
@@ -913,6 +955,7 @@ impl Renderer {
                 contents: FrameContents::ModelsOnly,
                 overhang_map: None,
                 raft_top_mm: 0.0,
+                supports_shown_up_to_mm: f32::MAX,
             },
         )
     }
@@ -972,6 +1015,7 @@ impl Renderer {
             contents,
             overhang_map,
             raft_top_mm,
+            supports_shown_up_to_mm,
         } = look;
         let tip_cell_mm = self.tip_cell_mm;
         if self.core.device_loss.is_lost() {
@@ -1097,6 +1141,16 @@ impl Renderer {
                 let [limit, radians, contact, _] = map.uniform(env_min.z);
                 [limit, radians, contact, tip_cell_mm]
             }),
+            under_plate: [
+                if under_plate > 0.0 {
+                    supports_shown_up_to_mm
+                } else {
+                    f32::MAX
+                },
+                support_lines::LINE_HALF_WIDTH_PX,
+                width as f32,
+                height as f32,
+            ],
         };
         self.core.queue.write_buffer(
             &self.pipelines.mesh.uniform_buffer,
@@ -1162,6 +1216,26 @@ impl Renderer {
                 self.record_mesh_objects(&mut pass, inst, selection);
                 if under_plate > 0.0 && raft_top_mm > 0.0 {
                     self.record_support_cuts(&mut pass, inst, selection, &support_objects);
+                }
+                if under_plate > 0.0 && !self.support_lines.is_empty() {
+                    self.support_lines.record(
+                        &mut pass,
+                        &self.pipelines.mesh.line_pipeline,
+                        &self.pipelines.mesh.ball_pipeline,
+                        &self.pipelines.mesh.uniforms_bind_group,
+                    );
+                }
+                // While the plate fades, what of the supports fades with it
+                // goes translucent (#481, #493), over the lines coming in.
+                let fading = raft_top_mm > 0.0 || supports_shown_up_to_mm < f32::MAX;
+                if under_plate > 0.0 && under_plate < 1.0 && fading {
+                    self.record_support_fade(
+                        &mut pass,
+                        inst,
+                        selection,
+                        &support_objects,
+                        under_plate,
+                    );
                 }
                 if contents == FrameContents::Workspace {
                     self.surface_paint
@@ -1350,6 +1424,82 @@ impl Renderer {
             pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
             pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
             pass.set_stencil_reference(u32::from(selection.binary_search(&obj.node_id()).is_ok()));
+            pass.draw_indexed(0..obj.index_count(), 0, 0..1);
+        }
+    }
+
+    /// What of the support meshes fades with the plate, while it fades
+    /// (#481, #493): into the depth first, a selected set marking the
+    /// stencil with how opaque it still is ([`fading_stencil`]) for its
+    /// outline to fade with it, then its colour over the nearest surface.
+    fn record_support_fade(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        inst: &InstalledScene,
+        selection: &[NodeId],
+        support_objects: &[bool],
+        fade: f32,
+    ) {
+        pass.set_bind_group(
+            MeshBindGroup::Uniforms.idx(),
+            &self.pipelines.mesh.uniforms_bind_group,
+            &[],
+        );
+        pass.set_stencil_reference(fading_stencil(fade));
+        for (i, obj) in inst.gpu.objects().iter().enumerate() {
+            if !support_objects.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let selected = selection.binary_search(&obj.node_id()).is_ok();
+            pass.set_pipeline(if selected {
+                &self.pipelines.mesh.fade_depth_marking_pipeline
+            } else {
+                &self.pipelines.mesh.fade_depth_pipeline
+            });
+            let offset = (i as u64 * inst.gpu.model_stride()) as u32;
+            pass.set_bind_group(
+                MeshBindGroup::Models.idx(),
+                &inst.models_bind_group,
+                &[offset],
+            );
+            pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
+            pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..obj.index_count(), 0, 0..1);
+        }
+        self.record_supports(
+            pass,
+            &self.pipelines.mesh.fade_pipeline,
+            inst,
+            support_objects,
+        );
+    }
+
+    /// The support meshes alone through `pipeline`, which writes no stencil.
+    fn record_supports(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        pipeline: &wgpu::RenderPipeline,
+        inst: &InstalledScene,
+        support_objects: &[bool],
+    ) {
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(
+            MeshBindGroup::Uniforms.idx(),
+            &self.pipelines.mesh.uniforms_bind_group,
+            &[],
+        );
+        for (i, obj) in inst.gpu.objects().iter().enumerate() {
+            if !support_objects.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let offset = (i as u64 * inst.gpu.model_stride()) as u32;
+            pass.set_bind_group(
+                MeshBindGroup::Models.idx(),
+                &inst.models_bind_group,
+                &[offset],
+            );
+            pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
+            pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..obj.index_count(), 0, 0..1);
         }
     }

@@ -150,6 +150,7 @@ fn draw(
                 contents: FrameContents::ModelsOnly,
                 overhang_map: map,
                 raft_top_mm: 0.0,
+                supports_shown_up_to_mm: f32::MAX,
             },
         )
         .expect("the frame is not refused")

@@ -106,6 +106,16 @@ pub trait MeshRenderer {
     /// view from under the plate to hide them (#481).
     fn set_raft_top(&mut self, _mm: f32) {}
 
+    /// From under the plate, the supports drawn as lines (#493): the height
+    /// above which the support meshes fade (`f32::MAX` keeps them), and the
+    /// lines drawn in their place.
+    fn set_support_lines(
+        &mut self,
+        _shown_up_to_mm: f32,
+        _lines: Option<&std::sync::Arc<super::SupportLines>>,
+    ) {
+    }
+
     /// Blocks until the GPU has finished the work submitted so far, so a
     /// caller can time a frame end to end (the performance test).
     fn wait_for_gpu(&self) {}
@@ -208,6 +218,14 @@ impl MeshRenderer for Renderer {
 
     fn set_raft_top(&mut self, mm: f32) {
         Renderer::set_raft_top(self, mm);
+    }
+
+    fn set_support_lines(
+        &mut self,
+        shown_up_to_mm: f32,
+        lines: Option<&std::sync::Arc<super::SupportLines>>,
+    ) {
+        Renderer::set_support_lines(self, shown_up_to_mm, lines);
     }
 
     fn wait_for_gpu(&self) {

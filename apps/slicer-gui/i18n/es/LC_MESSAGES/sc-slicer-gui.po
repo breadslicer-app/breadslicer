@@ -5437,8 +5437,23 @@ msgstr "Pared almenada"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
-msgid "Hide the raft from under the plate"
-msgstr "Ocultar la balsa desde abajo de la plataforma"
+msgid "FROM BELOW"
+msgstr "DESDE ABAJO"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "When the camera goes under the plate."
+msgstr "Cuando la cámara pasa por debajo de la plataforma."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Hide the raft"
+msgstr "Ocultar la balsa"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Supports as dotted lines"
+msgstr "Soportes como líneas punteadas"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"

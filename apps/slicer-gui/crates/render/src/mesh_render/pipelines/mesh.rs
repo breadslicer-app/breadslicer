@@ -16,6 +16,7 @@ use slint::wgpu_30::wgpu;
 use super::super::device_ops::scoped;
 use super::super::frame::Uniforms;
 use super::super::scene_upload::{GpuVertex, MODEL_ENTRY_SIZE};
+use super::super::support_lines::DASH_STRIDE;
 use super::super::tip_coverage::{CoverageGrid, CoverageTextures};
 use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
 
@@ -47,6 +48,19 @@ pub(in crate::mesh_render) struct MeshPipeline {
     /// Preview overlays: the mesh shader's `fs_overlay`, no culling, depth
     /// neither tested nor written, stencil untouched, alpha-blended.
     pub(in crate::mesh_render) overlay_pipeline: wgpu::RenderPipeline,
+    /// The supports as lines from under the plate (#493): each dash a quad
+    /// widened on screen, and the balls at the tips. Both are tested against
+    /// the scene's depth without writing it, and blended over it.
+    pub(in crate::mesh_render) line_pipeline: wgpu::RenderPipeline,
+    pub(in crate::mesh_render) ball_pipeline: wgpu::RenderPipeline,
+    /// What of the support meshes fades from under the plate, while the
+    /// plate fades (#481, #493): first into the depth alone (and the stencil
+    /// for a selected set, `fade_depth_marking_pipeline`), then its colour,
+    /// back faces culled, tested against that depth without writing it,
+    /// blended over.
+    pub(in crate::mesh_render) fade_depth_pipeline: wgpu::RenderPipeline,
+    pub(in crate::mesh_render) fade_depth_marking_pipeline: wgpu::RenderPipeline,
+    pub(in crate::mesh_render) fade_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) uniform_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) uniforms_bind_group: wgpu::BindGroup,
     /// Group 0's layout: the uniforms and the support tips' data textures,
@@ -258,6 +272,173 @@ impl MeshPipeline {
             cache: None,
         });
 
+        let depth_tested = wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: wgpu::StencilState {
+                front: wgpu::StencilFaceState::IGNORE,
+                back: wgpu::StencilFaceState::IGNORE,
+                read_mask: 0,
+                write_mask: 0,
+            },
+            bias: wgpu::DepthBiasState::default(),
+        };
+        let blended_target = [Some(wgpu::ColorTargetState {
+            format: TEXTURE_FORMAT,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let blended = |entry_point: &'static str| wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some(entry_point),
+            compilation_options: Default::default(),
+            targets: &blended_target,
+        };
+        let open = wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        };
+        let multisample = wgpu::MultisampleState {
+            count: SAMPLE_COUNT,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        };
+        // The dashes read the uniforms only.
+        let lines_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("mesh-viewer support lines pll"),
+            bind_group_layouts: &[Some(&uniforms_bind_group_layout)],
+            immediate_size: 0,
+        });
+        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer support line pipeline"),
+            layout: Some(&lines_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_support_line"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: DASH_STRIDE,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                })],
+            },
+            primitive: open,
+            depth_stencil: Some(depth_tested.clone()),
+            multisample,
+            fragment: Some(blended("fs_support_line")),
+            multiview_mask: None,
+            cache: None,
+        });
+        let ball_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer support ball pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<GpuVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                })],
+            },
+            primitive: open,
+            depth_stencil: Some(depth_tested.clone()),
+            multisample,
+            fragment: Some(blended("fs_support_ball")),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let fade_depth = |label: &'static str, marking: bool| {
+            let face = if marking {
+                wgpu::StencilFaceState {
+                    compare: wgpu::CompareFunction::Always,
+                    fail_op: wgpu::StencilOperation::Keep,
+                    depth_fail_op: wgpu::StencilOperation::Keep,
+                    pass_op: wgpu::StencilOperation::Replace,
+                }
+            } else {
+                wgpu::StencilFaceState::IGNORE
+            };
+            let mask = if marking { 0xFF } else { 0 };
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<GpuVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..open
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: wgpu::StencilState {
+                        front: face,
+                        back: face,
+                        read_mask: mask,
+                        write_mask: mask,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample,
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_support_fade_depth"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: TEXTURE_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::empty(),
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let fade_depth_pipeline = fade_depth("mesh-viewer support fade depth pipeline", false);
+        let fade_depth_marking_pipeline =
+            fade_depth("mesh-viewer support fade depth marking pipeline", true);
+        let fade_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer support fade pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<GpuVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                cull_mode: Some(wgpu::Face::Back),
+                ..open
+            },
+            depth_stencil: Some(depth_tested),
+            multisample,
+            fragment: Some(blended("fs_support_fade")),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("mesh-viewer uniforms"),
             size: size_of::<Uniforms>() as u64,
@@ -276,6 +457,11 @@ impl MeshPipeline {
             pipeline,
             cap_pipeline,
             overlay_pipeline,
+            line_pipeline,
+            ball_pipeline,
+            fade_depth_pipeline,
+            fade_depth_marking_pipeline,
+            fade_pipeline,
             uniform_buffer,
             uniforms_bind_group,
             uniforms_bind_group_layout,

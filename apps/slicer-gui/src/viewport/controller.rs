@@ -118,6 +118,11 @@ pub(crate) struct ViewportController {
     /// plate when the camera goes under it (#481), and the hand tools reach
     /// past them.
     hide_rafts_under_plate: Cell<bool>,
+    /// The Supports tab's box (#493): whether the supports are drawn as
+    /// lines from under the plate, and those lines, gathered when the sets
+    /// change.
+    support_lines_on: Cell<bool>,
+    support_lines: crate::support_lines::LinesCache,
     overhang_angle_deg: Cell<f32>,
     /// The support tips the map leaves what they hold plain by (#484), and
     /// the reach of the Supports tab's options, for a set that records none.
@@ -216,6 +221,8 @@ impl ViewportController {
             repair_marks: Default::default(),
             overhang_map_on: Cell::new(false),
             hide_rafts_under_plate: Cell::new(true),
+            support_lines_on: Cell::new(false),
+            support_lines: Default::default(),
             overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
             overhang_tips: Default::default(),
             tab_tip_reach_mm: Cell::new(default_tip_reach_mm()),
@@ -272,6 +279,8 @@ impl ViewportController {
             repair_marks: Default::default(),
             overhang_map_on: Cell::new(false),
             hide_rafts_under_plate: Cell::new(true),
+            support_lines_on: Cell::new(false),
+            support_lines: Default::default(),
             overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
             overhang_tips: Default::default(),
             tab_tip_reach_mm: Cell::new(default_tip_reach_mm()),
@@ -1016,6 +1025,13 @@ impl ViewportController {
         }
     }
 
+    /// Whether the supports are drawn as lines from under the plate (#493).
+    pub(crate) fn set_support_lines_under_plate(&self, on: bool) {
+        if self.support_lines_on.replace(on) != on {
+            self.mark_dirty();
+        }
+    }
+
     /// Whether `camera` sees past the rafts: under the plate, with the
     /// Supports tab's box on (#481, #492).
     fn sees_past_rafts(&self, camera: &crate::camera::OrbitCamera) -> bool {
@@ -1058,23 +1074,54 @@ impl ViewportController {
     /// How high the rafts reach while the camera is under the plate, for the
     /// view to fade them with it (#481); 0 with the camera above it.
     fn raft_top_under_plate(&self) -> f32 {
-        if !self.hide_rafts_under_plate.get() {
+        if !self.hide_rafts_under_plate.get() || !self.under_plate() {
             return 0.0;
         }
-        let under = self
-            .camera
+        self.raft_top()
+    }
+
+    /// Whether the camera is under the plate, which fades (#481).
+    fn under_plate(&self) -> bool {
+        self.camera
             .camera_cell()
             .borrow()
             .as_ref()
-            .is_some_and(|camera| under_plate_fade(camera) > 0.0);
-        if !under {
-            return 0.0;
-        }
+            .is_some_and(|camera| under_plate_fade(camera) > 0.0)
+    }
+
+    /// How high the rafts of the scene reach, mm (0 without one).
+    fn raft_top(&self) -> f32 {
         let document = self.session.document();
         let sessions = document.support_sessions();
         document
             .with_scene(|spatial| crate::support_persist::raft_top_mm(spatial, &sessions))
             .unwrap_or(0.0)
+    }
+
+    /// The supports as lines from under the plate (#493): the height above
+    /// which the support meshes fade (`f32::MAX` keeps them; below 0 fades
+    /// them whole, rafts and all, when the rafts fade too or there is none)
+    /// and the lines drawn in their place. Kept as they are with the box off
+    /// or the camera above the plate.
+    fn under_plate_supports(&self) -> (f32, Option<Arc<crate::mesh_render::SupportLines>>) {
+        if !self.support_lines_on.get() || !self.under_plate() {
+            return (f32::MAX, None);
+        }
+        let raft_top = self.raft_top();
+        let shown_up_to = if self.hide_rafts_under_plate.get() || raft_top <= 0.0 {
+            -1.0
+        } else {
+            hidden_below_mm(raft_top)
+        };
+        let lines = self.support_lines.lines(self.session.document());
+        (shown_up_to, Some(lines))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn under_plate_supports_for_test(
+        &self,
+    ) -> (f32, Option<Arc<crate::mesh_render::SupportLines>>) {
+        self.under_plate_supports()
     }
 
     fn overhang_map(&self) -> Option<crate::mesh_render::OverhangMap> {
@@ -3707,6 +3754,8 @@ impl ViewportController {
             renderer.set_support_tips(&self.support_tips());
         }
         renderer.set_raft_top(self.raft_top_under_plate());
+        let (shown_up_to, lines) = self.under_plate_supports();
+        renderer.set_support_lines(shown_up_to, lines.as_ref());
 
         let Some(ui) = self.ui.upgrade() else {
             return;

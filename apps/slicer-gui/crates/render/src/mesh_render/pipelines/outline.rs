@@ -110,10 +110,11 @@ impl OutlinePipeline {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: TEXTURE_FORMAT,
-                    // Outline fragments are opaque; non-edge fragments
-                    // `discard` so the underlying main-pass colour
-                    // stays put without needing alpha blending.
-                    blend: None,
+                    // Non-edge fragments `discard` so the underlying
+                    // main-pass colour stays put. An outline fragment is
+                    // opaque, save round a set fading from under the plate
+                    // (#493), which blends in as faint as the set.
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),

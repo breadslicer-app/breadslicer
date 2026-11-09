@@ -1723,10 +1723,13 @@ export component SupportsInspector inherits VerticalLayout {
     in property <bool> lift-on-plate;
     in property <string> lift-on-plate-label;
     callback lift-on-plate-toggled(bool);
-    // Whether the rafts fade out with the plate from under it (#481, #492),
-    // a setting.
+    // From under the plate, settings: whether the rafts fade out with the
+    // plate (#481, #492), and whether the supports do too, drawn as dotted
+    // lines (#493).
     in property <bool> hide-rafts-under-plate: true;
     callback hide-rafts-under-plate-toggled(bool);
+    in property <bool> lines-under-plate;
+    callback lines-under-plate-toggled(bool);
     // The Add tool (#3): whether it is armed, the tip size it places (0 the
     // preset's, 1 to 4 extra small to large), that tip in words, and the
     // hover preview's line, with whether it warns.
@@ -2092,11 +2095,27 @@ export component SupportsInspector inherits VerticalLayout {
                 root.option-changed(11, self.checked ? 1 : 0);
             }
         }
+    }
+
+    Card {
+        title: @tr("Inspector" => "FROM BELOW");
+        collapsible: true;
+
+        Note {
+            text: @tr("Inspector" => "When the camera goes under the plate.");
+        }
         CheckBox {
-            text: @tr("Inspector" => "Hide the raft from under the plate");
+            text: @tr("Inspector" => "Hide the raft");
             checked: root.hide-rafts-under-plate;
             toggled => {
                 root.hide-rafts-under-plate-toggled(self.checked);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Supports as dotted lines");
+            checked: root.lines-under-plate;
+            toggled => {
+                root.lines-under-plate-toggled(self.checked);
             }
         }
     }

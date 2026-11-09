@@ -24,6 +24,11 @@ struct Uniforms {
     // side of the cells the support tips are hashed in, mm (0 without
     // tips): what a tip holds, the map leaves plain (#484).
     overhang: vec4<f32>,
+    // From under the plate, the supports drawn as lines (#493): x = the
+    // height above which a support mesh fades out with the plate, mm (a
+    // huge one keeps it), y = half the width of a dash, pixels, zw = the
+    // target's size, pixels.
+    under_plate: vec4<f32>,
 };
 
 struct ModelEntry {
@@ -202,13 +207,55 @@ fn held_by_a_tip(p: vec3<f32>) -> bool {
 const TIP_CELL_MARGIN: f32 = 0.001;
 const TIP_LOOK_MARGIN: f32 = 0.0005;
 
-// A threshold in (0, 1) for each pixel of a 4 x 4 tile, every sixteenth
-// once: a fade that has reached f drops about f of the pixels, spread
-// evenly, so an opaque mesh fades without blending.
-fn screen_door(pixel: vec2<f32>) -> f32 {
-    var tile = array<u32, 16>(0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
-    let at = vec2<u32>(pixel) % 4u;
-    return (f32(tile[at.y * 4u + at.x]) + 0.5) / 16.0;
+// Whether a support mesh's fragment fades out from under the plate: its
+// raft, below env_max.w, so the tips above it show (#481), and the rest
+// above under_plate.x, where the supports are drawn as lines (#493). While
+// the plate fades (env_min.w between 0 and 1) such a fragment is drawn
+// translucent by `fs_support_fade`, not by the opaque passes: a pattern of
+// dropped pixels flickered, and a selected set's outline ran round every
+// one of them.
+fn fades_under_plate(supports: u32, cut_z: f32) -> bool {
+    return u.env_min.w > 0.0 && supports == 1u
+        && (cut_z < u.env_max.w || cut_z > u.under_plate.x);
+}
+
+// A fragment of a model or a support as the main pass paints it: lit, with
+// the selection's highlight, the overhang map and the envelope's warnings.
+fn surface_color(
+    world_pos: vec3<f32>,
+    normal: vec3<f32>,
+    selected: u32,
+    breaches: u32,
+    tint: u32,
+) -> vec3<f32> {
+    // The interpolated smooth normal; a vertex without one shades flat from
+    // screen-space derivatives.
+    let flat_n = normalize(cross(dpdx(world_pos), dpdy(world_pos)));
+    let has_normal = dot(normal, normal) > 1e-12;
+    let n = select(flat_n, normalize(normal), has_normal);
+    let l = normalize(u.light_dir.xyz);
+    // abs() makes lighting orientation-agnostic, safe for any winding.
+    let lambert = abs(dot(n, l));
+    let ambient = 0.25;
+    let intensity = ambient + (1.0 - ambient) * lambert;
+    let unselected = vec3<f32>(0.75, 0.78, 0.85);
+    let highlighted = vec3<f32>(1.00, 0.78, 0.42);
+    let mapped = tint == MODEL_OVERHANG_MAP;
+    let selection_tint = select(1.0, OVERHANG_SELECTED_TINT, mapped);
+    let base_color = mix(unselected, highlighted, f32(selected) * selection_tint);
+    var washed = mix(base_color, WARNING_WASH, f32(breaches) * WARNING_WASH_STRENGTH);
+    if (mapped) {
+        // `flat_n` runs right-to-down across the screen, into it: the face
+        // normal, seen from its front, is the opposite way.
+        washed = overhang_paint(washed, -flat_n, world_pos);
+    }
+    // Componentwise envelope test: a fragment outside on any axis
+    // is painted in the full warning amber instead of the wash.
+    let lo = u.env_min.xyz;
+    let hi = u.env_max.xyz;
+    let outside = any(world_pos < lo) || any(world_pos > hi);
+    let final_color = select(washed, WARNING_OUTSIDE, outside);
+    return final_color * intensity;
 }
 
 @fragment
@@ -218,41 +265,35 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (in.cut_z > u.light_dir.w) {
         discard;
     }
-    // From under the plate (#481), a support mesh's raft fades with the
-    // plate, so the tips above it show.
-    if (in.supports == 1u && in.cut_z < u.env_max.w
-        && screen_door(in.clip_pos.xy) < u.env_min.w) {
+    if (fades_under_plate(in.supports, in.cut_z)) {
         discard;
     }
-    // The interpolated smooth normal; a vertex without one shades flat from
-    // screen-space derivatives.
-    let flat_n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
-    let has_normal = dot(in.normal, in.normal) > 1e-12;
-    let n = select(flat_n, normalize(in.normal), has_normal);
-    let l = normalize(u.light_dir.xyz);
-    // abs() makes lighting orientation-agnostic, safe for any winding.
-    let lambert = abs(dot(n, l));
-    let ambient = 0.25;
-    let intensity = ambient + (1.0 - ambient) * lambert;
-    let unselected = vec3<f32>(0.75, 0.78, 0.85);
-    let highlighted = vec3<f32>(1.00, 0.78, 0.42);
-    let mapped = in.tint == MODEL_OVERHANG_MAP;
-    let selection_tint = select(1.0, OVERHANG_SELECTED_TINT, mapped);
-    let base_color = mix(unselected, highlighted, f32(in.selected) * selection_tint);
-    var washed = mix(base_color, WARNING_WASH, f32(in.breaches) * WARNING_WASH_STRENGTH);
-    if (mapped) {
-        // `flat_n` runs right-to-down across the screen, into it: the face
-        // normal, seen from its front, is the opposite way.
-        washed = overhang_paint(washed, -flat_n, in.world_pos);
+    let color = surface_color(in.world_pos, in.normal, in.selected, in.breaches, in.tint);
+    return vec4<f32>(color, 1.0);
+}
+
+// What of a support mesh fades from under the plate, while the plate fades
+// (#481, #493), first only into the depth (and, for a selected set, the
+// stencil, which its fading outline reads): so the colour pass after it
+// paints the nearest surface alone, as the opaque mesh shows, instead of
+// every surface in whatever order the triangles come.
+@fragment
+fn fs_support_fade_depth(in: VsOut) -> @location(0) vec4<f32> {
+    if (in.cut_z > u.light_dir.w || !fades_under_plate(in.supports, in.cut_z)) {
+        discard;
     }
-    // Componentwise envelope test: a fragment outside on any axis
-    // is painted in the full warning amber instead of the wash.
-    let p = in.world_pos;
-    let lo = u.env_min.xyz;
-    let hi = u.env_max.xyz;
-    let outside = any(p < lo) || any(p > hi);
-    let final_color = select(washed, WARNING_OUTSIDE, outside);
-    return vec4<f32>(final_color * intensity, 1.0);
+    return vec4<f32>(0.0);
+}
+
+// Then its colour: as the main pass would paint it, as opaque as the plate
+// still is.
+@fragment
+fn fs_support_fade(in: VsOut) -> @location(0) vec4<f32> {
+    if (in.cut_z > u.light_dir.w || !fades_under_plate(in.supports, in.cut_z)) {
+        discard;
+    }
+    let color = surface_color(in.world_pos, in.normal, in.selected, in.breaches, in.tint);
+    return vec4<f32>(color, 1.0 - u.env_min.w);
 }
 
 // The cut a hidden raft leaves in a support mesh (#481). From under the
@@ -265,7 +306,7 @@ fn fs_cap(in: VsOut) -> @location(0) vec4<f32> {
     if (in.supports != 1u || in.cut_z > u.light_dir.w) {
         discard;
     }
-    if (in.cut_z < u.env_max.w && screen_door(in.clip_pos.xy) < u.env_min.w) {
+    if (fades_under_plate(in.supports, in.cut_z)) {
         discard;
     }
     // The cut faces down, toward the camera under the plate.
@@ -299,4 +340,60 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
         color = vec4<f32>(0.80, 0.80, 0.84, 0.60);
     }
     return vec4<f32>(color.rgb * intensity, color.a);
+}
+
+// The supports as lines from under the plate (#493), in the theme's amber,
+// as opaque as the supports have faded.
+const SUPPORT_LINE_COLOR: vec3<f32> = vec3<f32>(1.00, 0.66, 0.24);
+
+struct LineIn {
+    @builtin(vertex_index) corner: u32,
+    // A dash, once per instance: its two ends, world mm.
+    @location(0) a: vec3<f32>,
+    @location(1) b: vec3<f32>,
+};
+
+struct LineOut {
+    @builtin(position) clip_pos: vec4<f32>,
+};
+
+// A dash as a quad: two triangles over its ends, each corner pushed off the
+// dash on screen by half its width, so it reads the same at any zoom. A dash
+// with an end behind the eye is left out.
+@vertex
+fn vs_support_line(in: LineIn) -> LineOut {
+    var out: LineOut;
+    var ends = array<u32, 6>(0u, 0u, 1u, 0u, 1u, 1u);
+    var sides = array<f32, 6>(-1.0, 1.0, -1.0, 1.0, 1.0, -1.0);
+    let a = u.view_proj * vec4<f32>(in.a, 1.0);
+    let b = u.view_proj * vec4<f32>(in.b, 1.0);
+    if (a.w <= 1e-5 || b.w <= 1e-5) {
+        out.clip_pos = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+        return out;
+    }
+    let size = max(u.under_plate.zw, vec2<f32>(1.0, 1.0));
+    var along = (b.xy / b.w - a.xy / a.w) * size;
+    if (dot(along, along) < 1e-8) {
+        along = vec2<f32>(1.0, 0.0);
+    }
+    let across = normalize(vec2<f32>(-along.y, along.x));
+    let end = select(a, b, ends[in.corner] == 1u);
+    // From pixels to clip space: a target is 2 wide in NDC.
+    let push = across * sides[in.corner] * u.under_plate.y * 2.0 / size;
+    out.clip_pos = vec4<f32>(end.xy + push * end.w, end.z, end.w);
+    return out;
+}
+
+@fragment
+fn fs_support_line(in: LineOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(SUPPORT_LINE_COLOR, u.env_min.w);
+}
+
+// The ball at a support's tip (#493), lit like the models so it reads round.
+@fragment
+fn fs_support_ball(in: VsOut) -> @location(0) vec4<f32> {
+    let n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    let lambert = abs(dot(n, normalize(u.light_dir.xyz)));
+    let intensity = 0.45 + 0.55 * lambert;
+    return vec4<f32>(SUPPORT_LINE_COLOR * intensity, u.env_min.w);
 }
