@@ -132,6 +132,17 @@ struct FrameLook {
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// The stencil a selected set marks what of it fades from under the plate
+/// with (#493): above 1, the selection's own mark, by how opaque it still
+/// is, so the outline pass (`outline.wgsl`, which reads it back the same
+/// way) fades the outline with it.
+const FADING_STENCIL_BASE: u32 = 2;
+const FADING_STENCIL_LEVELS: f32 = 200.0;
+
+fn fading_stencil(fade: f32) -> u32 {
+    FADING_STENCIL_BASE + ((1.0 - fade).clamp(0.0, 1.0) * FADING_STENCIL_LEVELS).round() as u32
+}
 // Depth24PlusStencil8 carries an 8-bit stencil alongside depth in a single
 // attachment. The selection-outline post-pass writes `1` to stencil for the
 // selected object via per-draw stencil reference, then reads that stencil
@@ -1206,23 +1217,24 @@ impl Renderer {
                 if under_plate > 0.0 && raft_top_mm > 0.0 {
                     self.record_support_cuts(&mut pass, inst, selection, &support_objects);
                 }
-                // While the plate fades, what of the supports fades with it
-                // goes translucent (#481, #493).
-                let fading = raft_top_mm > 0.0 || supports_shown_up_to_mm < f32::MAX;
-                if under_plate > 0.0 && under_plate < 1.0 && fading {
-                    self.record_supports(
-                        &mut pass,
-                        &self.pipelines.mesh.fade_pipeline,
-                        inst,
-                        &support_objects,
-                    );
-                }
                 if under_plate > 0.0 && !self.support_lines.is_empty() {
                     self.support_lines.record(
                         &mut pass,
                         &self.pipelines.mesh.line_pipeline,
                         &self.pipelines.mesh.ball_pipeline,
                         &self.pipelines.mesh.uniforms_bind_group,
+                    );
+                }
+                // While the plate fades, what of the supports fades with it
+                // goes translucent (#481, #493), over the lines coming in.
+                let fading = raft_top_mm > 0.0 || supports_shown_up_to_mm < f32::MAX;
+                if under_plate > 0.0 && under_plate < 1.0 && fading {
+                    self.record_support_fade(
+                        &mut pass,
+                        inst,
+                        selection,
+                        &support_objects,
+                        under_plate,
                     );
                 }
                 if contents == FrameContents::Workspace {
@@ -1414,6 +1426,52 @@ impl Renderer {
             pass.set_stencil_reference(u32::from(selection.binary_search(&obj.node_id()).is_ok()));
             pass.draw_indexed(0..obj.index_count(), 0, 0..1);
         }
+    }
+
+    /// What of the support meshes fades with the plate, while it fades
+    /// (#481, #493): into the depth first, a selected set marking the
+    /// stencil with how opaque it still is ([`fading_stencil`]) for its
+    /// outline to fade with it, then its colour over the nearest surface.
+    fn record_support_fade(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        inst: &InstalledScene,
+        selection: &[NodeId],
+        support_objects: &[bool],
+        fade: f32,
+    ) {
+        pass.set_bind_group(
+            MeshBindGroup::Uniforms.idx(),
+            &self.pipelines.mesh.uniforms_bind_group,
+            &[],
+        );
+        pass.set_stencil_reference(fading_stencil(fade));
+        for (i, obj) in inst.gpu.objects().iter().enumerate() {
+            if !support_objects.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let selected = selection.binary_search(&obj.node_id()).is_ok();
+            pass.set_pipeline(if selected {
+                &self.pipelines.mesh.fade_depth_marking_pipeline
+            } else {
+                &self.pipelines.mesh.fade_depth_pipeline
+            });
+            let offset = (i as u64 * inst.gpu.model_stride()) as u32;
+            pass.set_bind_group(
+                MeshBindGroup::Models.idx(),
+                &inst.models_bind_group,
+                &[offset],
+            );
+            pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
+            pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..obj.index_count(), 0, 0..1);
+        }
+        self.record_supports(
+            pass,
+            &self.pipelines.mesh.fade_pipeline,
+            inst,
+            support_objects,
+        );
     }
 
     /// The support meshes alone through `pipeline`, which writes no stencil.

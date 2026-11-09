@@ -273,9 +273,20 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 
 // What of a support mesh fades from under the plate, while the plate fades
-// (#481, #493): drawn after the opaque passes, as the main pass would paint
-// it, as opaque as the plate still is. It writes neither depth nor stencil,
-// so a selected set's outline keeps to what stays.
+// (#481, #493), first only into the depth (and, for a selected set, the
+// stencil, which its fading outline reads): so the colour pass after it
+// paints the nearest surface alone, as the opaque mesh shows, instead of
+// every surface in whatever order the triangles come.
+@fragment
+fn fs_support_fade_depth(in: VsOut) -> @location(0) vec4<f32> {
+    if (in.cut_z > u.light_dir.w || !fades_under_plate(in.supports, in.cut_z)) {
+        discard;
+    }
+    return vec4<f32>(0.0);
+}
+
+// Then its colour: as the main pass would paint it, as opaque as the plate
+// still is.
 @fragment
 fn fs_support_fade(in: VsOut) -> @location(0) vec4<f32> {
     if (in.cut_z > u.light_dir.w || !fades_under_plate(in.supports, in.cut_z)) {

@@ -54,8 +54,12 @@ pub(in crate::mesh_render) struct MeshPipeline {
     pub(in crate::mesh_render) line_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) ball_pipeline: wgpu::RenderPipeline,
     /// What of the support meshes fades from under the plate, while the
-    /// plate fades (#481, #493): back faces culled, tested against the
-    /// scene's depth without writing it or the stencil, blended over.
+    /// plate fades (#481, #493): first into the depth alone (and the stencil
+    /// for a selected set, `fade_depth_marking_pipeline`), then its colour,
+    /// back faces culled, tested against that depth without writing it,
+    /// blended over.
+    pub(in crate::mesh_render) fade_depth_pipeline: wgpu::RenderPipeline,
+    pub(in crate::mesh_render) fade_depth_marking_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) fade_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) uniform_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) uniforms_bind_group: wgpu::BindGroup,
@@ -352,6 +356,65 @@ impl MeshPipeline {
             cache: None,
         });
 
+        let fade_depth = |label: &'static str, marking: bool| {
+            let face = if marking {
+                wgpu::StencilFaceState {
+                    compare: wgpu::CompareFunction::Always,
+                    fail_op: wgpu::StencilOperation::Keep,
+                    depth_fail_op: wgpu::StencilOperation::Keep,
+                    pass_op: wgpu::StencilOperation::Replace,
+                }
+            } else {
+                wgpu::StencilFaceState::IGNORE
+            };
+            let mask = if marking { 0xFF } else { 0 };
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<GpuVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..open
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: wgpu::StencilState {
+                        front: face,
+                        back: face,
+                        read_mask: mask,
+                        write_mask: mask,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample,
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_support_fade_depth"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: TEXTURE_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::empty(),
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let fade_depth_pipeline = fade_depth("mesh-viewer support fade depth pipeline", false);
+        let fade_depth_marking_pipeline =
+            fade_depth("mesh-viewer support fade depth marking pipeline", true);
         let fade_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("mesh-viewer support fade pipeline"),
             layout: Some(&pipeline_layout),
@@ -396,6 +459,8 @@ impl MeshPipeline {
             overlay_pipeline,
             line_pipeline,
             ball_pipeline,
+            fade_depth_pipeline,
+            fade_depth_marking_pipeline,
             fade_pipeline,
             uniform_buffer,
             uniforms_bind_group,
