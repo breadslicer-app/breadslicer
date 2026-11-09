@@ -29,6 +29,7 @@ pub mod mock;
 mod overhang_map;
 mod overlay;
 mod smooth_shading;
+mod support_lines;
 mod surface_paint;
 mod tip_coverage;
 pub use smooth_shading::set_smooth_models;
@@ -82,6 +83,7 @@ use scene_upload::{
     MODEL_ENTRY_SIZE, WorldBoxes, build_envelope_warning_mask, build_model_entries,
     renderable_leaf_count,
 };
+pub use support_lines::SupportLines;
 pub use surface_paint::{BrushRing, PaintLayer};
 use targets::{MsaaTargets, TargetPool};
 pub use tip_coverage::SupportTip;
@@ -124,6 +126,9 @@ struct FrameLook {
     contents: FrameContents,
     overhang_map: Option<OverhangMap>,
     raft_top_mm: f32,
+    /// From under the plate, the height above which a support mesh fades out
+    /// for its lines (#493); `f32::MAX` keeps it.
+    supports_shown_up_to_mm: f32,
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -335,6 +340,11 @@ pub struct Renderer {
     /// How high the rafts of the scene reach, mm: what of a support mesh
     /// the view from under the plate hides (#481).
     raft_top_mm: f32,
+    /// From under the plate, the supports as lines (#493): the height above
+    /// which a support mesh fades out (`f32::MAX` keeps it), and the lines
+    /// drawn in its place.
+    supports_shown_up_to_mm: f32,
+    support_lines: support_lines::LinesSlot,
     target_manager: TargetManager,
 }
 
@@ -422,6 +432,8 @@ impl Renderer {
             support_tips: Vec::new(),
             tip_cell_mm: 0.0,
             raft_top_mm: 0.0,
+            supports_shown_up_to_mm: f32::MAX,
+            support_lines: support_lines::LinesSlot::default(),
             target_manager: TargetManager {
                 msaa: None,
                 targets: None,
@@ -844,6 +856,7 @@ impl Renderer {
                 contents: FrameContents::Workspace,
                 overhang_map: self.overhang_map,
                 raft_top_mm: self.raft_top_mm,
+                supports_shown_up_to_mm: self.supports_shown_up_to_mm,
             },
         )
     }
@@ -874,6 +887,24 @@ impl Renderer {
     /// it (#481).
     pub fn set_raft_top(&mut self, mm: f32) {
         self.raft_top_mm = mm.max(0.0);
+    }
+
+    /// From under the plate, the supports drawn as lines (#493): the height
+    /// above which the support meshes fade with the plate (`f32::MAX` keeps
+    /// them, below 0 fades them whole), and the lines drawn in their place
+    /// (`None` none). The same `Arc` as last time uploads nothing.
+    pub fn set_support_lines(
+        &mut self,
+        shown_up_to_mm: f32,
+        lines: Option<&std::sync::Arc<SupportLines>>,
+    ) {
+        self.supports_shown_up_to_mm = shown_up_to_mm;
+        self.support_lines.install(
+            &self.core.device,
+            &self.core.queue,
+            &self.pipelines.mesh.models_bind_group_layout,
+            lines,
+        );
     }
 
     /// Blocks until the GPU has finished the work submitted so far. A poll
@@ -913,6 +944,7 @@ impl Renderer {
                 contents: FrameContents::ModelsOnly,
                 overhang_map: None,
                 raft_top_mm: 0.0,
+                supports_shown_up_to_mm: f32::MAX,
             },
         )
     }
@@ -972,6 +1004,7 @@ impl Renderer {
             contents,
             overhang_map,
             raft_top_mm,
+            supports_shown_up_to_mm,
         } = look;
         let tip_cell_mm = self.tip_cell_mm;
         if self.core.device_loss.is_lost() {
@@ -1097,6 +1130,16 @@ impl Renderer {
                 let [limit, radians, contact, _] = map.uniform(env_min.z);
                 [limit, radians, contact, tip_cell_mm]
             }),
+            under_plate: [
+                if under_plate > 0.0 {
+                    supports_shown_up_to_mm
+                } else {
+                    f32::MAX
+                },
+                support_lines::LINE_HALF_WIDTH_PX,
+                width as f32,
+                height as f32,
+            ],
         };
         self.core.queue.write_buffer(
             &self.pipelines.mesh.uniform_buffer,
@@ -1162,6 +1205,14 @@ impl Renderer {
                 self.record_mesh_objects(&mut pass, inst, selection);
                 if under_plate > 0.0 && raft_top_mm > 0.0 {
                     self.record_support_cuts(&mut pass, inst, selection, &support_objects);
+                }
+                if under_plate > 0.0 && !self.support_lines.is_empty() {
+                    self.support_lines.record(
+                        &mut pass,
+                        &self.pipelines.mesh.line_pipeline,
+                        &self.pipelines.mesh.ball_pipeline,
+                        &self.pipelines.mesh.uniforms_bind_group,
+                    );
                 }
                 if contents == FrameContents::Workspace {
                     self.surface_paint

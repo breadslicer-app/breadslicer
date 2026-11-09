@@ -406,6 +406,7 @@ impl PanelUpdate {
             | PreferencesChange::OverhangMap
             | PreferencesChange::FixAllRepeat
             | PreferencesChange::HideRaftsUnderPlate
+            | PreferencesChange::SupportLinesUnderPlate
             | PreferencesChange::DiagnosticLog
             | PreferencesChange::SilencedMessages => None,
         }
@@ -477,6 +478,7 @@ mod panel_update_tests {
             (PreferencesChange::OverhangMap, None),
             (PreferencesChange::FixAllRepeat, None),
             (PreferencesChange::HideRaftsUnderPlate, None),
+            (PreferencesChange::SupportLinesUnderPlate, None),
             (PreferencesChange::DiagnosticLog, None),
             (PreferencesChange::SilencedMessages, None),
             (PreferencesChange::Profiles, Some(PanelUpdate::Profiles)),

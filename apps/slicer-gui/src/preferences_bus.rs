@@ -81,6 +81,9 @@ pub(crate) struct PreferencesSnapshot {
     /// Whether the rafts fade out with the plate when the camera goes under
     /// it (#481, #492), the Supports tab's box. Shared by every open window.
     pub hide_rafts_under_plate: bool,
+    /// Whether the supports are drawn as lines when the camera goes under
+    /// the plate (#493), the Supports tab's box. Shared by every open window.
+    pub support_lines_under_plate: bool,
     /// Whether the diagnostic log writes the session's events to disk, for
     /// the box in Preferences > Privacy, which starts and stops the log
     /// itself. Not stored in the settings: it stays on until the app closes,
@@ -184,6 +187,7 @@ impl PreferencesSnapshot {
             overhang_map: false,
             fix_all_repeat: true,
             hide_rafts_under_plate: true,
+            support_lines_under_plate: false,
             diagnostic_log: false,
             silenced_messages: BTreeSet::new(),
             object_list_visible: true,
@@ -240,6 +244,8 @@ pub(crate) enum PreferencesChange {
     FixAllRepeat,
     /// The Supports tab's "Hide the raft from under the plate" (#492).
     HideRaftsUnderPlate,
+    /// The Supports tab's "Supports as dotted lines" (#493).
+    SupportLinesUnderPlate,
     DiagnosticLog,
     SilencedMessages,
     ObjectListPanel,

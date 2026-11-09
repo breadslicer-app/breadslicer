@@ -517,6 +517,11 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_hide_rafts_under_plate"
     )]
     hide_rafts_under_plate: bool,
+    /// Whether the supports are drawn as lines when the camera goes under
+    /// the plate (#493), the Supports tab's box. Omitted in TOML while off
+    /// (the default).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    support_lines_under_plate: bool,
     /// The app messages the user silenced with "Don't show again", by key
     /// (see `error_dialog::MessageKey`). Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -572,6 +577,7 @@ impl Default for AppSettings {
             overhang_map: false,
             fix_all_repeat: default_fix_all_repeat(),
             hide_rafts_under_plate: default_hide_rafts_under_plate(),
+            support_lines_under_plate: false,
             silenced_messages: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
@@ -757,6 +763,14 @@ impl AppSettings {
 
     pub(crate) fn set_hide_rafts_under_plate(&mut self, on: bool) {
         self.hide_rafts_under_plate = on;
+    }
+
+    pub(crate) fn support_lines_under_plate(&self) -> bool {
+        self.support_lines_under_plate
+    }
+
+    pub(crate) fn set_support_lines_under_plate(&mut self, on: bool) {
+        self.support_lines_under_plate = on;
     }
 
     pub(crate) fn silenced_messages(&self) -> BTreeSet<String> {

@@ -362,6 +362,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_overhang_map(snap.overhang_map);
     settings.set_fix_all_repeat(snap.fix_all_repeat);
     settings.set_hide_rafts_under_plate(snap.hide_rafts_under_plate);
+    settings.set_support_lines_under_plate(snap.support_lines_under_plate);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
@@ -520,6 +521,7 @@ impl AppState {
             overhang_map: settings.overhang_map(),
             fix_all_repeat: settings.fix_all_repeat(),
             hide_rafts_under_plate: settings.hide_rafts_under_plate(),
+            support_lines_under_plate: settings.support_lines_under_plate(),
             // Never stored: the log runs until the app closes and every launch
             // starts with it off (#74).
             diagnostic_log: false,
@@ -2267,6 +2269,10 @@ mod settings_saver_tests {
         snap.hide_rafts_under_plate = false;
         apply_snapshot_to_settings(&mut settings, &snap);
         assert!(!settings.hide_rafts_under_plate());
+        assert!(!snap.support_lines_under_plate);
+        snap.support_lines_under_plate = true;
+        apply_snapshot_to_settings(&mut settings, &snap);
+        assert!(settings.support_lines_under_plate());
     }
 
     #[test]
@@ -2571,6 +2577,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::OverhangMap,
             PreferencesChange::FixAllRepeat,
             PreferencesChange::HideRaftsUnderPlate,
+            PreferencesChange::SupportLinesUnderPlate,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,

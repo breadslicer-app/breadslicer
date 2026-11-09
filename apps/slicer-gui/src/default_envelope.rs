@@ -268,6 +268,7 @@ mod default_envelope_tests {
             PreferencesChange::OverhangMap,
             PreferencesChange::FixAllRepeat,
             PreferencesChange::HideRaftsUnderPlate,
+            PreferencesChange::SupportLinesUnderPlate,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,

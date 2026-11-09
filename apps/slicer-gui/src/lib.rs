@@ -85,6 +85,7 @@ mod start_dialog;
 mod startup_token;
 mod support_follow;
 mod support_gen_run;
+mod support_lines;
 mod support_persist;
 mod surface_brush;
 #[cfg(test)]

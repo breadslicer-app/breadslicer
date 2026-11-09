@@ -16,6 +16,7 @@ use slint::wgpu_30::wgpu;
 use super::super::device_ops::scoped;
 use super::super::frame::Uniforms;
 use super::super::scene_upload::{GpuVertex, MODEL_ENTRY_SIZE};
+use super::super::support_lines::DASH_STRIDE;
 use super::super::tip_coverage::{CoverageGrid, CoverageTextures};
 use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
 
@@ -47,6 +48,11 @@ pub(in crate::mesh_render) struct MeshPipeline {
     /// Preview overlays: the mesh shader's `fs_overlay`, no culling, depth
     /// neither tested nor written, stencil untouched, alpha-blended.
     pub(in crate::mesh_render) overlay_pipeline: wgpu::RenderPipeline,
+    /// The supports as lines from under the plate (#493): each dash a quad
+    /// widened on screen, and the balls at the tips. Both are tested against
+    /// the scene's depth without writing it, and blended over it.
+    pub(in crate::mesh_render) line_pipeline: wgpu::RenderPipeline,
+    pub(in crate::mesh_render) ball_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) uniform_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) uniforms_bind_group: wgpu::BindGroup,
     /// Group 0's layout: the uniforms and the support tips' data textures,
@@ -258,6 +264,90 @@ impl MeshPipeline {
             cache: None,
         });
 
+        let depth_tested = wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: wgpu::StencilState {
+                front: wgpu::StencilFaceState::IGNORE,
+                back: wgpu::StencilFaceState::IGNORE,
+                read_mask: 0,
+                write_mask: 0,
+            },
+            bias: wgpu::DepthBiasState::default(),
+        };
+        let blended_target = [Some(wgpu::ColorTargetState {
+            format: TEXTURE_FORMAT,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let blended = |entry_point: &'static str| wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some(entry_point),
+            compilation_options: Default::default(),
+            targets: &blended_target,
+        };
+        let open = wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        };
+        let multisample = wgpu::MultisampleState {
+            count: SAMPLE_COUNT,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        };
+        // The dashes read the uniforms only.
+        let lines_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("mesh-viewer support lines pll"),
+            bind_group_layouts: &[Some(&uniforms_bind_group_layout)],
+            immediate_size: 0,
+        });
+        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer support line pipeline"),
+            layout: Some(&lines_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_support_line"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: DASH_STRIDE,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                })],
+            },
+            primitive: open,
+            depth_stencil: Some(depth_tested.clone()),
+            multisample,
+            fragment: Some(blended("fs_support_line")),
+            multiview_mask: None,
+            cache: None,
+        });
+        let ball_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer support ball pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<GpuVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                })],
+            },
+            primitive: open,
+            depth_stencil: Some(depth_tested),
+            multisample,
+            fragment: Some(blended("fs_support_ball")),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("mesh-viewer uniforms"),
             size: size_of::<Uniforms>() as u64,
@@ -276,6 +366,8 @@ impl MeshPipeline {
             pipeline,
             cap_pipeline,
             overlay_pipeline,
+            line_pipeline,
+            ball_pipeline,
             uniform_buffer,
             uniforms_bind_group,
             uniforms_bind_group_layout,

@@ -272,9 +272,12 @@ export component MainWindow inherits Window {
     in property <bool> support-lift-on-plate;
     in property <string> support-lift-on-plate-label;
     callback support-lift-on-plate-toggled(bool);
-    // The Supports tab's "Hide the raft from under the plate" (#492).
+    // The Supports tab's FROM BELOW card: "Hide the raft" (#492) and
+    // "Supports as dotted lines" (#493).
     in property <bool> support-hide-rafts-under-plate: true;
     callback support-hide-rafts-under-plate-toggled(bool);
+    in property <bool> support-lines-under-plate;
+    callback support-lines-under-plate-toggled(bool);
     callback support-raft-off-requested();
     callback support-raft-ignore-requested();
     // The Supports tab manual tool: 0 none, 1 add a support where the model
@@ -2082,6 +2085,10 @@ export component MainWindow inherits Window {
                             hide-rafts-under-plate: root.support-hide-rafts-under-plate;
                             hide-rafts-under-plate-toggled(on) => {
                                 root.support-hide-rafts-under-plate-toggled(on);
+                            }
+                            lines-under-plate: root.support-lines-under-plate;
+                            lines-under-plate-toggled(on) => {
+                                root.support-lines-under-plate-toggled(on);
                             }
                             raft-lift => {
                                 root.support-raft-lift-requested();

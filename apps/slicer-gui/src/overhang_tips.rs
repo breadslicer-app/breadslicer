@@ -27,10 +27,10 @@ use crate::support_persist::{latest_drawing, support_leaves};
 
 /// One support set as the scene shows it: its leaf, the session that drew
 /// it, and where the leaf stands.
-struct ShownSet {
-    leaf: NodeId,
-    session: Arc<DfSupportSession>,
-    world: Transform3D,
+pub(crate) struct ShownSet {
+    pub(crate) leaf: NodeId,
+    pub(crate) session: Arc<DfSupportSession>,
+    pub(crate) world: Transform3D,
 }
 
 /// What the tips were gathered from.
@@ -77,7 +77,7 @@ impl TipCache {
 /// Every support set the scene of `document` shows, by the session that
 /// drew it last: supports no session drew (a mesh saved as such) have no
 /// tips to count.
-fn shown_sets(document: &SceneDocument) -> Vec<ShownSet> {
+pub(crate) fn shown_sets(document: &SceneDocument) -> Vec<ShownSet> {
     let sessions = document.support_sessions();
     document
         .with_scene(|spatial| {

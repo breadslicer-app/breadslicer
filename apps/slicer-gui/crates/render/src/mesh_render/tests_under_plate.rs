@@ -444,3 +444,107 @@ fn the_slice_view_leaves_no_specks_of_what_stands_above_the_layer() {
     }
     assert!(found.iter().all(|f| f.2 == 0), "{found:?}");
 }
+
+/// The workspace frame of `graph` from `camera`, `side` pixels square.
+fn frame_of(
+    renderer: &mut Renderer,
+    graph: &Scene,
+    camera: &OrbitCamera,
+    side: u32,
+) -> FramePixels {
+    renderer.upload_scene(graph).expect("upload the scene");
+    renderer
+        .workspace_pixels_for_test(
+            SceneRender {
+                graph,
+                selection: &[],
+                gizmo: None,
+                clip_z: None,
+            },
+            BV,
+            camera,
+            side,
+            side,
+        )
+        .expect("the frame is not refused")
+        .expect("a sized frame")
+}
+
+/// How many pixels of `frame` take the support lines' amber, whole or
+/// blended at an edge: the plate's greys have their channels level.
+fn amber_pixels(frame: &FramePixels) -> usize {
+    frame
+        .rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[0] > 100 && p[0] > p[1] + 25 && p[1] > p[2] + 25)
+        .count()
+}
+
+/// #493: from under the plate with the supports drawn as lines, a support
+/// mesh fades out whole, raft and all, and its line and the ball at its tip
+/// show in its place; from above the plate, the support shows as ever.
+#[test]
+fn from_under_the_plate_the_supports_turn_into_lines() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let graph = scene_of(vec![supports(closed_box(
+        [-3.0, -3.0, 0.0],
+        [3.0, 3.0, 12.0],
+    ))]);
+    let shown = pixels_drawn(&mut renderer, &graph, &under(), 0.0, 128);
+    assert!(shown > 100, "{shown}");
+    renderer.set_support_lines(-1.0, None);
+    let hidden = pixels_drawn(&mut renderer, &graph, &under(), 0.0, 128);
+    assert_eq!(hidden, 0, "the support fades out whole");
+
+    // Faded out above its raft only: the raft stays.
+    renderer.set_support_lines(RAFT_TOP_MM, None);
+    let raft = pixels_drawn(&mut renderer, &graph, &under(), 0.0, 128);
+    assert!(raft > 0 && raft < shown, "{raft} of {shown}");
+
+    let lines = Arc::new(SupportLines::new(
+        &[vec![[0.0, 0.0, 12.0], [0.0, 0.0, 1.0]]],
+        &[([0.0, 0.0, 12.0], 1.5)],
+    ));
+    renderer.set_support_lines(-1.0, Some(&lines));
+    let drawn = frame_of(&mut renderer, &graph, &under(), 128);
+    assert!(amber_pixels(&drawn) > 20, "{}", amber_pixels(&drawn));
+
+    // From above nothing fades and no line is drawn.
+    let from_above = frame_of(&mut renderer, &graph, &above(), 128);
+    assert_eq!(amber_pixels(&from_above), 0);
+    let whole = pixels_drawn(&mut renderer, &graph, &above(), 0.0, 128);
+    assert!(whole > 100, "{whole}");
+}
+
+/// A line behind a model is hidden by it: the lines are tested against the
+/// scene's depth.
+#[test]
+fn a_support_line_behind_the_model_does_not_show() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    // A wide model slab at 5 mm; a line 2 mm above it, which a camera under
+    // the plate sees through the slab only.
+    let graph = scene_of(vec![square(60.0, 5.0)]);
+    let lines = Arc::new(SupportLines::new(
+        &[vec![[-10.0, 0.0, 7.0], [10.0, 0.0, 7.0]]],
+        &[],
+    ));
+    renderer.set_support_lines(-1.0, Some(&lines));
+    let behind = frame_of(&mut renderer, &graph, &under(), 128);
+    assert_eq!(amber_pixels(&behind), 0);
+    // The same line under the slab shows.
+    let lines = Arc::new(SupportLines::new(
+        &[vec![[-10.0, 0.0, 3.0], [10.0, 0.0, 3.0]]],
+        &[],
+    ));
+    renderer.set_support_lines(-1.0, Some(&lines));
+    let below = frame_of(&mut renderer, &graph, &under(), 128);
+    assert!(amber_pixels(&below) > 20, "{}", amber_pixels(&below));
+}

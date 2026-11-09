@@ -24,6 +24,11 @@ struct Uniforms {
     // side of the cells the support tips are hashed in, mm (0 without
     // tips): what a tip holds, the map leaves plain (#484).
     overhang: vec4<f32>,
+    // From under the plate, the supports drawn as lines (#493): x = the
+    // height above which a support mesh fades out with the plate, mm (a
+    // huge one keeps it), y = half the width of a dash, pixels, zw = the
+    // target's size, pixels.
+    under_plate: vec4<f32>,
 };
 
 struct ModelEntry {
@@ -211,6 +216,15 @@ fn screen_door(pixel: vec2<f32>) -> f32 {
     return (f32(tile[at.y * 4u + at.x]) + 0.5) / 16.0;
 }
 
+// Whether a support mesh's fragment fades out from under the plate: its
+// raft, below env_max.w, so the tips above it show (#481), and the rest
+// above under_plate.x, where the supports are drawn as lines (#493).
+fn hidden_under_plate(supports: u32, cut_z: f32, pixel: vec2<f32>) -> bool {
+    return supports == 1u
+        && (cut_z < u.env_max.w || cut_z > u.under_plate.x)
+        && screen_door(pixel) < u.env_min.w;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Slice clip: drop fragments above the selected layer's top Z. The
@@ -218,10 +232,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (in.cut_z > u.light_dir.w) {
         discard;
     }
-    // From under the plate (#481), a support mesh's raft fades with the
-    // plate, so the tips above it show.
-    if (in.supports == 1u && in.cut_z < u.env_max.w
-        && screen_door(in.clip_pos.xy) < u.env_min.w) {
+    if (hidden_under_plate(in.supports, in.cut_z, in.clip_pos.xy)) {
         discard;
     }
     // The interpolated smooth normal; a vertex without one shades flat from
@@ -265,7 +276,7 @@ fn fs_cap(in: VsOut) -> @location(0) vec4<f32> {
     if (in.supports != 1u || in.cut_z > u.light_dir.w) {
         discard;
     }
-    if (in.cut_z < u.env_max.w && screen_door(in.clip_pos.xy) < u.env_min.w) {
+    if (hidden_under_plate(in.supports, in.cut_z, in.clip_pos.xy)) {
         discard;
     }
     // The cut faces down, toward the camera under the plate.
@@ -299,4 +310,60 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
         color = vec4<f32>(0.80, 0.80, 0.84, 0.60);
     }
     return vec4<f32>(color.rgb * intensity, color.a);
+}
+
+// The supports as lines from under the plate (#493), in the theme's amber,
+// as opaque as the supports have faded.
+const SUPPORT_LINE_COLOR: vec3<f32> = vec3<f32>(1.00, 0.66, 0.24);
+
+struct LineIn {
+    @builtin(vertex_index) corner: u32,
+    // A dash, once per instance: its two ends, world mm.
+    @location(0) a: vec3<f32>,
+    @location(1) b: vec3<f32>,
+};
+
+struct LineOut {
+    @builtin(position) clip_pos: vec4<f32>,
+};
+
+// A dash as a quad: two triangles over its ends, each corner pushed off the
+// dash on screen by half its width, so it reads the same at any zoom. A dash
+// with an end behind the eye is left out.
+@vertex
+fn vs_support_line(in: LineIn) -> LineOut {
+    var out: LineOut;
+    var ends = array<u32, 6>(0u, 0u, 1u, 0u, 1u, 1u);
+    var sides = array<f32, 6>(-1.0, 1.0, -1.0, 1.0, 1.0, -1.0);
+    let a = u.view_proj * vec4<f32>(in.a, 1.0);
+    let b = u.view_proj * vec4<f32>(in.b, 1.0);
+    if (a.w <= 1e-5 || b.w <= 1e-5) {
+        out.clip_pos = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+        return out;
+    }
+    let size = max(u.under_plate.zw, vec2<f32>(1.0, 1.0));
+    var along = (b.xy / b.w - a.xy / a.w) * size;
+    if (dot(along, along) < 1e-8) {
+        along = vec2<f32>(1.0, 0.0);
+    }
+    let across = normalize(vec2<f32>(-along.y, along.x));
+    let end = select(a, b, ends[in.corner] == 1u);
+    // From pixels to clip space: a target is 2 wide in NDC.
+    let push = across * sides[in.corner] * u.under_plate.y * 2.0 / size;
+    out.clip_pos = vec4<f32>(end.xy + push * end.w, end.z, end.w);
+    return out;
+}
+
+@fragment
+fn fs_support_line(in: LineOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(SUPPORT_LINE_COLOR, u.env_min.w);
+}
+
+// The ball at a support's tip (#493), lit like the models so it reads round.
+@fragment
+fn fs_support_ball(in: VsOut) -> @location(0) vec4<f32> {
+    let n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    let lambert = abs(dot(n, normalize(u.light_dir.xyz)));
+    let intensity = 0.45 + 0.55 * lambert;
+    return vec4<f32>(SUPPORT_LINE_COLOR * intensity, u.env_min.w);
 }

@@ -33,6 +33,10 @@ pub enum OverlayTint {
     /// A placement not known yet to work or not (a drain before the cavity
     /// it would open into is computed): neutral, neither green nor red.
     Pending = 5,
+    /// The ball at a support's tip, drawn from under the plate in place of
+    /// the supports (#493). Not an overlay of its own: the support lines
+    /// draw these.
+    SupportBall = 7,
 }
 
 /// The overlay as a whole: its pieces, each shared so a piece that did not
@@ -84,13 +88,20 @@ impl OverlaySlot {
     }
 }
 
-impl Renderer {
-    /// Installs the overlay pieces (`None` clears them). Nothing happens when
-    /// `pieces` is the `Arc` installed; otherwise a piece already uploaded
-    /// (the same `Arc`) is kept and only new ones are uploaded. A piece the
-    /// device refuses is left out.
-    pub(crate) fn set_overlay(&mut self, pieces: Option<&Overlay>) {
-        let same = match (&self.overlay.source, pieces) {
+impl OverlaySlot {
+    /// Installs `pieces` (`None` clears them). Nothing happens when `pieces`
+    /// is the `Arc` installed; otherwise a piece already uploaded (the same
+    /// `Arc`) is kept and only new ones are uploaded. A piece the device
+    /// refuses is left out. `what` names the slot in the breadcrumbs.
+    pub(super) fn install(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        models_layout: &wgpu::BindGroupLayout,
+        pieces: Option<&Overlay>,
+        what: &str,
+    ) {
+        let same = match (&self.source, pieces) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (None, None) => true,
             _ => false,
@@ -98,20 +109,18 @@ impl Renderer {
         if same {
             return;
         }
-        self.overlay.source = pieces.cloned();
+        self.source = pieces.cloned();
         crate::breadcrumbs::note(&format!(
-            "gpu: overlay {} piece(s)",
+            "gpu: {what} {} piece(s)",
             pieces.map_or(0, |p| p.len())
         ));
-        let mut kept = std::mem::take(&mut self.overlay.pieces);
+        let mut kept = std::mem::take(&mut self.pieces);
         let Some(pieces) = pieces else {
             return;
         };
-        let device = &self.core.device;
-        let queue = &self.core.queue;
         for piece in pieces.iter() {
             if let Some(i) = kept.iter().position(|u| Arc::ptr_eq(&u.source, piece)) {
-                self.overlay.pieces.push(kept.swap_remove(i));
+                self.pieces.push(kept.swap_remove(i));
                 continue;
             }
             if piece.indices.is_empty() || piece.positions.is_empty() {
@@ -149,7 +158,7 @@ impl Renderer {
             };
             let entry_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("overlay model entry bg"),
-                layout: &self.pipelines.mesh.models_bind_group_layout,
+                layout: models_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -159,7 +168,7 @@ impl Renderer {
                     }),
                 }],
             });
-            self.overlay.pieces.push(UploadedPiece {
+            self.pieces.push(UploadedPiece {
                 source: piece.clone(),
                 vertices,
                 indices,
@@ -168,5 +177,19 @@ impl Renderer {
                 _entry: entry_buffer,
             });
         }
+    }
+}
+
+impl Renderer {
+    /// Installs the overlay pieces (`None` clears them): see
+    /// [`OverlaySlot::install`].
+    pub(crate) fn set_overlay(&mut self, pieces: Option<&Overlay>) {
+        self.overlay.install(
+            &self.core.device,
+            &self.core.queue,
+            &self.pipelines.mesh.models_bind_group_layout,
+            pieces,
+            "overlay",
+        );
     }
 }

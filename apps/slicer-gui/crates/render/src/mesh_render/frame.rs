@@ -39,6 +39,10 @@ pub(super) struct Uniforms {
     pub(super) env_max: [f32; 4],
     pub(super) face_breach_mask: [u32; 4],
     pub(super) overhang: [f32; 4],
+    /// From under the plate, the supports drawn as lines (#493): the height
+    /// above which a support mesh fades out, half a dash's width in pixels
+    /// and the target's size.
+    pub(super) under_plate: [f32; 4],
 }
 
 /// World-space directional light. The fourth component carries the

@@ -1047,6 +1047,31 @@ gizmo_size = 400
     }
 
     #[test]
+    fn support_lines_under_the_plate_round_trip_and_are_omitted_while_off() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        let mut s = AppSettings::default();
+        file.save(&s).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            !written.contains("support_lines_under_plate"),
+            "got:
+{written}"
+        );
+        assert!(!file.load().settings().support_lines_under_plate());
+
+        s.set_support_lines_under_plate(true);
+        file.save(&s).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            written.contains("support_lines_under_plate = true"),
+            "got:
+{written}"
+        );
+        assert!(file.load().settings().support_lines_under_plate());
+    }
+
+    #[test]
     fn orthographic_view_round_trips() {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);

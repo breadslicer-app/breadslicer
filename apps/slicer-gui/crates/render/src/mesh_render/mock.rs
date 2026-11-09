@@ -99,6 +99,9 @@ pub struct MockRendererState {
     pub overhang_map: Option<super::OverhangMap>,
     /// What the last `set_support_tips` asked for.
     pub support_tips: Vec<super::SupportTip>,
+    /// What the last `set_support_lines` asked for (#493).
+    pub supports_shown_up_to_mm: f32,
+    pub support_lines: Option<std::sync::Arc<super::SupportLines>>,
 }
 
 impl MockRendererState {
@@ -118,6 +121,8 @@ impl MockRendererState {
             front_label_calls: Vec::new(),
             overhang_map: None,
             support_tips: Vec::new(),
+            supports_shown_up_to_mm: f32::MAX,
+            support_lines: None,
         }))
     }
 }
@@ -143,6 +148,16 @@ impl MeshRenderer for MockRenderer {
 
     fn set_support_tips(&mut self, tips: &[super::SupportTip]) {
         self.state.borrow_mut().support_tips = tips.to_vec();
+    }
+
+    fn set_support_lines(
+        &mut self,
+        shown_up_to_mm: f32,
+        lines: Option<&std::sync::Arc<super::SupportLines>>,
+    ) {
+        let mut s = self.state.borrow_mut();
+        s.supports_shown_up_to_mm = shown_up_to_mm;
+        s.support_lines = lines.cloned();
     }
 
     fn upload_scene(&mut self, graph: &Scene) -> Result<()> {

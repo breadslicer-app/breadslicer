@@ -167,6 +167,9 @@ pub(crate) struct DfSupportRun {
     /// Keeps the Supports tab's raft-under-the-plate box (#492) following the
     /// shared setting.
     raft_under_plate_pref: RefCell<Option<Subscription>>,
+    /// Keeps the Supports tab's support-lines box (#493) following the
+    /// shared setting.
+    lines_under_plate_pref: RefCell<Option<Subscription>>,
     /// For the run in flight that regenerates supports (#153): the scene
     /// revision that left its models waiting, and the models.
     regenerating: RefCell<Option<(SceneRevision, SupportsWanted)>>,
@@ -1437,6 +1440,7 @@ impl DfSupportRun {
             lift_pref: RefCell::new(None),
             overhang_pref: RefCell::new(None),
             raft_under_plate_pref: RefCell::new(None),
+            lines_under_plate_pref: RefCell::new(None),
             regenerating: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
@@ -1657,7 +1661,37 @@ impl DfSupportRun {
             *run.raft_under_plate_pref.borrow_mut() = Some(subscription);
         }
         run.hide_rafts_under_plate(run.bus.snapshot().hide_rafts_under_plate);
+        {
+            let bus = run.bus.clone();
+            ui.on_support_lines_under_plate_toggled(move |on| {
+                bus.update(move |snap| {
+                    snap.support_lines_under_plate = on;
+                    PreferencesChange::SupportLinesUnderPlate
+                });
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            let subscription = run.bus.subscribe(move |snap, change| {
+                if matches!(change, PreferencesChange::SupportLinesUnderPlate)
+                    && let Some(run) = weak.upgrade()
+                {
+                    run.support_lines_under_plate(snap.support_lines_under_plate);
+                }
+            });
+            *run.lines_under_plate_pref.borrow_mut() = Some(subscription);
+        }
+        run.support_lines_under_plate(run.bus.snapshot().support_lines_under_plate);
         run
+    }
+
+    /// Whether the supports are drawn as lines from under the plate in this
+    /// window (#493).
+    fn support_lines_under_plate(&self, on: bool) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_lines_under_plate(on);
+        }
+        self.ctrl.set_support_lines_under_plate(on);
     }
 
     /// Whether the rafts fade out with the plate from under it in this window
@@ -9050,6 +9084,60 @@ mod hand_edit_tests {
                 .support_hit_for_test(crate::viewport::ScreenPoint::new(at[0], at[1]))
                 .expect("a support under the cursor");
             assert!(far(again, aimed) < 2.0, "past the raft again: {again:?}");
+        });
+    }
+
+    /// #493: with the Supports tab's box on, from under the plate the
+    /// supports fade out and the viewport draws their lines, a ball at every
+    /// tip; the rafts with them, or kept when their own box is off. From above
+    /// the plate, or with the box off, the supports stay as they are.
+    #[test]
+    fn from_under_the_plate_the_supports_turn_into_lines() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let place = AffineTransform3D::from_translation([25.0, 22.0, 12.0]);
+            let camera = camera_at([35.0, 27.0, 12.0], 0.4, -1.2, 60.0);
+            let (ctrl, _document, run) =
+                wired_slab(&window, Transform3D::Affine(place), camera.clone());
+            let session = in_force_session(&run).unwrap();
+            let top = session.raft_top_mm() as f32;
+            let tips: usize = session.pieces().iter().map(|p| p.contacts.len()).sum();
+            assert!(tips > 0);
+
+            assert!(!window.get_support_lines_under_plate(), "off by default");
+            let (kept, none) = ctrl.under_plate_supports_for_test();
+            assert_eq!(kept, f32::MAX);
+            assert!(none.is_none());
+
+            window.invoke_support_lines_under_plate_toggled(true);
+            assert!(window.get_support_lines_under_plate());
+            let (faded, lines) = ctrl.under_plate_supports_for_test();
+            assert!(faded < 0.0, "the rafts fade too: {faded}");
+            let lines = lines.expect("the lines");
+            assert!(!lines.dashes.is_empty());
+            // One ball for each tip, each of the same vertices.
+            assert_eq!(lines.balls.positions.len() % tips, 0);
+            assert!(!lines.balls.positions.is_empty());
+            // Gathered once while the sets stay.
+            let (_, again) = ctrl.under_plate_supports_for_test();
+            assert!(Arc::ptr_eq(&lines, &again.unwrap()));
+
+            // The rafts kept: the supports fade above them only.
+            window.invoke_support_hide_rafts_under_plate_toggled(false);
+            let (above_raft, _) = ctrl.under_plate_supports_for_test();
+            assert_eq!(above_raft, crate::under_plate::hidden_below_mm(top));
+            window.invoke_support_hide_rafts_under_plate_toggled(true);
+
+            // From above the plate nothing changes.
+            let mut over = camera.clone();
+            over.pitch = 0.6;
+            ctrl.set_camera_for_test(over);
+            assert_eq!(ctrl.under_plate_supports_for_test().0, f32::MAX);
+            ctrl.set_camera_for_test(camera);
+            window.invoke_support_lines_under_plate_toggled(false);
+            let (off, none) = ctrl.under_plate_supports_for_test();
+            assert_eq!(off, f32::MAX);
+            assert!(none.is_none());
         });
     }
 
