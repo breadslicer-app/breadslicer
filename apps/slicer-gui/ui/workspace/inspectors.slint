@@ -1723,6 +1723,10 @@ export component SupportsInspector inherits VerticalLayout {
     in property <bool> lift-on-plate;
     in property <string> lift-on-plate-label;
     callback lift-on-plate-toggled(bool);
+    // Whether the rafts fade out with the plate from under it (#481, #492),
+    // a setting.
+    in property <bool> hide-rafts-under-plate: true;
+    callback hide-rafts-under-plate-toggled(bool);
     // The Add tool (#3): whether it is armed, the tip size it places (0 the
     // preset's, 1 to 4 extra small to large), that tip in words, and the
     // hover preview's line, with whether it warns.
@@ -2087,6 +2091,13 @@ export component SupportsInspector inherits VerticalLayout {
             enabled: root.raft-index == 0;
             toggled => {
                 root.option-changed(11, self.checked ? 1 : 0);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Hide the raft from under the plate");
+            checked: root.hide-rafts-under-plate;
+            toggled => {
+                root.hide-rafts-under-plate-toggled(self.checked);
             }
         }
     }

@@ -1022,6 +1022,31 @@ gizmo_size = 400
     }
 
     #[test]
+    fn hiding_the_rafts_under_the_plate_round_trips_and_is_omitted_while_on() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        let mut s = AppSettings::default();
+        file.save(&s).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            !written.contains("hide_rafts_under_plate"),
+            "got:
+{written}"
+        );
+        assert!(file.load().settings().hide_rafts_under_plate());
+
+        s.set_hide_rafts_under_plate(false);
+        file.save(&s).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            written.contains("hide_rafts_under_plate = false"),
+            "got:
+{written}"
+        );
+        assert!(!file.load().settings().hide_rafts_under_plate());
+    }
+
+    #[test]
     fn orthographic_view_round_trips() {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);

@@ -78,6 +78,9 @@ pub(crate) struct PreferencesSnapshot {
     /// Whether a Fix All press repeats until the review is clean (#163), the
     /// Review card's box. Shared by every open window.
     pub fix_all_repeat: bool,
+    /// Whether the rafts fade out with the plate when the camera goes under
+    /// it (#481, #492), the Supports tab's box. Shared by every open window.
+    pub hide_rafts_under_plate: bool,
     /// Whether the diagnostic log writes the session's events to disk, for
     /// the box in Preferences > Privacy, which starts and stops the log
     /// itself. Not stored in the settings: it stays on until the app closes,
@@ -180,6 +183,7 @@ impl PreferencesSnapshot {
             lift_models_on_plate: false,
             overhang_map: false,
             fix_all_repeat: true,
+            hide_rafts_under_plate: true,
             diagnostic_log: false,
             silenced_messages: BTreeSet::new(),
             object_list_visible: true,
@@ -234,6 +238,8 @@ pub(crate) enum PreferencesChange {
     OverhangMap,
     /// The Review card's "Repeat until clean" (#163).
     FixAllRepeat,
+    /// The Supports tab's "Hide the raft from under the plate" (#492).
+    HideRaftsUnderPlate,
     DiagnosticLog,
     SilencedMessages,
     ObjectListPanel,

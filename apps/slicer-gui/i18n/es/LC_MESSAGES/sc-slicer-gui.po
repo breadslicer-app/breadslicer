@@ -5437,6 +5437,11 @@ msgstr "Pared almenada"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
+msgid "Hide the raft from under the plate"
+msgstr "Ocultar la balsa desde abajo de la plataforma"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
 msgid "PRESETS"
 msgstr "PRESETS"
 

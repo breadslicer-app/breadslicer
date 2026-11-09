@@ -378,6 +378,14 @@ fn is_default_fix_all_repeat(on: &bool) -> bool {
     *on
 }
 
+fn default_hide_rafts_under_plate() -> bool {
+    true
+}
+
+fn is_default_hide_rafts_under_plate(on: &bool) -> bool {
+    *on
+}
+
 /// Models keep their facets by default; supports always shade smooth.
 fn default_smooth_models() -> bool {
     false
@@ -501,6 +509,14 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_fix_all_repeat"
     )]
     fix_all_repeat: bool,
+    /// Whether the rafts fade out with the plate when the camera goes under
+    /// it (#481, #492), the Supports tab's box. Omitted in TOML while on (the
+    /// default).
+    #[serde(
+        default = "default_hide_rafts_under_plate",
+        skip_serializing_if = "is_default_hide_rafts_under_plate"
+    )]
+    hide_rafts_under_plate: bool,
     /// The app messages the user silenced with "Don't show again", by key
     /// (see `error_dialog::MessageKey`). Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -555,6 +571,7 @@ impl Default for AppSettings {
             lift_models_on_plate: false,
             overhang_map: false,
             fix_all_repeat: default_fix_all_repeat(),
+            hide_rafts_under_plate: default_hide_rafts_under_plate(),
             silenced_messages: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
@@ -732,6 +749,14 @@ impl AppSettings {
 
     pub(crate) fn set_fix_all_repeat(&mut self, on: bool) {
         self.fix_all_repeat = on;
+    }
+
+    pub(crate) fn hide_rafts_under_plate(&self) -> bool {
+        self.hide_rafts_under_plate
+    }
+
+    pub(crate) fn set_hide_rafts_under_plate(&mut self, on: bool) {
+        self.hide_rafts_under_plate = on;
     }
 
     pub(crate) fn silenced_messages(&self) -> BTreeSet<String> {
