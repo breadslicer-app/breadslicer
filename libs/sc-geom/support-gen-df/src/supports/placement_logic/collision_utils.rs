@@ -6,6 +6,8 @@
 //! shared `THREE.Raycaster` argument is only an allocation saver and is gone.
 
 use crate::supports::curves::bezier_utils::bezier_to_line_segments;
+use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
+use crate::supports::support_primitives::contact_cone::types::ContactCone;
 use crate::supports::types::Vec3;
 use crate::three::Ray;
 use crate::three::math_utils::{js_hypot, js_max, js_min};
@@ -22,6 +24,114 @@ const WHISKER_OFFSETS: [(f64, f64); 8] = [
     (WHISKER_DIAGONAL, -WHISKER_DIAGONAL),
     (-WHISKER_DIAGONAL, -WHISKER_DIAGONAL),
 ];
+
+/// How far before its contact a tip cone may go into the model: the tip's own
+/// way into its surface, and a crease or a bump of the surface around it.
+/// Further, the cone goes through another part of the model.
+pub const CONE_CROSSING_MARGIN_MM: f64 = 0.5;
+
+/// How much further than a flat surface would explain the side of a leaning
+/// cone may meet the model before its contact.
+const CONE_SIDE_SLACK_MM: f64 = 0.2;
+
+/// From this angle between a cone's low side and the normal of its surface,
+/// in degrees, the cone lies along the surface it touches, or reaches its
+/// contact from behind it: no tip.
+pub const CONE_ALONG_SURFACE_DEG: f64 = 80.0;
+
+/// SoulCrafted (#500): whether `cone` goes into the model more than
+/// [`CONE_CROSSING_MARGIN_MM`] before its contact: through another part of the
+/// model, as a tip under a curled finger through the claw below it, or a
+/// tooth's tip through the jaw in front of the tooth; or with its side, as a
+/// tip under a toe into the claw of the toe beside it; or lies along the
+/// surface it touches ([`CONE_ALONG_SURFACE_DEG`]), as a leaf hung straight
+/// from a shaft below to a contact on a wall.
+///
+/// Rays from the socket's end of the cone to its contact's: its axis; eight
+/// from the rim of the socket to the middle of the contact, which cross the
+/// inside of the cone; and sixteen along its side. A
+/// surface any of them meets on the way, seen from either side, says the
+/// cone goes into the model there or starts inside it. A cone that leans
+/// from the normal of its surface meets that surface with its low side
+/// before its contact, the further the more it leans: the rays along the
+/// side allow for what a flat surface explains.
+///
+/// The checks a cone is placed with sample it against the distance field and
+/// leave its last stretch alone; the rays see a thin part the cone goes
+/// through there.
+pub fn tip_cone_crosses_model(cone: &ContactCone, mesh: BvhMesh<'_>) -> bool {
+    let socket = get_final_socket_position(cone);
+    let axis = cone.pos.sub(socket);
+    let length = axis.length();
+    if length <= CONE_CROSSING_MARGIN_MM {
+        return false;
+    }
+    let dir = axis.multiply_scalar(1.0 / length);
+    let meets = |from: Vec3, to: Vec3, margin: f64| -> bool {
+        let way = to.sub(from);
+        let reach = way.length();
+        reach > margin
+            && !mesh
+                .intersect_object(
+                    &Ray {
+                        origin: from,
+                        direction: way.multiply_scalar(1.0 / reach),
+                    },
+                    Side::Double,
+                    0.0,
+                    reach - margin,
+                    true,
+                )
+                .is_empty()
+    };
+    if meets(socket, cone.pos, CONE_CROSSING_MARGIN_MM) {
+        return true;
+    }
+    let radius = cone.profile.body_diameter_mm / 2.0;
+    let contact_radius = cone.profile.contact_diameter_mm / 2.0;
+    if !(radius > 0.0) {
+        return false;
+    }
+    let across = if dir.z.abs() < 0.9 {
+        Vec3::new(0.0, 0.0, 1.0)
+    } else {
+        Vec3::new(1.0, 0.0, 0.0)
+    };
+    let u = dir.cross(across).normalize();
+    let v = dir.cross(u);
+    let around = |turn: f64| {
+        u.multiply_scalar(turn.cos())
+            .add(v.multiply_scalar(turn.sin()))
+    };
+    let eighth = std::f64::consts::FRAC_PI_4;
+    if (0..8).any(|k| {
+        let out = around(f64::from(k) * eighth);
+        meets(
+            socket.add(out.multiply_scalar(radius)),
+            cone.pos,
+            CONE_CROSSING_MARGIN_MM,
+        )
+    }) {
+        return true;
+    }
+    // Where the low side of the cone meets a flat surface it leans from.
+    let surface = cone.surface_normal.unwrap_or(cone.normal).normalize();
+    let lean = cone.normal.normalize().dot(surface).clamp(-1.0, 1.0).acos();
+    let flare = ((radius - contact_radius) / length).atan();
+    if lean + flare >= CONE_ALONG_SURFACE_DEG.to_radians() {
+        return true;
+    }
+    let own = contact_radius * lean.sin() / (lean + flare).cos();
+    let margin = CONE_CROSSING_MARGIN_MM.max(own + CONE_SIDE_SLACK_MM);
+    (0..16).any(|k| {
+        let out = around(f64::from(k) * eighth / 2.0);
+        meets(
+            socket.add(out.multiply_scalar(radius)),
+            cone.pos.add(out.multiply_scalar(contact_radius)),
+            margin,
+        )
+    })
+}
 
 const WORLD_UP: Vec3 = Vec3::new(0.0, 1.0, 0.0);
 const WORLD_RIGHT: Vec3 = Vec3::new(1.0, 0.0, 0.0);

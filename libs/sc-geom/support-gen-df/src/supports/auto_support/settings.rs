@@ -104,6 +104,17 @@ pub struct AutoSupportSettings {
     /// for a speck is more lever than hold.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rehang_island_branches: bool,
+    /// SoulCrafted (#500): a candidate's tip is resolved on its own surface,
+    /// never on whatever hangs above it (see `resolve_surface_normal`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tips_on_own_surface: bool,
+    /// SoulCrafted (#500): no support is placed whose tip cone goes into the
+    /// model before its contact, with its axis or its side, or lies along
+    /// the surface it touches (`tip_cone_crosses_model`): what would place it
+    /// tries its next way to the contact, and the cull at the end of the
+    /// plan takes away one that got through.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tip_cones_clear: bool,
     pub enabled: bool,
     pub min_island_area_mm2: f64,
     pub tip_influence_radius_mm: f64,
@@ -228,6 +239,8 @@ pub fn create_default_auto_support_settings() -> AutoSupportSettings {
     AutoSupportSettings {
         near_fans: false,
         rehang_island_branches: false,
+        tips_on_own_surface: false,
+        tip_cones_clear: false,
         enabled: true,
         min_island_area_mm2: c::MIN_ISLAND_AREA_MM2.default_value,
         tip_influence_radius_mm: c::TIP_INFLUENCE_RADIUS_MM.default_value,
@@ -281,6 +294,8 @@ pub fn normalize_auto_support_settings(source: &AutoSupportSettings) -> AutoSupp
     AutoSupportSettings {
         near_fans: source.near_fans,
         rehang_island_branches: source.rehang_island_branches,
+        tips_on_own_surface: source.tips_on_own_surface,
+        tip_cones_clear: source.tip_cones_clear,
         enabled: source.enabled,
         min_island_area_mm2: clamp(source.min_island_area_mm2, c::MIN_ISLAND_AREA_MM2),
         tip_influence_radius_mm: clamp(source.tip_influence_radius_mm, c::TIP_INFLUENCE_RADIUS_MM),

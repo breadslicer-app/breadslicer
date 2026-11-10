@@ -538,6 +538,10 @@ impl SettingsRecipe {
         settings.supports.auto_support.near_fans = true;
         // A long island branch hangs from a neighbour when it can (#464).
         settings.supports.auto_support.rehang_island_branches = true;
+        // A candidate's tip stays on its own surface (#500).
+        settings.supports.auto_support.tips_on_own_surface = true;
+        // No support's tip cone goes into the model before its contact (#500).
+        settings.supports.auto_support.tip_cones_clear = true;
         // A spine between the rays of a brace is no way through (#445).
         settings.supports.auto_bracing.exact_clearance = true;
         // A tall or bent shaft is braced where it stands above the rest (#464).

@@ -15,6 +15,7 @@ use crate::supports::auto_support::parameter_sizing::SizingBands;
 use crate::supports::auto_support::types::CandidateSource;
 use crate::supports::constants::member_shaft_diameter_mm;
 use crate::supports::placement_logic::collision_avoidance::{CollisionField, is_shaft_blocked};
+use crate::supports::placement_logic::collision_utils::tip_cone_crosses_model;
 use crate::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use crate::supports::placement_logic::placement_utils::calculate_smoothed_normal;
 use crate::supports::placement_logic::smart_placement_search_utils::member_departure_angle_from_vertical_deg;
@@ -22,8 +23,8 @@ use crate::supports::placement_logic_v3::smart_placement_v3::RouterStats;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::support_primitives::contact_cone::types::ContactCone;
 use crate::supports::support_type_registry::{
-    ConeBodyFollows, SHAFT_HOSTED_MEMBER_TYPE_ORDER, SupportOriginId, SupportTypeId,
-    get_support_type_descriptor, near_plate_origin,
+    ConeBodyFollows, SHAFT_HOSTED_MEMBER_TYPE_ORDER, SupportEntityValue, SupportOriginId,
+    SupportTypeId, get_support_type_descriptor, near_plate_origin,
 };
 use crate::supports::support_types::branch::branch_builder::{
     BranchBuildInput, BranchBuildResult, build_branch_data,
@@ -146,15 +147,34 @@ impl<'a> PlanCtx<'a> {
 
     /// The surface point and normal a tip aimed at `tip_pos` takes: the
     /// exact contact when it is that point, else what
-    /// [`resolve_surface_normal`] finds around it. That search casts up
-    /// from below the point and takes the first surface at or above it,
-    /// which on a wall is the next overhang up, often millimetres away:
-    /// right for a run's candidates, wrong for a point the person picked.
+    /// [`resolve_surface_normal`] finds around it. That search walks a disc
+    /// of rays up to 2.25 mm off the point and takes a surface there: right
+    /// for a run's candidates, wrong for a point the person picked.
     pub fn contact_at(&self, tip_pos: Vec3) -> (Vec3, Vec3) {
         match self.exact_contact.get() {
             Some((point, normal)) if point == tip_pos => (point, normal),
-            _ => resolve_surface_normal(tip_pos, self.mesh.as_ref()),
+            _ => resolve_surface_normal(
+                tip_pos,
+                self.mesh.as_ref(),
+                self.live().auto_support.tips_on_own_surface,
+            ),
         }
+    }
+
+    /// SoulCrafted (#500): whether `cone` may not be placed, going into the
+    /// model before its contact, with
+    /// [`AutoSupportSettings::tip_cones_clear`]. Asked of every tip where it
+    /// is built, so that what would place it tries its next way to the
+    /// contact (another host, another route, a trunk of its own) instead of
+    /// leaving the cull at the end of the plan to take it away.
+    ///
+    /// [`AutoSupportSettings::tip_cones_clear`]: crate::supports::auto_support::settings::AutoSupportSettings::tip_cones_clear
+    pub fn cone_crosses(&self, cone: &ContactCone) -> bool {
+        self.live().auto_support.tip_cones_clear
+            && self
+                .mesh
+                .as_ref()
+                .is_some_and(|mesh| contact_cone_crosses_model(cone, mesh))
     }
 
     /// Places what follows with zone size `size` (`None`: the run's own).
@@ -307,7 +327,21 @@ pub fn host_entity_of<'d>(
 /// upward ray from just below the tip first (underside contact), then a
 /// downward one (top-surface contact, normal flipped), each walking a small
 /// disc of offsets; the placeholder when both miss or there is no mesh.
-pub fn resolve_surface_normal(tip_pos: Vec3, mesh: Option<&PlanMesh<'_>>) -> (Vec3, Vec3) {
+///
+/// SoulCrafted (#500), with `own_surface`: an upward ray takes a surface no
+/// higher above the tip than a 45 degree slope rises over the ray's offset,
+/// plus the tolerance: the tip's own surface. Without it, as DragonFruit
+/// does, it takes the first surface at any height, so a candidate on a
+/// surface that does not face down (an up-facing point of an overhang
+/// region, a minimum inside the model) goes to whatever hangs above it, 30 mm
+/// up on a mini's curled fingers, and piles tips there. With it, such a
+/// candidate finds its own surface with the downward ray, and its support,
+/// which would come up through the model, is refused.
+pub fn resolve_surface_normal(
+    tip_pos: Vec3,
+    mesh: Option<&PlanMesh<'_>>,
+    own_surface: bool,
+) -> (Vec3, Vec3) {
     let Some(mesh) = mesh else {
         return (tip_pos, Vec3::new(0.0, 0.0, -1.0));
     };
@@ -329,10 +363,18 @@ pub fn resolve_surface_normal(tip_pos: Vec3, mesh: Option<&PlanMesh<'_>>) -> (Ve
                     tip_pos.y + js_sin(angle) * radius_mm,
                     seed_z,
                 );
+                let highest = if own_surface {
+                    tip_pos.z + radius_mm + SAME_SIDE_TOLERANCE_MM
+                } else {
+                    f64::INFINITY
+                };
                 if let Some(hit) = mesh
                     .raycast(origin, Vec3::new(0.0, 0.0, direction_z))
                     .into_iter()
-                    .find(|h| h.point.z >= tip_pos.z - SAME_SIDE_TOLERANCE_MM)
+                    .find(|h| {
+                        h.point.z >= tip_pos.z - SAME_SIDE_TOLERANCE_MM
+                            && (direction_z < 0.0 || h.point.z <= highest)
+                    })
                 {
                     return Some(hit);
                 }
@@ -477,6 +519,26 @@ pub fn contact_cone_collides(
         }
     }
     false
+}
+
+/// SoulCrafted (#500): whether `cone` goes into the model before its contact
+/// ([`tip_cone_crosses_model`]).
+pub fn contact_cone_crosses_model(cone: &ContactCone, mesh: &PlanMesh<'_>) -> bool {
+    tip_cone_crosses_model(cone, mesh.rays())
+}
+
+/// The tip cones `entity` reaches the model with.
+pub fn entity_cones(entity: &SupportEntityValue) -> Vec<&ContactCone> {
+    match entity {
+        SupportEntityValue::Trunk(e) => e.contact_cone.iter().collect(),
+        SupportEntityValue::Branch(e) => e.contact_cone.iter().collect(),
+        SupportEntityValue::Leaf(e) => vec![&e.contact_cone],
+        SupportEntityValue::Stick(e) => vec![&e.contact_cone_a, &e.contact_cone_b],
+        SupportEntityValue::Stump(e) => vec![&e.contact_cone],
+        SupportEntityValue::Twig(_)
+        | SupportEntityValue::Brace(_)
+        | SupportEntityValue::Kickstand(_) => Vec::new(),
+    }
 }
 
 /// Whether any segment of a built branch is blocked by the distance field.
@@ -725,6 +787,15 @@ pub fn build_hosted_branch(
             ctx.live(),
             &mut || ctx.id(),
         )
+    };
+    // A branch whose tip cone goes through the model is no branch (#500).
+    let rejected = |built: &BranchBuildResult| {
+        rejected(built)
+            || built
+                .branch
+                .contact_cone
+                .as_ref()
+                .is_some_and(|cone| ctx.cone_crosses(cone))
     };
     let floored = build(floored_shaft_mm);
     if !rejected(&floored) {
@@ -1206,9 +1277,15 @@ fn member_views(draft: &SupportState, type_id: SupportTypeId) -> Vec<MemberView<
 
 /// Validate hosted members' attachment after the forest resize; cull orphans
 /// (and hosts whose shafts pierce the mesh) and return them for reporting.
+///
+/// SoulCrafted (#500): with `cones_clear`, a support whose tip cone goes
+/// through the model on its way to its contact ([`contact_cone_crosses_model`])
+/// is culled too: a trunk as a blocked host (its members are placed again), a
+/// leaf or a branch as blocked, a stick or a stump by itself.
 pub fn validate_and_cull_orphans(
     draft: &SupportState,
     mesh: Option<&PlanMesh<'_>>,
+    cones_clear: bool,
 ) -> (SupportState, Vec<OrphanInfo>) {
     let mut orphans: Vec<OrphanInfo> = Vec::new();
     const DRIFT_TOL_SQ: f64 = 0.25; // 0.5mm
@@ -1241,7 +1318,13 @@ pub fn validate_and_cull_orphans(
                     break;
                 }
             }
-            if blocked {
+            let crossing = !blocked
+                && cones_clear
+                && entity
+                    .contact_cone
+                    .as_ref()
+                    .is_some_and(|c| contact_cone_crosses_model(c, mesh));
+            if blocked || crossing {
                 let where_ = entity.contact_cone.as_ref().map_or(String::new(), |c| {
                     format!(
                         " @ ({}, {}, Z{})",
@@ -1258,7 +1341,11 @@ pub fn validate_and_cull_orphans(
                     reason: OrphanReason::HostBlocked,
                     host_id: None,
                     knot_id: None,
-                    detail: Some(format!("{type_name} shaft pierces mesh{where_}")),
+                    detail: Some(if crossing {
+                        format!("{type_name} tip cone crosses mesh{where_}")
+                    } else {
+                        format!("{type_name} shaft pierces mesh{where_}")
+                    }),
                 });
                 hosts_to_remove.insert(host_id.to_owned());
             }
@@ -1390,6 +1477,16 @@ pub fn validate_and_cull_orphans(
                 );
                 return false;
             }
+            if cones_clear && mesh.is_some_and(|m| contact_cone_crosses_model(cone, m)) {
+                push(
+                    orphans,
+                    OrphanReason::Blocked,
+                    Some(owner_id),
+                    Some(&knot.id),
+                    "tip cone crosses mesh".to_owned(),
+                );
+                return false;
+            }
             // Shallow leaf/branch guard: a permissive 75° ceiling after resize.
             let v_dist = tip_pos.z - knot.pos.z;
             let h_dist = js_hypot(&[tip_pos.x - knot.pos.x, tip_pos.y - knot.pos.y]);
@@ -1463,7 +1560,55 @@ pub fn validate_and_cull_orphans(
         }
     }
 
-    if members_to_remove.values().all(IndexSet::is_empty) && hosts_to_remove.is_empty() {
+    // Sticks and stumps whose tip cone crosses the model (#500): they hold
+    // nothing else, so they go by themselves.
+    let mut sticks_to_remove: HashSet<String> = HashSet::new();
+    let mut stumps_to_remove: HashSet<String> = HashSet::new();
+    if cones_clear && let Some(mesh) = mesh {
+        let crossing_detail = |name: &str, cone: &ContactCone| {
+            format!(
+                "{name} tip cone crosses mesh @ ({}, {}, Z{})",
+                fixed1(cone.pos.x),
+                fixed1(cone.pos.y),
+                fixed1(cone.pos.z)
+            )
+        };
+        for (id, stick) in &draft.collections.sticks {
+            let crossing = [&stick.contact_cone_a, &stick.contact_cone_b]
+                .into_iter()
+                .find(|c| contact_cone_crosses_model(c, mesh));
+            if let Some(cone) = crossing {
+                orphans.push(OrphanInfo {
+                    id: id.clone(),
+                    kind: SupportTypeId::Stick,
+                    reason: OrphanReason::Blocked,
+                    host_id: None,
+                    knot_id: None,
+                    detail: Some(crossing_detail("Stick", cone)),
+                });
+                sticks_to_remove.insert(id.clone());
+            }
+        }
+        for (id, stump) in &draft.collections.stumps {
+            if contact_cone_crosses_model(&stump.contact_cone, mesh) {
+                orphans.push(OrphanInfo {
+                    id: id.clone(),
+                    kind: SupportTypeId::Stump,
+                    reason: OrphanReason::Blocked,
+                    host_id: None,
+                    knot_id: None,
+                    detail: Some(crossing_detail("Stump", &stump.contact_cone)),
+                });
+                stumps_to_remove.insert(id.clone());
+            }
+        }
+    }
+
+    if members_to_remove.values().all(IndexSet::is_empty)
+        && hosts_to_remove.is_empty()
+        && sticks_to_remove.is_empty()
+        && stumps_to_remove.is_empty()
+    {
         return (draft.clone(), orphans);
     }
 
@@ -1527,6 +1672,8 @@ pub fn validate_and_cull_orphans(
     c.branches
         .retain(|id, _| !members_to_remove[&SupportTypeId::Branch].contains(id));
     c.knots.retain(|id, _| !knots_to_remove.contains(id));
+    c.sticks.retain(|id, _| !sticks_to_remove.contains(id));
+    c.stumps.retain(|id, _| !stumps_to_remove.contains(id));
     let removed_roots: Vec<String> = hosts_to_remove
         .iter()
         .filter_map(|id| draft.collections.trunks.get(id).map(|t| t.root_id.clone()))

@@ -276,10 +276,10 @@ fn supports_turn_with_their_model_about_the_vertical_axis() {
 
     // Drawn where the model now is: the same supports, turned. Each round
     // piece is tessellated from a fixed world angle, so its ring vertices
-    // slide along their circle (0.13 mm on this cube's), but no further.
+    // slide along their circle (0.13 mm on this cube's), but no further. The
+    // raft's wall is cut into crenels from where its outline starts, so
+    // under the raft's top they slide along the wall, a crenel at most.
     let drawn = turned.mesh().unwrap().expect("a support mesh");
-    assert_eq!(drawn.faces().len(), mesh.faces().len());
-    assert_eq!(drawn.vertices().len(), mesh.vertices().len());
     let points = |mesh: &IndexedMesh| -> Vec<[f64; 3]> {
         mesh.vertices()
             .iter()
@@ -288,8 +288,20 @@ fn supports_turn_with_their_model_about_the_vertical_axis() {
     };
     let drawn = points(&drawn);
     let expected: Vec<[f64; 3]> = points(&mesh).into_iter().map(|p| m.point(p)).collect();
-    let off = farthest(&drawn, &expected).max(farthest(&expected, &drawn));
+    let raft_top = session.raft_top_mm() + 1e-3;
+    let over_the_raft = |points: &[[f64; 3]]| -> Vec<[f64; 3]> {
+        points.iter().copied().filter(|p| p[2] > raft_top).collect()
+    };
+    let (over, over_expected) = (over_the_raft(&drawn), over_the_raft(&expected));
+    assert!(over.len() > 1000, "{} vertices over the raft", over.len());
+    assert_eq!(over.len(), over_expected.len());
+    let off = farthest(&over, &over_expected).max(farthest(&over_expected, &over));
     assert!(off < 0.25, "a vertex is {off} mm off the turned supports");
+    let off = farthest(&drawn, &expected).max(farthest(&expected, &drawn));
+    assert!(
+        off < 1.0,
+        "a vertex of the raft is {off} mm off the turned one"
+    );
 
     // It fits the turned scene, keeps as data and reopens there.
     assert!(turned.fits_models_of(&there));

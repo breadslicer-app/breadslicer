@@ -9527,28 +9527,62 @@ mod hand_edit_tests {
                 assert!(far(aimed, tip) < 0.02, "tip {tip:?}, aimed {aimed:?}");
             }
 
-            // Move tip: the last one added, grabbed by its shaft just below
-            // its tip, dropped on another pixel.
-            window.set_support_tool(3);
-            let session = in_force_session(&run).unwrap();
-            let paths = session.support_paths();
-            let (id, grab) = paths
-                .iter()
-                .filter(|(_, path)| path.len() >= 2)
-                .find_map(|(id, path)| {
-                    let (tip, next) = (path[0], path[1]);
-                    let len = (0..3)
-                        .map(|k| (next[k] - tip[k]).powi(2))
-                        .sum::<f64>()
-                        .sqrt();
-                    let below: [f64; 3] =
-                        std::array::from_fn(|k| tip[k] + (next[k] - tip[k]) * (0.8 / len.max(0.8)));
-                    let at = ctrl.project_for_test(below.map(|c| c as f32))?;
-                    let on =
-                        ctrl.support_hit_for_test(crate::viewport::ScreenPoint::new(at[0], at[1]))?;
-                    (far(on, tip) < 2.0).then(|| (id.clone(), at))
+            // Move tip: a support added at the edge of the slab nearest the
+            // camera, where none of the run stands in front of it; it carries
+            // no other. Grabbed by its shaft just below its tip, dropped on
+            // another pixel.
+            let eye = camera.eye();
+            let mut edge: Vec<[f64; 3]> = (1..20)
+                .flat_map(|k| [[f64::from(k), 0.6, 0.0], [f64::from(k), 9.4, 0.0]])
+                .chain((1..10).flat_map(|k| [[0.6, f64::from(k), 0.0], [19.4, f64::from(k), 0.0]]))
+                .collect();
+            edge.sort_by(|a, b| {
+                (local(*a) - eye)
+                    .length()
+                    .total_cmp(&(local(*b) - eye).length())
+            });
+            let (session, id, grab) = edge
+                .into_iter()
+                .find_map(|p| {
+                    let at = pixel_of(p);
+                    let before = in_force_session(&run).unwrap();
+                    window.invoke_viewport_pointer_down(at[0], at[1], no_keys());
+                    window.invoke_viewport_pointer_up(at[0], at[1], no_keys());
+                    settle_click(&run);
+                    let after = in_force_session(&run).unwrap();
+                    if Arc::ptr_eq(&before, &after) {
+                        return None;
+                    }
+                    let old: Vec<String> = before.tips().into_iter().map(|(id, _)| id).collect();
+                    let grabbed = after
+                        .support_paths()
+                        .into_iter()
+                        .filter(|(id, path)| path.len() >= 2 && !old.contains(id))
+                        .find_map(|(id, path)| {
+                            let (tip, next) = (path[0], path[1]);
+                            let len = (0..3)
+                                .map(|k| (next[k] - tip[k]).powi(2))
+                                .sum::<f64>()
+                                .sqrt();
+                            let below: [f64; 3] = std::array::from_fn(|k| {
+                                tip[k] + (next[k] - tip[k]) * (0.8 / len.max(0.8))
+                            });
+                            let at = ctrl.project_for_test(below.map(|c| c as f32))?;
+                            let on = ctrl.support_hit_for_test(
+                                crate::viewport::ScreenPoint::new(at[0], at[1]),
+                            )?;
+                            (far(on, below) < 0.5).then_some((id, at))
+                        });
+                    match grabbed {
+                        Some((id, at)) => Some((after, id, at)),
+                        None => {
+                            assert!(document.undo().unwrap());
+                            None
+                        }
+                    }
                 })
                 .expect("a tip to grab on screen");
+            window.set_support_tool(3);
             let to = pixel_of([10.2, 2.4, 0.0]);
             let aimed = ray_meets_plane(&camera, to, p0, n);
             window.invoke_viewport_pointer_down(grab[0], grab[1], no_keys());
@@ -9613,7 +9647,11 @@ mod hand_edit_tests {
                 .filter(|p| p[2] > top + 4.0 && p[2] < 10.0)
                 .find_map(|p| {
                     let at = ctrl.project_for_test(p.map(|c| c as f32))?;
-                    raft_first(at).then_some((at, p))
+                    // Past the raft, this shaft and not the foot of one
+                    // nearer the camera.
+                    let seen =
+                        ctrl.support_hit_for_test(crate::viewport::ScreenPoint::new(at[0], at[1]))?;
+                    (raft_first(at) && far(seen, p) < 2.0).then_some((at, p))
                 })
                 .expect("a shaft seen through the raft");
 
@@ -9858,6 +9896,13 @@ mod hand_edit_tests {
                 .into_iter()
                 .find(|(k, _)| k == id)
                 .expect("the support");
+            // In sight, a pixel where the hit is this support's own: not a
+            // brace of it, nor a support that crosses in front.
+            let its_own = |point: [f32; 3]| {
+                let mut probe = (*self.generated).clone();
+                probe.remove_near(point.map(f64::from)).is_ok()
+                    && !probe.tips().iter().any(|(left, _)| left == id)
+            };
             along
                 .iter()
                 .rev()
@@ -9866,7 +9911,12 @@ mod hand_edit_tests {
                     let first = self.ctrl.first_hit_for_test(at)?;
                     let on_it = (0..3).map(|k| (first.point[k] - p[k]).powi(2)).sum::<f32>() < 1.0;
                     let walled = first.leaf == self.wall;
-                    (if hidden { walled } else { on_it }).then_some(at)
+                    (if hidden {
+                        walled
+                    } else {
+                        on_it && its_own(first.point)
+                    })
+                    .then_some(at)
                 })
                 .next()
                 .expect("a pixel of it")

@@ -99,6 +99,12 @@ pub const GRID_SPACING_FLOOR_MM: f64 = 1.2;
 
 /// A region's surface sampler: the triangle-accurate one when the mesh and the
 /// region's triangles are known, the voxel nearest-neighbor fallback otherwise.
+///
+/// The region's triangles are faces of the mesh's tree, in the order its
+/// build left them in: what a ray's hit names. DragonFruit scans a soup read
+/// through the index its tree already reordered, so its scan numbers them
+/// that way; a scan of the soup the tree was built from does not, and its
+/// regions are renumbered first (`pipeline`, #500).
 pub enum SurfaceSampler<'a> {
     Triangle {
         mesh: BvhMesh<'a>,
@@ -134,6 +140,35 @@ impl<'a> SurfaceSampler<'a> {
             cell_size,
             min_z,
             hash: None,
+        }
+    }
+
+    /// SoulCrafted (#500): every surface the region has over (x, y), lowest
+    /// first. A region is a connected patch of the model's underside, and it
+    /// folds over itself in plan wherever one part of the model hangs over
+    /// another: the underside of a raised hand over that of its arm.
+    /// [`Self::at`] gives the lowest alone.
+    pub fn all_at(&mut self, x: f64, y: f64) -> Vec<SurfaceHit> {
+        match self {
+            SurfaceSampler::Triangle { mesh, tris, base_z } => {
+                let ray = Ray {
+                    origin: Vec3::new(x, y, *base_z - 2.0),
+                    direction: Vec3::new(0.0, 0.0, 1.0),
+                };
+                let mut folds: Vec<SurfaceHit> = mesh
+                    .intersect_object(&ray, Side::Double, 0.0, f64::INFINITY, false)
+                    .into_iter()
+                    .filter(|hit| tris.contains(&hit.face_index))
+                    .map(|hit| SurfaceHit {
+                        z: hit.point.z,
+                        face_index: Some(hit.face_index),
+                    })
+                    .collect();
+                // A ray through an edge meets both of its faces.
+                folds.dedup_by(|next, kept| (next.z - kept.z).abs() < 1e-6);
+                folds
+            }
+            SurfaceSampler::Voxel { .. } => self.at(x, y).into_iter().collect(),
         }
     }
 

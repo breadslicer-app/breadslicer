@@ -9,7 +9,9 @@
 use super::super::contact_bridge::{BridgeEntity, ContactBridgeRequest, build_contact_bridge};
 use crate::supports::model_mesh::ModelMesh;
 use crate::supports::placement_logic::collision_avoidance::is_shaft_blocked;
-use crate::supports::placement_logic::collision_utils::check_short_bridge_collision;
+use crate::supports::placement_logic::collision_utils::{
+    check_short_bridge_collision, tip_cone_crosses_model,
+};
 use crate::supports::rendering::support_builder::{SupportData, support_data_for_entity};
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::support_primitives::knot::segment_endpoints::ShaftEntity;
@@ -314,6 +316,15 @@ pub fn attempt_cavity_bridge(
                 is_shaft_blocked(start, end, radius, mesh.field)
             };
             if blocked {
+                return Err(BridgeRefusal::Blocked);
+            }
+            // Nor may a tip cone of it go through the model (#500).
+            if settings.auto_support.tip_cones_clear
+                && let BridgeEntity::Stick(stick) = &entity
+                && [&stick.contact_cone_a, &stick.contact_cone_b]
+                    .into_iter()
+                    .any(|cone| tip_cone_crosses_model(cone, mesh.rays))
+            {
                 return Err(BridgeRefusal::Blocked);
             }
 

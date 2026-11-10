@@ -55,6 +55,9 @@ pub struct MeshBvh {
     /// Each triangle's bounds `[min xyz, max xyz]`, in BVH order, for the
     /// closest-point query's per-triangle pre-check.
     triangle_bounds: Vec<[f32; 6]>,
+    /// Whether the geometry came without an index: a triangle soup, whose
+    /// triangle `t` holds the vertices `3t..3t + 3`.
+    soup: bool,
 }
 
 impl MeshBvh {
@@ -72,6 +75,7 @@ impl MeshBvh {
         options: MeshBvhOptions,
     ) -> Self {
         // ensureIndex
+        let soup = index.is_none();
         let mut index = index.unwrap_or_else(|| (0..positions.len() as u32).collect());
         assert!(
             index.len().is_multiple_of(3),
@@ -100,7 +104,26 @@ impl MeshBvh {
             index,
             roots,
             triangle_bounds,
+            soup,
         }
+    }
+
+    /// SoulCrafted (#500): the face of this tree (in BVH order) that each
+    /// triangle of the soup it was built from became. The build reorders the
+    /// triangles, so where a triangle stood in the soup says nothing of its
+    /// face, and whatever was computed on the soup itself (the overhang
+    /// scan's regions) names triangles by that place. `None` for a geometry
+    /// that came with its own index, whose build does not keep where a
+    /// triangle stood.
+    pub fn faces_of_soup(&self) -> Option<Vec<u32>> {
+        if !self.soup {
+            return None;
+        }
+        let mut faces = vec![0u32; self.triangle_count()];
+        for (face, corners) in self.index.as_chunks::<3>().0.iter().enumerate() {
+            faces[corners[0] as usize / 3] = face as u32;
+        }
+        Some(faces)
     }
 
     /// Triangles in the geometry.
