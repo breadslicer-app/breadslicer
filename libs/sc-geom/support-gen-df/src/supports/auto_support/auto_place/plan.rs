@@ -1399,7 +1399,8 @@ pub fn compute_auto_support_plan(
         run.draft = rehost_legacy_knots(&run.draft);
         let mut orphan_infos: Vec<OrphanInfo> = Vec::new();
         let pre_cull_draft = run.draft.clone();
-        let (culled, orphans) = validate_and_cull_orphans(&run.draft, mesh);
+        let (culled, orphans) =
+            validate_and_cull_orphans(&run.draft, mesh, live.auto_support.tip_cones_clear);
         if !orphans.is_empty() {
             run.draft = culled;
             orphan_infos = orphans;
@@ -1494,7 +1495,8 @@ pub fn compute_auto_support_plan(
                         });
                     }
                 }
-                let (recheck, rechecked) = validate_and_cull_orphans(&run.draft, mesh);
+                let (recheck, rechecked) =
+                    validate_and_cull_orphans(&run.draft, mesh, live.auto_support.tip_cones_clear);
                 // DragonFruit's identity test: the cull returns its input
                 // untouched unless it removed something.
                 if recheck != run.draft {
