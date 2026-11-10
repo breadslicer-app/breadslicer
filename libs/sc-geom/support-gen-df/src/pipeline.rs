@@ -499,6 +499,22 @@ pub fn regions_on_tree_faces(mut scan: OverhangScan, bvh: &MeshBvh) -> OverhangS
     scan
 }
 
+/// SoulCrafted (#500): `scan` without the steep flats, for the zone rules.
+///
+/// A steep flat is DragonFruit's answer for a large planar face too steep to
+/// be an overhang (up to 85 degrees from horizontal): it supports the face as
+/// an overhang, lest it topple the part. The zone rules give their own answer
+/// by angle: an overhang up to their overhang angle, stabilization up to
+/// [`STABILIZATION_MAX_ANGLE_DEG`](crate::supports::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG),
+/// nothing past it. With steep flats the underside of a mini's base, stood
+/// near upright (12 degrees past vertical), took the overhang lattice: 119
+/// tips 1.9 mm apart on a face that prints without any.
+pub fn without_steep_flats(mut scan: OverhangScan) -> OverhangScan {
+    scan.regions.retain(|r| !r.steep_flat);
+    scan.steep_regions.retain(|r| !r.steep_flat);
+    scan
+}
+
 /// Runs the geometry-only part of [`generate_supports`] for `models` ahead of
 /// time, for [`generate_supports_with`] to reuse: what a run would scan
 /// first, done while nobody waits. A model `previous` already holds (same
@@ -692,7 +708,10 @@ fn run_pipeline(
             }
             None => scan_model(soup, settings, angle, has_raft),
         };
-        let overhang = regions_on_tree_faces(overhang, &bvhs[i]);
+        let mut overhang = regions_on_tree_faces(overhang, &bvhs[i]);
+        if settings.supports.auto_support.zone_rules.is_some() {
+            overhang = without_steep_flats(overhang);
+        }
 
         check()?;
         step(progress, Stage::DeriveIslands, i);
