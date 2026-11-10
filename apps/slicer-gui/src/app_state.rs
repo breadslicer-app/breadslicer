@@ -232,6 +232,8 @@ struct WindowDrivers {
     _repair_run: Rc<RepairRun>,
     _arrange_run: Rc<ArrangeRun>,
     _orient_run: Rc<OrientRun>,
+    /// The Slice tab's layer keys (#501).
+    _layer_keys: Rc<crate::layer_keys::LayerKeys>,
     /// The Tools > "Generate Support (trivial for test)" action driver. Held so
     /// its Slint callbacks live as long as the window.
     _support_gen_run: Rc<GenSupportRun>,
@@ -784,9 +786,11 @@ impl AppState {
             repair_run.clone(),
         );
         let split_bodies = SplitBodies::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+        let layer_keys = crate::layer_keys::LayerKeys::install(ui);
         WindowDrivers {
             _hollow_run: hollow_run,
             _split_bodies: split_bodies,
+            _layer_keys: layer_keys,
             _slice_panel: slice_panel,
             _slice_run: slice_run,
             _review_panel: review_panel,

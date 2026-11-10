@@ -35,6 +35,7 @@ mod i18n;
 mod import_notes;
 mod language;
 mod launch_files;
+mod layer_keys;
 mod load_progress;
 #[cfg(target_os = "macos")]
 mod macos_open_documents;

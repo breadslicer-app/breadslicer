@@ -57,6 +57,9 @@ export enum SupportPage { Patreon, KoFi }
 export enum WorkspaceSection { Transform, Hollow, Supports, Slice, Export }
 
 export component MainWindow inherits Window {
+    // The window's focus goes to the workspace, so the keys it takes work
+    // before anything is clicked (#501).
+    forward-focus: layer-keys;
     // Window title. Once a file is open it shows the file's name (with a
     // `*` prefix while there are unsaved changes); with no file open it
     // falls back to the application name.
@@ -594,6 +597,13 @@ export component MainWindow inherits Window {
     // The slice height slider moved: Rust repaints so the mesh clip
     // follows the selected layer.
     callback selected-layer-changed();
+    // The layer keys of the Slice tab (#501): Up (1) or Down (-1) pressed or
+    // repeated while held, with Shift or not; let go; Shift down or up; Home
+    // (false) or End (true).
+    callback layer-key-pressed(direction: int, shift: bool);
+    callback layer-key-released(direction: int);
+    callback layer-key-shift(down: bool);
+    callback layer-key-jump(to-last: bool);
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
     callback orbit-begin(length, length);
@@ -1035,1205 +1045,1242 @@ export component MainWindow inherits Window {
         }
     }
 
+    // The Slice tab walks the layers with the keyboard (#501), wherever the
+    // focus is in the workspace: the window takes Up, Down, Home and End
+    // before the view, the slider or a button does, unless a field takes
+    // them or something modal is up. The pace of a key held is the app's.
+    layer-keys := FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        capture-key-pressed(event) => {
+            if (!root.layer-key-on) {
+                return reject;
+            }
+            if (event.text == Key.UpArrow || event.text == Key.DownArrow) {
+                root.layer-key-pressed(event.text == Key.UpArrow ? 1 : -1, event.modifiers.shift);
+                return accept;
+            }
+            if (event.text == Key.Home || event.text == Key.End) {
+                if (!event.repeat) {
+                    root.layer-key-jump(event.text == Key.End);
+                }
+                return accept;
+            }
+            if (event.text == Key.Shift) {
+                root.layer-key-shift(true);
+            }
+            return reject;
+        }
+        capture-key-released(event) => {
+            if (event.text == Key.UpArrow || event.text == Key.DownArrow) {
+                root.layer-key-released(event.text == Key.UpArrow ? 1 : -1);
+            }
+            if (event.text == Key.Shift) {
+                root.layer-key-shift(false);
+            }
+            return reject;
+        }
+
     // The workspace (BS-68): the top bar with the workflow tabs, the tool
     // rail, the viewport, the inspector of the active tab and the status
     // bar. Rust stays the source of truth for the active tab: a tab click
     // only requests the change.
-    VerticalLayout {
-        spacing: 0px;
-
-        // Top bar.
-        Rectangle {
-            height: Theme.topbar-height;
-            background: Theme.chrome;
-
-            HorizontalLayout {
-                // Room for the compact menu button in its corner.
-                padding-left: root.menu-layout == MenuLayout.Compact ? 48px : 12px;
-                padding-right: 8px;
-                spacing: 16px;
-
-                HorizontalLayout {
-                    min-width: 240px;
-                    spacing: 10px;
-                    alignment: start;
-
-                    Image {
-                        source: @image-url("../assets/images/breadslicer.png");
-                        width: 22px;
-                        height: 22px;
-                        y: (parent.height - self.height) / 2;
-                    }
-                    Text {
-                        text: "Breadslicer";
-                        font-weight: 600;
-                        color: Theme.text;
-                        vertical-alignment: center;
-                    }
-                    if root.document-name != "": Text {
-                        text: "/";
-                        color: Theme.border-strong;
-                        vertical-alignment: center;
-                    }
-                    if root.document-name != "": Text {
-                        text: root.document-name;
-                        color: Theme.text-soft;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        max-width: 260px;
-                    }
-                    if root.scene-dirty: Rectangle {
-                        width: 6px;
-                        height: 6px;
-                        y: (parent.height - self.height) / 2;
-                        border-radius: 3px;
-                        background: Theme.accent;
-                    }
-                }
-
-                HorizontalLayout {
-                    horizontal-stretch: 1;
-                    alignment: center;
-                    spacing: 2px;
-
-                    WorkflowTab {
-                        number: "1";
-                        label: @tr("Workspace" => "Transform");
-                        active: root.workspace-section == WorkspaceSection.Transform;
-                        enabled: root.has-scene;
-                        dot: root.mesh-needs-repair ? Theme.warning : transparent;
-                        clicked => {
-                            root.section-change-requested(WorkspaceSection.Transform);
-                        }
-                    }
-                    Rectangle {
-                        width: 1px;
-                        height: 20px;
-                        y: (parent.height - self.height) / 2;
-                        background: Theme.border;
-                    }
-                    WorkflowTab {
-                        number: "2";
-                        label: @tr("Workspace" => "Hollow");
-                        active: root.workspace-section == WorkspaceSection.Hollow;
-                        enabled: root.has-scene;
-                        clicked => {
-                            root.section-change-requested(WorkspaceSection.Hollow);
-                        }
-                    }
-                    Text {
-                        text: "/";
-                        color: Theme.border-strong;
-                        vertical-alignment: center;
-                    }
-                    WorkflowTab {
-                        number: "2";
-                        label: @tr("Workspace" => "Supports");
-                        active: root.workspace-section == WorkspaceSection.Supports;
-                        enabled: root.has-scene;
-                        clicked => {
-                            root.section-change-requested(WorkspaceSection.Supports);
-                        }
-                    }
-                    Rectangle {
-                        width: 1px;
-                        height: 20px;
-                        y: (parent.height - self.height) / 2;
-                        background: Theme.border;
-                    }
-                    WorkflowTab {
-                        number: "3";
-                        label: @tr("Workspace" => "Slice");
-                        active: root.workspace-section == WorkspaceSection.Slice;
-                        enabled: root.has-scene;
-                        dot: root.slice-layer-count > 0 ? Theme.success : transparent;
-                        clicked => {
-                            root.section-change-requested(WorkspaceSection.Slice);
-                        }
-                    }
-                    WorkflowTab {
-                        number: "4";
-                        label: @tr("Workspace" => "Export");
-                        active: root.workspace-section == WorkspaceSection.Export;
-                        enabled: root.has-scene;
-                        clicked => {
-                            root.section-change-requested(WorkspaceSection.Export);
-                        }
-                    }
-                }
-
-                HorizontalLayout {
-                    min-width: 240px;
-                    spacing: 4px;
-                    alignment: end;
-
-                    SupportLink {
-                        label: @tr("Support us on Patreon");
-                        y: (parent.height - self.height) / 2;
-                        clicked => {
-                            root.support-page-requested(SupportPage.Patreon);
-                        }
-                    }
-                    SupportLink {
-                        label: @tr("Support us on Ko-fi");
-                        y: (parent.height - self.height) / 2;
-                        clicked => {
-                            root.support-page-requested(SupportPage.KoFi);
-                        }
-                    }
-                    Rectangle { width: 8px; }
-                    Text {
-                        text: root.slice-printer-current-index >= 0
-                            ? root.slice-printer-options[root.slice-printer-current-index]
-                            : @tr("Workspace" => "No printer");
-                        color: Theme.text-muted;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        max-width: 200px;
-                    }
-                    ToolButton {
-                        icon: Icons.undo;
-                        label: @tr("MenuBar" => "Undo");
-                        enabled: root.has-scene && !root.loading && root.can-undo
-                            && !root.repairing-in-progress && root.history-allowed;
-                        clicked => {
-                            root.undo-requested();
-                        }
-                    }
-                    ToolButton {
-                        icon: Icons.redo;
-                        label: @tr("MenuBar" => "Redo");
-                        enabled: root.has-scene && !root.loading && root.can-redo
-                            && !root.repairing-in-progress && root.history-allowed;
-                        clicked => {
-                            root.redo-requested();
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                y: parent.height - 1px;
-                height: 1px;
-                background: Theme.border;
-            }
-        }
-
-        HorizontalLayout {
+        VerticalLayout {
             spacing: 0px;
-            vertical-stretch: 1;
 
-            // Tool rail: the active tab's tools.
+            // Top bar.
             Rectangle {
-                width: Theme.rail-width;
+                height: Theme.topbar-height;
                 background: Theme.chrome;
 
-                VerticalLayout {
-                    padding: 6px;
-                    spacing: 4px;
-                    alignment: start;
-
-                    if root.workspace-section == WorkspaceSection.Transform: ToolButton {
-                        icon: Icons.move;
-                        label: @tr("Inspector" => "Move");
-                        shortcut: "G";
-                        active: root.gizmo-focused-style && root.gizmo-tool == 0;
-                        enabled: root.has-scene && root.selected-object-index >= 0;
-                        clicked => {
-                            root.orient-close-requested();
-                            root.gizmo-focus-translate-pressed();
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Transform: ToolButton {
-                        icon: Icons.rotate;
-                        label: @tr("Inspector" => "Rotate");
-                        shortcut: "R";
-                        active: root.gizmo-focused-style && root.gizmo-tool == 1;
-                        enabled: root.has-scene && root.selected-object-index >= 0;
-                        clicked => {
-                            root.orient-close-requested();
-                            root.gizmo-focus-rotate-pressed();
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Transform: ToolButton {
-                        icon: Icons.scale;
-                        label: @tr("Inspector" => "Scale");
-                        shortcut: "S";
-                        active: root.gizmo-focused-style && root.gizmo-tool == 2;
-                        enabled: root.has-scene && root.selected-object-index >= 0;
-                        clicked => {
-                            root.orient-close-requested();
-                            root.gizmo-focus-scale-pressed();
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Transform: ToolButton {
-                        icon: Icons.orient;
-                        label: @tr("Inspector" => "Orient: the best way up for printing");
-                        shortcut: "O";
-                        active: root.orient-open;
-                        enabled: root.has-scene && root.selection-valid;
-                        clicked => {
-                            root.orient-toggle-requested();
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Transform: Rectangle {
-                        height: 9px;
-                        Rectangle {
-                            width: 28px;
-                            height: 1px;
-                            background: Theme.border;
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Transform: ToolButton {
-                        icon: Icons.repair;
-                        label: @tr("Inspector" => "Repair meshes");
-                        active: root.mesh-needs-repair;
-                        enabled: root.has-scene && !root.loading && !root.slicing-in-progress
-                            && !root.repairing-in-progress;
-                        clicked => {
-                            root.repair-requested();
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Hollow: ToolButton {
-                        icon: Icons.hollow;
-                        label: @tr("Workspace" => "Hollow");
-                        shortcut: "H";
-                        active: true;
-                        enabled: false;
-                    }
-                    if root.workspace-section == WorkspaceSection.Hollow: ToolButton {
-                        icon: Icons.hole;
-                        label: @tr("Inspector" => "Drain holes");
-                        shortcut: "D";
-                        enabled: false;
-                    }
-                    if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                        icon: Icons.auto;
-                        label: @tr("Inspector" => "Generate supports");
-                        shortcut: "U";
-                        active: true;
-                        enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
-                        clicked => {
-                            root.df-support-requested();
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Supports: Rectangle {
-                        height: 9px;
-                        Rectangle {
-                            width: 28px;
-                            height: 1px;
-                            background: Theme.border;
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                        icon: Icons.add-support;
-                        label: @tr("Inspector" => "Add support (click the model)");
-                        shortcut: "A";
-                        active: root.support-tool == 1;
-                        enabled: root.has-scene && !root.support-gen-in-progress;
-                        clicked => {
-                            root.support-tool = root.support-tool == 1 ? 0 : 1;
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                        icon: Icons.move-tip;
-                        label: @tr("Inspector" => "Move tip (drag it)");
-                        shortcut: "M";
-                        active: root.support-tool == 3;
-                        enabled: root.has-scene && !root.support-gen-in-progress;
-                        clicked => {
-                            root.support-tool = root.support-tool == 3 ? 0 : 3;
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                        icon: Icons.brace-supports;
-                        label: @tr("Inspector" => "Brace two supports (click one, then the other)");
-                        shortcut: "C";
-                        active: root.support-tool == 4;
-                        enabled: root.has-scene && !root.support-gen-in-progress;
-                        clicked => {
-                            root.support-tool = root.support-tool == 4 ? 0 : 4;
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                        icon: Icons.remove-support;
-                        label: @tr("Inspector" => "Remove support (click it)");
-                        shortcut: "X";
-                        active: root.support-tool == 2;
-                        enabled: root.has-scene && !root.support-gen-in-progress;
-                        clicked => {
-                            root.support-tool = root.support-tool == 2 ? 0 : 2;
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Slice: ToolButton {
-                        icon: Icons.slice;
-                        label: @tr("SlicePanel" => "Slice");
-                        active: true;
-                        enabled: root.slice-printer-current-index >= 0
-                            && root.slice-resin-current-index >= 0 && !root.slicing-in-progress;
-                        clicked => {
-                            root.slice-requested();
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Slice: ToolButton {
-                        icon: Icons.layers;
-                        label: root.slice-layer-count > 0
-                            ? @tr("LayerView" => "Layer view: the layer's image beside the 3D view")
-                            : @tr("LayerView" => "Layer view: slice first to see each layer's image");
-                        shortcut: "L";
-                        active: root.slice-split && root.slice-layer-count > 0;
-                        enabled: root.slice-layer-count > 0;
-                        clicked => {
-                            root.slice-split = !root.slice-split;
-                        }
-                    }
-                    if root.workspace-section == WorkspaceSection.Export: ToolButton {
-                        icon: Icons.file;
-                        label: @tr("SlicePanel" => "Export for printer");
-                        active: true;
-                        enabled: root.slice-export-enabled && !root.slicing-in-progress
-                            && !root.saving-in-progress;
-                        clicked => {
-                            root.slice-export-requested();
-                        }
-                    }
-                }
-
-                Rectangle {
-                    x: parent.width - 1px;
-                    width: 1px;
-                    background: Theme.border;
-                }
-            }
-
-            // Viewport.
-            Rectangle {
-                horizontal-stretch: 1;
-                background: Theme.ground;
-
                 HorizontalLayout {
-                mv := MeshViewer {
-                    horizontal-stretch: 1;
-                    rendering: root.mesh-rendering;
-                    box-select-armed: root.box-select-armed;
-                    placeholder-text: @tr("Open a 3D model to visualize it here");
-                    modal-transform-active: root.modal-transform-active;
-                    modal-transform-status: root.modal-transform-status;
-                    modal-transform-start(code,x,y) => {
-                        root.orient-close-requested();
-                        root.modal-transform-start(code,x,y);
-                    }
-                    brush-on: root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2
-                        && root.support-remove-mode == 1;
-                    brush-radius: root.support-brush-radius * 1px;
-                    brush-wheel(up) => {
-                        root.support-brush-radius = clamp(root.support-brush-radius + (up ? 4 : -4), 4, 200);
-                    }
-                    paint-brush-on: root.orient-open && root.orient-brush-on;
-                    tool-escape => {
-                        if root.support-drag-cancel() {
-                            return true;
-                        }
-                        if root.orient-open && root.orient-brush-escape() {
-                            return true;
-                        }
-                        if root.orient-open {
-                            root.orient-close-requested();
-                            return true;
-                        }
-                        return false;
-                    }
-                    tab-tool-key(key) => {
-                        if root.workspace-section == WorkspaceSection.Hollow && root.selection-valid
-                            && root.hollow-model-state != 2 && !root.hollow-running && (key == "d" || key == "D") {
-                            root.hollow-drain-tool = !root.hollow-drain-tool;
-                            return true;
-                        }
-                        if root.workspace-section == WorkspaceSection.Supports && root.has-scene
-                            && !root.support-gen-in-progress {
-                            if key == "a" || key == "A" {
-                                root.support-tool = root.support-tool == 1 ? 0 : 1;
-                                return true;
-                            }
-                            if key == "x" || key == "X" {
-                                root.support-tool = root.support-tool == 2 ? 0 : 2;
-                                return true;
-                            }
-                            if key == "m" || key == "M" {
-                                root.support-tool = root.support-tool == 3 ? 0 : 3;
-                                return true;
-                            }
-                            if key == "c" || key == "C" {
-                                root.support-tool = root.support-tool == 4 ? 0 : 4;
-                                return true;
-                            }
-                            // Remove: B a box or a brush; [ and ] the brush.
-                            if root.support-tool == 2 && (key == "b" || key == "B") {
-                                root.support-remove-mode = root.support-remove-mode == 1 ? 0 : 1;
-                                return true;
-                            }
-                            if root.support-tool == 2 && root.support-remove-mode == 1 && (key == "[" || key == "]") {
-                                root.support-brush-radius = clamp(root.support-brush-radius + (key == "]" ? 4 : -4), 4, 200);
-                                return true;
-                            }
-                            // The tip size while Add is armed; the view keys
-                            // otherwise.
-                            if root.support-tool == 1 && (key == "1" || key == "2" || key == "3" || key == "4") {
-                                root.support-tip-size = key.to-float();
-                                return true;
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Transform && root.orient-open
-                            && root.selection-valid && (key == "b" || key == "B") {
-                            root.orient-brush-toggled();
-                            return true;
-                        }
-                        if root.workspace-section == WorkspaceSection.Transform && root.orient-open
-                            && root.orient-brush-on && (key == "[" || key == "]") {
-                            root.orient-brush-step(key == "]");
-                            return true;
-                        }
-                        if root.workspace-section == WorkspaceSection.Transform && root.has-scene
-                            && root.selection-valid && (key == "o" || key == "O") {
-                            root.orient-toggle-requested();
-                            return true;
-                        }
-                        if root.workspace-section == WorkspaceSection.Transform && root.has-scene
-                            && !root.loading && !root.slicing-in-progress && !root.repairing-in-progress
-                            && !root.arranging && (key == "a" || key == "A") {
-                            root.arrange-requested(false);
-                            return true;
-                        }
-                        return false;
-                    }
-                    modal-transform-axis(axis,x,y) => { root.modal-transform-axis(axis,x,y); }
-                    modal-transform-finish(confirm) => { root.modal-transform-finish(confirm); }
-                    gizmo-keyboard-focus-active: root.gizmo-keyboard-focus-active;
-                    // Tab cycles selection while a scene is loaded; without a
-                    // scene there's nothing to cycle, so Tab returns to its
-                    // native role of moving focus through the GUI's
-                    // interactive elements.
-                    can-cycle-selection: root.has-scene;
-                    viewport-resized(w, h) => {
-                        root.viewport-resized(w, h);
-                    }
-                    rotate-drag(dx, dy) => {
-                        root.rotate-drag(dx, dy);
-                    }
-                    orbit-begin(x, y) => {
-                        root.orbit-begin(x, y);
-                    }
-                    orbit-end() => {
-                        root.orbit-end();
-                    }
-                    orbit-step(h, v) => {
-                        root.orbit-step(h, v);
-                    }
-                    orbit-pivot-visible: root.orbit-pivot-visible;
-                    orbit-pivot-x: root.orbit-pivot-x;
-                    orbit-pivot-y: root.orbit-pivot-y;
-                    orbit-pivot-edge: root.orbit-pivot-edge;
-                    orbit-pivot-toward: root.orbit-pivot-toward;
-                    pan-drag(dx, dy) => {
-                        root.pan-drag(dx, dy);
-                    }
-                    zoom-at(dy, x, y) => {
-                        root.zoom-at(dy, x, y);
-                    }
-                    orthographic-view: root.orthographic-view;
-                    toggle-projection-requested() => { root.toggle-projection-requested(); }
-                    frame-selected-requested() => { root.frame-selected-requested(); }
-                    frame-view-requested() => {
-                        root.frame-view-requested();
-                    }
-                    axis-view-requested(view) => {
-                        root.axis-view-requested(view);
-                    }
-                    viewport-pointer-down(x, y, modifiers) => {
-                        root.viewport-pointer-down(x, y, modifiers);
-                    }
-                    viewport-pointer-move(x, y, modifiers) => {
-                        root.viewport-pointer-move(x, y, modifiers);
-                    }
-                    viewport-pointer-up(x, y, modifiers) => {
-                        root.viewport-pointer-up(x, y, modifiers);
-                    }
-                    selection-cleared() => {
-                        root.selection-cleared();
-                    }
-                    gizmo-focus-translate-pressed() => {
-                        root.gizmo-focus-translate-pressed();
-                    }
-                    gizmo-focus-rotate-pressed() => {
-                        root.gizmo-focus-rotate-pressed();
-                    }
-                    gizmo-focus-scale-pressed() => {
-                        root.gizmo-focus-scale-pressed();
-                    }
-                    gizmo-arrow-pressed(code) => {
-                        root.gizmo-arrow-pressed(code);
-                    }
-                    gizmo-arrow-released(code) => {
-                        root.gizmo-arrow-released(code);
-                    }
-                    selection-cycle(delta) => {
-                        root.selection-cycle(delta);
-                    }
-                    copy-pressed() => {
-                        root.copy-pressed();
-                    }
-                    paste-pressed() => {
-                        root.paste-pressed();
-                    }
-                    viewport-pointer-leave() => {
-                        root.viewport-pointer-leave();
-                    }
-                    context-copy-pressed() => {
-                        root.context-copy-pressed();
-                    }
-                    context-paste-pressed(x, y) => {
-                        root.context-paste-pressed(x, y);
-                    }
-                    delete-requested() => {
-                        root.delete-requested();
-                    }
-                    viewport-right-pointer-down(x, y) => {
-                        root.viewport-right-pointer-down(x, y);
-                    }
-                    viewport-right-pointer-up(x, y) => {
-                        root.viewport-right-pointer-up(x, y);
-                    }
-                }
+                    // Room for the compact menu button in its corner.
+                    padding-left: root.menu-layout == MenuLayout.Compact ? 48px : 12px;
+                    padding-right: 8px;
+                    spacing: 16px;
 
-                    if root.has-scene && root.workspace-section == WorkspaceSection.Slice
-                        && root.slice-split && root.slice-layer-count > 0: LayerView {
-                        horizontal-stretch: 1;
-                        // The layer slider sits over the pane's right edge.
-                        right-gutter: 48px;
-                        source: root.slice-view-image;
-                        caption: @tr("LayerView" => "Layer {} of {}", Math.round(root.selected-layer-index) + 1, root.slice-layer-count);
-                        close-requested => {
-                            root.slice-split = false;
-                        }
-                    }
-                }
-
-                if root.axis-guide-visible: Path {
-                    width: parent.width;
-                    height: parent.height;
-                    viewbox-width: parent.width / 1px;
-                    viewbox-height: parent.height / 1px;
-                    commands: root.axis-guide-commands;
-                    stroke: root.axis-guide-color;
-                    stroke-width: 1.5px;
-                    fill: transparent;
-                }
-
-                if root.axis-guide-2-visible: Path {
-                    width: parent.width;
-                    height: parent.height;
-                    viewbox-width: parent.width / 1px;
-                    viewbox-height: parent.height / 1px;
-                    commands: root.axis-guide-2-commands;
-                    stroke: root.axis-guide-2-color;
-                    stroke-width: 1.5px;
-                    fill: transparent;
-                }
-
-                if root.move-trail-visible: Path {
-                    width: parent.width;
-                    height: parent.height;
-                    viewbox-width: parent.width / 1px;
-                    viewbox-height: parent.height / 1px;
-                    commands: root.move-trail-commands;
-                    stroke: #c9ced2cc;
-                    stroke-width: 1.5px;
-                    fill: transparent;
-                }
-
-                if root.move-trail-visible: Rectangle {
-                    x: root.move-trail-start-x - 3.5px;
-                    y: root.move-trail-start-y - 3.5px;
-                    width: 7px;
-                    height: 7px;
-                    border-radius: 3.5px;
-                    background: #c9ced2;
-                    border-width: 1px;
-                    border-color: #0e1011;
-                }
-
-                if root.gesture-tag != "": Rectangle {
-                    x: max(4px, min(root.gesture-tag-x + 4px, parent.width - self.width - 4px));
-                    y: max(4px, min(root.gesture-tag-y - self.height / 2, parent.height - self.height - 4px));
-                    width: tag-text.preferred-width + 14px;
-                    height: 24px;
-                    border-radius: 4px;
-                    background: #16181af0;
-                    border-width: 1px;
-                    border-color: #4a5056;
-
-                    tag-text := Text {
-                        text: root.gesture-tag;
-                        font-family: Theme.mono;
-                        font-size: Theme.font-sm;
-                        color: #eef0f2;
-                        vertical-alignment: center;
-                        horizontal-alignment: center;
-                    }
-                }
-
-                if root.gesture-readout != "": Rectangle {
-                    x: (parent.width - self.width) / 2;
-                    y: 12px;
-                    width: readout-text.preferred-width + 24px;
-                    height: 30px;
-                    border-radius: Theme.radius;
-                    background: Theme.chrome;
-                    border-width: 1px;
-                    border-color: Theme.border;
-
-                    readout-text := Text {
-                        text: root.gesture-readout;
-                        font-family: Theme.mono;
-                        font-size: Theme.font;
-                        color: Theme.text;
-                        vertical-alignment: center;
-                        horizontal-alignment: center;
-                    }
-                }
-
-                // Per-layer height slider on the viewport's right edge, in
-                // the Slice tab; disabled until a slice exists. Its value is
-                // the selected layer index, the top layer at the top.
-                if root.has-scene && root.workspace-section == WorkspaceSection.Slice: Rectangle {
-                    x: parent.width - self.width - 12px;
-                    y: 48px;
-                    width: 32px;
-                    height: parent.height - 96px;
-
-                    Slider {
-                        width: parent.width;
-                        height: parent.height;
-                        orientation: Orientation.vertical;
-                        enabled: root.slice-layer-count > 0;
-                        minimum: 0;
-                        maximum: Math.max(0, root.slice-layer-count - 1);
-                        step: 1;
-                        value <=> root.selected-layer-index;
-                        changed(v) => {
-                            root.selected-layer-changed();
-                        }
-                    }
-                }
-            }
-
-            // Inspector.
-            Rectangle {
-                width: Theme.inspector-width;
-                background: Theme.panel;
-
-                Rectangle {
-                    x: 0;
-                    width: 1px;
-                    background: Theme.border;
-                }
-
-                // The Slice tab does not scroll as a whole: its setup, Slice
-                // button and result stay put, and only the review list
-                // scrolls inside it.
-                if root.workspace-section == WorkspaceSection.Slice: VerticalLayout {
-                    x: 1px;
-                    width: parent.width - 1px;
-                    padding: 12px;
-
-                    SliceInspector {
-                        overhang-map-on <=> root.overhang-map-on;
-                        overhang-map-limit: root.overhang-map-limit;
-                        overhang-map-toggled(on) => {
-                            root.overhang-map-toggled(on);
-                        }
-                        printer-options: root.slice-printer-options;
-                        printer-current-index <=> root.slice-printer-current-index;
-                        resin-options: root.slice-resin-options;
-                        resin-current-index <=> root.slice-resin-current-index;
-                        first-layer-height-text <=> root.slice-first-layer-height-text;
-                        slicing: root.slicing-in-progress;
-                        up-to-date: root.slice-up-to-date;
-                        layer-count: root.slice-layer-count;
-                        selected-layer: root.selected-layer-index;
-                        layer-image: root.slice-view-image;
-                        estimate-valid: root.slice-estimate-valid;
-                        estimate-time: root.slice-estimate-time;
-                        estimate-volume: root.slice-estimate-volume;
-                        estimate-mass: root.slice-estimate-mass;
-                        estimate-note: root.slice-estimate-note;
-                        review-state: root.review-state;
-                        review-summary: root.review-summary;
-                        review-worst: root.review-worst;
-                        review-rows: root.review-rows;
-                        review-stale: root.review-stale;
-                        review-message: root.review-message;
-                        review-selected <=> root.review-selected;
-                        review-notes: root.review-notes;
-                        review-notes-open: root.review-notes-open;
-                        review-fill-small: root.review-fill-small;
-                        review-fills-note: root.review-fills-note;
-                        review-fills-clearable: root.review-fills-clearable;
-                        review-fills-clear-label: root.review-fills-clear-label;
-                        review-fix-all: root.review-fix-all;
-                        review-fixing: root.review-fixing;
-                        review-fix-progress: root.review-fix-progress;
-                        review-fix-phase: root.review-fix-phase;
-                        review-fix-repeat: root.review-fix-repeat;
-                        review-fix-repeat-toggled(on) => {
-                            root.review-fix-repeat-toggled(on);
-                        }
-                        review-fix-all-requested => {
-                            root.review-fix-all-requested();
-                        }
-                        review-fix-all-cancel => {
-                            root.review-fix-all-cancel();
-                        }
-                        review-fill-toggled(id) => {
-                            root.review-fill-toggled(id);
-                        }
-                        review-leave-requested(id) => {
-                            root.review-leave-requested(id);
-                        }
-                        review-fill-small-requested => {
-                            root.review-fill-small-requested();
-                        }
-                        review-fills-cleared => {
-                            root.review-fills-cleared();
-                        }
-                        review-notes-toggled => {
-                            root.review-notes-toggled();
-                        }
-                        review-finding-clicked(id) => {
-                            root.review-finding-clicked(id);
-                        }
-                        review-fix-requested(id) => {
-                            root.review-fix-requested(id);
-                        }
-                        review-raft-off-requested(id) => {
-                            root.review-raft-off-requested(id);
-                        }
-                        printer-picked(i) => {
-                            root.slice-printer-picked(i);
-                        }
-                        resin-picked(i) => {
-                            root.slice-resin-picked(i);
-                        }
-                        first-layer-height-edited(t) => {
-                            root.slice-first-layer-height-edited(t);
-                        }
-                        slice-requested => {
-                            root.slice-requested();
-                        }
-                    }
-                }
-
-                if root.workspace-section != WorkspaceSection.Slice: ScrollView {
-                    x: 1px;
-                    width: parent.width - 1px;
-
-                    VerticalLayout {
-                        padding: 12px;
-                        spacing: 12px;
+                    HorizontalLayout {
+                        min-width: 240px;
+                        spacing: 10px;
                         alignment: start;
 
-                        if root.workspace-section == WorkspaceSection.Transform && root.orient-open: OrientCard {
-                            enabled: root.has-scene && root.selection-valid && !root.loading
-                                && !root.slicing-in-progress && !root.repairing-in-progress && !root.arranging;
-                            running: root.orient-running;
-                            phase: root.orient-phase;
-                            progress: root.orient-progress;
-                            preset: root.orient-preset;
-                            max-tilt: root.orient-max-tilt;
-                            align: root.orient-align;
-                            weight-supports: root.orient-weight-supports;
-                            weight-force: root.orient-weight-force;
-                            weight-height: root.orient-weight-height;
-                            options: root.orient-options;
-                            selected: root.orient-selected;
-                            current: root.orient-current;
-                            status: root.orient-status;
-                            warning: root.orient-warning;
-                            offer-arrange: root.orient-offer-arrange;
-                            brush-on: root.orient-brush-on;
-                            brush-size: root.orient-brush-size;
-                            brush-erase: root.orient-brush-erase;
-                            brush-visible-only: root.orient-brush-visible-only;
-                            painted: root.orient-painted;
-                            brush-toggled => {
-                                root.orient-brush-toggled();
-                            }
-                            brush-size-changed(mm) => {
-                                root.orient-brush-size-changed(mm);
-                            }
-                            brush-erase-toggled => {
-                                root.orient-brush-erase-toggled();
-                            }
-                            brush-visible-changed(on) => {
-                                root.orient-brush-visible-changed(on);
-                            }
-                            brush-op(code) => {
-                                root.orient-brush-op(code);
-                            }
-                            search(mode) => {
-                                root.orient-search(mode);
-                            }
-                            cancel => {
-                                root.orient-cancel();
-                            }
-                            option-changed(code, value) => {
-                                root.orient-option-changed(code, value);
-                            }
-                            option-hovered(i, on) => {
-                                root.orient-option-hovered(i, on);
-                            }
-                            option-picked(i) => {
-                                root.orient-option-picked(i);
-                            }
-                            apply => {
-                                root.orient-apply();
-                            }
-                            close => {
-                                root.orient-close-requested();
-                                mv.focus-viewport();
-                            }
-                            arrange => {
-                                root.arrange-requested(false);
+                        Image {
+                            source: @image-url("../assets/images/breadslicer.png");
+                            width: 22px;
+                            height: 22px;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        Text {
+                            text: "Breadslicer";
+                            font-weight: 600;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                        }
+                        if root.document-name != "": Text {
+                            text: "/";
+                            color: Theme.border-strong;
+                            vertical-alignment: center;
+                        }
+                        if root.document-name != "": Text {
+                            text: root.document-name;
+                            color: Theme.text-soft;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            max-width: 260px;
+                        }
+                        if root.scene-dirty: Rectangle {
+                            width: 6px;
+                            height: 6px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 3px;
+                            background: Theme.accent;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: 2px;
+
+                        WorkflowTab {
+                            number: "1";
+                            label: @tr("Workspace" => "Transform");
+                            active: root.workspace-section == WorkspaceSection.Transform;
+                            enabled: root.has-scene;
+                            dot: root.mesh-needs-repair ? Theme.warning : transparent;
+                            clicked => {
+                                root.section-change-requested(WorkspaceSection.Transform);
                             }
                         }
-                        if root.workspace-section == WorkspaceSection.Transform: TransformInspector {
-                            objects: root.object-list;
-                            selected-index: root.selected-object-index;
-                            selected-rows: root.selected-object-rows;
-                            selected-count: root.selected-object-count;
-                            needs-repair: root.mesh-needs-repair;
-                            check-note: root.mesh-check-note;
-                            check-text: root.mesh-check-text;
-                            repairing: root.repairing-in-progress;
-                            repair-phase: root.repair-phase;
-                            repair-progress: root.repair-progress;
-                            repair-marks-available: root.repair-marks-available;
-                            repair-marks-shown: root.repair-marks-shown;
+                        Rectangle {
+                            width: 1px;
+                            height: 20px;
+                            y: (parent.height - self.height) / 2;
+                            background: Theme.border;
+                        }
+                        WorkflowTab {
+                            number: "2";
+                            label: @tr("Workspace" => "Hollow");
+                            active: root.workspace-section == WorkspaceSection.Hollow;
+                            enabled: root.has-scene;
+                            clicked => {
+                                root.section-change-requested(WorkspaceSection.Hollow);
+                            }
+                        }
+                        Text {
+                            text: "/";
+                            color: Theme.border-strong;
+                            vertical-alignment: center;
+                        }
+                        WorkflowTab {
+                            number: "2";
+                            label: @tr("Workspace" => "Supports");
+                            active: root.workspace-section == WorkspaceSection.Supports;
+                            enabled: root.has-scene;
+                            clicked => {
+                                root.section-change-requested(WorkspaceSection.Supports);
+                            }
+                        }
+                        Rectangle {
+                            width: 1px;
+                            height: 20px;
+                            y: (parent.height - self.height) / 2;
+                            background: Theme.border;
+                        }
+                        WorkflowTab {
+                            number: "3";
+                            label: @tr("Workspace" => "Slice");
+                            active: root.workspace-section == WorkspaceSection.Slice;
+                            enabled: root.has-scene;
+                            dot: root.slice-layer-count > 0 ? Theme.success : transparent;
+                            clicked => {
+                                root.section-change-requested(WorkspaceSection.Slice);
+                            }
+                        }
+                        WorkflowTab {
+                            number: "4";
+                            label: @tr("Workspace" => "Export");
+                            active: root.workspace-section == WorkspaceSection.Export;
+                            enabled: root.has-scene;
+                            clicked => {
+                                root.section-change-requested(WorkspaceSection.Export);
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        min-width: 240px;
+                        spacing: 4px;
+                        alignment: end;
+
+                        SupportLink {
+                            label: @tr("Support us on Patreon");
+                            y: (parent.height - self.height) / 2;
+                            clicked => {
+                                root.support-page-requested(SupportPage.Patreon);
+                            }
+                        }
+                        SupportLink {
+                            label: @tr("Support us on Ko-fi");
+                            y: (parent.height - self.height) / 2;
+                            clicked => {
+                                root.support-page-requested(SupportPage.KoFi);
+                            }
+                        }
+                        Rectangle { width: 8px; }
+                        Text {
+                            text: root.slice-printer-current-index >= 0
+                                ? root.slice-printer-options[root.slice-printer-current-index]
+                                : @tr("Workspace" => "No printer");
+                            color: Theme.text-muted;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            max-width: 200px;
+                        }
+                        ToolButton {
+                            icon: Icons.undo;
+                            label: @tr("MenuBar" => "Undo");
+                            enabled: root.has-scene && !root.loading && root.can-undo
+                                && !root.repairing-in-progress && root.history-allowed;
+                            clicked => {
+                                root.undo-requested();
+                            }
+                        }
+                        ToolButton {
+                            icon: Icons.redo;
+                            label: @tr("MenuBar" => "Redo");
+                            enabled: root.has-scene && !root.loading && root.can-redo
+                                && !root.repairing-in-progress && root.history-allowed;
+                            clicked => {
+                                root.redo-requested();
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.border;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 0px;
+                vertical-stretch: 1;
+
+                // Tool rail: the active tab's tools.
+                Rectangle {
+                    width: Theme.rail-width;
+                    background: Theme.chrome;
+
+                    VerticalLayout {
+                        padding: 6px;
+                        spacing: 4px;
+                        alignment: start;
+
+                        if root.workspace-section == WorkspaceSection.Transform: ToolButton {
+                            icon: Icons.move;
+                            label: @tr("Inspector" => "Move");
+                            shortcut: "G";
+                            active: root.gizmo-focused-style && root.gizmo-tool == 0;
+                            enabled: root.has-scene && root.selected-object-index >= 0;
+                            clicked => {
+                                root.orient-close-requested();
+                                root.gizmo-focus-translate-pressed();
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Transform: ToolButton {
+                            icon: Icons.rotate;
+                            label: @tr("Inspector" => "Rotate");
+                            shortcut: "R";
+                            active: root.gizmo-focused-style && root.gizmo-tool == 1;
+                            enabled: root.has-scene && root.selected-object-index >= 0;
+                            clicked => {
+                                root.orient-close-requested();
+                                root.gizmo-focus-rotate-pressed();
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Transform: ToolButton {
+                            icon: Icons.scale;
+                            label: @tr("Inspector" => "Scale");
+                            shortcut: "S";
+                            active: root.gizmo-focused-style && root.gizmo-tool == 2;
+                            enabled: root.has-scene && root.selected-object-index >= 0;
+                            clicked => {
+                                root.orient-close-requested();
+                                root.gizmo-focus-scale-pressed();
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Transform: ToolButton {
+                            icon: Icons.orient;
+                            label: @tr("Inspector" => "Orient: the best way up for printing");
+                            shortcut: "O";
+                            active: root.orient-open;
+                            enabled: root.has-scene && root.selection-valid;
+                            clicked => {
+                                root.orient-toggle-requested();
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Transform: Rectangle {
+                            height: 9px;
+                            Rectangle {
+                                width: 28px;
+                                height: 1px;
+                                background: Theme.border;
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Transform: ToolButton {
+                            icon: Icons.repair;
+                            label: @tr("Inspector" => "Repair meshes");
+                            active: root.mesh-needs-repair;
+                            enabled: root.has-scene && !root.loading && !root.slicing-in-progress
+                                && !root.repairing-in-progress;
+                            clicked => {
+                                root.repair-requested();
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Hollow: ToolButton {
+                            icon: Icons.hollow;
+                            label: @tr("Workspace" => "Hollow");
+                            shortcut: "H";
+                            active: true;
+                            enabled: false;
+                        }
+                        if root.workspace-section == WorkspaceSection.Hollow: ToolButton {
+                            icon: Icons.hole;
+                            label: @tr("Inspector" => "Drain holes");
+                            shortcut: "D";
+                            enabled: false;
+                        }
+                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
+                            icon: Icons.auto;
+                            label: @tr("Inspector" => "Generate supports");
+                            shortcut: "U";
+                            active: true;
+                            enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
+                            clicked => {
+                                root.df-support-requested();
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Supports: Rectangle {
+                            height: 9px;
+                            Rectangle {
+                                width: 28px;
+                                height: 1px;
+                                background: Theme.border;
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
+                            icon: Icons.add-support;
+                            label: @tr("Inspector" => "Add support (click the model)");
+                            shortcut: "A";
+                            active: root.support-tool == 1;
+                            enabled: root.has-scene && !root.support-gen-in-progress;
+                            clicked => {
+                                root.support-tool = root.support-tool == 1 ? 0 : 1;
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
+                            icon: Icons.move-tip;
+                            label: @tr("Inspector" => "Move tip (drag it)");
+                            shortcut: "M";
+                            active: root.support-tool == 3;
+                            enabled: root.has-scene && !root.support-gen-in-progress;
+                            clicked => {
+                                root.support-tool = root.support-tool == 3 ? 0 : 3;
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
+                            icon: Icons.brace-supports;
+                            label: @tr("Inspector" => "Brace two supports (click one, then the other)");
+                            shortcut: "C";
+                            active: root.support-tool == 4;
+                            enabled: root.has-scene && !root.support-gen-in-progress;
+                            clicked => {
+                                root.support-tool = root.support-tool == 4 ? 0 : 4;
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
+                            icon: Icons.remove-support;
+                            label: @tr("Inspector" => "Remove support (click it)");
+                            shortcut: "X";
+                            active: root.support-tool == 2;
+                            enabled: root.has-scene && !root.support-gen-in-progress;
+                            clicked => {
+                                root.support-tool = root.support-tool == 2 ? 0 : 2;
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Slice: ToolButton {
+                            icon: Icons.slice;
+                            label: @tr("SlicePanel" => "Slice");
+                            active: true;
+                            enabled: root.slice-printer-current-index >= 0
+                                && root.slice-resin-current-index >= 0 && !root.slicing-in-progress;
+                            clicked => {
+                                root.slice-requested();
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Slice: ToolButton {
+                            icon: Icons.layers;
+                            label: root.slice-layer-count > 0
+                                ? @tr("LayerView" => "Layer view: the layer's image beside the 3D view")
+                                : @tr("LayerView" => "Layer view: slice first to see each layer's image");
+                            shortcut: "L";
+                            active: root.slice-split && root.slice-layer-count > 0;
+                            enabled: root.slice-layer-count > 0;
+                            clicked => {
+                                root.slice-split = !root.slice-split;
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Export: ToolButton {
+                            icon: Icons.file;
+                            label: @tr("SlicePanel" => "Export for printer");
+                            active: true;
+                            enabled: root.slice-export-enabled && !root.slicing-in-progress
+                                && !root.saving-in-progress;
+                            clicked => {
+                                root.slice-export-requested();
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        x: parent.width - 1px;
+                        width: 1px;
+                        background: Theme.border;
+                    }
+                }
+
+                // Viewport.
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: Theme.ground;
+
+                    HorizontalLayout {
+                    mv := MeshViewer {
+                        horizontal-stretch: 1;
+                        rendering: root.mesh-rendering;
+                        box-select-armed: root.box-select-armed;
+                        placeholder-text: @tr("Open a 3D model to visualize it here");
+                        modal-transform-active: root.modal-transform-active;
+                        modal-transform-status: root.modal-transform-status;
+                        modal-transform-start(code,x,y) => {
+                            root.orient-close-requested();
+                            root.modal-transform-start(code,x,y);
+                        }
+                        brush-on: root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2
+                            && root.support-remove-mode == 1;
+                        brush-radius: root.support-brush-radius * 1px;
+                        brush-wheel(up) => {
+                            root.support-brush-radius = clamp(root.support-brush-radius + (up ? 4 : -4), 4, 200);
+                        }
+                        paint-brush-on: root.orient-open && root.orient-brush-on;
+                        tool-escape => {
+                            if root.support-drag-cancel() {
+                                return true;
+                            }
+                            if root.orient-open && root.orient-brush-escape() {
+                                return true;
+                            }
+                            if root.orient-open {
+                                root.orient-close-requested();
+                                return true;
+                            }
+                            return false;
+                        }
+                        tab-tool-key(key) => {
+                            if root.workspace-section == WorkspaceSection.Hollow && root.selection-valid
+                                && root.hollow-model-state != 2 && !root.hollow-running && (key == "d" || key == "D") {
+                                root.hollow-drain-tool = !root.hollow-drain-tool;
+                                return true;
+                            }
+                            if root.workspace-section == WorkspaceSection.Supports && root.has-scene
+                                && !root.support-gen-in-progress {
+                                if key == "a" || key == "A" {
+                                    root.support-tool = root.support-tool == 1 ? 0 : 1;
+                                    return true;
+                                }
+                                if key == "x" || key == "X" {
+                                    root.support-tool = root.support-tool == 2 ? 0 : 2;
+                                    return true;
+                                }
+                                if key == "m" || key == "M" {
+                                    root.support-tool = root.support-tool == 3 ? 0 : 3;
+                                    return true;
+                                }
+                                if key == "c" || key == "C" {
+                                    root.support-tool = root.support-tool == 4 ? 0 : 4;
+                                    return true;
+                                }
+                                // Remove: B a box or a brush; [ and ] the brush.
+                                if root.support-tool == 2 && (key == "b" || key == "B") {
+                                    root.support-remove-mode = root.support-remove-mode == 1 ? 0 : 1;
+                                    return true;
+                                }
+                                if root.support-tool == 2 && root.support-remove-mode == 1 && (key == "[" || key == "]") {
+                                    root.support-brush-radius = clamp(root.support-brush-radius + (key == "]" ? 4 : -4), 4, 200);
+                                    return true;
+                                }
+                                // The tip size while Add is armed; the view keys
+                                // otherwise.
+                                if root.support-tool == 1 && (key == "1" || key == "2" || key == "3" || key == "4") {
+                                    root.support-tip-size = key.to-float();
+                                    return true;
+                                }
+                            }
+                            if root.workspace-section == WorkspaceSection.Transform && root.orient-open
+                                && root.selection-valid && (key == "b" || key == "B") {
+                                root.orient-brush-toggled();
+                                return true;
+                            }
+                            if root.workspace-section == WorkspaceSection.Transform && root.orient-open
+                                && root.orient-brush-on && (key == "[" || key == "]") {
+                                root.orient-brush-step(key == "]");
+                                return true;
+                            }
+                            if root.workspace-section == WorkspaceSection.Transform && root.has-scene
+                                && root.selection-valid && (key == "o" || key == "O") {
+                                root.orient-toggle-requested();
+                                return true;
+                            }
+                            if root.workspace-section == WorkspaceSection.Transform && root.has-scene
+                                && !root.loading && !root.slicing-in-progress && !root.repairing-in-progress
+                                && !root.arranging && (key == "a" || key == "A") {
+                                root.arrange-requested(false);
+                                return true;
+                            }
+                            return false;
+                        }
+                        modal-transform-axis(axis,x,y) => { root.modal-transform-axis(axis,x,y); }
+                        modal-transform-finish(confirm) => { root.modal-transform-finish(confirm); }
+                        gizmo-keyboard-focus-active: root.gizmo-keyboard-focus-active;
+                        // Tab cycles selection while a scene is loaded; without a
+                        // scene there's nothing to cycle, so Tab returns to its
+                        // native role of moving focus through the GUI's
+                        // interactive elements.
+                        can-cycle-selection: root.has-scene;
+                        viewport-resized(w, h) => {
+                            root.viewport-resized(w, h);
+                        }
+                        rotate-drag(dx, dy) => {
+                            root.rotate-drag(dx, dy);
+                        }
+                        orbit-begin(x, y) => {
+                            root.orbit-begin(x, y);
+                        }
+                        orbit-end() => {
+                            root.orbit-end();
+                        }
+                        orbit-step(h, v) => {
+                            root.orbit-step(h, v);
+                        }
+                        orbit-pivot-visible: root.orbit-pivot-visible;
+                        orbit-pivot-x: root.orbit-pivot-x;
+                        orbit-pivot-y: root.orbit-pivot-y;
+                        orbit-pivot-edge: root.orbit-pivot-edge;
+                        orbit-pivot-toward: root.orbit-pivot-toward;
+                        pan-drag(dx, dy) => {
+                            root.pan-drag(dx, dy);
+                        }
+                        zoom-at(dy, x, y) => {
+                            root.zoom-at(dy, x, y);
+                        }
+                        orthographic-view: root.orthographic-view;
+                        toggle-projection-requested() => { root.toggle-projection-requested(); }
+                        frame-selected-requested() => { root.frame-selected-requested(); }
+                        frame-view-requested() => {
+                            root.frame-view-requested();
+                        }
+                        axis-view-requested(view) => {
+                            root.axis-view-requested(view);
+                        }
+                        viewport-pointer-down(x, y, modifiers) => {
+                            root.viewport-pointer-down(x, y, modifiers);
+                        }
+                        viewport-pointer-move(x, y, modifiers) => {
+                            root.viewport-pointer-move(x, y, modifiers);
+                        }
+                        viewport-pointer-up(x, y, modifiers) => {
+                            root.viewport-pointer-up(x, y, modifiers);
+                        }
+                        selection-cleared() => {
+                            root.selection-cleared();
+                        }
+                        gizmo-focus-translate-pressed() => {
+                            root.gizmo-focus-translate-pressed();
+                        }
+                        gizmo-focus-rotate-pressed() => {
+                            root.gizmo-focus-rotate-pressed();
+                        }
+                        gizmo-focus-scale-pressed() => {
+                            root.gizmo-focus-scale-pressed();
+                        }
+                        gizmo-arrow-pressed(code) => {
+                            root.gizmo-arrow-pressed(code);
+                        }
+                        gizmo-arrow-released(code) => {
+                            root.gizmo-arrow-released(code);
+                        }
+                        selection-cycle(delta) => {
+                            root.selection-cycle(delta);
+                        }
+                        copy-pressed() => {
+                            root.copy-pressed();
+                        }
+                        paste-pressed() => {
+                            root.paste-pressed();
+                        }
+                        viewport-pointer-leave() => {
+                            root.viewport-pointer-leave();
+                        }
+                        context-copy-pressed() => {
+                            root.context-copy-pressed();
+                        }
+                        context-paste-pressed(x, y) => {
+                            root.context-paste-pressed(x, y);
+                        }
+                        delete-requested() => {
+                            root.delete-requested();
+                        }
+                        viewport-right-pointer-down(x, y) => {
+                            root.viewport-right-pointer-down(x, y);
+                        }
+                        viewport-right-pointer-up(x, y) => {
+                            root.viewport-right-pointer-up(x, y);
+                        }
+                    }
+
+                        if root.has-scene && root.workspace-section == WorkspaceSection.Slice
+                            && root.slice-split && root.slice-layer-count > 0: LayerView {
+                            horizontal-stretch: 1;
+                            // The layer slider sits over the pane's right edge.
+                            right-gutter: 48px;
+                            source: root.slice-view-image;
+                            caption: @tr("LayerView" => "Layer {} of {}", Math.round(root.selected-layer-index) + 1, root.slice-layer-count);
+                            close-requested => {
+                                root.slice-split = false;
+                            }
+                        }
+                    }
+
+                    if root.axis-guide-visible: Path {
+                        width: parent.width;
+                        height: parent.height;
+                        viewbox-width: parent.width / 1px;
+                        viewbox-height: parent.height / 1px;
+                        commands: root.axis-guide-commands;
+                        stroke: root.axis-guide-color;
+                        stroke-width: 1.5px;
+                        fill: transparent;
+                    }
+
+                    if root.axis-guide-2-visible: Path {
+                        width: parent.width;
+                        height: parent.height;
+                        viewbox-width: parent.width / 1px;
+                        viewbox-height: parent.height / 1px;
+                        commands: root.axis-guide-2-commands;
+                        stroke: root.axis-guide-2-color;
+                        stroke-width: 1.5px;
+                        fill: transparent;
+                    }
+
+                    if root.move-trail-visible: Path {
+                        width: parent.width;
+                        height: parent.height;
+                        viewbox-width: parent.width / 1px;
+                        viewbox-height: parent.height / 1px;
+                        commands: root.move-trail-commands;
+                        stroke: #c9ced2cc;
+                        stroke-width: 1.5px;
+                        fill: transparent;
+                    }
+
+                    if root.move-trail-visible: Rectangle {
+                        x: root.move-trail-start-x - 3.5px;
+                        y: root.move-trail-start-y - 3.5px;
+                        width: 7px;
+                        height: 7px;
+                        border-radius: 3.5px;
+                        background: #c9ced2;
+                        border-width: 1px;
+                        border-color: #0e1011;
+                    }
+
+                    if root.gesture-tag != "": Rectangle {
+                        x: max(4px, min(root.gesture-tag-x + 4px, parent.width - self.width - 4px));
+                        y: max(4px, min(root.gesture-tag-y - self.height / 2, parent.height - self.height - 4px));
+                        width: tag-text.preferred-width + 14px;
+                        height: 24px;
+                        border-radius: 4px;
+                        background: #16181af0;
+                        border-width: 1px;
+                        border-color: #4a5056;
+
+                        tag-text := Text {
+                            text: root.gesture-tag;
+                            font-family: Theme.mono;
+                            font-size: Theme.font-sm;
+                            color: #eef0f2;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    if root.gesture-readout != "": Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        y: 12px;
+                        width: readout-text.preferred-width + 24px;
+                        height: 30px;
+                        border-radius: Theme.radius;
+                        background: Theme.chrome;
+                        border-width: 1px;
+                        border-color: Theme.border;
+
+                        readout-text := Text {
+                            text: root.gesture-readout;
+                            font-family: Theme.mono;
+                            font-size: Theme.font;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    // Per-layer height slider on the viewport's right edge, in
+                    // the Slice tab; disabled until a slice exists. Its value is
+                    // the selected layer index, the top layer at the top.
+                    if root.has-scene && root.workspace-section == WorkspaceSection.Slice: Rectangle {
+                        x: parent.width - self.width - 12px;
+                        y: 48px;
+                        width: 32px;
+                        height: parent.height - 96px;
+
+                        Slider {
+                            width: parent.width;
+                            height: parent.height;
+                            orientation: Orientation.vertical;
+                            enabled: root.slice-layer-count > 0;
+                            minimum: 0;
+                            maximum: Math.max(0, root.slice-layer-count - 1);
+                            step: 1;
+                            value <=> root.selected-layer-index;
+                            changed(v) => {
+                                root.selected-layer-changed();
+                            }
+                        }
+                    }
+                }
+
+                // Inspector.
+                Rectangle {
+                    width: Theme.inspector-width;
+                    background: Theme.panel;
+
+                    Rectangle {
+                        x: 0;
+                        width: 1px;
+                        background: Theme.border;
+                    }
+
+                    // The Slice tab does not scroll as a whole: its setup, Slice
+                    // button and result stay put, and only the review list
+                    // scrolls inside it.
+                    if root.workspace-section == WorkspaceSection.Slice: VerticalLayout {
+                        x: 1px;
+                        width: parent.width - 1px;
+                        padding: 12px;
+
+                        SliceInspector {
                             overhang-map-on <=> root.overhang-map-on;
                             overhang-map-limit: root.overhang-map-limit;
                             overhang-map-toggled(on) => {
                                 root.overhang-map-toggled(on);
                             }
-                            repair-cancel => {
-                                root.repair-cancel();
+                            printer-options: root.slice-printer-options;
+                            printer-current-index <=> root.slice-printer-current-index;
+                            resin-options: root.slice-resin-options;
+                            resin-current-index <=> root.slice-resin-current-index;
+                            first-layer-height-text <=> root.slice-first-layer-height-text;
+                            slicing: root.slicing-in-progress;
+                            up-to-date: root.slice-up-to-date;
+                            layer-count: root.slice-layer-count;
+                            selected-layer: root.selected-layer-index;
+                            layer-image: root.slice-view-image;
+                            estimate-valid: root.slice-estimate-valid;
+                            estimate-time: root.slice-estimate-time;
+                            estimate-volume: root.slice-estimate-volume;
+                            estimate-mass: root.slice-estimate-mass;
+                            estimate-note: root.slice-estimate-note;
+                            review-state: root.review-state;
+                            review-summary: root.review-summary;
+                            review-worst: root.review-worst;
+                            review-rows: root.review-rows;
+                            review-stale: root.review-stale;
+                            review-message: root.review-message;
+                            review-selected <=> root.review-selected;
+                            review-notes: root.review-notes;
+                            review-notes-open: root.review-notes-open;
+                            review-fill-small: root.review-fill-small;
+                            review-fills-note: root.review-fills-note;
+                            review-fills-clearable: root.review-fills-clearable;
+                            review-fills-clear-label: root.review-fills-clear-label;
+                            review-fix-all: root.review-fix-all;
+                            review-fixing: root.review-fixing;
+                            review-fix-progress: root.review-fix-progress;
+                            review-fix-phase: root.review-fix-phase;
+                            review-fix-repeat: root.review-fix-repeat;
+                            review-fix-repeat-toggled(on) => {
+                                root.review-fix-repeat-toggled(on);
                             }
-                            repair-marks-toggled(on) => {
-                                root.repair-marks-toggled(on);
+                            review-fix-all-requested => {
+                                root.review-fix-all-requested();
                             }
-                            repair-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
-                                && !root.repairing-in-progress;
-                            object-picked(i) => {
-                                root.selected-object-index = i;
-                                root.object-list-selection-changed(i);
-                                mv.focus-viewport();
+                            review-fix-all-cancel => {
+                                root.review-fix-all-cancel();
                             }
-                            object-toggled(i) => {
-                                root.object-list-toggle(i);
-                                mv.focus-viewport();
+                            review-fill-toggled(id) => {
+                                root.review-fill-toggled(id);
                             }
-                            repair-requested => {
-                                root.repair-requested();
+                            review-leave-requested(id) => {
+                                root.review-leave-requested(id);
                             }
-                            selection-valid: root.selection-valid;
-                            size-x: root.selection-size-x;
-                            size-y: root.selection-size-y;
-                            size-z: root.selection-size-z;
-                            model-x: root.selection-model-x;
-                            model-y: root.selection-model-y;
-                            model-z: root.selection-model-z;
-                            tilted: root.selection-tilted;
-                            pos-x: root.selection-pos-x;
-                            pos-y: root.selection-pos-y;
-                            pos-z: root.selection-pos-z;
-                            rot-x: root.selection-rot-x;
-                            rot-y: root.selection-rot-y;
-                            rot-z: root.selection-rot-z;
-                            scale: root.selection-scale;
-                            numeric-edit(code, value) => {
-                                root.numeric-edit(code, value);
+                            review-fill-small-requested => {
+                                root.review-fill-small-requested();
                             }
-                            arrange-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
-                                && !root.repairing-in-progress && !root.arranging;
-                            arranging: root.arranging;
-                            arrange-last-run: root.arrange-last-run;
-                            arrange-gap: root.arrange-gap;
-                            arrange-margin: root.arrange-margin;
-                            arrange-turns: root.arrange-turns;
-                            arrange-shadow-only: root.arrange-shadow-only;
-                            arrange-filling: root.arrange-filling;
-                            arrange-fill-progress: root.arrange-fill-progress;
-                            arrange-max-copies: root.arrange-max-copies;
-                            arrange-requested(selection) => {
-                                root.arrange-requested(selection);
+                            review-fills-cleared => {
+                                root.review-fills-cleared();
                             }
-                            arrange-fill-requested => {
-                                root.arrange-fill-requested();
+                            review-notes-toggled => {
+                                root.review-notes-toggled();
                             }
-                            arrange-cancel => {
-                                root.arrange-cancel();
+                            review-finding-clicked(id) => {
+                                root.review-finding-clicked(id);
                             }
-                            arrange-option-changed(code, value) => {
-                                root.arrange-option-changed(code, value);
+                            review-fix-requested(id) => {
+                                root.review-fix-requested(id);
                             }
-                            orient-requested => {
-                                if !root.orient-open {
-                                    root.orient-toggle-requested();
+                            review-raft-off-requested(id) => {
+                                root.review-raft-off-requested(id);
+                            }
+                            printer-picked(i) => {
+                                root.slice-printer-picked(i);
+                            }
+                            resin-picked(i) => {
+                                root.slice-resin-picked(i);
+                            }
+                            first-layer-height-edited(t) => {
+                                root.slice-first-layer-height-edited(t);
+                            }
+                            slice-requested => {
+                                root.slice-requested();
+                            }
+                        }
+                    }
+
+                    if root.workspace-section != WorkspaceSection.Slice: ScrollView {
+                        x: 1px;
+                        width: parent.width - 1px;
+
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 12px;
+                            alignment: start;
+
+                            if root.workspace-section == WorkspaceSection.Transform && root.orient-open: OrientCard {
+                                enabled: root.has-scene && root.selection-valid && !root.loading
+                                    && !root.slicing-in-progress && !root.repairing-in-progress && !root.arranging;
+                                running: root.orient-running;
+                                phase: root.orient-phase;
+                                progress: root.orient-progress;
+                                preset: root.orient-preset;
+                                max-tilt: root.orient-max-tilt;
+                                align: root.orient-align;
+                                weight-supports: root.orient-weight-supports;
+                                weight-force: root.orient-weight-force;
+                                weight-height: root.orient-weight-height;
+                                options: root.orient-options;
+                                selected: root.orient-selected;
+                                current: root.orient-current;
+                                status: root.orient-status;
+                                warning: root.orient-warning;
+                                offer-arrange: root.orient-offer-arrange;
+                                brush-on: root.orient-brush-on;
+                                brush-size: root.orient-brush-size;
+                                brush-erase: root.orient-brush-erase;
+                                brush-visible-only: root.orient-brush-visible-only;
+                                painted: root.orient-painted;
+                                brush-toggled => {
+                                    root.orient-brush-toggled();
+                                }
+                                brush-size-changed(mm) => {
+                                    root.orient-brush-size-changed(mm);
+                                }
+                                brush-erase-toggled => {
+                                    root.orient-brush-erase-toggled();
+                                }
+                                brush-visible-changed(on) => {
+                                    root.orient-brush-visible-changed(on);
+                                }
+                                brush-op(code) => {
+                                    root.orient-brush-op(code);
+                                }
+                                search(mode) => {
+                                    root.orient-search(mode);
+                                }
+                                cancel => {
+                                    root.orient-cancel();
+                                }
+                                option-changed(code, value) => {
+                                    root.orient-option-changed(code, value);
+                                }
+                                option-hovered(i, on) => {
+                                    root.orient-option-hovered(i, on);
+                                }
+                                option-picked(i) => {
+                                    root.orient-option-picked(i);
+                                }
+                                apply => {
+                                    root.orient-apply();
+                                }
+                                close => {
+                                    root.orient-close-requested();
+                                    mv.focus-viewport();
+                                }
+                                arrange => {
+                                    root.arrange-requested(false);
+                                }
+                            }
+                            if root.workspace-section == WorkspaceSection.Transform: TransformInspector {
+                                objects: root.object-list;
+                                selected-index: root.selected-object-index;
+                                selected-rows: root.selected-object-rows;
+                                selected-count: root.selected-object-count;
+                                needs-repair: root.mesh-needs-repair;
+                                check-note: root.mesh-check-note;
+                                check-text: root.mesh-check-text;
+                                repairing: root.repairing-in-progress;
+                                repair-phase: root.repair-phase;
+                                repair-progress: root.repair-progress;
+                                repair-marks-available: root.repair-marks-available;
+                                repair-marks-shown: root.repair-marks-shown;
+                                overhang-map-on <=> root.overhang-map-on;
+                                overhang-map-limit: root.overhang-map-limit;
+                                overhang-map-toggled(on) => {
+                                    root.overhang-map-toggled(on);
+                                }
+                                repair-cancel => {
+                                    root.repair-cancel();
+                                }
+                                repair-marks-toggled(on) => {
+                                    root.repair-marks-toggled(on);
+                                }
+                                repair-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
+                                    && !root.repairing-in-progress;
+                                object-picked(i) => {
+                                    root.selected-object-index = i;
+                                    root.object-list-selection-changed(i);
+                                    mv.focus-viewport();
+                                }
+                                object-toggled(i) => {
+                                    root.object-list-toggle(i);
+                                    mv.focus-viewport();
+                                }
+                                repair-requested => {
+                                    root.repair-requested();
+                                }
+                                selection-valid: root.selection-valid;
+                                size-x: root.selection-size-x;
+                                size-y: root.selection-size-y;
+                                size-z: root.selection-size-z;
+                                model-x: root.selection-model-x;
+                                model-y: root.selection-model-y;
+                                model-z: root.selection-model-z;
+                                tilted: root.selection-tilted;
+                                pos-x: root.selection-pos-x;
+                                pos-y: root.selection-pos-y;
+                                pos-z: root.selection-pos-z;
+                                rot-x: root.selection-rot-x;
+                                rot-y: root.selection-rot-y;
+                                rot-z: root.selection-rot-z;
+                                scale: root.selection-scale;
+                                numeric-edit(code, value) => {
+                                    root.numeric-edit(code, value);
+                                }
+                                arrange-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
+                                    && !root.repairing-in-progress && !root.arranging;
+                                arranging: root.arranging;
+                                arrange-last-run: root.arrange-last-run;
+                                arrange-gap: root.arrange-gap;
+                                arrange-margin: root.arrange-margin;
+                                arrange-turns: root.arrange-turns;
+                                arrange-shadow-only: root.arrange-shadow-only;
+                                arrange-filling: root.arrange-filling;
+                                arrange-fill-progress: root.arrange-fill-progress;
+                                arrange-max-copies: root.arrange-max-copies;
+                                arrange-requested(selection) => {
+                                    root.arrange-requested(selection);
+                                }
+                                arrange-fill-requested => {
+                                    root.arrange-fill-requested();
+                                }
+                                arrange-cancel => {
+                                    root.arrange-cancel();
+                                }
+                                arrange-option-changed(code, value) => {
+                                    root.arrange-option-changed(code, value);
+                                }
+                                orient-requested => {
+                                    if !root.orient-open {
+                                        root.orient-toggle-requested();
+                                    }
+                                }
+                            }
+                            if root.workspace-section == WorkspaceSection.Hollow: HollowInspector {
+                                selection-valid: root.selection-valid && !root.loading;
+                                running: root.hollow-running;
+                                phase: root.hollow-phase;
+                                progress: root.hollow-progress;
+                                last-run: root.hollow-last-run;
+                                model-state: root.hollow-model-state;
+                                drain-count: root.hollow-drain-count;
+                                drain-tool-on: root.hollow-drain-tool;
+                                show-cavity: root.hollow-show-cavity;
+                                show-cavity-toggled(on) => {
+                                    root.hollow-show-cavity = on;
+                                }
+                                wall: root.hollow-wall;
+                                recommended-wall: root.hollow-recommended-wall;
+                                voxel: root.hollow-voxel;
+                                fill-index: root.hollow-fill-index;
+                                cell: root.hollow-cell;
+                                beam: root.hollow-beam;
+                                drain-radius: root.hollow-drain-radius;
+                                drain-depth-set: root.hollow-drain-depth-set;
+                                drain-depth: root.hollow-drain-depth;
+                                drain-cone: root.hollow-drain-cone;
+                                drain-inner-radius: root.hollow-drain-inner-radius;
+                                drain-plug: root.hollow-drain-plug;
+                                plug-clearance: root.hollow-plug-clearance;
+                                apply-requested => {
+                                    root.hollow-drain-tool = false;
+                                    root.hollow-apply();
+                                }
+                                cancel-requested => {
+                                    root.hollow-cancel();
+                                }
+                                restore-requested => {
+                                    root.hollow-drain-tool = false;
+                                    root.hollow-restore();
+                                }
+                                clear-drains-requested => {
+                                    root.hollow-clear-drains();
+                                }
+                                drain-tool-toggled => {
+                                    root.hollow-drain-tool = !root.hollow-drain-tool;
+                                }
+                                option-changed(code, value) => {
+                                    root.hollow-option-changed(code, value);
+                                }
+                            }
+                            if root.workspace-section == WorkspaceSection.Supports: SupportsInspector {
+                                overhang-map-on <=> root.overhang-map-on;
+                                overhang-map-limit: root.overhang-map-limit;
+                                overhang-map-toggled(on) => {
+                                    root.overhang-map-toggled(on);
+                                }
+                                has-scene: root.has-scene && !root.loading;
+                                running: root.support-gen-in-progress;
+                                phase: root.support-gen-phase;
+                                progress: root.support-gen-progress;
+                                cancelable: root.support-gen-cancelable;
+                                last-run: root.supports-last-run;
+                                generate-requested => {
+                                    root.df-support-requested();
+                                }
+                                cancel-requested => {
+                                    root.support-gen-cancel-requested();
+                                }
+                                preset-names: root.support-preset-names;
+                                preset-index: root.support-preset-index;
+                                sizing-index: root.support-sizing-index;
+                                density: root.support-density;
+                                angle: root.support-angle;
+                                size-scale: root.support-size-scale;
+                                min-island: root.support-min-island;
+                                coverage: root.support-coverage;
+                                stabilization: root.support-stabilization;
+                                bracing: root.support-bracing;
+                                smooth: root.support-smooth;
+                                raft-index: root.support-raft-index;
+                                raft-thickness: root.support-raft-thickness;
+                                raft-wall: root.support-raft-wall;
+                                zone-summary: root.support-zone-summary;
+                                grid-on: root.support-grid-on;
+                                grid-spacing: root.support-grid-spacing;
+                                grid-hint: root.support-grid-hint;
+                                raft-clash-message: root.support-raft-clash-message;
+                                raft-lift-label: root.support-raft-lift-label;
+                                lift-on-plate: root.support-lift-on-plate;
+                                lift-on-plate-label: root.support-lift-on-plate-label;
+                                lift-on-plate-toggled(on) => {
+                                    root.support-lift-on-plate-toggled(on);
+                                }
+                                hide-rafts-under-plate: root.support-hide-rafts-under-plate;
+                                hide-rafts-under-plate-toggled(on) => {
+                                    root.support-hide-rafts-under-plate-toggled(on);
+                                }
+                                lines-under-plate: root.support-lines-under-plate;
+                                lines-under-plate-toggled(on) => {
+                                    root.support-lines-under-plate-toggled(on);
+                                }
+                                raft-lift => {
+                                    root.support-raft-lift-requested();
+                                }
+                                raft-off => {
+                                    root.support-raft-off-requested();
+                                }
+                                raft-ignore => {
+                                    root.support-raft-ignore-requested();
+                                }
+                                add-tool-on: root.support-tool == 1;
+                                remove-tool-on: root.support-tool == 2;
+                                remove-mode: root.support-remove-mode;
+                                brush-radius: root.support-brush-radius;
+                                remove-mode-picked(i) => {
+                                    root.support-remove-mode = i;
+                                }
+                                tip-size: root.support-tip-size;
+                                tip-label: root.support-tip-label;
+                                add-note: root.support-add-note;
+                                add-note-warns: root.support-add-note-warns;
+                                tip-size-picked(i) => {
+                                    root.support-tip-size = i;
+                                }
+                                selection-valid: root.selection-valid;
+                                lift: root.selection-pos-z;
+                                option-changed(code, value) => {
+                                    root.support-option-changed(code, value);
+                                }
+                                preset-picked(i) => {
+                                    root.support-preset-picked(i);
+                                }
+                                preset-save(name) => {
+                                    root.support-preset-save(name);
+                                }
+                                preset-delete => {
+                                    root.support-preset-delete();
+                                }
+                                lift-edit(v) => {
+                                    root.numeric-edit(2, v);
+                                }
+                                drop-to-plate => {
+                                    root.numeric-edit(10, 0);
+                                }
+                            }
+                            if root.workspace-section == WorkspaceSection.Export: ExportInspector {
+                                format-options: root.slice-print-format-options;
+                                format-current-index <=> root.slice-print-format-current-index;
+                                format-note: root.slice-print-format-note;
+                                export-enabled: root.slice-export-enabled;
+                                busy: root.slicing-in-progress || root.saving-in-progress || root.loading;
+                                has-scene: root.has-scene;
+                                format-picked(i) => {
+                                    root.slice-print-format-picked(i);
+                                }
+                                export-printer-file => {
+                                    root.slice-export-requested();
+                                }
+                                save-project => {
+                                    root.save-requested();
+                                }
+                                export-mesh => {
+                                    root.export-as-requested();
                                 }
                             }
                         }
-                        if root.workspace-section == WorkspaceSection.Hollow: HollowInspector {
-                            selection-valid: root.selection-valid && !root.loading;
-                            running: root.hollow-running;
-                            phase: root.hollow-phase;
-                            progress: root.hollow-progress;
-                            last-run: root.hollow-last-run;
-                            model-state: root.hollow-model-state;
-                            drain-count: root.hollow-drain-count;
-                            drain-tool-on: root.hollow-drain-tool;
-                            show-cavity: root.hollow-show-cavity;
-                            show-cavity-toggled(on) => {
-                                root.hollow-show-cavity = on;
-                            }
-                            wall: root.hollow-wall;
-                            recommended-wall: root.hollow-recommended-wall;
-                            voxel: root.hollow-voxel;
-                            fill-index: root.hollow-fill-index;
-                            cell: root.hollow-cell;
-                            beam: root.hollow-beam;
-                            drain-radius: root.hollow-drain-radius;
-                            drain-depth-set: root.hollow-drain-depth-set;
-                            drain-depth: root.hollow-drain-depth;
-                            drain-cone: root.hollow-drain-cone;
-                            drain-inner-radius: root.hollow-drain-inner-radius;
-                            drain-plug: root.hollow-drain-plug;
-                            plug-clearance: root.hollow-plug-clearance;
-                            apply-requested => {
-                                root.hollow-drain-tool = false;
-                                root.hollow-apply();
-                            }
-                            cancel-requested => {
-                                root.hollow-cancel();
-                            }
-                            restore-requested => {
-                                root.hollow-drain-tool = false;
-                                root.hollow-restore();
-                            }
-                            clear-drains-requested => {
-                                root.hollow-clear-drains();
-                            }
-                            drain-tool-toggled => {
-                                root.hollow-drain-tool = !root.hollow-drain-tool;
-                            }
-                            option-changed(code, value) => {
-                                root.hollow-option-changed(code, value);
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Supports: SupportsInspector {
-                            overhang-map-on <=> root.overhang-map-on;
-                            overhang-map-limit: root.overhang-map-limit;
-                            overhang-map-toggled(on) => {
-                                root.overhang-map-toggled(on);
-                            }
-                            has-scene: root.has-scene && !root.loading;
-                            running: root.support-gen-in-progress;
-                            phase: root.support-gen-phase;
-                            progress: root.support-gen-progress;
-                            cancelable: root.support-gen-cancelable;
-                            last-run: root.supports-last-run;
-                            generate-requested => {
-                                root.df-support-requested();
-                            }
-                            cancel-requested => {
-                                root.support-gen-cancel-requested();
-                            }
-                            preset-names: root.support-preset-names;
-                            preset-index: root.support-preset-index;
-                            sizing-index: root.support-sizing-index;
-                            density: root.support-density;
-                            angle: root.support-angle;
-                            size-scale: root.support-size-scale;
-                            min-island: root.support-min-island;
-                            coverage: root.support-coverage;
-                            stabilization: root.support-stabilization;
-                            bracing: root.support-bracing;
-                            smooth: root.support-smooth;
-                            raft-index: root.support-raft-index;
-                            raft-thickness: root.support-raft-thickness;
-                            raft-wall: root.support-raft-wall;
-                            zone-summary: root.support-zone-summary;
-                            grid-on: root.support-grid-on;
-                            grid-spacing: root.support-grid-spacing;
-                            grid-hint: root.support-grid-hint;
-                            raft-clash-message: root.support-raft-clash-message;
-                            raft-lift-label: root.support-raft-lift-label;
-                            lift-on-plate: root.support-lift-on-plate;
-                            lift-on-plate-label: root.support-lift-on-plate-label;
-                            lift-on-plate-toggled(on) => {
-                                root.support-lift-on-plate-toggled(on);
-                            }
-                            hide-rafts-under-plate: root.support-hide-rafts-under-plate;
-                            hide-rafts-under-plate-toggled(on) => {
-                                root.support-hide-rafts-under-plate-toggled(on);
-                            }
-                            lines-under-plate: root.support-lines-under-plate;
-                            lines-under-plate-toggled(on) => {
-                                root.support-lines-under-plate-toggled(on);
-                            }
-                            raft-lift => {
-                                root.support-raft-lift-requested();
-                            }
-                            raft-off => {
-                                root.support-raft-off-requested();
-                            }
-                            raft-ignore => {
-                                root.support-raft-ignore-requested();
-                            }
-                            add-tool-on: root.support-tool == 1;
-                            remove-tool-on: root.support-tool == 2;
-                            remove-mode: root.support-remove-mode;
-                            brush-radius: root.support-brush-radius;
-                            remove-mode-picked(i) => {
-                                root.support-remove-mode = i;
-                            }
-                            tip-size: root.support-tip-size;
-                            tip-label: root.support-tip-label;
-                            add-note: root.support-add-note;
-                            add-note-warns: root.support-add-note-warns;
-                            tip-size-picked(i) => {
-                                root.support-tip-size = i;
-                            }
-                            selection-valid: root.selection-valid;
-                            lift: root.selection-pos-z;
-                            option-changed(code, value) => {
-                                root.support-option-changed(code, value);
-                            }
-                            preset-picked(i) => {
-                                root.support-preset-picked(i);
-                            }
-                            preset-save(name) => {
-                                root.support-preset-save(name);
-                            }
-                            preset-delete => {
-                                root.support-preset-delete();
-                            }
-                            lift-edit(v) => {
-                                root.numeric-edit(2, v);
-                            }
-                            drop-to-plate => {
-                                root.numeric-edit(10, 0);
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Export: ExportInspector {
-                            format-options: root.slice-print-format-options;
-                            format-current-index <=> root.slice-print-format-current-index;
-                            format-note: root.slice-print-format-note;
-                            export-enabled: root.slice-export-enabled;
-                            busy: root.slicing-in-progress || root.saving-in-progress || root.loading;
-                            has-scene: root.has-scene;
-                            format-picked(i) => {
-                                root.slice-print-format-picked(i);
-                            }
-                            export-printer-file => {
-                                root.slice-export-requested();
-                            }
-                            save-project => {
-                                root.save-requested();
-                            }
-                            export-mesh => {
-                                root.export-as-requested();
-                            }
-                        }
                     }
                 }
             }
-        }
 
-        // Status bar.
-        Rectangle {
-            height: Theme.statusbar-height;
-            background: Theme.chrome;
-
+            // Status bar.
             Rectangle {
-                y: 0;
-                height: 1px;
-                background: Theme.border;
-            }
+                height: Theme.statusbar-height;
+                background: Theme.chrome;
 
-            HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                spacing: 18px;
-
-                if root.status-notice != "": Text {
-                    text: root.status-notice;
-                    font-size: Theme.font-xs;
-                    color: Theme.text;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    overflow: elide;
+                Rectangle {
+                    y: 0;
+                    height: 1px;
+                    background: Theme.border;
                 }
-                if root.status-notice == "": Text {
-                    text: !root.has-scene ? @tr("Workspace" => "Open or drop a model to start.")
-                        : root.workspace-section == WorkspaceSection.Transform ? @tr("Workspace" => "G move · R rotate · S scale, then X / Y / Z to lock an axis. Ctrl snaps, Shift is finer.")
-                        : root.drain-misses ? @tr("Workspace" => "A drain here would not reach the cavity: hollowing leaves it out.")
-                        : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool && root.hollow-drain-reach == 3 ? @tr("Workspace" => "Not known yet whether a drain here reaches the cavity: the cavity is not computed.")
-                        : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool && root.hollow-drain-reach == 4 ? @tr("Workspace" => "At its set depth a drain here would reach the far side of the cavity: it is drilled shorter, as drawn.")
-                        : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool ? @tr("Workspace" => "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back.")
-                        : root.workspace-section == WorkspaceSection.Hollow ? @tr("Workspace" => "Hollow the selected model to save resin, then place its drains with D.")
-                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool != 0 && root.support-add-note != "" ? root.support-add-note
-                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 ? @tr("Workspace" => "Click the model where a support should touch it; Shift+click hangs it from the nearest support. 1–4 set the tip size. Undo takes it back.")
-                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 && root.support-remove-mode == 1 ? @tr("Workspace" => "Click a support to remove it, or paint over supports to remove them; [ ] or the wheel size the brush, B a box. Esc drops it.")
-                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 ? @tr("Workspace" => "Click a support to remove it, or drag a box over supports to remove them; B a brush. Esc drops it.")
-                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 3 ? @tr("Workspace" => "Drag a support by its tip over the model; it is routed again where you let go. Esc or a right click drops it.")
-                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 4 ? @tr("Workspace" => "Click a support where the brace starts, then the support it goes to; it is laid by the preset's bracing rules. Esc or a right click drops the first.")
-                        : root.workspace-section == WorkspaceSection.Supports ? @tr("Workspace" => "Generate supports for every model on the plate.")
-                        : root.workspace-section == WorkspaceSection.Slice ? @tr("Workspace" => "Drag the layer slider to inspect the slice.")
-                        : @tr("Workspace" => "The printer file uses the printer and resin in force.");
-                    font-size: Theme.font-xs;
-                    color: root.drain-misses
-                        || (root.workspace-section == WorkspaceSection.Supports && root.support-tool != 0
-                            && root.support-add-note != "" && root.support-add-note-warns)
-                        ? Theme.danger : Theme.text-muted;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    overflow: elide;
-                }
-                if root.has-scene && root.import-notes != "": TouchArea {
-                    width: notes-text.preferred-width;
-                    mouse-cursor: pointer;
-                    accessible-role: button;
-                    accessible-label: root.import-notes;
-                    accessible-action-default => {
-                        root.import-notes-requested();
-                    }
-                    clicked => {
-                        root.import-notes-requested();
-                    }
 
-                    notes-text := Text {
-                        // The glyph is kept out of the translatable string.
-                        text: "ℹ " + root.import-notes;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 18px;
+
+                    if root.status-notice != "": Text {
+                        text: root.status-notice;
                         font-size: Theme.font-xs;
-                        color: Theme.accent;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    if root.status-notice == "": Text {
+                        text: !root.has-scene ? @tr("Workspace" => "Open or drop a model to start.")
+                            : root.workspace-section == WorkspaceSection.Transform ? @tr("Workspace" => "G move · R rotate · S scale, then X / Y / Z to lock an axis. Ctrl snaps, Shift is finer.")
+                            : root.drain-misses ? @tr("Workspace" => "A drain here would not reach the cavity: hollowing leaves it out.")
+                            : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool && root.hollow-drain-reach == 3 ? @tr("Workspace" => "Not known yet whether a drain here reaches the cavity: the cavity is not computed.")
+                            : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool && root.hollow-drain-reach == 4 ? @tr("Workspace" => "At its set depth a drain here would reach the far side of the cavity: it is drilled shorter, as drawn.")
+                            : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool ? @tr("Workspace" => "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back.")
+                            : root.workspace-section == WorkspaceSection.Hollow ? @tr("Workspace" => "Hollow the selected model to save resin, then place its drains with D.")
+                            : root.workspace-section == WorkspaceSection.Supports && root.support-tool != 0 && root.support-add-note != "" ? root.support-add-note
+                            : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 ? @tr("Workspace" => "Click the model where a support should touch it; Shift+click hangs it from the nearest support. 1–4 set the tip size. Undo takes it back.")
+                            : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 && root.support-remove-mode == 1 ? @tr("Workspace" => "Click a support to remove it, or paint over supports to remove them; [ ] or the wheel size the brush, B a box. Esc drops it.")
+                            : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 ? @tr("Workspace" => "Click a support to remove it, or drag a box over supports to remove them; B a brush. Esc drops it.")
+                            : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 3 ? @tr("Workspace" => "Drag a support by its tip over the model; it is routed again where you let go. Esc or a right click drops it.")
+                            : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 4 ? @tr("Workspace" => "Click a support where the brace starts, then the support it goes to; it is laid by the preset's bracing rules. Esc or a right click drops the first.")
+                            : root.workspace-section == WorkspaceSection.Supports ? @tr("Workspace" => "Generate supports for every model on the plate.")
+                            : root.workspace-section == WorkspaceSection.Slice ? @tr("Workspace" => "Drag the layer slider to inspect the slice.")
+                            : @tr("Workspace" => "The printer file uses the printer and resin in force.");
+                        font-size: Theme.font-xs;
+                        color: root.drain-misses
+                            || (root.workspace-section == WorkspaceSection.Supports && root.support-tool != 0
+                                && root.support-add-note != "" && root.support-add-note-warns)
+                            ? Theme.danger : Theme.text-muted;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    if root.has-scene && root.import-notes != "": TouchArea {
+                        width: notes-text.preferred-width;
+                        mouse-cursor: pointer;
+                        accessible-role: button;
+                        accessible-label: root.import-notes;
+                        accessible-action-default => {
+                            root.import-notes-requested();
+                        }
+                        clicked => {
+                            root.import-notes-requested();
+                        }
+
+                        notes-text := Text {
+                            // The glyph is kept out of the translatable string.
+                            text: "ℹ " + root.import-notes;
+                            font-size: Theme.font-xs;
+                            color: Theme.accent;
+                            vertical-alignment: center;
+                        }
+                    }
+                    if root.has-scene: Text {
+                        text: @tr("Workspace" => "{} object(s)", root.object-list.length);
+                        font-size: Theme.font-xs;
+                        color: Theme.text-muted;
                         vertical-alignment: center;
                     }
-                }
-                if root.has-scene: Text {
-                    text: @tr("Workspace" => "{} object(s)", root.object-list.length);
-                    font-size: Theme.font-xs;
-                    color: Theme.text-muted;
-                    vertical-alignment: center;
                 }
             }
         }
