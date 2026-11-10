@@ -474,6 +474,31 @@ fn scan_model(
     )
 }
 
+/// SoulCrafted (#500): `scan`, each region naming its triangles by the faces
+/// of `bvh`, the tree built from the soup that was scanned.
+///
+/// The scan numbers triangles as the soup holds them; the tree's build
+/// reorders them, and the region sampler tells a region's surface by the
+/// face a ray's hit names
+/// ([`SurfaceSampler`](crate::supports::auto_support::grid_placement::SurfaceSampler)).
+/// DragonFruit scans a soup read through the index its tree already
+/// reordered, so the two orders are one there. Here they are not, and without
+/// this the sampler took for a region's surface whatever face shared a number
+/// with one of its triangles: tops and walls of the model, and little of an
+/// underside. Overhang candidates landed on surfaces that face up (and went
+/// on to whatever hung over them), and undersides went without any.
+pub fn regions_on_tree_faces(mut scan: OverhangScan, bvh: &MeshBvh) -> OverhangScan {
+    let Some(faces) = bvh.faces_of_soup() else {
+        return scan;
+    };
+    for region in scan.regions.iter_mut().chain(&mut scan.steep_regions) {
+        for triangle in &mut region.triangle_ids {
+            *triangle = faces[*triangle as usize];
+        }
+    }
+    scan
+}
+
 /// Runs the geometry-only part of [`generate_supports`] for `models` ahead of
 /// time, for [`generate_supports_with`] to reuse: what a run would scan
 /// first, done while nobody waits. A model `previous` already holds (same
@@ -667,6 +692,7 @@ fn run_pipeline(
             }
             None => scan_model(soup, settings, angle, has_raft),
         };
+        let overhang = regions_on_tree_faces(overhang, &bvhs[i]);
 
         check()?;
         step(progress, Stage::DeriveIslands, i);

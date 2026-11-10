@@ -11,7 +11,6 @@ use std::collections::{HashMap, HashSet};
 
 use super::grid_placement::{
     PERIMETER_CONTACT_INSET_MM, SurfaceSampler, build_boundary_points, face_normal_at,
-    sample_boundary_2d,
 };
 use super::support_blockers::is_support_blocked_contact;
 use super::types::{AutoSupportMesh, CandidatePoint, CandidateSource, js_compare};
@@ -20,7 +19,7 @@ use crate::native::islands::body::BODY_CELL_MM;
 use crate::three::math_utils::js_to_fixed;
 use crate::three::{Ray, Vec3};
 use crate::three_mesh_bvh::Side;
-use crate::volume_analysis::islands::types::{DetectedIsland, IslandClass, IslandSource};
+use crate::volume_analysis::islands::types::{DetectedIsland, IslandClass, IslandSource, Vec3Loop};
 use crate::volume_analysis::islands::voxel_footprint::FootprintPoint;
 
 /// Which zone a candidate serves, most urgent first.
@@ -171,7 +170,9 @@ fn region_points(
 }
 
 /// The boundary ring (`ring_spacing` apart, first) and the plan lattice
-/// (`spacing` apart) of a region, on its surface.
+/// (`spacing` apart) of a region, on its surface. Where the region folds over
+/// itself in plan, the lattice takes every fold: each is an underside to hold,
+/// and the lowest says nothing of the ones over it (#500).
 fn region_samples(
     island: &DetectedIsland,
     spacing: f64,
@@ -208,31 +209,88 @@ fn region_samples(
         for j in 0..=(ny as i64) {
             let x = x0 + i as f64 * spacing;
             let y = y0 + j as f64 * spacing;
-            if let Some(s) = sampler.at(x, y) {
+            for s in sampler.all_at(x, y) {
                 out.push((x, y, s.z, s.face_index));
             }
         }
     }
-    let ring = sample_boundary_2d(
-        island.perimeter_loops.as_deref(),
-        ring_spacing,
-        &mut sampler,
-    )
-    .unwrap_or_else(|| build_boundary_points(&points, ring_spacing, island.base_z));
-    let mut ring_points: Vec<(f64, f64, f64, Option<usize>)> = ring
-        .into_iter()
-        .map(|b| {
-            let sampled = sampler.at(b.x, b.y);
-            (
-                b.x,
-                b.y,
-                sampled.map_or(b.z, |s| s.z),
-                sampled.and_then(|s| s.face_index).or(b.face_index),
-            )
-        })
-        .collect();
+    let on_loops = island
+        .perimeter_loops
+        .as_deref()
+        .map(|loops| ring_on_folds(loops, ring_spacing, &mut sampler))
+        .filter(|ring| !ring.is_empty());
+    let mut ring_points = on_loops.unwrap_or_else(|| {
+        build_boundary_points(&points, ring_spacing, island.base_z)
+            .into_iter()
+            .map(|b| {
+                let sampled = sampler.at(b.x, b.y);
+                (
+                    b.x,
+                    b.y,
+                    sampled.map_or(b.z, |s| s.z),
+                    sampled.and_then(|s| s.face_index).or(b.face_index),
+                )
+            })
+            .collect()
+    });
     ring_points.extend(out);
     ring_points
+}
+
+/// How far from a perimeter loop, in height, the fold it runs on may be: the
+/// loop is inset along the surface, so it stands a little off it.
+const RING_FOLD_REACH_MM: f64 = 0.5;
+
+/// Points `spacing` apart along a region's perimeter `loops` (inset, closed,
+/// in space), each on the surface of the fold its loop runs on: of the
+/// region's surfaces over the point, the one at the loop's height. A loop
+/// around a part of the region that hangs over another part keeps its points
+/// up there (#500).
+fn ring_on_folds(
+    loops: &[Vec3Loop],
+    spacing: f64,
+    sampler: &mut SurfaceSampler<'_>,
+) -> Vec<(f64, f64, f64, Option<usize>)> {
+    let mut out: Vec<(f64, f64, f64, Option<usize>)> = Vec::new();
+    if !(spacing > 0.0) {
+        return out;
+    }
+    let min_d2 = (spacing * 0.5) * (spacing * 0.5);
+    let mut take = |x: f64, y: f64, z: f64, out: &mut Vec<(f64, f64, f64, Option<usize>)>| {
+        let Some(hit) = sampler
+            .all_at(x, y)
+            .into_iter()
+            .min_by(|a, b| (a.z - z).abs().total_cmp(&(b.z - z).abs()))
+            .filter(|hit| (hit.z - z).abs() <= RING_FOLD_REACH_MM)
+        else {
+            return;
+        };
+        let close = out
+            .iter()
+            .any(|q| (x - q.0).powi(2) + (y - q.1).powi(2) + (hit.z - q.2).powi(2) < min_d2);
+        if !close {
+            out.push((x, y, hit.z, hit.face_index));
+        }
+    };
+    for lp in loops.iter().filter(|lp| lp.len() >= 2) {
+        // How far along the loop the next point stands from this corner.
+        let mut next = 0.0;
+        for i in 0..lp.len() {
+            let (a, b) = (lp[i], lp[(i + 1) % lp.len()]);
+            let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            if len < 1e-9 {
+                continue;
+            }
+            while next <= len {
+                let t = next / len;
+                take(a[0] + d[0] * t, a[1] + d[1] * t, a[2] + d[2] * t, &mut out);
+                next += spacing;
+            }
+            next -= len;
+        }
+    }
+    out
 }
 
 fn island_source(island: &DetectedIsland) -> CandidateSource {
@@ -252,6 +310,7 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
     let lh = input.layer_height_mm.max(0.001);
     let mesh = input.mesh;
     let mut pending: Vec<Pending> = Vec::new();
+    let mut ids: HashSet<String> = HashSet::new();
     let mut push = |id: String,
                     pos: Vec3,
                     normal: Option<Vec3>,
@@ -264,6 +323,14 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
         // A lattice point keeps the surface it was sampled on; anything else
         // (or a point whose face does not face down) is resolved at placement.
         let normal = normal.filter(|n| n.z < 0.0);
+        // Two folds of a region over the same lattice point: the second
+        // carries its height.
+        let id = if ids.contains(&id) {
+            format!("{id}-{}", js_to_fixed(pos.z, 2))
+        } else {
+            id
+        };
+        ids.insert(id.clone());
         pending.push(Pending {
             candidate: CandidatePoint {
                 id,

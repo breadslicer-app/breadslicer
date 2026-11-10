@@ -3891,9 +3891,23 @@ mod session_tests {
         let mut tips = session.tips();
         tips.sort_by(|a, b| a.1[0].total_cmp(&b.1[0]));
         let (removed_id, removed) = tips[1].clone();
-        let (moved_id, moved_from) = tips[tips.len() - 2].clone();
         session.remove_tips(&[removed_id]).expect("it goes");
-        let to = [moved_from[0] - 1.5, moved_from[1] + 1.0, 12.0];
+        // The furthest tip that carries no other support: one that does
+        // stays where it is.
+        let mut left = session.tips();
+        left.sort_by(|a, b| b.1[0].total_cmp(&a.1[0]));
+        let aim = |from: [f64; 3]| [from[0] - 1.5, from[1] + 1.0, 12.0];
+        let (moved_id, moved_from) = left
+            .into_iter()
+            .skip(1)
+            .find(|(id, from)| {
+                session
+                    .clone()
+                    .move_tip(id, aim(*from), &AddOptions::default())
+                    .is_ok()
+            })
+            .expect("a tip that moves");
+        let to = aim(moved_from);
         session
             .move_tip(&moved_id, to, &AddOptions::default())
             .expect("it moves");
@@ -4199,8 +4213,8 @@ mod session_tests {
     #[test]
     fn a_brace_is_removed_on_its_own_and_the_log_follows() {
         let mut session = supported_slab();
-        let (a, b) = trunk_pair(&session, 3.0, 8.0);
-        let from = session.brace_end_near(axis_at(&session, &a, 4.0)).unwrap();
+        let (a, b) = trunk_pair(&session, 3.0, 6.0);
+        let from = session.brace_end_near(axis_at(&session, &a, 2.5)).unwrap();
         let before = session.clone();
         session
             .add_brace(&from, axis_at(&session, &b, 4.0))
@@ -4253,8 +4267,8 @@ mod session_tests {
     #[test]
     fn braces_by_hand_are_kept_saved_and_moved() {
         let mut old = supported_slab();
-        let (a, b) = trunk_pair(&old, 3.0, 8.0);
-        let from = old.brace_end_near(axis_at(&old, &a, 4.0)).unwrap();
+        let (a, b) = trunk_pair(&old, 3.0, 6.0);
+        let from = old.brace_end_near(axis_at(&old, &a, 2.5)).unwrap();
         let before = old.clone();
         old.add_brace(&from, axis_at(&old, &b, 4.0)).unwrap();
         let (_, [p, q]) = new_brace(&before, &old);

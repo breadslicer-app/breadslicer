@@ -13,8 +13,8 @@ use support_gen_df::native::mesh_minima::scan_islands;
 use support_gen_df::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
 use support_gen_df::pipeline::{
     CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, build_rafts,
-    generate_supports, generate_supports_with, plan_supports_with, prescan_models, support_soup,
-    world_soup,
+    generate_supports, generate_supports_with, plan_supports_with, prescan_models,
+    regions_on_tree_faces, support_soup, world_soup,
 };
 use support_gen_df::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use support_gen_df::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
@@ -191,11 +191,14 @@ fn by_stage(
         let (regions, stability) = overhang_and_stability_from_soup(soup, angle, 0.25, has_raft);
         let derived = derive_islands(
             &combined,
-            &OverhangScan {
-                regions,
-                stability,
-                steep_regions: Vec::new(),
-            },
+            &regions_on_tree_faces(
+                OverhangScan {
+                    regions,
+                    stability,
+                    steep_regions: Vec::new(),
+                },
+                &bvhs[i],
+            ),
             &[],
             &settings.panel,
         );
@@ -302,10 +305,10 @@ fn facade_matches_the_stages_called_one_by_one() {
         );
         assert!(!out.rafts.is_empty(), "scene {k}: rafts were built");
         let keys: Vec<&str> = out.rafts.iter().map(|g| g.model_key.as_str()).collect();
-        // Scene 1: the shell rests on itself (sticks and stumps, no roots);
-        // the knot's per-model line raft is built although the knot is hidden.
+        // Scene 1: the shell's raft, and the knot's per-model line raft, built
+        // although the knot is hidden.
         if k == 1 {
-            assert_eq!(keys, ["knot"], "scene 1: raft groups");
+            assert_eq!(keys, ["shell", "knot"], "scene 1: raft groups");
         }
 
         // Stage reports: geometry for every model, then scan/derive/plan per

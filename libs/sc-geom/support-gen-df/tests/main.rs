@@ -33,6 +33,7 @@ mod df_parity_tip_offset;
 mod df_parity_v3;
 mod js_math;
 mod pipeline;
+mod region_folds;
 mod smooth_shafts;
 mod support_primitives;
 mod support_type_registry;

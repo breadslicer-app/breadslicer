@@ -216,21 +216,34 @@ fn a_brace_is_laid_dropped_refused_and_removed_through_the_viewport() {
                 .min_by(|a, b| a.0.total_cmp(&b.0))
                 .map(|(_, bid)| bid.clone())
         };
-        let at = (2..=8)
-            .filter_map(|k| {
-                let t = f64::from(k) / 10.0;
-                let on = [
-                    (p.x + (q.x - p.x) * t) as f32,
-                    (p.y + (q.y - p.y) * t) as f32,
-                    (p.z + (q.z - p.z) * t) as f32,
-                ];
-                let at = ctrl.project_for_test(on)?;
-                let seen = ctrl.first_hit_for_test(at)?;
-                let close = (0..3).map(|k| (seen.point[k] - on[k]).powi(2)).sum::<f32>() < 1.0;
-                let under = nearest_brace(seen.point)?;
-                close.then_some((at, under))
+        // Looked at from around until it shows between the run's supports.
+        let middle = [
+            ((p.x + q.x) / 2.0) as f32,
+            ((p.y + q.y) / 2.0) as f32,
+            ((p.z + q.z) / 2.0) as f32,
+        ];
+        let at = [0.6f32, 1.6, 2.6, 3.6, 4.6, 5.6]
+            .into_iter()
+            .flat_map(|yaw| [-0.5f32, -0.2, 0.2].map(|pitch| (yaw, pitch)))
+            .find_map(|(yaw, pitch)| {
+                ctrl.set_camera_for_test(camera_at(middle, yaw, pitch, 40.0));
+                (4..=36)
+                    .filter_map(|k| {
+                        let t = f64::from(k) / 40.0;
+                        let on = [
+                            (p.x + (q.x - p.x) * t) as f32,
+                            (p.y + (q.y - p.y) * t) as f32,
+                            (p.z + (q.z - p.z) * t) as f32,
+                        ];
+                        let at = ctrl.project_for_test(on)?;
+                        let seen = ctrl.first_hit_for_test(at)?;
+                        let close =
+                            (0..3).map(|k| (seen.point[k] - on[k]).powi(2)).sum::<f32>() < 1.0;
+                        let under = nearest_brace(seen.point)?;
+                        close.then_some((at, under))
+                    })
+                    .next()
             })
-            .next()
             .expect("the brace in sight");
         let (at, under) = at;
         click(&window, at);
