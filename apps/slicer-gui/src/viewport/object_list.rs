@@ -47,7 +47,16 @@ pub(crate) fn build_object_list_names(graph: &Scene) -> Vec<String> {
                     .mesh_resource(*rid)
                     .and_then(|mesh| mesh.meta().as_ref())
                     .and_then(|m| m.name.clone()),
-            };
+            }
+            .map(|name| {
+                // The supports a pre-supported file came with (#258) carry
+                // their role as their name: it shows in the language in force.
+                if sc_geom::df_supports::is_imported_supports_name(&name) {
+                    ctr!("ObjectList", "Imported supports").to_string()
+                } else {
+                    name
+                }
+            });
             scene_name
                 .or(mesh_name)
                 .unwrap_or_else(|| ctr!("ObjectList", "Object {}", i + 1).to_string())

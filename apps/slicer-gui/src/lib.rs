@@ -33,6 +33,7 @@ mod hollow_persist;
 mod hollow_run;
 mod i18n;
 mod import_notes;
+mod imported_supports;
 mod language;
 mod launch_files;
 mod layer_keys;
@@ -50,6 +51,7 @@ mod pending_load;
 mod preferences_bus;
 mod preferences_filters;
 mod preferences_window;
+mod presupported_import;
 mod print_format;
 mod print_selection;
 pub mod profile_catalog;
@@ -111,6 +113,8 @@ mod tests_paste_prep;
 mod tests_paste_timing;
 #[cfg(test)]
 mod tests_pick_timing;
+#[cfg(test)]
+mod tests_presupported_import;
 #[cfg(test)]
 mod tests_scene_dirty;
 #[cfg(test)]

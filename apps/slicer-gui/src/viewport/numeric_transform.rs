@@ -278,7 +278,11 @@ pub(crate) fn apply(query: &ObjectQuery<'_>, edit: NumericEdit) -> Option<Transf
     let (rmin, rmax) = world_box(query, reshaped_world)?;
     let now = anchor(rmin, rmax);
     let shift = [target[0] - now[0], target[1] - now[1], target[2] - now[2]];
-    let moved = AffineTransform3D::from_translation(shift).compose(&reshaped);
+    let mut moved = AffineTransform3D::from_translation(shift).compose(&reshaped);
+    if matches!(edit, NumericEdit::DropToPlate) {
+        // On the plate as the viewport draws it too, not a hair under (#422).
+        moved = sc_orient::drawn_no_lower_than(query.mesh(), &moved, 0.0);
+    }
     let inverse_parent = query.parent_world().inverse().ok()?;
     Some(inverse_parent.compose(&Transform3D::Affine(moved)))
 }

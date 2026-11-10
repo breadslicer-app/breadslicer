@@ -289,6 +289,23 @@ fn add_supports(shown: &Shown) {
     );
 }
 
+fn separate_supports(shown: &Shown) {
+    shown.manager.show_separate_supports(
+        "Werewolf Noble - Presupported".into(),
+        || InfoTexts {
+            heading: ctr!("SeparateSupportsDialog", "This file has supports"),
+            message: ctr!(
+                "SeparateSupportsDialog",
+                "1 model, {n} support and a raft. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model.",
+                "1 model, {n} supports and a raft. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model.",
+                644
+            ),
+            details: Default::default(),
+        },
+        |_| {},
+    );
+}
+
 fn recovery(shown: &Shown) {
     shown.manager.show_recovery(
         vec![
@@ -393,6 +410,11 @@ const CASES: &[Case] = &[
     Case {
         name: "agregar-soportes",
         show: add_supports,
+        primary: true,
+    },
+    Case {
+        name: "separar-soportes",
+        show: separate_supports,
         primary: true,
     },
     Case {

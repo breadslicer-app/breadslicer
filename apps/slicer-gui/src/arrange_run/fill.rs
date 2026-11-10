@@ -21,7 +21,8 @@
 //! in the plate plane ([`DfSupportSession::moved_in_plane`],
 //! [`DfSupportSession::turned_in_plane`], #119, #153) and drawn for the
 //! copy, which then has a set of its own, editable and saved as data
-//! (#197). Supports no session stands behind go along as they are.
+//! (#197). Supports no session stands behind, and those a pre-supported
+//! file came with (#259), go along as they are.
 //!
 //! The search and the copies' supports run on a worker, with the count so
 //! far on the card and Cancel. The copies land as one undoable edit; a
@@ -34,7 +35,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use sc_arrange::{Body, Filled, Placement, Plate, Settings};
-use sc_geom::df_supports::{DfSupportSession, model_from_world_mesh};
+use sc_geom::df_supports::{DfSupportSession, is_imported_supports, model_from_world_mesh};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::node::{LeafAttachment, LeafPayload, SceneMetadata};
@@ -372,14 +373,25 @@ fn gather_fill(document: &SceneDocument) -> Option<(Vec<Body>, Vec<Source>)> {
                     if !selected.contains(&model) {
                         return None;
                     }
-                    let set = follows.first().and_then(|&leaf| {
+                    let set = follows.iter().find_map(|&leaf| {
                         let drawn = in_force(spatial, &sessions, leaf)?;
                         Some((drawn.session, piece(leaf)?))
+                    });
+                    // The supports its file came with go along as they are
+                    // (#259).
+                    let imported = follows.iter().filter(|&&leaf| {
+                        spatial
+                            .leaf(leaf)
+                            .is_some_and(|q| is_imported_supports(q.mesh()))
                     });
                     Some(Source {
                         body,
                         model: piece(model)?,
-                        rigid: leaves[1..].iter().filter_map(|&l| piece(l)).collect(),
+                        rigid: leaves[1..]
+                            .iter()
+                            .chain(imported)
+                            .filter_map(|&l| piece(l))
+                            .collect(),
                         set,
                     })
                 })

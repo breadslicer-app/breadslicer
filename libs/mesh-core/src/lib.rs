@@ -21,6 +21,7 @@
 pub mod aabb;
 pub mod geometry;
 pub mod indexed_mesh;
+pub mod presupported;
 pub mod primitives;
 pub mod shells;
 pub mod transform;

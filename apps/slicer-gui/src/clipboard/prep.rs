@@ -24,6 +24,9 @@
 //! Everything is taken at copy time: a paste after the model was deleted,
 //! in another window, or after the model was edited again, pastes the model
 //! as it was copied. The copy and its supports land as one undo entry.
+//!
+//! The supports a pre-supported file came with (#259) go along as they are,
+//! at the model's height, as they follow it in the plate plane.
 
 use std::sync::Arc;
 
@@ -35,6 +38,7 @@ use sc_scene::{NodeId, SceneError};
 use sc_scene_edit::SceneFragment;
 
 use crate::hollow_run::Hollowed;
+use crate::imported_supports::imported_of;
 use crate::scene_document::SceneDocument;
 use crate::support_follow::moved_set;
 use crate::support_persist::{in_force, record, sets_of_model};
@@ -109,11 +113,13 @@ impl Prep {
                 ..Self::default()
             };
             let supports = sets_of_model(spatial, &sessions, model);
-            if supports.is_empty() {
+            // The supports its file came with go along as they are (#259).
+            let imported = imported_of(spatial, model, None);
+            if supports.is_empty() && imported.is_empty() {
                 return prep;
             }
             let mut reach = query.transformed_aabb(query.world_transform());
-            for leaf in supports {
+            for leaf in supports.into_iter().chain(imported) {
                 let (Some(support), Some(support_mesh)) =
                     (spatial.leaf(leaf), graph.leaf_mesh_arc(leaf))
                 else {

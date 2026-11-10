@@ -1764,8 +1764,39 @@ export component SupportsInspector inherits VerticalLayout {
     in-out property <bool> overhang-map-on;
     in property <string> overhang-map-limit;
     callback overhang-map-toggled(bool);
+    // The supports the selected model came with (#259): how many bodies they
+    // have, 0 for none, and the ways to be rid of them.
+    in property <int> imported-bodies;
+    callback remove-imported();
+    callback replace-imported();
 
     spacing: 12px;
+
+    if root.imported-bodies > 0: Card {
+        title: @tr("Inspector" => "IMPORTED SUPPORTS");
+
+        Note {
+            text: @tr("Inspector" => "This model came with its supports: {} bodies, raft included. They move with it; moving it up or down, tilting it or scaling it replaces them with supports made here.", root.imported-bodies);
+        }
+        ScButton {
+            text: @tr("Inspector" => "Replace with Breadslicer supports");
+            kind: ButtonKind.primary;
+            enabled: !root.running;
+            clicked => {
+                root.replace-imported();
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Remove imported supports");
+            enabled: !root.running;
+            clicked => {
+                root.remove-imported();
+            }
+        }
+        Note {
+            text: @tr("Inspector" => "With Remove, a click takes off one body of them.");
+        }
+    }
 
     if root.raft-clash-message != "": Card {
         title: @tr("Inspector" => "RAFT");

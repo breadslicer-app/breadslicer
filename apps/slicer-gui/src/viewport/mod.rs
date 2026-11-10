@@ -18,7 +18,7 @@ mod input_state;
 mod keyboard_drive;
 mod modal_transform;
 pub(crate) mod numeric_transform;
-mod object_list;
+pub(crate) mod object_list;
 mod orbit_pivot;
 mod performance_probe;
 mod render_host;

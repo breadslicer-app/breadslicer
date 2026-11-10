@@ -281,6 +281,11 @@ export component MainWindow inherits Window {
     callback support-hide-rafts-under-plate-toggled(bool);
     in property <bool> support-lines-under-plate;
     callback support-lines-under-plate-toggled(bool);
+    // The Supports tab's IMPORTED SUPPORTS card (#259): the bodies of the
+    // selected model's imported supports, 0 for none.
+    in property <int> imported-support-bodies;
+    callback imported-supports-remove-requested();
+    callback imported-supports-replace-requested();
     callback support-raft-off-requested();
     callback support-raft-ignore-requested();
     // The Supports tab manual tool: 0 none, 1 add a support where the model
@@ -2135,6 +2140,13 @@ export component MainWindow inherits Window {
                                 lines-under-plate: root.support-lines-under-plate;
                                 lines-under-plate-toggled(on) => {
                                     root.support-lines-under-plate-toggled(on);
+                                }
+                                imported-bodies: root.imported-support-bodies;
+                                remove-imported => {
+                                    root.imported-supports-remove-requested();
+                                }
+                                replace-imported => {
+                                    root.imported-supports-replace-requested();
                                 }
                                 raft-lift => {
                                     root.support-raft-lift-requested();

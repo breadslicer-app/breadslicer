@@ -144,6 +144,8 @@ pub(crate) enum MessageKey {
     SupportStructuresGenerated,
     /// Transform tab: the summary of a mesh repair.
     MeshRepairSummary,
+    /// A file whose supports are fused into its model (#258).
+    FusedSupports,
 }
 
 impl MessageKey {
@@ -156,6 +158,7 @@ impl MessageKey {
             Self::SupportsRegeneratedHandEdits => "supports.regenerated-hand-edits",
             Self::SupportStructuresGenerated => "support-structures.generated",
             Self::MeshRepairSummary => "repair.summary",
+            Self::FusedSupports => "import.fused-supports",
         }
     }
 }
@@ -207,6 +210,13 @@ enum Entry {
         build_texts: Box<dyn Fn() -> InfoTexts>,
         on_yes: Box<dyn FnOnce()>,
     },
+    /// A file that came with its supports (#258): separate them from the
+    /// model?
+    SeparateSupports {
+        build_texts: Box<dyn Fn() -> InfoTexts>,
+        context: SharedString,
+        on_choice: Box<dyn FnOnce(bool)>,
+    },
     Recovery {
         /// 1 line per scene.
         scenes: SharedString,
@@ -233,6 +243,7 @@ impl Entry {
             | Self::SceneChange { .. }
             | Self::SliceOverwrite { .. }
             | Self::AddSupports { .. }
+            | Self::SeparateSupports { .. }
             | Self::Recovery { .. } => MessageClass::MustAnswer,
         }
     }
@@ -315,6 +326,17 @@ impl Entry {
                 message.heading = texts.heading;
                 message.text = texts.message;
             }
+            Self::SeparateSupports {
+                build_texts,
+                context,
+                ..
+            } => {
+                let texts = build_texts();
+                message.kind = MessageKind::SeparateSupports;
+                message.heading = texts.heading;
+                message.text = texts.message;
+                message.context = context.clone();
+            }
             Self::Diagnostics { has_scene, .. } => {
                 message.kind = MessageKind::Diagnostics;
                 message.has_scene = *has_scene;
@@ -375,6 +397,10 @@ impl Entry {
                 if answer == MessageAnswer::Confirm {
                     on_yes();
                 }
+            }
+            Self::SeparateSupports { on_choice, .. } => {
+                // Anything but Separate leaves the file as it came.
+                on_choice(answer == MessageAnswer::Confirm);
             }
             Self::Diagnostics {
                 has_scene, on_save, ..
@@ -741,6 +767,26 @@ impl DialogManager {
         self.enqueue(Entry::AddSupports {
             build_texts: Box::new(build_texts),
             on_yes: Box::new(on_yes),
+        });
+    }
+
+    /// Asks whether to separate the supports a file came with from its model
+    /// (#258), about the object `context` names. Calls `on_choice` once,
+    /// with `true` for Separate (also Enter) and `false` for Leave as is
+    /// and Escape, which leave the file as it came. One question per
+    /// object: several files asked about wait in turn. Must run on the
+    /// Slint UI thread.
+    pub(crate) fn show_separate_supports(
+        self: &Rc<Self>,
+        context: SharedString,
+        build_texts: impl Fn() -> InfoTexts + 'static,
+        on_choice: impl FnOnce(bool) + 'static,
+    ) {
+        crate::breadcrumbs::note(&format!("message: {}", build_texts().heading));
+        self.enqueue(Entry::SeparateSupports {
+            build_texts: Box::new(build_texts),
+            context,
+            on_choice: Box::new(on_choice),
         });
     }
 

@@ -6554,3 +6554,111 @@ msgstr ""
 msgctxt "Review"
 msgid "A tip ends {} layers below it."
 msgstr "Una punta termina {} capas debajo."
+
+#: src/presupported_import.rs
+msgctxt "SeparateSupportsDialog"
+msgid "This file has supports"
+msgstr "Este archivo trae soportes"
+
+#: src/presupported_import.rs
+msgctxt "SeparateSupportsDialog"
+msgid "1 model, {n} support and a raft. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model."
+msgid_plural "1 model, {n} supports and a raft. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model."
+msgstr[0] "1 modelo, {n} soporte y una balsa. ¿Separarlos? Los soportes pasan a un objeto propio: Breadslicer no les pone soportes de nuevo y se mueven con el modelo."
+msgstr[1] "1 modelo, {n} soportes y una balsa. ¿Separarlos? Los soportes pasan a un objeto propio: Breadslicer no les pone soportes de nuevo y se mueven con el modelo."
+
+#: src/presupported_import.rs
+msgctxt "SeparateSupportsDialog"
+msgid "1 model and {n} support. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model."
+msgid_plural "1 model and {n} supports. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model."
+msgstr[0] "1 modelo y {n} soporte. ¿Separarlos? Los soportes pasan a un objeto propio: Breadslicer no les pone soportes de nuevo y se mueven con el modelo."
+msgstr[1] "1 modelo y {n} soportes. ¿Separarlos? Los soportes pasan a un objeto propio: Breadslicer no les pone soportes de nuevo y se mueven con el modelo."
+
+#: src/presupported_import.rs
+msgctxt "SeparateSupportsDialog"
+msgid "Supports fused into the model"
+msgstr "Soportes fundidos con el modelo"
+
+#: src/presupported_import.rs
+msgctxt "SeparateSupportsDialog"
+msgid "The supports of this file are fused with the model and cannot be separated. Breadslicer takes the whole file as one model."
+msgstr "Los soportes de este archivo están fundidos con el modelo y no se pueden separar. Breadslicer toma todo el archivo como un solo modelo."
+
+#: src/presupported_import.rs
+msgctxt "SeparateSupportsDialog"
+msgid "Breadslicer already made supports for this object, so its imported supports are not separated. Undo the supports made here to separate them."
+msgstr "Breadslicer ya le hizo soportes a este objeto, así que sus soportes importados no se separan. Deshacé los soportes hechos acá para separarlos."
+
+#: src/presupported_import.rs
+msgctxt "SeparateSupportsDialog"
+msgid "Separated: the model and its imported supports."
+msgstr "Separados: el modelo y sus soportes importados."
+
+#: src/presupported_import.rs
+msgctxt "SeparateSupportsDialog"
+msgid "Imported supports removed; generating supports for the model."
+msgstr "Soportes importados quitados; generando soportes para el modelo."
+
+#: src/presupported_import.rs
+msgctxt "SeparateSupportsDialog"
+msgid "Imported supports removed."
+msgstr "Soportes importados quitados."
+
+#: ui/message-layer.slint
+msgctxt "SeparateSupportsDialog"
+msgid "Leave as is"
+msgstr "Dejar como está"
+
+#: ui/message-layer.slint
+msgctxt "SeparateSupportsDialog"
+msgid "Separate"
+msgstr "Separar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "IMPORTED SUPPORTS"
+msgstr "SOPORTES IMPORTADOS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "This model came with its supports: {} bodies, raft included. They move with it; moving it up or down, tilting it or scaling it replaces them with supports made here."
+msgstr "Este modelo vino con sus soportes: {} cuerpos, balsa incluida. Se mueven con él; subirlo o bajarlo, inclinarlo o escalarlo los reemplaza por soportes hechos acá."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Replace with Breadslicer supports"
+msgstr "Reemplazar por soportes de Breadslicer"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Remove imported supports"
+msgstr "Quitar soportes importados"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "With Remove, a click takes off one body of them."
+msgstr "Con Quitar, un clic saca uno de sus cuerpos."
+
+#: src/viewport/object_list.rs
+msgctxt "ObjectList"
+msgid "Imported supports"
+msgstr "Soportes importados"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "A click removes this body of the imported supports."
+msgstr "Un clic quita este cuerpo de los soportes importados."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "Removed {n} body of the imported supports."
+msgid_plural "Removed {n} bodies of the imported supports."
+msgstr[0] "Se quitó {n} cuerpo de los soportes importados."
+msgstr[1] "Se quitaron {n} cuerpos de los soportes importados."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "Bodies of the imported supports to remove: {}."
+msgstr "Cuerpos de los soportes importados a quitar: {}."

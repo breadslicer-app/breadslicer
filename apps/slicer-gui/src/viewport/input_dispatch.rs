@@ -545,7 +545,7 @@ pub(super) fn shows_supports(spatial: &SceneSpatial, id: NodeId) -> bool {
     spatial
         .graph()
         .leaf_mesh_arc(id)
-        .is_some_and(|mesh| sc_geom::df_supports::is_support_mesh(mesh))
+        .is_some_and(|mesh| sc_geom::df_supports::is_any_support_mesh(mesh))
 }
 
 /// The leaf a click along `ray` selects. The supports are selected only

@@ -71,6 +71,23 @@ pub fn is_support_mesh(mesh: &IndexedMesh) -> bool {
         .is_some_and(is_support_mesh_name)
 }
 
+pub use sc_mesh_core::presupported::{
+    IMPORTED_SUPPORTS_NAME, is_imported_supports, is_imported_supports_name,
+};
+
+/// Whether a mesh named `name` is supports of any kind: generated here, or
+/// imported with a pre-supported file (#258).
+pub fn is_any_support_mesh_name(name: &str) -> bool {
+    is_support_mesh_name(name) || is_imported_supports_name(name)
+}
+
+/// Whether `mesh` is supports of any kind: generated here, or imported with
+/// a pre-supported file (#258). Neither is a model: a run supports neither,
+/// and neither is hollowed, oriented or arranged on its own.
+pub fn is_any_support_mesh(mesh: &IndexedMesh) -> bool {
+    is_support_mesh(mesh) || is_imported_supports(mesh)
+}
+
 /// What the run is asked for.
 #[derive(Debug, Clone)]
 pub struct DfSupportRequest {
@@ -165,10 +182,10 @@ impl DfSupportOutcome {
     }
 }
 
-/// Whether a run takes the mesh of a leaf as a model: it is not supports
-/// this crate made, and not empty.
+/// Whether a run takes the mesh of a leaf as a model: it is not supports,
+/// made here or imported, and not empty.
 fn is_model_mesh(mesh: &IndexedMesh) -> bool {
-    !is_support_mesh(mesh) && !mesh.faces().is_empty()
+    !is_any_support_mesh(mesh) && !mesh.faces().is_empty()
 }
 
 /// One model per mesh leaf, baked to world space; previous DragonFruit

@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use sc_arrange::{Body, Outcome, Part, Plate, Settings};
-use sc_geom::df_supports::is_support_mesh;
+use sc_geom::df_supports::is_any_support_mesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
 use sc_scene_edit::SceneEdit;
@@ -423,7 +423,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             let Some(query) = spatial.leaf(leaf) else {
                 continue;
             };
-            if is_support_mesh(query.mesh()) {
+            if is_any_support_mesh(query.mesh()) {
                 continue;
             }
             let Some(part) = part(leaf) else {
@@ -442,20 +442,29 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             let Some(query) = spatial.leaf(leaf) else {
                 continue;
             };
-            if !is_support_mesh(query.mesh()) {
+            if !is_any_support_mesh(query.mesh()) {
                 continue;
             }
             let Some(support) = part(leaf) else {
                 continue;
             };
-            let model = model_of(&sessions, leaf);
+            // The supports a model came with (#259) belong to the model
+            // they stand under.
+            let imported = sc_geom::df_supports::is_imported_supports(query.mesh());
+            let model = if imported {
+                crate::imported_supports::owner_of(spatial, leaf, None)
+            } else {
+                model_of(&sessions, leaf)
+            };
             match model.and_then(|m| body_of.get(&m).copied()) {
                 Some(i) => {
                     gathered.bodies[i].parts.push(support);
-                    // A set in force is redrawn where its model goes;
-                    // any other moves with it as it is.
-                    let follows = in_force(spatial, &sessions, leaf)
-                        .is_some_and(|drawn| Some(drawn.model) == model);
+                    // A set in force is redrawn where its model goes, and
+                    // imported supports follow it; any other moves with it
+                    // as it is.
+                    let follows = imported
+                        || in_force(spatial, &sessions, leaf)
+                            .is_some_and(|drawn| Some(drawn.model) == model);
                     if follows {
                         gathered.follows[i].push(leaf);
                     } else {

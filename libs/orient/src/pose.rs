@@ -157,5 +157,45 @@ pub fn turned_about_footprint(
         (lo0[1] + hi0[1] - lo1[1] - hi1[1]) / 2.0,
         lo0[2] - lo1[2],
     ];
-    AffineTransform3D::from_translation(shift).compose(&turned)
+    drawn_no_lower_than(
+        mesh,
+        &AffineTransform3D::from_translation(shift).compose(&turned),
+        lo0[2],
+    )
+}
+
+/// The lowest point of `mesh` under `world` as the viewport draws it: in
+/// f32, with the matrix cast to f32 and the GPU's order of operations
+/// (glam's `Mat4::transform_point3`).
+pub fn drawn_lowest(mesh: &IndexedMesh, world: &AffineTransform3D) -> f32 {
+    let (l, t) = (world.linear(), world.translation());
+    let (a, b, c, d) = (l[2][0] as f32, l[2][1] as f32, l[2][2] as f32, t[2] as f32);
+    mesh.vertices()
+        .iter()
+        .map(|v| {
+            let [x, y, z] = v.coords();
+            ((a * x + b * y) + c * z) + d
+        })
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// `world`, raised by the least that draws `mesh` no lower than `floor`
+/// (mm): a pose that rests on the plate in f64 can be drawn a few nanometres
+/// under it in f32, where the plate shows the model through itself and the
+/// envelope check reads it as below the plate.
+pub fn drawn_no_lower_than(
+    mesh: &IndexedMesh,
+    world: &AffineTransform3D,
+    floor: f64,
+) -> AffineTransform3D {
+    let mut lifted = *world;
+    for _ in 0..8 {
+        let low = drawn_lowest(mesh, &lifted);
+        if !low.is_finite() || low >= floor as f32 {
+            return lifted;
+        }
+        let gap = f64::from(floor as f32 - low).max(1e-7);
+        lifted = AffineTransform3D::from_translation([0.0, 0.0, gap]).compose(&lifted);
+    }
+    lifted
 }

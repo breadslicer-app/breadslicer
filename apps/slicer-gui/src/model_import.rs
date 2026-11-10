@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use sc_arrange::{Body, Part, Placement, Plate, Settings};
-use sc_geom::df_supports::is_support_mesh;
+use sc_geom::df_supports::is_any_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_formats::messages::LoadMeshWarning;
@@ -514,7 +514,7 @@ fn standing_of(scene: &Scene) -> Vec<Body> {
         .filter_map(|id| {
             let mesh = scene.leaf_mesh_arc(id)?.clone();
             let world = world_of(scene, id)?;
-            Some((is_support_mesh(&mesh), Part { mesh, world }))
+            Some((is_any_support_mesh(&mesh), Part { mesh, world }))
         })
         .collect();
     let (supports, models): (Vec<_>, Vec<_>) = parts.into_iter().partition(|(s, _)| *s);
@@ -537,7 +537,7 @@ fn model_leaves(scene: &Scene) -> Vec<NodeId> {
         .filter(|&id| {
             scene
                 .leaf_mesh_arc(id)
-                .is_some_and(|mesh| !mesh.faces.is_empty() && !is_support_mesh(mesh))
+                .is_some_and(|mesh| !mesh.faces.is_empty() && !is_any_support_mesh(mesh))
         })
         .collect()
 }

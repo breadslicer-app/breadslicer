@@ -52,7 +52,7 @@ pub fn set_smooth_models(on: bool) {
 }
 
 fn is_support(mesh: &IndexedMesh) -> bool {
-    sc_geom::df_supports::is_support_mesh(mesh)
+    sc_geom::df_supports::is_any_support_mesh(mesh)
 }
 
 /// Whether `mesh` is drawn smooth: supports always, models by preference.
