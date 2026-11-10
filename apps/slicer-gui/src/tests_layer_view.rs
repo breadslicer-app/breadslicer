@@ -566,3 +566,68 @@ fn the_pane_pictures_are_written_when_asked() {
         }
     });
 }
+
+/// The layer the slider shows.
+fn shown_layer(ui: &MainWindow) -> i32 {
+    ui.get_selected_layer_index().round() as i32
+}
+
+/// Up, Down, Home and End walk the layers of the Slice tab (#501) wherever
+/// the focus is, before anything is clicked, on the view and on the slider,
+/// but not in a text field, and not in another tab.
+#[test]
+fn the_layer_keys_walk_the_layers_wherever_the_focus_is() {
+    on_fresh_slint_thread(|| {
+        let ui = sliced_window(SIZES[0]);
+        let _keys = crate::layer_keys::LayerKeys::install(&ui);
+        let told = Rc::new(RefCell::new(0));
+        ui.on_selected_layer_changed({
+            let told = told.clone();
+            move || *told.borrow_mut() += 1
+        });
+        // Nothing clicked yet.
+        assert_eq!(shown_layer(&ui), 1127);
+        key(&ui, Key::DownArrow);
+        assert_eq!(shown_layer(&ui), 1126);
+        assert_eq!(*told.borrow(), 1, "the app is told");
+        key(&ui, Key::Home);
+        assert_eq!(shown_layer(&ui), 0);
+        key(&ui, Key::UpArrow);
+        assert_eq!(shown_layer(&ui), 1);
+        key(&ui, Key::End);
+        assert_eq!(shown_layer(&ui), 1127);
+        key(&ui, Key::UpArrow);
+        assert_eq!(shown_layer(&ui), 1127, "nothing above the last");
+
+        // On the view.
+        click(&ui, &element(&ui, "MainWindow::mv"));
+        key(&ui, Key::DownArrow);
+        assert_eq!(shown_layer(&ui), 1126);
+
+        // On the slider: one layer a press, as anywhere else.
+        let slider = ElementHandle::find_by_element_type_name(&ui, "Slider")
+            .next()
+            .expect("the Slice tab has the layer slider");
+        click(&ui, &slider);
+        let at = shown_layer(&ui);
+        key(&ui, Key::UpArrow);
+        assert_eq!(shown_layer(&ui), at + 1);
+
+        // A text field keeps its keys.
+        let field = ElementHandle::find_by_element_type_name(&ui, "LineEdit")
+            .next()
+            .expect("the Slice tab has a text field");
+        click(&ui, &field);
+        let at = shown_layer(&ui);
+        key(&ui, Key::DownArrow);
+        key(&ui, Key::Home);
+        assert_eq!(shown_layer(&ui), at, "the field took them");
+
+        // Another tab leaves the keys to the view.
+        ui.set_workspace_section(WorkspaceSection::Supports);
+        render_frames();
+        click(&ui, &element(&ui, "MainWindow::mv"));
+        key(&ui, Key::DownArrow);
+        assert_eq!(shown_layer(&ui), at);
+    });
+}

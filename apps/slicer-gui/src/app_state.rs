@@ -234,6 +234,8 @@ struct WindowDrivers {
     _orient_run: Rc<OrientRun>,
     /// Asks about the supports a file came with (#258).
     _presupported_import: Rc<crate::presupported_import::PresupportedImport>,
+    /// The Slice tab's layer keys (#501).
+    _layer_keys: Rc<crate::layer_keys::LayerKeys>,
     /// The Tools > "Generate Support (trivial for test)" action driver. Held so
     /// its Slint callbacks live as long as the window.
     _support_gen_run: Rc<GenSupportRun>,
@@ -791,10 +793,12 @@ impl AppState {
             ctrl.document(),
             ctrl.dialogs(),
         );
+        let layer_keys = crate::layer_keys::LayerKeys::install(ui);
         WindowDrivers {
             _hollow_run: hollow_run,
             _split_bodies: split_bodies,
             _presupported_import: presupported_import,
+            _layer_keys: layer_keys,
             _slice_panel: slice_panel,
             _slice_run: slice_run,
             _review_panel: review_panel,
