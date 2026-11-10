@@ -127,6 +127,8 @@ mod tests_start_dialog;
 mod tests_surface_paint;
 #[cfg(test)]
 mod tests_tab_translations;
+#[cfg(test)]
+mod tests_ui_inventory;
 mod ui_language;
 mod viewport;
 mod window_icon;
