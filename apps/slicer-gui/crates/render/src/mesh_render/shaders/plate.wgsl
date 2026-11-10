@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-// Plate pipeline: renders the 3D plate slab (top face inside the
-// build envelope is the grid floor, the rounded outer ring is plain
-// border colour, sides are a darker shade, bottom is translucent
+// Plate pipeline: renders the plate (top face inside the build envelope
+// is the grid floor, the rounded outer ring carries the rulers and is the
+// background's shade, as are the sides; the bottom is translucent
 // so the cage and any meshes show through when the camera looks up
 // from below) plus the build-volume cage edges, plus 5 invisible
 // envelope-wall quads that turn into diagonal red stripes when the
@@ -65,46 +65,140 @@ fn vs_main(in: VsIn) -> VsOut {
 }
 
 // Colours are Breadslicer's theme tokens (`ui/kit/theme.slint`, dark),
-// written as-is: the viewport target is not sRGB-encoded.
-// Floor: `raised` #272b2e, grid lines: `border` #383e42.
-const FLOOR_BASE: vec3<f32> = vec3<f32>(0.153, 0.169, 0.180);
-const FLOOR_GRID: vec3<f32> = vec3<f32>(0.220, 0.243, 0.259);
-// Cage edges: `border-strong` #545c62.
-const CAGE_COLOUR: vec3<f32> = vec3<f32>(0.329, 0.361, 0.384);
-// Plate top border (outer rounded ring): `border-soft` #2c3135, a
-// shade lighter than the floor, so the build area reads as set into
-// a rim without a hard separator.
-const PLATE_TOP_BORDER_COLOUR: vec3<f32> = vec3<f32>(0.173, 0.192, 0.208);
-// Plate sides: `well` #16181a, darker so the slab fakes 3D depth
-// without a lighting model.
-const PLATE_SIDE_COLOUR: vec3<f32> = vec3<f32>(0.086, 0.094, 0.102);
+// written as-is: the viewport target is not sRGB-encoded. The plate is
+// drawn as a technical plan (#507): a floor a shade off the background, a
+// fine grid, millimetre rulers along the front and left edges, and the
+// build volume as dashed uprights with brackets at its top corners.
+// Floor: a shade over `ground` #111315.
+const FLOOR_BASE: vec3<f32> = vec3<f32>(0.078, 0.090, 0.102);
+// The 10 mm grid, #1f2428, and every 50 mm, #31393f.
+const FLOOR_GRID: vec3<f32> = vec3<f32>(0.122, 0.141, 0.157);
+const FLOOR_GRID_MAJOR: vec3<f32> = vec3<f32>(0.192, 0.224, 0.247);
+// The floor's outline, `border-strong` #3c454d.
+const FLOOR_EDGE: vec3<f32> = vec3<f32>(0.235, 0.271, 0.302);
+// Cage lines and brackets: `text-muted` #8b959d.
+const CAGE_COLOUR: vec3<f32> = vec3<f32>(0.545, 0.584, 0.616);
+// The rim around the floor and the plate's sides: the background, so the
+// plate reads as a drawing on the ground rather than a slab. One shade off,
+// so what stands behind it still tells the two apart.
+const PLATE_TOP_BORDER_COLOUR: vec3<f32> = vec3<f32>(0.071, 0.079, 0.086);
+const PLATE_SIDE_COLOUR: vec3<f32> = vec3<f32>(0.071, 0.079, 0.086);
+// The ruler's ticks, `text-soft` #c2c9cf dimmed.
+const RULER_TICK: vec3<f32> = vec3<f32>(0.545, 0.584, 0.616);
 // Bottom face: same hue as the sides, but emitted with alpha < 1
 // so the alpha-blending pipeline mixes it over whatever was in the
 // framebuffer when the camera looks up from below.
 const PLATE_BOTTOM_ALPHA: f32 = 0.45;
 
-// Major grid spacing: 10 mm. Single set of lines, moderate intensity.
+// Grid spacing: 10 mm, with every fifth line stronger. Measured from the
+// plate's front-left corner, as the rulers are.
 const GRID_SPACING_MM: f32 = 10.0;
+const GRID_MAJOR_EVERY: f32 = 5.0;
 
-// Half-width of a grid line in millimetres. Together with the
-// fwidth-based anti-aliasing below, this gives a roughly 1 mm-wide
-// line at world scale, which appears as a thin stripe at default
-// zoom and stays readable as the camera dollies in or out.
-const GRID_LINE_HALF_WIDTH_MM: f32 = 0.5;
+// Ruler ticks, outward from the floor's edge: every 10 mm, longer every
+// 50 mm.
+const TICK_MM: f32 = 1.4;
+const TICK_MAJOR_MM: f32 = 3.0;
+
+// How far the brackets at the top of the volume reach along each edge, mm.
+const BRACKET_MM: f32 = 14.0;
+// The dashes of the volume's uprights: their period and how much of it is
+// drawn, mm.
+const DASH_PERIOD_MM: f32 = 6.0;
+const DASH_ON_MM: f32 = 2.0;
+
+// Coverage of a line `dist` mm from its middle, a pixel wide whatever the
+// zoom: `aa` is the fragment's millimetres per pixel.
+fn hairline(dist: f32, aa: f32, pixels: f32) -> f32 {
+    return clamp(0.5 * pixels + 0.5 - dist / aa, 0.0, 1.0);
+}
+
+// Distance to the nearest multiple of `step` from `x`.
+fn to_step(x: f32, step: f32) -> f32 {
+    let f = fract(x / step);
+    return min(f, 1.0 - f) * step;
+}
 
 fn floor_colour(world_xy: vec2<f32>) -> vec3<f32> {
-    // Distance to the nearest grid line on each axis, in millimetres.
-    // `fract(x / S) * S` is in `[0, S)`; `min(d, S - d)` folds it to
-    // `[0, S/2]`, the distance to whichever neighbour line is closer.
-    let coord = world_xy / GRID_SPACING_MM;
-    let folded = abs(fract(coord) - 0.5) - 0.5;
-    let dist_mm = min(abs(folded.x), abs(folded.y)) * GRID_SPACING_MM;
-    // Screen-space derivative gives a per-fragment mm-per-pixel
-    // estimate; widening the line by it keeps the apparent thickness
-    // stable as the camera moves.
+    let lo = u.env_min.xy;
+    let hi = u.env_max.xy;
+    let local = world_xy - lo;
     let aa = max(fwidth(world_xy.x), fwidth(world_xy.y));
-    let line_intensity = 1.0 - smoothstep(GRID_LINE_HALF_WIDTH_MM, GRID_LINE_HALF_WIDTH_MM + aa, dist_mm);
-    return mix(FLOOR_BASE, FLOOR_GRID, line_intensity);
+    let major_step = GRID_SPACING_MM * GRID_MAJOR_EVERY;
+    let minor = max(
+        hairline(to_step(local.x, GRID_SPACING_MM), aa, 1.0),
+        hairline(to_step(local.y, GRID_SPACING_MM), aa, 1.0),
+    );
+    let major = max(
+        hairline(to_step(local.x, major_step), aa, 1.2),
+        hairline(to_step(local.y, major_step), aa, 1.2),
+    );
+    // Far from the camera the minor lines would turn the floor into a
+    // haze: they fade out once they come closer than 4 px apart.
+    let minor_shown = minor * (1.0 - smoothstep(GRID_SPACING_MM / 8.0, GRID_SPACING_MM / 4.0, aa));
+    var colour = mix(FLOOR_BASE, FLOOR_GRID, minor_shown);
+    colour = mix(colour, FLOOR_GRID_MAJOR, major);
+    let edge = min(min(world_xy.x - lo.x, hi.x - world_xy.x), min(world_xy.y - lo.y, hi.y - world_xy.y));
+    return mix(colour, FLOOR_EDGE, hairline(edge, aa, 1.5));
+}
+
+// The rim around the floor, with the rulers' ticks on its front and left
+// sides: counted from the front-left corner, every 10 mm.
+fn rim_colour(world_xy: vec2<f32>) -> vec3<f32> {
+    let lo = u.env_min.xy;
+    let hi = u.env_max.xy;
+    let aa = max(fwidth(world_xy.x), fwidth(world_xy.y));
+    let local = world_xy - lo;
+    var tick = 0.0;
+    // Front: below the floor, along X.
+    let out_front = lo.y - world_xy.y;
+    if local.x >= -aa && world_xy.x <= hi.x + aa && out_front >= 0.0 {
+        let major = to_step(local.x, GRID_SPACING_MM * GRID_MAJOR_EVERY) < GRID_SPACING_MM * 0.5;
+        let reach = select(TICK_MM, TICK_MAJOR_MM, major);
+        if out_front <= reach {
+            tick = max(tick, hairline(to_step(local.x, GRID_SPACING_MM), aa, 1.0));
+        }
+    }
+    // Left: beside the floor, along Y.
+    let out_left = lo.x - world_xy.x;
+    if local.y >= -aa && world_xy.y <= hi.y + aa && out_left >= 0.0 {
+        let major = to_step(local.y, GRID_SPACING_MM * GRID_MAJOR_EVERY) < GRID_SPACING_MM * 0.5;
+        let reach = select(TICK_MM, TICK_MAJOR_MM, major);
+        if out_left <= reach {
+            tick = max(tick, hairline(to_step(local.y, GRID_SPACING_MM), aa, 1.0));
+        }
+    }
+    return mix(PLATE_TOP_BORDER_COLOUR, RULER_TICK, tick);
+}
+
+// How much of a cage fragment shows: the edges round the floor whole, the
+// uprights dashed, and along the top only brackets at the corners and a
+// faint line between them.
+fn cage_alpha(p: vec3<f32>) -> f32 {
+    let lo = u.env_min.xyz;
+    let hi = u.env_max.xyz;
+    let height = hi.z - lo.z;
+    let along_x = min(abs(p.x - lo.x), abs(p.x - hi.x));
+    let along_y = min(abs(p.y - lo.y), abs(p.y - hi.y));
+    let up = p.z - lo.z;
+    if up < 0.01 * height {
+        return 1.0;
+    }
+    if up > 0.99 * height {
+        // On a top edge one of the two distances is 0; the other is how
+        // far along the edge from its nearest corner.
+        if max(along_x, along_y) <= BRACKET_MM {
+            return 1.0;
+        }
+        return 0.18;
+    }
+    if height - up <= BRACKET_MM {
+        return 1.0;
+    }
+    if fract(up / DASH_PERIOD_MM) * DASH_PERIOD_MM < DASH_ON_MM {
+        return 0.55;
+    }
+    return 0.0;
 }
 
 // Warning-wall palette and pattern. Diagonal stripes in world-space
@@ -166,7 +260,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         return plate_face(grid, 1.0);
     }
     if in.kind == 2u {
-        return plate_face(PLATE_TOP_BORDER_COLOUR, 1.0);
+        return plate_face(rim_colour(in.world_pos.xy), 1.0);
     }
     if in.kind == 3u {
         return plate_face(PLATE_SIDE_COLOUR, 1.0);
@@ -190,5 +284,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         }
         return vec4<f32>(WALL_WARNING_COLOUR, WALL_STRIPE_ALPHA);
     }
-    return vec4<f32>(CAGE_COLOUR, 1.0);
+    let shown = cage_alpha(in.world_pos);
+    if shown <= 0.0 {
+        discard;
+    }
+    return vec4<f32>(CAGE_COLOUR, shown);
 }

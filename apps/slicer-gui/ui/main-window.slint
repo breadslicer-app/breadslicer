@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, Palette, ScrollView, Slider } from "std-widgets.slint";
+import { Button, Palette, ScrollView } from "std-widgets.slint";
 import { ScProgress as ProgressIndicator } from "./kit/controls.slint";
 import { AboutWindow } from "about-window.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
-import { Icon, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
+import { Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
 import { ExportInspector, HollowInspector, OrientCard, OrientOption, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
@@ -1759,19 +1759,16 @@ export component MainWindow inherits Window {
                     // the Slice tab; disabled until a slice exists. Its value is
                     // the selected layer index, the top layer at the top.
                     if root.has-scene && root.workspace-section == WorkspaceSection.Slice: Rectangle {
-                        x: parent.width - self.width - 12px;
+                        x: parent.width - self.width - 8px;
                         y: 48px;
-                        width: 32px;
+                        width: 76px;
                         height: parent.height - 96px;
 
-                        Slider {
+                        LayerRuler {
                             width: parent.width;
                             height: parent.height;
-                            orientation: Orientation.vertical;
                             enabled: root.slice-layer-count > 0;
-                            minimum: 0;
-                            maximum: Math.max(0, root.slice-layer-count - 1);
-                            step: 1;
+                            count: root.slice-layer-count;
                             value <=> root.selected-layer-index;
                             changed(v) => {
                                 root.selected-layer-changed();

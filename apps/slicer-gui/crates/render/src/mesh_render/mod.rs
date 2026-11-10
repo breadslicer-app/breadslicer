@@ -14,7 +14,7 @@ use slint::wgpu_30::wgpu;
 
 use crate::build_volume::BuildVolume;
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
-use crate::front_label::LabelRaster;
+use crate::front_label::{LabelRaster, MarksRaster};
 use crate::slice_cap::CapRaster;
 
 mod device_loss;
@@ -227,6 +227,8 @@ struct Pipelines {
     /// The plate-label pipeline, immutable after construction.
     label: LabelPipeline,
     label_state: LabelState,
+    /// The numbers along the plate's rulers (#507): their raster and quads.
+    marks_state: MarksState,
     /// The paint and brush-ring pipelines, immutable after construction.
     surface_paint: SurfacePaintPipeline,
     /// Cached plate geometry for the current `BuildVolume`. `None` until the
@@ -260,6 +262,7 @@ impl Pipelines {
             cap_state: CapState::Off,
             label,
             label_state: LabelState::Off,
+            marks_state: MarksState::Off,
             surface_paint,
             plate_buffers: None,
         })
@@ -317,6 +320,29 @@ impl LabelState {
         match self {
             Self::Shown { tab, .. } => Some(*tab),
             Self::Off | Self::Refused { .. } => None,
+        }
+    }
+}
+
+/// The rulers' numbers as uploaded, for the plate they were laid out on.
+enum MarksState {
+    Off,
+    Shown {
+        key: u64,
+        bind_group: wgpu::BindGroup,
+        vertices: wgpu::Buffer,
+        count: u32,
+    },
+    Refused {
+        key: u64,
+    },
+}
+
+impl MarksState {
+    fn key(&self) -> Option<u64> {
+        match self {
+            Self::Off => None,
+            Self::Shown { key, .. } | Self::Refused { key } => Some(*key),
         }
     }
 }
@@ -726,6 +752,68 @@ impl Renderer {
             Err(err) => {
                 self.pipelines.label_state = LabelState::Refused { key };
                 Err(err)
+            }
+        }
+    }
+
+    /// Refresh the numbers along the plate's rulers for the plate `key`
+    /// names. `build` lays them out only when `key` changes.
+    pub(crate) fn update_plate_marks(
+        &mut self,
+        key: u64,
+        build: &mut dyn FnMut() -> Option<MarksRaster>,
+    ) -> Result<(), RenderError> {
+        if self.pipelines.marks_state.key() == Some(key) {
+            return Ok(());
+        }
+        if self.core.device_loss.is_lost() {
+            return Err(RenderError::DeviceLost);
+        }
+        let Some(raster) = build() else {
+            self.pipelines.marks_state = MarksState::Off;
+            return Ok(());
+        };
+        let quads: Vec<pipelines::label::LabelVertex> = raster
+            .marks
+            .iter()
+            .flat_map(|mark| pipelines::label::mark_quad(mark.world, mark.uv))
+            .collect();
+        let uploaded = scoped(&self.core.device, || {
+            let bind_group = self.coverage_bind_group(
+                "plate marks",
+                wgpu::TextureFormat::Rg8Unorm,
+                &raster.coverage,
+                raster.width,
+                raster.height,
+                &self.pipelines.label.texture_bind_group_layout,
+                &self.pipelines.label.sampler,
+            );
+            let vertices = wgpu::util::DeviceExt::create_buffer_init(
+                &self.core.device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("mesh-viewer plate marks vbo"),
+                    contents: bytemuck::cast_slice(&quads),
+                    usage: wgpu::BufferUsages::VERTEX,
+                },
+            );
+            (bind_group, vertices)
+        });
+        match uploaded {
+            Ok((bind_group, vertices)) => {
+                self.pipelines.marks_state = MarksState::Shown {
+                    key,
+                    bind_group,
+                    vertices,
+                    count: quads.len() as u32,
+                };
+                Ok(())
+            }
+            Err(source) => {
+                self.pipelines.marks_state = MarksState::Refused { key };
+                Err(RenderError::DeviceRefused {
+                    what: RenderAllocation::LabelTexture,
+                    source,
+                })
             }
         }
     }
@@ -1237,6 +1325,7 @@ impl Renderer {
                 self.record_plate_top(&mut pass, plate_buffers);
                 self.record_cage(&mut pass, plate_buffers);
                 self.record_front_label(&mut pass, plate_buffers, LABEL_TOP);
+                self.record_plate_marks(&mut pass);
             }
 
             if scene_for_draws && let Some(inst) = installed {
@@ -1357,6 +1446,25 @@ impl Renderer {
             wgpu::IndexFormat::Uint32,
         );
         pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
+    }
+
+    /// The numbers along the plate's rulers, with the label's pipeline.
+    fn record_plate_marks(&self, pass: &mut wgpu::RenderPass<'_>) {
+        let MarksState::Shown {
+            bind_group,
+            vertices,
+            count,
+            ..
+        } = &self.pipelines.marks_state
+        else {
+            return;
+        };
+        pass.set_pipeline(&self.pipelines.label.pipeline);
+        pass.set_bind_group(0, &self.pipelines.label.uniforms_bind_group, &[]);
+        pass.set_bind_group(1, bind_group, &[]);
+        pass.set_vertex_buffer(0, vertices.slice(..));
+        pass.set_stencil_reference(0);
+        pass.draw(0..*count, 0..1);
     }
 
     /// The word on the plate's front tab: `vertices` picks the copy over the

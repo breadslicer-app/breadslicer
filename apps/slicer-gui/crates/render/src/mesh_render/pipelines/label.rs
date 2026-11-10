@@ -65,6 +65,29 @@ pub(in crate::mesh_render) fn label_quad(text_box: [f32; 4]) -> [LabelVertex; 6]
 /// height `z`, mirrored in `v` so the word reads the right way round
 /// from underneath (looking up, the plate's front edge is at the top
 /// of the view), and wound counter-clockwise as seen from below.
+/// The quad of a ruler's number: its ink box in world mm at `Z = 0`, and
+/// where it is in the raster, `[u0, v0, u1, v1]`.
+pub(in crate::mesh_render) fn mark_quad(world: [f32; 4], uv: [f32; 4]) -> [LabelVertex; 6] {
+    let [min_x, min_y, max_x, max_y] = world;
+    let [u0, v0, u1, v1] = uv;
+    let corner = |x: f32, y: f32, u: f32, v: f32| LabelVertex {
+        position: [x, y, 0.0],
+        uv: [u, v],
+    };
+    let bottom_left = corner(min_x, min_y, u0, v0);
+    let bottom_right = corner(max_x, min_y, u1, v0);
+    let top_right = corner(max_x, max_y, u1, v1);
+    let top_left = corner(min_x, max_y, u0, v1);
+    [
+        bottom_left,
+        bottom_right,
+        top_right,
+        bottom_left,
+        top_right,
+        top_left,
+    ]
+}
+
 pub(in crate::mesh_render) fn underside_label_quad(text_box: [f32; 4], z: f32) -> [LabelVertex; 6] {
     let [min_x, min_y, max_x, max_y] = text_box;
     let corner = |x: f32, y: f32, u: f32, v: f32| LabelVertex {

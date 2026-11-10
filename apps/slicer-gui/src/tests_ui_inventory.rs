@@ -60,6 +60,25 @@ fn the_pictures_of_the_app_are_written_when_asked() {
                 });
             }
         }
+        // The Slice view with a slice: the layer ruler (#507).
+        let ruler_dir = dir.clone();
+        on_fresh_slint_thread(move || {
+            let window = MainWindow::new().expect("a main window");
+            slint::select_bundled_translation(language).expect("bundled language");
+            window.show().expect("the window shows");
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(1600.0, 1000.0));
+            window.set_has_scene(true);
+            window.set_workspace_section(WorkspaceSection::Slice);
+            window.set_slice_layer_count(2437);
+            window.set_selected_layer_index(1126.0);
+            write(
+                window.window(),
+                &ruler_dir,
+                &format!("{language}-4-slice-ruler"),
+            );
+        });
         let dir = dir.clone();
         on_fresh_slint_thread(move || {
             let window = PreferencesWindow::new().expect("a preferences window");

@@ -18,7 +18,7 @@ use super::scene_upload::GpuScene;
 use super::{FramePixels, RenderError, Renderer, SceneRender};
 use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
-use crate::front_label::LabelRaster;
+use crate::front_label::{LabelRaster, MarksRaster};
 use crate::slice_cap::CapRaster;
 
 pub trait MeshRenderer {
@@ -68,6 +68,17 @@ pub trait MeshRenderer {
         key: u64,
         build: &mut dyn FnMut() -> Option<LabelRaster>,
     ) -> Result<(), RenderError>;
+
+    /// Refresh the numbers along the plate's rulers for the plate `key`
+    /// names. `build` lays them out only when `key` changes. A renderer
+    /// that draws no plate has nothing to do.
+    fn update_plate_marks(
+        &mut self,
+        _key: u64,
+        _build: &mut dyn FnMut() -> Option<MarksRaster>,
+    ) -> Result<(), RenderError> {
+        Ok(())
+    }
 
     /// Run the per-frame render pass. Returns `Ok(None)` when the
     /// viewport is zero-sized. The texture may be smaller than
@@ -183,6 +194,14 @@ impl MeshRenderer for Renderer {
         build: &mut dyn FnMut() -> Option<LabelRaster>,
     ) -> Result<(), RenderError> {
         Renderer::update_front_label(self, key, build)
+    }
+
+    fn update_plate_marks(
+        &mut self,
+        key: u64,
+        build: &mut dyn FnMut() -> Option<MarksRaster>,
+    ) -> Result<(), RenderError> {
+        Renderer::update_plate_marks(self, key, build)
     }
 
     fn render(

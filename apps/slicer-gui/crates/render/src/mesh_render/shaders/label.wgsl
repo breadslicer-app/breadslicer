@@ -39,11 +39,12 @@ fn vs_main(in: VsIn) -> VsOut {
     return out;
 }
 
-// Ink colours, from Breadslicer's theme tokens: the word in
-// `text-muted` #8d959b, so it reads as a marking on the machine, and
-// the printer's name below it in the highlight, `accent` #d7a75a.
-const WORD_COLOUR: vec3<f32> = vec3<f32>(0.553, 0.584, 0.608);
-const NAME_COLOUR: vec3<f32> = vec3<f32>(0.843, 0.655, 0.353);
+// Ink colours, from Breadslicer's theme tokens: the word, and the
+// rulers' numbers, in `text-muted` #8b959d, so they read as markings on
+// a drawing, and the printer's name below the word in `text-faint`
+// #69737b.
+const WORD_COLOUR: vec3<f32> = vec3<f32>(0.545, 0.584, 0.616);
+const NAME_COLOUR: vec3<f32> = vec3<f32>(0.412, 0.451, 0.482);
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {

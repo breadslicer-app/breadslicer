@@ -342,15 +342,11 @@ export component Card inherits Rectangle {
     in property <bool> collapsible;
     in-out property <bool> expanded: true;
 
-    // A section of the inspector: a small caps title over its content and
-    // a rule under it. No box: the panel is the surface.
+    // A section of the inspector, as a drawing labels one: a small caps
+    // title with a leader line running to its note, over its content. No
+    // box: the panel is the surface.
     background: transparent;
 
-    Rectangle {
-        y: parent.height - 1px;
-        height: 1px;
-        background: Theme.border;
-    }
     if root.highlighted: Rectangle {
         x: -12px;
         y: 8px;
@@ -381,10 +377,19 @@ export component Card inherits Rectangle {
                     letter-spacing: 1px;
                     color: root.highlighted ? Theme.accent : Theme.text-faint;
                     vertical-alignment: center;
-                    horizontal-stretch: 1;
                 }
-                Text {
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+
+                    Rectangle {
+                        height: 1px;
+                        background: root.highlighted ? Theme.accent.transparentize(0.6) : Theme.border;
+                    }
+                }
+                if root.note != "": Text {
                     text: root.note;
+                    font-family: Theme.mono;
                     font-size: Theme.font-xs;
                     color: root.note-color;
                     vertical-alignment: center;
@@ -1004,5 +1009,166 @@ export component ScProgress inherits Rectangle {
         width: (root.indeterminate ? 0.3 : Math.clamp(root.progress, 0, 1)) * parent.width;
         border-radius: 2px;
         background: Theme.accent;
+    }
+}
+
+// The layer slider of the Slice view with its ruler (#507): the track on
+// the right, the top layer at the top; on its left, a tick every 100 layers
+// where they stand far enough apart, and the numbers of layer 0, the last
+// one and every 500. A tag beside the handle says the layer it is on.
+export component LayerRuler inherits Rectangle {
+    in property <int> count;
+    in-out property <float> value;
+    in property <bool> enabled: true;
+    callback changed(float);
+
+    property <int> last: Math.max(0, root.count - 1);
+    // The handle's travel, inside the ends of the track.
+    property <length> inset: 8px;
+    property <length> travel: root.height - 2 * root.inset;
+    property <length> track-x: root.width - 10px;
+    property <length> label-right: root.track-x - 12px;
+    property <length> step-px: root.last > 0 ? root.travel / root.last : 0px;
+    property <bool> minor-shown: root.step-px * 100 >= 5px;
+    property <length> label-gap: 14px;
+
+    function y-of(layer: float) -> length {
+        return root.last > 0 ? root.inset + (1 - layer / root.last) * root.travel : root.inset + root.travel;
+    }
+    function layer-at(y: length) -> float {
+        return root.last > 0
+            ? Math.round(Math.clamp(1 - (y - root.inset) / root.travel, 0, 1) * root.last) : 0;
+    }
+
+    min-width: 76px;
+    opacity: root.enabled ? 1 : 0.45;
+    accessible-role: slider;
+    accessible-value: Math.round(root.value);
+    accessible-value-minimum: 0;
+    accessible-value-maximum: root.last;
+
+    // The track and what of it lies under the handle.
+    Rectangle {
+        x: root.track-x - 1px;
+        y: root.inset;
+        width: 2px;
+        height: root.travel;
+        background: Theme.border-strong;
+    }
+    Rectangle {
+        x: root.track-x - 1px;
+        y: root.y-of(root.value);
+        width: 2px;
+        height: root.inset + root.travel - self.y;
+        background: Theme.text-muted;
+    }
+
+    // Ticks: every 100 layers, longer every 500, and at both ends.
+    if root.minor-shown && root.last > 0: Rectangle {
+        for k in Math.floor(root.last / 100): Rectangle {
+            property <int> layer: (k + 1) * 100;
+            property <bool> major: Math.mod(self.layer, 500) == 0;
+            x: root.track-x - 6px - (self.major ? 4px : 0px);
+            y: root.y-of(self.layer);
+            width: self.major ? 9px : 5px;
+            height: 1px;
+            background: self.major ? Theme.text-faint : Theme.border-strong;
+        }
+    }
+    if !root.minor-shown && root.last > 0: Rectangle {
+        for k in Math.floor(root.last / 500): Rectangle {
+            x: root.track-x - 10px;
+            y: root.y-of((k + 1) * 500);
+            width: 9px;
+            height: 1px;
+            background: Theme.text-faint;
+        }
+    }
+    for layer in [0, root.last]: Rectangle {
+        x: root.track-x - 10px;
+        y: root.y-of(layer);
+        width: 9px;
+        height: 1px;
+        background: Theme.text-muted;
+    }
+
+    // Numbers: layer 0, the last, and every 500 that does not crowd them.
+    for k in Math.floor(root.last / 500): Text {
+        property <int> layer: (k + 1) * 500;
+        visible: (root.y-of(0) - root.y-of(self.layer)) >= root.label-gap
+            && (root.y-of(self.layer) - root.y-of(root.last)) >= root.label-gap;
+        x: root.label-right - self.width;
+        y: root.y-of(self.layer) - self.height / 2;
+        text: self.layer;
+        font-family: Theme.mono;
+        font-size: 10px;
+        color: Theme.text-faint;
+    }
+    for layer in [0, root.last]: Text {
+        visible: root.count > 0 && (layer == 0 || root.last > 0);
+        x: root.label-right - self.width;
+        y: root.y-of(layer) - self.height / 2;
+        text: layer;
+        font-family: Theme.mono;
+        font-size: 10px;
+        color: Theme.text-muted;
+    }
+
+    // The handle, and the tag with its layer.
+    Rectangle {
+        x: root.track-x - self.width / 2;
+        y: root.y-of(root.value) - self.height / 2;
+        width: 14px;
+        height: 6px;
+        border-radius: 1px;
+        background: touch.pressed || touch.has-hover ? Theme.action-hover : Theme.action;
+    }
+    if root.count > 0: Rectangle {
+        x: root.label-right - self.width + 4px;
+        y: root.y-of(root.value) - self.height / 2;
+        width: tag.preferred-width + 8px;
+        height: 16px;
+        border-radius: Theme.radius-sm;
+        background: Theme.chrome;
+        border-width: 1px;
+        border-color: Theme.accent;
+
+        tag := Text {
+            text: Math.round(root.value);
+            font-family: Theme.mono;
+            font-size: 10px;
+            font-weight: 600;
+            color: Theme.accent;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled && root.count > 0;
+        mouse-cursor: pointer;
+        pointer-event(event) => {
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                root.value = root.layer-at(self.mouse-y);
+                root.changed(root.value);
+            }
+        }
+        moved => {
+            if self.pressed {
+                let at = root.layer-at(self.mouse-y);
+                if at != root.value {
+                    root.value = at;
+                    root.changed(at);
+                }
+            }
+        }
+        scroll-event(event) => {
+            let at = Math.clamp(root.value + (event.delta-y > 0 ? 1 : event.delta-y < 0 ? -1 : 0), 0, root.last);
+            if at != root.value {
+                root.value = at;
+                root.changed(at);
+            }
+            accept
+        }
     }
 }

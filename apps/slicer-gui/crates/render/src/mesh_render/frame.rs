@@ -63,13 +63,12 @@ pub(super) fn pack_light_dir(clip_z: Option<f32>) -> [f32; 4] {
     ]
 }
 
-/// Clear colour for the main mesh pass. A near-black neutral so the
-/// rendered model and gizmo handles read clearly without competing
-/// with the background.
+/// Clear colour for the main mesh pass: the theme's `ground` #111315, so the
+/// view and the panels around it are one surface (#507).
 pub(super) const CLEAR_COLOR: wgpu::Color = wgpu::Color {
-    r: 0.12,
-    g: 0.12,
-    b: 0.13,
+    r: 0.067,
+    g: 0.075,
+    b: 0.082,
     a: 1.0,
 };
 

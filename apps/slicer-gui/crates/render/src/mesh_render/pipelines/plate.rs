@@ -75,7 +75,7 @@ const KIND_ENVELOPE_WALL_Z_POS: u32 = 9;
 /// build floor) down to `Z = -PLATE_THICKNESS_MM`.
 const PLATE_THICKNESS_MM: f32 = 4.0;
 /// How far the plate extends in XY beyond the build envelope, mm.
-const PLATE_OVERHANG_MM: f32 = 8.0;
+const PLATE_OVERHANG_MM: f32 = 26.0;
 /// Corner radius (XY) for the rounded outer plate edge, mm.
 const PLATE_CORNER_RADIUS_MM: f32 = 6.0;
 /// Tessellation per quarter-arc on the rounded corners. Higher =

@@ -3882,7 +3882,14 @@ impl ViewportController {
         // The word on the plate's front tab and the printer's name under it,
         // keyed on the text so a language or printer change rebuilds it and an
         // orbit does not.
-        let front_word = ctr!("MeshViewer", "FRONT");
+        // With the plate's size beside it, as a drawing's title block reads
+        // (#507).
+        let front_word = format!(
+            "{}  ·  {} × {} mm",
+            ctr!("MeshViewer", "FRONT"),
+            plate_length(build_volume.width_mm()),
+            plate_length(build_volume.depth_mm())
+        );
         let printer_name = self.plate_printer_name.borrow().clone();
         let mut hasher = DefaultHasher::new();
         front_word.as_str().hash(&mut hasher);
@@ -3890,6 +3897,20 @@ impl ViewportController {
         let mut build_label =
             || crate::front_label::rasterise_label(front_word.as_str(), printer_name.as_deref());
         match renderer.update_front_label(hasher.finish(), &mut build_label) {
+            Ok(()) | Err(RenderError::DeviceLost) => {}
+            Err(err) => self.session.loader().note_render_failure(&err),
+        }
+
+        // The numbers along the plate's rulers, laid out for this plate.
+        let corner = build_volume.envelope_min_mm();
+        let (plate_x, plate_y) = (build_volume.width_mm(), build_volume.depth_mm());
+        let mut marks_key = DefaultHasher::new();
+        [corner.x, corner.y, plate_x, plate_y]
+            .map(f32::to_bits)
+            .hash(&mut marks_key);
+        let mut build_marks =
+            || crate::front_label::rasterise_plate_marks([corner.x, corner.y], plate_x, plate_y);
+        match renderer.update_plate_marks(marks_key.finish(), &mut build_marks) {
             Ok(()) | Err(RenderError::DeviceLost) => {}
             Err(err) => self.session.loader().note_render_failure(&err),
         }
@@ -5584,5 +5605,16 @@ mod paste_clipboard_tests {
         // camera cell is still None.
         let cb = triangle_clipboard();
         assert!(!ctrl.paste_clipboard_at_cursor(&cb));
+    }
+}
+
+/// A plate's length as its front label writes it: whole millimetres bare,
+/// otherwise to a tenth.
+fn plate_length(mm: f32) -> String {
+    let tenths = (mm * 10.0).round();
+    if tenths % 10.0 == 0.0 {
+        format!("{}", tenths / 10.0)
+    } else {
+        format!("{:.1}", tenths / 10.0)
     }
 }
