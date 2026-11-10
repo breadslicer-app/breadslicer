@@ -379,6 +379,10 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
             continue;
         }
         let mut leaf = built.leaf;
+        if ctx.cone_crosses(&leaf.contact_cone) {
+            last_blocked = Some(FanLeafRefusal::Blocked);
+            continue;
+        }
         if leaf_path_crosses_supports(
             parent_knot.pos,
             leaf.contact_cone.pos,

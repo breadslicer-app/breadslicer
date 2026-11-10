@@ -13,8 +13,8 @@ use super::fan::{
 use super::helpers::{
     FanShaftPoint, HostedBranchInput, PlanCtx, branch_collides_with_sdf,
     branch_departure_angle_deg, build_hosted_branch, collect_fan_shaft_points,
-    collect_fan_shaft_points_near, contact_cone_collides, find_merge_host, free_knot_id,
-    host_entity_of, host_segment_span, is_host_at_attachment_capacity,
+    collect_fan_shaft_points_near, contact_cone_collides, entity_cones, find_merge_host,
+    free_knot_id, host_entity_of, host_segment_span, is_host_at_attachment_capacity,
     member_max_angle_from_vertical_deg, origin_by_source,
 };
 use crate::supports::auto_support::constants::{
@@ -591,6 +591,28 @@ pub fn place_one_candidate(
         )
     };
 
+    // What the engine would place goes into the model with its tip cone: no
+    // placement, and the candidate goes on as one the lattice turned down
+    // (#500).
+    let decision = match decision {
+        GridPlacementDecision::Place {
+            node_key,
+            placed,
+            support_data,
+        } if entity_cones(&placed.entity)
+            .into_iter()
+            .any(|cone| ctx.cone_crosses(cone)) =>
+        {
+            GridPlacementDecision::Reject {
+                node_key,
+                reason: GridPlacementRejectReason::CollisionWithModel,
+                trunk_build: None,
+                support_data,
+            }
+        }
+        other => other,
+    };
+
     match decision {
         GridPlacementDecision::Place { placed, .. } => {
             if let Some(hosted_by) = &placed.hosted_by
@@ -827,6 +849,9 @@ fn try_merge(
                 mesh,
             )
         {
+            return None;
+        }
+        if ctx.cone_crosses(cone) {
             return None;
         }
         if is_host_at_attachment_capacity(host.host_type_id, &host.host_id, cap, draft) {

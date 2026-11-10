@@ -15,16 +15,16 @@ use crate::supports::auto_support::parameter_sizing::SizingBands;
 use crate::supports::auto_support::types::CandidateSource;
 use crate::supports::constants::member_shaft_diameter_mm;
 use crate::supports::placement_logic::collision_avoidance::{CollisionField, is_shaft_blocked};
+use crate::supports::placement_logic::collision_utils::tip_cone_crosses_model;
 use crate::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use crate::supports::placement_logic::placement_utils::calculate_smoothed_normal;
 use crate::supports::placement_logic::smart_placement_search_utils::member_departure_angle_from_vertical_deg;
 use crate::supports::placement_logic_v3::smart_placement_v3::RouterStats;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
 use crate::supports::support_primitives::contact_cone::types::ContactCone;
 use crate::supports::support_type_registry::{
-    ConeBodyFollows, SHAFT_HOSTED_MEMBER_TYPE_ORDER, SupportOriginId, SupportTypeId,
-    get_support_type_descriptor, near_plate_origin,
+    ConeBodyFollows, SHAFT_HOSTED_MEMBER_TYPE_ORDER, SupportEntityValue, SupportOriginId,
+    SupportTypeId, get_support_type_descriptor, near_plate_origin,
 };
 use crate::supports::support_types::branch::branch_builder::{
     BranchBuildInput, BranchBuildResult, build_branch_data,
@@ -159,6 +159,22 @@ impl<'a> PlanCtx<'a> {
                 self.live().auto_support.tips_on_own_surface,
             ),
         }
+    }
+
+    /// SoulCrafted (#500): whether `cone` may not be placed, going into the
+    /// model before its contact, with
+    /// [`AutoSupportSettings::tip_cones_clear`]. Asked of every tip where it
+    /// is built, so that what would place it tries its next way to the
+    /// contact (another host, another route, a trunk of its own) instead of
+    /// leaving the cull at the end of the plan to take it away.
+    ///
+    /// [`AutoSupportSettings::tip_cones_clear`]: crate::supports::auto_support::settings::AutoSupportSettings::tip_cones_clear
+    pub fn cone_crosses(&self, cone: &ContactCone) -> bool {
+        self.live().auto_support.tip_cones_clear
+            && self
+                .mesh
+                .as_ref()
+                .is_some_and(|mesh| contact_cone_crosses_model(cone, mesh))
     }
 
     /// Places what follows with zone size `size` (`None`: the run's own).
@@ -505,45 +521,24 @@ pub fn contact_cone_collides(
     false
 }
 
-/// How far before its contact a tip cone's axis may go into the model: the
-/// tip's own way into its surface, and a crease or a bump of the surface
-/// around it. Further, the cone goes through another part of the model.
-pub const CONE_CROSSING_MARGIN_MM: f64 = 0.5;
-
-/// SoulCrafted (#500): whether `cone`'s axis, from its socket to its contact,
-/// goes into the model more than [`CONE_CROSSING_MARGIN_MM`] before the
-/// contact: through another part of the model, as a tip under a curled
-/// finger through the claw below it, or a tooth's tip through the jaw in
-/// front of the tooth. The checks the cone was placed with sample it against
-/// the distance field and leave its last stretch alone; a ray along the axis
-/// sees a thin part the cone goes through there.
+/// SoulCrafted (#500): whether `cone` goes into the model before its contact
+/// ([`tip_cone_crosses_model`]).
 pub fn contact_cone_crosses_model(cone: &ContactCone, mesh: &PlanMesh<'_>) -> bool {
-    let socket = get_final_socket_position(cone);
-    let (dx, dy, dz) = (
-        cone.pos.x - socket.x,
-        cone.pos.y - socket.y,
-        cone.pos.z - socket.z,
-    );
-    let length = (dx * dx + dy * dy + dz * dz).sqrt();
-    if length <= CONE_CROSSING_MARGIN_MM {
-        return false;
+    tip_cone_crosses_model(cone, mesh.rays())
+}
+
+/// The tip cones `entity` reaches the model with.
+pub fn entity_cones(entity: &SupportEntityValue) -> Vec<&ContactCone> {
+    match entity {
+        SupportEntityValue::Trunk(e) => e.contact_cone.iter().collect(),
+        SupportEntityValue::Branch(e) => e.contact_cone.iter().collect(),
+        SupportEntityValue::Leaf(e) => vec![&e.contact_cone],
+        SupportEntityValue::Stick(e) => vec![&e.contact_cone_a, &e.contact_cone_b],
+        SupportEntityValue::Stump(e) => vec![&e.contact_cone],
+        SupportEntityValue::Twig(_)
+        | SupportEntityValue::Brace(_)
+        | SupportEntityValue::Kickstand(_) => Vec::new(),
     }
-    let dir = Vec3::new(dx / length, dy / length, dz / length);
-    // Both sides: a surface it leaves on the way says the cone starts inside
-    // the model, one it meets says it goes into another part.
-    !mesh
-        .rays()
-        .intersect_object(
-            &Ray {
-                origin: socket,
-                direction: dir,
-            },
-            Side::Double,
-            0.0,
-            length - CONE_CROSSING_MARGIN_MM,
-            true,
-        )
-        .is_empty()
 }
 
 /// Whether any segment of a built branch is blocked by the distance field.
@@ -792,6 +787,15 @@ pub fn build_hosted_branch(
             ctx.live(),
             &mut || ctx.id(),
         )
+    };
+    // A branch whose tip cone goes through the model is no branch (#500).
+    let rejected = |built: &BranchBuildResult| {
+        rejected(built)
+            || built
+                .branch
+                .contact_cone
+                .as_ref()
+                .is_some_and(|cone| ctx.cone_crosses(cone))
     };
     let floored = build(floored_shaft_mm);
     if !rejected(&floored) {

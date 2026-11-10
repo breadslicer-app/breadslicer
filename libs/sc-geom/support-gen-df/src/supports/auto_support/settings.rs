@@ -108,9 +108,11 @@ pub struct AutoSupportSettings {
     /// never on whatever hangs above it (see `resolve_surface_normal`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tips_on_own_surface: bool,
-    /// SoulCrafted (#500): a support whose tip cone goes through the model on
-    /// its way to its contact is culled at the end of the plan (see
-    /// `contact_cone_crosses_model`).
+    /// SoulCrafted (#500): no support is placed whose tip cone goes into the
+    /// model before its contact, with its axis or its side, or lies along
+    /// the surface it touches (`tip_cone_crosses_model`): what would place it
+    /// tries its next way to the contact, and the cull at the end of the
+    /// plan takes away one that got through.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tip_cones_clear: bool,
     pub enabled: bool,

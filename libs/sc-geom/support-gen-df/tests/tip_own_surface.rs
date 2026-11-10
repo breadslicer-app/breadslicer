@@ -6,8 +6,9 @@
 //! the search finds the candidate's.
 //!
 //! A tip cone that goes through another part of the model on its way to its
-//! contact (a claw under a finger, a jaw in front of a tooth), or starts
-//! inside the model, crosses it; one in the open does not.
+//! contact (a claw under a finger, a jaw in front of a tooth), with its axis
+//! or with its side, or starts inside the model, crosses it; one in the open
+//! does not, nor one that leans on a flat surface.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -135,6 +136,37 @@ fn a_tip_cone_through_another_part_of_the_model_crosses_it() {
     bump.extend(closed_box([4.5, 4.5, 9.7], [5.5, 5.5, 10.0]));
     let bumpy = Model::of(bump);
     assert!(!contact_cone_crosses_model(&cone, &bumpy.mesh()), "a bump");
+
+    // The end of a claw beside the cone's axis, 1.6 mm under the contact,
+    // 0.09 mm into the cone's side: the axis passes it by.
+    let mut beside = closed_box([0.0, 0.0, 10.0], [10.0, 10.0, 12.0]);
+    beside.extend(closed_box([5.35, 4.8, 8.0], [5.9, 5.2, 8.4]));
+    let grazed = Model::of(beside);
+    assert!(
+        contact_cone_crosses_model(&cone, &grazed.mesh()),
+        "its side into a claw"
+    );
+    // The same claw clear of the cone.
+    let mut clear = closed_box([0.0, 0.0, 10.0], [10.0, 10.0, 12.0]);
+    clear.extend(closed_box([5.7, 4.8, 8.0], [6.2, 5.2, 8.4]));
+    let passed = Model::of(clear);
+    assert!(
+        !contact_cone_crosses_model(&cone, &passed.mesh()),
+        "beside it"
+    );
+
+    // A cone that leans 50 degrees from the normal of a flat surface meets
+    // it with its low side just before its contact, and is no crossing.
+    let lean = 50f64.to_radians();
+    let leaning = ContactCone {
+        normal: Vec3::new(lean.sin(), 0.0, -lean.cos()),
+        surface_normal: Some(Vec3::new(0.0, 0.0, -1.0)),
+        ..cone.clone()
+    };
+    assert!(
+        !contact_cone_crosses_model(&leaning, &open.mesh()),
+        "leaning"
+    );
 }
 
 #[test]
