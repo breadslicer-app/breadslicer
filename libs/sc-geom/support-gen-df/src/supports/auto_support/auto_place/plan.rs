@@ -1334,7 +1334,11 @@ pub fn compute_auto_support_plan(
                 ) {
                     continue;
                 }
-                let (point, normal) = resolve_surface_normal(Vec3::new(gx, gy, cell_z), mesh);
+                let (point, normal) = resolve_surface_normal(
+                    Vec3::new(gx, gy, cell_z),
+                    mesh,
+                    live.auto_support.tips_on_own_surface,
+                );
                 let parent_knot = Knot {
                     id: format!("auto-overhang-{}-{}-{r}-{c}", host.host_id, island.id),
                     parent_shaft_id: host.host_id.clone(),

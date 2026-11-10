@@ -146,14 +146,17 @@ impl<'a> PlanCtx<'a> {
 
     /// The surface point and normal a tip aimed at `tip_pos` takes: the
     /// exact contact when it is that point, else what
-    /// [`resolve_surface_normal`] finds around it. That search casts up
-    /// from below the point and takes the first surface at or above it,
-    /// which on a wall is the next overhang up, often millimetres away:
-    /// right for a run's candidates, wrong for a point the person picked.
+    /// [`resolve_surface_normal`] finds around it. That search walks a disc
+    /// of rays up to 2.25 mm off the point and takes a surface there: right
+    /// for a run's candidates, wrong for a point the person picked.
     pub fn contact_at(&self, tip_pos: Vec3) -> (Vec3, Vec3) {
         match self.exact_contact.get() {
             Some((point, normal)) if point == tip_pos => (point, normal),
-            _ => resolve_surface_normal(tip_pos, self.mesh.as_ref()),
+            _ => resolve_surface_normal(
+                tip_pos,
+                self.mesh.as_ref(),
+                self.live().auto_support.tips_on_own_surface,
+            ),
         }
     }
 
@@ -307,7 +310,21 @@ pub fn host_entity_of<'d>(
 /// upward ray from just below the tip first (underside contact), then a
 /// downward one (top-surface contact, normal flipped), each walking a small
 /// disc of offsets; the placeholder when both miss or there is no mesh.
-pub fn resolve_surface_normal(tip_pos: Vec3, mesh: Option<&PlanMesh<'_>>) -> (Vec3, Vec3) {
+///
+/// SoulCrafted (#500), with `own_surface`: an upward ray takes a surface no
+/// higher above the tip than a 45 degree slope rises over the ray's offset,
+/// plus the tolerance: the tip's own surface. Without it, as DragonFruit
+/// does, it takes the first surface at any height, so a candidate on a
+/// surface that does not face down (an up-facing point of an overhang
+/// region, a minimum inside the model) goes to whatever hangs above it, 30 mm
+/// up on a mini's curled fingers, and piles tips there. With it, such a
+/// candidate finds its own surface with the downward ray, and its support,
+/// which would come up through the model, is refused.
+pub fn resolve_surface_normal(
+    tip_pos: Vec3,
+    mesh: Option<&PlanMesh<'_>>,
+    own_surface: bool,
+) -> (Vec3, Vec3) {
     let Some(mesh) = mesh else {
         return (tip_pos, Vec3::new(0.0, 0.0, -1.0));
     };
@@ -329,10 +346,18 @@ pub fn resolve_surface_normal(tip_pos: Vec3, mesh: Option<&PlanMesh<'_>>) -> (Ve
                     tip_pos.y + js_sin(angle) * radius_mm,
                     seed_z,
                 );
+                let highest = if own_surface {
+                    tip_pos.z + radius_mm + SAME_SIDE_TOLERANCE_MM
+                } else {
+                    f64::INFINITY
+                };
                 if let Some(hit) = mesh
                     .raycast(origin, Vec3::new(0.0, 0.0, direction_z))
                     .into_iter()
-                    .find(|h| h.point.z >= tip_pos.z - SAME_SIDE_TOLERANCE_MM)
+                    .find(|h| {
+                        h.point.z >= tip_pos.z - SAME_SIDE_TOLERANCE_MM
+                            && (direction_z < 0.0 || h.point.z <= highest)
+                    })
                 {
                     return Some(hit);
                 }
