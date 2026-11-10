@@ -292,7 +292,7 @@ fn the_l_key_works_wherever_the_focus_is_in_the_slice_tab() {
             assert!(!ui.get_slice_split());
 
             // In a text field and out of it: only the field gets the letter.
-            let field = ElementHandle::find_by_element_type_name(&ui, "LineEdit")
+            let field = ElementHandle::find_by_element_type_name(&ui, "ScLineEdit")
                 .next()
                 .expect("the Slice tab has a text field");
             click(&ui, &field);
@@ -614,7 +614,7 @@ fn the_layer_keys_walk_the_layers_wherever_the_focus_is() {
         assert_eq!(shown_layer(&ui), at + 1);
 
         // A text field keeps its keys.
-        let field = ElementHandle::find_by_element_type_name(&ui, "LineEdit")
+        let field = ElementHandle::find_by_element_type_name(&ui, "ScLineEdit")
             .next()
             .expect("the Slice tab has a text field");
         click(&ui, &field);

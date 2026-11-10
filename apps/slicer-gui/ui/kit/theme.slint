@@ -3,10 +3,12 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-// Breadslicer's design tokens (BS-68): one restrained palette, a single
-// amber accent, flat surfaces. Dark is the reference look ("Synrg Neutral",
-// carried over from the owner's DragonFruit theme); light follows the
-// window's color scheme with the same structure.
+// Breadslicer's design tokens (BS-68, BS-507): cool graphite, compact,
+// near-square corners. Amber is the colour of indicators and warnings (the
+// active step, the active tool, a focused field, "needs attention"); what
+// the primary button wears is `action`, a plain light tile, so a warning
+// never reads as the thing to press. Dark is the reference look; light
+// follows the window's color scheme with the same structure.
 
 import { Palette } from "std-widgets.slint";
 
@@ -14,41 +16,46 @@ export global Theme {
     out property <bool> dark: Palette.color-scheme != ColorScheme.light;
 
     // Surfaces, back to front.
-    out property <brush> ground: dark ? #1b1e20 : #eef0f1;
-    out property <brush> chrome: dark ? #202326 : #f7f8f8;
-    out property <brush> panel: dark ? #1e2124 : #f3f4f5;
-    out property <brush> card: dark ? #202326 : #ffffff;
-    out property <brush> well: dark ? #16181a : #e7eaec;
-    out property <brush> raised: dark ? #272b2e : #ffffff;
-    out property <brush> hover: dark ? #303539 : #e2e5e7;
+    out property <brush> ground: dark ? #111315 : #e6e9ec;
+    out property <brush> chrome: dark ? #171a1d : #f3f5f6;
+    out property <brush> panel: dark ? #15181a : #eef0f2;
+    out property <brush> card: dark ? #1a1e21 : #f7f9fa;
+    out property <brush> well: dark ? #0c0e10 : #ffffff;
+    out property <brush> raised: dark ? #1c2024 : #ffffff;
+    out property <brush> hover: dark ? #262c32 : #dde2e6;
 
     // Lines.
-    out property <brush> border: dark ? #383e42 : #d3d8db;
-    out property <brush> border-soft: dark ? #2c3135 : #e3e6e8;
-    out property <brush> border-strong: dark ? #545c62 : #aab2b8;
+    out property <brush> border: dark ? #272d32 : #d0d6db;
+    out property <brush> border-soft: dark ? #20252a : #dfe4e8;
+    out property <brush> border-strong: dark ? #3c454d : #a9b2b9;
 
     // Text.
-    out property <brush> text: dark ? #eceeef : #1d2124;
-    out property <brush> text-soft: dark ? #c9ced2 : #3b4246;
-    out property <brush> text-muted: dark ? #8d959b : #5f686e;
-    out property <brush> text-faint: dark ? #6c7479 : #8b9399;
+    out property <brush> text: dark ? #eef1f3 : #15181a;
+    out property <brush> text-soft: dark ? #c2c9cf : #353c42;
+    out property <brush> text-muted: dark ? #8b959d : #5b656d;
+    out property <brush> text-faint: dark ? #69737b : #87919a;
 
-    // Accent and states.
-    out property <brush> accent: #d7a75a;
-    out property <brush> accent-hover: #e3b56b;
-    out property <brush> on-accent: #1b1e20;
-    out property <brush> success: #65bc92;
-    out property <brush> warning: #d7a75a;
-    out property <brush> danger: #ed7777;
+    // The primary action.
+    out property <brush> action: dark ? #e8ecef : #22272b;
+    out property <brush> action-hover: dark ? #ffffff : #323940;
+    out property <brush> on-action: dark ? #101214 : #f3f5f6;
+
+    // Indicators and states.
+    out property <brush> accent: dark ? #e2a750 : #b97a1c;
+    out property <brush> accent-hover: dark ? #edb866 : #a56b14;
+    out property <brush> on-accent: #15181a;
+    out property <brush> success: dark ? #5fc08f : #2f8f5e;
+    out property <brush> warning: dark ? #e2a750 : #b97a1c;
+    out property <brush> danger: dark ? #f06a6a : #cc3d3d;
     // Painted faces in the 3D view, and what stands for them in the panels
     // (#183). Provisional, Damian picks it: it must not read as the amber of
     // warnings or as the selection. Its alpha is how much it covers the model.
     out property <color> surface-paint: #22c3d6d9;
 
     // Shape.
-    out property <length> radius-sm: 4px;
-    out property <length> radius: 6px;
-    out property <length> radius-lg: 8px;
+    out property <length> radius-sm: 2px;
+    out property <length> radius: 3px;
+    out property <length> radius-lg: 4px;
 
     // Type.
     out property <length> font-xs: 11px;
@@ -58,8 +65,8 @@ export global Theme {
     out property <string> mono: "Consolas";
 
     // Fixed chrome sizes.
-    out property <length> topbar-height: 44px;
-    out property <length> rail-width: 56px;
-    out property <length> inspector-width: 340px;
-    out property <length> statusbar-height: 28px;
+    out property <length> topbar-height: 40px;
+    out property <length> rail-width: 48px;
+    out property <length> inspector-width: 332px;
+    out property <length> statusbar-height: 26px;
 }

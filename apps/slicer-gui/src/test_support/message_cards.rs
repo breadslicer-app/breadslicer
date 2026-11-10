@@ -5,30 +5,31 @@
 
 use crate::test_support::slint_thread::render_frames;
 
-/// The fill of a primary button (`Theme.accent`).
-const ACCENT: [u8; 3] = [0xd7, 0xa7, 0x5a];
+/// The fill of a primary button (`Theme.action`), dark and light.
+const ACTION: [[u8; 3]; 2] = [[0xe8, 0xec, 0xef], [0x22, 0x27, 0x2b]];
 
 /// The fill of a card (`Theme.card`), dark and light: what tells the card
 /// from the dimmed window around it.
-const CARD: [[u8; 3]; 2] = [[0x20, 0x23, 0x26], [0xff, 0xff, 0xff]];
+const CARD: [[u8; 3]; 2] = [[0x1a, 0x1e, 0x21], [0xf7, 0xf9, 0xfa]];
 
 /// What a card's text is drawn on besides the card: the well the details
 /// sit in (`Theme.well`) and the lines around it and between the card's
 /// parts (`Theme.border-soft`), dark and light.
 const GROUNDS: [[u8; 3]; 4] = [
-    [0x16, 0x18, 0x1a],
-    [0xe7, 0xea, 0xec],
-    [0x2c, 0x31, 0x35],
-    [0xe3, 0xe6, 0xe8],
+    [0x0c, 0x0e, 0x10],
+    [0xff, 0xff, 0xff],
+    [0x20, 0x25, 0x2a],
+    [0xdf, 0xe4, 0xe8],
 ];
 
 /// The rows (top, bottom) of the primary button: the lowest row with a
-/// button's width of accent, and up from it as long as the rows have accent
+/// button's width of its fill, and up from it as long as the rows have it
 /// across the button's width (the rows of its text have less, but some).
-/// The tile of a row that leads (#385) is accent too, but narrower and
+/// The tile of a row that leads (#385) may wear it too, but narrower and
 /// higher up.
 fn primary_rows(pixel: &dyn Fn(u32, u32) -> [u8; 3], width: u32, height: u32) -> (u32, u32) {
-    let accent_in = |y: u32, from: u32, to: u32| (from..to).filter(move |&x| pixel(x, y) == ACCENT);
+    let accent_in =
+        |y: u32, from: u32, to: u32| (from..to).filter(move |&x| ACTION.contains(&pixel(x, y)));
     let bottom = (0..height)
         .rev()
         .find(|&y| accent_in(y, 0, width).count() >= 40)
@@ -58,7 +59,7 @@ pub(crate) fn card_around_primary_button(window: &slint::Window) -> (bool, bool)
     let (top, bottom) = primary_rows(&pixel, width, height);
     let accent: Vec<u32> = (top..=bottom)
         .flat_map(|y| (0..width).map(move |x| (x, y)))
-        .filter(|&(x, y)| pixel(x, y) == ACCENT)
+        .filter(|&(x, y)| ACTION.contains(&pixel(x, y)))
         .map(|(x, _)| x)
         .collect();
     let left = accent.iter().copied().min().unwrap_or(0);

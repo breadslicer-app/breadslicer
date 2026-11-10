@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, Palette, ProgressIndicator, ScrollView, Slider } from "std-widgets.slint";
+import { Button, Palette, ScrollView, Slider } from "std-widgets.slint";
+import { ScProgress as ProgressIndicator } from "./kit/controls.slint";
 import { AboutWindow } from "about-window.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
@@ -1178,7 +1179,7 @@ export component MainWindow inherits Window {
                             vertical-alignment: center;
                         }
                         WorkflowTab {
-                            number: "2";
+                            number: "3";
                             label: @tr("Workspace" => "Supports");
                             active: root.workspace-section == WorkspaceSection.Supports;
                             enabled: root.has-scene;
@@ -1193,7 +1194,7 @@ export component MainWindow inherits Window {
                             background: Theme.border;
                         }
                         WorkflowTab {
-                            number: "3";
+                            number: "4";
                             label: @tr("Workspace" => "Slice");
                             active: root.workspace-section == WorkspaceSection.Slice;
                             enabled: root.has-scene;
@@ -1203,7 +1204,7 @@ export component MainWindow inherits Window {
                             }
                         }
                         WorkflowTab {
-                            number: "4";
+                            number: "5";
                             label: @tr("Workspace" => "Export");
                             active: root.workspace-section == WorkspaceSection.Export;
                             enabled: root.has-scene;
