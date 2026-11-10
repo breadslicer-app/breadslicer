@@ -1030,7 +1030,7 @@ export component LayerRuler inherits Rectangle {
     property <length> label-right: root.track-x - 12px;
     property <length> step-px: root.last > 0 ? root.travel / root.last : 0px;
     property <bool> minor-shown: root.step-px * 100 >= 5px;
-    property <length> label-gap: 14px;
+    property <length> label-gap: 18px;
 
     function y-of(layer: float) -> length {
         return root.last > 0 ? root.inset + (1 - layer / root.last) * root.travel : root.inset + root.travel;
@@ -1040,7 +1040,7 @@ export component LayerRuler inherits Rectangle {
             ? Math.round(Math.clamp(1 - (y - root.inset) / root.travel, 0, 1) * root.last) : 0;
     }
 
-    min-width: 76px;
+    min-width: 92px;
     opacity: root.enabled ? 1 : 0.45;
     accessible-role: slider;
     accessible-value: Math.round(root.value);
@@ -1101,8 +1101,8 @@ export component LayerRuler inherits Rectangle {
         y: root.y-of(self.layer) - self.height / 2;
         text: self.layer;
         font-family: Theme.mono;
-        font-size: 10px;
-        color: Theme.text-faint;
+        font-size: 12px;
+        color: Theme.text-muted;
     }
     for layer in [0, root.last]: Text {
         visible: root.count > 0 && (layer == 0 || root.last > 0);
@@ -1110,8 +1110,9 @@ export component LayerRuler inherits Rectangle {
         y: root.y-of(layer) - self.height / 2;
         text: layer;
         font-family: Theme.mono;
-        font-size: 10px;
-        color: Theme.text-muted;
+        font-size: 12px;
+        font-weight: 600;
+        color: Theme.text-soft;
     }
 
     // The handle, and the tag with its layer.
@@ -1126,8 +1127,8 @@ export component LayerRuler inherits Rectangle {
     if root.count > 0: Rectangle {
         x: root.label-right - self.width + 4px;
         y: root.y-of(root.value) - self.height / 2;
-        width: tag.preferred-width + 8px;
-        height: 16px;
+        width: tag.preferred-width + 10px;
+        height: 22px;
         border-radius: Theme.radius-sm;
         background: Theme.chrome;
         border-width: 1px;
@@ -1136,8 +1137,8 @@ export component LayerRuler inherits Rectangle {
         tag := Text {
             text: Math.round(root.value);
             font-family: Theme.mono;
-            font-size: 10px;
-            font-weight: 600;
+            font-size: 13px;
+            font-weight: 700;
             color: Theme.accent;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -1169,6 +1170,48 @@ export component LayerRuler inherits Rectangle {
                 root.changed(at);
             }
             accept
+        }
+    }
+}
+
+// A caption button of the app's own title bar (#507): minimise, maximise
+// or restore, close. As wide as Windows draws them; close turns red.
+export enum CaptionKind { minimize, maximize, restore, close }
+
+export component CaptionButton inherits Rectangle {
+    in property <CaptionKind> kind;
+    in property <string> label;
+    callback clicked();
+
+    width: 46px;
+    background: !touch.has-hover ? transparent
+        : root.kind == CaptionKind.close ? (touch.pressed ? #a8261b : #c42b1c)
+        : touch.pressed ? Theme.border-strong : Theme.hover;
+    accessible-role: button;
+    accessible-label: self.label;
+    accessible-action-default => {
+        self.clicked();
+    }
+
+    Path {
+        width: 10px;
+        height: 10px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        stroke-width: 1px;
+        stroke: touch.has-hover && root.kind == CaptionKind.close ? #ffffff : Theme.text-soft;
+        fill: transparent;
+        commands: root.kind == CaptionKind.minimize ? "M 0 5 L 10 5"
+            : root.kind == CaptionKind.maximize ? "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z"
+            : root.kind == CaptionKind.restore ? "M 0.5 2.5 L 7.5 2.5 L 7.5 9.5 L 0.5 9.5 Z M 2.5 2.5 L 2.5 0.5 L 9.5 0.5 L 9.5 7.5 L 7.5 7.5"
+            : "M 0 0 L 10 10 M 10 0 L 0 10";
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
         }
     }
 }

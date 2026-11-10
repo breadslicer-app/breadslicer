@@ -71,6 +71,7 @@ fn the_pictures_of_the_app_are_written_when_asked() {
                 .set_size(slint::LogicalSize::new(1600.0, 1000.0));
             window.set_has_scene(true);
             window.set_workspace_section(WorkspaceSection::Slice);
+            window.set_custom_chrome(true);
             window.set_slice_layer_count(2437);
             window.set_selected_layer_index(1126.0);
             write(

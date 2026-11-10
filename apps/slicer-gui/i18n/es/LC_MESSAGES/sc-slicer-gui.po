@@ -852,6 +852,26 @@ msgstr "Preparar"
 
 #: ui/main-window.slint
 msgctxt "Workspace"
+msgid "Minimize"
+msgstr "Minimizar"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Maximize"
+msgstr "Maximizar"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Restore"
+msgstr "Restaurar"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Close"
+msgstr "Cerrar"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
 msgid "Transform"
 msgstr "Transformar"
 

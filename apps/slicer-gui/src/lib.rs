@@ -131,6 +131,7 @@ mod tests_tab_translations;
 mod tests_ui_inventory;
 mod ui_language;
 mod viewport;
+mod window_chrome;
 mod window_icon;
 mod window_placement;
 mod window_prefs;
