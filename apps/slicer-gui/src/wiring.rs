@@ -124,7 +124,7 @@ fn wire_edit_menu(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     {
         // Esc drops a Supports tab drag in flight (#3).
         let ctrl = ctrl.clone();
-        ui.on_support_drag_cancel(move || ctrl.cancel_support_drag());
+        ui.on_support_drag_cancel(move || ctrl.cancel_lasso() || ctrl.cancel_support_drag());
     }
     ui.on_delete_requested(move || ctrl.on_delete_requested());
 }

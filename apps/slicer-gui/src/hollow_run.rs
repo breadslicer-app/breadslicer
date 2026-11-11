@@ -50,13 +50,14 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 
+use sc_geom::df_hollow::hollow_df::LassoRegion;
 use sc_geom::df_hollow::hollow_df::engine::{DEFAULT_PLUG_CLEARANCE_MM, DRAIN_PAST_WALL_MM};
 use sc_geom::df_hollow::hollow_df::{
     DrainDepth, GridRequest, HollowFill, HollowSettings, InfillMode, ResolutionBound, Stage,
 };
 use sc_geom::df_hollow::{
     HollowKind, HollowOutcome, HollowPlug, HollowRequest, HollowResult, LeafFrame, PreparedHollow,
-    WorldDrain, start_hollow_mesh,
+    WorldDrain, WorldSolidArea, start_hollow_mesh,
 };
 use sc_geom::{JobError, JobHandle};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
@@ -425,6 +426,8 @@ pub(crate) struct Hollowed {
     pub(crate) options: HollowOptions,
     /// The plugs it put in the scene with it (#318).
     pub(crate) plugs: Vec<PlugLink>,
+    /// The areas drawn to stay solid (#179), in the leaf's local frame.
+    pub(crate) solids: Vec<LassoRegion>,
 }
 
 /// The job in flight and what it needs to land.
@@ -436,6 +439,7 @@ struct Job {
     before: Arc<IndexedMesh>,
     original: Arc<IndexedMesh>,
     drains: Vec<LocalDrain>,
+    solids: Vec<LassoRegion>,
     options: HollowOptions,
 }
 
@@ -463,6 +467,9 @@ pub(crate) struct HollowRun {
     /// Drains placed on a model not hollowed yet, by its mesh: drilled when
     /// it is hollowed.
     pending: RefCell<Vec<(usize, Vec<LocalDrain>)>>,
+    /// Areas drawn to stay solid on a model not hollowed yet (#179), by its
+    /// mesh, in its local frame: kept when it is hollowed.
+    pending_solids: RefCell<Vec<(usize, Vec<LassoRegion>)>>,
     /// The local bounding box of the last mesh asked about, by identity, for
     /// the recommended wall (a scan of every vertex once per mesh).
     bounds: RefCell<Option<MeshBounds>>,
@@ -536,6 +543,8 @@ struct PreviewKey {
     /// their channels through it, and the preview shows that (#339). 0
     /// without infill, where they change nothing shown.
     drains: u64,
+    /// The areas kept solid ([`solids_key`]): they change the cavity.
+    solids: u64,
 }
 
 impl PreviewKey {
@@ -548,6 +557,30 @@ impl PreviewKey {
                 ..*other
             }
     }
+}
+
+/// A hash of `solids`, to tell sets of solid areas apart; 0 when there are
+/// none.
+fn solids_key(solids: &[LassoRegion]) -> u64 {
+    if solids.is_empty() {
+        return 0;
+    }
+    solids
+        .iter()
+        .flat_map(|r| {
+            [f32::from(u8::from(r.perspective))]
+                .into_iter()
+                .chain(r.origin)
+                .chain(r.u)
+                .chain(r.v)
+                .chain(r.w)
+                .chain(r.polygon.iter().flatten().copied())
+                .chain([f32::NAN])
+        })
+        .fold(0x8422_2325_cbf2_9ce4u64, |h, c| {
+            (h ^ u64::from(c.to_bits())).wrapping_mul(0x0100_0000_01b3)
+        })
+        | 1
 }
 
 /// A hash of `drains`, to tell drain sets apart; 0 when there are none.
@@ -656,6 +689,7 @@ impl HollowRun {
                 hover: Cell::new(None),
                 preview_timer: slint::Timer::default(),
                 pending: RefCell::new(Vec::new()),
+                pending_solids: RefCell::new(Vec::new()),
                 bounds: RefCell::new(None),
             }
         });
@@ -712,7 +746,97 @@ impl HollowRun {
                 run.on_drain_click([x, y, z], [nx, ny, nz]);
             });
         }
+        {
+            let weak = Rc::downgrade(&run);
+            run.ctrl.set_lasso_handler(Rc::new(move |region| {
+                if let Some(run) = weak.upgrade() {
+                    run.on_lasso(region);
+                }
+            }));
+        }
+        {
+            let run = run.clone();
+            ui.on_hollow_remove_last_solid(move || {
+                run.edit_solids(|solids| {
+                    solids.pop();
+                })
+            });
+        }
+        {
+            let run = run.clone();
+            ui.on_hollow_clear_solids(move || run.edit_solids(Vec::clear));
+        }
         run
+    }
+
+    /// The areas a model keeps solid (#179), in its local frame: a hollow's
+    /// own, or those drawn on a solid model so far.
+    fn solids_for(&self, mesh: &Arc<IndexedMesh>) -> Vec<LassoRegion> {
+        if let Some(h) = self
+            .hollowed
+            .borrow()
+            .iter()
+            .find(|h| Arc::ptr_eq(&h.hollow, mesh))
+        {
+            return h.solids.clone();
+        }
+        let ptr = Arc::as_ptr(mesh) as usize;
+        self.pending_solids
+            .borrow()
+            .iter()
+            .find(|(m, _)| *m == ptr)
+            .map(|(_, s)| s.clone())
+            .unwrap_or_default()
+    }
+
+    fn set_pending_solids(&self, mesh: &Arc<IndexedMesh>, solids: Vec<LassoRegion>) {
+        let ptr = Arc::as_ptr(mesh) as usize;
+        let mut pending = self.pending_solids.borrow_mut();
+        pending.retain(|(m, _)| *m != ptr);
+        if !solids.is_empty() {
+            pending.push((ptr, solids));
+        }
+    }
+
+    /// A lasso closed over the viewport (#179): what lies behind it, given
+    /// in the world at the current pose, stays solid on the selected model.
+    fn on_lasso(self: &Rc<Self>, region: LassoRegion) {
+        let Some((_, _, world)) = self.selected() else {
+            return;
+        };
+        let Some(local) = region_to_local(&region, &world) else {
+            return;
+        };
+        self.edit_solids(|solids| solids.push(local));
+    }
+
+    /// Changes the selected model's solid areas with `change`: a hollow is
+    /// hollowed again with them (one undo step), a solid model keeps them
+    /// for when it is hollowed, and its cavity preview follows.
+    fn edit_solids(self: &Rc<Self>, change: impl FnOnce(&mut Vec<LassoRegion>)) {
+        if self.job.borrow().is_some() {
+            return;
+        }
+        let Some((leaf, mesh, world)) = self.selected() else {
+            return;
+        };
+        if self.model_state(&mesh) == 2 {
+            return;
+        }
+        let mut solids = self.solids_for(&mesh);
+        let before = solids.clone();
+        change(&mut solids);
+        if solids == before {
+            return;
+        }
+        if self.entry_for(&mesh).is_some() {
+            let (original, drains) = self.source_for(&mesh);
+            self.launch_with(leaf, mesh, original, drains, solids, &world);
+        } else {
+            self.set_pending_solids(&mesh, solids);
+            self.refresh_ui();
+            self.tick_preview();
+        }
     }
 
     /// The selected leaf, its mesh and its world transform.
@@ -867,10 +991,15 @@ impl HollowRun {
             }
             None => (2, 0),
         };
+        let solids = self
+            .selected()
+            .map_or(0, |(_, mesh, _)| self.solids_for(&mesh).len());
         ui.set_hollow_model_state(state);
         ui.set_hollow_drain_count(drains as i32);
+        ui.set_hollow_solid_count(solids as i32);
         if state == 2 {
             ui.set_hollow_drain_tool(false);
+            ui.set_hollow_lasso_tool(false);
         }
     }
 
@@ -1101,12 +1230,27 @@ impl HollowRun {
             .flatten()
     }
 
+    /// Hollows `original` into the leaf showing `before`, with `drains` and
+    /// the solid areas `before` keeps.
     fn launch(
         self: &Rc<Self>,
         leaf: NodeId,
         before: Arc<IndexedMesh>,
         original: Arc<IndexedMesh>,
         drains: Vec<LocalDrain>,
+        world: &Transform3D,
+    ) {
+        let solids = self.solids_for(&before);
+        self.launch_with(leaf, before, original, drains, solids, world);
+    }
+
+    fn launch_with(
+        self: &Rc<Self>,
+        leaf: NodeId,
+        before: Arc<IndexedMesh>,
+        original: Arc<IndexedMesh>,
+        drains: Vec<LocalDrain>,
+        solids: Vec<LassoRegion>,
         world: &Transform3D,
     ) {
         let Some(ui) = self.ui.upgrade() else {
@@ -1124,6 +1268,7 @@ impl HollowRun {
             },
             settings: options.settings(),
             drains: drains.iter().map(|d| d.to_world(world)).collect(),
+            solid_areas: solid_areas(&solids, world),
             prepared: self.prepared.borrow().clone(),
             ..HollowRequest::default()
         };
@@ -1136,6 +1281,7 @@ impl HollowRun {
                     before,
                     original,
                     drains,
+                    solids,
                     options,
                 });
                 ui.set_hollow_running(true);
@@ -1279,6 +1425,7 @@ impl HollowRun {
                 && Arc::ptr_eq(&h.original, &job.original)
                 && h.options == job.options
                 && h.drains == kept
+                && h.solids == job.solids
         });
         if unchanged {
             self.refresh_ui();
@@ -1422,6 +1569,9 @@ impl HollowRun {
         self.pending
             .borrow_mut()
             .retain(|(m, _)| *m != original_ptr);
+        self.pending_solids
+            .borrow_mut()
+            .retain(|(m, _)| *m != original_ptr);
         // The tab already shows the settings this hollow was made with.
         self.adopted.set(Some(Arc::as_ptr(&hollow) as usize));
         self.hollowed.borrow_mut().push(Hollowed {
@@ -1430,6 +1580,7 @@ impl HollowRun {
             drains: kept,
             options: job.options,
             plugs: plug_links,
+            solids: job.solids,
         });
         self.refresh_ui();
     }
@@ -1684,6 +1835,7 @@ impl HollowRun {
             return;
         }
         let (original, drains) = self.source_for(&mesh);
+        let solids = self.solids_for(&mesh);
         let options = *self.options.borrow();
         let Ok(frame) = LeafFrame::of(&world) else {
             self.hide_preview();
@@ -1700,10 +1852,18 @@ impl HollowRun {
             } else {
                 drains_key(&drains)
             },
+            solids: solids_key(&solids),
         };
         let show_cavity = ui.get_hollow_show_cavity();
         if show_cavity {
-            self.advance_cavity_job(key, &original, &world, ui.get_hollow_drain_tool(), &drains);
+            self.advance_cavity_job(
+                key,
+                &original,
+                &world,
+                ui.get_hollow_drain_tool(),
+                &drains,
+                &solids,
+            );
         }
         let matrix = matrix_of(&world);
         // Until the engine has measured a drain, the depth it gets on a
@@ -1846,6 +2006,7 @@ impl HollowRun {
         world: &Transform3D,
         drain_tool: bool,
         drains: &[LocalDrain],
+        solids: &[LassoRegion],
     ) {
         let mut preview = self.preview.borrow_mut();
         if let Some((handle, job_key)) = &preview.job {
@@ -1892,6 +2053,7 @@ impl HollowRun {
             } else {
                 drains.iter().map(|d| d.to_world(world)).collect()
             },
+            solid_areas: solid_areas(solids, world),
             prepared: self.prepared.borrow().clone(),
             ..HollowRequest::default()
         };
@@ -2055,6 +2217,39 @@ fn drain_solid(
         let n = (k + 1) % DRAIN_SIDES;
         let (b0, b1) = (base + 2 * n, base + 2 * n + 1);
         indices.extend_from_slice(&[a0, b0, b1, a0, b1, a1, cs, b0, a0, ce, a1, b1]);
+    }
+}
+
+/// `region` (a drawn solid area, #179) taken from the world at the pose
+/// `world` into the leaf's local frame: its origin as a point, its axes as
+/// directions, so it keeps the same material whatever the pose or scale.
+fn region_to_local(region: &LassoRegion, world: &Transform3D) -> Option<LassoRegion> {
+    let inverse = world.inverse().ok()?;
+    Some(mapped_region(region, &inverse))
+}
+
+/// The world solid areas `solids` (local frame) make at the pose `world`.
+fn solid_areas(solids: &[LassoRegion], world: &Transform3D) -> Vec<WorldSolidArea> {
+    solids
+        .iter()
+        .map(|r| WorldSolidArea::Lasso(mapped_region(r, world)))
+        .collect()
+}
+
+/// `region` under the affine map `map`.
+fn mapped_region(region: &LassoRegion, map: &Transform3D) -> LassoRegion {
+    let at = |p: [f32; 3]| map.apply_to_vertex(Vertex::new(p)).coords();
+    let origin = at(region.origin);
+    let along = |d: [f32; 3]| {
+        let tip = at(std::array::from_fn(|i| region.origin[i] + d[i]));
+        std::array::from_fn(|i| tip[i] - origin[i])
+    };
+    LassoRegion {
+        origin,
+        u: along(region.u),
+        v: along(region.v),
+        w: along(region.w),
+        ..region.clone()
     }
 }
 
@@ -2992,5 +3187,119 @@ mod tests {
         });
         assert_eq!(before, 1, "the model's plug");
         assert_eq!(after, 3, "the model's, and the copy's two");
+    }
+
+    /// #179: a region drawn over a solid model's cavity preview takes it
+    /// out of the cavity at once; hollowed, the hollow keeps it; taking it
+    /// away hollows again, one undo step, and undo brings it back.
+    #[test]
+    fn a_drawn_solid_area_leaves_the_cavity_and_stays_with_the_hollow() {
+        use crate::selection::{LeafId, Selection};
+        use crate::test_support::slint_thread::on_fresh_slint_thread;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut cube = sc_mesh_fixtures::unit_cube_mesh();
+            for v in &mut cube.vertices {
+                *v = Vertex::new(v.as_array().map(|c| c * 30.0));
+            }
+            let world =
+                Transform3D::Affine(AffineTransform3D::from_translation([50.0, 50.0, 15.0]));
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(None, world, LeafPayload::Mesh(Arc::new(cube)))
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, std::path::PathBuf::from("cube.stl"));
+            document.set_selection(Selection::One(LeafId(leaf)));
+            window.set_workspace_section(WorkspaceSection::Hollow);
+            let run = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            run.on_option(0, 2.0);
+            // Seen from above, orthographic: everything right of x = 56.
+            let region = LassoRegion {
+                perspective: false,
+                origin: [0.0, 0.0, 100.0],
+                u: [1.0, 0.0, 0.0],
+                v: [0.0, 1.0, 0.0],
+                w: [0.0, 0.0, -1.0],
+                polygon: vec![[56.0, 0.0], [100.0, 0.0], [100.0, 100.0], [56.0, 100.0]],
+            };
+            let ready = |run: &HollowRun| {
+                run.preview
+                    .borrow()
+                    .ready
+                    .as_ref()
+                    .map(|(key, cavity, _)| (*key, cavity.clone()))
+            };
+            let wait_for = |run: &HollowRun, solids: u64| {
+                let waited = std::time::Instant::now();
+                loop {
+                    run.tick_preview();
+                    if let Some((key, cavity)) = ready(run)
+                        && key.solids == solids
+                    {
+                        return cavity;
+                    }
+                    assert!(
+                        waited.elapsed() < Duration::from_secs(30),
+                        "the preview lands"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            };
+            let plain = wait_for(&run, 0);
+            let reach = |cavity: &IndexedMesh| {
+                cavity
+                    .vertices()
+                    .iter()
+                    .map(|v| world.apply_to_vertex(*v).coords()[0])
+                    .fold(f32::MIN, f32::max)
+            };
+            assert!((reach(&plain) - 63.0).abs() < 0.1, "{}", reach(&plain));
+
+            run.on_lasso(region.clone());
+            assert_eq!(window.get_hollow_solid_count(), 1);
+            let model = document
+                .with_scene(|s| s.graph().leaf_mesh_arc(leaf).cloned())
+                .flatten()
+                .unwrap();
+            let local = run.solids_for(&model);
+            let drawn = wait_for(&run, solids_key(&local));
+            // The cavity stops on the region's side, not a voxel inside it.
+            assert!((reach(&drawn) - 56.0).abs() < 0.05, "{}", reach(&drawn));
+
+            // Hollowed: the hollow keeps the area, and its cavity stops there.
+            run.on_apply();
+            land_job(&run);
+            let (hollow, solids) = {
+                let hollows = document.hollows();
+                let last = hollows.borrow().last().cloned().expect("a hollow");
+                (last.hollow, last.solids)
+            };
+            assert_eq!(solids, local);
+            let inner_reach = hollow
+                .vertices()
+                .iter()
+                .map(|v| world.apply_to_vertex(*v).coords())
+                .filter(|p| p[1] > 40.0 && p[1] < 60.0 && p[2] > 5.0 && p[2] < 25.0)
+                .map(|p| p[0])
+                .filter(|&x| x < 64.0)
+                .fold(f32::MIN, f32::max);
+            assert!((inner_reach - 56.0).abs() < 0.05, "{inner_reach}");
+
+            // Taken away: hollowed again without it, in one undo step.
+            run.edit_solids(Vec::clear);
+            land_job(&run);
+            assert_eq!(window.get_hollow_solid_count(), 0);
+            assert!(document.undo().unwrap());
+            run.refresh_ui();
+            let shown = document
+                .with_scene(|s| s.graph().leaf_mesh_arc(leaf).cloned())
+                .flatten()
+                .unwrap();
+            assert!(Arc::ptr_eq(&shown, &hollow), "one undo step back");
+            assert_eq!(window.get_hollow_solid_count(), 1);
+        });
     }
 }
