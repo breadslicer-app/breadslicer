@@ -835,10 +835,7 @@ fn drawn_regions_leave_the_cavity_closed() {
             -(pitch.cos() * yaw.sin()),
             -pitch.sin(),
         ];
-        let right = {
-            let r = [-yaw.sin(), yaw.cos(), 0.0];
-            r
-        };
+        let right = [-yaw.sin(), yaw.cos(), 0.0];
         let up = [
             right[1] * forward[2] - right[2] * forward[1],
             right[2] * forward[0] - right[0] * forward[2],
