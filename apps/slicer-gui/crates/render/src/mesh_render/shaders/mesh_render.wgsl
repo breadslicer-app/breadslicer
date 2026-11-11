@@ -455,9 +455,11 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(color.rgb * intensity, color.a);
 }
 
-// The supports as lines from under the plate (#493), in the theme's amber,
-// as opaque as the supports have faded.
-const SUPPORT_LINE_COLOR: vec3<f32> = vec3<f32>(1.00, 0.66, 0.24);
+// The supports as lines from under the plate (#493), white (#523), as
+// opaque as the supports have faded.
+const SUPPORT_LINE_COLOR: vec3<f32> = vec3<f32>(0.92, 0.94, 0.96);
+// The balls at their tips stay in the amber (#523): the lines go white.
+const SUPPORT_BALL_COLOR: vec3<f32> = vec3<f32>(1.00, 0.66, 0.24);
 
 struct LineIn {
     @builtin(vertex_index) corner: u32,
@@ -508,5 +510,5 @@ fn fs_support_ball(in: VsOut) -> @location(0) vec4<f32> {
     let n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
     let lambert = abs(dot(n, normalize(u.light_dir.xyz)));
     let intensity = 0.45 + 0.55 * lambert;
-    return vec4<f32>(SUPPORT_LINE_COLOR * intensity, u.env_min.w);
+    return vec4<f32>(SUPPORT_BALL_COLOR * intensity, u.env_min.w);
 }

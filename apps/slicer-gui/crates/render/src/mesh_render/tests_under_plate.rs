@@ -470,15 +470,26 @@ fn frame_of(
         .expect("a sized frame")
 }
 
-/// How many pixels of `frame` take the support lines' amber, whole or
-/// blended at an edge: the plate's greys have their channels level.
-fn amber_pixels(frame: &FramePixels) -> usize {
-    frame
-        .rgba
+/// How many pixels the support lines `lines` (and the balls at their tips)
+/// change, seen by `camera` with the supports shown up to `shown_up_to_mm`:
+/// the frame with them against the same frame without them.
+fn line_pixels(
+    renderer: &mut Renderer,
+    graph: &Scene,
+    camera: &OrbitCamera,
+    shown_up_to_mm: f32,
+    lines: &Arc<SupportLines>,
+) -> usize {
+    renderer.set_support_lines(shown_up_to_mm, None);
+    let bare = frame_of(renderer, graph, camera, 128);
+    renderer.set_support_lines(shown_up_to_mm, Some(lines));
+    let drawn = frame_of(renderer, graph, camera, 128);
+    bare.rgba
         .as_chunks::<4>()
         .0
         .iter()
-        .filter(|p| p[0] > 100 && p[0] > p[1] + 25 && p[1] > p[2] + 25)
+        .zip(drawn.rgba.as_chunks::<4>().0)
+        .filter(|(a, b)| (0..3).any(|k| a[k].abs_diff(b[k]) > 40))
         .count()
 }
 
@@ -510,13 +521,12 @@ fn from_under_the_plate_the_supports_turn_into_lines() {
         &[vec![[0.0, 0.0, 12.0], [0.0, 0.0, 1.0]]],
         &[([0.0, 0.0, 12.0], 1.5)],
     ));
-    renderer.set_support_lines(-1.0, Some(&lines));
-    let drawn = frame_of(&mut renderer, &graph, &under(), 128);
-    assert!(amber_pixels(&drawn) > 20, "{}", amber_pixels(&drawn));
+    let drawn = line_pixels(&mut renderer, &graph, &under(), -1.0, &lines);
+    assert!(drawn > 20, "{drawn}");
 
     // From above nothing fades and no line is drawn.
-    let from_above = frame_of(&mut renderer, &graph, &above(), 128);
-    assert_eq!(amber_pixels(&from_above), 0);
+    let from_above = line_pixels(&mut renderer, &graph, &above(), -1.0, &lines);
+    assert_eq!(from_above, 0);
     let whole = pixels_drawn(&mut renderer, &graph, &above(), 0.0, 128);
     assert!(whole > 100, "{whole}");
 }
@@ -536,17 +546,15 @@ fn a_support_line_behind_the_model_does_not_show() {
         &[vec![[-10.0, 0.0, 7.0], [10.0, 0.0, 7.0]]],
         &[],
     ));
-    renderer.set_support_lines(-1.0, Some(&lines));
-    let behind = frame_of(&mut renderer, &graph, &under(), 128);
-    assert_eq!(amber_pixels(&behind), 0);
+    let behind = line_pixels(&mut renderer, &graph, &under(), -1.0, &lines);
+    assert_eq!(behind, 0);
     // The same line under the slab shows.
     let lines = Arc::new(SupportLines::new(
         &[vec![[-10.0, 0.0, 3.0], [10.0, 0.0, 3.0]]],
         &[],
     ));
-    renderer.set_support_lines(-1.0, Some(&lines));
-    let below = frame_of(&mut renderer, &graph, &under(), 128);
-    assert!(amber_pixels(&below) > 20, "{}", amber_pixels(&below));
+    let below = line_pixels(&mut renderer, &graph, &under(), -1.0, &lines);
+    assert!(below > 20, "{below}");
 }
 
 /// While the plate fades, what of a support fades with it goes evenly
