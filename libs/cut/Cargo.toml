@@ -1,0 +1,27 @@
+[package]
+name = "sc-cut"
+version = "0.1.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors = ["SynrgStudio"]
+description = "Cuts a closed triangle mesh with a plane and closes the pieces, taking all of the plane's cross-section or only some of its pieces."
+categories = ["algorithms"]
+keywords = ["3d", "mesh", "cut", "plane", "slicer"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sc-mesh-core.workspace = true
+
+# Its polygon triangulator closes the cuts, and its plane split is the
+# fallback when a cut of ours does not close.
+manifold-rust = { version = "0.19.2", features = ["parallel"] }
+rayon.workspace = true
+
+[dev-dependencies]
+# The measurement on real models reads them from STL files.
+sc-mesh-fixtures.workspace = true
+sc-mesh-formats.workspace = true
+sc-scene.workspace = true

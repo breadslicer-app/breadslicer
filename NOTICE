@@ -26,3 +26,10 @@ the source as their licenses require:
   printer profiles are converted from the PrusaSlicer printer profiles UVtools
   v7.1.1 bundles (PrusaSlicer/printer/*.ini); see assets/profiles/README.md.
   https://github.com/sn4k3/UVtools
+
+- manifold-rust (Lars Brubaker; Apache-2.0), a Rust port of Manifold (Emmett
+  Lalish and contributors; Apache-2.0): its polygon triangulator closes the
+  plane cut, and its plane split is the cut's fallback. Used as a crate. See
+  libs/cut.
+  https://github.com/larsbrubaker/manifold-rust
+  https://github.com/elalish/manifold

@@ -11,6 +11,7 @@ members = [
     "libs/3mf",
     "libs/app-paths",
     "libs/arrange",
+    "libs/cut",
     "libs/mesh-core",
     "libs/mesh-fixtures",
     "libs/mesh-formats",
@@ -75,6 +76,7 @@ sc-mesh-fixtures = { path = "libs/mesh-fixtures", version = "0.2.0" }
 sc-mesh-formats = { path = "libs/mesh-formats", version = "0.2.0" }
 sc-mesh-spatial = { path = "libs/mesh-spatial", version = "0.2.0" }
 sc-message-catalog = { path = "libs/message-catalog", version = "0.1.0" }
+sc-cut = { path = "libs/cut", version = "0.1.0" }
 sc-orient = { path = "libs/orient", version = "0.1.0" }
 sc-print-glue = { path = "libs/print-glue", version = "0.2.0" }
 sc-print-primitives = { path = "libs/print-primitives", version = "0.2.0" }
