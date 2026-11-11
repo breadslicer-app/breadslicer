@@ -843,6 +843,28 @@ impl DfSupportSession {
         self.recipe.as_deref().map(|r| &r.options)
     }
 
+    /// The session on the raft of `options` (#519): its kind, thickness and
+    /// wall. The supports stay as they are, where they are; only the raft
+    /// under them, and the roots' feet on it, are drawn again. `None` when
+    /// the raft is already that one.
+    pub fn with_raft_of(&self, options: &crate::DfSupportOptions) -> Option<Self> {
+        let mut settings = (*self.settings).clone();
+        if !options.apply_raft(&mut settings) {
+            return None;
+        }
+        let mut next = self.clone();
+        next.settings = Arc::new(settings);
+        next.recipe = self.recipe.as_deref().map(|recipe| {
+            let mut recipe = recipe.clone();
+            let o = options.clamped();
+            recipe.options.raft = o.raft;
+            recipe.options.raft_thickness_mm = o.raft_thickness_mm;
+            recipe.options.raft_wall = o.raft_wall;
+            Arc::new(recipe)
+        });
+        Some(next)
+    }
+
     /// Whether supports were added or removed by hand since the run: a run
     /// made again would not keep those edits.
     pub fn hand_edited(&self) -> bool {
