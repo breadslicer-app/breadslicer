@@ -617,3 +617,334 @@ fn a_plug_comes_back_standing_and_slices() {
         assert_eq!((polygons, holes), (1, 0), "a solid disc");
     }
 }
+
+/// #179: a region drawn in the world at the current pose keeps the same
+/// world material solid however the model is placed, turned or scaled: no
+/// point of the cavity, back in the world, is inside it.
+#[test]
+fn a_drawn_region_stays_solid_where_it_was_drawn() {
+    // Looking down -z from above, the region's side across x = 2.
+    let region = hollow_df::LassoRegion {
+        perspective: true,
+        origin: [0.0, 0.0, 80.0],
+        u: [1.0, 0.0, 0.0],
+        v: [0.0, -1.0, 0.0],
+        w: [0.0, 0.0, -1.0],
+        polygon: vec![[0.025, -1.0], [1.0, -1.0], [1.0, 1.0], [0.025, 1.0]],
+    };
+    let prepared = region.prepared().expect("a region");
+    let turn = 0.4f64;
+    for world in [
+        affine(
+            [
+                [turn.cos(), -turn.sin(), 0.0],
+                [turn.sin(), turn.cos(), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            [3.0, -2.0, 1.0],
+        ),
+        affine(
+            [[1.6, 0.0, 0.2], [0.0, 1.0, 0.0], [0.0, 0.0, 0.8]],
+            [1.0, 0.5, 0.0],
+        ),
+    ] {
+        let (scene, leaf) = scene_with(sphere_leaf_mesh(12.0), world);
+        let plain = run(&scene, leaf, HollowRequest::default());
+        let drawn = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                solid_areas: vec![WorldSolidArea::Lasso(region.clone())],
+                prepared: Some(plain.prepared.clone()),
+                ..HollowRequest::default()
+            },
+        );
+        assert!(drawn.stats.removed_voxels < plain.stats.removed_voxels);
+        let HollowResult::Preview { cavity, .. } = &drawn.result else {
+            panic!("preview");
+        };
+        let deepest = cavity
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = world.apply_to_vertex(*v).coords();
+                prepared.signed_distance_mm(hollow_df::Vec3::new(p[0], p[1], p[2]))
+            })
+            .fold(f32::MIN, f32::max);
+        assert!(deepest <= 0.06, "{deepest} mm into the region");
+        assert!(deepest >= -0.06, "the cavity reaches the region: {deepest}");
+    }
+}
+
+/// Reads a binary STL, its vertices welded where they are equal.
+fn read_binary_stl(path: &str) -> IndexedMesh {
+    let bytes = std::fs::read(path).expect("the model reads");
+    let n = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
+    let mut index = std::collections::HashMap::new();
+    let mut vertices = Vec::new();
+    let mut faces = Vec::with_capacity(n);
+    for i in 0..n {
+        let o = 84 + i * 50 + 12;
+        let corner = |k: usize| {
+            std::array::from_fn::<f32, 3, _>(|c| {
+                let p = o + k * 12 + c * 4;
+                f32::from_le_bytes(bytes[p..p + 4].try_into().unwrap())
+            })
+        };
+        let ids = [0, 1, 2].map(|k| {
+            let p = corner(k);
+            *index.entry(p.map(f32::to_bits)).or_insert_with(|| {
+                vertices.push(Vertex::new(p));
+                (vertices.len() - 1) as u32
+            })
+        });
+        if ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2] {
+            faces.push(IndexedTriangle::from_raw_indices(ids));
+        }
+    }
+    IndexedMesh::new(None, vertices, faces)
+}
+
+/// #179, measured by hand: with `HOLLOW_LASSO_STL` naming a binary STL, the
+/// time a cavity preview takes without and with a drawn region over the top
+/// third of the model, on the same session, and how far into the region
+/// the cavity reaches.
+#[test]
+#[ignore = "measured by hand on a real model"]
+fn a_drawn_region_on_a_real_model() {
+    let Ok(path) = std::env::var("HOLLOW_LASSO_STL") else {
+        return;
+    };
+    let mesh = read_binary_stl(&path);
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in mesh.vertices() {
+        for k in 0..3 {
+            lo[k] = lo[k].min(v.as_array()[k]);
+            hi[k] = hi[k].max(v.as_array()[k]);
+        }
+    }
+    let centre: [f32; 3] = std::array::from_fn(|k| 0.5 * (lo[k] + hi[k]));
+    let height = hi[2] - lo[2];
+    // A perspective eye in front of the model (-y), level with its middle;
+    // the region: the top third, across the whole width.
+    let eye = [centre[0], lo[1] - 3.0 * height, centre[2]];
+    let depth = centre[1] - eye[1];
+    let top = (hi[2] - height / 3.0 - centre[2]) / depth;
+    let region = hollow_df::LassoRegion {
+        perspective: true,
+        origin: eye,
+        u: [1.0, 0.0, 0.0],
+        v: [0.0, 0.0, 1.0],
+        w: [0.0, 1.0, 0.0],
+        polygon: vec![[-1.0, top], [1.0, top], [1.0, 1.0], [-1.0, 1.0]],
+    };
+    let (scene, leaf) = scene_with(mesh, Transform3D::Identity);
+    let started = std::time::Instant::now();
+    let plain = run(&scene, leaf, HollowRequest::default());
+    let first = started.elapsed();
+    for round in 0..2 {
+        let started = std::time::Instant::now();
+        let again = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                settings: HollowSettings {
+                    wall_thickness_mm: 2.0 + 0.1 * (round + 1) as f32,
+                    ..HollowSettings::default()
+                },
+                prepared: Some(plain.prepared.clone()),
+                ..HollowRequest::default()
+            },
+        );
+        let plain_ms = started.elapsed();
+        let started = std::time::Instant::now();
+        let drawn = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                settings: HollowSettings {
+                    wall_thickness_mm: 2.0 + 0.1 * (round + 1) as f32,
+                    ..HollowSettings::default()
+                },
+                solid_areas: vec![WorldSolidArea::Lasso(region.clone())],
+                prepared: Some(plain.prepared.clone()),
+                ..HollowRequest::default()
+            },
+        );
+        let drawn_ms = started.elapsed();
+        let HollowResult::Preview { cavity, .. } = &drawn.result else {
+            panic!("preview");
+        };
+        let prepared = region.prepared().unwrap();
+        let deepest = cavity
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = v.as_array();
+                prepared.signed_distance_mm(hollow_df::Vec3::new(p[0], p[1], p[2]))
+            })
+            .fold(f32::MIN, f32::max);
+        println!(
+            "{path}: session + first preview {first:?}; preview {plain_ms:?}, with the region {drawn_ms:?}; removed voxels {} -> {}; deepest into the region {deepest:.3} mm",
+            again.stats.removed_voxels, drawn.stats.removed_voxels
+        );
+    }
+}
+
+/// #179, by hand: with `HOLLOW_LASSO_STL` naming a binary STL (supports it
+/// came with taken off), many regions drawn across it from around, each
+/// checked for a closed cavity. Prints the ones that leave it open.
+#[test]
+#[ignore = "measured by hand on a real model"]
+fn drawn_regions_leave_the_cavity_closed() {
+    let Ok(path) = std::env::var("HOLLOW_LASSO_STL") else {
+        return;
+    };
+    let mut mesh = read_binary_stl(&path);
+    if let Some(found) = sc_mesh_core::presupported::find_supports(&mesh) {
+        mesh = found.model;
+    }
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in mesh.vertices() {
+        for k in 0..3 {
+            lo[k] = lo[k].min(v.as_array()[k]);
+            hi[k] = hi[k].max(v.as_array()[k]);
+        }
+    }
+    let centre: [f32; 3] = std::array::from_fn(|k| 0.5 * (lo[k] + hi[k]));
+    let size = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f32::max);
+    let (scene, leaf) = scene_with(mesh, Transform3D::Identity);
+    let plain = run(&scene, leaf, HollowRequest::default());
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut rnd = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f32 / (1u64 << 53) as f32
+    };
+    let mut open = 0;
+    let tries: usize = std::env::var("HOLLOW_LASSO_TRIES")
+        .ok()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(60);
+    for attempt in 0..tries {
+        let yaw = rnd() * std::f32::consts::TAU;
+        let pitch = (rnd() - 0.5) * 2.0;
+        let forward = [
+            -(pitch.cos() * yaw.cos()),
+            -(pitch.cos() * yaw.sin()),
+            -pitch.sin(),
+        ];
+        let right = [-yaw.sin(), yaw.cos(), 0.0];
+        let up = [
+            right[1] * forward[2] - right[2] * forward[1],
+            right[2] * forward[0] - right[0] * forward[2],
+            right[0] * forward[1] - right[1] * forward[0],
+        ];
+        let perspective = attempt % 2 == 0;
+        let distance = 2.5 * size;
+        let eye: [f32; 3] = std::array::from_fn(|k| centre[k] - forward[k] * distance);
+        // A blob around a random point of the view, a fifth to a half wide.
+        let (cx, cy) = ((rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.3);
+        let radius = 0.05 + 0.12 * rnd();
+        let n = 24 + (rnd() * 40.0) as usize;
+        let polygon: Vec<[f32; 2]> = (0..n)
+            .map(|k| {
+                let a = k as f32 / n as f32 * std::f32::consts::TAU;
+                let r = radius * (0.7 + 0.3 * rnd());
+                [cx + r * a.cos(), cy + r * a.sin()]
+            })
+            .map(|p| {
+                if perspective {
+                    p
+                } else {
+                    [p[0] * distance, p[1] * distance]
+                }
+            })
+            .collect();
+        let region = hollow_df::LassoRegion {
+            perspective,
+            origin: eye,
+            u: right,
+            v: up,
+            w: forward,
+            polygon,
+        };
+        let drawn = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                solid_areas: vec![WorldSolidArea::Lasso(region.clone())],
+                prepared: Some(plain.prepared.clone()),
+                ..HollowRequest::default()
+            },
+        );
+        let HollowResult::Preview { cavity, .. } = &drawn.result else {
+            panic!("preview");
+        };
+        let defects = hollow_df::topology::edge_manifold_defects(&as_engine(cavity));
+        if !defects.is_clean() {
+            open += 1;
+            println!("OPEN attempt {attempt}: {defects:?} region {region:?}");
+        }
+    }
+    println!("{path}: {open} of {tries} regions left the cavity open");
+}
+
+/// By hand: whether `HOLLOW_LASSO_STL` (supports taken off) hollows at all,
+/// without any region, and the source's own defects.
+#[test]
+#[ignore = "measured by hand on a real model"]
+fn a_real_model_hollows_without_regions() {
+    let Ok(path) = std::env::var("HOLLOW_LASSO_STL") else {
+        return;
+    };
+    let mut mesh = read_binary_stl(&path);
+    if let Some(found) = sc_mesh_core::presupported::find_supports(&mesh) {
+        mesh = found.model;
+    }
+    println!(
+        "source defects: {:?}",
+        hollow_df::topology::edge_manifold_defects(&as_engine(&mesh))
+    );
+    let (scene, leaf) = scene_with(mesh, Transform3D::Identity);
+    let preview = run(&scene, leaf, HollowRequest::default());
+    if let HollowResult::Preview { cavity, .. } = &preview.result {
+        let engine = as_engine(cavity);
+        println!(
+            "cavity defects: {:?}",
+            hollow_df::topology::edge_manifold_defects(&engine)
+        );
+        let mut count = std::collections::HashMap::new();
+        for t in &engine.triangles {
+            for k in 0..3 {
+                let (a, b) = (t[k], t[(k + 1) % 3]);
+                *count.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+            }
+        }
+        for ((a, b), n) in count {
+            if n == 1 {
+                println!(
+                    "open edge {:?} - {:?}",
+                    engine.positions[a as usize].to_array(),
+                    engine.positions[b as usize].to_array()
+                );
+            }
+        }
+        println!("voxel {:?}", preview.stats.grid);
+    }
+    match start_hollow(
+        &scene,
+        leaf,
+        HollowRequest {
+            kind: HollowKind::Apply,
+            ..HollowRequest::default()
+        },
+    )
+    .unwrap()
+    .join()
+    {
+        Ok(_) => println!("APPLY ok"),
+        Err(e) => println!("APPLY failed: {e:?}"),
+    }
+}

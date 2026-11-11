@@ -21,6 +21,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use sc_geom::df_hollow::hollow_df::LassoRegion;
 use sc_mesh_core::transform::Transform3D;
 use slint::ComponentHandle;
 use slint::wgpu_30::wgpu;
@@ -170,7 +171,14 @@ pub(crate) struct ViewportController {
     /// A press off the model: the stroke starts where the drag reaches it,
     /// erasing or not.
     brush_waiting: Cell<Option<bool>>,
+    /// The Hollow tab's lasso (#179): the points of a stroke in flight, in
+    /// viewport pixels, and who takes the region it closes.
+    lasso: RefCell<Option<Vec<[f32; 2]>>>,
+    lasso_handler: RefCell<Option<LassoHandler>>,
 }
+
+/// Who takes the region a lasso stroke closes.
+type LassoHandler = Rc<dyn Fn(LassoRegion)>;
 
 /// A tool of a workspace tab that acts where the model is clicked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,6 +260,8 @@ impl ViewportController {
             paint_owed: Cell::new(false),
             brush_press: Cell::new(false),
             brush_waiting: Cell::new(None),
+            lasso: RefCell::new(None),
+            lasso_handler: RefCell::new(None),
         }
     }
 
@@ -312,6 +322,8 @@ impl ViewportController {
             paint_owed: Cell::new(false),
             brush_press: Cell::new(false),
             brush_waiting: Cell::new(None),
+            lasso: RefCell::new(None),
+            lasso_handler: RefCell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -2506,7 +2518,7 @@ impl ViewportController {
     }
 
     pub(crate) fn on_pointer_down(&self, cursor: ScreenPoint, mut modifiers: PointerModifiers) {
-        if self.brush_down(cursor, &modifiers) {
+        if self.lasso_down(cursor) || self.brush_down(cursor, &modifiers) {
             return;
         }
         // Shift+click with Add armed hangs the support from the nearest one
@@ -2541,7 +2553,7 @@ impl ViewportController {
         // Track the cursor in every section so a later paste anchors on it; the
         // gizmo drag and hover run in Prepare and Transform.
         self.input.note_hover_cursor(cursor);
-        if self.brush_move(cursor, &modifiers) {
+        if self.lasso_move(cursor) || self.brush_move(cursor, &modifiers) {
             return;
         }
         if self.support_drag_move(cursor) {
@@ -2570,7 +2582,7 @@ impl ViewportController {
     /// Shift, the object joins the selection or leaves it, #13), or selects
     /// what a Shift drag's box touches, on top of the selection.
     pub(crate) fn on_pointer_up(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
-        if self.brush_up() {
+        if self.lasso_up(cursor) || self.brush_up() {
             return;
         }
         if let Some(ui) = self.ui.upgrade() {
@@ -3118,6 +3130,102 @@ impl ViewportController {
         true
     }
 
+    /// Who takes the region a lasso stroke closes (the Hollow tab, #179).
+    pub(crate) fn set_lasso_handler(&self, handler: Rc<dyn Fn(LassoRegion)>) {
+        *self.lasso_handler.borrow_mut() = Some(handler);
+    }
+
+    /// Whether the Hollow tab's lasso is armed: it takes the left button.
+    fn lasso_armed(&self) -> bool {
+        self.session.section() == WorkspaceSection::Hollow
+            && self
+                .ui
+                .upgrade()
+                .is_some_and(|ui| ui.get_hollow_lasso_tool())
+    }
+
+    /// A left press with the lasso armed starts a stroke there.
+    fn lasso_down(&self, cursor: ScreenPoint) -> bool {
+        if !self.lasso_armed() {
+            return false;
+        }
+        *self.lasso.borrow_mut() = Some(vec![[cursor.x, cursor.y]]);
+        self.show_lasso();
+        true
+    }
+
+    /// A move while a stroke is drawn: the curve reaches the cursor, a point
+    /// every few pixels.
+    fn lasso_move(&self, cursor: ScreenPoint) -> bool {
+        let mut lasso = self.lasso.borrow_mut();
+        let Some(points) = lasso.as_mut() else {
+            return false;
+        };
+        let at = [cursor.x, cursor.y];
+        let last = points[points.len() - 1];
+        if (at[0] - last[0]).hypot(at[1] - last[1]) >= LASSO_STEP_PX {
+            points.push(at);
+            drop(lasso);
+            self.show_lasso();
+        }
+        true
+    }
+
+    /// The release that closes a stroke: the region behind it, as the
+    /// camera sees it now, goes to the Hollow tab. A stroke too small to
+    /// enclose anything is dropped.
+    fn lasso_up(&self, cursor: ScreenPoint) -> bool {
+        let Some(mut points) = self.lasso.borrow_mut().take() else {
+            return false;
+        };
+        points.push([cursor.x, cursor.y]);
+        self.show_lasso();
+        let region = self.lasso_region(&points);
+        let handler = self.lasso_handler.borrow().clone();
+        if let (Some(region), Some(handler)) = (region, handler) {
+            handler(region);
+        }
+        true
+    }
+
+    /// Drops a lasso stroke in flight: Esc or a right press. Whether there
+    /// was one.
+    pub(crate) fn cancel_lasso(&self) -> bool {
+        if self.lasso.borrow_mut().take().is_none() {
+            return false;
+        }
+        self.show_lasso();
+        true
+    }
+
+    /// Draws the stroke in flight on the viewport, or nothing.
+    fn show_lasso(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let commands = match self.lasso.borrow().as_ref() {
+            Some(points) if points.len() > 1 => lasso_commands(points),
+            _ => String::new(),
+        };
+        ui.set_hollow_lasso_commands(commands.into());
+    }
+
+    /// The world region behind the closed curve `points` (viewport pixels),
+    /// as the camera sees it now: a cone from the eye in perspective, a
+    /// prism along the view in orthographic. `None` for a curve that
+    /// encloses no area.
+    fn lasso_region(&self, points: &[[f32; 2]]) -> Option<LassoRegion> {
+        let viewport = self.render.viewport()?;
+        let camera_slot = self.camera.camera_cell().borrow();
+        let camera = camera_slot.as_ref()?;
+        lasso_region(
+            camera,
+            crate::mesh_render::default_fov_y(),
+            [viewport.width(), viewport.height()],
+            points,
+        )
+    }
+
     /// Drops a stroke in flight: Esc or a right press. Whether there was one.
     pub(crate) fn cancel_brush_stroke(&self) -> bool {
         let Some(brush) = self.surface_brush.borrow().clone() else {
@@ -3165,7 +3273,7 @@ impl ViewportController {
     pub(crate) fn on_right_pointer_down(&self, x: f32, y: f32) {
         // A right press drops a stroke or a Supports drag in flight, and is
         // no more.
-        if self.cancel_brush_stroke() || self.cancel_support_drag() {
+        if self.cancel_lasso() || self.cancel_brush_stroke() || self.cancel_support_drag() {
             self.right_dropped_drag.set(true);
             return;
         }
@@ -4086,6 +4194,139 @@ fn axis_from_ui(view: crate::AxisView) -> AxisView {
         crate::AxisView::Left => AxisView::Left,
         crate::AxisView::Top => AxisView::Top,
         crate::AxisView::Bottom => AxisView::Bottom,
+    }
+}
+
+/// How far apart, in pixels, the lasso keeps the points of a stroke.
+const LASSO_STEP_PX: f32 = 3.0;
+/// The most points a lasso keeps: a longer stroke keeps every few.
+const LASSO_MAX_POINTS: usize = 512;
+/// The least area, in square pixels, a lasso must enclose to count.
+const LASSO_MIN_AREA_PX: f32 = 64.0;
+
+/// The path commands that draw the lasso stroke `points`, closed.
+fn lasso_commands(points: &[[f32; 2]]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(points.len() * 16);
+    for (i, p) in points.iter().enumerate() {
+        let _ = write!(
+            out,
+            "{} {:.1} {:.1} ",
+            if i == 0 { "M" } else { "L" },
+            p[0],
+            p[1]
+        );
+    }
+    out.push('Z');
+    out
+}
+
+/// The world region behind the closed curve `points`, in pixels of a
+/// viewport of `size`, as `camera` sees it with a vertical field of view of
+/// `fov_y`: what the lasso keeps solid (#179). In perspective a cone from the
+/// eye, its polygon where each pixel's ray crosses the plane one unit in
+/// front of the eye; in orthographic a prism along the view, its polygon
+/// where each pixel's ray starts on the camera plane. `None` for a curve that
+/// encloses less than [`LASSO_MIN_AREA_PX`].
+pub(crate) fn lasso_region(
+    camera: &crate::camera::OrbitCamera,
+    fov_y: f32,
+    size: [f32; 2],
+    points: &[[f32; 2]],
+) -> Option<LassoRegion> {
+    let area = points
+        .iter()
+        .zip(points.iter().cycle().skip(1))
+        .map(|(a, b)| a[0] * b[1] - b[0] * a[1])
+        .sum::<f32>()
+        .abs()
+        * 0.5;
+    if points.len() < 3 || area < LASSO_MIN_AREA_PX {
+        return None;
+    }
+    let step = points.len().div_ceil(LASSO_MAX_POINTS);
+    let eye = camera.eye();
+    let forward = (camera.target - eye).normalize_or_zero();
+    let (right, up) = camera.right_and_up();
+    let polygon: Vec<[f32; 2]> = points
+        .iter()
+        .step_by(step)
+        .map(|p| {
+            let ray = picking::ray_from_pixel(camera, fov_y, size[0], size[1], p[0], p[1]);
+            if camera.orthographic {
+                let d = ray.origin - eye;
+                [d.dot(right), d.dot(up)]
+            } else {
+                let depth = ray.direction.dot(forward).max(1e-6);
+                [
+                    ray.direction.dot(right) / depth,
+                    ray.direction.dot(up) / depth,
+                ]
+            }
+        })
+        .collect();
+    Some(LassoRegion {
+        perspective: !camera.orthographic,
+        origin: eye.into(),
+        u: right.into(),
+        v: up.into(),
+        w: forward.into(),
+        polygon,
+    })
+}
+
+#[cfg(test)]
+mod lasso_region_tests {
+    use super::*;
+    use crate::camera::OrbitCamera;
+    use glam::Vec3;
+
+    /// #179: the region a lasso makes holds, at any depth, what the camera
+    /// shows inside the curve, and nothing outside it: in perspective and in
+    /// orthographic, from a slanted view.
+    #[test]
+    fn the_lasso_region_is_what_the_camera_shows_inside_the_curve() {
+        let size = [800.0, 600.0];
+        let fov = crate::mesh_render::default_fov_y();
+        // A square of pixels a little left of the middle.
+        let square = [
+            [300.0, 250.0],
+            [420.0, 250.0],
+            [420.0, 370.0],
+            [300.0, 370.0],
+        ];
+        for orthographic in [false, true] {
+            let mut camera = OrbitCamera::new(Vec3::new(10.0, -5.0, 20.0), 60.0);
+            camera.yaw = 0.7;
+            camera.pitch = 0.5;
+            camera.orthographic = orthographic;
+            let region = lasso_region(&camera, fov, size, &square)
+                .expect("a region")
+                .prepared()
+                .expect("prepared");
+            let at = |px: [f32; 2], depth: f32| {
+                let ray = picking::ray_from_pixel(&camera, fov, size[0], size[1], px[0], px[1]);
+                let p = ray.origin + ray.direction * depth;
+                sc_geom::df_hollow::hollow_df::Vec3::new(p.x, p.y, p.z)
+            };
+            for depth in [20.0, 60.0, 140.0] {
+                assert!(region.contains(at([360.0, 310.0], depth)));
+                assert!(region.contains(at([302.0, 252.0], depth)));
+                assert!(!region.contains(at([298.0, 310.0], depth)));
+                assert!(!region.contains(at([360.0, 380.0], depth)));
+                // The curve itself is the region's surface.
+                assert!(region.signed_distance_mm(at([420.0, 300.0], depth)).abs() < 1e-2);
+            }
+        }
+    }
+
+    /// A stroke that encloses next to nothing makes no region.
+    #[test]
+    fn a_lasso_without_area_makes_no_region() {
+        let camera = OrbitCamera::new(Vec3::ZERO, 50.0);
+        let fov = crate::mesh_render::default_fov_y();
+        let line = [[100.0, 100.0], [200.0, 100.0], [300.0, 101.0]];
+        assert!(lasso_region(&camera, fov, [800.0, 600.0], &line).is_none());
     }
 }
 

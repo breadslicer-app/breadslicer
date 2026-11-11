@@ -375,6 +375,9 @@ pub enum WorldSolidArea {
         center: [f32; 3],
         radius_mm: f32,
     },
+    /// What lies behind a curve drawn on screen (#179): its `origin` a
+    /// world point, its `u`, `v`, `w` world directions, at the current pose.
+    Lasso(hollow_df::LassoRegion),
 }
 
 /// Preview (the cavity, as apply builds it) or apply (printable).
@@ -607,6 +610,13 @@ fn run_hollow(
                 center: frame.world_to_frame(*center),
                 radius_mm: *radius_mm,
             },
+            WorldSolidArea::Lasso(region) => SolidArea::Lasso(hollow_df::LassoRegion {
+                origin: frame.world_to_frame(region.origin),
+                u: frame.world_dir_to_frame(region.u),
+                v: frame.world_dir_to_frame(region.v),
+                w: frame.world_dir_to_frame(region.w),
+                ..region.clone()
+            }),
         })
         .collect();
 

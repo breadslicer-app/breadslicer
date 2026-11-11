@@ -32,6 +32,7 @@ use rayon::prelude::*;
 use crate::bvh::Bvh;
 use crate::control::{Cancelled, Control, Stage};
 use crate::mesh::{Aabb, IndexedMesh, Vec3};
+use crate::solid::{LassoRegion, PreparedLasso};
 use crate::topology::{Topology, edge_manifold_defects, is_edge_manifold};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +105,10 @@ pub struct HollowOptions {
     /// shells. The mesh is not Taubin-smoothed, and a cavity that does not
     /// close falls back to the unsmoothed one instead of DragonFruit's ladder.
     pub exact_wall: bool,
+    /// Drawn regions kept solid (#179), in the session frame. Their voxels
+    /// are in `blocked_voxel_indices` too; an exact cavity also takes their
+    /// distance where it crosses them, so its wall lands on their surface.
+    pub solid_regions: Vec<LassoRegion>,
 }
 
 impl Default for HollowOptions {
@@ -125,6 +130,7 @@ impl Default for HollowOptions {
             preview_surface_only: false,
             rotation_quat: [0.0, 0.0, 0.0, 1.0],
             exact_wall: false,
+            solid_regions: Vec::new(),
         }
     }
 }
@@ -1013,8 +1019,14 @@ impl HollowSession {
         let kept = keep.iter().filter(|v| **v).count();
 
         ctl.stage(Stage::CavitySurface)?;
-        let (wall, wall_closed) =
-            exact_cavity_wall(&self.grid, &self.solid, &keep, dist, shell_voxels_f);
+        let (wall, wall_closed) = exact_cavity_wall(
+            &self.grid,
+            &self.solid,
+            &keep,
+            dist,
+            shell_voxels_f,
+            &options.solid_regions,
+        );
 
         let infill = if matches!(options.mode, HollowMode::Infill) {
             ctl.stage(Stage::Infill)?;
@@ -1079,14 +1091,16 @@ fn exact_cavity_wall(
     keep: &[bool],
     dist: &[f32],
     shell_voxels_f: f32,
+    regions: &[LassoRegion],
 ) -> (IndexedMesh, bool) {
     let negative: Vec<bool> = solid
         .par_iter()
         .zip(keep)
         .map(|(solid, kept)| *solid && !*kept)
         .collect();
-    let scalar =
+    let mut scalar =
         build_smoothed_cavity_scalar_field(grid, solid, keep, dist, shell_voxels_f, 0, true);
+    place_on_solid_regions(grid, solid, keep, regions, &mut scalar);
     let mesh = organic_boundary_mesh(grid, keep, &negative, &scalar, true);
     if edge_manifold_defects(&mesh).is_clean() && !has_degenerate_triangle(&mesh) {
         return (mesh, true);
@@ -1098,6 +1112,98 @@ fn exact_cavity_wall(
         Some(closed) => (closed, true),
         None => (mesh, false),
     }
+}
+
+/// Puts the cavity wall on the surface of the drawn regions kept solid
+/// (#179). The keep mask holds the voxels whose centre a region holds, so
+/// alone the wall would land between those and the carved ones, up to a
+/// voxel off the region. Where the mask changes across a region's surface,
+/// the cells on both sides take the region's signed distance instead (in
+/// voxels, kept on their side of 0), and the contour, interpolated between
+/// them, follows the surface: exactly for a flat side, to second order on a
+/// cone's. Cells away from it keep their values.
+fn place_on_solid_regions(
+    grid: &GridSpec,
+    solid: &[bool],
+    keep: &[bool],
+    regions: &[LassoRegion],
+    field: &mut [f32],
+) {
+    let prepared: Vec<PreparedLasso> = regions.iter().filter_map(LassoRegion::prepared).collect();
+    if prepared.is_empty() {
+        return;
+    }
+    let held = |i: usize| {
+        let (x, y, z) = grid.coords(i);
+        let p = grid.center_world(x, y, z);
+        prepared.iter().any(|r| r.contains(p))
+    };
+    let in_region: Vec<bool> = (0..solid.len())
+        .into_par_iter()
+        .map(|i| solid[i] && held(i))
+        .collect();
+    let voxel = grid.voxel_mm;
+    let plane = grid.nx * grid.ny;
+    field
+        .par_chunks_mut(plane)
+        .enumerate()
+        .for_each(|(z, layer)| {
+            for (k, value) in layer.iter_mut().enumerate() {
+                let i = z * plane + k;
+                if !solid[i] {
+                    continue;
+                }
+                // Kept for a region, or carved: the two sides of its surface.
+                // A wall cell outside every region keeps its value.
+                let side = if in_region[i] {
+                    true
+                } else if !keep[i] {
+                    false
+                } else {
+                    continue;
+                };
+                let (x, y) = (k % grid.nx, k / grid.nx);
+                let mut crosses = false;
+                'around: for dz in -1isize..=1 {
+                    for dy in -1isize..=1 {
+                        for dx in -1isize..=1 {
+                            let (nx, ny, nz) = (x as isize + dx, y as isize + dy, z as isize + dz);
+                            if !grid.in_bounds(nx, ny, nz) {
+                                continue;
+                            }
+                            let n = grid.idx(nx as usize, ny as usize, nz as usize);
+                            let other = if in_region[n] {
+                                true
+                            } else if solid[n] && !keep[n] {
+                                false
+                            } else {
+                                continue;
+                            };
+                            if other != side {
+                                crosses = true;
+                                break 'around;
+                            }
+                        }
+                    }
+                }
+                if !crosses {
+                    continue;
+                }
+                let p = grid.center_world(x, y, z);
+                let distance = prepared
+                    .iter()
+                    .map(|r| r.signed_distance_mm(p))
+                    .fold(f32::MIN, f32::max)
+                    / voxel;
+                *value = if side {
+                    value.max(distance).max(EXACT_WALL_SAMPLE_MARGIN)
+                } else {
+                    // Carved: the nearer of the wall and the region, still
+                    // a cavity value.
+                    value.max(distance).min(-EXACT_WALL_SAMPLE_MARGIN)
+                };
+            }
+        });
 }
 
 /// A triangle [`normalize_mesh_for_boolean`] would drop: a repeated vertex

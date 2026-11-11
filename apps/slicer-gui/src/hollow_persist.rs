@@ -45,6 +45,17 @@
 //! replaces it as before saving. A hollow whose drains are all plain, with
 //! the drain tool plain, is still written as version 1, which builds before
 //! these shapes read.
+//!
+//! Version 3 adds the areas drawn to stay solid (#179), after the plugs:
+//!
+//! ```text
+//! … as in version 2, up to the plugs
+//! u32 count, per area: u8 perspective, 3 f32 origin, 3 f32 u, 3 f32 v,
+//!   3 f32 w, u32 points, per point 2 f32  in the leaf's local frame
+//! u32 length, the original mesh
+//! ```
+//!
+//! A hollow with no such area is written as version 1 or 2, as before.
 
 use std::sync::Arc;
 
@@ -55,6 +66,8 @@ use sc_project_formats::HollowDocument;
 use sc_scene::node::NodeKind;
 use sc_scene::{NodeId, Scene};
 
+use sc_geom::df_hollow::hollow_df::LassoRegion;
+
 use crate::hollow_run::{HollowOptions, Hollowed, LocalDrain, PlugLink};
 use crate::scene_document::SceneDocument;
 
@@ -62,7 +75,7 @@ use crate::scene_document::SceneDocument;
 pub(crate) const DF_HOLLOWER: &str = "df";
 
 /// The newest document version this build writes and reads.
-pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 2;
+pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 3;
 
 /// The hollows to save with the scene of `spatial`: each hollow made here
 /// that a leaf still shows, once, with the first leaf that shows it. Copies
@@ -148,6 +161,7 @@ fn restore(scene: &Scene, document: &HollowDocument) -> Result<Hollowed, String>
         drains: decoded.drains,
         options: decoded.options,
         plugs,
+        solids: decoded.solids,
     })
 }
 
@@ -226,7 +240,8 @@ fn needs_shapes(hollowed: &Hollowed) -> bool {
 
 /// The document of `hollowed`, and its version.
 fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
-    let shapes = needs_shapes(hollowed);
+    let solids = !hollowed.solids.is_empty();
+    let shapes = solids || needs_shapes(hollowed);
     let mut out = Vec::new();
     let f32s = |out: &mut Vec<u8>, values: &[f32]| {
         for v in values {
@@ -288,10 +303,30 @@ fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
             out.extend_from_slice(&hash.to_le_bytes());
         }
     }
+    if solids {
+        out.extend_from_slice(&(hollowed.solids.len() as u32).to_le_bytes());
+        for area in &hollowed.solids {
+            out.push(u8::from(area.perspective));
+            for axis in [area.origin, area.u, area.v, area.w] {
+                f32s(&mut out, &axis);
+            }
+            out.extend_from_slice(&(area.polygon.len() as u32).to_le_bytes());
+            for point in &area.polygon {
+                f32s(&mut out, point);
+            }
+        }
+    }
     let mesh = encode_mesh(&hollowed.original);
     out.extend_from_slice(&(mesh.len() as u32).to_le_bytes());
     out.extend_from_slice(&mesh);
-    (if shapes { 2 } else { 1 }, out)
+    let version = if solids {
+        3
+    } else if shapes {
+        2
+    } else {
+        1
+    };
+    (version, out)
 }
 
 /// Reads a document, front to back.
@@ -348,14 +383,16 @@ struct Decoded {
     drains: Vec<LocalDrain>,
     /// Each plug: its drain and the fingerprint of its model.
     plugs: Vec<(usize, Fingerprint)>,
+    solids: Vec<LassoRegion>,
     original: IndexedMesh,
 }
 
-/// Reads a document of `version` (1 or 2).
+/// Reads a document of `version` (1, 2 or 3).
 fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
-    let shapes = match version {
-        0 | 1 => false,
-        2 => true,
+    let (shapes, solids) = match version {
+        0 | 1 => (false, false),
+        2 => (true, false),
+        3 => (true, true),
         _ => return None,
     };
     let mut input = Reader(bytes);
@@ -426,12 +463,48 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
     } else {
         Vec::new()
     };
+    let solids = if solids {
+        let count = input.u32()? as usize;
+        // Each area takes at least 57 bytes and 3 points.
+        if count > input.0.len() / 81 {
+            return None;
+        }
+        (0..count)
+            .map(|_| {
+                let perspective = match input.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return None,
+                };
+                let [origin, u, v, w] =
+                    [input.f32s()?, input.f32s()?, input.f32s()?, input.f32s()?];
+                let points = input.u32()? as usize;
+                if points < 3 || points > input.0.len() / 8 {
+                    return None;
+                }
+                let polygon = (0..points)
+                    .map(|_| input.f32s())
+                    .collect::<Option<Vec<[f32; 2]>>>()?;
+                Some(LassoRegion {
+                    perspective,
+                    origin,
+                    u,
+                    v,
+                    w,
+                    polygon,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
     let length = input.u32()? as usize;
     let original = decode_mesh(input.take(length)?).ok()?;
     input.0.is_empty().then_some(Decoded {
         options,
         drains,
         plugs,
+        solids,
         original,
     })
 }
@@ -458,6 +531,7 @@ mod hollow_persist_tests {
                 ..HollowOptions::default()
             },
             plugs: Vec::new(),
+            solids: Vec::new(),
         }
     }
 
@@ -529,6 +603,43 @@ mod hollow_persist_tests {
         // Read as version 1, it is malformed: never half read.
         assert!(decode(&bytes, 1).is_none());
         assert!(decode(&bytes, 3).is_none());
+    }
+
+    /// #179: the areas kept solid are written as version 3 and read back as
+    /// they were; without them a hollow stays version 1 or 2.
+    #[test]
+    fn solid_areas_read_back_as_version_3() {
+        let area = |perspective: bool, n: usize| LassoRegion {
+            perspective,
+            origin: [1.0, -2.0, 30.0],
+            u: [1.0, 0.0, 0.0],
+            v: [0.0, 0.5, 0.0],
+            w: [0.0, 0.0, -1.0],
+            polygon: (0..n)
+                .map(|k| {
+                    let a = k as f32 / n as f32 * std::f32::consts::TAU;
+                    [a.cos() * 0.3, a.sin() * 0.2]
+                })
+                .collect(),
+        };
+        for base in [hollowed(), shaped()] {
+            let h = Hollowed {
+                solids: vec![area(true, 40), area(false, 3)],
+                ..base
+            };
+            let (version, bytes) = encode(&h);
+            assert_eq!(version, 3);
+            let decoded = decode(&bytes, version).expect("it decodes");
+            assert_eq!(decoded.solids, h.solids);
+            assert_eq!(decoded.drains, h.drains);
+            assert_eq!(decoded.options, h.options);
+            assert_eq!(decoded.plugs.len(), h.plugs.len());
+            // Cut short, it is malformed: never half read.
+            assert!(decode(&bytes[..bytes.len() - 1], version).is_none());
+            // Read as version 2, it is malformed too.
+            assert!(decode(&bytes, 2).is_none());
+        }
+        assert_ne!(encode(&hollowed()).0, 3);
     }
 
     /// A version 1 document, as builds before #316 wrote it, byte for byte:

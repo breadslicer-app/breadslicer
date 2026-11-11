@@ -6687,3 +6687,38 @@ msgstr[1] "Se quitaron {n} cuerpos de los soportes importados."
 msgctxt "DfSupportDialog"
 msgid "Bodies of the imported supports to remove: {}."
 msgstr "Cuerpos de los soportes importados a quitar: {}."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "SOLID AREAS"
+msgstr "ZONAS MACIZAS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Drawing solid areas (M)"
+msgstr "Dibujando zonas macizas (M)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Keep an area solid (M)"
+msgstr "Dejar una zona maciza (M)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Turn the camera to the side you want, then drag around a part: everything behind the curve, through the model, stays solid. The cavity is computed again at once."
+msgstr "Girá la cámara hacia el lado que quieras y arrastrá alrededor de una parte: todo lo que queda detrás de la curva, a través del modelo, queda macizo. La cavidad se vuelve a calcular en el momento."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Remove the last"
+msgstr "Quitar la última"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Remove all"
+msgstr "Quitar todas"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Drag around what should stay solid: everything behind the curve, through the model, is no longer hollowed. Turn the camera first to choose the side. Esc puts the lasso away."
+msgstr "Arrastrá alrededor de lo que tiene que quedar macizo: todo lo que está detrás de la curva, a través del modelo, deja de ahuecarse. Girá la cámara antes para elegir el lado. Esc guarda el lazo."

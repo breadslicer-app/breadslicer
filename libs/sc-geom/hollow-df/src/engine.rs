@@ -79,6 +79,8 @@
 
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
+use rayon::prelude::*;
+
 use crate::bvh::Bvh;
 use crate::control::{Cancelled, Control, Stage};
 use crate::drain::{
@@ -91,6 +93,7 @@ use crate::hollowing::{
     normalize_mesh_for_boolean_with_weld, point_inside_mesh_parity, vec3_normalize,
 };
 use crate::mesh::{IndexedMesh, Vec3};
+use crate::solid::LassoRegion;
 use crate::topology::{EdgeManifoldDefects, edge_manifold_defects, is_edge_manifold};
 use crate::wall::WallDistances;
 
@@ -210,6 +213,9 @@ pub enum SolidArea {
     Sphere { center: [f32; 3], radius_mm: f32 },
     /// Every voxel whose center is inside the box.
     Box { min: [f32; 3], max: [f32; 3] },
+    /// What lies behind a curve drawn on screen (#179): every voxel whose
+    /// centre the region holds, and the cavity wall put on its surface.
+    Lasso(LassoRegion),
 }
 
 /// What to hollow, independent of the grid.
@@ -532,6 +538,18 @@ impl SourceShell {
                 }
             }
         }
+        // The clean-up drops a triangle with no area: a needle (three
+        // corners in a line) on a closed source leaves a hole of 3 edges
+        // there. A source closed as it is goes in as it is.
+        if !defects.is_clean() {
+            let own = edge_manifold_defects(source);
+            if own.is_clean() {
+                return Self {
+                    mesh: None,
+                    defects: own,
+                };
+            }
+        }
         // Welding a clean, compact source changes only its vertex order:
         // keep the session's copy rather than a second one.
         let same = mesh.triangles.len() == source.triangles.len()
@@ -757,7 +775,7 @@ impl Session {
     /// The solid voxels a solid area covers in this grid.
     pub fn solid_area_voxels(&self, area: &SolidArea) -> Vec<usize> {
         let grid = self.inner.grid();
-        let inside: Box<dyn Fn(Vec3) -> bool> = match area {
+        let inside: Box<dyn Fn(Vec3) -> bool + Send + Sync> = match area {
             SolidArea::Voxels(indices) => {
                 return indices
                     .iter()
@@ -777,8 +795,15 @@ impl Session {
                     (0..3).all(|k| p[k] >= min[k] && p[k] <= max[k])
                 })
             }
+            SolidArea::Lasso(region) => {
+                let Some(region) = region.prepared() else {
+                    return Vec::new();
+                };
+                Box::new(move |p: Vec3| region.contains(p))
+            }
         };
         (0..grid.cell_count())
+            .into_par_iter()
             .filter(|&i| {
                 if !self.inner.is_solid(i) {
                     return false;
@@ -824,6 +849,14 @@ impl Session {
             preview_surface_only: false,
             rotation_quat: [0.0, 0.0, 0.0, 1.0],
             exact_wall: true,
+            solid_regions: settings
+                .solid_areas
+                .iter()
+                .filter_map(|area| match area {
+                    SolidArea::Lasso(region) => Some(region.clone()),
+                    _ => None,
+                })
+                .collect(),
         }
     }
 

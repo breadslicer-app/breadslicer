@@ -1407,6 +1407,9 @@ export component HollowInspector inherits VerticalLayout {
     in property <int> model-state;
     in property <int> drain-count;
     in property <bool> drain-tool-on;
+    // The lasso (#179): how many regions the model keeps solid.
+    in property <int> solid-count;
+    in property <bool> lasso-tool-on;
     in property <bool> show-cavity;
     callback show-cavity-toggled(bool);
     // The options (HollowRun::on_option), pushed by Rust after every change.
@@ -1429,6 +1432,9 @@ export component HollowInspector inherits VerticalLayout {
     callback restore-requested();
     callback clear-drains-requested();
     callback drain-tool-toggled();
+    callback lasso-tool-toggled();
+    callback remove-last-solid-requested();
+    callback clear-solids-requested();
     callback option-changed(int, float);
 
     spacing: 12px;
@@ -1582,6 +1588,41 @@ export component HollowInspector inherits VerticalLayout {
             value: root.beam;
             committed(v) => {
                 root.option-changed(5, v);
+            }
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "SOLID AREAS");
+        note: root.solid-count > 0 ? "\{root.solid-count}" : "";
+
+        ScButton {
+            text: root.lasso-tool-on ? @tr("Inspector" => "Drawing solid areas (M)") : @tr("Inspector" => "Keep an area solid (M)");
+            icon: Icons.lasso;
+            kind: root.lasso-tool-on ? ButtonKind.primary : ButtonKind.normal;
+            enabled: root.selection-valid && root.model-state != 2 && !root.running;
+            clicked => {
+                root.lasso-tool-toggled();
+            }
+        }
+        Note {
+            text: @tr("Inspector" => "Turn the camera to the side you want, then drag around a part: everything behind the curve, through the model, stays solid. The cavity is computed again at once.");
+        }
+        if root.solid-count > 0: HorizontalLayout {
+            spacing: 8px;
+            ScButton {
+                text: @tr("Inspector" => "Remove the last");
+                enabled: !root.running;
+                clicked => {
+                    root.remove-last-solid-requested();
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Remove all");
+                enabled: !root.running;
+                clicked => {
+                    root.clear-solids-requested();
+                }
             }
         }
     }
