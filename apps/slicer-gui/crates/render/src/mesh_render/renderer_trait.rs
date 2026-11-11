@@ -128,6 +128,9 @@ pub trait MeshRenderer {
     /// view from under the plate to hide them (#481).
     fn set_raft_top(&mut self, _mm: f32) {}
 
+    /// Leaves the support meshes out of the view, lines and all (#512).
+    fn set_supports_hidden(&mut self, _hidden: bool) {}
+
     /// From under the plate, the supports drawn as lines (#493): the height
     /// above which the support meshes fade (`f32::MAX` keeps them), and the
     /// lines drawn in their place.
@@ -256,6 +259,10 @@ impl MeshRenderer for Renderer {
 
     fn set_raft_top(&mut self, mm: f32) {
         Renderer::set_raft_top(self, mm);
+    }
+
+    fn set_supports_hidden(&mut self, hidden: bool) {
+        Renderer::set_supports_hidden(self, hidden);
     }
 
     fn set_support_lines(

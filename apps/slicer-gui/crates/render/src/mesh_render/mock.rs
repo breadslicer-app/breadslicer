@@ -101,6 +101,7 @@ pub struct MockRendererState {
     pub support_tips: Vec<super::SupportTip>,
     /// What the last `set_support_lines` asked for (#493).
     pub supports_shown_up_to_mm: f32,
+    pub supports_hidden: bool,
     pub support_lines: Option<std::sync::Arc<super::SupportLines>>,
 }
 
@@ -122,6 +123,7 @@ impl MockRendererState {
             overhang_map: None,
             support_tips: Vec::new(),
             supports_shown_up_to_mm: f32::MAX,
+            supports_hidden: false,
             support_lines: None,
         }))
     }
@@ -148,6 +150,10 @@ impl MeshRenderer for MockRenderer {
 
     fn set_support_tips(&mut self, tips: &[super::SupportTip]) {
         self.state.borrow_mut().support_tips = tips.to_vec();
+    }
+
+    fn set_supports_hidden(&mut self, hidden: bool) {
+        self.state.borrow_mut().supports_hidden = hidden;
     }
 
     fn set_support_lines(

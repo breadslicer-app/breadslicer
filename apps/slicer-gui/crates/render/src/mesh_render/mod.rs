@@ -130,6 +130,8 @@ struct FrameLook {
     /// From under the plate, the height above which a support mesh fades out
     /// for its lines (#493); `f32::MAX` keeps it.
     supports_shown_up_to_mm: f32,
+    /// The support meshes are left out whole, lines and all (#512).
+    supports_hidden: bool,
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -385,6 +387,9 @@ pub struct Renderer {
     /// drawn in its place.
     supports_shown_up_to_mm: f32,
     support_lines: support_lines::LinesSlot,
+    /// Leaves the support meshes out of the view, as the Hollow tab's lasso
+    /// does to keep the model clear (#512).
+    supports_hidden: bool,
     target_manager: TargetManager,
 }
 
@@ -474,6 +479,7 @@ impl Renderer {
             surface_normals: surface_normals::SurfaceNormals::default(),
             raft_top_mm: 0.0,
             supports_shown_up_to_mm: f32::MAX,
+            supports_hidden: false,
             support_lines: support_lines::LinesSlot::default(),
             target_manager: TargetManager {
                 msaa: None,
@@ -968,6 +974,7 @@ impl Renderer {
                 overhang_map: self.overhang_map,
                 raft_top_mm: self.raft_top_mm,
                 supports_shown_up_to_mm: self.supports_shown_up_to_mm,
+                supports_hidden: self.supports_hidden,
             },
         )
     }
@@ -1011,6 +1018,12 @@ impl Renderer {
     /// it (#481).
     pub fn set_raft_top(&mut self, mm: f32) {
         self.raft_top_mm = mm.max(0.0);
+    }
+
+    /// Leaves the support meshes out of the frames to come, lines and all
+    /// (#512), or draws them again.
+    pub fn set_supports_hidden(&mut self, hidden: bool) {
+        self.supports_hidden = hidden;
     }
 
     /// From under the plate, the supports drawn as lines (#493): the height
@@ -1069,6 +1082,7 @@ impl Renderer {
                 overhang_map: None,
                 raft_top_mm: 0.0,
                 supports_shown_up_to_mm: f32::MAX,
+                supports_hidden: false,
             },
         )
     }
@@ -1129,6 +1143,7 @@ impl Renderer {
             overhang_map,
             raft_top_mm,
             supports_shown_up_to_mm,
+            supports_hidden,
         } = look;
         let tip_cell_mm = self.tip_cell_mm;
         if self.core.device_loss.is_lost() {
@@ -1337,11 +1352,18 @@ impl Renderer {
             }
 
             if scene_for_draws && let Some(inst) = installed {
-                self.record_mesh_objects(&mut pass, inst, selection);
-                if under_plate > 0.0 && raft_top_mm > 0.0 {
+                let hidden: &[bool] = if supports_hidden {
+                    &support_objects
+                } else {
+                    &[]
+                };
+                self.record_mesh_objects(&mut pass, inst, selection, hidden);
+                if supports_hidden {
+                    // Nothing of the supports: no cuts, lines or fades.
+                } else if under_plate > 0.0 && raft_top_mm > 0.0 {
                     self.record_support_cuts(&mut pass, inst, selection, &support_objects);
                 }
-                if under_plate > 0.0 && !self.support_lines.is_empty() {
+                if !supports_hidden && under_plate > 0.0 && !self.support_lines.is_empty() {
                     self.support_lines.record(
                         &mut pass,
                         &self.pipelines.mesh.line_pipeline,
@@ -1352,7 +1374,7 @@ impl Renderer {
                 // While the plate fades, what of the supports fades with it
                 // goes translucent (#481, #493), over the lines coming in.
                 let fading = raft_top_mm > 0.0 || supports_shown_up_to_mm < f32::MAX;
-                if under_plate > 0.0 && under_plate < 1.0 && fading {
+                if !supports_hidden && under_plate > 0.0 && under_plate < 1.0 && fading {
                     self.record_support_fade(
                         &mut pass,
                         inst,
@@ -1521,6 +1543,7 @@ impl Renderer {
         pass: &mut wgpu::RenderPass<'_>,
         inst: &InstalledScene,
         selection: &[NodeId],
+        hidden: &[bool],
     ) {
         let mut mapped = false;
         pass.set_pipeline(&self.pipelines.mesh.pipeline);
@@ -1530,6 +1553,9 @@ impl Renderer {
             &[],
         );
         for (i, obj) in inst.gpu.objects().iter().enumerate() {
+            if hidden.get(i).copied().unwrap_or(false) {
+                continue;
+            }
             let offset = (i as u64 * inst.gpu.model_stride()) as u32;
             pass.set_bind_group(
                 MeshBindGroup::Models.idx(),
