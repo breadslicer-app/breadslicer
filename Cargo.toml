@@ -80,7 +80,7 @@ sc-print-glue = { path = "libs/print-glue", version = "0.2.0" }
 sc-print-primitives = { path = "libs/print-primitives", version = "0.2.0" }
 sc-print-profiles = { path = "libs/print-profiles", version = "0.3.0" }
 # The .bread file format, kept in its own repository.
-bread-format = { git = "https://github.com/breadslicer-app/bread-format", tag = "v0.2.0" }
+bread-format = { git = "https://github.com/breadslicer-app/bread-format", tag = "v0.3.0" }
 sc-project-formats = { path = "libs/project-formats", version = "0.2.0" }
 sc-review = { path = "libs/review", version = "0.1.0" }
 sc-scene = { path = "libs/scene", version = "0.2.0" }
