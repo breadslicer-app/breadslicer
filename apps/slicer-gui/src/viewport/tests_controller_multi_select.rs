@@ -5,7 +5,7 @@
 //! out, Shift+left drag selects with a box on top of what was selected, the
 //! object list agrees with the viewport, and Delete, the gizmo, `G`, `R` and
 //! `S` act on all of them about their shared centre (#218), each as one
-//! undo step.
+//! undo step. Drop to plate drops each of them (#516).
 
 use std::sync::Arc;
 
@@ -660,4 +660,51 @@ fn measure_box_drag_moves() {
             release.elapsed()
         );
     }
+}
+
+/// The world height of each row's lowest point (the unit cubes reach half a
+/// millimetre below their translation).
+fn lowest(ctrl: &ViewportController, row: usize) -> f64 {
+    translation(ctrl, row)[2] - 0.5
+}
+
+#[test]
+fn drop_to_plate_drops_each_selected_object_in_one_undo_step() {
+    let ctrl = plate(
+        &[
+            (Piece::Model, [-6.0, 0.0, 3.0]),
+            (Piece::Model, [0.0, 0.0, 7.0]),
+            (Piece::Model, [6.0, 0.0, 5.0]),
+        ],
+        WorkspaceSection::Transform,
+    );
+    select_rows(&ctrl, &[0, 1]);
+    ctrl.on_numeric_edit(10, 0.0);
+    assert!(lowest(&ctrl, 0).abs() < 1e-9, "{}", lowest(&ctrl, 0));
+    assert!(lowest(&ctrl, 1).abs() < 1e-9, "{}", lowest(&ctrl, 1));
+    assert_eq!(translation(&ctrl, 2), [6.0, 0.0, 5.0], "not selected");
+    // Each keeps its place on the plate.
+    assert!(close(translation(&ctrl, 0), [-6.0, 0.0, 0.5]));
+    assert!(close(translation(&ctrl, 1), [0.0, 0.0, 0.5]));
+    assert_eq!(selected(&ctrl), vec![0, 1]);
+    assert!(ctrl.document().undo().unwrap());
+    assert!(close(translation(&ctrl, 0), [-6.0, 0.0, 3.0]));
+    assert!(close(translation(&ctrl, 1), [0.0, 0.0, 7.0]));
+    assert!(!ctrl.document().can_undo(), "it was one step");
+}
+
+#[test]
+fn in_the_supports_tab_drop_to_plate_drops_each_model_and_not_their_supports() {
+    let ctrl = plate(
+        &[
+            (Piece::Model, [-6.0, 0.0, 3.0]),
+            (Piece::Supports, [-6.0, 0.0, 1.0]),
+            (Piece::Model, [6.0, 0.0, 4.0]),
+        ],
+        WorkspaceSection::Supports,
+    );
+    select_rows(&ctrl, &[0, 1, 2]);
+    ctrl.on_numeric_edit(10, 0.0);
+    assert!(lowest(&ctrl, 0).abs() < 1e-9);
+    assert!(lowest(&ctrl, 2).abs() < 1e-9);
 }
