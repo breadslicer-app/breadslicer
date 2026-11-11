@@ -20,12 +20,14 @@ export component PreferencesPage inherits VerticalLayout {
 
     Text {
         text: root.title;
-        font-size: 1.2rem;
-        font-weight: 700;
+        font-size: Theme.font-lg;
+        font-weight: 600;
+        color: Theme.text;
         // Title is already exposed as the panel's accessible-label; avoid
         // a duplicate node in the a11y tree.
         accessible-role: none;
     }
 
     @children
-}
+}import { Theme } from "../kit/theme.slint";
+

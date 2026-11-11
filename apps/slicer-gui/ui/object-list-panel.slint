@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Palette, StandardListView } from "std-widgets.slint";
+import { Theme } from "kit/theme.slint";
+import { StandardListView } from "std-widgets.slint";
 
 // Compact control used in the panel's title bar. Hosts a single glyph
 // passed as its child and reports clicks. The background lightens on
@@ -12,7 +13,7 @@ component PanelButton inherits Rectangle {
     callback clicked();
 
     width: 26px;
-    border-radius: 4px;
+    border-radius: Theme.radius;
 
     ta := TouchArea {
         mouse-cursor: pointer;
@@ -21,7 +22,7 @@ component PanelButton inherits Rectangle {
         }
     }
 
-    background: ta.has-hover ? Palette.foreground.transparentize(0.85) : transparent;
+    background: ta.has-hover ? Theme.text.transparentize(0.85) : transparent;
 
     HorizontalLayout {
         alignment: center;
@@ -125,10 +126,10 @@ export component ObjectListPanel inherits Rectangle {
         }
     }
 
-    background: Palette.background.darker(0.15);
-    border-color: Palette.border;
+    background: Theme.panel.darker(0.15);
+    border-color: Theme.border;
     border-width: 1px;
-    border-radius: 8px;
+    border-radius: Theme.radius-lg;
     clip: true;
     drop-shadow-blur: 14px;
     drop-shadow-color: #0000004d;
@@ -147,7 +148,7 @@ export component ObjectListPanel inherits Rectangle {
         // drag.
         Rectangle {
             height: root.title-bar-height;
-            background: Palette.background.darker(0.3);
+            background: Theme.panel.darker(0.3);
 
             drag-area := TouchArea {
                 mouse-cursor: move;
@@ -202,7 +203,7 @@ export component ObjectListPanel inherits Rectangle {
                     horizontal-stretch: 1;
                     vertical-alignment: center;
                     font-weight: 600;
-                    color: Palette.foreground;
+                    color: Theme.text;
                     text: @tr("ObjectList" => "Scene Objects");
                     overflow: elide;
                     accessible-role: none;
@@ -220,13 +221,13 @@ export component ObjectListPanel inherits Rectangle {
                     if !root.minimized: Rectangle {
                         width: 12px;
                         height: 2px;
-                        background: Palette.foreground;
+                        background: Theme.text;
                     }
                     if root.minimized: Rectangle {
                         width: 11px;
                         height: 10px;
                         border-width: 1.5px;
-                        border-color: Palette.foreground;
+                        border-color: Theme.text;
                         border-radius: 1px;
                     }
                 }
@@ -245,14 +246,14 @@ export component ObjectListPanel inherits Rectangle {
                             y: (parent.height - self.height) / 2;
                             width: 14px;
                             height: 2px;
-                            background: Palette.foreground;
+                            background: Theme.text;
                             transform-rotation: 45deg;
                         }
                         Rectangle {
                             y: (parent.height - self.height) / 2;
                             width: 14px;
                             height: 2px;
-                            background: Palette.foreground;
+                            background: Theme.text;
                             transform-rotation: -45deg;
                         }
                     }
@@ -335,7 +336,7 @@ export component ObjectListPanel inherits Rectangle {
             viewbox-y: 0;
             viewbox-width: 16;
             viewbox-height: 16;
-            stroke: Palette.foreground.transparentize(0.5);
+            stroke: Theme.text.transparentize(0.5);
             stroke-width: 1.5px;
 
             MoveTo {

@@ -39,11 +39,12 @@ fn vs_main(in: VsIn) -> VsOut {
     return out;
 }
 
-// Ink colours, from Breadslicer's theme tokens: the word in
-// `text-muted` #8d959b, so it reads as a marking on the machine, and
-// the printer's name below it in the highlight, `accent` #d7a75a.
-const WORD_COLOUR: vec3<f32> = vec3<f32>(0.553, 0.584, 0.608);
-const NAME_COLOUR: vec3<f32> = vec3<f32>(0.843, 0.655, 0.353);
+// Ink colours, from Breadslicer's theme tokens: the word, and the
+// rulers' numbers, in `text-muted` #8b959d, so they read as markings on
+// a drawing, and the printer's name below the word in `text-faint`
+// #69737b.
+const WORD_COLOUR: vec3<f32> = vec3<f32>(0.545, 0.584, 0.616);
+const NAME_COLOUR: vec3<f32> = vec3<f32>(0.412, 0.451, 0.482);
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
@@ -51,6 +52,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // lines never share a texel.
     let coverage = textureSample(label_tex, label_samp, in.uv).rg;
     let colour = select(WORD_COLOUR, NAME_COLOUR, coverage.g > coverage.r);
-    // The tab is the plate's: it fades with it from under the plate (#481).
-    return vec4<f32>(colour, max(coverage.r, coverage.g) * (1.0 - u.env_min.w));
+    // Unlike the plate's faces, the writing stays from under the plate: its
+    // copy facing down reads the right way round from there (#507).
+    return vec4<f32>(colour, max(coverage.r, coverage.g));
 }

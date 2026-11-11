@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, ComboBox, LineEdit, Palette, ScrollView } from "std-widgets.slint";
+import { Theme } from "kit/theme.slint";
+import { Palette, ScrollView } from "std-widgets.slint";
+import { Card, ScButton as Button, ScComboBox as ComboBox, ScLineEdit as LineEdit } from "kit/controls.slint";
 import { ThemePreference } from "preferences/appearance.slint";
 
 // One displayed value of the profile viewer. `value` is already
@@ -34,8 +36,8 @@ export component EditField inherits HorizontalLayout {
 
     Text {
         text: root.label;
-        font-size: 0.85rem;
-        color: Palette.foreground.transparentize(0.3);
+        font-size: Theme.font-sm;
+        color: Theme.text-muted;
         vertical-alignment: center;
         horizontal-stretch: 1;
     }
@@ -57,6 +59,8 @@ export component EditField inherits HorizontalLayout {
 // additionally get the edit mode, where the defaults are editable and
 // one calibration pair per session can be picked and edited.
 export component ProfileViewDialog inherits Window {
+    // The app's own surface, not the platform style's (#507).
+    background: Theme.panel;
     title: @tr("ProfileViewDialog" => "Resin profile");
     icon: @image-url("../assets/images/breadslicer.png");
     default-font-family: "Noto Sans";
@@ -152,15 +156,16 @@ export component ProfileViewDialog inherits Window {
 
             Text {
                 text: root.profile-name;
-                font-size: 1.1rem;
-                font-weight: 700;
+                font-size: Theme.font-lg;
+                font-weight: 600;
+                color: Theme.text;
                 wrap: word-wrap;
             }
 
             if root.note != "": Text {
                 text: root.note;
-                font-size: 0.85rem;
-                color: Palette.foreground.transparentize(0.3);
+                font-size: Theme.font-sm;
+                color: Theme.text-muted;
                 wrap: word-wrap;
             }
 
@@ -171,58 +176,37 @@ export component ProfileViewDialog inherits Window {
                     spacing: 12px;
                     alignment: start;
 
-                    for section in root.sections: Rectangle {
-                        border-radius: 6px;
-                        border-width: section.highlighted ? 2px : 1px;
-                        border-color: section.highlighted
-                            ? Palette.accent-background
-                            : Palette.border;
-                        background: Palette.alternate-background;
-                        height: section-body.preferred-height;
+                    // Sections as the panels draw them (#507): a small caps
+                    // title with its leader line, no box; the one the
+                    // default printer uses carries the amber mark.
+                    for section in root.sections: Card {
+                        title: section.title;
+                        highlighted: section.highlighted;
 
-                        section-body := VerticalLayout {
-                            padding: 10px;
-                            spacing: 6px;
-
+                        for field in section.fields: HorizontalLayout {
+                            spacing: 8px;
                             Text {
-                                text: section.title;
-                                font-size: 0.9rem;
-                                font-weight: 700;
+                                text: field.label;
+                                font-size: Theme.font-sm;
+                                color: Theme.text-muted;
+                                horizontal-stretch: 1;
                             }
-
-                            for field in section.fields: HorizontalLayout {
-                                spacing: 8px;
-                                Text {
-                                    text: field.label;
-                                    font-size: 0.85rem;
-                                    color: Palette.foreground.transparentize(0.3);
-                                    horizontal-stretch: 1;
-                                }
-                                Text {
-                                    text: field.value;
-                                    font-size: 0.85rem;
-                                    horizontal-alignment: right;
-                                }
+                            Text {
+                                text: field.value;
+                                font-family: Theme.mono;
+                                font-size: Theme.font-sm;
+                                color: Theme.text;
+                                horizontal-alignment: right;
                             }
                         }
                     }
 
-                    if root.editable && root.defaults-editable: Rectangle {
-                        border-radius: 6px;
-                        border-width: 1px;
-                        border-color: Palette.border;
-                        background: Palette.alternate-background;
-                        height: defaults-edit-body.preferred-height;
+                    if root.editable && root.defaults-editable: Card {
+                        title: @tr("ProfileViewDialog" => "Defaults");
 
-                        defaults-edit-body := VerticalLayout {
-                            padding: 10px;
+                        VerticalLayout {
                             spacing: 6px;
 
-                            Text {
-                                text: @tr("ProfileViewDialog" => "Defaults");
-                                font-size: 0.9rem;
-                                font-weight: 700;
-                            }
                             EditField {
                                 label: @tr("ProfileViewDialog" => "Scale compensation x (%)");
                                 value <=> root.scale-x-text;
@@ -262,22 +246,12 @@ export component ProfileViewDialog inherits Window {
                         }
                     }
 
-                    if root.editable && root.edit-target-labels.length > 0: Rectangle {
-                        border-radius: 6px;
-                        border-width: 1px;
-                        border-color: Palette.border;
-                        background: Palette.alternate-background;
-                        height: block-edit-body.preferred-height;
+                    if root.editable && root.edit-target-labels.length > 0: Card {
+                        title: @tr("ProfileViewDialog" => "Edit calibration values");
 
-                        block-edit-body := VerticalLayout {
-                            padding: 10px;
+                        VerticalLayout {
                             spacing: 6px;
 
-                            Text {
-                                text: @tr("ProfileViewDialog" => "Edit calibration values");
-                                font-size: 0.9rem;
-                                font-weight: 700;
-                            }
                             ComboBox {
                                 model: root.edit-target-labels;
                                 current-index <=> root.edit-target-index;
@@ -390,8 +364,8 @@ export component ProfileViewDialog inherits Window {
 
                 Text {
                     text: root.error-message;
-                    color: #d32f2f;
-                    font-size: 0.85rem;
+                    color: Theme.danger;
+                    font-size: Theme.font-sm;
                     wrap: word-wrap;
                     vertical-alignment: center;
                     horizontal-stretch: 1;

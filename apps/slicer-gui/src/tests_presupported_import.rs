@@ -196,10 +196,39 @@ fn separate(opened: &Opened) -> (NodeId, NodeId) {
     );
     opened
         .window
-        .invoke_message_answered(MessageAnswer::Confirm);
+        .invoke_message_answered(MessageAnswer::Separate);
+    assert!(!opened.window.get_message_open(), "nothing more is asked");
     let leaves = scene_leaves(&opened.document);
     assert_eq!(leaves.len(), 2, "the model and its supports");
+    assert!(opened.document.supports_wanted().is_none(), "nothing waits");
     (leaves[0].0, leaves[1].0)
+}
+
+#[test]
+fn replace_gives_the_model_supports_made_here_in_one_undo_step() {
+    on_fresh_slint_thread(|| {
+        let opened = open();
+        let doc = &opened.document;
+        // Enter replaces.
+        opened
+            .window
+            .invoke_message_answered(MessageAnswer::Confirm);
+        assert!(!opened.window.get_message_open(), "nothing more is asked");
+        let leaves = scene_leaves(doc);
+        assert_eq!(leaves.len(), 1, "the model alone");
+        assert_eq!(leaves[0].1.faces().len(), opened.model_faces);
+        let model = leaves[0].0;
+        assert_eq!(doc.selection_primary_node_id(), Some(model));
+        let (_, wanted) = doc.supports_wanted().expect("the model waits");
+        assert_eq!(wanted.ids(), [model]);
+        // One undo step brings the file back as it came, and asks nothing.
+        assert!(doc.undo().expect("undoes"));
+        let back = scene_leaves(doc);
+        assert_eq!(back.len(), 1);
+        assert!(Arc::ptr_eq(&back[0].1, &opened.file));
+        opened._run.settle_for_test();
+        assert!(!opened.window.get_message_open());
+    });
 }
 
 fn world(document: &SceneDocument, leaf: NodeId) -> Transform3D {

@@ -62,6 +62,115 @@ impl LabelRaster {
     }
 }
 
+/// The numbers along the plate's rulers (#507), packed side by side in one
+/// raster, and where each lands on the plate.
+pub struct MarksRaster {
+    /// Two coverage channels interleaved per texel, as [`LabelRaster`]'s:
+    /// the numbers are in the first, the second is empty.
+    pub(crate) coverage: Vec<u8>,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) marks: Vec<PlateMark>,
+}
+
+// The sizes only, not the coverage.
+impl std::fmt::Debug for MarksRaster {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MarksRaster")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("marks", &self.marks)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One number on the plate: where its ink lands, `[min_x, min_y, max_x,
+/// max_y]` in world mm at `Z = 0`, and where it is in the raster, as
+/// `[u0, v0, u1, v1]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlateMark {
+    pub(crate) text: u32,
+    pub(crate) world: [f32; 4],
+    pub(crate) uv: [f32; 4],
+}
+
+/// Pixels per em the rulers' numbers rasterise at.
+const MARK_PX: f32 = 64.0;
+/// The height of a number's ink on the plate, mm.
+const MARK_TEXT_MM: f32 = 2.4;
+/// How far a number stands from the floor's edge, mm: past the longest
+/// tick of the ruler.
+const MARK_OFFSET_MM: f32 = 3.8;
+/// A number every this many mm along a ruler.
+const MARK_EVERY_MM: f32 = 50.0;
+
+/// Rasterises the numbers of the plate's two rulers, counted in mm from
+/// the floor's front-left corner `corner`: along the front edge (X) from 0
+/// to `width_mm`, and along the left edge (Y) from 50 to `depth_mm`. Each
+/// is read from the front.
+pub fn rasterise_plate_marks(
+    corner: [f32; 2],
+    width_mm: f32,
+    depth_mm: f32,
+) -> Option<MarksRaster> {
+    let steps = |length: f32| {
+        (0..)
+            .map(|k| k as f32 * MARK_EVERY_MM)
+            .take_while(move |v| *v <= length + 0.01)
+    };
+    let mut wanted: Vec<(u32, bool)> = steps(width_mm).map(|v| (v as u32, true)).collect();
+    wanted.extend(steps(depth_mm).skip(1).map(|v| (v as u32, false)));
+
+    let mut lines = Vec::new();
+    for (value, _) in &wanted {
+        lines.push(rasterise_line(&value.to_string(), MARK_PX)?);
+    }
+    let gap = 4;
+    let width = lines.iter().map(|l| l.width + gap).sum::<u32>();
+    let height = lines.iter().map(|l| l.height).max()?;
+    let mut coverage = vec![0u8; (width * height * 2) as usize];
+    let scale = MARK_TEXT_MM / height as f32;
+    let mut marks = Vec::new();
+    let mut left = 0;
+    for ((value, front), line) in wanted.iter().zip(&lines) {
+        for row in 0..line.height {
+            for col in 0..line.width {
+                let texel = (row * width + left + col) as usize;
+                coverage[texel * 2] = line.coverage[(row * line.width + col) as usize];
+            }
+        }
+        let (w, h) = (line.width as f32 * scale, line.height as f32 * scale);
+        let along = *value as f32;
+        let world = if *front {
+            let x = corner[0] + along;
+            let top = corner[1] - MARK_OFFSET_MM;
+            [x - 0.5 * w, top - h, x + 0.5 * w, top]
+        } else {
+            let y = corner[1] + along;
+            let right = corner[0] - MARK_OFFSET_MM;
+            [right - w, y - 0.5 * h, right, y + 0.5 * h]
+        };
+        let uv = [
+            left as f32 / width as f32,
+            0.0,
+            (left + line.width) as f32 / width as f32,
+            line.height as f32 / height as f32,
+        ];
+        marks.push(PlateMark {
+            text: *value,
+            world,
+            uv,
+        });
+        left += line.width + gap;
+    }
+    Some(MarksRaster {
+        coverage,
+        width,
+        height,
+        marks,
+    })
+}
+
 /// One line of ink: single-channel coverage, bottom-to-top, cropped.
 struct Line {
     coverage: Vec<u8>,
@@ -317,6 +426,32 @@ mod front_label_tests {
             left.abs_diff(right) <= 1,
             "{left} texels left, {right} right"
         );
+    }
+
+    #[test]
+    fn the_rulers_number_every_50_mm_from_the_front_left_corner() {
+        let marks = rasterise_plate_marks([-111.8, -63.5], 223.6, 127.0).expect("numbers");
+        let texts: Vec<u32> = marks.marks.iter().map(|m| m.text).collect();
+        assert_eq!(texts, [0, 50, 100, 150, 200, 50, 100]);
+        // Along the front: under the edge, centred on their mark.
+        let fifty = marks.marks[1].world;
+        assert!(
+            ((fifty[0] + fifty[2]) / 2.0 - (-61.8)).abs() < 1e-3,
+            "{fifty:?}"
+        );
+        assert!(fifty[3] < -63.5 - 3.0, "{fifty:?}");
+        // Along the left: beside the edge, centred on their mark.
+        let left = marks.marks[5].world;
+        assert!(left[2] < -111.8 - 3.0, "{left:?}");
+        assert!(
+            ((left[1] + left[3]) / 2.0 - (-13.5)).abs() < 1e-3,
+            "{left:?}"
+        );
+        // Each its own run of the raster, inside it.
+        for pair in marks.marks.windows(2) {
+            assert!(pair[0].uv[2] <= pair[1].uv[0], "{pair:?}");
+        }
+        assert!(marks.marks.iter().all(|m| m.uv[2] <= 1.0 && m.uv[3] <= 1.0));
     }
 
     #[test]

@@ -46,22 +46,32 @@ export component ScButton inherits Rectangle {
     in property <string> text;
     in property <string> icon;
     in property <ButtonKind> kind: ButtonKind.normal;
+    // The standard Button's way to ask for the primary look.
+    in property <bool> primary;
     in property <bool> enabled: true;
-    in property <length> button-height: 32px;
+    in property <length> button-height: 28px;
     // A ring around the button: what Enter presses.
     in property <bool> ring;
     callback clicked();
 
+    property <bool> lead: root.primary || root.kind == ButtonKind.primary;
+
     height: self.button-height;
+    // Takes the keyboard like the standard button, so a window can start on
+    // it and Tab reaches it; a click leaves the keyboard where it was, so
+    // the 3D view keeps its keys.
+    forward-focus: keys;
     min-width: layout.preferred-width;
     border-radius: Theme.radius;
     border-width: self.kind == ButtonKind.ghost ? 0px : 1px;
-    border-color: self.kind == ButtonKind.primary ? Theme.accent : Theme.border-strong.transparentize(0.3);
-    background: !self.enabled ? Theme.raised.transparentize(0.4)
-        : self.kind == ButtonKind.primary ? (touch.has-hover ? Theme.accent-hover : Theme.accent)
+    // Off, a button keeps its shape and a text that can be read: only the
+    // fill and the weight of the line go.
+    border-color: !self.enabled ? Theme.border
+        : root.lead ? Theme.action : Theme.border-strong;
+    background: !self.enabled ? (self.kind == ButtonKind.ghost ? transparent : Theme.raised)
+        : root.lead ? (touch.has-hover ? Theme.action-hover : Theme.action)
         : self.kind == ButtonKind.ghost ? (touch.has-hover ? Theme.hover : transparent)
         : (touch.has-hover ? Theme.hover : Theme.raised);
-    opacity: self.enabled ? 1 : 0.55;
     accessible-role: button;
     accessible-label: self.text;
     accessible-action-default => {
@@ -70,7 +80,19 @@ export component ScButton inherits Rectangle {
         }
     }
 
-    if root.ring: Rectangle {
+    keys := FocusScope {
+        enabled: root.enabled;
+        focus-on-click: false;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    if root.ring || keys.has-focus: Rectangle {
         x: -3px;
         y: -3px;
         width: parent.width + 6px;
@@ -90,14 +112,16 @@ export component ScButton inherits Rectangle {
             commands: root.icon;
             size: 16px;
             y: (parent.height - self.height) / 2;
-            color: root.kind == ButtonKind.primary ? Theme.on-accent : Theme.text-soft;
+            color: !root.enabled ? Theme.text-faint
+                : root.lead ? Theme.on-action : Theme.text-soft;
         }
         if root.text != "": Text {
             text: root.text;
             vertical-alignment: center;
             font-size: Theme.font;
-            font-weight: root.kind == ButtonKind.primary ? 600 : 400;
-            color: root.kind == ButtonKind.primary ? Theme.on-accent : Theme.text;
+            font-weight: root.lead ? 600 : 500;
+            color: !root.enabled ? Theme.text-muted
+                : root.lead ? Theme.on-action : Theme.text;
         }
     }
 
@@ -224,10 +248,19 @@ export component ToolButton inherits Rectangle {
     in property <bool> enabled: true;
     callback clicked();
 
-    width: 44px;
-    height: 44px;
+    width: 36px;
+    height: 36px;
     border-radius: Theme.radius;
     background: root.active ? Theme.hover : touch.has-hover && root.enabled ? Theme.raised : transparent;
+
+    // The active tool: a bar at the rail's edge.
+    if root.active: Rectangle {
+        x: -6px;
+        y: 6px;
+        width: 2px;
+        height: parent.height - 12px;
+        background: Theme.accent;
+    }
     opacity: root.enabled ? 1 : 0.4;
     accessible-role: button;
     accessible-label: self.label;
@@ -239,17 +272,17 @@ export component ToolButton inherits Rectangle {
 
     Icon {
         commands: root.icon;
-        size: 20px;
+        size: 18px;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        color: root.active ? Theme.accent : Theme.text-soft;
+        color: root.active ? Theme.text : Theme.text-muted;
     }
     if root.shortcut != "": Text {
-        x: parent.width - self.width - 3px;
-        y: parent.height - self.height - 2px;
+        x: parent.width - self.width - 2px;
+        y: parent.height - self.height - 1px;
         text: root.shortcut;
         font-family: Theme.mono;
-        font-size: 9px;
+        font-size: 8px;
         color: Theme.text-faint;
     }
 
@@ -329,14 +362,22 @@ export component Card inherits Rectangle {
     in property <bool> collapsible;
     in-out property <bool> expanded: true;
 
-    background: Theme.card;
-    border-width: 1px;
-    border-color: self.highlighted ? Theme.accent : Theme.border;
-    border-radius: Theme.radius-lg;
+    // A section of the inspector, as a drawing labels one: a small caps
+    // title with a leader line running to its note, over its content. No
+    // box: the panel is the surface.
+    background: transparent;
+
+    if root.highlighted: Rectangle {
+        x: -12px;
+        y: 8px;
+        width: 2px;
+        height: 12px;
+        background: Theme.accent;
+    }
 
     VerticalLayout {
         Rectangle {
-            height: 36px;
+            height: 28px;
             accessible-role: button;
             accessible-label: root.title;
             accessible-expanded: root.expanded;
@@ -347,21 +388,28 @@ export component Card inherits Rectangle {
             }
 
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
                 spacing: 8px;
 
                 Text {
                     text: root.title;
-                    font-size: Theme.font-sm;
+                    font-size: 10.5px;
                     font-weight: 600;
-                    letter-spacing: 0.5px;
-                    color: root.highlighted ? Theme.accent : Theme.text-muted;
+                    letter-spacing: 1px;
+                    color: root.highlighted ? Theme.accent : Theme.text-faint;
                     vertical-alignment: center;
-                    horizontal-stretch: 1;
                 }
-                Text {
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+
+                    Rectangle {
+                        height: 1px;
+                        background: root.highlighted ? Theme.accent.transparentize(0.6) : Theme.border;
+                    }
+                }
+                if root.note != "": Text {
                     text: root.note;
+                    font-family: Theme.mono;
                     font-size: Theme.font-xs;
                     color: root.note-color;
                     vertical-alignment: center;
@@ -376,11 +424,6 @@ export component Card inherits Rectangle {
             }
         }
 
-        if root.expanded: Rectangle {
-            height: 1px;
-            background: Theme.border-soft;
-        }
-
         // Folded by height rather than removed: `@children` cannot sit in a
         // conditional element.
         Rectangle {
@@ -390,8 +433,9 @@ export component Card inherits Rectangle {
             body := VerticalLayout {
                 y: 0;
                 height: self.preferred-height;
-                padding: 12px;
-                spacing: 10px;
+                padding-top: 2px;
+                padding-bottom: 12px;
+                spacing: 8px;
 
                 @children
             }
@@ -503,7 +547,7 @@ export component NumberField inherits HorizontalLayout {
     }
 
     spacing: 10px;
-    min-height: 28px;
+    min-height: 26px;
 
     if root.label != "": Text {
         text: root.label;
@@ -515,7 +559,7 @@ export component NumberField inherits HorizontalLayout {
     }
     box := Rectangle {
         width: root.field-width;
-        height: 28px;
+        height: 26px;
         background: Theme.well;
         border-width: 1px;
         border-color: input.has-focus ? Theme.accent : Theme.border;
@@ -591,7 +635,7 @@ export component Segmented inherits Rectangle {
     in property <bool> enabled: true;
     callback picked(int);
 
-    height: 28px;
+    height: 26px;
     background: Theme.well;
     border-width: 1px;
     border-color: Theme.border;
@@ -618,6 +662,7 @@ export component Segmented inherits Rectangle {
             Text {
                 text: option;
                 font-size: Theme.font-sm;
+                font-weight: i == root.current ? 600 : 400;
                 color: i == root.current ? Theme.text : Theme.text-muted;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -648,4 +693,545 @@ export component LabeledRow inherits HorizontalLayout {
         overflow: elide;
     }
     @children
+}
+
+// A box to tick, with its text. The same properties as the standard one.
+export component ScCheckBox inherits Rectangle {
+    in property <string> text;
+    in-out property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled();
+
+    function flip() {
+        if root.enabled {
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+
+    min-height: 22px;
+    min-width: row.min-width;
+    preferred-width: row.preferred-width;
+    preferred-height: row.preferred-height;
+    horizontal-stretch: 1;
+    opacity: self.enabled ? 1 : 0.5;
+    accessible-role: checkbox;
+    accessible-label: self.text;
+    accessible-checkable: true;
+    accessible-checked: self.checked;
+    accessible-action-default => {
+        root.flip();
+    }
+
+    row := HorizontalLayout {
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: 14px;
+                height: 14px;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: root.checked ? Theme.action : scope.has-focus ? Theme.accent : Theme.border-strong;
+                background: root.checked ? Theme.action : touch.has-hover ? Theme.hover : Theme.well;
+
+                if root.checked: Icon {
+                    commands: Icons.check;
+                    size: 12px;
+                    x: 1px;
+                    y: 1px;
+                    stroke-width: 2.4px;
+                    color: Theme.on-action;
+                }
+            }
+        }
+        Text {
+            text: root.text;
+            font-size: Theme.font;
+            color: Theme.text-soft;
+            vertical-alignment: center;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            scope.focus();
+            root.flip();
+        }
+    }
+    scope := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == Key.Return {
+                root.flip();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+// One choice out of a list, opened under the field. The same properties as
+// the standard one.
+export component ScComboBox inherits Rectangle {
+    in property <[string]> model;
+    in-out property <int> current-index: 0;
+    out property <string> current-value: root.model[root.current-index];
+    in property <bool> enabled: true;
+    callback selected(string);
+
+    property <length> row-height: 26px;
+    property <length> list-height: Math.min(root.model.length * root.row-height + 2px, 320px);
+
+    height: 26px;
+    min-width: 80px;
+    horizontal-stretch: 1;
+    background: Theme.well;
+    border-width: 1px;
+    border-color: touch.has-hover && root.enabled ? Theme.border-strong : Theme.border;
+    border-radius: Theme.radius;
+    opacity: self.enabled ? 1 : 0.5;
+    accessible-role: combobox;
+    accessible-value: self.current-value;
+    accessible-action-default => {
+        if root.enabled {
+            popup.show();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 6px;
+        spacing: 6px;
+
+        Text {
+            text: root.current-value;
+            font-size: Theme.font;
+            color: Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        Icon {
+            commands: "M6 9 L12 15 L18 9";
+            size: 14px;
+            y: (parent.height - self.height) / 2;
+            color: Theme.text-muted;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            popup.show();
+        }
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 2px;
+        width: root.width;
+        height: root.list-height;
+
+        Rectangle {
+            background: Theme.raised;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            border-radius: Theme.radius;
+            clip: true;
+
+            Flickable {
+                x: 1px;
+                y: 1px;
+                width: parent.width - 2px;
+                height: parent.height - 2px;
+                content-height: root.model.length * root.row-height;
+
+                for option[i] in root.model: Rectangle {
+                    y: i * root.row-height;
+                    height: root.row-height;
+                    background: option-touch.has-hover ? Theme.hover : transparent;
+
+                    if i == root.current-index: Rectangle {
+                        x: 0;
+                        width: 2px;
+                        background: Theme.accent;
+                    }
+                    Text {
+                        x: 9px;
+                        width: parent.width - 16px;
+                        text: option;
+                        font-size: Theme.font;
+                        font-weight: i == root.current-index ? 600 : 400;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    option-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.current-index = i;
+                            root.selected(option);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A line of text to type in. The same properties as the standard one.
+export component ScLineEdit inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in property <string> placeholder-text;
+    in property <bool> enabled: true;
+    in property <InputType> input-type <=> input.input-type;
+    callback edited(string);
+    callback accepted(string);
+
+    height: 26px;
+    min-width: 60px;
+    horizontal-stretch: 1;
+    background: Theme.well;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    border-radius: Theme.radius;
+    opacity: self.enabled ? 1 : 0.5;
+    forward-focus: input;
+    accessible-role: text-input;
+    accessible-value: self.text;
+    accessible-placeholder-text: self.placeholder-text;
+    accessible-action-set-value(value) => {
+        if root.enabled {
+            input.text = value;
+            root.edited(value);
+        }
+    }
+
+    input := TextInput {
+        x: 8px;
+        width: parent.width - 16px;
+        height: parent.height;
+        enabled: root.enabled;
+        font-size: Theme.font;
+        color: Theme.text;
+        vertical-alignment: center;
+        single-line: true;
+        accessible-role: none;
+        edited => {
+            root.edited(self.text);
+        }
+        accepted => {
+            root.accepted(self.text);
+        }
+    }
+    if root.text == "" && root.placeholder-text != "": Text {
+        x: 8px;
+        width: parent.width - 16px;
+        height: parent.height;
+        text: root.placeholder-text;
+        font-size: Theme.font;
+        color: Theme.text-faint;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+// A value dragged along a track. The same properties as the standard one,
+// lying down.
+export component ScSlider inherits Rectangle {
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in-out property <float> value;
+    in property <bool> enabled: true;
+    callback changed(float);
+    callback released(float);
+
+    property <length> knob: 12px;
+    property <float> share: root.maximum > root.minimum
+        ? Math.clamp((root.value - root.minimum) / (root.maximum - root.minimum), 0, 1) : 0;
+    function at(x: length) -> float {
+        return root.minimum
+            + Math.clamp((x - root.knob / 2) / (root.width - root.knob), 0, 1) * (root.maximum - root.minimum);
+    }
+
+    height: 20px;
+    min-width: 60px;
+    horizontal-stretch: 1;
+    opacity: self.enabled ? 1 : 0.5;
+    accessible-role: slider;
+    accessible-value: self.value;
+    accessible-value-minimum: self.minimum;
+    accessible-value-maximum: self.maximum;
+
+    Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: 2px;
+        background: Theme.border-strong;
+    }
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: root.share * (root.width - root.knob) + root.knob / 2;
+        height: 2px;
+        background: Theme.text-soft;
+    }
+    Rectangle {
+        x: root.share * (root.width - root.knob);
+        y: (parent.height - self.height) / 2;
+        width: root.knob;
+        height: root.knob;
+        border-radius: Theme.radius-sm;
+        background: touch.pressed || touch.has-hover ? Theme.action-hover : Theme.action;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        pointer-event(event) => {
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                root.value = root.at(self.mouse-x);
+                root.changed(root.value);
+            } else if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                root.released(root.value);
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.value = root.at(self.mouse-x);
+                root.changed(root.value);
+            }
+        }
+    }
+}
+
+// How far a job has got, 0 to 1.
+export component ScProgress inherits Rectangle {
+    in property <float> progress;
+    in property <bool> indeterminate;
+
+    height: 4px;
+    horizontal-stretch: 1;
+    border-radius: 2px;
+    background: Theme.border;
+    accessible-role: progress-indicator;
+    accessible-value: self.progress;
+
+    Rectangle {
+        x: 0;
+        width: (root.indeterminate ? 0.3 : Math.clamp(root.progress, 0, 1)) * parent.width;
+        border-radius: 2px;
+        background: Theme.accent;
+    }
+}
+
+// The layer slider of the Slice view with its ruler (#507): the track on
+// the right, the top layer at the top; on its left, a tick every 100 layers
+// where they stand far enough apart, and the numbers of layer 0, the last
+// one and every 500. A tag beside the handle says the layer it is on.
+export component LayerRuler inherits Rectangle {
+    in property <int> count;
+    in-out property <float> value;
+    in property <bool> enabled: true;
+    callback changed(float);
+
+    property <int> last: Math.max(0, root.count - 1);
+    // The handle's travel, inside the ends of the track.
+    property <length> inset: 8px;
+    property <length> travel: root.height - 2 * root.inset;
+    property <length> track-x: root.width - 10px;
+    property <length> label-right: root.track-x - 12px;
+    property <length> step-px: root.last > 0 ? root.travel / root.last : 0px;
+    property <bool> minor-shown: root.step-px * 100 >= 5px;
+    property <length> label-gap: 18px;
+
+    function y-of(layer: float) -> length {
+        return root.last > 0 ? root.inset + (1 - layer / root.last) * root.travel : root.inset + root.travel;
+    }
+    function layer-at(y: length) -> float {
+        return root.last > 0
+            ? Math.round(Math.clamp(1 - (y - root.inset) / root.travel, 0, 1) * root.last) : 0;
+    }
+
+    min-width: 92px;
+    opacity: root.enabled ? 1 : 0.45;
+    accessible-role: slider;
+    accessible-value: Math.round(root.value);
+    accessible-value-minimum: 0;
+    accessible-value-maximum: root.last;
+
+    // The track and what of it lies under the handle.
+    Rectangle {
+        x: root.track-x - 1px;
+        y: root.inset;
+        width: 2px;
+        height: root.travel;
+        background: Theme.border-strong;
+    }
+    Rectangle {
+        x: root.track-x - 1px;
+        y: root.y-of(root.value);
+        width: 2px;
+        height: root.inset + root.travel - self.y;
+        background: Theme.text-muted;
+    }
+
+    // Ticks: every 100 layers, longer every 500, and at both ends.
+    if root.minor-shown && root.last > 0: Rectangle {
+        for k in Math.floor(root.last / 100): Rectangle {
+            property <int> layer: (k + 1) * 100;
+            property <bool> major: Math.mod(self.layer, 500) == 0;
+            x: root.track-x - 6px - (self.major ? 4px : 0px);
+            y: root.y-of(self.layer);
+            width: self.major ? 9px : 5px;
+            height: 1px;
+            background: self.major ? Theme.text-faint : Theme.border-strong;
+        }
+    }
+    if !root.minor-shown && root.last > 0: Rectangle {
+        for k in Math.floor(root.last / 500): Rectangle {
+            x: root.track-x - 10px;
+            y: root.y-of((k + 1) * 500);
+            width: 9px;
+            height: 1px;
+            background: Theme.text-faint;
+        }
+    }
+    for layer in [0, root.last]: Rectangle {
+        x: root.track-x - 10px;
+        y: root.y-of(layer);
+        width: 9px;
+        height: 1px;
+        background: Theme.text-muted;
+    }
+
+    // Numbers: layer 0, the last, and every 500 that does not crowd them.
+    for k in Math.floor(root.last / 500): Text {
+        property <int> layer: (k + 1) * 500;
+        visible: (root.y-of(0) - root.y-of(self.layer)) >= root.label-gap
+            && (root.y-of(self.layer) - root.y-of(root.last)) >= root.label-gap;
+        x: root.label-right - self.width;
+        y: root.y-of(self.layer) - self.height / 2;
+        text: self.layer;
+        font-family: Theme.mono;
+        font-size: 12px;
+        color: Theme.text-muted;
+    }
+    for layer in [0, root.last]: Text {
+        visible: root.count > 0 && (layer == 0 || root.last > 0);
+        x: root.label-right - self.width;
+        y: root.y-of(layer) - self.height / 2;
+        text: layer;
+        font-family: Theme.mono;
+        font-size: 12px;
+        font-weight: 600;
+        color: Theme.text-soft;
+    }
+
+    // The handle, and the tag with its layer.
+    Rectangle {
+        x: root.track-x - self.width / 2;
+        y: root.y-of(root.value) - self.height / 2;
+        width: 14px;
+        height: 6px;
+        border-radius: 1px;
+        background: touch.pressed || touch.has-hover ? Theme.action-hover : Theme.action;
+    }
+    if root.count > 0: Rectangle {
+        x: root.label-right - self.width + 4px;
+        y: root.y-of(root.value) - self.height / 2;
+        width: tag.preferred-width + 10px;
+        height: 22px;
+        border-radius: Theme.radius-sm;
+        background: Theme.chrome;
+        border-width: 1px;
+        border-color: Theme.accent;
+
+        tag := Text {
+            text: Math.round(root.value);
+            font-family: Theme.mono;
+            font-size: 13px;
+            font-weight: 700;
+            color: Theme.accent;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled && root.count > 0;
+        mouse-cursor: pointer;
+        pointer-event(event) => {
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                root.value = root.layer-at(self.mouse-y);
+                root.changed(root.value);
+            }
+        }
+        moved => {
+            if self.pressed {
+                let at = root.layer-at(self.mouse-y);
+                if at != root.value {
+                    root.value = at;
+                    root.changed(at);
+                }
+            }
+        }
+        scroll-event(event) => {
+            let at = Math.clamp(root.value + (event.delta-y > 0 ? 1 : event.delta-y < 0 ? -1 : 0), 0, root.last);
+            if at != root.value {
+                root.value = at;
+                root.changed(at);
+            }
+            accept
+        }
+    }
+}
+
+// A caption button of the app's own title bar (#507): minimise, maximise
+// or restore, close. As wide as Windows draws them; close turns red.
+export enum CaptionKind { minimize, maximize, restore, close }
+
+export component CaptionButton inherits Rectangle {
+    in property <CaptionKind> kind;
+    in property <string> label;
+    callback clicked();
+
+    width: 46px;
+    background: !touch.has-hover ? transparent
+        : root.kind == CaptionKind.close ? (touch.pressed ? #a8261b : #c42b1c)
+        : touch.pressed ? Theme.border-strong : Theme.hover;
+    accessible-role: button;
+    accessible-label: self.label;
+    accessible-action-default => {
+        self.clicked();
+    }
+
+    Path {
+        width: 10px;
+        height: 10px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        stroke-width: 1px;
+        stroke: touch.has-hover && root.kind == CaptionKind.close ? #ffffff : Theme.text-soft;
+        fill: transparent;
+        commands: root.kind == CaptionKind.minimize ? "M 0 5 L 10 5"
+            : root.kind == CaptionKind.maximize ? "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z"
+            : root.kind == CaptionKind.restore ? "M 0.5 2.5 L 7.5 2.5 L 7.5 9.5 L 0.5 9.5 Z M 2.5 2.5 L 2.5 0.5 L 9.5 0.5 L 9.5 7.5 L 7.5 7.5"
+            : "M 0 0 L 10 10 M 10 0 L 0 10";
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
 }

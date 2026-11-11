@@ -3,12 +3,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, Palette, ProgressIndicator, ScrollView, Slider } from "std-widgets.slint";
+import { Palette, ScrollView } from "std-widgets.slint";
+import { ScButton as Button } from "kit/controls.slint";
+import { ScProgress as ProgressIndicator } from "./kit/controls.slint";
 import { AboutWindow } from "about-window.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
-import { Icon, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
+import { CaptionButton, CaptionKind, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
 import { ExportInspector, HollowInspector, OrientCard, OrientOption, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
@@ -68,6 +70,20 @@ export component MainWindow inherits Window {
         : "Breadslicer";
     icon: @image-url("../assets/images/breadslicer.png");
     default-font-family: "Noto Sans";
+
+    // The app draws its own title bar (#507): the top bar takes the
+    // window's caption buttons, is where the window is dragged from, and
+    // the edges are where it is resized. Rust turns it on where it is
+    // supported (Windows).
+    in property <bool> custom-chrome: false;
+    in property <bool> window-maximized: false;
+    callback window-drag();
+    callback window-minimize();
+    callback window-maximize-toggle();
+    callback window-close();
+    // 0 N, 1 S, 2 E, 3 W, 4 NE, 5 NW, 6 SE, 7 SW.
+    callback window-resize(int);
+    no-frame: root.custom-chrome;
 
     min-height: 560px;
     min-width: 960px;
@@ -1098,10 +1114,23 @@ export component MainWindow inherits Window {
                 height: Theme.topbar-height;
                 background: Theme.chrome;
 
+                // With the app's own title bar, what of the bar holds no
+                // control drags the window; a double click maximises it.
+                if root.custom-chrome: TouchArea {
+                    pointer-event(event) => {
+                        if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                            root.window-drag();
+                        }
+                    }
+                    double-clicked => {
+                        root.window-maximize-toggle();
+                    }
+                }
+
                 HorizontalLayout {
                     // Room for the compact menu button in its corner.
                     padding-left: root.menu-layout == MenuLayout.Compact ? 48px : 12px;
-                    padding-right: 8px;
+                    padding-right: root.custom-chrome ? 0px : 8px;
                     spacing: 16px;
 
                     HorizontalLayout {
@@ -1178,7 +1207,7 @@ export component MainWindow inherits Window {
                             vertical-alignment: center;
                         }
                         WorkflowTab {
-                            number: "2";
+                            number: "3";
                             label: @tr("Workspace" => "Supports");
                             active: root.workspace-section == WorkspaceSection.Supports;
                             enabled: root.has-scene;
@@ -1193,7 +1222,7 @@ export component MainWindow inherits Window {
                             background: Theme.border;
                         }
                         WorkflowTab {
-                            number: "3";
+                            number: "4";
                             label: @tr("Workspace" => "Slice");
                             active: root.workspace-section == WorkspaceSection.Slice;
                             enabled: root.has-scene;
@@ -1203,7 +1232,7 @@ export component MainWindow inherits Window {
                             }
                         }
                         WorkflowTab {
-                            number: "4";
+                            number: "5";
                             label: @tr("Workspace" => "Export");
                             active: root.workspace-section == WorkspaceSection.Export;
                             enabled: root.has-scene;
@@ -1259,6 +1288,30 @@ export component MainWindow inherits Window {
                                 && !root.repairing-in-progress && root.history-allowed;
                             clicked => {
                                 root.redo-requested();
+                            }
+                        }
+                        if root.custom-chrome: Rectangle {
+                            width: 9px;
+                        }
+                        if root.custom-chrome: CaptionButton {
+                            kind: CaptionKind.minimize;
+                            label: @tr("Workspace" => "Minimize");
+                            clicked => {
+                                root.window-minimize();
+                            }
+                        }
+                        if root.custom-chrome: CaptionButton {
+                            kind: root.window-maximized ? CaptionKind.restore : CaptionKind.maximize;
+                            label: root.window-maximized ? @tr("Workspace" => "Restore") : @tr("Workspace" => "Maximize");
+                            clicked => {
+                                root.window-maximize-toggle();
+                            }
+                        }
+                        if root.custom-chrome: CaptionButton {
+                            kind: CaptionKind.close;
+                            label: @tr("Workspace" => "Close");
+                            clicked => {
+                                root.window-close();
                             }
                         }
                     }
@@ -1758,19 +1811,16 @@ export component MainWindow inherits Window {
                     // the Slice tab; disabled until a slice exists. Its value is
                     // the selected layer index, the top layer at the top.
                     if root.has-scene && root.workspace-section == WorkspaceSection.Slice: Rectangle {
-                        x: parent.width - self.width - 12px;
+                        x: parent.width - self.width - 8px;
                         y: 48px;
-                        width: 32px;
+                        width: 92px;
                         height: parent.height - 96px;
 
-                        Slider {
+                        LayerRuler {
                             width: parent.width;
                             height: parent.height;
-                            orientation: Orientation.vertical;
                             enabled: root.slice-layer-count > 0;
-                            minimum: 0;
-                            maximum: Math.max(0, root.slice-layer-count - 1);
-                            step: 1;
+                            count: root.slice-layer-count;
                             value <=> root.selected-layer-index;
                             changed(v) => {
                                 root.selected-layer-changed();
@@ -2583,15 +2633,15 @@ export component MainWindow inherits Window {
     if root.drop-hovering: Rectangle {
         width: 100%;
         height: 100%;
-        background: Palette.background.transparentize(0.25);
-        border-color: Palette.accent-background;
+        background: Theme.panel.transparentize(0.25);
+        border-color: Theme.accent;
         border-width: 3px;
 
         Text {
             text: @tr("Drop to open");
             font-size: 1.6rem;
             font-weight: 700;
-            color: Palette.foreground;
+            color: Theme.text;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -2606,8 +2656,8 @@ export component MainWindow inherits Window {
         height: progress-panel-layout.preferred-height;
         x: (parent.width - self.width) / 2;
         y: parent.height - self.height - Theme.statusbar-height - 16px;
-        background: Palette.background;
-        border-color: Palette.border;
+        background: Theme.panel;
+        border-color: Theme.border;
         border-width: 1px;
         border-radius: 6px;
 
@@ -2621,7 +2671,7 @@ export component MainWindow inherits Window {
                     : root.load-phase == LoadPhase.PreparingGeometry
                     ? @tr("Preparing geometry…")
                     : @tr("Uploading to GPU…");
-                color: Palette.foreground;
+                color: Theme.text;
             }
 
             ProgressIndicator {
@@ -2640,8 +2690,8 @@ export component MainWindow inherits Window {
         height: support-gen-progress-panel-layout.preferred-height;
         x: (parent.width - self.width) / 2;
         y: parent.height - self.height - Theme.statusbar-height - 16px;
-        background: Palette.background;
-        border-color: Palette.border;
+        background: Theme.panel;
+        border-color: Theme.border;
         border-width: 1px;
         border-radius: 6px;
 
@@ -2653,7 +2703,7 @@ export component MainWindow inherits Window {
                 text: root.support-gen-phase == ""
                     ? @tr("Generating support structure…")
                     : root.support-gen-phase;
-                color: Palette.foreground;
+                color: Theme.text;
             }
 
             ProgressIndicator {
@@ -2678,8 +2728,8 @@ export component MainWindow inherits Window {
         height: save-progress-panel-layout.preferred-height;
         x: (parent.width - self.width) / 2;
         y: parent.height - self.height - Theme.statusbar-height - 16px;
-        background: Palette.background;
-        border-color: Palette.border;
+        background: Theme.panel;
+        border-color: Theme.border;
         border-width: 1px;
         border-radius: 6px;
 
@@ -2695,7 +2745,7 @@ export component MainWindow inherits Window {
                     : root.save-phase == SavePhase.Compressing
                     ? @tr("Compressing…")
                     : @tr("Writing file…");
-                color: Palette.foreground;
+                color: Theme.text;
             }
 
             ProgressIndicator {
@@ -2734,8 +2784,8 @@ export component MainWindow inherits Window {
             height: slice-card.preferred-height;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            background: Palette.background;
-            border-color: Palette.border;
+            background: Theme.panel;
+            border-color: Theme.border;
             border-width: 1px;
             border-radius: 8px;
 
@@ -2746,12 +2796,12 @@ export component MainWindow inherits Window {
                 Text {
                     text: @tr("SlicePanel" => "Slicing...");
                     font-weight: 600;
-                    color: Palette.foreground;
+                    color: Theme.text;
                     horizontal-alignment: center;
                 }
                 if root.slice-fix-pass != "": Text {
                     text: root.slice-fix-pass;
-                    color: Palette.foreground.transparentize(0.3);
+                    color: Theme.text.transparentize(0.3);
                     horizontal-alignment: center;
                 }
                 Text {
@@ -2760,7 +2810,7 @@ export component MainWindow inherits Window {
                         : root.slice-total > 0
                         ? @tr("SlicePanel" => "{} / {} layers", root.slice-completed, root.slice-total)
                         : @tr("SlicePanel" => "Preparing...");
-                    color: Palette.foreground.transparentize(0.3);
+                    color: Theme.text.transparentize(0.3);
                     horizontal-alignment: center;
                 }
                 ProgressIndicator {
@@ -2859,6 +2909,35 @@ export component MainWindow inherits Window {
                 start-layer.focus-dialog();
             } else {
                 mv.focus-viewport();
+            }
+        }
+    }
+
+    // The window's edges and corners, while it is not maximised: where the
+    // app's own frame is resized from (#507).
+    if root.custom-chrome && !root.window-maximized: frame := Rectangle {
+        property <length> edge: 5px;
+        property <length> corner: 10px;
+
+        for side[i] in [
+            { x: frame.corner, y: 0px, w: root.width - 2 * frame.corner, h: frame.edge, d: 0, c: MouseCursor.ns-resize },
+            { x: frame.corner, y: root.height - frame.edge, w: root.width - 2 * frame.corner, h: frame.edge, d: 1, c: MouseCursor.ns-resize },
+            { x: root.width - frame.edge, y: frame.corner, w: frame.edge, h: root.height - 2 * frame.corner, d: 2, c: MouseCursor.ew-resize },
+            { x: 0px, y: frame.corner, w: frame.edge, h: root.height - 2 * frame.corner, d: 3, c: MouseCursor.ew-resize },
+            { x: root.width - frame.corner, y: 0px, w: frame.corner, h: frame.corner, d: 4, c: MouseCursor.nesw-resize },
+            { x: 0px, y: 0px, w: frame.corner, h: frame.corner, d: 5, c: MouseCursor.nwse-resize },
+            { x: root.width - frame.corner, y: root.height - frame.corner, w: frame.corner, h: frame.corner, d: 6, c: MouseCursor.nwse-resize },
+            { x: 0px, y: root.height - frame.corner, w: frame.corner, h: frame.corner, d: 7, c: MouseCursor.nesw-resize },
+        ]: TouchArea {
+            x: side.x;
+            y: side.y;
+            width: side.w;
+            height: side.h;
+            mouse-cursor: side.c;
+            pointer-event(event) => {
+                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    root.window-resize(side.d);
+                }
             }
         }
     }

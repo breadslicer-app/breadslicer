@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, ComboBox, Palette } from "std-widgets.slint";
+import { Theme } from "kit/theme.slint";
+import { Palette } from "std-widgets.slint";
+import { ScButton as Button, ScComboBox as ComboBox } from "kit/controls.slint";
 import { EditField } from "profile-view-dialog.slint";
 import { ThemePreference } from "preferences/appearance.slint";
 
@@ -12,6 +14,8 @@ import { ThemePreference } from "preferences/appearance.slint";
 // cover yet (derived on the Rust side); the value fields appear once a
 // target is picked, and partial values are allowed.
 export component ExtendDialog inherits Window {
+    // The app's own surface, not the platform style's (#507).
+    background: Theme.panel;
     title: @tr("ExtendDialog" => "Extend resin profile");
     icon: @image-url("../assets/images/breadslicer.png");
     default-font-family: "Noto Sans";
@@ -86,15 +90,16 @@ export component ExtendDialog inherits Window {
 
             Text {
                 text: @tr("ExtendDialog" => "Extend {}", root.source-name);
-                font-size: 1.1rem;
-                font-weight: 700;
+                font-size: Theme.font-lg;
+                font-weight: 600;
+                color: Theme.text;
                 wrap: word-wrap;
             }
 
             Text {
                 text: @tr("ExtendDialog" => "Add calibration values for a target this resin does not cover yet.");
-                font-size: 0.85rem;
-                color: Palette.foreground.transparentize(0.3);
+                font-size: Theme.font-sm;
+                color: Theme.text.transparentize(0.3);
                 wrap: word-wrap;
             }
 
@@ -117,8 +122,8 @@ export component ExtendDialog inherits Window {
                         spacing: 4px;
                         Text {
                             text: @tr("ExtendDialog" => "Copy values from");
-                            font-size: 0.85rem;
-                            color: Palette.foreground.transparentize(0.3);
+                            font-size: Theme.font-sm;
+                            color: Theme.text.transparentize(0.3);
                         }
                         ComboBox {
                             model: root.copy-source-labels;
@@ -228,8 +233,8 @@ export component ExtendDialog inherits Window {
 
                 Text {
                     text: root.error-message;
-                    color: #d32f2f;
-                    font-size: 0.85rem;
+                    color: Theme.danger;
+                    font-size: Theme.font-sm;
                     wrap: word-wrap;
                     vertical-alignment: center;
                     horizontal-stretch: 1;

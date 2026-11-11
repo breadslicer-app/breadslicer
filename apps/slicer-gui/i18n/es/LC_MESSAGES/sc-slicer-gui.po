@@ -852,6 +852,26 @@ msgstr "Preparar"
 
 #: ui/main-window.slint
 msgctxt "Workspace"
+msgid "Minimize"
+msgstr "Minimizar"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Maximize"
+msgstr "Maximizar"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Restore"
+msgstr "Restaurar"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Close"
+msgstr "Cerrar"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
 msgid "Transform"
 msgstr "Transformar"
 
@@ -6562,17 +6582,17 @@ msgstr "Este archivo trae soportes"
 
 #: src/presupported_import.rs
 msgctxt "SeparateSupportsDialog"
-msgid "1 model, {n} support and a raft. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model."
-msgid_plural "1 model, {n} supports and a raft. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model."
-msgstr[0] "1 modelo, {n} soporte y una balsa. ¿Separarlos? Los soportes pasan a un objeto propio: Breadslicer no les pone soportes de nuevo y se mueven con el modelo."
-msgstr[1] "1 modelo, {n} soportes y una balsa. ¿Separarlos? Los soportes pasan a un objeto propio: Breadslicer no les pone soportes de nuevo y se mueven con el modelo."
+msgid "1 model, {n} support and a raft. Replace them with supports made by Breadslicer, with the preset of the Supports tab, or separate them: the file's supports then go to an object of their own that moves with the model."
+msgid_plural "1 model, {n} supports and a raft. Replace them with supports made by Breadslicer, with the preset of the Supports tab, or separate them: the file's supports then go to an object of their own that moves with the model."
+msgstr[0] "1 modelo, {n} soporte y una balsa. Podés reemplazarlos por soportes de Breadslicer, con el preset de la pestaña Soportes, o separarlos: los soportes del archivo pasan a un objeto propio que se mueve con el modelo."
+msgstr[1] "1 modelo, {n} soportes y una balsa. Podés reemplazarlos por soportes de Breadslicer, con el preset de la pestaña Soportes, o separarlos: los soportes del archivo pasan a un objeto propio que se mueve con el modelo."
 
 #: src/presupported_import.rs
 msgctxt "SeparateSupportsDialog"
-msgid "1 model and {n} support. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model."
-msgid_plural "1 model and {n} supports. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model."
-msgstr[0] "1 modelo y {n} soporte. ¿Separarlos? Los soportes pasan a un objeto propio: Breadslicer no les pone soportes de nuevo y se mueven con el modelo."
-msgstr[1] "1 modelo y {n} soportes. ¿Separarlos? Los soportes pasan a un objeto propio: Breadslicer no les pone soportes de nuevo y se mueven con el modelo."
+msgid "1 model and {n} support. Replace them with supports made by Breadslicer, with the preset of the Supports tab, or separate them: the file's supports then go to an object of their own that moves with the model."
+msgid_plural "1 model and {n} supports. Replace them with supports made by Breadslicer, with the preset of the Supports tab, or separate them: the file's supports then go to an object of their own that moves with the model."
+msgstr[0] "1 modelo y {n} soporte. Podés reemplazarlos por soportes de Breadslicer, con el preset de la pestaña Soportes, o separarlos: los soportes del archivo pasan a un objeto propio que se mueve con el modelo."
+msgstr[1] "1 modelo y {n} soportes. Podés reemplazarlos por soportes de Breadslicer, con el preset de la pestaña Soportes, o separarlos: los soportes del archivo pasan a un objeto propio que se mueve con el modelo."
 
 #: src/presupported_import.rs
 msgctxt "SeparateSupportsDialog"
@@ -6608,6 +6628,11 @@ msgstr "Soportes importados quitados."
 msgctxt "SeparateSupportsDialog"
 msgid "Leave as is"
 msgstr "Dejar como está"
+
+#: ui/message-layer.slint
+msgctxt "SeparateSupportsDialog"
+msgid "Replace with Breadslicer supports"
+msgstr "Reemplazar por soportes de Breadslicer"
 
 #: ui/message-layer.slint
 msgctxt "SeparateSupportsDialog"

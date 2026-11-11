@@ -40,7 +40,7 @@ use sc_scene::node::SceneMetadata;
 use slint::{ComponentHandle, SharedString};
 
 use crate::MainWindow;
-use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey};
+use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey, SeparateChoice};
 use crate::i18n::ctr;
 use crate::imported_supports::{imported_of, owner_of};
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneEvent, SceneSubscription};
@@ -237,9 +237,15 @@ impl PresupportedImport {
         let Some((model, sets)) = self.selected_imported() else {
             return;
         };
+        self.remove_imported_of(model, &sets, replace);
+    }
+
+    /// Removes `sets`, the imported supports of `model`, in one undo entry;
+    /// with `replace`, the model then waits for supports made here.
+    fn remove_imported_of(&self, model: NodeId, sets: &[NodeId], replace: bool) {
         let Some(edit) = self
             .document
-            .with_scene(|spatial| removal_edit(spatial.graph(), &sets))
+            .with_scene(|spatial| removal_edit(spatial.graph(), sets))
             .flatten()
         else {
             return;
@@ -436,28 +442,32 @@ impl PresupportedImport {
                         message: if raft {
                             ctr!(
                                 "SeparateSupportsDialog",
-                                "1 model, {n} support and a raft. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model.",
-                                "1 model, {n} supports and a raft. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model.",
+                                "1 model, {n} support and a raft. Replace them with supports made by Breadslicer, with the preset of the Supports tab, or separate them: the file's supports then go to an object of their own that moves with the model.",
+                                "1 model, {n} supports and a raft. Replace them with supports made by Breadslicer, with the preset of the Supports tab, or separate them: the file's supports then go to an object of their own that moves with the model.",
                                 supports
                             )
                         } else {
                             ctr!(
                                 "SeparateSupportsDialog",
-                                "1 model and {n} support. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model.",
-                                "1 model and {n} supports. Separate them? The supports go to an object of their own: Breadslicer does not support them again, and they move with the model.",
+                                "1 model and {n} support. Replace them with supports made by Breadslicer, with the preset of the Supports tab, or separate them: the file's supports then go to an object of their own that moves with the model.",
+                                "1 model and {n} supports. Replace them with supports made by Breadslicer, with the preset of the Supports tab, or separate them: the file's supports then go to an object of their own that moves with the model.",
                                 supports
                             )
                         },
                         details: Default::default(),
                     },
-                    move |separate| {
+                    move |choice| {
                         let Some(run) = run.upgrade() else {
                             return;
                         };
-                        if separate {
-                            run.separate(leaf, &mesh, *presupported);
-                        } else {
-                            run.declined.borrow_mut().push(leaf);
+                        match choice {
+                            SeparateChoice::Leave => run.declined.borrow_mut().push(leaf),
+                            SeparateChoice::Separate => {
+                                run.separate(leaf, &mesh, *presupported, false);
+                            }
+                            SeparateChoice::Replace => {
+                                run.separate(leaf, &mesh, *presupported, true);
+                            }
                         }
                     },
                 );
@@ -466,8 +476,15 @@ impl PresupportedImport {
     }
 
     /// Puts the model and its supports in 2 objects where `leaf` stood, in
-    /// one undo entry, when `leaf` still shows `mesh`.
-    fn separate(&self, leaf: NodeId, mesh: &Weak<IndexedMesh>, presupported: Presupported) {
+    /// one undo entry, when `leaf` still shows `mesh`; with `replace`, the
+    /// model alone, waiting for supports made here, which join that entry.
+    fn separate(
+        &self,
+        leaf: NodeId,
+        mesh: &Weak<IndexedMesh>,
+        presupported: Presupported,
+        replace: bool,
+    ) {
         if self.still_shows(leaf, mesh).is_none() {
             return;
         }
@@ -493,7 +510,11 @@ impl PresupportedImport {
             .document
             .with_scene(|spatial| spatial.graph().node(leaf).and_then(|n| n.meta.clone()))
             .flatten();
-        let parts = vec![(presupported.model, meta), (presupported.supports, None)];
+        let parts = if replace {
+            vec![(presupported.model, meta)]
+        } else {
+            vec![(presupported.model, meta), (presupported.supports, None)]
+        };
         let slots = self.document.allocate_leaf_slots(parts.len());
         let Some(edit) = self
             .document
@@ -507,7 +528,12 @@ impl PresupportedImport {
         self.quiet.set(false);
         match applied {
             Ok(()) => {
-                self.document.push_edit(edit);
+                let (model, _) = slots[0];
+                if replace {
+                    self.document.push_edit_wanting(edit, &[model]);
+                } else {
+                    self.document.push_edit(edit);
+                }
                 for (id, _) in &slots {
                     let mesh = self
                         .document
@@ -517,13 +543,20 @@ impl PresupportedImport {
                         self.mark_seen(&mesh);
                     }
                 }
-                let (model, _) = slots[0];
                 self.document.set_selection(Selection::One(LeafId(model)));
-                self.show_status(ctr!(
-                    "SeparateSupportsDialog",
-                    "Separated: the model and its imported supports."
-                ));
-                crate::breadcrumbs::note("presupported: separated");
+                if replace {
+                    self.show_status(ctr!(
+                        "SeparateSupportsDialog",
+                        "Imported supports removed; generating supports for the model."
+                    ));
+                    crate::breadcrumbs::note("presupported: replaced");
+                } else {
+                    self.show_status(ctr!(
+                        "SeparateSupportsDialog",
+                        "Separated: the model and its imported supports."
+                    ));
+                    crate::breadcrumbs::note("presupported: separated");
+                }
             }
             Err(EditNotApplied::NoSceneLoaded) => {}
             Err(EditNotApplied::Rejected(error)) => self.show_rejected(error.to_string()),

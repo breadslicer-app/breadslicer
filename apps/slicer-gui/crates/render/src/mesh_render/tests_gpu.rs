@@ -2069,11 +2069,11 @@ fn invalidate_sizing_keeps_the_installed_scene() {
     assert_eq!(bounds_before, bounds_after);
 }
 
-/// Counts pixels that differ from the mesh pass's clear colour, the near-black
-/// neutral quantised to `Rgba8Unorm`. Every surface the renderer draws lands
-/// well outside the tolerance.
+/// Counts pixels that differ from the mesh pass's clear colour quantised to
+/// `Rgba8Unorm`. Every surface the renderer draws lands outside the
+/// tolerance, but for the plate's rim, which is the background's shade.
 fn count_drawn_pixels(rgba: &[u8]) -> usize {
-    const BACKGROUND: [i32; 3] = [31, 31, 33];
+    const BACKGROUND: [i32; 3] = [17, 19, 21];
     const TOLERANCE: i32 = 2;
     rgba.as_chunks::<4>()
         .0

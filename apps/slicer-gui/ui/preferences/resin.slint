@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, LineEdit, ListView, Palette } from "std-widgets.slint";
+import { Theme } from "../kit/theme.slint";
+import { ListView, Palette } from "std-widgets.slint";
+import { ScButton as Button, ScLineEdit as LineEdit } from "../kit/controls.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 import { FavouriteStar } from "./favourite-star.slint";
 import { FilterTabs } from "./filter-tabs.slint";
@@ -83,28 +85,28 @@ export component ResinPreferences inherits PreferencesPage {
     // and dark variants follow the theme.
     pure function pill-background(kind: PillKind) -> brush {
         if (kind == PillKind.our-printer) {
-            return Palette.color-scheme == ColorScheme.dark ? #1d4a29 : #cdeed6;
+            return Theme.success.transparentize(0.82);
         }
         if (kind == PillKind.generic) {
-            return Palette.color-scheme == ColorScheme.dark ? #4a3d14 : #fcecc5;
+            return Theme.warning.transparentize(0.82);
         }
         if (kind == PillKind.no-data) {
-            return Palette.color-scheme == ColorScheme.dark ? #571e24 : #f6d3d7;
+            return Theme.danger.transparentize(0.82);
         }
-        return Palette.foreground.transparentize(0.92);
+        return Theme.text.transparentize(0.92);
     }
 
     pure function pill-foreground(kind: PillKind) -> brush {
         if (kind == PillKind.our-printer) {
-            return Palette.color-scheme == ColorScheme.dark ? #a9e8b8 : #0d5223;
+            return Theme.success;
         }
         if (kind == PillKind.generic) {
-            return Palette.color-scheme == ColorScheme.dark ? #f0d284 : #6b4e00;
+            return Theme.warning;
         }
         if (kind == PillKind.no-data) {
-            return Palette.color-scheme == ColorScheme.dark ? #f2b4bc : #8a1c28;
+            return Theme.danger;
         }
-        return Palette.foreground.transparentize(0.45);
+        return Theme.text.transparentize(0.45);
     }
 
     FilterTabs {
@@ -130,7 +132,7 @@ export component ResinPreferences inherits PreferencesPage {
         for row in root.resin-rows: Rectangle {
             height: row-content.preferred-height;
             background: row.id-index == root.selected-resin-index
-                ? Palette.selection-background
+                ? Theme.hover
                 : transparent;
 
             row-menu := ContextMenuArea {
@@ -217,26 +219,26 @@ export component ResinPreferences inherits PreferencesPage {
                             spacing: 8px;
                             Text {
                                 text: row.brand + " " + row.name;
-                                font-size: 0.95rem;
+                                font-size: Theme.font-sm;
                                 vertical-alignment: center;
                                 wrap: word-wrap;
                             }
                             Text {
                                 text: row.family;
-                                font-size: 0.75rem;
-                                color: Palette.foreground.transparentize(0.4);
+                                font-size: Theme.font-xs;
+                                color: Theme.text.transparentize(0.4);
                                 vertical-alignment: center;
                             }
                             // The custom mark: set apart from the calibration
                             // tags, own color family.
                             if row.is-custom: Rectangle {
-                                background: Palette.color-scheme == ColorScheme.dark ? #3d2a5e : #e6dcf5;
-                                border-radius: 4px;
+                                background: Theme.hover;
+                                border-radius: Theme.radius-sm;
                                 width: custom-text.preferred-width + 10px;
                                 custom-text := Text {
                                     text: @tr("PreferencesPage" => "custom");
-                                    color: Palette.color-scheme == ColorScheme.dark ? #cdb8f0 : #4b2a82;
-                                    font-size: 0.7rem;
+                                    color: Theme.text-soft;
+                                    font-size: Theme.font-xs;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
                                 }
@@ -258,13 +260,13 @@ export component ResinPreferences inherits PreferencesPage {
                                         ? @tr("PreferencesPage" => "Generic calibration")
                                         : @tr("PreferencesPage" => "Calibration: {}", pill.label);
                                 background: root.pill-background(pill.kind);
-                                border-radius: 9px;
+                                border-radius: Theme.radius-lg;
                                 width: pill-text.preferred-width + 14px;
                                 height: pill-text.preferred-height + 6px;
                                 pill-text := Text {
                                     text: pill.label;
                                     color: root.pill-foreground(pill.kind);
-                                    font-size: 0.75rem;
+                                    font-size: Theme.font-xs;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
                                 }

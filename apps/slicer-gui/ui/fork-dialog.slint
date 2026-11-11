@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, CheckBox, LineEdit, Palette, ScrollView } from "std-widgets.slint";
+import { Theme } from "kit/theme.slint";
+import { Palette, ScrollView } from "std-widgets.slint";
+import { ScButton as Button, ScCheckBox as CheckBox, ScLineEdit as LineEdit } from "kit/controls.slint";
 import { ThemePreference } from "preferences/appearance.slint";
 
 // A calibration block of the source: the generic machine's, or the block of the
@@ -18,6 +20,8 @@ export struct ForkBlock {
 // blocks; every part starts selected). This component only reports the choices;
 // the fork itself is assembled in Rust.
 export component ForkDialog inherits Window {
+    // The app's own surface, not the platform style's (#507).
+    background: Theme.panel;
     title: @tr("ForkDialog" => "Fork resin profile");
     icon: @image-url("../assets/images/breadslicer.png");
     default-font-family: "Noto Sans";
@@ -82,8 +86,9 @@ export component ForkDialog inherits Window {
 
             Text {
                 text: @tr("ForkDialog" => "Fork {}", root.source-name);
-                font-size: 1.1rem;
-                font-weight: 700;
+                font-size: Theme.font-lg;
+                font-weight: 600;
+                color: Theme.text;
                 wrap: word-wrap;
             }
 
@@ -93,8 +98,8 @@ export component ForkDialog inherits Window {
                 Row {
                     Text {
                         text: @tr("ForkDialog" => "Brand");
-                        font-size: 0.85rem;
-                        color: Palette.foreground.transparentize(0.3);
+                        font-size: Theme.font-sm;
+                        color: Theme.text.transparentize(0.3);
                         vertical-alignment: center;
                     }
                     brand-input := LineEdit {
@@ -108,8 +113,8 @@ export component ForkDialog inherits Window {
                 Row {
                     Text {
                         text: @tr("ForkDialog" => "Name");
-                        font-size: 0.85rem;
-                        color: Palette.foreground.transparentize(0.3);
+                        font-size: Theme.font-sm;
+                        color: Theme.text.transparentize(0.3);
                         vertical-alignment: center;
                     }
                     name-input := LineEdit {
@@ -124,8 +129,8 @@ export component ForkDialog inherits Window {
 
             Text {
                 text: @tr("ForkDialog" => "Copy from the source:");
-                font-size: 0.85rem;
-                color: Palette.foreground.transparentize(0.3);
+                font-size: Theme.font-sm;
+                color: Theme.text.transparentize(0.3);
             }
 
             ScrollView {
@@ -161,8 +166,8 @@ export component ForkDialog inherits Window {
 
                 Text {
                     text: root.error-message;
-                    color: #d32f2f;
-                    font-size: 0.85rem;
+                    color: Theme.danger;
+                    font-size: Theme.font-sm;
                     wrap: word-wrap;
                     vertical-alignment: center;
                     horizontal-stretch: 1;

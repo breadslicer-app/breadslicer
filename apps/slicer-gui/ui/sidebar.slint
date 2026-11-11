@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { HorizontalBox, VerticalBox, Palette } from "std-widgets.slint";
+import { Theme } from "kit/theme.slint";
+import { HorizontalBox, VerticalBox } from "std-widgets.slint";
 
 component SideBarItem inherits Rectangle {
     in property <int> tab-index;
@@ -38,9 +39,18 @@ component SideBarItem inherits Rectangle {
 
     state := Rectangle {
         opacity: 0;
-        background: Palette.background;
+        background: Theme.hover;
 
         animate opacity { duration: 150ms; }
+    }
+
+    // The page shown: the amber mark of what is active, as on the tool rail
+    // (#507).
+    if root.selected: Rectangle {
+        x: 0;
+        width: 2px;
+        height: parent.height;
+        background: Theme.accent;
     }
 
     l := HorizontalBox {
@@ -49,6 +59,8 @@ component SideBarItem inherits Rectangle {
 
         label := Text {
             vertical-alignment: center;
+            font-size: Theme.font;
+            color: root.selected ? Theme.text : Theme.text-muted;
             accessible-role: none;
         }
     }
@@ -75,7 +87,7 @@ export component SideBar inherits Rectangle {
     }
 
     Rectangle {
-        background: Palette.background.darker(0.2);
+        background: Theme.panel.darker(0.2);
     }
 
     VerticalBox {

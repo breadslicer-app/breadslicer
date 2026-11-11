@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import { Theme } from "../kit/theme.slint";
 import { Palette } from "std-widgets.slint";
 import { SideBar } from "../sidebar.slint";
 import { AppMessage, MessageAnswer, MessageKind, MessageLayer } from "../message-layer.slint";
@@ -13,6 +14,8 @@ import { SlicingPreferences } from "./slicing.slint";
 import { PrivacyPreferences } from "./privacy.slint";
 
 export component PreferencesWindow inherits Window {
+    // The app's own surface, not the platform style's (#507).
+    background: Theme.panel;
     title: @tr("Preferences");
     default-font-family: "Noto Sans";
 

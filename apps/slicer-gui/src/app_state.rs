@@ -706,8 +706,10 @@ impl AppState {
         self.wire_start_dialog_again(&ctrl, id);
         crate::startup_timing::mark("window menus, autosave and events");
 
+        crate::window_chrome::wire(&ui);
         ui.show()?;
         crate::startup_timing::mark("window show");
+        crate::window_chrome::after_show(&ui);
         // The winit window only exists once shown; set the taskbar icon here so
         // the live window matches the executable resource.
         crate::window_icon::apply(ui.window());
@@ -927,6 +929,11 @@ impl AppState {
                     && let Some(w) = ui_weak.upgrade()
                 {
                     app.on_file_drag(&w, id, drag);
+                }
+                if matches!(event, winit::event::WindowEvent::Resized(_))
+                    && let Some(w) = ui_weak.upgrade()
+                {
+                    crate::window_chrome::note_size(&w);
                 }
                 EventResult::Propagate
             });

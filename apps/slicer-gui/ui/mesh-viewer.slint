@@ -208,9 +208,10 @@ export component MeshViewer inherits Rectangle {
 
     // Viewport background stays dark regardless of OS theme: the CAD/DCC
     // convention, keeps the light-grey mesh legible under both light and
-    // dark app chrome. The border follows the Palette so it blends with the
-    // surrounding chrome.
-    background: #1e1e1e;
+    // dark app chrome. It is the 3D view's clear colour, `ground` (#507), so
+    // nothing shows between the view and its frame. The border follows the
+    // Palette so it blends with the surrounding chrome.
+    background: #111315;
     border-color: Palette.border;
     border-width: 1px;
 
@@ -724,14 +725,15 @@ export component MeshViewer inherits Rectangle {
         y: parent.height - 48px;
         width: status.preferred-width + 24px;
         height: 32px;
-        border-radius: 5px;
+        border-radius: 2px;
         border-width: 1px;
-        border-color: #555;
-        background: #202024;
+        border-color: #3c454d;
+        background: #171a1d;
         status := Text {
             text: root.modal-transform-status + "  |  " + @tr("Enter / click: confirm | Esc / right click: cancel") + "  |  " + @tr("Ctrl: snap | Shift: fine");
-            color: #eee;
-            font-size: 13px;
+            color: #eef1f3;
+            font-family: "Consolas";
+            font-size: 12px;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -740,13 +742,13 @@ export component MeshViewer inherits Rectangle {
     // Small visible projection control, usable without knowing the shortcut.
     Rectangle {
         x: 12px; y: parent.height - 38px;
-        width: 122px; height: 26px;
-        border-radius: 4px;
-        background: #252527;
-        border-color: #454548; border-width: 1px;
+        width: 122px; height: 24px;
+        border-radius: 2px;
+        background: #171a1d;
+        border-color: #272d32; border-width: 1px;
         Text {
             text: root.orthographic-view ? "Orthographic  5" : "Perspective  5";
-            color: #cccccc; font-size: 11px;
+            color: #8b959d; font-size: 11px; font-family: "Consolas";
             horizontal-alignment: center; vertical-alignment: center;
         }
         TouchArea {

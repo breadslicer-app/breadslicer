@@ -677,3 +677,100 @@ fn a_fading_set_marks_the_stencil_by_how_opaque_it_still_is() {
     assert_eq!(fading_stencil(1.0), 2);
     assert_eq!(fading_stencil(2.0), 2);
 }
+
+/// The plate as it looks, for a person to judge (#507): with
+/// `BREADSLICER_PLATE_SHOT` naming a PNG, a 1400 x 860 frame of an M7 Pro's
+/// plate with its label, rulers and a 30 mm cube on it.
+#[test]
+fn the_plate_picture_is_written_when_asked() {
+    let Some(path) = std::env::var_os("BREADSLICER_PLATE_SHOT") else {
+        return;
+    };
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let bv = BuildVolume::new(223.642, 126.976, 230.0);
+    let corner = bv.envelope_min_mm();
+    renderer
+        .update_front_label(1, &mut || {
+            crate::front_label::rasterise_label(
+                "FRONT  ·  223.6 × 127 mm",
+                Some("Anycubic Photon Mono M7 Pro"),
+            )
+        })
+        .expect("the label uploads");
+    renderer
+        .update_plate_marks(1, &mut || {
+            crate::front_label::rasterise_plate_marks(
+                [corner.x, corner.y],
+                bv.width_mm(),
+                bv.depth_mm(),
+            )
+        })
+        .expect("the marks upload");
+    let cube = {
+        let h = 15.0;
+        let c = [
+            [-h, -h, 0.0],
+            [h, -h, 0.0],
+            [h, h, 0.0],
+            [-h, h, 0.0],
+            [-h, -h, 2.0 * h],
+            [h, -h, 2.0 * h],
+            [h, h, 2.0 * h],
+            [-h, h, 2.0 * h],
+        ];
+        let faces = [
+            [0, 2, 1],
+            [0, 3, 2],
+            [4, 5, 6],
+            [4, 6, 7],
+            [0, 1, 5],
+            [0, 5, 4],
+            [1, 2, 6],
+            [1, 6, 5],
+            [2, 3, 7],
+            [2, 7, 6],
+            [3, 0, 4],
+            [3, 4, 7],
+        ];
+        IndexedMesh::new(
+            None,
+            c.map(Vertex::new).to_vec(),
+            faces.map(IndexedTriangle::from_raw_indices).to_vec(),
+        )
+    };
+    let graph = scene_of(vec![cube]);
+    renderer.upload_scene(&graph).expect("upload the scene");
+    let (centre, radius) = bv.framing(None);
+    let mut camera = OrbitCamera::new(Vec3::new(centre.x, centre.y, 25.0), radius);
+    camera.distance *= 0.72;
+    // `BREADSLICER_PLATE_SHOT_PITCH` (degrees, negative from below) views it
+    // from another height.
+    if let Some(pitch) = std::env::var("BREADSLICER_PLATE_SHOT_PITCH")
+        .ok()
+        .and_then(|p| p.parse::<f32>().ok())
+    {
+        camera.pitch = pitch.to_radians();
+    }
+    let (w, h) = (1400, 860);
+    let frame = renderer
+        .workspace_pixels_for_test(
+            SceneRender {
+                graph: &graph,
+                selection: &[],
+                gizmo: None,
+                clip_z: None,
+            },
+            bv,
+            &camera,
+            w,
+            h,
+        )
+        .expect("the frame is not refused")
+        .expect("a sized frame");
+    image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
+        .expect("RGBA")
+        .save(path)
+        .expect("the picture is written");
+}
