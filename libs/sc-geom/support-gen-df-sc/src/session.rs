@@ -3292,6 +3292,52 @@ mod session_tests {
         }
     }
 
+    /// #518: on a line raft the roots stand on small feet, a little wider
+    /// than a line, not on their disks; and the feet stay under the height
+    /// the view from under the plate hides.
+    #[test]
+    fn on_a_line_raft_the_roots_stand_on_feet_a_little_wider_than_a_line() {
+        for zones in [None, Some(crate::zone_presets::minis_30())] {
+            let mut request = crate::DfSupportRequest::default();
+            request.options.raft = crate::options::RaftMode::Lines;
+            request.options.zones = zones;
+            let mut session = bare_slab(12.0, request);
+            session.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+            session.add_trunk_at([10.0, 5.0, 12.0]).expect("another");
+            let raft = session.settings.rafts.global;
+            assert_eq!(raft.bottom_mode, RaftBottomMode::Line);
+            let roots: Vec<_> = session.state.collections.roots.values().collect();
+            let disk = roots.iter().map(|r| r.diameter * 0.5).fold(0.0, f64::max);
+            let foot = raft.line_width_mm * 0.5 * 1.15;
+            assert!(disk > foot, "the disk {disk} would be wider");
+            let with = support_soup(&session.state, &session.models, &session.settings).unwrap();
+            let mut off = (*session.settings).clone();
+            off.rafts.global.bottom_mode = RaftBottomMode::Off;
+            off.rafts.per_model.clear();
+            let alone = support_soup(&session.state, &session.models, &off).unwrap();
+            // The supports' own pieces, before the raft's: what they draw on
+            // the lines reaches no farther from a root than the foot.
+            let raft_from = with.parts[alone.parts.len() - 1];
+            let mut low = 0;
+            for p in with.floats[..raft_from].as_chunks::<3>().0 {
+                if f64::from(p[2]) > raft.line_height_mm * 0.5 {
+                    continue;
+                }
+                low += 1;
+                let near = roots
+                    .iter()
+                    .map(|r| {
+                        (f64::from(p[0]) - r.transform.pos.x)
+                            .hypot(f64::from(p[1]) - r.transform.pos.y)
+                    })
+                    .fold(f64::MAX, f64::min);
+                assert!(near <= foot + 1e-3, "{near} from its root, past {foot}");
+            }
+            assert!(low > 0, "the feet stand on the plate");
+            assert!(session.raft_top_mm() >= raft.line_height_mm);
+        }
+    }
+
     /// The wall a raft gets by default, mm.
     const DEFAULT_RAFT_WALL_HEIGHT_MM: f64 =
         support_gen_df::supports::rafts::crenelated::raft_types::DEFAULT_RAFT_SETTINGS.wall_height;

@@ -46,13 +46,13 @@ use crate::supports::support_primitives::contact_disk::contact_disk_utils::{
     calculate_disk_thickness, get_disk_center, get_disk_rotation,
 };
 use crate::supports::support_primitives::knot::segment_endpoints::{
-    EndpointHosts, ShaftEntity, resolve_segment_endpoints,
+    EndpointHosts, ShaftEntity, resolve_segment_endpoints, root_top,
 };
 use crate::supports::support_type_registry::{
     SUPPORT_TYPES, SupportCollectionKey, SupportEdgeTarget, SupportEndpointKind,
 };
 use crate::supports::types::{
-    BezierCurve, ContactDisk, Joint, Knot, Segment, SegmentShape, SupportCollections, Vec3,
+    BezierCurve, ContactDisk, Joint, Knot, Roots, Segment, SegmentShape, SupportCollections, Vec3,
 };
 use crate::three::buffer_geometry::BufferGeometry;
 use crate::three::math_utils::js_max;
@@ -298,6 +298,54 @@ pub fn append_contact_cone_primitive(
 /// How far a zone root's neck reaches above its join cone, mm: past where
 /// the shaft's tube is at its full width (SoulCrafted, #360).
 const ROOT_NECK_ABOVE_JOIN_MM: f64 = 1.0;
+
+/// On a line raft a root's foot is a small cone standing on the lines, this
+/// much wider than a line where the lines meet (SoulCrafted, #518): the lines
+/// carry the supports to the plate, and a root's full disk only adds resin
+/// and suction on it.
+const LINE_FOOT_SPREAD: f64 = 1.15;
+
+/// How wide and how tall a root's foot on a line raft is: its radius at the
+/// lines and the height of its 45° cone up to the shaft's radius.
+fn line_foot(raft: &RaftSettings, shaft_radius: f64) -> (f64, f64) {
+    let radius = js_max(
+        shaft_radius,
+        js_max(0.0, raft.line_width_mm) * 0.5 * LINE_FOOT_SPREAD,
+    );
+    (radius, js_max(0.05, radius - shaft_radius))
+}
+
+/// The radius each root's shaft leaves it at, by root id.
+fn root_shaft_radii(state: &SupportCollections) -> HashMap<&str, f64> {
+    let first_radius = |segments: &[Segment]| {
+        segments
+            .first()
+            .map(|s| s.diameter)
+            .filter(|d| d.is_finite() && *d > 0.0)
+            .map(|d| js_max(0.05, d * 0.5))
+    };
+    let mut radii = HashMap::new();
+    for t in state.trunks.values() {
+        if let Some(r) = first_radius(&t.segments) {
+            radii.insert(t.root_id.as_str(), r);
+        }
+    }
+    for k in state.kickstands.values() {
+        if let Some(r) = first_radius(&k.segments) {
+            radii.insert(k.root_id.as_str(), r);
+        }
+    }
+    radii
+}
+
+/// A root's shaft radius, or the share of its disk a shaft takes when none
+/// leaves it.
+fn shaft_radius_of(radii: &HashMap<&str, f64>, root: &Roots) -> f64 {
+    radii
+        .get(root.base.id.as_str())
+        .copied()
+        .unwrap_or_else(|| js_max(0.05, js_max(0.05, root.diameter * 0.5) * 0.45))
+}
 
 /// How contact tips are drawn (SoulCrafted, #360). The default is
 /// DragonFruit's.
@@ -647,7 +695,8 @@ pub fn build_support_and_raft_world_triangles(
 /// plate, in millimetres, as [`build_support_and_raft_world_parts`] draws
 /// them: the raft's plate or lines and its wall, each root's disk, and its
 /// cone or its join cone; the neck above, as wide as the shaft, does not count
-/// (SoulCrafted, #481: what the view from under the plate hides).
+/// (SoulCrafted, #481: what the view from under the plate hides). A root on
+/// a line raft counts its foot's cone instead (#518).
 pub fn raft_and_feet_top_mm(state: &SupportCollections, raft: &RaftSettings) -> f64 {
     let raft_on = raft.bottom_mode != RaftBottomMode::Off;
     let raft_top = if raft_on { raft_band_top_mm(raft) } else { 0.0 };
@@ -656,10 +705,15 @@ pub fn raft_and_feet_top_mm(state: &SupportCollections, raft: &RaftSettings) -> 
     } else {
         0.0
     };
+    let radii = root_shaft_radii(state);
     state
         .roots
         .values()
         .map(|root| {
+            if raft.bottom_mode == RaftBottomMode::Line {
+                let (_, rise) = line_foot(raft, shaft_radius_of(&radii, root));
+                return root.transform.pos.z + js_max(0.01, raft.line_height_mm) + rise;
+            }
             let disk_height = js_max(0.01, root.disk_height);
             let foot = match root.join_cone_mm.filter(|j| *j > 0.0) {
                 Some(join) => js_max(disk_height, plate_top) + join,
@@ -703,24 +757,7 @@ pub fn build_support_and_raft_world_parts(
         root_model_key.entry(&k.root_id).or_insert(&k.base.model_id);
     }
 
-    let mut root_top_radius: HashMap<&str, f64> = HashMap::new();
-    let first_radius = |segments: &[Segment]| {
-        segments
-            .first()
-            .map(|s| s.diameter)
-            .filter(|d| d.is_finite() && *d > 0.0)
-            .map(|d| js_max(0.05, d * 0.5))
-    };
-    for t in state.trunks.values() {
-        if let Some(r) = first_radius(&t.segments) {
-            root_top_radius.insert(&t.root_id, r);
-        }
-    }
-    for k in state.kickstands.values() {
-        if let Some(r) = first_radius(&k.segments) {
-            root_top_radius.insert(&k.root_id, r);
-        }
-    }
+    let root_top_radius = root_shaft_radii(state);
 
     let root_visible =
         |id: &str, model_id: &str| visible.contains(model_id) || visible_root_ids.contains(id);
@@ -731,10 +768,41 @@ pub fn build_support_and_raft_world_parts(
         let disk_height = js_max(0.01, root.disk_height);
         let base = root.transform.pos;
         let root_radius = js_max(0.05, root.diameter * 0.5);
-        let top_radius = root_top_radius
-            .get(root.base.id.as_str())
-            .copied()
-            .unwrap_or_else(|| js_max(0.05, root_radius * 0.45));
+        let top_radius = shaft_radius_of(&root_top_radius, root);
+        if input.raft.bottom_mode == RaftBottomMode::Line {
+            // SoulCrafted (#518): on the lines, a pad as wide as the foot up
+            // their height, a 45° cone from it to the shaft, and a neck of
+            // the shaft's width up past where the shaft leaves the root.
+            let (foot, rise) = line_foot(input.raft, top_radius);
+            let line_top = js_max(0.01, input.raft.line_height_mm);
+            let up = |z: f64| base.add(Vec3::new(0.0, 0.0, z));
+            append_frustum(
+                &mut sink,
+                base,
+                up(line_top),
+                foot,
+                foot,
+                tessellation.root_radial_segments,
+            );
+            append_frustum(
+                &mut sink,
+                up(line_top),
+                up(line_top + rise),
+                foot,
+                top_radius,
+                tessellation.root_radial_segments,
+            );
+            let shaft_from = root_top(root).z - base.z;
+            append_frustum(
+                &mut sink,
+                up(line_top),
+                up(js_max(line_top + rise, shaft_from) + ROOT_NECK_ABOVE_JOIN_MM),
+                top_radius,
+                top_radius,
+                tessellation.root_radial_segments,
+            );
+            continue;
+        }
         let disk_top = base.add(Vec3::new(0.0, 0.0, disk_height));
         let cone_top = disk_top.add(Vec3::new(0.0, 0.0, js_max(0.01, root.cone_height)));
         append_frustum(

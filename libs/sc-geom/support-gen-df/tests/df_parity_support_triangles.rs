@@ -18,7 +18,7 @@ use support_gen_df::features::slicing::support_world_triangles::{
 use support_gen_df::supports::rafts::crenelated::geometry::model_plate_footprint::{
     ModelTransform, PlateFootprintSource,
 };
-use support_gen_df::supports::rafts::crenelated::raft_types::RaftSettings;
+use support_gen_df::supports::rafts::crenelated::raft_types::{RaftBottomMode, RaftSettings};
 use support_gen_df::supports::support_primitives::contact_cone::types::ContactCone;
 use support_gen_df::supports::types::ContactDisk;
 use support_gen_df::supports::types::SupportCollections;
@@ -75,6 +75,10 @@ fn support_triangles_match_dragonfruit() {
             .map(|v| v.as_str().unwrap().to_owned())
             .collect();
         let raft: RaftSettings = serde_json::from_value(case["raft"].clone()).unwrap();
+        // Line rafts and their roots' feet are drawn our own way (#518).
+        if raft.bottom_mode == RaftBottomMode::Line {
+            continue;
+        }
         let soup_geometry = case["clearance"].as_bool().unwrap().then(|| {
             let soup: Vec<f64> =
                 serde_json::from_value(native["meshes"][case["scene"].as_str().unwrap()].clone())
