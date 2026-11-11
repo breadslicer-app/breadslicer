@@ -774,3 +774,61 @@ fn the_plate_picture_is_written_when_asked() {
         .save(path)
         .expect("the picture is written");
 }
+
+/// The Hollow tab's lasso leaves the supports out whole (#512): a support
+/// mesh, selected or not, draws nothing, from above the plate as from under
+/// it, while a model next to it still draws.
+#[test]
+fn hidden_supports_draw_nothing_and_models_still_draw() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let target = Vec3::new(0.0, 0.0, 40.0);
+    let frame = |renderer: &mut Renderer, graph: &Scene, selection: &[NodeId], pitch: f32| {
+        let mut camera = OrbitCamera::new(target, 50.0);
+        camera.target = target;
+        camera.distance = 50.0;
+        camera.pitch = pitch.asin();
+        camera.yaw = 0.3;
+        renderer.upload_scene(graph).expect("upload the scene");
+        renderer
+            .workspace_pixels_for_test(
+                SceneRender {
+                    graph,
+                    selection,
+                    gizmo: None,
+                    clip_z: None,
+                },
+                BV,
+                &camera,
+                SIZE,
+                SIZE,
+            )
+            .expect("the frame is not refused")
+            .expect("a sized frame")
+    };
+    let differs = |a: &[u8], b: &[u8]| {
+        a.chunks(4)
+            .zip(b.chunks(4))
+            .filter(|(p, q)| (0..3).any(|k| p[k].abs_diff(q[k]) > 2))
+            .count()
+    };
+    let support = scene_of(vec![supports(square(60.0, 40.0))]);
+    let model = scene_of(vec![square(60.0, 40.0)]);
+    let empty = scene_of(Vec::new());
+    let leaf = support.first_leaf_id().expect("the support leaf");
+    for pitch in [0.85f32, -0.85] {
+        renderer.set_supports_hidden(false);
+        let bare = frame(&mut renderer, &empty, &[], pitch).rgba;
+        let shown = frame(&mut renderer, &support, &[], pitch).rgba;
+        assert!(differs(&bare, &shown) > 100, "the support shows");
+        renderer.set_supports_hidden(true);
+        for selection in [&[][..], &[leaf][..]] {
+            let hidden = frame(&mut renderer, &support, selection, pitch).rgba;
+            assert_eq!(differs(&bare, &hidden), 0, "pitch {pitch}");
+        }
+        let drawn = frame(&mut renderer, &model, &[], pitch).rgba;
+        assert!(differs(&bare, &drawn) > 100, "a model still draws");
+    }
+}

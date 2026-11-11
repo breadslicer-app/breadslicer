@@ -71,8 +71,12 @@ use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::i18n::ctr;
 use crate::mesh_render::{Overlay, OverlayMesh, OverlayTint};
 use crate::scene_document::{
-    SceneDocument, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
+    MarksStep, SceneDocument, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
 };
+
+/// The marks placed on a solid model before it is hollowed: its drains and
+/// its solid areas (#512).
+type Marks = (Vec<LocalDrain>, Vec<LassoRegion>);
 use crate::surface_brush::lost_paint_note;
 use crate::viewport::ViewportController;
 use crate::{MainWindow, WorkspaceSection};
@@ -789,8 +793,7 @@ impl HollowRun {
             .unwrap_or_default()
     }
 
-    fn set_pending_solids(&self, mesh: &Arc<IndexedMesh>, solids: Vec<LassoRegion>) {
-        let ptr = Arc::as_ptr(mesh) as usize;
+    fn set_pending_solids_at(&self, ptr: usize, solids: Vec<LassoRegion>) {
         let mut pending = self.pending_solids.borrow_mut();
         pending.retain(|(m, _)| *m != ptr);
         if !solids.is_empty() {
@@ -833,9 +836,8 @@ impl HollowRun {
             let (original, drains) = self.source_for(&mesh);
             self.launch_with(leaf, mesh, original, drains, solids, &world);
         } else {
-            self.set_pending_solids(&mesh, solids);
-            self.refresh_ui();
-            self.tick_preview();
+            let drains = self.source_for(&mesh).1;
+            self.change_marks(&mesh, (drains, solids), "solid areas");
         }
     }
 
@@ -888,13 +890,51 @@ impl HollowRun {
         })
     }
 
-    fn set_pending(&self, mesh: &Arc<IndexedMesh>, drains: Vec<LocalDrain>) {
-        let ptr = Arc::as_ptr(mesh) as usize;
+    fn set_pending_at(&self, ptr: usize, drains: Vec<LocalDrain>) {
         let mut pending = self.pending.borrow_mut();
         pending.retain(|(m, _)| *m != ptr);
         if !drains.is_empty() {
             pending.push((ptr, drains));
         }
+    }
+
+    /// The marks placed on a solid model so far (#512): its drains and its
+    /// solid areas.
+    fn marks_of(&self, mesh: &Arc<IndexedMesh>) -> Marks {
+        (self.source_for(mesh).1, self.solids_for(mesh))
+    }
+
+    /// Puts `after` as the marks of the solid model `mesh`, as one step of
+    /// history that Undo takes back to what it had (#512), and brings the
+    /// tab and the cavity preview in line.
+    fn change_marks(self: &Rc<Self>, mesh: &Arc<IndexedMesh>, after: Marks, label: &'static str) {
+        let before = self.marks_of(mesh);
+        if before == after {
+            return;
+        }
+        let ptr = Arc::as_ptr(mesh) as usize;
+        let put = |marks: Marks| -> Rc<dyn Fn()> {
+            let weak = Rc::downgrade(self);
+            Rc::new(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.put_marks(ptr, marks.clone());
+                }
+            })
+        };
+        let step = MarksStep {
+            label,
+            undo: put(before),
+            redo: put(after.clone()),
+        };
+        self.put_marks(ptr, after);
+        self.document.push_marks_step(step);
+    }
+
+    fn put_marks(&self, ptr: usize, (drains, solids): Marks) {
+        self.set_pending_at(ptr, drains);
+        self.set_pending_solids_at(ptr, solids);
+        self.refresh_ui();
+        self.tick_preview();
     }
 
     /// Hollows the selected model with a `wall_mm` wall and a drain at
@@ -1106,8 +1146,8 @@ impl HollowRun {
             return;
         };
         let Some((original, drains)) = self.entry_for(&mesh) else {
-            self.set_pending(&mesh, Vec::new());
-            self.refresh_ui();
+            let solids = self.solids_for(&mesh);
+            self.change_marks(&mesh, (Vec::new(), solids), "drain marks cleared");
             return;
         };
         if !drains.is_empty() {
@@ -1140,9 +1180,8 @@ impl HollowRun {
         if self.entry_for(&mesh).is_some() {
             self.launch(leaf, mesh, original, drains, &world);
         } else {
-            self.set_pending(&mesh, drains);
-            self.refresh_ui();
-            self.tick_preview();
+            let solids = self.solids_for(&mesh);
+            self.change_marks(&mesh, (drains, solids), "drain mark");
         }
     }
 
@@ -1564,14 +1603,8 @@ impl HollowRun {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_hollow_last_run(summary.into());
         }
-        // The drains placed before are drilled now: they live on the hollow.
-        let original_ptr = Arc::as_ptr(&job.original) as usize;
-        self.pending
-            .borrow_mut()
-            .retain(|(m, _)| *m != original_ptr);
-        self.pending_solids
-            .borrow_mut()
-            .retain(|(m, _)| *m != original_ptr);
+        // The marks placed before are drilled now and live on the hollow;
+        // the solid model keeps them, for when Undo brings it back (#512).
         // The tab already shows the settings this hollow was made with.
         self.adopted.set(Some(Arc::as_ptr(&hollow) as usize));
         self.hollowed.borrow_mut().push(Hollowed {
@@ -2548,7 +2581,9 @@ mod tests {
                 document.undo().unwrap();
                 undo_steps += 1;
             }
-            document.redo().unwrap();
+            while document.can_redo() {
+                document.redo().unwrap();
+            }
             // On the hollow, another miss: nothing to drill, nothing to undo.
             run.on_drain_click([36.0, 64.0, 0.0], down);
             land_job(&run);
@@ -2565,8 +2600,9 @@ mod tests {
             "only the drain that opens"
         );
         assert_eq!(notices, vec!["Drain not drilled".to_owned()]);
-        assert_eq!(undo_steps, 1);
-        assert_eq!(after_click, 1, "the left-out drain added no step");
+        // The two drains placed (#512) and the hollow.
+        assert_eq!(undo_steps, 3);
+        assert_eq!(after_click, 3, "the left-out drain added no step");
     }
 
     /// The Review's drain button finds the model of any cavity (#431): one
@@ -3300,6 +3336,86 @@ mod tests {
                 .unwrap();
             assert!(Arc::ptr_eq(&shown, &hollow), "one undo step back");
             assert_eq!(window.get_hollow_solid_count(), 1);
+        });
+    }
+
+    /// #512: the drains and areas placed on a solid model are steps of
+    /// history: Undo and Redo walk them back and forth one by one, undoing
+    /// the hollow brings them back, and none of them makes the document
+    /// unsaved.
+    #[test]
+    fn the_marks_placed_before_hollowing_are_undone_one_by_one() {
+        use crate::selection::{LeafId, Selection};
+        use crate::test_support::slint_thread::on_fresh_slint_thread;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut cube = sc_mesh_fixtures::unit_cube_mesh();
+            for v in &mut cube.vertices {
+                *v = Vertex::new(v.as_array().map(|c| c * 30.0));
+            }
+            let world =
+                Transform3D::Affine(AffineTransform3D::from_translation([50.0, 50.0, 15.0]));
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(None, world, LeafPayload::Mesh(Arc::new(cube)))
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, std::path::PathBuf::from("cube.stl"));
+            document.set_selection(Selection::One(LeafId(leaf)));
+            window.set_workspace_section(WorkspaceSection::Hollow);
+            let run = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            run.on_option(0, 2.0);
+            document.mark_saved();
+            let counts = || {
+                (
+                    window.get_hollow_drain_count(),
+                    window.get_hollow_solid_count(),
+                )
+            };
+
+            run.on_drain_click([50.0, 50.0, 30.0], [0.0, 0.0, 1.0]);
+            run.on_drain_click([45.0, 45.0, 30.0], [0.0, 0.0, 1.0]);
+            run.on_lasso(LassoRegion {
+                perspective: false,
+                origin: [0.0, 0.0, 100.0],
+                u: [1.0, 0.0, 0.0],
+                v: [0.0, 1.0, 0.0],
+                w: [0.0, 0.0, -1.0],
+                polygon: vec![[56.0, 0.0], [100.0, 0.0], [100.0, 100.0], [56.0, 100.0]],
+            });
+            assert_eq!(counts(), (2, 1));
+            assert!(!document.is_dirty(), "marks are not in the file");
+
+            assert!(document.undo().unwrap());
+            assert_eq!(counts(), (2, 0));
+            assert!(document.undo().unwrap());
+            assert_eq!(counts(), (1, 0));
+            assert!(document.redo().unwrap());
+            assert!(document.redo().unwrap());
+            assert_eq!(counts(), (2, 1));
+            run.on_clear_drains();
+            assert_eq!(counts(), (0, 1));
+            assert!(document.undo().unwrap());
+            assert_eq!(counts(), (2, 1));
+            assert!(!document.is_dirty());
+
+            // Hollowed: the marks are drilled; Undo brings the solid model
+            // back with them, Redo the hollow.
+            run.on_apply();
+            land_job(&run);
+            assert_eq!(window.get_hollow_model_state(), 1);
+            assert!(document.is_dirty());
+            assert!(document.undo().unwrap());
+            run.refresh_ui();
+            assert_eq!(window.get_hollow_model_state(), 0);
+            assert_eq!(counts(), (2, 1));
+            assert!(!document.is_dirty());
+            assert!(document.redo().unwrap());
+            run.refresh_ui();
+            assert_eq!(window.get_hollow_model_state(), 1);
+            assert_eq!(counts(), (2, 1));
         });
     }
 }

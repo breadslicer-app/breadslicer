@@ -1186,6 +1186,16 @@ impl ViewportController {
         (shown_up_to, Some(lines))
     }
 
+    /// Whether the supports are left out of the view: while the Hollow tab's
+    /// lasso is armed, the model stands clear to draw around (#512).
+    fn supports_hidden(&self) -> bool {
+        self.session.section() == WorkspaceSection::Hollow
+            && self
+                .ui
+                .upgrade()
+                .is_some_and(|ui| ui.get_hollow_lasso_tool())
+    }
+
     #[cfg(test)]
     pub(crate) fn under_plate_supports_for_test(
         &self,
@@ -3244,6 +3254,8 @@ impl ViewportController {
     pub(crate) fn on_tab_tools_changed(&self) {
         self.cancel_support_drag();
         self.set_preview_overlay(None);
+        // The lasso hides the supports, and they come back with it (#512).
+        self.render.request_redraw();
         if let Some(ui) = self.ui.upgrade() {
             crate::breadcrumbs::note(&format!(
                 "tools: support tool {}, drain tool {}",
@@ -3921,6 +3933,7 @@ impl ViewportController {
         renderer.set_raft_top(self.raft_top_under_plate());
         let (shown_up_to, lines) = self.under_plate_supports();
         renderer.set_support_lines(shown_up_to, lines.as_ref());
+        renderer.set_supports_hidden(self.supports_hidden());
 
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -4280,6 +4293,25 @@ mod lasso_region_tests {
     use super::*;
     use crate::camera::OrbitCamera;
     use glam::Vec3;
+
+    /// #512: the supports leave the view while the lasso is armed in the
+    /// Hollow tab, and come back with it put away or in another tab.
+    #[test]
+    fn the_armed_lasso_hides_the_supports() {
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = ViewportController::new_for_test_with_ui(&window);
+            ctrl.set_section(WorkspaceSection::Hollow);
+            assert!(!ctrl.supports_hidden());
+            window.set_hollow_lasso_tool(true);
+            assert!(ctrl.supports_hidden());
+            ctrl.set_section(WorkspaceSection::Supports);
+            assert!(!ctrl.supports_hidden());
+            ctrl.set_section(WorkspaceSection::Hollow);
+            window.set_hollow_lasso_tool(false);
+            assert!(!ctrl.supports_hidden());
+        });
+    }
 
     /// #179: the region a lasso makes holds, at any depth, what the camera
     /// shows inside the curve, and nothing outside it: in perspective and in
