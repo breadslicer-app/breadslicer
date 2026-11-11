@@ -64,6 +64,10 @@ pub(in crate::mesh_render) struct MeshPipeline {
     pub(in crate::mesh_render) fade_depth_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) fade_depth_marking_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) fade_pipeline: wgpu::RenderPipeline,
+    /// What is selected, with the supports in focus with it, marked into
+    /// the stencil whole, through whatever stands in front, so the outline
+    /// runs round the silhouette alone (#523): no depth, no colour.
+    pub(in crate::mesh_render) mark_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) uniform_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) uniforms_bind_group: wgpu::BindGroup,
     /// Group 0's layout: the uniforms and the support tips' data textures,
@@ -469,6 +473,53 @@ impl MeshPipeline {
             cache: None,
         });
 
+        let mark_face = wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::Always,
+            fail_op: wgpu::StencilOperation::Keep,
+            depth_fail_op: wgpu::StencilOperation::Keep,
+            pass_op: wgpu::StencilOperation::Replace,
+        };
+        let mark_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer selection mark pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<GpuVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                })],
+            },
+            primitive: open,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState {
+                    front: mark_face,
+                    back: mark_face,
+                    read_mask: 0xFF,
+                    write_mask: 0xFF,
+                },
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample,
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_mark"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: TEXTURE_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::empty(),
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("mesh-viewer uniforms"),
             size: size_of::<Uniforms>() as u64,
@@ -493,6 +544,7 @@ impl MeshPipeline {
             fade_depth_pipeline,
             fade_depth_marking_pipeline,
             fade_pipeline,
+            mark_pipeline,
             uniform_buffer,
             uniforms_bind_group,
             uniforms_bind_group_layout,

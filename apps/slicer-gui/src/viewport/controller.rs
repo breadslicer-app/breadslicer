@@ -181,7 +181,17 @@ pub(crate) struct ViewportController {
     /// has moved yet.
     cut_handles: RefCell<Option<Rc<dyn CutHandles>>>,
     cut_press: Cell<Option<([f32; 2], bool)>>,
+    /// The focus of the last frame (#523), with the scene revision and the
+    /// selection it was worked out for.
+    focus_cache: FocusCache,
 }
+
+type FocusCache = RefCell<
+    Option<(
+        (crate::scene_document::SceneRevision, Vec<sc_scene::NodeId>),
+        Vec<sc_scene::NodeId>,
+    )>,
+>;
 
 /// Who takes the region a lasso stroke closes.
 type LassoHandler = Rc<dyn Fn(LassoRegion)>;
@@ -273,6 +283,7 @@ impl ViewportController {
             lasso_handler: RefCell::new(None),
             cut_handles: RefCell::new(None),
             cut_press: Cell::new(None),
+            focus_cache: RefCell::new(None),
         }
     }
 
@@ -337,6 +348,7 @@ impl ViewportController {
             lasso_handler: RefCell::new(None),
             cut_handles: RefCell::new(None),
             cut_press: Cell::new(None),
+            focus_cache: RefCell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -3169,6 +3181,21 @@ impl ViewportController {
         *self.cut_handles.borrow_mut() = Some(handles);
     }
 
+    /// What stays lit while something is selected (#523), worked out again
+    /// only when the scene or the selection changed.
+    fn focus(&self) -> Vec<sc_scene::NodeId> {
+        let document = self.session.document();
+        let key = (document.scene_revision(), document.selection_node_ids());
+        if let Some((at, focus)) = self.focus_cache.borrow().as_ref()
+            && *at == key
+        {
+            return focus.clone();
+        }
+        let focus = document.focus_ids();
+        *self.focus_cache.borrow_mut() = Some((key, focus.clone()));
+        focus
+    }
+
     /// The Cut tool's handles while it is open in the Transform tab: the
     /// object's gizmo then goes, and the object does not move.
     fn open_cut(&self) -> Option<Rc<dyn CutHandles>> {
@@ -4164,6 +4191,7 @@ impl ViewportController {
         let (shown_up_to, lines) = self.under_plate_supports();
         renderer.set_support_lines(shown_up_to, lines.as_ref());
         renderer.set_supports_hidden(self.supports_hidden());
+        renderer.set_focus(&self.focus());
 
         let Some(ui) = self.ui.upgrade() else {
             return;

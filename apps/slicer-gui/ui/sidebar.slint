@@ -44,13 +44,13 @@ component SideBarItem inherits Rectangle {
         animate opacity { duration: 150ms; }
     }
 
-    // The page shown: the amber mark of what is active, as on the tool rail
-    // (#507).
+    // The page shown: the light mark of what is active, as on the tool rail
+    // (#507, #523).
     if root.selected: Rectangle {
         x: 0;
         width: 2px;
         height: parent.height;
-        background: Theme.accent;
+        background: Theme.indicator;
     }
 
     l := HorizontalBox {

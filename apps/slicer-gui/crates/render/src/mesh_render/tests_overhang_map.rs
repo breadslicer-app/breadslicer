@@ -298,7 +298,8 @@ fn the_red_deepens_towards_a_flat_ceiling_and_the_rose_warns_before_the_limit() 
         "the limit is a clear step: {edge} / {near}"
     );
     assert!(near > 1.15, "the rose shows: {near}");
-    assert!(away < 1.0, "past the band the model is plain: {away}");
+    // The model's own grey is neutral (#523): red and green alike.
+    assert!(away < 1.03, "past the band the model is plain: {away}");
 }
 
 #[test]

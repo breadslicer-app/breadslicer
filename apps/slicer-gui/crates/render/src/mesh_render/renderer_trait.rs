@@ -131,6 +131,9 @@ pub trait MeshRenderer {
     /// Leaves the support meshes out of the view, lines and all (#512).
     fn set_supports_hidden(&mut self, _hidden: bool) {}
 
+    /// What stays lit while something is selected (#523); the rest dims.
+    fn set_focus(&mut self, _focus: &[sc_scene::NodeId]) {}
+
     /// From under the plate, the supports drawn as lines (#493): the height
     /// above which the support meshes fade (`f32::MAX` keeps them), and the
     /// lines drawn in their place.
@@ -263,6 +266,10 @@ impl MeshRenderer for Renderer {
 
     fn set_supports_hidden(&mut self, hidden: bool) {
         Renderer::set_supports_hidden(self, hidden);
+    }
+
+    fn set_focus(&mut self, focus: &[sc_scene::NodeId]) {
+        Renderer::set_focus(self, focus);
     }
 
     fn set_support_lines(

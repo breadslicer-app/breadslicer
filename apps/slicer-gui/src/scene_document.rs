@@ -1645,6 +1645,39 @@ impl SceneDocument {
         }
     }
 
+    /// What stays lit while something is selected (#523): the selection,
+    /// the model of each support set among it, and the supports of every
+    /// model among both. Empty with nothing selected.
+    pub(crate) fn focus_ids(&self) -> Vec<NodeId> {
+        let selected = self.selection_node_ids();
+        if selected.is_empty() {
+            return selected;
+        }
+        let sessions = self.support_sessions();
+        let owners: Vec<NodeId> = self
+            .with_scene(|spatial| {
+                selected
+                    .iter()
+                    .filter_map(|&id| {
+                        let query = spatial.leaf(id)?;
+                        if !sc_geom::df_supports::is_any_support_mesh(query.mesh()) {
+                            return None;
+                        }
+                        crate::support_persist::model_of(&sessions, id)
+                            .or_else(|| crate::imported_supports::owner_of(spatial, id, None))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut ids = selected;
+        for owner in owners {
+            if !ids.contains(&owner) {
+                ids.push(owner);
+            }
+        }
+        self.with_their_supports(ids)
+    }
+
     /// `ids`, followed by the supports of each model among them that are not
     /// among them already: its support sets and its imported supports.
     fn with_their_supports(&self, ids: Vec<NodeId>) -> Vec<NodeId> {
