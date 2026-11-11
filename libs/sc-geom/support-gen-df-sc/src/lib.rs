@@ -529,6 +529,8 @@ impl SettingsRecipe {
             shaft_style: ShaftStyle::Smooth(SmoothShaftParams::default()),
             // Walls that slice cleanly on trimmed footprints.
             robust_raft_geometry: true,
+            // Small feet on a line raft, not the roots' disks (#518).
+            line_raft_feet: true,
             ..PipelineSettings::defaults(self.layer_height_mm)
         };
         self.options.apply(&mut settings);

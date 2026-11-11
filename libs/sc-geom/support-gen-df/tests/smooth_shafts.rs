@@ -170,6 +170,7 @@ fn on_dragonfruit_states_smooth_shafts_stay_closed_and_drop_the_spheres() {
                 tip_drawing: Default::default(),
                 shaft_style,
                 robust_raft_geometry: false,
+                line_raft_feet: false,
             })
             .unwrap()
         };
@@ -383,6 +384,7 @@ fn on_dragonfruit_states_no_vertex_flies_off() {
                 tip_drawing: Default::default(),
                 shaft_style,
                 robust_raft_geometry: false,
+                line_raft_feet: false,
             })
             .unwrap()
         };
