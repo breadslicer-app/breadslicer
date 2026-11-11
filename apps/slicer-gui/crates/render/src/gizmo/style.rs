@@ -90,6 +90,20 @@ pub(crate) fn axis_fade(axis: Axis, view_dir: Vec3) -> f32 {
     1.0 - smoothstep(AXIS_FADE_START, AXIS_FADE_END, along)
 }
 
+/// [`axis_fade`] for any unit direction `dir`.
+pub(crate) fn dir_fade(dir: Vec3, view_dir: Vec3) -> f32 {
+    1.0 - smoothstep(AXIS_FADE_START, AXIS_FADE_END, dir.dot(view_dir).abs())
+}
+
+/// [`ring_fade`] for a ring about any unit direction `axis`.
+pub(crate) fn ring_dir_fade(axis: Vec3, view_dir: Vec3) -> f32 {
+    if axis.dot(view_dir).abs() < super::tolerances::ROTATE_LOCKOUT_COS {
+        RING_EDGE_ALPHA
+    } else {
+        1.0
+    }
+}
+
 /// Opacity of the plane square perpendicular to `normal` seen along
 /// `view_dir` (unit): 1 facing the camera, 0 edge-on.
 pub(crate) fn plane_fade(normal: Axis, view_dir: Vec3) -> f32 {

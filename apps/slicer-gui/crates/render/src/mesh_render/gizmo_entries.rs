@@ -15,10 +15,11 @@ use glam::{Mat4, Vec3};
 use crate::gizmo::axis::{ALL_AXES, Axis};
 use crate::gizmo::dimensions::px;
 use crate::gizmo::look::{Family, GizmoLook};
+use crate::gizmo::style::AXIS_COLORS;
 use crate::gizmo::style::{
     ACTIVE_MIX, CENTRE_COLOR, HOVER_MIX, OUTLINE_ALPHA, OUTLINE_COLOR, PLANE_ALPHA_MAX,
     PLANE_LIT_GAIN, REFERENCE_ALPHA, RING_BACK_ALPHA, TICK_ALPHA, TICK_MIX, VIEW_RING_COLOR,
-    WEDGE_ALPHA, axis_color, axis_fade, lighten, plane_fade, ring_fade,
+    WEDGE_ALPHA, axis_color, axis_fade, dir_fade, lighten, plane_fade, ring_dir_fade, ring_fade,
 };
 
 /// Per-frame uniform for the gizmo pass: the camera transform, the
@@ -110,6 +111,34 @@ pub struct GizmoFrame {
     /// The style, size and tool the user picked (#274, #276). `scale`
     /// already holds the size.
     pub look: GizmoLook,
+    /// A tool's own gizmo in place of the transform handles (the Cut
+    /// tool's plane, #56), drawn in the same style; `visibility` and
+    /// `hover` are then not read.
+    pub tool: Option<ToolGizmo>,
+}
+
+/// A tool's gizmo, drawn as the transform gizmo is: an arrow along a
+/// normal, a ring about each of two directions across it, and a cube at
+/// each of four corners, all at `pivot` but the corners.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ToolGizmo {
+    /// The two directions (the rings turn about them, red and green) and
+    /// the normal (the arrow points along it, blue), unit, right-handed.
+    pub axes: [Vec3; 3],
+    /// Where the corner cubes stand, world.
+    pub corners: [Vec3; 4],
+    /// The handle under the cursor, and the one being dragged: while one
+    /// is, only it shows.
+    pub hover: Option<ToolHandle>,
+    pub active: Option<ToolHandle>,
+}
+
+/// One of a [`ToolGizmo`]'s handles.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ToolHandle {
+    Arrow,
+    Ring(usize),
+    Corner(usize),
 }
 
 /// Live cursor-driven drag state, used by the renderer to give real-time
@@ -290,7 +319,14 @@ pub(super) fn build_gizmo_draws(frame: &GizmoFrame) -> Vec<GizmoDraw> {
             entry: entry(h.transform, h.color, h.alpha * h.fill, 0.0, half_of(h)),
         });
     }
+    let tool_ring = frame.tool.and_then(|t| match t.active {
+        Some(ToolHandle::Ring(k)) => Some(k.min(1)),
+        _ => None,
+    });
     let marks_color = match (frame.visibility, frame.drag_visual) {
+        (_, Some(GizmoDragVisual::ViewRotate { .. })) if tool_ring.is_some() => {
+            tool_ring.map(|k| AXIS_COLORS[k])
+        }
         (GizmoVisibility::DraggingRotate { axis }, Some(GizmoDragVisual::Rotate { .. })) => {
             Some(axis_color(axis))
         }
@@ -321,6 +357,9 @@ pub(super) fn build_gizmo_draws(frame: &GizmoFrame) -> Vec<GizmoDraw> {
 }
 
 fn visible_handles(frame: &GizmoFrame) -> Vec<Handle> {
+    if let Some(tool) = frame.tool {
+        return tool_handles(frame, &tool);
+    }
     let rotations = axis_world_rotations();
     let look = frame.look;
     let m = look.metrics();
@@ -496,6 +535,75 @@ fn visible_handles(frame: &GizmoFrame) -> Vec<Handle> {
     out
 }
 
+/// The handles of a tool's gizmo: each mesh of the transform gizmo turned
+/// from handle-local +X onto the tool's own directions.
+fn tool_handles(frame: &GizmoFrame, tool: &ToolGizmo) -> Vec<Handle> {
+    let [u, v, n] = tool.axes;
+    let m = frame.look.metrics();
+    // Handle-local +X onto `x`, +Y onto `y`, +Z onto their cross.
+    let basis = |x: Vec3, y: Vec3| {
+        Mat4::from_cols(
+            x.extend(0.0),
+            y.extend(0.0),
+            x.cross(y).extend(0.0),
+            glam::Vec4::W,
+        )
+    };
+    let state = |h: ToolHandle| match tool.active {
+        Some(dragged) => (dragged == h).then_some(Look::Active),
+        None => Some(Look::of(tool.hover == Some(h), false)),
+    };
+    let dragging = tool.active.is_some();
+    let mut out = Vec::with_capacity(7);
+    if let Some(look) = state(ToolHandle::Arrow) {
+        let alpha = if dragging {
+            1.0
+        } else {
+            dir_fade(n, frame.view_dir)
+        };
+        out.push(Handle::solid(
+            GizmoMesh::Arrow,
+            basis(n, u),
+            look.color(AXIS_COLORS[2]),
+            alpha,
+        ));
+    }
+    for (k, (axis, side)) in [(u, v), (v, n)].into_iter().enumerate() {
+        let Some(look) = state(ToolHandle::Ring(k)) else {
+            continue;
+        };
+        out.push(Handle {
+            split_ring: !dragging,
+            ..Handle::solid(
+                GizmoMesh::Ring,
+                basis(axis, side),
+                look.color(AXIS_COLORS[k]),
+                if dragging {
+                    1.0
+                } else {
+                    ring_dir_fade(axis, frame.view_dir)
+                },
+            )
+        });
+    }
+    // The cube mesh stands at `cube_at` along +X: back to the origin, onto
+    // the plane, out to the corner.
+    let to_origin = Mat4::from_translation(Vec3::new(-m.cube_at * frame.scale, 0.0, 0.0));
+    for (k, corner) in tool.corners.into_iter().enumerate() {
+        let Some(look) = state(ToolHandle::Corner(k)) else {
+            continue;
+        };
+        out.push(Handle::solid(
+            GizmoMesh::Cube,
+            Mat4::from_translation(corner - frame.pivot) * basis(u, v) * to_origin,
+            look.color(CENTRE_COLOR),
+            1.0,
+        ));
+    }
+    out.retain(|h| h.alpha >= MIN_ALPHA);
+    out
+}
+
 /// Lays the plane mesh (built across handle-local +X, its square toward +Y
 /// and +Z) onto the plane perpendicular to `normal`, in the quadrant that
 /// faces the camera looking along `view_dir` (`plane_quadrant`, which the hit
@@ -534,6 +642,7 @@ mod tests {
             hover: None,
             drag_visual: None,
             look: GizmoLook::default(),
+            tool: None,
         }
     }
 
@@ -882,6 +991,78 @@ mod tests {
         }
         assert!(cores(&draws, GizmoMesh::Ring).is_empty());
         assert!(cores(&draws, GizmoMesh::Ball).is_empty());
+    }
+
+    /// A tool's gizmo on a plane tilted about x, its corners 5 shafts out.
+    fn tool(hover: Option<ToolHandle>, active: Option<ToolHandle>) -> GizmoFrame {
+        let (s, c) = 0.3f32.sin_cos();
+        let (u, v) = (Vec3::X, Vec3::new(0.0, c, s));
+        let n = u.cross(v);
+        let mut f = frame(GizmoVisibility::Idle);
+        f.tool = Some(ToolGizmo {
+            axes: [u, v, n],
+            corners: [(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0)]
+                .map(|(a, b)| u * a + v * b),
+            hover,
+            active,
+        });
+        f
+    }
+
+    #[test]
+    fn a_tools_gizmo_draws_the_transform_handles_on_its_own_axes() {
+        let draws = build_gizmo_draws(&tool(Some(ToolHandle::Ring(1)), None));
+        let arrows = cores(&draws, GizmoMesh::Arrow);
+        let rings = cores(&draws, GizmoMesh::Ring);
+        let cubes = cores(&draws, GizmoMesh::Cube);
+        assert_eq!((arrows.len(), rings.len(), cubes.len()), (1, 2, 4));
+        assert!(cores(&draws, GizmoMesh::Ball).is_empty());
+        assert!(cores(&draws, GizmoMesh::Plane).is_empty());
+        // In the transform gizmo's colours: blue along the normal, red and
+        // green about the two directions, the hovered one lighter.
+        assert_rgb(rgb(&arrows[0]), AXIS_COLORS[2]);
+        assert_rgb(rgb(&rings[0]), AXIS_COLORS[0]);
+        assert_rgb(rgb(&rings[1]), lighten(AXIS_COLORS[1], HOVER_MIX));
+        assert_rgb(rgb(&cubes[0]), CENTRE_COLOR);
+        // Each with its dark outline.
+        let halos = draws
+            .iter()
+            .filter(|d| d.layer == GizmoLayer::Halo && d.entry.tint[..3] == OUTLINE_COLOR)
+            .count();
+        assert_eq!(halos, 7);
+        // The arrow lies along the normal; a corner cube sits on its corner.
+        let along = |e: &GizmoDrawEntry, p: Vec3| {
+            Mat4::from_cols_array_2d(&e.axis_rotation).transform_point3(p)
+        };
+        let n = Vec3::X.cross(Vec3::new(0.0, 0.3f32.cos(), 0.3f32.sin()));
+        assert!((along(&arrows[0], Vec3::X) - n).length() < 1e-5);
+        let m = GizmoLook::default().metrics();
+        let corner = along(&cubes[2], Vec3::new(m.cube_at, 0.0, 0.0));
+        let want = Vec3::X * 5.0 + Vec3::new(0.0, 0.3f32.cos(), 0.3f32.sin()) * 5.0;
+        assert!((corner - want).length() < 1e-5, "{corner:?}");
+    }
+
+    #[test]
+    fn a_tools_dragged_ring_shows_alone_with_its_turn() {
+        let mut f = tool(None, Some(ToolHandle::Ring(0)));
+        f.drag_visual = Some(GizmoDragVisual::ViewRotate {
+            right: Vec3::Y,
+            up: Vec3::Z,
+            start: 0.0,
+            sweep: 0.5,
+        });
+        let draws = build_gizmo_draws(&f);
+        let rings = cores(&draws, GizmoMesh::Ring);
+        assert_eq!(rings.len(), 1);
+        assert_rgb(rgb(&rings[0]), lighten(AXIS_COLORS[0], ACTIVE_MIX));
+        assert!(cores(&draws, GizmoMesh::Arrow).is_empty());
+        assert!(cores(&draws, GizmoMesh::Cube).is_empty());
+        let wedge: Vec<_> = draws
+            .iter()
+            .filter(|d| d.mesh == GizmoMesh::Wedge)
+            .collect();
+        assert_eq!(wedge.len(), 1);
+        assert_rgb(wedge[0].entry.tint[..3].try_into().unwrap(), AXIS_COLORS[0]);
     }
 
     fn focused(tool: crate::gizmo::look::GizmoTool) -> GizmoFrame {

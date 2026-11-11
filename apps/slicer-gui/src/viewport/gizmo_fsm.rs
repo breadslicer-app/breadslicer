@@ -886,6 +886,7 @@ mod front_most_handle_tests {
                 hover: None,
                 drag_visual: None,
                 look,
+                tool: None,
             };
             let started = std::time::Instant::now();
             let mut draws = 0usize;

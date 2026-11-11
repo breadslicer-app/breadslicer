@@ -784,6 +784,161 @@ export component OrientCard inherits Card {
     }
 }
 
+// The Cut tool (#56): a plane through the selected model, its height and
+// tilt, and optionally the shape its four corners make on it, which bounds
+// the cut. The same is set by the plane's handles in the scene. The parts of
+// the cut show on the plane; a click on one takes it or leaves it (Rust:
+// `cut_run.rs`, `cut_gizmo.rs`).
+export component CutCard inherits Card {
+    // A model is selected and the scene can be edited.
+    in property <bool> enabled;
+    // The model is being made ready, or the cut worked out.
+    in property <bool> working;
+    in property <float> plane-height;
+    in property <float> height-min;
+    in property <float> height-max;
+    in property <float> tilt-x;
+    in property <float> tilt-y;
+    in property <bool> bounded;
+    in property <float> rect-width;
+    in property <float> rect-depth;
+    in property <float> offset-u;
+    in property <float> offset-v;
+    in property <string> status;
+    in property <string> warning;
+    in property <bool> can-cut;
+    // 0 height, 1 tilt about x, 2 tilt about y, 3 bounded (0/1), 4 width,
+    // 5 depth, 6 offset along the plane, 7 offset across it.
+    callback option-changed(int, float);
+    callback apply();
+    callback close();
+
+    title: @tr("Inspector" => "CUT");
+    note: "K";
+    highlighted: true;
+
+    Note {
+        text: @tr("Inspector" => "Cuts the selected model with a plane and closes the pieces. In the scene, the arrow moves the plane, the rings tilt it, the corners shape it and a drag on it moves it along. Click a part of the cut to take it or leave it.");
+    }
+    NumberField {
+        label: @tr("Inspector" => "Height");
+        unit: "mm";
+        decimals: 2;
+        value: root.plane-height;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(0, v);
+        }
+    }
+    Slider {
+        minimum: root.height-min;
+        maximum: root.height-max;
+        value: root.plane-height;
+        enabled: root.enabled;
+        changed(v) => {
+            root.option-changed(0, v);
+        }
+    }
+    NumberField {
+        label: @tr("Inspector" => "Tilt front to back");
+        unit: "°";
+        decimals: 1;
+        value: root.tilt-x;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(1, v);
+        }
+    }
+    NumberField {
+        label: @tr("Inspector" => "Tilt side to side");
+        unit: "°";
+        decimals: 1;
+        value: root.tilt-y;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(2, v);
+        }
+    }
+    CheckBox {
+        text: @tr("Inspector" => "Limit the plane");
+        checked: root.bounded;
+        enabled: root.enabled;
+        toggled => {
+            root.option-changed(3, self.checked ? 1 : 0);
+        }
+    }
+    // Each one under its own `if`: a wrapped Note inside a nested layout
+    // under an `if` is measured as one line, and the card came out short.
+    if root.bounded: NumberField {
+        label: @tr("Inspector" => "Width");
+        unit: "mm";
+        decimals: 1;
+        value: root.rect-width;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(4, v);
+        }
+    }
+    if root.bounded: NumberField {
+        label: @tr("Inspector" => "Depth");
+        unit: "mm";
+        decimals: 1;
+        value: root.rect-depth;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(5, v);
+        }
+    }
+    if root.bounded: NumberField {
+        label: @tr("Inspector" => "Move along X");
+        unit: "mm";
+        decimals: 1;
+        value: root.offset-u;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(6, v);
+        }
+    }
+    if root.bounded: NumberField {
+        label: @tr("Inspector" => "Move along Y");
+        unit: "mm";
+        decimals: 1;
+        value: root.offset-v;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(7, v);
+        }
+    }
+    if root.status != "": Note {
+        text: root.status;
+    }
+    if root.warning != "": Note {
+        text: root.warning;
+        color: Theme.warning;
+    }
+    HorizontalLayout {
+        spacing: 8px;
+
+        ScButton {
+            text: root.working ? @tr("Inspector" => "Working…") : @tr("Inspector" => "Cut");
+            icon: Icons.cut;
+            kind: ButtonKind.primary;
+            horizontal-stretch: 1;
+            enabled: root.enabled && root.can-cut;
+            clicked => {
+                root.apply();
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Close");
+            kind: ButtonKind.ghost;
+            clicked => {
+                root.close();
+            }
+        }
+    }
+}
+
 // The Repair button of the MESH CHECK card; while a run goes, what it is
 // doing, how far it is and Cancel, which discards the run (#253). Under it,
 // when a run left something broken, whether the viewport marks it.

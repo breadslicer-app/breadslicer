@@ -22,6 +22,7 @@ use crate::arrange_run::ArrangeRun;
 use crate::autosave::{Autosaver, recovery_line};
 use crate::autosave_store::{AutosaveStore, OrphanRun};
 use crate::clipboard::{Clipboard, clipboard_from_document_selection};
+use crate::cut_run::CutRun;
 use crate::default_envelope::DefaultEnvelope;
 use crate::df_support_run::DfSupportRun;
 use crate::error_dialog::{ErrorTexts, InfoTexts, RecoveryChoice};
@@ -232,6 +233,7 @@ struct WindowDrivers {
     _repair_run: Rc<RepairRun>,
     _arrange_run: Rc<ArrangeRun>,
     _orient_run: Rc<OrientRun>,
+    _cut_run: Rc<CutRun>,
     /// Asks about the supports a file came with (#258).
     _presupported_import: Rc<crate::presupported_import::PresupportedImport>,
     /// The Slice tab's layer keys (#501).
@@ -770,6 +772,7 @@ impl AppState {
             ctrl.clone(),
             df_support_run.clone(),
         );
+        let cut_run = CutRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let hollow_run = HollowRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         // The Review card applies its fixes through the support and hollow
         // drivers, and the Slice driver hands it each slice's findings.
@@ -807,6 +810,7 @@ impl AppState {
             _repair_run: repair_run,
             _arrange_run: arrange_run,
             _orient_run: orient_run,
+            _cut_run: cut_run,
             _support_gen_run: support_gen_run,
             _df_support_run: df_support_run,
         }

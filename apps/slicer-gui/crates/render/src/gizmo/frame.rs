@@ -68,6 +68,7 @@ pub fn build_gizmo_frame_at(
         hover,
         drag_visual,
         look,
+        tool: None,
     })
 }
 
