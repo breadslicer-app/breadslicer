@@ -37,14 +37,6 @@ pub enum OverlayTint {
     /// the supports (#493). Not an overlay of its own: the support lines
     /// draw these.
     SupportBall = 7,
-    /// A handle of a tool's gizmo (the Cut tool's plane corners, #56).
-    Handle = 8,
-    /// The handle under the cursor or being dragged.
-    HandleHot = 9,
-    /// Handles along or about the gizmo's axes, in its axis colours.
-    AxisX = 10,
-    AxisY = 11,
-    AxisZ = 12,
 }
 
 /// The overlay as a whole: its pieces, each shared so a piece that did not

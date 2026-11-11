@@ -3182,6 +3182,9 @@ impl ViewportController {
         let camera = self.camera.camera_cell().borrow().as_ref()?.clone();
         let fov = crate::mesh_render::default_fov_y();
         let (w, h) = (vp.width(), vp.height());
+        let look = self.input.gizmo_look();
+        let metrics = look.metrics();
+        let sized = camera.clone();
         let ray = picking::ray_from_pixel(&camera, fov, w, h, cursor.x, cursor.y);
         let (o, d) = (ray.origin, ray.direction);
         Some(ScenePointer {
@@ -3193,7 +3196,42 @@ impl ViewportController {
                 picking::project_world_to_screen(&camera, fov, w, h, at)
                     .map(|(x, y)| [f64::from(x), f64::from(y)])
             }),
+            scale_at: Box::new(move |p: [f64; 3]| {
+                let at = glam::Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32);
+                gizmo::gizmo_scale_sized(&sized, at, fov, h, look.size).map(f64::from)
+            }),
+            ring_radius: f64::from(metrics.ring_radius),
+            arrow_tip: f64::from(metrics.cone_tip),
         })
+    }
+
+    /// The Cut tool's gizmo for this frame, in the object's gizmo's style
+    /// and size.
+    fn cut_gizmo_frame(
+        &self,
+        handles: &dyn CutHandles,
+        camera: &crate::camera::OrbitCamera,
+        viewport_h_logical: f32,
+    ) -> Option<crate::mesh_render::GizmoFrame> {
+        let (center, tool, turn) = handles.gizmo()?;
+        let v3 = |p: [f64; 3]| glam::Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32);
+        let drag_visual = turn.map(|t| crate::mesh_render::GizmoDragVisual::ViewRotate {
+            right: v3(t.right),
+            up: v3(t.up),
+            start: t.start as f32,
+            sweep: t.sweep as f32,
+        });
+        let mut frame = gizmo::frame::build_gizmo_frame_at(
+            v3(center),
+            camera,
+            viewport_h_logical,
+            crate::mesh_render::GizmoVisibility::Idle,
+            None,
+            drag_visual,
+            self.input.gizmo_look(),
+        )?;
+        frame.tool = Some(tool);
+        Some(frame)
     }
 
     /// A left press with the Cut tool open: on its gizmo or plane, the
@@ -3209,6 +3247,7 @@ impl ViewportController {
             return false;
         }
         self.cut_press.set(Some(([cursor.x, cursor.y], false)));
+        self.mark_dirty();
         true
     }
 
@@ -3227,12 +3266,13 @@ impl ViewportController {
                     if let Some(pointer) = pointer {
                         handles.drag(&pointer);
                     }
+                    self.mark_dirty();
                 }
                 true
             }
             None => {
-                if self.cut_on() {
-                    handles.hover(pointer.as_ref());
+                if self.cut_on() && handles.hover(pointer.as_ref()) {
+                    self.mark_dirty();
                 }
                 false
             }
@@ -3405,7 +3445,9 @@ impl ViewportController {
         }
         self.input.on_pointer_leave();
         if let Some(handles) = self.open_cut() {
-            handles.hover(None);
+            if handles.hover(None) {
+                self.mark_dirty();
+            }
         } else {
             self.set_preview_overlay(None);
         }
@@ -4211,14 +4253,18 @@ impl ViewportController {
                     } else {
                         None
                     };
-                let gizmo_frame = GizmoFrameComposer::compose(
-                    &self.input,
-                    spatial_for_render,
-                    camera,
-                    gizmo_selection,
-                    &group,
-                    h_logical,
-                );
+                let gizmo_frame = match self.open_cut() {
+                    // The Cut tool's gizmo in the object's gizmo's place (#56).
+                    Some(handles) => self.cut_gizmo_frame(&*handles, camera, h_logical),
+                    None => GizmoFrameComposer::compose(
+                        &self.input,
+                        spatial_for_render,
+                        camera,
+                        gizmo_selection,
+                        &group,
+                        h_logical,
+                    ),
+                };
 
                 renderer.render(
                     Some(SceneRender {

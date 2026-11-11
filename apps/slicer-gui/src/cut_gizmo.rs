@@ -5,21 +5,21 @@
 
 //! The Cut tool's gizmo (#56): the handles that move the plane in the scene.
 //!
-//! While the tool is open the object's gizmo goes and these come in its
-//! place, around the plane: an arrow along the plane's normal (blue) moves it
-//! up or down along it, a ring about each of the plane's two directions (red
-//! and green) tilts it, a light square at each of the four corners moves that
-//! corner on the plane alone, and a drag on the plane moves the whole shape
-//! along it. Handles are picked on the screen, a few pixels around what is
-//! drawn, so a small one is as easy to grab as a big one.
+//! While the tool is open the object's gizmo goes and this one comes in its
+//! place, drawn by the same pass in the same style ([`ToolGizmo`]): an arrow
+//! along the plane's normal (blue) moves it along it, a ring about each of
+//! the plane's two directions (red and green) tilts it, a cube at each of the
+//! four corners moves that corner on the plane alone, and a drag on the plane
+//! moves the whole shape along it. Like the object's gizmo it keeps its size
+//! on the screen, and its handles are picked within the same pixels.
 //!
-//! This module only knows the geometry: where the handles are, which one a
-//! pointer is on, and the meshes that draw them. [`crate::cut_run`] turns a
-//! drag into new settings.
+//! This module only knows the geometry: where the handles are and which one
+//! a pointer is on. [`crate::cut_run`] turns a drag into new settings.
 
 use std::f64::consts::TAU;
 
-use crate::mesh_render::{OverlayMesh, OverlayTint};
+use crate::gizmo::dimensions::{HANDLE_PIXEL_RADIUS, RING_HIT_PIXELS, px};
+use crate::mesh_render::{ToolGizmo, ToolHandle};
 
 /// A pointer over the viewport, as the Cut tool sees it.
 pub(crate) struct ScenePointer {
@@ -30,6 +30,12 @@ pub(crate) struct ScenePointer {
     pub(crate) cursor: [f64; 2],
     /// Where a world point lands on the viewport, `None` behind the eye.
     pub(crate) project: Box<dyn Fn([f64; 3]) -> Option<[f64; 2]>>,
+    /// How long, world mm, the gizmo's arrow shaft is at a point: its size
+    /// on the screen, as the object's gizmo is drawn.
+    pub(crate) scale_at: Box<dyn Fn([f64; 3]) -> Option<f64>>,
+    /// The rings' radius and where the arrow's cone tip ends, in shafts.
+    pub(crate) ring_radius: f64,
+    pub(crate) arrow_tip: f64,
 }
 
 impl ScenePointer {
@@ -63,8 +69,13 @@ impl ScenePointer {
 pub(crate) trait CutHandles {
     /// Whether the tool is open: the object's gizmo then goes.
     fn active(&self) -> bool;
-    /// The pointer moved with no button down (`None`: it left the view).
-    fn hover(&self, pointer: Option<&ScenePointer>);
+    /// The gizmo to draw in the object's gizmo's place, and the turn of a
+    /// ring being dragged, which the pass marks as it marks the object's.
+    /// Where it stands (its centre).
+    fn gizmo(&self) -> Option<([f64; 3], ToolGizmo, Option<RingTurn>)>;
+    /// The pointer moved with no button down (`None`: it left the view);
+    /// whether the handle under it changed.
+    fn hover(&self, pointer: Option<&ScenePointer>) -> bool;
     /// A left press; `true` when it is on the tool's gizmo or plane, and
     /// the drag that follows is the tool's.
     fn press(&self, pointer: &ScenePointer) -> bool;
@@ -76,6 +87,17 @@ pub(crate) trait CutHandles {
     /// A click the tool did not take at the press: on a part of the cut,
     /// takes it or leaves it.
     fn click(&self, pointer: &ScenePointer) -> bool;
+}
+
+/// A ring's turn in flight, for its marks: the ring lies across `right`
+/// and `up`, the turn starts at angle `start` from `right` toward `up` and
+/// has gone `sweep` radians that way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RingTurn {
+    pub(crate) right: [f64; 3],
+    pub(crate) up: [f64; 3],
+    pub(crate) start: f64,
+    pub(crate) sweep: f64,
 }
 
 /// One of the gizmo's handles.
@@ -91,6 +113,18 @@ pub(crate) enum Handle {
     Plane,
 }
 
+impl Handle {
+    /// The handle as the gizmo pass draws it; the plane is not one.
+    pub(crate) fn drawn(self) -> Option<ToolHandle> {
+        match self {
+            Handle::Arrow => Some(ToolHandle::Arrow),
+            Handle::Ring(k) => Some(ToolHandle::Ring(k)),
+            Handle::Corner(k) => Some(ToolHandle::Corner(k)),
+            Handle::Plane => None,
+        }
+    }
+}
+
 /// Where the gizmo stands, in the world.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Gizmo {
@@ -102,101 +136,96 @@ pub(crate) struct Gizmo {
     pub(crate) v: [f64; 3],
     /// The four corners of the shape on show, in order around it.
     pub(crate) corners: [[f64; 3]; 4],
-    /// The size handles are drawn at, mm: the model's reach.
-    pub(crate) reach: f64,
 }
 
-/// How near the cursor a handle is picked, logical pixels.
-const CORNER_PICK_PX: f64 = 11.0;
-const ARROW_PICK_PX: f64 = 8.0;
-const RING_PICK_PX: f64 = 7.0;
+/// How near the cursor a corner cube is picked, logical pixels: half the
+/// cube and the margin the object's scale cubes have.
+const CORNER_PICK_PX: f64 = 13.0;
+/// Where the arrow starts grabbing, past the centre, in shafts.
+const ARROW_FROM: f64 = px(16.0) as f64;
+/// The arrow cannot be grabbed pointing within 8° of the eye, nor a ring
+/// seen within 8° of edge on, as the object's gizmo (`gizmo::tolerances`).
+const LOCKOUT_COS: f64 = 0.990_268_07;
+const ROTATE_LOCKOUT_COS: f64 = 0.139_173_1;
 const RING_SEGMENTS: usize = 64;
 
 impl Gizmo {
-    /// The width handles are drawn at, mm.
-    fn unit(&self) -> f64 {
-        (self.reach * 0.016).clamp(0.25, 3.0)
-    }
-
-    fn arrow_tip(&self) -> [f64; 3] {
-        add(self.center, scale(self.n, self.reach * 0.38))
-    }
-
-    pub(crate) fn ring_radius(&self) -> f64 {
-        self.reach * 0.28
-    }
-
     /// The axis ring `k` turns about.
     pub(crate) fn ring_axis(&self, k: usize) -> [f64; 3] {
         if k == 0 { self.u } else { self.v }
     }
 
-    /// The point at angle `a` round ring `k`.
-    fn ring_point(&self, k: usize, a: f64) -> [f64; 3] {
-        // The ring lies across its axis: in the plane of the normal and the
-        // other direction.
-        let side = if k == 0 { self.v } else { self.u };
-        let r = self.ring_radius();
+    /// The directions ring `k` lies across, as the gizmo pass draws it: a
+    /// turn about its axis runs from `right` toward `up`.
+    pub(crate) fn ring_plane(&self, k: usize) -> ([f64; 3], [f64; 3]) {
+        if k == 0 {
+            (self.v, self.n)
+        } else {
+            (self.n, self.u)
+        }
+    }
+
+    /// The point at angle `a` round ring `k`, of radius `r`.
+    fn ring_point(&self, k: usize, a: f64, r: f64) -> [f64; 3] {
+        let (right, up) = self.ring_plane(k);
         add(
             self.center,
-            add(scale(side, r * a.cos()), scale(self.n, r * a.sin())),
+            add(scale(right, r * a.cos()), scale(up, r * a.sin())),
         )
     }
 
-    /// The point of ring `k` nearest the cursor on the screen, and how far
-    /// from it, pixels.
+    /// The point of ring `k` nearest the cursor on the screen, its angle
+    /// round the ring, and how far from the cursor it is, pixels.
     pub(crate) fn ring_point_near(
         &self,
         k: usize,
         pointer: &ScenePointer,
-    ) -> Option<([f64; 3], f64)> {
+    ) -> Option<([f64; 3], f64, f64)> {
+        let r = (pointer.scale_at)(self.center)? * pointer.ring_radius;
         let at = pointer.cursor;
         (0..RING_SEGMENTS)
             .filter_map(|s| {
-                let p = self.ring_point(k, TAU * s as f64 / RING_SEGMENTS as f64);
+                let a = TAU * s as f64 / RING_SEGMENTS as f64;
+                let p = self.ring_point(k, a, r);
                 let q = (pointer.project)(p)?;
-                Some((p, (q[0] - at[0]).hypot(q[1] - at[1])))
+                Some((p, a, (q[0] - at[0]).hypot(q[1] - at[1])))
             })
-            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .min_by(|a, b| a.2.total_cmp(&b.2))
     }
 
-    /// The handle `pointer` is on, nearest first among the handles, the
-    /// plane last.
+    /// The handle `pointer` is on: the corners first, then the arrow, the
+    /// rings, and the plane last.
     pub(crate) fn pick(&self, pointer: &ScenePointer) -> Option<Handle> {
         let at = pointer.cursor;
-        let near = |p: [f64; 3], px: f64| {
-            (pointer.project)(p)
-                .map(|s| (s[0] - at[0]).hypot(s[1] - at[1]))
-                .filter(|&d| d <= px)
-        };
         let corner = (0..4)
-            .filter_map(|k| near(self.corners[k], CORNER_PICK_PX).map(|d| (k, d)))
+            .filter_map(|k| {
+                let s = (pointer.project)(self.corners[k])?;
+                let d = (s[0] - at[0]).hypot(s[1] - at[1]);
+                (d <= CORNER_PICK_PX).then_some((k, d))
+            })
             .min_by(|a, b| a.1.total_cmp(&b.1));
         if let Some((k, _)) = corner {
             return Some(Handle::Corner(k));
         }
-        let segment_near = |a: [f64; 3], b: [f64; 3], px: f64| -> Option<f64> {
-            let (sa, sb) = ((pointer.project)(a)?, (pointer.project)(b)?);
-            let d = segment_distance(at, sa, sb);
-            (d <= px).then_some(d)
-        };
-        if segment_near(self.center, self.arrow_tip(), ARROW_PICK_PX).is_some() {
-            return Some(Handle::Arrow);
-        }
-        let ring = (0..2)
-            .filter_map(|k| {
-                (0..RING_SEGMENTS)
-                    .filter_map(|s| {
-                        let a = TAU * s as f64 / RING_SEGMENTS as f64;
-                        let b = TAU * (s + 1) as f64 / RING_SEGMENTS as f64;
-                        segment_near(self.ring_point(k, a), self.ring_point(k, b), RING_PICK_PX)
-                    })
-                    .min_by(f64::total_cmp)
-                    .map(|d| (k, d))
-            })
-            .min_by(|a, b| a.1.total_cmp(&b.1));
-        if let Some((k, _)) = ring {
-            return Some(Handle::Ring(k));
+        if let Some(shaft) = (pointer.scale_at)(self.center) {
+            let from = add(self.center, scale(self.n, shaft * ARROW_FROM));
+            let tip = add(self.center, scale(self.n, shaft * pointer.arrow_tip));
+            let near = (pointer.project)(from)
+                .zip((pointer.project)(tip))
+                .is_some_and(|(a, b)| segment_distance(at, a, b) <= f64::from(HANDLE_PIXEL_RADIUS));
+            if near && dot(self.n, pointer.direction).abs() <= LOCKOUT_COS {
+                return Some(Handle::Arrow);
+            }
+            let ring = (0..2)
+                .filter(|&k| dot(self.ring_axis(k), pointer.direction).abs() >= ROTATE_LOCKOUT_COS)
+                .filter_map(|k| {
+                    let (_, _, d) = self.ring_point_near(k, pointer)?;
+                    (d <= f64::from(RING_HIT_PIXELS)).then_some((k, d))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((k, _)) = ring {
+                return Some(Handle::Ring(k));
+            }
         }
         let hit = pointer.on_plane(self.center, self.n)?;
         let flat = |p: [f64; 3]| {
@@ -207,48 +236,15 @@ impl Gizmo {
         inside(flat(hit), &outline).then_some(Handle::Plane)
     }
 
-    /// The meshes that draw the handles, `hot` the one under the cursor or
-    /// being dragged.
-    pub(crate) fn meshes(&self, hot: Option<Handle>) -> Vec<OverlayMesh> {
-        let tint = |handle: Handle, cold: OverlayTint| {
-            if hot == Some(handle) {
-                OverlayTint::HandleHot
-            } else {
-                cold
-            }
-        };
-        let w = self.unit();
-        let mut out = Vec::new();
-        // The shape's edges, thin, so its outline reads over the model.
-        let mut edges = Builder::default();
-        for k in 0..4 {
-            edges.rod(self.corners[k], self.corners[(k + 1) % 4], w * 0.18, 4);
+    /// The gizmo as the gizmo pass draws it.
+    pub(crate) fn drawn(&self, hover: Option<Handle>, active: Option<Handle>) -> ToolGizmo {
+        let v3 = |p: [f64; 3]| glam::Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32);
+        ToolGizmo {
+            axes: [v3(self.u), v3(self.v), v3(self.n)],
+            corners: self.corners.map(v3),
+            hover: hover.and_then(Handle::drawn),
+            active: active.and_then(Handle::drawn),
         }
-        out.push(edges.mesh(tint(Handle::Plane, OverlayTint::Handle)));
-        for (k, ring_tint) in [OverlayTint::AxisX, OverlayTint::AxisY]
-            .into_iter()
-            .enumerate()
-        {
-            let mut ring = Builder::default();
-            for s in 0..RING_SEGMENTS {
-                let a = TAU * s as f64 / RING_SEGMENTS as f64;
-                let b = TAU * (s + 1) as f64 / RING_SEGMENTS as f64;
-                ring.rod(self.ring_point(k, a), self.ring_point(k, b), w * 0.28, 6);
-            }
-            out.push(ring.mesh(tint(Handle::Ring(k), ring_tint)));
-        }
-        let mut arrow = Builder::default();
-        let tip = self.arrow_tip();
-        let neck = sub(tip, scale(self.n, w * 3.2));
-        arrow.rod(self.center, neck, w * 0.32, 10);
-        arrow.cone(neck, tip, w * 1.05, 16);
-        out.push(arrow.mesh(tint(Handle::Arrow, OverlayTint::AxisZ)));
-        for k in 0..4 {
-            let mut corner = Builder::default();
-            corner.cube(self.corners[k], [self.u, self.v, self.n], w * 0.95);
-            out.push(corner.mesh(tint(Handle::Corner(k), OverlayTint::Handle)));
-        }
-        out
     }
 }
 
@@ -278,112 +274,6 @@ fn segment_distance(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     (p[0] - a[0] - d[0] * t).hypot(p[1] - a[1] - d[1] * t)
 }
 
-/// Builds a handle's triangles.
-#[derive(Default)]
-struct Builder {
-    positions: Vec<[f32; 3]>,
-    indices: Vec<u32>,
-}
-
-impl Builder {
-    fn mesh(self, tint: OverlayTint) -> OverlayMesh {
-        OverlayMesh {
-            positions: self.positions,
-            indices: self.indices,
-            tint,
-        }
-    }
-
-    fn point(&mut self, p: [f64; 3]) -> u32 {
-        self.positions.push(p.map(|c| c as f32));
-        (self.positions.len() - 1) as u32
-    }
-
-    /// A tube of `sides` from `a` to `b`, open at the ends.
-    fn rod(&mut self, a: [f64; 3], b: [f64; 3], radius: f64, sides: usize) {
-        let axis = sub(b, a);
-        let len = norm(axis);
-        if len < 1e-9 {
-            return;
-        }
-        let (x, y) = across(scale(axis, 1.0 / len));
-        let base = self.positions.len() as u32;
-        for s in 0..sides {
-            let t = TAU * s as f64 / sides as f64;
-            let off = add(scale(x, radius * t.cos()), scale(y, radius * t.sin()));
-            self.point(add(a, off));
-            self.point(add(b, off));
-        }
-        for s in 0..sides as u32 {
-            let (i, j) = (base + 2 * s, base + 2 * ((s + 1) % sides as u32));
-            self.indices
-                .extend_from_slice(&[i, j, i + 1, i + 1, j, j + 1]);
-        }
-    }
-
-    /// A cone standing on a disc at `base` with its point at `tip`.
-    fn cone(&mut self, base: [f64; 3], tip: [f64; 3], radius: f64, sides: usize) {
-        let axis = sub(tip, base);
-        let len = norm(axis);
-        if len < 1e-9 {
-            return;
-        }
-        let (x, y) = across(scale(axis, 1.0 / len));
-        let top = self.point(tip);
-        let middle = self.point(base);
-        let first = self.positions.len() as u32;
-        for s in 0..sides {
-            let t = TAU * s as f64 / sides as f64;
-            self.point(add(
-                base,
-                add(scale(x, radius * t.cos()), scale(y, radius * t.sin())),
-            ));
-        }
-        for s in 0..sides as u32 {
-            let (i, j) = (first + s, first + (s + 1) % sides as u32);
-            self.indices.extend_from_slice(&[i, j, top, j, i, middle]);
-        }
-    }
-
-    /// A cube of half side `half` round `c`, along `axes`.
-    fn cube(&mut self, c: [f64; 3], axes: [[f64; 3]; 3], half: f64) {
-        let base = self.positions.len() as u32;
-        for k in 0..8 {
-            let s = |bit: usize| if k & (1 << bit) != 0 { half } else { -half };
-            self.point(add(
-                c,
-                add(
-                    scale(axes[0], s(0)),
-                    add(scale(axes[1], s(1)), scale(axes[2], s(2))),
-                ),
-            ));
-        }
-        const FACES: [[u32; 4]; 6] = [
-            [0, 2, 3, 1],
-            [4, 5, 7, 6],
-            [0, 1, 5, 4],
-            [2, 6, 7, 3],
-            [0, 4, 6, 2],
-            [1, 3, 7, 5],
-        ];
-        for f in FACES {
-            let [a, b, c, d] = f.map(|i| base + i);
-            self.indices.extend_from_slice(&[a, b, c, a, c, d]);
-        }
-    }
-}
-
-/// Two unit directions across `axis` (unit), at right angles.
-fn across(axis: [f64; 3]) -> ([f64; 3], [f64; 3]) {
-    let pick = if axis[0].abs() < 0.9 {
-        [1.0, 0.0, 0.0]
-    } else {
-        [0.0, 1.0, 0.0]
-    };
-    let x = normalize(cross(axis, pick));
-    (x, cross(axis, x))
-}
-
 pub(crate) fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
@@ -408,12 +298,8 @@ pub(crate) fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     ]
 }
 
-fn norm(a: [f64; 3]) -> f64 {
-    dot(a, a).sqrt()
-}
-
 pub(crate) fn normalize(a: [f64; 3]) -> [f64; 3] {
-    let n = norm(a);
+    let n = dot(a, a).sqrt();
     if n < 1e-15 { a } else { scale(a, 1.0 / n) }
 }
 
@@ -436,17 +322,43 @@ pub(crate) fn turned_dir(d: [f64; 3], axis: [f64; 3], angle: f64) -> [f64; 3] {
 mod tests {
     use super::*;
 
-    /// A camera straight above, looking down: 10 px per mm, the world
-    /// origin at the middle of an 800 × 600 viewport.
-    fn from_above(cursor: [f64; 2]) -> ScenePointer {
-        let project = |p: [f64; 3]| Some([400.0 + p[0] * 10.0, 300.0 - p[1] * 10.0]);
-        let at = [(cursor[0] - 400.0) / 10.0, (300.0 - cursor[1]) / 10.0];
+    /// A pointer whose camera puts the world point it maps to `(a, b)` by
+    /// `onto` at `(400 + 10 a, 300 - 10 b)`, looking along `direction`; the
+    /// shaft is 12 mm (120 px), as at 100 %.
+    fn pointer(
+        cursor: [f64; 2],
+        direction: [f64; 3],
+        onto: fn([f64; 3]) -> [f64; 2],
+        origin: [f64; 3],
+    ) -> ScenePointer {
         ScenePointer {
-            origin: [at[0], at[1], 100.0],
-            direction: [0.0, 0.0, -1.0],
+            origin,
+            direction,
             cursor,
-            project: Box::new(project),
+            project: Box::new(move |p| {
+                let [a, b] = onto(p);
+                Some([400.0 + a * 10.0, 300.0 - b * 10.0])
+            }),
+            scale_at: Box::new(|_| Some(12.0)),
+            ring_radius: 0.85,
+            arrow_tip: 1.18,
         }
+    }
+
+    fn at(cursor: [f64; 2]) -> [f64; 2] {
+        [(cursor[0] - 400.0) / 10.0, (300.0 - cursor[1]) / 10.0]
+    }
+
+    /// Seen from straight above.
+    fn from_above(cursor: [f64; 2]) -> ScenePointer {
+        let [x, y] = at(cursor);
+        pointer(cursor, [0.0, 0.0, -1.0], |p| [p[0], p[1]], [x, y, 100.0])
+    }
+
+    /// Seen from the front, looking along +y.
+    fn from_front(cursor: [f64; 2]) -> ScenePointer {
+        let [x, z] = at(cursor);
+        pointer(cursor, [0.0, 1.0, 0.0], |p| [p[0], p[2]], [x, -100.0, z])
     }
 
     fn level() -> Gizmo {
@@ -456,38 +368,36 @@ mod tests {
             u: [1.0, 0.0, 0.0],
             v: [0.0, 1.0, 0.0],
             corners: [
-                [-10.0, -10.0, 0.0],
-                [10.0, -10.0, 0.0],
-                [10.0, 10.0, 0.0],
-                [-10.0, 10.0, 0.0],
+                [-20.0, -20.0, 0.0],
+                [20.0, -20.0, 0.0],
+                [20.0, 20.0, 0.0],
+                [-20.0, 20.0, 0.0],
             ],
-            reach: 40.0,
         }
     }
 
     #[test]
     fn each_handle_is_picked_where_it_shows() {
         let g = level();
-        // A corner, a few pixels off.
+        // From above: a corner a few pixels off. The arrow points at the
+        // eye and both rings are edge on, as the object's gizmo's are, so
+        // the middle is the plane.
         assert_eq!(
-            g.pick(&from_above([400.0 + 100.0 + 6.0, 300.0 - 100.0])),
+            g.pick(&from_above([600.0 + 8.0, 100.0])),
             Some(Handle::Corner(2))
         );
-        // Seen from above the ring about x lies along y, the one about y
-        // along x, at 11.2 mm.
+        assert_eq!(g.pick(&from_above([400.0, 300.0])), Some(Handle::Plane));
+        assert_eq!(g.pick(&from_above([700.0, 300.0])), None);
+        // From the front the arrow stands up, and the ring about y faces
+        // the eye: a circle of 0.85 shafts, 102 px.
         assert_eq!(
-            g.pick(&from_above([400.0, 300.0 - 112.0])),
-            Some(Handle::Ring(0))
+            g.pick(&from_front([401.0, 300.0 - 80.0])),
+            Some(Handle::Arrow)
         );
         assert_eq!(
-            g.pick(&from_above([400.0 + 112.0, 300.0])),
+            g.pick(&from_front([400.0 + 102.0, 302.0])),
             Some(Handle::Ring(1))
         );
-        // The arrow points at the eye: its foot is the middle.
-        assert_eq!(g.pick(&from_above([401.0, 301.0])), Some(Handle::Arrow));
-        // Elsewhere on the shape, the plane; off it, nothing.
-        assert_eq!(g.pick(&from_above([450.0, 250.0])), Some(Handle::Plane));
-        assert_eq!(g.pick(&from_above([700.0, 300.0])), None);
     }
 
     #[test]
@@ -497,15 +407,16 @@ mod tests {
     }
 
     #[test]
-    fn the_handles_draw_closed_triangle_lists() {
-        for mesh in level().meshes(Some(Handle::Arrow)) {
-            assert!(!mesh.indices.is_empty());
-            assert_eq!(mesh.indices.len() % 3, 0);
-            assert!(
-                mesh.indices
-                    .iter()
-                    .all(|&i| (i as usize) < mesh.positions.len())
-            );
+    fn a_ring_turns_from_right_toward_up() {
+        // As the pass lays the ring: handle-local +X onto the axis, +Y onto
+        // `right`, +Z onto `up`; a turn about the axis moves `right` to `up`.
+        let g = level();
+        for k in 0..2 {
+            let (right, up) = g.ring_plane(k);
+            let axis = g.ring_axis(k);
+            assert_eq!(cross(axis, right), up);
+            let q = turned_dir(right, axis, TAU / 4.0);
+            assert!((0..3).all(|i| (q[i] - up[i]).abs() < 1e-12));
         }
     }
 }

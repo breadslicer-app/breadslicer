@@ -59,7 +59,9 @@ use gizmo_buffers::GizmoBuffers;
 use gizmo_entries::{
     GIZMO_ENTRY_SLOTS, GizmoDrawEntry, GizmoLayer, GizmoMesh, GizmoUniformsGpu, build_gizmo_draws,
 };
-pub use gizmo_entries::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility};
+pub use gizmo_entries::{
+    GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility, ToolGizmo, ToolHandle,
+};
 
 /// How many draws the gizmo pass records for `frame`, for the cost probe.
 #[cfg(feature = "test-support")]

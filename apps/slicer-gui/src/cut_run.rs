@@ -47,11 +47,13 @@ use slint::ComponentHandle;
 
 use crate::MainWindow;
 use crate::cut_gizmo::{
-    CutHandles, Gizmo, Handle, ScenePointer, add, dot, normalize, scale, sub, turned, turned_dir,
+    CutHandles, Gizmo, Handle, RingTurn, ScenePointer, add, dot, normalize, scale, sub, turned,
+    turned_dir,
 };
 use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
+use crate::mesh_render::ToolGizmo;
 use crate::mesh_render::{Overlay, OverlayMesh, OverlayTint};
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneEvent, SceneSubscription};
 use crate::selection::{LeafId, Selection};
@@ -296,7 +298,6 @@ impl Placed {
             u: self.u,
             v: self.v,
             corners: self.corners.map(|c| self.world(c)),
-            reach: self.reach,
         }
     }
 }
@@ -387,8 +388,11 @@ struct Grab {
     hit: Option<[f64; 3]>,
     /// How far along the arrow the press lay.
     along: Option<f64>,
-    /// How a ring's drag turns it.
+    /// How a ring's drag turns it, where on the ring it was grabbed and
+    /// how far it has turned, radians.
     turn: Option<Turn>,
+    start: f64,
+    swept: f64,
 }
 
 /// How a drag on a ring turns the plane.
@@ -418,6 +422,7 @@ const EDGE_ON: f64 = 0.3;
 impl Turn {
     fn start(gizmo: &Gizmo, k: usize, pointer: &ScenePointer) -> Option<Self> {
         let axis = gizmo.ring_axis(k);
+        let (point, _, _) = gizmo.ring_point_near(k, pointer)?;
         let facing = dot(axis, pointer.direction);
         if facing.abs() >= EDGE_ON {
             let pivot = (pointer.project)(gizmo.center)?;
@@ -428,9 +433,8 @@ impl Turn {
                 sign: if facing > 0.0 { -1.0 } else { 1.0 },
             });
         }
-        // The ring's point nearest the cursor, and which way a turn moves it
-        // on the screen.
-        let (point, _) = gizmo.ring_point_near(k, pointer)?;
+        // Which way a turn moves the ring's point nearest the cursor on the
+        // screen.
         let step = 0.01;
         let ahead = turned(point, gizmo.center, axis, step);
         let (a, b) = ((pointer.project)(point)?, (pointer.project)(ahead)?);
@@ -1052,14 +1056,41 @@ impl CutRun {
     }
 
     /// The pointer moved with no button down: the handle under it lights.
-    fn hover(&self, pointer: Option<&ScenePointer>) {
+    /// Whether that changed.
+    fn hover(&self, pointer: Option<&ScenePointer>) -> bool {
         if self.grab.borrow().is_some() {
-            return;
+            return false;
         }
         let hot = pointer.and_then(|p| self.on_show().and_then(|(at, _)| at.gizmo().pick(p)));
-        if self.hot.replace(hot) != hot {
-            self.redraw();
-        }
+        self.hot.replace(hot) != hot
+    }
+
+    /// The gizmo to draw, and a ring's turn in flight.
+    fn drawn_gizmo(&self) -> Option<([f64; 3], ToolGizmo, Option<RingTurn>)> {
+        let grab = self.grab.borrow();
+        let (at, _) = self.on_show()?;
+        let gizmo = at.gizmo();
+        let active = grab.as_ref().map(|g| g.handle);
+        let turn = grab.as_ref().and_then(|g| match g.handle {
+            Handle::Ring(k) => {
+                // Marked on the ring as it was grabbed.
+                let (right, up) = g.gizmo.ring_plane(k);
+                Some(RingTurn {
+                    right,
+                    up,
+                    start: g.start,
+                    sweep: g.swept,
+                })
+            }
+            _ => None,
+        });
+        // While a ring turns, the gizmo stands as it was grabbed: its marks
+        // and its ring stay put under the cursor.
+        let gizmo = match grab.as_ref() {
+            Some(g) if matches!(g.handle, Handle::Ring(_)) => g.gizmo.clone(),
+            _ => gizmo,
+        };
+        Some((gizmo.center, gizmo.drawn(self.hot.get(), active), turn))
     }
 
     /// A left press: on a handle (or the plane), the drag is the tool's.
@@ -1082,6 +1113,10 @@ impl CutRun {
             Handle::Ring(k) => Turn::start(&gizmo, k, pointer),
             _ => None,
         };
+        let start = match handle {
+            Handle::Ring(k) => gizmo.ring_point_near(k, pointer).map_or(0.0, |(_, a, _)| a),
+            _ => 0.0,
+        };
         *self.grab.borrow_mut() = Some(Grab {
             handle,
             settings: self.settings.get(),
@@ -1091,8 +1126,10 @@ impl CutRun {
             target,
             along,
             turn,
+            start,
+            swept: 0.0,
         });
-        self.redraw();
+        self.hot.set(Some(handle));
         true
     }
 
@@ -1125,6 +1162,7 @@ impl CutRun {
                         return;
                     };
                     let angle = turn.update(pointer.cursor);
+                    g.swept = angle;
                     let (axis, pivot) = (g.gizmo.ring_axis(k), g.gizmo.center);
                     posed(
                         &g.settings,
@@ -1191,7 +1229,6 @@ impl CutRun {
         }
         self.hot
             .set(pointer.and_then(|p| self.on_show().and_then(|(at, _)| at.gizmo().pick(p))));
-        self.redraw();
     }
 
     /// The plane, the pieces of the section with what is to happen to each,
@@ -1225,13 +1262,6 @@ impl CutRun {
                 }));
             }
         }
-        let hot = self
-            .grab
-            .borrow()
-            .as_ref()
-            .map(|g| g.handle)
-            .or(self.hot.get());
-        pieces.extend(world.gizmo().meshes(hot).into_iter().map(Arc::new));
         let overlay: Overlay = pieces.into();
         self.ctrl.set_preview_overlay(Some(overlay));
     }
@@ -1514,10 +1544,12 @@ impl CutHandles for Handles {
         self.0.upgrade().is_some_and(|run| run.open.get())
     }
 
-    fn hover(&self, pointer: Option<&ScenePointer>) {
-        if let Some(run) = self.0.upgrade() {
-            run.hover(pointer);
-        }
+    fn gizmo(&self) -> Option<([f64; 3], ToolGizmo, Option<RingTurn>)> {
+        self.0.upgrade().and_then(|run| run.drawn_gizmo())
+    }
+
+    fn hover(&self, pointer: Option<&ScenePointer>) -> bool {
+        self.0.upgrade().is_some_and(|run| run.hover(pointer))
     }
 
     fn press(&self, pointer: &ScenePointer) -> bool {

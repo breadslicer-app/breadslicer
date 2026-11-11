@@ -913,6 +913,7 @@ fn render_with_gizmo_under_default_limits_is_validated() {
         hover: None,
         drag_visual: None,
         look: crate::gizmo::look::GizmoLook::default(),
+        tool: None,
     };
     let _ = renderer
         .render(
@@ -978,6 +979,7 @@ fn render_with_idle_gizmo_under_default_limits() {
         hover: None,
         drag_visual: None,
         look: crate::gizmo::look::GizmoLook::default(),
+        tool: None,
     };
     let _ = renderer
         .render(
@@ -1035,6 +1037,7 @@ fn render_with_rotate_gizmo_under_default_limits() {
             sweep: 1.2,
         }),
         look: crate::gizmo::look::GizmoLook::default(),
+        tool: None,
     };
     let _ = renderer
         .render(
@@ -1085,6 +1088,7 @@ fn render_with_scale_gizmo_under_default_limits() {
         hover: None,
         drag_visual: None,
         look: crate::gizmo::look::GizmoLook::default(),
+        tool: None,
     };
     let _ = renderer
         .render(
@@ -2409,6 +2413,7 @@ fn showcase_frame_in(
         hover,
         drag_visual,
         look,
+        tool: None,
     }
 }
 

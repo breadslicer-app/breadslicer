@@ -200,6 +200,10 @@ fn above(x: f64, y: f64) -> ScenePointer {
         direction: [0.0, 0.0, -1.0],
         cursor: [400.0 + x * 10.0, 300.0 - y * 10.0],
         project: Box::new(|p| Some([400.0 + p[0] * 10.0, 300.0 - p[1] * 10.0])),
+        // The shaft 12 mm, 120 px, as at 100 %.
+        scale_at: Box::new(|_| Some(12.0)),
+        ring_radius: 0.85,
+        arrow_tip: 1.18,
     }
 }
 
@@ -210,6 +214,10 @@ fn front(x: f64, z: f64) -> ScenePointer {
         direction: [0.0, 1.0, 0.0],
         cursor: [400.0 + x * 10.0, 300.0 - z * 10.0],
         project: Box::new(|p| Some([400.0 + p[0] * 10.0, 300.0 - p[2] * 10.0])),
+        // The shaft 12 mm, 120 px, as at 100 %.
+        scale_at: Box::new(|_| Some(12.0)),
+        ring_radius: 0.85,
+        arrow_tip: 1.18,
     }
 }
 
@@ -261,7 +269,7 @@ fn the_arrow_moves_the_plane_and_the_rings_tilt_it() {
         // The ring about y faces the eye from the front: its point on the
         // right dragged 30 degrees up round the middle lifts the plane's
         // right side.
-        let r = 20.0 * 0.28;
+        let r = 12.0 * 0.85;
         let (sin, cos) = 30f64.to_radians().sin_cos();
         drag(
             &f.run,

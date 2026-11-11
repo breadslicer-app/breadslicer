@@ -401,18 +401,6 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
     } else if (in.tint == 5u) {
         // Neither green nor red: not known yet whether it works.
         color = vec4<f32>(0.80, 0.80, 0.84, 0.60);
-    } else if (in.tint == 8u) {
-        // A tool's handle: light, nearly opaque.
-        color = vec4<f32>(0.93, 0.94, 0.96, 0.95);
-    } else if (in.tint == 9u) {
-        // The gizmo's hover yellow.
-        color = vec4<f32>(0.918, 0.820, 0.337, 1.0);
-    } else if (in.tint == 10u) {
-        color = vec4<f32>(0.937, 0.357, 0.357, 0.95);
-    } else if (in.tint == 11u) {
-        color = vec4<f32>(0.424, 0.769, 0.416, 0.95);
-    } else if (in.tint == 12u) {
-        color = vec4<f32>(0.310, 0.561, 0.969, 0.95);
     }
     return vec4<f32>(color.rgb * intensity, color.a);
 }
