@@ -16,7 +16,7 @@ use std::fs::File;
 use std::io::{BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use sc_bread_format::{HollowDocument, SupportDocument};
+use crate::bread_file::{HollowDocument, SupportDocument};
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_formats::error::LoadMeshError;
 use sc_mesh_formats::filetypes::infer_mesh_file_format_from_extension;

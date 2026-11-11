@@ -249,13 +249,14 @@ impl DfSupportSession {
     /// models the session was saved with must be in the scene; others may
     /// be there too.
     pub fn from_document(scene: &Scene, version: u32, bytes: &[u8]) -> Result<Self, RestoreError> {
-        Self::from_document_on_leaves(scene, version, bytes).map(|(session, _)| session)
+        Self::from_document_on_leaves(scene, None, version, bytes).map(|(session, _)| session)
     }
 
     /// [`Self::from_document`], with the leaf of each of the session's
     /// models, in its order.
     fn from_document_on_leaves(
         scene: &Scene,
+        only: Option<&[NodeId]>,
         version: u32,
         bytes: &[u8],
     ) -> Result<(Self, Vec<NodeId>), RestoreError> {
@@ -265,7 +266,7 @@ impl DfSupportSession {
         let document: Document =
             serde_json::from_slice(bytes).map_err(|e| RestoreError::Malformed(e.to_string()))?;
         let leaves =
-            scene_model_leaves(scene, None).map_err(|e| RestoreError::Scene(e.to_string()))?;
+            scene_model_leaves(scene, only).map_err(|e| RestoreError::Scene(e.to_string()))?;
         let scene_models: Vec<ModelInput> = leaves.iter().map(|(_, m)| m.clone()).collect();
         let picks =
             match_models(&document.models, &scene_models).ok_or(RestoreError::ModelsChanged)?;
@@ -307,13 +308,20 @@ impl DfSupportSession {
     /// holds its mesh; the others, from a version 1 document that held every
     /// model's supports, into new root leaves like it. A model the document
     /// placed nothing on gets no set. On error the scene is unchanged.
+    ///
+    /// With `model`, the leaf the file names as the one the supports stand
+    /// on, the document's model is that leaf: its fingerprint only checks
+    /// that the model has not changed since.
     pub fn restore_sets_into(
         scene: &mut Scene,
         leaf: NodeId,
+        model: Option<NodeId>,
         version: u32,
         bytes: &[u8],
     ) -> Result<Vec<RestoredSet>, RestoreError> {
-        let (session, models) = Self::from_document_on_leaves(scene, version, bytes)?;
+        let only = model.map(|model| [model]);
+        let (session, models) =
+            Self::from_document_on_leaves(scene, only.as_ref().map(|m| &m[..]), version, bytes)?;
         let mut drawn = Vec::new();
         for (session, model) in session.split_by_model().into_iter().zip(models) {
             if session.is_empty() {

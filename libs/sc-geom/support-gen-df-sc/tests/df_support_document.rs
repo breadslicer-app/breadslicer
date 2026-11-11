@@ -285,7 +285,7 @@ fn a_version_1_document_of_two_models_opens_as_two_sets() {
         reopened.add_root(id).unwrap();
         models.push(id);
     }
-    let sets = DfSupportSession::restore_sets_into(&mut reopened, leaf, 1, &bytes)
+    let sets = DfSupportSession::restore_sets_into(&mut reopened, leaf, None, 1, &bytes)
         .expect("a version 1 document opens");
     assert_eq!(sets.len(), 2);
     assert_eq!(sets[0].leaf, leaf);

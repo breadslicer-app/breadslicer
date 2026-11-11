@@ -353,10 +353,10 @@ fn scan_file(path: PathBuf) -> Scan {
 
 /// The thumbnail of the `.bread` file at `path`, decoded; `None` when it has
 /// none, or one that is not a PNG this reads or is larger than the spec
-/// allows. Reads the chunks' headers and the thumbnail, never the meshes.
+/// allows. Reads the first chunk, where writers put the thumbnail, never the meshes.
 pub(crate) fn read_thumbnail(path: &Path) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
     let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
-    let png = sc_bread_format::file::read_thumbnail(file).ok()??;
+    let png = sc_project_formats::read_bread_thumbnail(file)?;
     decode_thumbnail(&png)
 }
 
@@ -444,14 +444,13 @@ mod tests {
 
     #[test]
     fn a_project_s_thumbnail_is_read_from_its_file() {
-        use sc_bread_format::container::{BreadWriter, ChunkTag};
-        use sc_bread_format::file::THUMBNAIL_TAG;
+        use bread_format::{BreadWriter, ChunkTag, THUMBNAIL_TAG};
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("with-thumbnail.bread");
         let mut writer = BreadWriter::new(Vec::new()).unwrap();
-        writer.chunk(ChunkTag(*b"SCNE"), 1, &[7; 4096]).unwrap();
         writer.chunk(THUMBNAIL_TAG, 1, &png(16, 16)).unwrap();
+        writer.chunk(ChunkTag(*b"SCNE"), 1, &[7; 4096]).unwrap();
         std::fs::write(&path, writer.finish().unwrap()).unwrap();
         let thumbnail = read_thumbnail(&path).expect("the thumbnail reads");
         assert_eq!((thumbnail.width(), thumbnail.height()), (16, 16));

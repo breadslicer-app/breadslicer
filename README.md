@@ -52,4 +52,4 @@ Thanks to all three projects. Their notices are kept in the source as their lice
 [`NOTICE`](NOTICE).
 The `.bread` project format uses [meshoptimizer](https://github.com/zeux/meshoptimizer)
 (Arseny Kapoulkine; MIT) and [Zstandard](https://github.com/facebook/zstd) (Meta; BSD); see
-[`libs/bread-format/NOTICE`](libs/bread-format/NOTICE).</sub>
+[`libs/project-formats/NOTICE.bread-format`](libs/project-formats/NOTICE.bread-format).</sub>
