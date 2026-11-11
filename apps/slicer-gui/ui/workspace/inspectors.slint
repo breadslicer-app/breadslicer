@@ -1338,6 +1338,13 @@ export component TransformInspector inherits VerticalLayout {
         Note {
             text: @tr("Inspector" => "{} objects selected. Move, rotate or scale them together about their shared centre with the gizmo, G, R or S. To type values, select one.", root.selected-count);
         }
+        // Each drops to the plate on its own (#516).
+        ScButton {
+            text: @tr("Inspector" => "Drop to plate");
+            clicked => {
+                root.numeric-edit(10, 0);
+            }
+        }
     }
 
     if root.selection-valid && root.selected-count <= 1: Card {

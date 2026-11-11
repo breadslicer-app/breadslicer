@@ -708,3 +708,34 @@ fn in_the_supports_tab_drop_to_plate_drops_each_model_and_not_their_supports() {
     assert!(lowest(&ctrl, 0).abs() < 1e-9);
     assert!(lowest(&ctrl, 2).abs() < 1e-9);
 }
+
+fn leaf_count(ctrl: &ViewportController) -> usize {
+    ctrl.document()
+        .with_scene(|s| (0..).map_while(|i| s.leaf_id_at_index(i)).count())
+        .unwrap_or(0)
+}
+
+#[test]
+fn delete_in_the_supports_tab_takes_the_selected_supports_alone() {
+    let ctrl = plate(
+        &[
+            (Piece::Model, [-6.0, 0.0, 3.0]),
+            (Piece::Supports, [-6.0, 0.0, 1.0]),
+            (Piece::Model, [6.0, 0.0, 3.0]),
+        ],
+        WorkspaceSection::Supports,
+    );
+    let model = leaf(&ctrl, 0);
+    // The model and its supports selected: Delete takes the supports, the
+    // models stay.
+    select_rows(&ctrl, &[0, 1]);
+    ctrl.on_delete_requested();
+    assert_eq!(leaf_count(&ctrl), 2);
+    assert_eq!(leaf(&ctrl, 0), model);
+    assert!(ctrl.document().undo().unwrap());
+    assert_eq!(leaf_count(&ctrl), 3);
+    // Only a model selected: nothing goes.
+    select_rows(&ctrl, &[2]);
+    ctrl.on_delete_requested();
+    assert_eq!(leaf_count(&ctrl), 3);
+}

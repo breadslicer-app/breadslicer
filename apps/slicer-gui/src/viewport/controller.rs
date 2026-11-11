@@ -2062,6 +2062,13 @@ impl ViewportController {
         if self.input.modal.get().is_some() {
             return;
         }
+        // In the Supports tab, Delete takes the selected supports alone.
+        if self.session.section() == WorkspaceSection::Supports {
+            if let Err(error) = self.session.document().delete_selected_supports() {
+                self.show_edit_rejected(error);
+            }
+            return;
+        }
         if !self.allows_layout_tools() {
             return;
         }

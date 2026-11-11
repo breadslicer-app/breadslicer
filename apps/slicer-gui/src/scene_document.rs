@@ -1581,7 +1581,32 @@ impl SceneDocument {
     /// Returns `Ok(true)` on a successful deletion. Selection clearing and the
     /// `Restructured` event are handled by [`Self::apply_edit`].
     pub(crate) fn delete_selected_leaf(&self) -> Result<bool, SceneError> {
-        let ids = self.with_their_supports(self.selection_node_ids());
+        self.delete_leaves(self.with_their_supports(self.selection_node_ids()))
+    }
+
+    /// Deletes the supports among the selection (a set made here, or the
+    /// supports a file came with), in one entry; the models stay (#516's
+    /// follow-up: Delete in the Supports tab).
+    pub(crate) fn delete_selected_supports(&self) -> Result<bool, SceneError> {
+        let selected = self.selection_node_ids();
+        let ids: Vec<NodeId> = self
+            .with_scene(|spatial| {
+                selected
+                    .into_iter()
+                    .filter(|&id| {
+                        spatial
+                            .leaf(id)
+                            .is_some_and(|q| sc_geom::df_supports::is_any_support_mesh(q.mesh()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.delete_leaves(ids)
+    }
+
+    /// Deletes the leaves `ids`, each with the resources only it used, in
+    /// one entry.
+    fn delete_leaves(&self, ids: Vec<NodeId>) -> Result<bool, SceneError> {
         if ids.is_empty() {
             return Ok(false);
         }
