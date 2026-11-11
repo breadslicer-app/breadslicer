@@ -160,6 +160,37 @@ struct HistoryEntry {
     wants: Option<SupportsWanted>,
     /// The edit changes paint and nothing else (#183).
     paint_only: bool,
+    /// The entry changes marks the scene does not hold, and nothing else
+    /// (#512): its edit is empty, Undo and Redo run the step instead.
+    marks: Option<MarksStep>,
+}
+
+impl HistoryEntry {
+    /// Whether the entry rides on top of the edit before it, as a paint
+    /// stroke or a mark does: what that edit left waiting is carried, and a
+    /// run completing it completes that edit instead.
+    fn rides_on_top(&self) -> bool {
+        self.paint_only || self.marks.is_some()
+    }
+}
+
+/// A step of history that changes marks a project file does not hold (#512):
+/// the drains and solid areas placed on a model before it is hollowed. It
+/// makes the document no more unsaved and no slice out of date; Undo and
+/// Redo run `undo` and `redo`, which put the marks as they were.
+#[derive(Clone)]
+pub(crate) struct MarksStep {
+    pub(crate) label: &'static str,
+    pub(crate) undo: Rc<dyn Fn()>,
+    pub(crate) redo: Rc<dyn Fn()>,
+}
+
+impl std::fmt::Debug for MarksStep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MarksStep")
+            .field("label", &self.label)
+            .finish()
+    }
 }
 
 /// Models whose supports a move in Z, a tilt or a scale took away, and
@@ -910,7 +941,13 @@ impl SceneDocument {
     }
 
     fn top_edit_id(&self) -> Option<u64> {
-        self.undo_stack.borrow().back().map(|entry| entry.id)
+        // Marks are not in the file (#512).
+        self.undo_stack
+            .borrow()
+            .iter()
+            .rev()
+            .find(|entry| entry.marks.is_none())
+            .map(|entry| entry.id)
     }
 
     /// The newest committed edit that is more than paint: the marker of the
@@ -920,13 +957,16 @@ impl SceneDocument {
             .borrow()
             .iter()
             .rev()
-            .find(|entry| !entry.paint_only)
+            .find(|entry| !entry.rides_on_top())
             .map(|entry| entry.id)
             .or(self.evicted_head.get())
     }
 
     /// Takes `entry`, the oldest, off the stack for good: it stays applied.
     fn note_evicted(&self, entry: &HistoryEntry) {
+        if entry.marks.is_some() {
+            return;
+        }
         self.evicted_since_save.set(true);
         self.evicted_since_slice.set(true);
         if !entry.paint_only {
@@ -1168,6 +1208,7 @@ impl SceneDocument {
                 edit,
                 wants,
                 paint_only,
+                marks: None,
             });
         }
         self.redo_stack.borrow_mut().clear();
@@ -1184,6 +1225,40 @@ impl SceneDocument {
         }
         self.notify(SceneEvent::UndoStackChanged);
         self.notify_dirty_change(was_dirty);
+    }
+
+    /// Records `step`, already made, as one entry of history (#512): marks
+    /// the scene does not hold, such as the drains placed on a model before
+    /// it is hollowed. What the entry before left waiting is carried.
+    pub(crate) fn push_marks_step(&self, step: MarksStep) {
+        if !self.is_loaded() {
+            return;
+        }
+        crate::breadcrumbs::note(&format!("edit: {}", step.label));
+        let wants = self
+            .undo_stack
+            .borrow()
+            .back()
+            .and_then(|entry| entry.wants.clone());
+        let id = self.next_edit_id.get();
+        self.next_edit_id.set(id + 1);
+        {
+            let mut undo = self.undo_stack.borrow_mut();
+            if undo.len() == UNDO_STACK_CAP
+                && let Some(gone) = undo.pop_front()
+            {
+                self.note_evicted(&gone);
+            }
+            undo.push_back(HistoryEntry {
+                id,
+                edit: SceneEdit::Compound(Vec::new()),
+                wants,
+                paint_only: false,
+                marks: Some(step),
+            });
+        }
+        self.redo_stack.borrow_mut().clear();
+        self.notify(SceneEvent::UndoStackChanged);
     }
 
     /// `edit`, just applied, with the paint it left behind carried to the
@@ -1344,7 +1419,7 @@ impl SceneDocument {
                     entry.wants = None;
                 }
             }
-            if !entry.paint_only {
+            if !entry.rides_on_top() {
                 break;
             }
         }
@@ -1371,7 +1446,7 @@ impl SceneDocument {
             .undo_stack
             .borrow()
             .iter()
-            .rposition(|entry| !entry.paint_only)
+            .rposition(|entry| !entry.rides_on_top())
         else {
             return Ok(false);
         };
@@ -1889,7 +1964,7 @@ impl SceneDocument {
             .undo_stack
             .borrow()
             .back()
-            .is_some_and(|entry| entry.paint_only);
+            .is_some_and(HistoryEntry::rides_on_top);
         if self.scene_revision() != revision || stroked {
             return Ok(false);
         }
@@ -1945,6 +2020,14 @@ impl SceneDocument {
         let Some(entry) = self.undo_stack.borrow_mut().pop_back() else {
             return Ok(false);
         };
+        if let Some(step) = &entry.marks {
+            let undo = step.undo.clone();
+            crate::breadcrumbs::note(&format!("edit: undo {}", step.label));
+            self.redo_stack.borrow_mut().push_back(entry);
+            undo();
+            self.notify(SceneEvent::UndoStackChanged);
+            return Ok(true);
+        }
         match self.apply_edit_unfollowed(entry.edit.inverse()) {
             Ok(()) => {}
             Err(reason) => {
@@ -1981,6 +2064,14 @@ impl SceneDocument {
         let Some(entry) = self.redo_stack.borrow_mut().pop_back() else {
             return Ok(false);
         };
+        if let Some(step) = &entry.marks {
+            let redo = step.redo.clone();
+            crate::breadcrumbs::note(&format!("edit: redo {}", step.label));
+            self.undo_stack.borrow_mut().push_back(entry);
+            redo();
+            self.notify(SceneEvent::UndoStackChanged);
+            return Ok(true);
+        }
         match self.apply_edit_unfollowed(entry.edit.clone()) {
             Ok(()) => {}
             Err(reason) => {
