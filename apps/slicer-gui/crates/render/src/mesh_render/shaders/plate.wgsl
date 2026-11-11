@@ -5,9 +5,8 @@
 
 // Plate pipeline: renders the plate (top face inside the build envelope
 // is the grid floor, the rounded outer ring carries the rulers and is the
-// background's shade, as are the sides; the bottom is translucent
-// so the cage and any meshes show through when the camera looks up
-// from below) plus the build-volume cage edges, plus 5 invisible
+// background's shade; the sides and the bottom are not drawn, the plate
+// being a drawing on the ground) plus the build-volume cage edges, plus 5 invisible
 // envelope-wall quads that turn into diagonal red stripes when the
 // matching face-breach bit is set. Vertex positions are world-space
 // mm; `kind` selects which colour path the fragment shader takes:
@@ -78,17 +77,12 @@ const FLOOR_GRID_MAJOR: vec3<f32> = vec3<f32>(0.192, 0.224, 0.247);
 const FLOOR_EDGE: vec3<f32> = vec3<f32>(0.235, 0.271, 0.302);
 // Cage lines and brackets: `text-muted` #8b959d.
 const CAGE_COLOUR: vec3<f32> = vec3<f32>(0.545, 0.584, 0.616);
-// The rim around the floor and the plate's sides: the background, so the
-// plate reads as a drawing on the ground rather than a slab. One shade off,
-// so what stands behind it still tells the two apart.
+// The rim around the floor: the background, so the plate reads as a
+// drawing on the ground rather than a slab. One shade off, so what stands
+// behind it still tells the two apart.
 const PLATE_TOP_BORDER_COLOUR: vec3<f32> = vec3<f32>(0.071, 0.079, 0.086);
-const PLATE_SIDE_COLOUR: vec3<f32> = vec3<f32>(0.071, 0.079, 0.086);
 // The ruler's ticks, `text-soft` #c2c9cf dimmed.
 const RULER_TICK: vec3<f32> = vec3<f32>(0.545, 0.584, 0.616);
-// Bottom face: same hue as the sides, but emitted with alpha < 1
-// so the alpha-blending pipeline mixes it over whatever was in the
-// framebuffer when the camera looks up from below.
-const PLATE_BOTTOM_ALPHA: f32 = 0.45;
 
 // Grid spacing: 10 mm, with every fifth line stronger. Measured from the
 // plate's front-left corner, as the rulers are.
@@ -262,11 +256,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if in.kind == 2u {
         return plate_face(rim_colour(in.world_pos.xy), 1.0);
     }
-    if in.kind == 3u {
-        return plate_face(PLATE_SIDE_COLOUR, 1.0);
-    }
-    if in.kind == 4u {
-        return plate_face(PLATE_SIDE_COLOUR, PLATE_BOTTOM_ALPHA);
+    if in.kind == 3u || in.kind == 4u {
+        // The plate is a drawing on the ground, not a slab (#507): its
+        // sides and underside are not drawn, so a camera going under the
+        // plate sees no rim of a thickness the drawing does not have.
+        discard;
     }
     if in.kind >= 5u && in.kind <= 9u {
         // Walls 5..9 map to bits 0..4 of face_breach_mask.x. Discard

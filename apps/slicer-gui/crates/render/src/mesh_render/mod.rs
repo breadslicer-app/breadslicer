@@ -773,10 +773,18 @@ impl Renderer {
             self.pipelines.marks_state = MarksState::Off;
             return Ok(());
         };
+        // Every number on top, then every one again facing down, so they
+        // read the right way round from under the plate too.
         let quads: Vec<pipelines::label::LabelVertex> = raster
             .marks
             .iter()
             .flat_map(|mark| pipelines::label::mark_quad(mark.world, mark.uv))
+            .chain(
+                raster
+                    .marks
+                    .iter()
+                    .flat_map(|mark| pipelines::label::underside_mark_quad(mark.world, mark.uv)),
+            )
             .collect();
         let uploaded = scoped(&self.core.device, || {
             let bind_group = self.coverage_bind_group(
@@ -1325,7 +1333,7 @@ impl Renderer {
                 self.record_plate_top(&mut pass, plate_buffers);
                 self.record_cage(&mut pass, plate_buffers);
                 self.record_front_label(&mut pass, plate_buffers, LABEL_TOP);
-                self.record_plate_marks(&mut pass);
+                self.record_plate_marks(&mut pass, false);
             }
 
             if scene_for_draws && let Some(inst) = installed {
@@ -1370,8 +1378,10 @@ impl Renderer {
                 self.record_cap(&mut pass);
                 self.record_envelope_walls(&mut pass, plate_buffers);
                 self.record_plate_bottom(&mut pass, plate_buffers);
-                // Over the translucent bottom, so it reads clear from below.
+                // After the models, so it blends over whatever stands behind
+                // it as seen from below.
                 self.record_front_label(&mut pass, plate_buffers, LABEL_UNDERSIDE);
+                self.record_plate_marks(&mut pass, true);
             }
         }
         if outline {
@@ -1448,8 +1458,9 @@ impl Renderer {
         pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
     }
 
-    /// The numbers along the plate's rulers, with the label's pipeline.
-    fn record_plate_marks(&self, pass: &mut wgpu::RenderPass<'_>) {
+    /// The numbers along the plate's rulers, with the label's pipeline:
+    /// `underside` picks the copies read from under the plate.
+    fn record_plate_marks(&self, pass: &mut wgpu::RenderPass<'_>, underside: bool) {
         let MarksState::Shown {
             bind_group,
             vertices,
@@ -1464,7 +1475,12 @@ impl Renderer {
         pass.set_bind_group(1, bind_group, &[]);
         pass.set_vertex_buffer(0, vertices.slice(..));
         pass.set_stencil_reference(0);
-        pass.draw(0..*count, 0..1);
+        let half = *count / 2;
+        if underside {
+            pass.draw(half..*count, 0..1);
+        } else {
+            pass.draw(0..half, 0..1);
+        }
     }
 
     /// The word on the plate's front tab: `vertices` picks the copy over the

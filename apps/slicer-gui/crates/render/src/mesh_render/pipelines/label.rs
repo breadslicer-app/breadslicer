@@ -61,10 +61,6 @@ pub(in crate::mesh_render) fn label_quad(text_box: [f32; 4]) -> [LabelVertex; 6]
     ]
 }
 
-/// Builds the copy of [`label_quad`] read from below: the same box at
-/// height `z`, mirrored in `v` so the word reads the right way round
-/// from underneath (looking up, the plate's front edge is at the top
-/// of the view), and wound counter-clockwise as seen from below.
 /// The quad of a ruler's number: its ink box in world mm at `Z = 0`, and
 /// where it is in the raster, `[u0, v0, u1, v1]`.
 pub(in crate::mesh_render) fn mark_quad(world: [f32; 4], uv: [f32; 4]) -> [LabelVertex; 6] {
@@ -88,6 +84,21 @@ pub(in crate::mesh_render) fn mark_quad(world: [f32; 4], uv: [f32; 4]) -> [Label
     ]
 }
 
+/// The copy of [`mark_quad`] read from under the plate: mirrored in `v`
+/// and wound to face down, as [`underside_label_quad`] does for the word.
+pub(in crate::mesh_render) fn underside_mark_quad(
+    world: [f32; 4],
+    uv: [f32; 4],
+) -> [LabelVertex; 6] {
+    let [u0, v0, u1, v1] = uv;
+    let [a, b, c, d, e, f] = mark_quad(world, [u0, v1, u1, v0]);
+    [a, c, b, d, f, e]
+}
+
+/// Builds the copy of [`label_quad`] read from below: the same box at
+/// height `z`, mirrored in `v` so the word reads the right way round
+/// from underneath (looking up, the plate's front edge is at the top
+/// of the view), and wound counter-clockwise as seen from below.
 pub(in crate::mesh_render) fn underside_label_quad(text_box: [f32; 4], z: f32) -> [LabelVertex; 6] {
     let [min_x, min_y, max_x, max_y] = text_box;
     let corner = |x: f32, y: f32, u: f32, v: f32| LabelVertex {
@@ -319,6 +330,27 @@ mod label_quad_tests {
             );
         }
         for triangle in quad.chunks(3) {
+            assert!(turn_from_above(triangle) < 0.0, "faces down");
+        }
+    }
+
+    #[test]
+    fn a_numbers_underside_copy_faces_down_and_is_mirrored_in_v() {
+        let world = [10.0, -80.0, 14.0, -76.0];
+        let uv = [0.25, 0.5, 0.5, 0.75];
+        let top = mark_quad(world, uv);
+        let under = underside_mark_quad(world, uv);
+
+        for corner in &under {
+            assert_eq!(corner.position[2], 0.0);
+            let same = top
+                .iter()
+                .find(|t| t.position == corner.position)
+                .expect("the same corners");
+            assert_eq!(corner.uv[0], same.uv[0]);
+            assert_eq!(corner.uv[1], 1.25 - same.uv[1], "mirrored in v");
+        }
+        for triangle in under.chunks(3) {
             assert!(turn_from_above(triangle) < 0.0, "faces down");
         }
     }

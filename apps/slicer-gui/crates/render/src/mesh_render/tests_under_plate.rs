@@ -745,6 +745,14 @@ fn the_plate_picture_is_written_when_asked() {
     let (centre, radius) = bv.framing(None);
     let mut camera = OrbitCamera::new(Vec3::new(centre.x, centre.y, 25.0), radius);
     camera.distance *= 0.72;
+    // `BREADSLICER_PLATE_SHOT_PITCH` (degrees, negative from below) views it
+    // from another height.
+    if let Some(pitch) = std::env::var("BREADSLICER_PLATE_SHOT_PITCH")
+        .ok()
+        .and_then(|p| p.parse::<f32>().ok())
+    {
+        camera.pitch = pitch.to_radians();
+    }
     let (w, h) = (1400, 860);
     let frame = renderer
         .workspace_pixels_for_test(

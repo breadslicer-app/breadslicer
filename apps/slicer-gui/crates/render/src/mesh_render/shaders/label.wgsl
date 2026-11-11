@@ -52,6 +52,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // lines never share a texel.
     let coverage = textureSample(label_tex, label_samp, in.uv).rg;
     let colour = select(WORD_COLOUR, NAME_COLOUR, coverage.g > coverage.r);
-    // The tab is the plate's: it fades with it from under the plate (#481).
-    return vec4<f32>(colour, max(coverage.r, coverage.g) * (1.0 - u.env_min.w));
+    // Unlike the plate's faces, the writing stays from under the plate: its
+    // copy facing down reads the right way round from there (#507).
+    return vec4<f32>(colour, max(coverage.r, coverage.g));
 }

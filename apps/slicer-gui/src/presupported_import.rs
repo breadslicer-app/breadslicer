@@ -237,9 +237,39 @@ impl PresupportedImport {
         let Some((model, sets)) = self.selected_imported() else {
             return;
         };
+        self.remove_imported_of(model, &sets, replace);
+    }
+
+    /// Asks, right after a separation, whether `model`'s imported supports
+    /// go for supports made here; Replace does what the Supports tab's
+    /// button does.
+    fn offer_replace(self: &Rc<Self>, model: NodeId, context: SharedString) {
+        let run = Rc::downgrade(self);
+        self.dialogs.show_replace_imported(context, move |replace| {
+            let Some(run) = run.upgrade() else {
+                return;
+            };
+            if !replace {
+                return;
+            }
+            let sets = run
+                .document
+                .with_scene(|spatial| imported_of(spatial, model, None))
+                .unwrap_or_default();
+            if sets.is_empty() {
+                // Undone, or taken away meanwhile.
+                return;
+            }
+            run.remove_imported_of(model, &sets, true);
+        });
+    }
+
+    /// Removes `sets`, the imported supports of `model`, in one undo entry;
+    /// with `replace`, the model then waits for supports made here.
+    fn remove_imported_of(&self, model: NodeId, sets: &[NodeId], replace: bool) {
         let Some(edit) = self
             .document
-            .with_scene(|spatial| removal_edit(spatial.graph(), &sets))
+            .with_scene(|spatial| removal_edit(spatial.graph(), sets))
             .flatten()
         else {
             return;
@@ -467,7 +497,12 @@ impl PresupportedImport {
 
     /// Puts the model and its supports in 2 objects where `leaf` stood, in
     /// one undo entry, when `leaf` still shows `mesh`.
-    fn separate(&self, leaf: NodeId, mesh: &Weak<IndexedMesh>, presupported: Presupported) {
+    fn separate(
+        self: &Rc<Self>,
+        leaf: NodeId,
+        mesh: &Weak<IndexedMesh>,
+        presupported: Presupported,
+    ) {
         if self.still_shows(leaf, mesh).is_none() {
             return;
         }
@@ -524,6 +559,7 @@ impl PresupportedImport {
                     "Separated: the model and its imported supports."
                 ));
                 crate::breadcrumbs::note("presupported: separated");
+                self.offer_replace(model, self.name_of(model));
             }
             Err(EditNotApplied::NoSceneLoaded) => {}
             Err(EditNotApplied::Rejected(error)) => self.show_rejected(error.to_string()),

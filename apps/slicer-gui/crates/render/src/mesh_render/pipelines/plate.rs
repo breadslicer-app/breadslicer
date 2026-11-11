@@ -877,7 +877,9 @@ pub(in crate::mesh_render) fn plate_geometry(
         bottom_indices.extend(front.bottom_indices);
         let text_box = tab.text_box(-outer_d, outer_w - radius);
         let top = label_quad(text_box);
-        let underside = underside_label_quad(text_box, z_bot);
+        // The plate is drawn without its thickness (#507): the copy read from
+        // below sits on the same plane as the one read from above.
+        let underside = underside_label_quad(text_box, z_top);
         std::array::from_fn(|i| if i < 6 { top[i] } else { underside[i - 6] })
     });
 

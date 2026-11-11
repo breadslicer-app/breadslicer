@@ -6631,6 +6631,26 @@ msgstr "Dejar como está"
 
 #: ui/message-layer.slint
 msgctxt "SeparateSupportsDialog"
+msgid "Keep them"
+msgstr "Conservarlos"
+
+#: ui/message-layer.slint
+msgctxt "SeparateSupportsDialog"
+msgid "Replace with Breadslicer supports"
+msgstr "Reemplazar por soportes de Breadslicer"
+
+#: src/error_dialog.rs
+msgctxt "SeparateSupportsDialog"
+msgid "Replace the imported supports?"
+msgstr "¿Reemplazar los soportes importados?"
+
+#: src/error_dialog.rs
+msgctxt "SeparateSupportsDialog"
+msgid "Breadslicer can take the file's supports away and make its own for this model, with the preset of the Supports tab. Kept, the imported supports print as they came."
+msgstr "Breadslicer puede sacar los soportes del archivo y hacer los suyos para este modelo, con el preset de la pestaña Soportes. Si los conservás, los soportes importados se imprimen como vinieron."
+
+#: ui/message-layer.slint
+msgctxt "SeparateSupportsDialog"
 msgid "Separate"
 msgstr "Separar"
 

@@ -217,6 +217,12 @@ enum Entry {
         context: SharedString,
         on_choice: Box<dyn FnOnce(bool)>,
     },
+    /// Right after separating a file's supports: replace them with
+    /// supports made here?
+    ReplaceImported {
+        context: SharedString,
+        on_choice: Box<dyn FnOnce(bool)>,
+    },
     Recovery {
         /// 1 line per scene.
         scenes: SharedString,
@@ -244,6 +250,7 @@ impl Entry {
             | Self::SliceOverwrite { .. }
             | Self::AddSupports { .. }
             | Self::SeparateSupports { .. }
+            | Self::ReplaceImported { .. }
             | Self::Recovery { .. } => MessageClass::MustAnswer,
         }
     }
@@ -337,6 +344,15 @@ impl Entry {
                 message.text = texts.message;
                 message.context = context.clone();
             }
+            Self::ReplaceImported { context, .. } => {
+                message.kind = MessageKind::ReplaceImported;
+                message.heading = ctr!("SeparateSupportsDialog", "Replace the imported supports?");
+                message.text = ctr!(
+                    "SeparateSupportsDialog",
+                    "Breadslicer can take the file's supports away and make its own for this model, with the preset of the Supports tab. Kept, the imported supports print as they came."
+                );
+                message.context = context.clone();
+            }
             Self::Diagnostics { has_scene, .. } => {
                 message.kind = MessageKind::Diagnostics;
                 message.has_scene = *has_scene;
@@ -400,6 +416,10 @@ impl Entry {
             }
             Self::SeparateSupports { on_choice, .. } => {
                 // Anything but Separate leaves the file as it came.
+                on_choice(answer == MessageAnswer::Confirm);
+            }
+            Self::ReplaceImported { on_choice, .. } => {
+                // Anything but Replace keeps the imported supports.
                 on_choice(answer == MessageAnswer::Confirm);
             }
             Self::Diagnostics {
@@ -785,6 +805,21 @@ impl DialogManager {
         crate::breadcrumbs::note(&format!("message: {}", build_texts().heading));
         self.enqueue(Entry::SeparateSupports {
             build_texts: Box::new(build_texts),
+            context,
+            on_choice: Box::new(on_choice),
+        });
+    }
+
+    /// Asks, right after a file's supports were separated, whether to
+    /// replace them with supports made here. Calls `on_choice` once with the
+    /// answer. Must run on the Slint UI thread.
+    pub(crate) fn show_replace_imported(
+        self: &Rc<Self>,
+        context: SharedString,
+        on_choice: impl FnOnce(bool) + 'static,
+    ) {
+        crate::breadcrumbs::note("message: replace the imported supports?");
+        self.enqueue(Entry::ReplaceImported {
             context,
             on_choice: Box::new(on_choice),
         });

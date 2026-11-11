@@ -187,8 +187,9 @@ fn scene_leaves(document: &SceneDocument) -> Vec<(NodeId, Arc<IndexedMesh>)> {
         .unwrap_or_default()
 }
 
-/// Answers Separate, and returns the model and its imported supports.
-fn separate(opened: &Opened) -> (NodeId, NodeId) {
+/// Answers Separate, and returns the model and its imported supports,
+/// the question about replacing them still up.
+fn separate_asked(opened: &Opened) -> (NodeId, NodeId) {
     assert!(opened.window.get_message_open(), "the question is up");
     assert_eq!(
         opened.window.get_message().kind,
@@ -199,7 +200,47 @@ fn separate(opened: &Opened) -> (NodeId, NodeId) {
         .invoke_message_answered(MessageAnswer::Confirm);
     let leaves = scene_leaves(&opened.document);
     assert_eq!(leaves.len(), 2, "the model and its supports");
+    assert!(opened.window.get_message_open(), "the next question is up");
+    let next = opened.window.get_message();
+    assert_eq!(next.kind, MessageKind::ReplaceImported);
+    assert_eq!(next.context.as_str(), "werewolf");
     (leaves[0].0, leaves[1].0)
+}
+
+/// Answers Separate and keeps the imported supports, and returns the model
+/// and its imported supports.
+fn separate(opened: &Opened) -> (NodeId, NodeId) {
+    let separated = separate_asked(opened);
+    opened.window.invoke_message_answered(MessageAnswer::Cancel);
+    assert!(!opened.window.get_message_open());
+    assert_eq!(scene_leaves(&opened.document).len(), 2, "kept");
+    assert!(opened.document.supports_wanted().is_none(), "nothing waits");
+    separated
+}
+
+#[test]
+fn after_separating_replace_gives_the_model_supports_made_here() {
+    on_fresh_slint_thread(|| {
+        let opened = open();
+        let (model, _) = separate_asked(&opened);
+        let doc = &opened.document;
+        // Enter replaces.
+        opened
+            .window
+            .invoke_message_answered(MessageAnswer::Confirm);
+        assert!(!opened.window.get_message_open());
+        let leaves = scene_leaves(doc);
+        assert_eq!(leaves.len(), 1, "the imported supports went");
+        assert_eq!(leaves[0].0, model);
+        let (_, wanted) = doc.supports_wanted().expect("the model waits");
+        assert_eq!(wanted.ids(), [model]);
+        // Undo brings the imported supports back, and once more the file.
+        assert!(doc.undo().expect("undoes"));
+        assert_eq!(scene_leaves(doc).len(), 2);
+        assert!(doc.undo().expect("undoes"));
+        assert_eq!(scene_leaves(doc).len(), 1);
+        assert!(Arc::ptr_eq(&scene_leaves(doc)[0].1, &opened.file));
+    });
 }
 
 fn world(document: &SceneDocument, leaf: NodeId) -> Transform3D {
