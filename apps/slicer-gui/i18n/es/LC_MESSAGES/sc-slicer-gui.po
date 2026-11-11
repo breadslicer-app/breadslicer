@@ -6722,3 +6722,167 @@ msgstr "Quitar todas"
 msgctxt "Workspace"
 msgid "Drag around what should stay solid: everything behind the curve, through the model, is no longer hollowed. Turn the camera first to choose the side. Esc puts the lasso away."
 msgstr "Arrastrá alrededor de lo que tiene que quedar macizo: todo lo que está detrás de la curva, a través del modelo, deja de ahuecarse. Girá la cámara antes para elegir el lado. Esc guarda el lazo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "CUT"
+msgstr "CORTAR"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Cuts the selected model with a plane and closes the pieces. Click a part of the cut on the plane to take it or leave it."
+msgstr "Corta el modelo seleccionado con un plano y cierra las piezas. Hacé clic en una parte del corte, sobre el plano, para incluirla o dejarla."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Height"
+msgstr "Altura"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Tilt front to back"
+msgstr "Inclinación adelante y atrás"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Tilt side to side"
+msgstr "Inclinación de costado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Limit the plane"
+msgstr "Limitar el plano"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Width"
+msgstr "Ancho"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Move along X"
+msgstr "Mover en X"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Move along Y"
+msgstr "Mover en Y"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Working…"
+msgstr "Calculando…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Cut"
+msgstr "Cortar"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Cut with a plane"
+msgstr "Cortar con un plano"
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Getting the model ready…"
+msgstr "Preparando el modelo…"
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "The plane does not cross the model."
+msgstr "El plano no atraviesa el modelo."
+
+#: src/cut_run.rs
+#, rust-format
+msgctxt "CutRun"
+msgid "This model cannot be cut: {}"
+msgstr "Este modelo no se puede cortar: {}"
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "The pieces would not come out closed with only these parts of the cut. Take the whole plane, or move it a little."
+msgstr "Con solo estas partes del corte, las piezas no quedarían cerradas. Usá el plano entero o movelo un poco."
+
+#: src/cut_run.rs
+#, rust-format
+msgctxt "CutRun"
+msgid "The cut failed: {}"
+msgstr "El corte falló: {}"
+
+#: src/cut_run.rs
+#, rust-format
+msgctxt "CutRun"
+msgid "The plane crosses {} parts: {} cut, {} left whole."
+msgstr "El plano atraviesa {} partes: {} se cortan y {} quedan enteras."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "It leaves one piece."
+msgstr "Deja una sola pieza."
+
+#: src/cut_run.rs
+#, rust-format
+msgctxt "CutRun"
+msgid "It leaves {} pieces."
+msgstr "Deja {} piezas."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "The plane's edge crosses a part (amber): cutting part of it would leave a slit. Move or resize the plane so it lies inside or outside."
+msgstr "El borde del plano cruza una parte (en ámbar): cortar solo un pedazo dejaría una ranura. Mové o agrandá el plano para que quede adentro o afuera."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "No part of the cut is taken. Click a part on the plane to take it."
+msgstr "No hay ninguna parte del corte incluida. Hacé clic en una parte del plano para incluirla."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "This cut leaves one piece: the parts in red still join the two sides. Take them too, or make the plane reach them."
+msgstr "Este corte deja una sola pieza: las partes en rojo siguen uniendo los dos lados. Incluilas también o hacé que el plano llegue hasta ellas."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "The model is not closed: it is repaired before it is cut."
+msgstr "El modelo no está cerrado: se repara antes de cortarlo."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Object"
+msgstr "Objeto"
+
+#: src/cut_run.rs
+#, rust-format
+msgctxt "CutRun"
+msgid "{} – part {}"
+msgstr "{} – parte {}"
+
+#: src/cut_run.rs
+#, rust-format
+msgctxt "CutRun"
+msgid "Cut into {} pieces."
+msgstr "Cortado en {} piezas."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Its supports were removed: generate supports for the pieces."
+msgstr "Se quitaron sus soportes: generá soportes para las piezas."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Cut"
+msgstr "Cortar"
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "The cut could not be put in the scene."
+msgstr "No se pudo poner el corte en la escena."
+
+#: src/cut_run.rs
+#, rust-format
+msgctxt "CutRun"
+msgid "The plane crosses 1 part: it is cut."
+msgid_plural "The plane crosses {n} parts: all are cut."
+msgstr[0] "El plano atraviesa 1 parte: se corta."
+msgstr[1] "El plano atraviesa {n} partes: se cortan todas."

@@ -5417,6 +5417,7 @@ dependencies = [
  "rfd",
  "sc-app-paths",
  "sc-arrange",
+ "sc-cut",
  "sc-geom",
  "sc-mesh-core",
  "sc-mesh-fixtures",

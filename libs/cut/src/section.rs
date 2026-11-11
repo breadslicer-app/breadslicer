@@ -279,22 +279,42 @@ impl Section {
     }
 
     /// Where each piece lies against `rect`, in the order of [`Self::pieces`].
-    pub fn fits(&self, rect: &Rect) -> Vec<Fit> {
+    ///
+    /// The rectangle lies in a frame of its own on the plane: `to_rect` takes
+    /// a point of the mesh to it, and `from_rect` a point of it back to the
+    /// mesh. Both are affine, so a model turned or scaled in the scene can
+    /// be cut by a rectangle drawn in the scene's frame.
+    pub fn fits(
+        &self,
+        rect: &Rect,
+        to_rect: impl Fn([f64; 3]) -> [f64; 2],
+        from_rect: impl Fn([f64; 2]) -> [f64; 3],
+    ) -> Vec<Fit> {
+        let at: Vec<[f64; 2]> = self.points.iter().map(|&p| to_rect(p)).collect();
+        let (u, v) = self.plane.frame();
+        let corners: Vec<[f64; 2]> = rect
+            .corners()
+            .iter()
+            .map(|&c| {
+                let p = from_rect(c);
+                [dot(p, u), dot(p, v)]
+            })
+            .collect();
         self.pieces
             .iter()
             .map(|piece| {
                 let ring = &self.loops[piece.outer].points;
                 let inside = ring
                     .iter()
-                    .filter(|&&p| rect.contains(self.flat[p as usize]))
+                    .filter(|&&p| rect.contains(at[p as usize]))
                     .count();
                 if inside == ring.len() {
                     Fit::Inside
                 } else if inside > 0
-                    || rect.corners().iter().any(|&c| self.inside(c, piece.outer))
+                    || corners.iter().any(|&c| self.inside(c, piece.outer))
                     || (0..ring.len()).any(|k| {
-                        let a = self.flat[ring[k] as usize];
-                        let b = self.flat[ring[(k + 1) % ring.len()] as usize];
+                        let a = at[ring[k] as usize];
+                        let b = at[ring[(k + 1) % ring.len()] as usize];
                         crosses(rect, a, b)
                     })
                 {

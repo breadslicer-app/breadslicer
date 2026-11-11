@@ -210,19 +210,21 @@ fn the_rectangle_says_which_pieces_it_takes() {
         center: [5.0, 5.0],
         half: [8.0, 8.0],
     };
-    let fits = section.fits(&around_left);
+    let to = |p: [f64; 3]| [p[0], p[1]];
+    let from = |q: [f64; 2]| [q[0], q[1], 5.0];
+    let fits = section.fits(&around_left, to, from);
     assert_eq!(fits[left], Fit::Inside);
     assert_eq!(fits[right], Fit::Outside);
     let half_of_left = Rect {
         center: [0.0, 5.0],
         half: [4.0, 8.0],
     };
-    assert_eq!(section.fits(&half_of_left)[left], Fit::Crossed);
+    assert_eq!(section.fits(&half_of_left, to, from)[left], Fit::Crossed);
     let inside_left = Rect {
         center: [5.0, 5.0],
         half: [1.0, 1.0],
     };
-    assert_eq!(section.fits(&inside_left)[left], Fit::Crossed);
+    assert_eq!(section.fits(&inside_left, to, from)[left], Fit::Crossed);
 }
 
 #[test]

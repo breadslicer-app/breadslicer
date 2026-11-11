@@ -11,7 +11,7 @@ import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
 import { CaptionButton, CaptionKind, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
-import { ExportInspector, HollowInspector, OrientCard, OrientOption, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
+import { CutCard, ExportInspector, HollowInspector, OrientCard, OrientOption, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
@@ -365,6 +365,9 @@ export component MainWindow inherits Window {
         if root.orient-open && root.workspace-section != WorkspaceSection.Transform {
             root.orient-close-requested();
         }
+        if root.cut-open && root.workspace-section != WorkspaceSection.Transform {
+            root.cut-close-requested();
+        }
     }
     // The Hollow tab (BS-8): the selected model's hollow job, its options
     // (HollowRun::on_option) and the drain tool (a click drills a drain).
@@ -696,6 +699,30 @@ export component MainWindow inherits Window {
     // open, a search in flight, the options found and the tool's settings
     // (Rust keeps them; see `orient_run.rs`).
     in property <bool> orient-open: false;
+    // Cut (#56), the Transform tab's plane cut (Rust keeps it; see
+    // `cut_run.rs`).
+    in property <bool> cut-open: false;
+    in property <bool> cut-working: false;
+    in property <float> cut-height: 0;
+    in property <float> cut-height-min: 0;
+    in property <float> cut-height-max: 100;
+    in property <float> cut-tilt-x: 0;
+    in property <float> cut-tilt-y: 0;
+    in property <bool> cut-bounded: false;
+    in property <float> cut-width: 20;
+    in property <float> cut-depth: 20;
+    in property <float> cut-offset-u: 0;
+    in property <float> cut-offset-v: 0;
+    in property <string> cut-status;
+    in property <string> cut-warning;
+    in property <bool> cut-can-cut: false;
+    // Opens the tool, or closes it when open (the rail button, K).
+    callback cut-toggle-requested();
+    callback cut-close-requested();
+    callback cut-option-changed(int, float);
+    callback cut-apply();
+    // A worker of the tool finished.
+    callback cut-worked();
     in property <bool> orient-running: false;
     // 0 preparing the model, 1 searching, 2 refining, 3 judging the best.
     in property <int> orient-phase: 0;
@@ -1395,7 +1422,19 @@ export component MainWindow inherits Window {
                             active: root.orient-open;
                             enabled: root.has-scene && root.selection-valid;
                             clicked => {
+                                root.cut-close-requested();
                                 root.orient-toggle-requested();
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Transform: ToolButton {
+                            icon: Icons.cut;
+                            label: @tr("Inspector" => "Cut with a plane");
+                            shortcut: "K";
+                            active: root.cut-open;
+                            enabled: root.has-scene && root.selection-valid;
+                            clicked => {
+                                root.orient-close-requested();
+                                root.cut-toggle-requested();
                             }
                         }
                         if root.workspace-section == WorkspaceSection.Transform: Rectangle {
@@ -1567,6 +1606,10 @@ export component MainWindow inherits Window {
                                 root.orient-close-requested();
                                 return true;
                             }
+                            if root.cut-open {
+                                root.cut-close-requested();
+                                return true;
+                            }
                             return false;
                         }
                         tab-tool-key(key) => {
@@ -1626,7 +1669,14 @@ export component MainWindow inherits Window {
                             }
                             if root.workspace-section == WorkspaceSection.Transform && root.has-scene
                                 && root.selection-valid && (key == "o" || key == "O") {
+                                root.cut-close-requested();
                                 root.orient-toggle-requested();
+                                return true;
+                            }
+                            if root.workspace-section == WorkspaceSection.Transform && root.has-scene
+                                && root.selection-valid && (key == "k" || key == "K") {
+                                root.orient-close-requested();
+                                root.cut-toggle-requested();
                                 return true;
                             }
                             if root.workspace-section == WorkspaceSection.Transform && root.has-scene
@@ -1982,6 +2032,33 @@ export component MainWindow inherits Window {
                             spacing: 12px;
                             alignment: start;
 
+                            if root.workspace-section == WorkspaceSection.Transform && root.cut-open: CutCard {
+                                enabled: root.has-scene && root.selection-valid && !root.loading
+                                    && !root.slicing-in-progress && !root.repairing-in-progress && !root.arranging;
+                                working: root.cut-working;
+                                plane-height: root.cut-height;
+                                height-min: root.cut-height-min;
+                                height-max: root.cut-height-max;
+                                tilt-x: root.cut-tilt-x;
+                                tilt-y: root.cut-tilt-y;
+                                bounded: root.cut-bounded;
+                                rect-width: root.cut-width;
+                                rect-depth: root.cut-depth;
+                                offset-u: root.cut-offset-u;
+                                offset-v: root.cut-offset-v;
+                                status: root.cut-status;
+                                warning: root.cut-warning;
+                                can-cut: root.cut-can-cut;
+                                option-changed(code, value) => {
+                                    root.cut-option-changed(code, value);
+                                }
+                                apply => {
+                                    root.cut-apply();
+                                }
+                                close => {
+                                    root.cut-close-requested();
+                                }
+                            }
                             if root.workspace-section == WorkspaceSection.Transform && root.orient-open: OrientCard {
                                 enabled: root.has-scene && root.selection-valid && !root.loading
                                     && !root.slicing-in-progress && !root.repairing-in-progress && !root.arranging;

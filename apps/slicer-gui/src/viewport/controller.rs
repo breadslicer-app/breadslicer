@@ -175,10 +175,17 @@ pub(crate) struct ViewportController {
     /// viewport pixels, and who takes the region it closes.
     lasso: RefCell<Option<Vec<[f32; 2]>>>,
     lasso_handler: RefCell<Option<LassoHandler>>,
+    /// The Cut tool (#56): who is offered a click in the Transform tab
+    /// first, as a ray in the world.
+    cut_picker: RefCell<Option<CutPicker>>,
 }
 
 /// Who takes the region a lasso stroke closes.
 type LassoHandler = Rc<dyn Fn(LassoRegion)>;
+
+/// Takes a click's ray (origin and unit direction, world mm) and says
+/// whether it used it.
+type CutPicker = Rc<dyn Fn([f64; 3], [f64; 3]) -> bool>;
 
 /// A tool of a workspace tab that acts where the model is clicked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,6 +269,7 @@ impl ViewportController {
             brush_waiting: Cell::new(None),
             lasso: RefCell::new(None),
             lasso_handler: RefCell::new(None),
+            cut_picker: RefCell::new(None),
         }
     }
 
@@ -324,6 +332,7 @@ impl ViewportController {
             brush_waiting: Cell::new(None),
             lasso: RefCell::new(None),
             lasso_handler: RefCell::new(None),
+            cut_picker: RefCell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -2616,6 +2625,8 @@ impl ViewportController {
                 let forced = modifiers.shift && self.add_support_armed();
                 if modifiers.shift && !forced {
                     self.run_toggle_pick_at(cursor);
+                } else if self.cut_click(cursor) {
+                    self.mark_dirty();
                 } else if !self.support_tool_click(cursor, forced) {
                     self.run_pick_at(cursor);
                 }
@@ -3141,6 +3152,44 @@ impl ViewportController {
     }
 
     /// Who takes the region a lasso stroke closes (the Hollow tab, #179).
+    /// Installs who is offered a click in the Transform tab first (#56).
+    pub(crate) fn set_cut_picker(&self, picker: CutPicker) {
+        *self.cut_picker.borrow_mut() = Some(picker);
+    }
+
+    /// Offers a click in the Transform tab to the Cut tool, as a ray.
+    fn cut_click(&self, cursor: ScreenPoint) -> bool {
+        if self.session.section() != WorkspaceSection::Transform {
+            return false;
+        }
+        let Some(picker) = self.cut_picker.borrow().clone() else {
+            return false;
+        };
+        let Some(vp) = self.render.viewport() else {
+            return false;
+        };
+        let ray = {
+            let camera_slot = self.camera.camera_cell().borrow();
+            let Some(camera) = camera_slot.as_ref() else {
+                return false;
+            };
+            picking::ray_from_pixel(
+                camera,
+                crate::mesh_render::default_fov_y(),
+                vp.width(),
+                vp.height(),
+                cursor.x,
+                cursor.y,
+            )
+        };
+        let o = ray.origin;
+        let d = ray.direction;
+        picker(
+            [f64::from(o.x), f64::from(o.y), f64::from(o.z)],
+            [f64::from(d.x), f64::from(d.y), f64::from(d.z)],
+        )
+    }
+
     pub(crate) fn set_lasso_handler(&self, handler: Rc<dyn Fn(LassoRegion)>) {
         *self.lasso_handler.borrow_mut() = Some(handler);
     }
