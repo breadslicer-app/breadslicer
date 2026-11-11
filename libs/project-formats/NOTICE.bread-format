@@ -1,7 +1,9 @@
-sc-bread-format: third-party notices
-====================================
+.bread files: third-party notices
+=============================
 
-The .bread project format compresses its data with two libraries whose C and
+Breadslicer reads and writes .bread files through the bread-format crate
+(https://github.com/breadslicer-app/bread-format, Apache-2.0), which
+compresses their data with two libraries whose C and
 C++ sources are built into Breadslicer. Their licenses require these notices
 in source and binary distributions.
 

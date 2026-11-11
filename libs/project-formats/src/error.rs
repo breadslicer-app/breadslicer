@@ -221,8 +221,19 @@ pub enum WriteBreadProjectError {
     /// An embedded profile document is not UTF-8 text, so the settings
     /// document cannot carry it.
     ProfileNotUtf8 { id: String },
-    /// The container could not be written.
-    Container(sc_bread_format::WriteBreadError),
+    /// The file could not be written.
+    Container(bread_format::WriteFileError),
+    /// The scene has a CSG node, which a `.bread` file cannot hold.
+    Csg,
+    /// A node or resource the scene names is missing, or a subtree reaches
+    /// itself.
+    SceneInconsistent,
+    /// Supports stand on a model that is not in the scene.
+    SupportModelMissing,
+    /// Supports belong to a leaf that is not in the scene.
+    SupportLeafMissing,
+    /// A hollow belongs to a leaf that is not in the scene.
+    HollowLeafMissing,
 }
 
 impl fmt::Display for WriteBreadProjectError {
@@ -237,6 +248,21 @@ impl fmt::Display for WriteBreadProjectError {
                 ".bread project writer: the embedded profile \"{id}\" is not UTF-8 text",
             ),
             Self::Container(e) => write!(f, ".bread project writer: {e}"),
+            Self::Csg => f.write_str(
+                ".bread project writer: the scene has a CSG node, which a .bread file cannot hold",
+            ),
+            Self::SceneInconsistent => {
+                f.write_str(".bread project writer: the scene graph is inconsistent")
+            }
+            Self::SupportModelMissing => f.write_str(
+                ".bread project writer: supports stand on a model that is not in the scene",
+            ),
+            Self::SupportLeafMissing => f.write_str(
+                ".bread project writer: the supports belong to a part that is not in the scene",
+            ),
+            Self::HollowLeafMissing => f.write_str(
+                ".bread project writer: a hollow belongs to a part that is not in the scene",
+            ),
         }
     }
 }
@@ -245,8 +271,13 @@ impl std::error::Error for WriteBreadProjectError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Settings(e) => Some(e),
-            Self::ProfileNotUtf8 { .. } => None,
             Self::Container(e) => Some(e),
+            Self::ProfileNotUtf8 { .. }
+            | Self::Csg
+            | Self::SceneInconsistent
+            | Self::SupportModelMissing
+            | Self::SupportLeafMissing
+            | Self::HollowLeafMissing => None,
         }
     }
 }
@@ -257,7 +288,9 @@ pub enum ReadBreadProjectError {
     /// The file could not be measured.
     Io(std::io::Error),
     /// The container or one of the chunks this build needs could not be read.
-    Container(sc_bread_format::ReadProjectError),
+    Container(bread_format::ReadFileError),
+    /// The scene refused a node of the file.
+    Scene(sc_scene::SceneError),
     /// The settings document is not UTF-8 encoded.
     SettingsNotUtf8(std::str::Utf8Error),
     /// The settings document is not valid TOML of the shape this build reads.
@@ -269,6 +302,7 @@ impl fmt::Display for ReadBreadProjectError {
         match self {
             Self::Io(e) => write!(f, ".bread project reader I/O error: {e}"),
             Self::Container(e) => write!(f, ".bread project reader: {e}"),
+            Self::Scene(e) => write!(f, ".bread project reader: the scene is inconsistent: {e}"),
             Self::SettingsNotUtf8(e) => write!(
                 f,
                 ".bread project reader: the project settings are not UTF-8: {e}",
@@ -286,8 +320,15 @@ impl std::error::Error for ReadBreadProjectError {
         match self {
             Self::Io(e) => Some(e),
             Self::Container(e) => Some(e),
+            Self::Scene(e) => Some(e),
             Self::SettingsNotUtf8(e) => Some(e),
             Self::SettingsParse(e) => Some(e),
         }
+    }
+}
+
+impl From<sc_scene::SceneError> for ReadBreadProjectError {
+    fn from(e: sc_scene::SceneError) -> Self {
+        Self::Scene(e)
     }
 }

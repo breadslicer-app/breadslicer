@@ -8,8 +8,9 @@
 //! The document holds the hollows made here ([`SceneDocument::hollows`]):
 //! per hollowed leaf, the mesh it was hollowed from, its drains and the
 //! settings. A save stores each one whose leaf still shows its hollow as a
-//! [`HollowDocument`]; the leaf keeps the hollow mesh, so a build that does
-//! not know these documents opens the model hollowed. On opening, the load
+//! [`HollowDocument`]: the original goes in the file as one more mesh (#211),
+//! and the leaf keeps the hollow mesh, so a reader that does not know these
+//! documents opens the model hollowed. On opening, the load
 //! worker reads them back against the leaves' meshes, and the window puts
 //! them in the document once the scene is installed: the review then knows
 //! the hollow (#158), and a new drain hollows the original again.
@@ -21,8 +22,10 @@
 //! f32 drain radius                       the Hollow tab's settings
 //! u32 count, per drain: 3 f32 centre, 3 f32 direction, f32 radius
 //!                                        in the leaf's local frame
-//! u32 length, the original mesh           as a `.bread` mesh chunk holds it
 //! ```
+//!
+//! Before the `.bread` hollows chunk named the original as a mesh of the file
+//! (#211), every version ended with the original mesh itself.
 //!
 //! `smooth` is the smoothing builds before #29 had: written 1, not read.
 //!
@@ -36,7 +39,6 @@
 //!   u8 shape, f32 depth, f32 inner radius, f32 plug clearance
 //! u32 count, per plug: u32 drain, u32 vertices, u32 faces,
 //!   u64 fingerprint                        the plug models it made
-//! u32 length, the original mesh
 //! ```
 //!
 //! `shape` holds a bit per part that is set: 1 the depth, 2 the cone, 4 the
@@ -52,14 +54,12 @@
 //! … as in version 2, up to the plugs
 //! u32 count, per area: u8 perspective, 3 f32 origin, 3 f32 u, 3 f32 v,
 //!   3 f32 w, u32 points, per point 2 f32  in the leaf's local frame
-//! u32 length, the original mesh
 //! ```
 //!
 //! A hollow with no such area is written as version 1 or 2, as before.
 
 use std::sync::Arc;
 
-use sc_bread_format::{decode_mesh, encode_mesh};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_spatial::SceneSpatial;
 use sc_project_formats::HollowDocument;
@@ -98,6 +98,7 @@ pub(crate) fn hollow_documents(doc: &SceneDocument, spatial: &SceneSpatial) -> V
             let (version, document) = encode(hollowed);
             Some(HollowDocument {
                 leaf,
+                original: hollowed.original.clone(),
                 hollower: DF_HOLLOWER.to_owned(),
                 version,
                 document,
@@ -157,7 +158,7 @@ fn restore(scene: &Scene, document: &HollowDocument) -> Result<Hollowed, String>
         .collect();
     Ok(Hollowed {
         hollow,
-        original: Arc::new(decoded.original),
+        original: document.original.clone(),
         drains: decoded.drains,
         options: decoded.options,
         plugs,
@@ -316,9 +317,6 @@ fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
             }
         }
     }
-    let mesh = encode_mesh(&hollowed.original);
-    out.extend_from_slice(&(mesh.len() as u32).to_le_bytes());
-    out.extend_from_slice(&mesh);
     let version = if solids {
         3
     } else if shapes {
@@ -384,7 +382,6 @@ struct Decoded {
     /// Each plug: its drain and the fingerprint of its model.
     plugs: Vec<(usize, Fingerprint)>,
     solids: Vec<LassoRegion>,
-    original: IndexedMesh,
 }
 
 /// Reads a document of `version` (1, 2 or 3).
@@ -498,14 +495,11 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
     } else {
         Vec::new()
     };
-    let length = input.u32()? as usize;
-    let original = decode_mesh(input.take(length)?).ok()?;
     input.0.is_empty().then_some(Decoded {
         options,
         drains,
         plugs,
         solids,
-        original,
     })
 }
 
@@ -579,11 +573,6 @@ mod hollow_persist_tests {
         assert_eq!(decoded.options, h.options);
         assert_eq!(decoded.drains, h.drains);
         assert!(decoded.plugs.is_empty());
-        assert_eq!(decoded.original.faces().len(), h.original.faces().len());
-        assert_eq!(
-            decoded.original.vertices().len(),
-            h.original.vertices().len()
-        );
     }
 
     /// #316–#318: the drains' depths, cones and plugs, the drain tool and
@@ -660,9 +649,6 @@ mod hollow_persist_tests {
         for v in [1.0f32, 2.0, 3.0, 0.0, 0.0, 1.0, 1.5] {
             bytes.extend_from_slice(&v.to_le_bytes());
         }
-        let mesh = encode_mesh(&unit_cube_mesh());
-        bytes.extend_from_slice(&(mesh.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(&mesh);
         let decoded = decode(&bytes, 1).expect("it decodes");
         assert_eq!(decoded.drains, hollowed().drains);
         assert_eq!(decoded.options, hollowed().options);

@@ -729,6 +729,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "597e81e56404b7a3e26ef7b449f82a4b7a661ae76c3cac692b42d6bad06a0fbe"
 
 [[package]]
+name = "bread-format"
+version = "0.2.0"
+source = "git+https://github.com/breadslicer-app/bread-format?tag=v0.2.0#24e947a43549d76a10cde47a43f8c27182092e8e"
+dependencies = [
+ "crc32fast",
+ "meshopt",
+ "zstd",
+]
+
+[[package]]
 name = "bstr"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5017,18 +5027,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-bread-format"
-version = "0.1.0"
-dependencies = [
- "crc32fast",
- "meshopt",
- "sc-mesh-core",
- "sc-mesh-formats",
- "sc-scene",
- "zstd",
-]
-
-[[package]]
 name = "sc-geom"
 version = "0.0.2"
 dependencies = [
@@ -5186,9 +5184,9 @@ dependencies = [
 name = "sc-project-formats"
 version = "0.2.0"
 dependencies = [
+ "bread-format",
  "rayon",
  "sc-3mf",
- "sc-bread-format",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
@@ -5328,6 +5326,7 @@ version = "0.3.1"
 dependencies = [
  "anyhow",
  "block2 0.6.2",
+ "bread-format",
  "bytemuck",
  "chrono",
  "float-cmp 0.10.0",
@@ -5345,7 +5344,6 @@ dependencies = [
  "rfd",
  "sc-app-paths",
  "sc-arrange",
- "sc-bread-format",
  "sc-geom",
  "sc-mesh-core",
  "sc-mesh-fixtures",

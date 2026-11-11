@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Breadslicer's own project file, `.bread` (#145), on top of
-//! `sc-bread-format`.
+//! Breadslicer's own project file, `.bread` (#145), on top of the
+//! `bread-format` crate.
 //!
 //! The container holds the scene, the supports as data and the project
 //! settings; this module writes the settings: a versioned TOML document with
@@ -14,11 +14,11 @@
 
 use std::io::{Read, Write};
 
-use sc_bread_format::{BreadProject, HollowDocument, SupportDocument};
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_scene::Scene;
 use serde::{Deserialize, Serialize};
 
+use crate::bread_file::{self, HollowDocument, Opened, SupportDocument};
 use crate::error::{ReadBreadProjectError, WriteBreadProjectError};
 use crate::messages::ReadProjectWarning;
 use crate::payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload, ReviewDecision};
@@ -192,10 +192,11 @@ pub(crate) fn parse_settings(
 }
 
 /// Writes `scene`, `payload`, `supports` and `hollows` as a `.bread`
-/// project. Each support document names the leaf that shows it; that leaf is
-/// stored with an empty mesh, to be rebuilt from the document after opening.
-/// Each hollow document names the leaf that shows the hollow, which keeps it
-/// (#161).
+/// project. Each support document names its model and the leaf that shows
+/// the supports; that leaf is stored with an empty mesh, to be rebuilt from
+/// the document after opening. Each hollow document names the leaf that
+/// shows the hollow, which keeps it, and the mesh it was hollowed from, which
+/// the file stores as one more mesh (#161, #211).
 ///
 /// The container is written in one pass, so `progress` reports the serialize
 /// phase as begun and the compress phase as done.
@@ -209,15 +210,10 @@ pub fn write_bread_project_with_progress<W: Write>(
     mut progress: impl FnMut(WriteProgress),
 ) -> Result<(), WriteBreadProjectError> {
     progress(WriteProgress::Serialize { done: 0, total: 1 });
-    let project = BreadProject {
-        scene: scene.clone(),
-        settings: Some(serialize_settings(payload, embed)?.into_bytes()),
-        supports: supports.to_vec(),
-        hollows: hollows.to_vec(),
-        surface_notes: Vec::new(),
-    };
+    let settings = serialize_settings(payload, embed)?.into_bytes();
+    let file = bread_file::to_file(scene, Some(settings), supports, hollows)?;
     progress(WriteProgress::Serialize { done: 1, total: 1 });
-    sc_bread_format::write_project(&project, writer).map_err(WriteBreadProjectError::Container)?;
+    bread_format::write_file(&file, writer).map_err(WriteBreadProjectError::Container)?;
     progress(WriteProgress::Compress { done: 1, total: 1 });
     Ok(())
 }
@@ -225,14 +221,30 @@ pub fn write_bread_project_with_progress<W: Write>(
 /// Reads a `.bread` project. A file without a settings document, or with one
 /// of a version this build does not read, still opens as a project, with an
 /// empty payload: its scene sits where it was saved.
-pub fn read_bread_project<R: Read>(reader: R) -> Result<LoadedProject, ReadBreadProjectError> {
-    let BreadProject {
+///
+/// A file saved before #211 keeps its supports and hollows in chunks the
+/// crate skips as drafts of the format; they are read here, so that such a
+/// file opens with them, and saving it again writes them as they are now.
+pub fn read_bread_project<R: Read>(mut reader: R) -> Result<LoadedProject, ReadBreadProjectError> {
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(ReadBreadProjectError::Io)?;
+    let file =
+        bread_format::read_file(bytes.as_slice()).map_err(ReadBreadProjectError::Container)?;
+    let drafts = if file.supports.is_empty() && file.hollows.is_empty() {
+        bread_file::draft_documents(&bytes)
+    } else {
+        bread_file::Drafts::default()
+    };
+    drop(bytes);
+    let Opened {
         scene,
         settings,
         supports,
         hollows,
         surface_notes,
-    } = sc_bread_format::read_project(reader).map_err(ReadBreadProjectError::Container)?;
+    } = bread_file::from_file(file, drafts)?;
     let mut warnings: Vec<ReadProjectWarning> = surface_notes
         .iter()
         .map(|note| ReadProjectWarning::SurfacePaintDropped {

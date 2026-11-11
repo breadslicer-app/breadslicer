@@ -342,18 +342,18 @@ pub(crate) fn support_documents(doc: &SceneDocument, spatial: &SceneSpatial) -> 
     let sessions = doc.support_sessions();
     let mut kept = SupportsToSave::default();
     for (leaf, leaf_mesh) in support_leaves(spatial) {
-        let session = match in_force(spatial, &sessions, leaf) {
-            Some(drawn) => Some(drawn.session),
+        let drawing = match in_force(spatial, &sessions, leaf) {
+            Some(drawn) => Some((drawn.model, drawn.session)),
             None => sessions
                 .borrow()
                 .iter()
                 .rev()
                 .filter(|d| d.leaf == leaf)
-                .map(|d| d.session.clone())
-                .find(|session| drew(session, spatial, &leaf_mesh)),
+                .map(|d| (d.model, d.session.clone()))
+                .find(|(_, session)| drew(session, spatial, &leaf_mesh)),
         };
-        let document = match session.as_deref().map(DfSupportSession::to_document) {
-            Some(Some(document)) => document,
+        let (model, document) = match drawing.map(|(model, s)| (model, s.to_document())) {
+            Some((model, Some(document))) => (model, document),
             missing => {
                 let why = match missing {
                     None => SupportsAsMesh::NoSession,
@@ -364,6 +364,7 @@ pub(crate) fn support_documents(doc: &SceneDocument, spatial: &SceneSpatial) -> 
             }
         };
         kept.documents.push(SupportDocument {
+            model: Some(model),
             leaf,
             generator: DF_SUPPORT_GENERATOR.to_owned(),
             version: DF_SUPPORT_DOCUMENT_VERSION,
@@ -440,6 +441,7 @@ fn rebuild(scene: &mut Scene, document: &SupportDocument) -> Result<Vec<Restored
         DfSupportSession::restore_sets_into(
             scene,
             document.leaf,
+            document.model,
             document.version,
             &document.document,
         )

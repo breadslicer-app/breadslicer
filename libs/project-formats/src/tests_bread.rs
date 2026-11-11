@@ -7,7 +7,6 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
-use sc_bread_format::{BreadProject, HollowDocument, SupportDocument};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_fixtures::{cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
@@ -17,6 +16,7 @@ use sc_scene::node::{LeafPayload, NodeKind};
 use crate::bread::{
     parse_settings, read_bread_project, serialize_settings, write_bread_project_with_progress,
 };
+use crate::bread_file::{HollowDocument, SupportDocument, to_file};
 use crate::error::{ReadProjectError, WriteBreadProjectError};
 use crate::filetypes::{ProjectFileType, infer_project_file_type_from_extension};
 use crate::loader::{LoadedContent, is_supported_scene_file_extension, load_scene};
@@ -102,6 +102,7 @@ fn a_bread_project_opens_with_its_hollows() {
     let model = scene.roots()[0];
     let hollows = vec![HollowDocument {
         leaf: model,
+        original: Arc::new(unit_cube_mesh()),
         hollower: "df".to_owned(),
         version: 1,
         document: b"how it was hollowed".to_vec(),
@@ -136,6 +137,7 @@ fn a_bread_project_opens_with_its_settings_and_supports() {
     let scene = two_leaf_scene();
     let support_leaf = scene.roots()[1];
     let supports = vec![SupportDocument {
+        model: Some(scene.roots()[0]),
         leaf: support_leaf,
         generator: "df".to_owned(),
         version: 1,
@@ -170,6 +172,7 @@ fn a_bread_project_opens_with_its_settings_and_supports() {
     assert_eq!(meshes[0].faces(), unit_cube_mesh().faces());
     assert!(meshes[1].faces().is_empty());
     assert_eq!(support.leaf, project.scene.roots()[1]);
+    assert_eq!(support.model, Some(project.scene.roots()[0]));
     for (a, b) in scene.roots().iter().zip(project.scene.roots()) {
         assert_eq!(
             scene.node(*a).unwrap().local_transform,
@@ -220,14 +223,14 @@ fn the_generic_writer_writes_a_bread_project_without_slices_or_supports() {
 
 #[test]
 fn settings_of_a_newer_version_open_the_scene_as_a_project_without_them() {
-    let project = BreadProject {
-        scene: two_leaf_scene(),
-        settings: Some(b"version = 99\nfuture = true\n".to_vec()),
-        supports: Vec::new(),
-        hollows: Vec::new(),
-        surface_notes: Vec::new(),
-    };
-    let bytes = sc_bread_format::write_project(&project, Vec::new()).unwrap();
+    let file = to_file(
+        &two_leaf_scene(),
+        Some(b"version = 99\nfuture = true\n".to_vec()),
+        &[],
+        &[],
+    )
+    .unwrap();
+    let bytes = bread_format::write_file(&file, Vec::new()).unwrap();
     let loaded = read_bread_project(Cursor::new(bytes)).unwrap();
     assert_eq!(
         loaded.warnings,
@@ -286,4 +289,41 @@ fn the_review_decisions_come_back_with_the_settings() {
     // None: the settings say nothing of them.
     let none = serialize_settings(&ProjectPayload::default(), EmbedProfiles::No).expect("written");
     assert!(!none.contains("ignored"), "{none}");
+}
+
+/// The conformance files of the format (`test-data/bread-conformance`).
+fn conformance(kind: &str) -> Vec<std::path::PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("test-data/bread-conformance")
+        .join(kind);
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == "bread"))
+        .collect();
+    files.sort();
+    files
+}
+
+/// #202: every valid conformance file opens, and every invalid one is
+/// refused with a message.
+#[test]
+fn the_conformance_files_open_or_are_refused() {
+    let valid = conformance("valid");
+    assert!(valid.len() >= 18, "the valid files are there");
+    for path in valid {
+        let bytes = std::fs::read(&path).unwrap();
+        if let Err(e) = read_bread_project(Cursor::new(bytes)) {
+            panic!("{} does not open: {e}", path.display());
+        }
+    }
+    let invalid = conformance("invalid");
+    assert!(invalid.len() >= 17, "the invalid files are there");
+    for path in invalid {
+        let bytes = std::fs::read(&path).unwrap();
+        match read_bread_project(Cursor::new(bytes)) {
+            Ok(_) => panic!("{} opens", path.display()),
+            Err(e) => assert!(!e.to_string().is_empty()),
+        }
+    }
 }

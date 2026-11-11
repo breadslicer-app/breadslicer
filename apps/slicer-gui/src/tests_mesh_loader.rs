@@ -578,6 +578,7 @@ fn write_bread_with_supports(path: &Path, support_offset: [f64; 3]) -> usize {
         .unwrap();
     scene.add_root(leaf).unwrap();
     let supports = [SupportDocument {
+        model: Some(scene.roots()[0]),
         leaf,
         generator: DF_SUPPORT_GENERATOR.to_owned(),
         version: DF_SUPPORT_DOCUMENT_VERSION,

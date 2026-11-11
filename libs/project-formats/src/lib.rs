@@ -23,6 +23,7 @@
 //! routes.
 
 pub mod bread;
+mod bread_file;
 pub mod error;
 pub mod filetypes;
 pub mod loader;
@@ -37,6 +38,8 @@ pub mod write;
 #[cfg(test)]
 mod tests_bread;
 #[cfg(test)]
+mod tests_bread_file;
+#[cfg(test)]
 mod tests_error;
 #[cfg(test)]
 mod tests_filetypes;
@@ -48,6 +51,9 @@ mod tests_payload;
 pub use sc_3mf::package::DecompressionProgress;
 
 pub use bread::{BREAD_SETTINGS_VERSION, read_bread_project, write_bread_project_with_progress};
+pub use bread_file::{
+    HollowDocument, SURFACE_DOCUMENT_VERSION, SupportDocument, SurfaceNote, read_bread_thumbnail,
+};
 pub use error::{ReadProjectError, WriteProjectError};
 pub use filetypes::{
     InferProjectFileTypeError, ProjectFileType, infer_project_file_type_from_extension,
@@ -59,7 +65,6 @@ pub use loader::{
 pub use messages::{ForeignDialect, ProfileRefWarning, ReadProjectWarning};
 pub use payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload, ReviewDecision};
 pub use read::{LoadedProject, read_project, read_project_with_progress};
-pub use sc_bread_format::{HollowDocument, SupportDocument};
 pub use slices::PlateSlices;
 pub use write::progress::WriteProgress;
 pub use write::{write_project, write_project_with_progress};

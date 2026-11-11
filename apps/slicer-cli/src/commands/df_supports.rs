@@ -62,6 +62,7 @@ pub(crate) fn restore_df_supports(
             DfSupportSession::restore_sets_into(
                 scene,
                 document.leaf,
+                document.model,
                 document.version,
                 &document.document,
             )

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_bread_format::{HollowDocument, SupportDocument};
+use crate::bread_file::{HollowDocument, SupportDocument};
 use sc_scene::Scene;
 use sc_sl1cer::contour::ContourStack;
 

@@ -28,7 +28,6 @@ sc-mesh-spatial = { workspace = true }
 sc-print-glue = { workspace = true }
 sc-print-primitives = { workspace = true, features = ["serde"] }
 sc-print-profiles = { workspace = true }
-sc-bread-format = { workspace = true }
 sc-project-formats = { workspace = true }
 sc-review = { workspace = true }
 sc-scene = { workspace = true }
@@ -89,6 +88,7 @@ toml = "1.1.2"
 winresource = "0.1.31"
 
 [dev-dependencies]
+bread-format = { workspace = true }
 sc-message-catalog = { workspace = true }
 sc-slicer-gui-base = { workspace = true, features = ["test-support"] }
 sc-slicer-gui-render = { workspace = true, features = ["test-support"] }
