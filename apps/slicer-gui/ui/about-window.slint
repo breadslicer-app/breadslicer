@@ -3,10 +3,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, Palette } from "std-widgets.slint";
+import { Theme } from "kit/theme.slint";
+import { Palette } from "std-widgets.slint";
+import { ScButton as Button } from "kit/controls.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 
 export component AboutWindow inherits Window {
+    // The app's own surface, not the platform style's (#507).
+    background: Theme.panel;
     title: @tr("About Breadslicer");
     icon: @image-url("../assets/images/breadslicer.png");
     default-font-family: "Noto Sans";

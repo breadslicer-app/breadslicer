@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, LineEdit, ScrollView, Palette } from "std-widgets.slint";
+import { Theme } from "../kit/theme.slint";
+import { ScrollView } from "std-widgets.slint";
+import { ScButton as Button, ScLineEdit as LineEdit } from "../kit/controls.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 import { FavouriteStar } from "./favourite-star.slint";
 import { FilterTabs } from "./filter-tabs.slint";
@@ -122,12 +124,12 @@ export component PrinterPreferences inherits PreferencesPage {
             y: Math.floor(i / gallery.columns) * (root.tile-h + root.tile-gap);
             width: root.tile-w;
             height: root.tile-h;
-            border-radius: 6px;
+            border-radius: Theme.radius-lg;
             border-width: card.id-index == root.selected-printer-index ? 2px : 1px;
             border-color: card.id-index == root.selected-printer-index
-                ? Palette.accent-background
-                : Palette.border;
-            background: Palette.alternate-background;
+                ? Theme.accent
+                : Theme.border;
+            background: Theme.card;
 
             TouchArea {
                 clicked => {
@@ -147,11 +149,11 @@ export component PrinterPreferences inherits PreferencesPage {
                 }
                 if !card.has-thumbnail: Rectangle {
                     height: 96px;
-                    border-radius: 4px;
-                    background: Palette.background;
+                    border-radius: Theme.radius;
+                    background: Theme.panel;
                     Text {
                         text: @tr("PreferencesPage" => "No image");
-                        color: Palette.foreground.transparentize(0.5);
+                        color: Theme.text.transparentize(0.5);
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
@@ -160,12 +162,12 @@ export component PrinterPreferences inherits PreferencesPage {
                     text: card.name;
                     wrap: word-wrap;
                     horizontal-alignment: center;
-                    font-size: 0.9rem;
+                    font-size: Theme.font-sm;
                 }
                 if card.is-custom: Text {
                     text: @tr("PreferencesPage" => "custom");
-                    color: Palette.foreground.transparentize(0.4);
-                    font-size: 0.7rem;
+                    color: Theme.text.transparentize(0.4);
+                    font-size: Theme.font-xs;
                     horizontal-alignment: center;
                 }
             }

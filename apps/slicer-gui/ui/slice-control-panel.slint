@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, Palette } from "std-widgets.slint";
+import { Theme } from "kit/theme.slint";
+import { ScButton as Button } from "kit/controls.slint";
 import { ScComboBox as ComboBox, ScLineEdit as LineEdit } from "kit/controls.slint";
 
 // Always-visible control panel for the Slice section: the scene's
@@ -153,10 +154,10 @@ export component SliceControlPanel inherits Rectangle {
         }
     }
 
-    background: Palette.background.darker(0.15);
-    border-color: Palette.border;
+    background: Theme.panel.darker(0.15);
+    border-color: Theme.border;
     border-width: 1px;
-    border-radius: 8px;
+    border-radius: Theme.radius-lg;
     clip: true;
     drop-shadow-blur: 14px;
     drop-shadow-color: #0000004d;
@@ -172,7 +173,7 @@ export component SliceControlPanel inherits Rectangle {
         // Title bar doubles as the drag handle.
         Rectangle {
             height: root.title-bar-height;
-            background: Palette.background.darker(0.3);
+            background: Theme.panel.darker(0.3);
 
             drag-area := TouchArea {
                 mouse-cursor: move;
@@ -225,7 +226,7 @@ export component SliceControlPanel inherits Rectangle {
                     horizontal-stretch: 1;
                     vertical-alignment: center;
                     font-weight: 600;
-                    color: Palette.foreground;
+                    color: Theme.text;
                     text: @tr("SlicePanel" => "Print Setup");
                     overflow: elide;
                     accessible-role: none;
@@ -242,7 +243,7 @@ export component SliceControlPanel inherits Rectangle {
                 Text {
                     text: @tr("SlicePanel" => "Printer");
                     font-size: 0.8rem;
-                    color: Palette.foreground.transparentize(0.3);
+                    color: Theme.text.transparentize(0.3);
                 }
                 printer-combo := ComboBox {
                     model: root.printer-options;
@@ -259,7 +260,7 @@ export component SliceControlPanel inherits Rectangle {
                 Text {
                     text: @tr("SlicePanel" => "Resin");
                     font-size: 0.8rem;
-                    color: Palette.foreground.transparentize(0.3);
+                    color: Theme.text.transparentize(0.3);
                 }
                 resin-combo := ComboBox {
                     model: root.resin-options;
@@ -276,7 +277,7 @@ export component SliceControlPanel inherits Rectangle {
                 Text {
                     text: @tr("SlicePanel" => "First layer height (mm)");
                     font-size: 0.8rem;
-                    color: Palette.foreground.transparentize(0.3);
+                    color: Theme.text.transparentize(0.3);
                 }
                 first-layer-height-input := LineEdit {
                     text: root.first-layer-height-text;
@@ -295,7 +296,7 @@ export component SliceControlPanel inherits Rectangle {
             Text {
                 text: @tr("SlicePanel" => "Slice is up to date.");
                 font-size: 0.8rem;
-                color: Palette.foreground.transparentize(0.3);
+                color: Theme.text.transparentize(0.3);
                 horizontal-alignment: center;
                 wrap: word-wrap;
                 opacity: root.slice-up-to-date ? 1.0 : 0.0;
@@ -323,7 +324,7 @@ export component SliceControlPanel inherits Rectangle {
                 Text {
                     text: @tr("SlicePanel" => "Print format");
                     font-size: 0.8rem;
-                    color: Palette.foreground.transparentize(0.3);
+                    color: Theme.text.transparentize(0.3);
                 }
                 print-format-combo := ComboBox {
                     model: root.print-format-options;
@@ -336,7 +337,7 @@ export component SliceControlPanel inherits Rectangle {
                 if root.print-format-note != "": Text {
                     text: root.print-format-note;
                     font-size: 0.8rem;
-                    color: Palette.foreground.transparentize(0.3);
+                    color: Theme.text.transparentize(0.3);
                     wrap: word-wrap;
                 }
             }
@@ -414,7 +415,7 @@ export component SliceControlPanel inherits Rectangle {
             viewbox-y: 0;
             viewbox-width: 16;
             viewbox-height: 16;
-            stroke: Palette.foreground.transparentize(0.5);
+            stroke: Theme.text.transparentize(0.5);
             stroke-width: 1.5px;
 
             MoveTo {

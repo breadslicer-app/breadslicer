@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Palette } from "std-widgets.slint";
+import { Theme } from "../kit/theme.slint";
 
 // A small star toggle for the Preferences printer / resin cards. Filled
 // with the accent colour when the profile is a favourite, a faint tone
@@ -27,8 +27,8 @@ export component FavouriteStar inherits Rectangle {
         viewbox-height: 100;
         commands: "M 50 3 L 61 35 L 95 35 L 67 56 L 78 88 L 50 68 L 22 88 L 33 56 L 5 35 L 39 35 Z";
         fill: root.favourite
-            ? Palette.accent-background
-            : Palette.foreground.transparentize(0.75);
+            ? Theme.accent
+            : Theme.text.transparentize(0.75);
     }
 
     TouchArea {

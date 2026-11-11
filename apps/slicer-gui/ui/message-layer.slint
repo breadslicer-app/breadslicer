@@ -206,7 +206,11 @@ export component MessageLayer inherits Rectangle {
                         : root.kind == MessageKind.slice-overwrite ? Icons.warning
                         : root.kind == MessageKind.recovery ? Icons.history
                         : Icons.pulse;
-                    tint: root.kind == MessageKind.error ? Theme.danger : Theme.accent;
+                    // Amber for what warns, red for an error, grey for the
+                    // rest: amber is never the thing to press (#507).
+                    tint: root.kind == MessageKind.error ? Theme.danger
+                        : root.kind == MessageKind.slice-overwrite || root.kind == MessageKind.stale-supports || root.kind == MessageKind.add-supports ? Theme.accent
+                        : Theme.text-soft;
                     title: root.notice ? (root.message.heading != "" ? root.message.heading : root.default-heading)
                         : root.kind == MessageKind.scene-change ? (root.message.closing ? @tr("ReplaceSceneDialog" => "Close the current scene?") : @tr("ReplaceSceneDialog" => "Replace the current scene?"))
                         : root.kind == MessageKind.slice-overwrite ? @tr("SliceOverwriteDialog" => "Re-slice this scene?")
@@ -255,7 +259,7 @@ export component MessageLayer inherits Rectangle {
                             alignment: start;
                             spacing: 16px;
 
-                            TouchArea {
+                            toggle-touch := TouchArea {
                                 width: toggle.preferred-width;
                                 height: toggle.preferred-height;
                                 mouse-cursor: pointer;
@@ -264,7 +268,7 @@ export component MessageLayer inherits Rectangle {
                                     alignment: start;
                                     DisclosureChevron {
                                         open: root.details-visible;
-                                        color: Theme.accent;
+                                        color: toggle-touch.has-hover ? Theme.text : Theme.text-muted;
                                         size: 9px;
                                         y: (parent.height - self.height) / 2;
                                     }
@@ -273,7 +277,7 @@ export component MessageLayer inherits Rectangle {
                                             ? (root.details-visible ? @tr("ErrorDialog" => "Hide technical details") : @tr("ErrorDialog" => "Show technical details"))
                                             : (root.details-visible ? @tr("InfoDialog" => "Hide details") : @tr("InfoDialog" => "Show details"));
                                         font-size: Theme.font-sm;
-                                        color: Theme.accent;
+                                        color: toggle-touch.has-hover ? Theme.text : Theme.text-muted;
                                         vertical-alignment: center;
                                     }
                                 }
@@ -285,14 +289,14 @@ export component MessageLayer inherits Rectangle {
 
                             // Copies the details as text, to paste them in
                             // a message or an issue.
-                            if root.details-visible: TouchArea {
+                            if root.details-visible: copy-touch := TouchArea {
                                 width: copy-label.preferred-width;
                                 height: copy-label.preferred-height;
                                 mouse-cursor: pointer;
                                 copy-label := Text {
                                     text: root.copied ? @tr("InfoDialog" => "Copied") : @tr("InfoDialog" => "Copy details");
                                     font-size: Theme.font-sm;
-                                    color: Theme.accent;
+                                    color: copy-touch.has-hover ? Theme.text : Theme.text-muted;
                                     vertical-alignment: center;
                                 }
                                 clicked => {
@@ -570,7 +574,7 @@ export component MessageLayer inherits Rectangle {
                         Text {
                             text: "•";
                             font-size: Theme.font-sm;
-                            color: Theme.accent;
+                            color: Theme.text-faint;
                             accessible-role: none;
                         }
                         BodyText {

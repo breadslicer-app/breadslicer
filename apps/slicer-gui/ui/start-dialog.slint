@@ -64,7 +64,7 @@ component FileTile inherits Rectangle {
             x: (parent.width - self.width) / 2;
             commands: Icons.file;
             size: 18px;
-            color: root.file.project ? Theme.accent : Theme.text-muted;
+            color: root.file.project ? Theme.text : Theme.text-muted;
         }
         Text {
             text: root.file.kind;
@@ -73,7 +73,7 @@ component FileTile inherits Rectangle {
             font-weight: 700;
             letter-spacing: 0.4px;
             horizontal-alignment: center;
-            color: root.file.project ? Theme.accent : Theme.text-muted;
+            color: root.file.project ? Theme.text : Theme.text-muted;
             accessible-role: none;
         }
     }

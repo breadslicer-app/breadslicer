@@ -12,21 +12,25 @@ import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Icon } from "controls.slint";
 
-// The tile an icon sits on at the head of a dialog.
+// The tile an icon sits on at the head of a dialog: a small framed square,
+// as a drawing marks a part (#507). Its colour is the icon's alone: amber
+// for a warning, red for an error, grey for the rest.
 export component IconTile inherits Rectangle {
     in property <string> icon;
-    in property <brush> tint: Theme.accent;
+    in property <brush> tint: Theme.text-soft;
 
-    width: 40px;
-    height: 40px;
-    border-radius: Theme.radius-lg;
-    background: self.tint.transparentize(0.86);
+    width: 30px;
+    height: 30px;
+    border-radius: Theme.radius;
+    background: Theme.well;
+    border-width: 1px;
+    border-color: Theme.border;
 
     Icon {
         commands: root.icon;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        size: 24px;
+        size: 16px;
         color: root.tint;
     }
 }
@@ -66,7 +70,7 @@ export component CloseButton inherits Rectangle {
 // the close button at the top right.
 export component DialogHead inherits HorizontalLayout {
     in property <string> icon;
-    in property <brush> tint: Theme.accent;
+    in property <brush> tint: Theme.text-soft;
     in property <string> title;
     // Small text beside the title, such as the version; empty shows none.
     in property <string> badge;
@@ -78,11 +82,11 @@ export component DialogHead inherits HorizontalLayout {
     in property <string> close-label;
     callback close();
 
-    padding-left: 22px;
-    padding-right: 12px;
-    padding-top: 18px;
-    padding-bottom: 16px;
-    spacing: 14px;
+    padding-left: 20px;
+    padding-right: 10px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+    spacing: 12px;
 
     IconTile {
         y: (parent.height - self.height) / 2;
@@ -101,8 +105,8 @@ export component DialogHead inherits HorizontalLayout {
 
             Text {
                 text: root.title;
-                font-size: 18px;
-                font-weight: 700;
+                font-size: Theme.font-lg;
+                font-weight: 600;
                 color: Theme.text;
                 vertical-alignment: bottom;
                 wrap: word-wrap;
@@ -118,7 +122,7 @@ export component DialogHead inherits HorizontalLayout {
         }
         if root.subtitle != "": Text {
             text: root.subtitle;
-            font-size: Theme.font-sm;
+            font-size: Theme.font-xs;
             color: Theme.text-muted;
             wrap: root.subtitle-wraps ? TextWrap.word-wrap : TextWrap.no-wrap;
             overflow: elide;
@@ -156,19 +160,18 @@ export component ActionRow inherits Rectangle {
     in property <string> icon;
     in property <string> title;
     in property <string> detail;
-    // The way the dialog leads with: the accent around it.
+    // The way the dialog leads with: framed, its tile in the primary
+    // button's light, as the primary button is (#507).
     in property <bool> lead;
     // The icon's colour on a row that does not lead.
-    in property <brush> tint: Theme.accent;
+    in property <brush> tint: Theme.text-soft;
     callback clicked();
 
-    height: 56px;
+    height: 52px;
     border-radius: Theme.radius;
     border-width: self.lead ? 1px : 0px;
-    border-color: Theme.accent.transparentize(0.35);
-    background: self.lead
-        ? (touch.has-hover ? Theme.accent.transparentize(0.78) : Theme.accent.transparentize(0.88))
-        : (touch.has-hover ? Theme.hover : transparent);
+    border-color: Theme.border-strong;
+    background: touch.has-hover ? Theme.hover : self.lead ? Theme.raised : transparent;
     accessible-role: button;
     accessible-label: self.title;
     accessible-description: self.detail;
@@ -182,18 +185,20 @@ export component ActionRow inherits Rectangle {
         spacing: 12px;
 
         Rectangle {
-            width: 34px;
-            height: 34px;
+            width: 30px;
+            height: 30px;
             y: (parent.height - self.height) / 2;
             border-radius: Theme.radius;
-            background: root.lead ? Theme.accent : Theme.well;
+            background: root.lead ? Theme.action : Theme.well;
+            border-width: root.lead ? 0px : 1px;
+            border-color: Theme.border;
 
             Icon {
                 commands: root.icon;
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                size: 18px;
-                color: root.lead ? Theme.on-accent : root.tint;
+                size: 16px;
+                color: root.lead ? Theme.on-action : root.tint;
             }
         }
 

@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, Palette, ScrollView } from "std-widgets.slint";
+import { Palette, ScrollView } from "std-widgets.slint";
+import { ScButton as Button } from "kit/controls.slint";
 import { ScProgress as ProgressIndicator } from "./kit/controls.slint";
 import { AboutWindow } from "about-window.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
@@ -2632,15 +2633,15 @@ export component MainWindow inherits Window {
     if root.drop-hovering: Rectangle {
         width: 100%;
         height: 100%;
-        background: Palette.background.transparentize(0.25);
-        border-color: Palette.accent-background;
+        background: Theme.panel.transparentize(0.25);
+        border-color: Theme.accent;
         border-width: 3px;
 
         Text {
             text: @tr("Drop to open");
             font-size: 1.6rem;
             font-weight: 700;
-            color: Palette.foreground;
+            color: Theme.text;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -2655,8 +2656,8 @@ export component MainWindow inherits Window {
         height: progress-panel-layout.preferred-height;
         x: (parent.width - self.width) / 2;
         y: parent.height - self.height - Theme.statusbar-height - 16px;
-        background: Palette.background;
-        border-color: Palette.border;
+        background: Theme.panel;
+        border-color: Theme.border;
         border-width: 1px;
         border-radius: 6px;
 
@@ -2670,7 +2671,7 @@ export component MainWindow inherits Window {
                     : root.load-phase == LoadPhase.PreparingGeometry
                     ? @tr("Preparing geometry…")
                     : @tr("Uploading to GPU…");
-                color: Palette.foreground;
+                color: Theme.text;
             }
 
             ProgressIndicator {
@@ -2689,8 +2690,8 @@ export component MainWindow inherits Window {
         height: support-gen-progress-panel-layout.preferred-height;
         x: (parent.width - self.width) / 2;
         y: parent.height - self.height - Theme.statusbar-height - 16px;
-        background: Palette.background;
-        border-color: Palette.border;
+        background: Theme.panel;
+        border-color: Theme.border;
         border-width: 1px;
         border-radius: 6px;
 
@@ -2702,7 +2703,7 @@ export component MainWindow inherits Window {
                 text: root.support-gen-phase == ""
                     ? @tr("Generating support structure…")
                     : root.support-gen-phase;
-                color: Palette.foreground;
+                color: Theme.text;
             }
 
             ProgressIndicator {
@@ -2727,8 +2728,8 @@ export component MainWindow inherits Window {
         height: save-progress-panel-layout.preferred-height;
         x: (parent.width - self.width) / 2;
         y: parent.height - self.height - Theme.statusbar-height - 16px;
-        background: Palette.background;
-        border-color: Palette.border;
+        background: Theme.panel;
+        border-color: Theme.border;
         border-width: 1px;
         border-radius: 6px;
 
@@ -2744,7 +2745,7 @@ export component MainWindow inherits Window {
                     : root.save-phase == SavePhase.Compressing
                     ? @tr("Compressing…")
                     : @tr("Writing file…");
-                color: Palette.foreground;
+                color: Theme.text;
             }
 
             ProgressIndicator {
@@ -2783,8 +2784,8 @@ export component MainWindow inherits Window {
             height: slice-card.preferred-height;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            background: Palette.background;
-            border-color: Palette.border;
+            background: Theme.panel;
+            border-color: Theme.border;
             border-width: 1px;
             border-radius: 8px;
 
@@ -2795,12 +2796,12 @@ export component MainWindow inherits Window {
                 Text {
                     text: @tr("SlicePanel" => "Slicing...");
                     font-weight: 600;
-                    color: Palette.foreground;
+                    color: Theme.text;
                     horizontal-alignment: center;
                 }
                 if root.slice-fix-pass != "": Text {
                     text: root.slice-fix-pass;
-                    color: Palette.foreground.transparentize(0.3);
+                    color: Theme.text.transparentize(0.3);
                     horizontal-alignment: center;
                 }
                 Text {
@@ -2809,7 +2810,7 @@ export component MainWindow inherits Window {
                         : root.slice-total > 0
                         ? @tr("SlicePanel" => "{} / {} layers", root.slice-completed, root.slice-total)
                         : @tr("SlicePanel" => "Preparing...");
-                    color: Palette.foreground.transparentize(0.3);
+                    color: Theme.text.transparentize(0.3);
                     horizontal-alignment: center;
                 }
                 ProgressIndicator {

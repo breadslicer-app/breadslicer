@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, CheckBox, ComboBox, Palette, ProgressIndicator } from "std-widgets.slint";
+import { Theme } from "../kit/theme.slint";
+import { ScButton as Button, ScCheckBox as CheckBox, ScComboBox as ComboBox, ScProgress as ProgressIndicator } from "../kit/controls.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 
 export enum ThemePreference { System, Light, Dark }
@@ -138,7 +139,7 @@ export component AppearancePreferences inherits PreferencesPage {
         if root.silenced-message-count > 0: Text {
             text: @tr("AppearancePreferences" => "Hidden messages: {}", root.silenced-message-count);
             vertical-alignment: center;
-            color: Palette.foreground.transparentize(0.4);
+            color: Theme.text.transparentize(0.4);
         }
     }
 
@@ -234,7 +235,7 @@ export component AppearancePreferences inherits PreferencesPage {
     Text {
         text: @tr("AppearancePreferences" => "Automatic follows your monitor and uses 30 FPS on battery. The 3D view only draws when something changes.");
         wrap: word-wrap;
-        color: Palette.foreground.transparentize(0.4);
+        color: Theme.text.transparentize(0.4);
     }
 
     HorizontalLayout {

@@ -89,33 +89,60 @@ pub(crate) struct OpenDetails {
     pub(crate) detail_width: u32,
 }
 
-/// Whether `p` has the accent's warm tone, blended into the card or not: the
-/// edges of text and paths are anti-aliased, so few of their pixels are the
-/// exact accent.
-fn accent_toned(p: [u8; 3]) -> bool {
-    p[0] >= 0x80 && i32::from(p[0]) - i32::from(p[2]) > 40
+/// Whether `p` is something drawn on the card: neither the card nor the
+/// well and lines its text sits on.
+fn ink(p: [u8; 3]) -> bool {
+    !CARD.contains(&p) && !GROUNDS.contains(&p)
 }
 
-/// The rows (first, last) of the lowest run of rows with accent-toned pixels
-/// above the primary button, and the button's top row. The info icon is
-/// accent too, but higher up, above the line under the head.
+/// Whether row `y` holds a stretch of the details' well, the darkest ground.
+fn well_row(pixel: &dyn Fn(u32, u32) -> [u8; 3], width: u32, y: u32) -> bool {
+    let well = |x: u32| GROUNDS[..2].contains(&pixel(x, y));
+    let mut run = 0;
+    (0..width).any(|x| {
+        run = if well(x) { run + 1 } else { 0 };
+        run >= 40
+    })
+}
+
+/// The rows (first, last) of the details toggle, the line just above the
+/// details' well, and the primary button's top row.
 fn toggle_rows(pixel: &dyn Fn(u32, u32) -> [u8; 3], width: u32, height: u32) -> (u32, u32, u32) {
     let (button_top, _) = primary_rows(pixel, width, height);
-    let toned = |y: u32| (0..width).any(|x| accent_toned(pixel(x, y)));
-    let bottom = (0..button_top.saturating_sub(4))
+    let well_bottom = (0..button_top)
         .rev()
-        .find(|&y| toned(y))
+        .find(|&y| well_row(pixel, width, y))
+        .expect("the notice shows its details");
+    let mut well_top = well_bottom;
+    while well_top > 0 && well_row(pixel, width, well_top - 1) {
+        well_top -= 1;
+    }
+    // Inside the card: from its left edge on the row, past its border.
+    let inked = |y: u32| {
+        let Some(left) = (0..width).find(|&x| CARD.contains(&pixel(x, y))) else {
+            return false;
+        };
+        let right = (left..width)
+            .rev()
+            .find(|&x| CARD.contains(&pixel(x, y)))
+            .unwrap_or(left);
+        (left..right).any(|x| ink(pixel(x, y)))
+    };
+    // Up past the well's border and the gap over it.
+    let bottom = (0..well_top.saturating_sub(2))
+        .rev()
+        .find(|&y| inked(y))
         .expect("the notice shows a details toggle");
     let mut top = bottom;
-    while top > 0 && toned(top - 1) {
+    while top > 0 && inked(top - 1) {
         top -= 1;
     }
     (top, bottom, button_top)
 }
 
 /// Reads the card of the notice open in `window`, whose details a notice
-/// shows from the start (#392). The toggle is found by its accent tone
-/// above the primary button.
+/// shows from the start (#392). The toggle is the line just above the
+/// details' well.
 pub(crate) fn open_details(window: &slint::Window) -> OpenDetails {
     render_frames();
     let shot = window
@@ -127,20 +154,21 @@ pub(crate) fn open_details(window: &slint::Window) -> OpenDetails {
         [p.r, p.g, p.b]
     };
     let (top, bottom, button_top) = toggle_rows(&pixel, width, height);
-    // The chevron: the accent-toned columns from the toggle's left edge up
-    // to the first column without any.
-    let toned_column = |x: u32| (top..=bottom).any(|y| accent_toned(pixel(x, y)));
-    let left = (0..width).find(|&x| toned_column(x)).unwrap_or(0);
+    // The chevron: the inked columns from the toggle's left edge, inside
+    // the card, up to the first column without any.
+    let card_left = (0..width)
+        .find(|&x| CARD.contains(&pixel(x, bottom)))
+        .unwrap_or(0);
+    let toned_column = |x: u32| (top..=bottom).any(|y| ink(pixel(x, y)));
+    let left = (card_left..width).find(|&x| toned_column(x)).unwrap_or(0);
     let chevron_end = (left..width).find(|&x| !toned_column(x)).unwrap_or(left);
     let chevron_pixels = (left..chevron_end)
         .flat_map(|x| (top..=bottom).map(move |y| (x, y)))
-        .filter(|&(x, y)| accent_toned(pixel(x, y)))
+        .filter(|&(x, y)| ink(pixel(x, y)))
         .count();
     let chevron_rows = (top..=bottom)
         .filter_map(|y| {
-            let xs: Vec<u32> = (left..chevron_end)
-                .filter(|&x| accent_toned(pixel(x, y)))
-                .collect();
+            let xs: Vec<u32> = (left..chevron_end).filter(|&x| ink(pixel(x, y))).collect();
             let (first, last) = (*xs.first()?, *xs.last()?);
             let gap = xs.len() as u32 != last - first + 1;
             Some((last - first + 1, gap))

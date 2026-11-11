@@ -46,22 +46,30 @@ export component ScButton inherits Rectangle {
     in property <string> text;
     in property <string> icon;
     in property <ButtonKind> kind: ButtonKind.normal;
+    // The standard Button's way to ask for the primary look.
+    in property <bool> primary;
     in property <bool> enabled: true;
     in property <length> button-height: 28px;
     // A ring around the button: what Enter presses.
     in property <bool> ring;
     callback clicked();
 
+    property <bool> lead: root.primary || root.kind == ButtonKind.primary;
+
     height: self.button-height;
+    // Takes the keyboard like the standard button, so a window can start on
+    // it and Tab reaches it; a click leaves the keyboard where it was, so
+    // the 3D view keeps its keys.
+    forward-focus: keys;
     min-width: layout.preferred-width;
     border-radius: Theme.radius;
     border-width: self.kind == ButtonKind.ghost ? 0px : 1px;
     // Off, a button keeps its shape and a text that can be read: only the
     // fill and the weight of the line go.
     border-color: !self.enabled ? Theme.border
-        : self.kind == ButtonKind.primary ? Theme.action : Theme.border-strong;
+        : root.lead ? Theme.action : Theme.border-strong;
     background: !self.enabled ? (self.kind == ButtonKind.ghost ? transparent : Theme.raised)
-        : self.kind == ButtonKind.primary ? (touch.has-hover ? Theme.action-hover : Theme.action)
+        : root.lead ? (touch.has-hover ? Theme.action-hover : Theme.action)
         : self.kind == ButtonKind.ghost ? (touch.has-hover ? Theme.hover : transparent)
         : (touch.has-hover ? Theme.hover : Theme.raised);
     accessible-role: button;
@@ -72,7 +80,19 @@ export component ScButton inherits Rectangle {
         }
     }
 
-    if root.ring: Rectangle {
+    keys := FocusScope {
+        enabled: root.enabled;
+        focus-on-click: false;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    if root.ring || keys.has-focus: Rectangle {
         x: -3px;
         y: -3px;
         width: parent.width + 6px;
@@ -93,15 +113,15 @@ export component ScButton inherits Rectangle {
             size: 16px;
             y: (parent.height - self.height) / 2;
             color: !root.enabled ? Theme.text-faint
-                : root.kind == ButtonKind.primary ? Theme.on-action : Theme.text-soft;
+                : root.lead ? Theme.on-action : Theme.text-soft;
         }
         if root.text != "": Text {
             text: root.text;
             vertical-alignment: center;
             font-size: Theme.font;
-            font-weight: root.kind == ButtonKind.primary ? 600 : 500;
+            font-weight: root.lead ? 600 : 500;
             color: !root.enabled ? Theme.text-muted
-                : root.kind == ButtonKind.primary ? Theme.on-action : Theme.text;
+                : root.lead ? Theme.on-action : Theme.text;
         }
     }
 
