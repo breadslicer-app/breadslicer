@@ -53,6 +53,17 @@ pub(crate) enum RecoveryChoice {
     Later,
 }
 
+/// The answer to "this file has supports" (#258).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeparateChoice {
+    /// The file stays one model, as it came.
+    Leave,
+    /// The model and its imported supports become 2 objects.
+    Separate,
+    /// The model alone, waiting for supports made here.
+    Replace,
+}
+
 /// The answer to "supports out of date" (#408).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StaleSupportsChoice {
@@ -215,13 +226,7 @@ enum Entry {
     SeparateSupports {
         build_texts: Box<dyn Fn() -> InfoTexts>,
         context: SharedString,
-        on_choice: Box<dyn FnOnce(bool)>,
-    },
-    /// Right after separating a file's supports: replace them with
-    /// supports made here?
-    ReplaceImported {
-        context: SharedString,
-        on_choice: Box<dyn FnOnce(bool)>,
+        on_choice: Box<dyn FnOnce(SeparateChoice)>,
     },
     Recovery {
         /// 1 line per scene.
@@ -250,7 +255,6 @@ impl Entry {
             | Self::SliceOverwrite { .. }
             | Self::AddSupports { .. }
             | Self::SeparateSupports { .. }
-            | Self::ReplaceImported { .. }
             | Self::Recovery { .. } => MessageClass::MustAnswer,
         }
     }
@@ -344,15 +348,6 @@ impl Entry {
                 message.text = texts.message;
                 message.context = context.clone();
             }
-            Self::ReplaceImported { context, .. } => {
-                message.kind = MessageKind::ReplaceImported;
-                message.heading = ctr!("SeparateSupportsDialog", "Replace the imported supports?");
-                message.text = ctr!(
-                    "SeparateSupportsDialog",
-                    "Breadslicer can take the file's supports away and make its own for this model, with the preset of the Supports tab. Kept, the imported supports print as they came."
-                );
-                message.context = context.clone();
-            }
             Self::Diagnostics { has_scene, .. } => {
                 message.kind = MessageKind::Diagnostics;
                 message.has_scene = *has_scene;
@@ -414,14 +409,12 @@ impl Entry {
                     on_yes();
                 }
             }
-            Self::SeparateSupports { on_choice, .. } => {
-                // Anything but Separate leaves the file as it came.
-                on_choice(answer == MessageAnswer::Confirm);
-            }
-            Self::ReplaceImported { on_choice, .. } => {
-                // Anything but Replace keeps the imported supports.
-                on_choice(answer == MessageAnswer::Confirm);
-            }
+            Self::SeparateSupports { on_choice, .. } => on_choice(match answer {
+                MessageAnswer::Confirm => SeparateChoice::Replace,
+                MessageAnswer::Separate => SeparateChoice::Separate,
+                // Anything else leaves the file as it came.
+                _ => SeparateChoice::Leave,
+            }),
             Self::Diagnostics {
                 has_scene, on_save, ..
             } => {
@@ -800,26 +793,11 @@ impl DialogManager {
         self: &Rc<Self>,
         context: SharedString,
         build_texts: impl Fn() -> InfoTexts + 'static,
-        on_choice: impl FnOnce(bool) + 'static,
+        on_choice: impl FnOnce(SeparateChoice) + 'static,
     ) {
         crate::breadcrumbs::note(&format!("message: {}", build_texts().heading));
         self.enqueue(Entry::SeparateSupports {
             build_texts: Box::new(build_texts),
-            context,
-            on_choice: Box::new(on_choice),
-        });
-    }
-
-    /// Asks, right after a file's supports were separated, whether to
-    /// replace them with supports made here. Calls `on_choice` once with the
-    /// answer. Must run on the Slint UI thread.
-    pub(crate) fn show_replace_imported(
-        self: &Rc<Self>,
-        context: SharedString,
-        on_choice: impl FnOnce(bool) + 'static,
-    ) {
-        crate::breadcrumbs::note("message: replace the imported supports?");
-        self.enqueue(Entry::ReplaceImported {
             context,
             on_choice: Box::new(on_choice),
         });
