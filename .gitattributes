@@ -21,3 +21,5 @@ docs/sc/evidence/supports-wolverine-query/*.log -text whitespace=-blank-at-eof,-
 # Bundled profiles are checked byte-for-byte against the profile writer's
 # LF output; keep them LF on every checkout (binaries stay auto-detected).
 assets/profiles/** text=auto eol=lf
+# .bread files are binary: a line-ending change breaks them.
+*.bread binary
