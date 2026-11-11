@@ -2533,6 +2533,101 @@ impl DfSupportRun {
             _ => return,
         }
         self.set_options(o);
+        if matches!(code, 9..=11) {
+            self.rafts_follow();
+        }
+    }
+
+    /// The tab's raft changed (#519): the sets already made, of the models
+    /// Generate would work on, are drawn again on it, in one undo step. The
+    /// supports stay where they are: only the raft and the roots' feet on it
+    /// change, so there is nothing to generate again.
+    fn rafts_follow(&self) {
+        // A run in flight lands with the raft it started with, and a hand
+        // edit in flight with its set's: neither is drawn over under them.
+        if self.handle.borrow().is_some()
+            || self.pending_click.borrow().is_some()
+            || !self.queued_clicks.borrow().is_empty()
+        {
+            return;
+        }
+        let options = self.options.borrow().clone();
+        let targets = self.target_models();
+        let sets: Vec<DrawnSet> = self
+            .document
+            .with_scene(|spatial| sets_in_force(spatial, &self.sessions))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| !d.unborn && targets.as_ref().is_none_or(|t| t.contains(&d.model)))
+            .collect();
+        let started = Instant::now();
+        // Each set is drawn on its own thread: a set is a few tens of
+        // milliseconds, a plate of them would add up.
+        let redrawn: Vec<(DrawnSet, DfSupportSession, Arc<sc_mesh_core::IndexedMesh>)> =
+            std::thread::scope(|scope| {
+                let jobs: Vec<_> = sets
+                    .into_iter()
+                    .filter_map(|drawn| {
+                        let next = drawn.session.with_raft_of(&options)?;
+                        Some(scope.spawn(move || {
+                            let mesh =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    next.mesh()
+                                }));
+                            match mesh {
+                                Ok(Ok(Some(mesh))) => Some((drawn, next, Arc::new(mesh))),
+                                _ => None,
+                            }
+                        }))
+                    })
+                    .collect();
+                jobs.into_iter()
+                    .filter_map(|job| job.join().ok().flatten())
+                    .collect()
+            });
+        if redrawn.is_empty() {
+            return;
+        }
+        let swaps: Option<Vec<SceneEdit>> = redrawn
+            .iter()
+            .map(|(drawn, _, mesh)| {
+                self.document
+                    .with_scene(|spatial| leaf_mesh_swap(spatial.graph(), drawn.leaf, mesh.clone()))
+                    .flatten()
+            })
+            .collect();
+        let Some(mut swaps) = swaps else {
+            return;
+        };
+        let swap = if swaps.len() == 1 {
+            swaps.pop().expect("len == 1")
+        } else {
+            SceneEdit::Compound(swaps)
+        };
+        if self.document.apply_edit(swap.clone()).is_err() {
+            return;
+        }
+        self.document.push_edit(swap);
+        let count = redrawn.len();
+        for (drawn, next, _) in redrawn {
+            record(
+                &self.document,
+                &self.sessions,
+                drawn.leaf,
+                drawn.model,
+                Arc::new(next),
+            );
+        }
+        crate::breadcrumbs::note(&format!(
+            "supports: {count} set(s) drawn on the new raft in {} ms",
+            started.elapsed().as_millis()
+        ));
+        self.show_status(ctr!(
+            "Workspace",
+            "The raft of 1 set of supports changed; the supports stayed where they were.",
+            "The raft of {n} sets of supports changed; the supports stayed where they were.",
+            count
+        ));
     }
 
     fn reload_presets(&self) {
@@ -10324,4 +10419,8 @@ mod hand_edit_tests {
     // The support test plate (#464), written on request.
     #[path = "../../tests_support_test_plate.rs"]
     mod support_test_plate;
+
+    // A new raft redraws the sets already made (#519).
+    #[path = "../../tests_raft_follows.rs"]
+    mod raft_follows;
 }

@@ -6886,3 +6886,11 @@ msgid "The plane crosses 1 part: it is cut."
 msgid_plural "The plane crosses {n} parts: all are cut."
 msgstr[0] "El plano atraviesa 1 parte: se corta."
 msgstr[1] "El plano atraviesa {n} partes: se cortan todas."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Workspace"
+msgid "The raft of 1 set of supports changed; the supports stayed where they were."
+msgid_plural "The raft of {n} sets of supports changed; the supports stayed where they were."
+msgstr[0] "Cambió la balsa de 1 juego de soportes; los soportes quedaron donde estaban."
+msgstr[1] "Cambió la balsa de {n} juegos de soportes; los soportes quedaron donde estaban."

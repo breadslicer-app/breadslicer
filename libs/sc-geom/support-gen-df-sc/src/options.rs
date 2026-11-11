@@ -194,14 +194,21 @@ impl DfSupportOptions {
         } else {
             ShaftStyle::DragonFruit
         };
+        if let Some(zones) = &o.zones {
+            apply_zones(zones, settings);
+        }
+        o.apply_raft(settings);
+    }
+
+    /// Sets the raft of `settings` to these options' (#519): its kind, its
+    /// thickness and its wall. Whether that changed it.
+    pub(crate) fn apply_raft(&self, settings: &mut PipelineSettings) -> bool {
+        let o = self.clamped();
         let mode = match o.raft {
             RaftMode::Solid => RaftBottomMode::Solid,
             RaftMode::Lines => RaftBottomMode::Line,
             RaftMode::Off => RaftBottomMode::Off,
         };
-        if let Some(zones) = &o.zones {
-            apply_zones(zones, settings);
-        }
         // Through the store, as DragonFruit's panel does, only when the raft
         // really changes: the store also resolves the rest of the raft.
         let g = settings.rafts.global;
@@ -217,7 +224,9 @@ impl DfSupportOptions {
                 },
                 true,
             );
+            return true;
         }
+        false
     }
 }
 
