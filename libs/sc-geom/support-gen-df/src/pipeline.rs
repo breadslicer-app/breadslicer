@@ -131,9 +131,6 @@ pub struct PipelineSettings {
     /// Closed, manifold raft geometry for a contour slicer (SoulCrafted's;
     /// see `robust_wall`). `false` keeps DragonFruit's.
     pub robust_raft_geometry: bool,
-    /// Small feet for the roots on a line raft (SoulCrafted's, #518).
-    /// `false` keeps DragonFruit's disks.
-    pub line_raft_feet: bool,
 }
 
 impl PipelineSettings {
@@ -151,7 +148,6 @@ impl PipelineSettings {
             tip_drawing: TipDrawing::default(),
             shaft_style: ShaftStyle::DragonFruit,
             robust_raft_geometry: false,
-            line_raft_feet: false,
         }
     }
 }
@@ -848,7 +844,6 @@ pub fn support_soup(
         tip_drawing: settings.tip_drawing,
         shaft_style: settings.shaft_style,
         robust_raft_geometry: settings.robust_raft_geometry,
-        line_raft_feet: settings.line_raft_feet,
     })
 }
 

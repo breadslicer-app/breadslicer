@@ -2226,11 +2226,7 @@ impl DfSupportSession {
     /// lines and its wall, each root's disk and its cone. What the view from
     /// under the plate hides (#481); 0 with neither.
     pub fn raft_top_mm(&self) -> f64 {
-        raft_and_feet_top_mm(
-            &self.state.collections,
-            &self.settings.rafts.global,
-            self.settings.line_raft_feet,
-        )
+        raft_and_feet_top_mm(&self.state.collections, &self.settings.rafts.global)
     }
 
     /// The tip diameter of support `id`, when it has one.

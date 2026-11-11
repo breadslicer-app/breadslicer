@@ -14,7 +14,13 @@ use crate::three::buffer_geometry::BufferGeometry;
 use crate::three::extrude_geometry::{ExtrudeOptions, extrude_geometry};
 use crate::three::math_utils::js_max;
 
-/// Beam rectangle around `a -> b`, extended by half a width at each end.
+/// How many sides the round joint at each end of a beam has.
+const JOINT_SIDES: usize = 24;
+
+/// Beam rectangle from `a` to `b`, ending at them: the round joint at each
+/// end ([`build_joint_ring`]) closes it. Square ends stretched past the ends,
+/// as DragonFruit draws them, stuck out as little corners where several beams
+/// meet (SoulCrafted, #518).
 fn build_beam_ring(a: Vector2, b: Vector2, width_mm: f64) -> Vec<Vector2> {
     let half_width = js_max(0.001, width_mm / 2.0);
     let dir = b.sub(a);
@@ -23,8 +29,7 @@ fn build_beam_ring(a: Vector2, b: Vector2, width_mm: f64) -> Vec<Vector2> {
         return Vec::new();
     }
     let dir = dir.multiply_scalar(1.0 / length);
-    let start = a.add_scaled_vector(dir, -half_width);
-    let end = b.add_scaled_vector(dir, half_width);
+    let (start, end) = (a, b);
     let normal = Vector2::new(-dir.y, dir.x);
     vec![
         start.add_scaled_vector(normal, half_width),
@@ -32,6 +37,17 @@ fn build_beam_ring(a: Vector2, b: Vector2, width_mm: f64) -> Vec<Vector2> {
         end.add_scaled_vector(normal, -half_width),
         start.add_scaled_vector(normal, -half_width),
     ]
+}
+
+/// A disk as wide as a beam round `at`, turning the way a beam ring does.
+fn build_joint_ring(at: Vector2, width_mm: f64) -> Vec<Vector2> {
+    let r = js_max(0.001, width_mm / 2.0);
+    (0..JOINT_SIDES)
+        .map(|k| {
+            let a = -std::f64::consts::TAU * k as f64 / JOINT_SIDES as f64;
+            Vector2::new(at.x + r * a.cos(), at.y + r * a.sin())
+        })
+        .collect()
 }
 
 /// `filterLineRaftEdges(edges, clearance, beamWidthMm)`.
@@ -82,11 +98,20 @@ pub fn generate_unioned_line_raft_mesh(
     let width = js_max(0.001, width_mm);
     let height = js_max(0.001, height_mm);
     let mut subjects: Vec<PolygonWithHoles> = Vec::new();
+    let mut joints: Vec<Vector2> = Vec::new();
     for &(a, b) in edges {
         let ring = build_beam_ring(a, b, width);
         if ring.len() >= 3 {
             subjects.push(ring_to_polygon(ring));
+            for end in [a, b] {
+                if !joints.iter().any(|j| j.sub(end).length() < 1e-6) {
+                    joints.push(end);
+                }
+            }
         }
+    }
+    for at in joints {
+        subjects.push(ring_to_polygon(build_joint_ring(at, width)));
     }
     if let Some(border) = border_profile.filter(|b| b.len() >= 3) {
         let inner = inset_convex_polygon(border, width);
@@ -126,4 +151,44 @@ pub fn generate_unioned_line_raft_mesh(
         return Ok(chamfered);
     }
     Ok(extrude(&polys))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #518: where beams meet, nothing sticks out past half a line's width
+    /// from them: the joints are round, not the beams' square ends.
+    #[test]
+    fn beams_meet_in_round_joints_with_no_corners_out() {
+        let n = |x: f64, y: f64| Vector2::new(x, y);
+        // Three beams meeting at the origin at uneven angles, and a fourth
+        // from one of their far ends.
+        let edges = [
+            (n(0.0, 0.0), n(10.0, 0.0)),
+            (n(0.0, 0.0), n(-4.0, 9.0)),
+            (n(0.0, 0.0), n(-7.0, -6.0)),
+            (n(10.0, 0.0), n(14.0, 8.0)),
+        ];
+        let width = 1.5;
+        let mesh = generate_unioned_line_raft_mesh(&edges, width, 0.6, None, None).unwrap();
+        let points = mesh.position.as_ref().expect("a mesh");
+        assert!(!points.is_empty());
+        let seg = |p: Vector2, a: Vector2, b: Vector2| {
+            let d = b.sub(a);
+            let t = (((p.x - a.x) * d.x + (p.y - a.y) * d.y) / (d.x * d.x + d.y * d.y))
+                .clamp(0.0, 1.0);
+            (p.x - a.x - d.x * t).hypot(p.y - a.y - d.y * t)
+        };
+        let mut farthest: f64 = 0.0;
+        for p in points.as_chunks::<3>().0 {
+            let at = n(f64::from(p[0]), f64::from(p[1]));
+            let near = edges
+                .iter()
+                .map(|&(a, b)| seg(at, a, b))
+                .fold(f64::MAX, f64::min);
+            farthest = farthest.max(near);
+        }
+        assert!(farthest <= width / 2.0 + 1e-3, "{farthest}");
+    }
 }

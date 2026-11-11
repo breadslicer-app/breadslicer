@@ -1056,7 +1056,6 @@ fn placement(
                     tip_drawing: settings.tip_drawing,
                     shaft_style: settings.shaft_style,
                     robust_raft_geometry: settings.robust_raft_geometry,
-                    line_raft_feet: settings.line_raft_feet,
                 }) else {
                     return (false, false, true);
                 };

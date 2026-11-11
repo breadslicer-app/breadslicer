@@ -557,10 +557,6 @@ pub struct SupportSliceInput<'a> {
     /// built on rings without collinear points (`robust_wall`), so the raft
     /// is closed and manifold. `false` is DragonFruit's output.
     pub robust_raft_geometry: bool,
-    /// SoulCrafted's option (#518): on a line raft, each root stands on a
-    /// small foot a little wider than a line instead of its disk. `false` is
-    /// DragonFruit's output.
-    pub line_raft_feet: bool,
 }
 
 /// The entity fields the generic walk needs, read per type.
@@ -699,13 +695,9 @@ pub fn build_support_and_raft_world_triangles(
 /// plate, in millimetres, as [`build_support_and_raft_world_parts`] draws
 /// them: the raft's plate or lines and its wall, each root's disk, and its
 /// cone or its join cone; the neck above, as wide as the shaft, does not count
-/// (SoulCrafted, #481: what the view from under the plate hides). With
-/// `line_feet` (#518), a root on a line raft counts its foot's cone instead.
-pub fn raft_and_feet_top_mm(
-    state: &SupportCollections,
-    raft: &RaftSettings,
-    line_feet: bool,
-) -> f64 {
+/// (SoulCrafted, #481: what the view from under the plate hides). A root on
+/// a line raft counts its foot's cone instead (#518).
+pub fn raft_and_feet_top_mm(state: &SupportCollections, raft: &RaftSettings) -> f64 {
     let raft_on = raft.bottom_mode != RaftBottomMode::Off;
     let raft_top = if raft_on { raft_band_top_mm(raft) } else { 0.0 };
     let plate_top = if raft_on {
@@ -718,7 +710,7 @@ pub fn raft_and_feet_top_mm(
         .roots
         .values()
         .map(|root| {
-            if line_feet && raft.bottom_mode == RaftBottomMode::Line {
+            if raft.bottom_mode == RaftBottomMode::Line {
                 let (_, rise) = line_foot(raft, shaft_radius_of(&radii, root));
                 return root.transform.pos.z + js_max(0.01, raft.line_height_mm) + rise;
             }
@@ -777,7 +769,7 @@ pub fn build_support_and_raft_world_parts(
         let base = root.transform.pos;
         let root_radius = js_max(0.05, root.diameter * 0.5);
         let top_radius = shaft_radius_of(&root_top_radius, root);
-        if input.line_raft_feet && input.raft.bottom_mode == RaftBottomMode::Line {
+        if input.raft.bottom_mode == RaftBottomMode::Line {
             // SoulCrafted (#518): on the lines, a pad as wide as the foot up
             // their height, a 45° cone from it to the shaft, and a neck of
             // the shaft's width up past where the shaft leaves the root.

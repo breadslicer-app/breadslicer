@@ -13,9 +13,7 @@ use support_gen_df::supports::rafts::crenelated::geometry::build_line_raft_edge_
     BuildLineRaftEdgePairsOptions, build_line_raft_edge_pairs,
 };
 use support_gen_df::supports::rafts::crenelated::geometry::generate_chamfered_beam::generate_chamfered_beam;
-use support_gen_df::supports::rafts::crenelated::geometry::generate_unioned_line_raft_mesh::{
-    filter_line_raft_edges, generate_unioned_line_raft_mesh,
-};
+use support_gen_df::supports::rafts::crenelated::geometry::generate_unioned_line_raft_mesh::filter_line_raft_edges;
 use support_gen_df::supports::rafts::crenelated::geometry::model_plate_footprint::{
     ModelTransform, PlateFootprintSource, collect_model_plate_footprint,
 };
@@ -29,7 +27,9 @@ use support_gen_df::supports::rafts::crenelated::geometry::small::{
 use support_gen_df::supports::rafts::crenelated::raft_export::{
     RaftRoot, RaftSettingsStore, build_export_rafts,
 };
-use support_gen_df::supports::rafts::crenelated::raft_types::{RaftSettings, SupportBaseCircle};
+use support_gen_df::supports::rafts::crenelated::raft_types::{
+    RaftBottomMode, RaftSettings, SupportBaseCircle,
+};
 use support_gen_df::three::buffer_geometry::BufferGeometry;
 use support_gen_df::three::{Vec3, Vector2};
 
@@ -281,6 +281,8 @@ fn line_raft_edge_pairs_match_dragonfruit() {
     }
 }
 
+/// The beam filter and the chamfered beam as DragonFruit's. The unioned
+/// line raft mesh is not compared: its beams meet in round joints (#518).
 #[test]
 fn line_raft_meshes_match_dragonfruit() {
     let fixture = load();
@@ -307,16 +309,11 @@ fn line_raft_meshes_match_dragonfruit() {
             &case["filtered"],
             &format!("{path}.filtered"),
         );
-        let border = case["border"].as_array().map(|_| points(&case["border"]));
         let chamfer = match &case["chamfer"] {
             Value::Null => None,
             Value::String(_) => Some(f64::NAN),
             v => Some(f(v)),
         };
-        let mesh =
-            generate_unioned_line_raft_mesh(&edges, width, height, border.as_deref(), chamfer)
-                .unwrap();
-        assert_same(&dump(&mesh), &case["mesh"], &format!("{path}.mesh"));
         let b = &case["beamArgs"];
         let z = f(&b["z"]);
         let angle = chamfer.filter(|a| !a.is_nan()).unwrap_or(90.0);
@@ -368,6 +365,10 @@ fn export_rafts_match_dragonfruit() {
             .map(model_geometry)
             .collect();
         let srcs = sources(&case["models"], &geoms);
+        // Line rafts are drawn with round joints (#518): not compared.
+        let lines = std::iter::once(&store.global)
+            .chain(store.per_model.values())
+            .any(|r| r.bottom_mode == RaftBottomMode::Line);
         let groups = build_export_rafts(&roots, scoped.as_ref(), &store, &srcs).unwrap();
         let expected = case["groups"].as_array().unwrap();
         assert_eq!(groups.len(), expected.len(), "{path}: group count");
@@ -380,6 +381,9 @@ fn export_rafts_match_dragonfruit() {
             }
             if e["meshes"].as_array().unwrap().len() > 2 {
                 line += 1;
+            }
+            if lines {
+                continue;
             }
             let meshes = Value::Array(g.meshes.iter().map(dump).collect());
             assert_same(&meshes, &e["meshes"], &format!("{gp}.meshes"));
