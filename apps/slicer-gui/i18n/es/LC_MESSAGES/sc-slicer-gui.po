@@ -6730,8 +6730,8 @@ msgstr "CORTAR"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
-msgid "Cuts the selected model with a plane and closes the pieces. Click a part of the cut on the plane to take it or leave it."
-msgstr "Corta el modelo seleccionado con un plano y cierra las piezas. Hacé clic en una parte del corte, sobre el plano, para incluirla o dejarla."
+msgid "Cuts the selected model with a plane and closes the pieces. In the scene, the arrow moves the plane, the rings tilt it, the corners shape it and a drag on it moves it along. Click a part of the cut to take it or leave it."
+msgstr "Corta el modelo seleccionado con un plano y cierra las piezas. En la escena, la flecha mueve el plano, los aros lo inclinan, las esquinas le dan forma y arrastrarlo lo corre sobre sí mismo. Hacé clic en una parte del corte para incluirla o dejarla."
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"

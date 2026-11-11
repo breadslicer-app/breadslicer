@@ -785,8 +785,10 @@ export component OrientCard inherits Card {
 }
 
 // The Cut tool (#56): a plane through the selected model, its height and
-// tilt, and optionally a rectangle that bounds it. The parts of the cut show
-// on the plane; a click on one takes it or leaves it (Rust: `cut_run.rs`).
+// tilt, and optionally the shape its four corners make on it, which bounds
+// the cut. The same is set by the plane's handles in the scene. The parts of
+// the cut show on the plane; a click on one takes it or leaves it (Rust:
+// `cut_run.rs`, `cut_gizmo.rs`).
 export component CutCard inherits Card {
     // A model is selected and the scene can be edited.
     in property <bool> enabled;
@@ -816,7 +818,7 @@ export component CutCard inherits Card {
     highlighted: true;
 
     Note {
-        text: @tr("Inspector" => "Cuts the selected model with a plane and closes the pieces. Click a part of the cut on the plane to take it or leave it.");
+        text: @tr("Inspector" => "Cuts the selected model with a plane and closes the pieces. In the scene, the arrow moves the plane, the rings tilt it, the corners shape it and a drag on it moves it along. Click a part of the cut to take it or leave it.");
     }
     NumberField {
         label: @tr("Inspector" => "Height");

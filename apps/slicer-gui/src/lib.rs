@@ -19,6 +19,7 @@ mod arrange_run;
 mod autosave;
 mod autosave_store;
 mod clipboard;
+mod cut_gizmo;
 mod cut_run;
 mod default_envelope;
 mod df_support_run;

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 
-use crate::{CutError, CutModel, Fit, Plane, Rect, is_closed, volume};
+use crate::{CutError, CutModel, Fit, Outline, Plane, is_closed, volume};
 
 /// An axis-aligned box from `lo` to `hi`, faces outward, or inward when
 /// `inward` (a cavity).
@@ -206,25 +206,56 @@ fn the_rectangle_says_which_pieces_it_takes() {
     let section = CutModel::new(model).unwrap().section(level(5.0)).unwrap();
     let left = section.piece_at([5.0, 5.0, 5.0]).unwrap();
     let right = 1 - left;
-    let around_left = Rect {
-        center: [5.0, 5.0],
-        half: [8.0, 8.0],
-    };
+    let around_left = Outline::rect([5.0, 5.0], [8.0, 8.0]);
     let to = |p: [f64; 3]| [p[0], p[1]];
     let from = |q: [f64; 2]| [q[0], q[1], 5.0];
     let fits = section.fits(&around_left, to, from);
     assert_eq!(fits[left], Fit::Inside);
     assert_eq!(fits[right], Fit::Outside);
-    let half_of_left = Rect {
-        center: [0.0, 5.0],
-        half: [4.0, 8.0],
-    };
+    let half_of_left = Outline::rect([0.0, 5.0], [4.0, 8.0]);
     assert_eq!(section.fits(&half_of_left, to, from)[left], Fit::Crossed);
-    let inside_left = Rect {
-        center: [5.0, 5.0],
-        half: [1.0, 1.0],
-    };
+    let inside_left = Outline::rect([5.0, 5.0], [1.0, 1.0]);
     assert_eq!(section.fits(&inside_left, to, from)[left], Fit::Crossed);
+}
+
+#[test]
+fn any_four_corners_bound_the_cut() {
+    let model = mesh(&[
+        cuboid([0.0; 3], [10.0, 10.0, 10.0], false),
+        cuboid([20.0, 0.0, 0.0], [30.0, 10.0, 10.0], false),
+    ]);
+    let section = CutModel::new(model).unwrap().section(level(5.0)).unwrap();
+    let left = section.piece_at([5.0, 5.0, 5.0]).unwrap();
+    let right = 1 - left;
+    let to = |p: [f64; 3]| [p[0], p[1]];
+    let from = |q: [f64; 2]| [q[0], q[1], 5.0];
+    // A slanted shape whose far corner reaches past the left cube only.
+    let slanted =
+        Outline::new(vec![[-2.0, -2.0], [14.0, -1.0], [18.0, 14.0], [-1.0, 12.0]]).unwrap();
+    let fits = section.fits(&slanted, to, from);
+    assert_eq!((fits[left], fits[right]), (Fit::Inside, Fit::Outside));
+    // Its corner pulled into the right cube crosses it.
+    let reaching =
+        Outline::new(vec![[-2.0, -2.0], [14.0, -1.0], [25.0, 5.0], [-1.0, 12.0]]).unwrap();
+    assert_eq!(section.fits(&reaching, to, from)[right], Fit::Crossed);
+    // A corner that cuts in between the left cube's corners crosses it even
+    // though every corner of the cube's outline lies inside.
+    let notched = Outline::new(vec![
+        [-2.0, -2.0],
+        [12.0, -2.0],
+        [5.0, 5.0],
+        [12.0, 12.0],
+        [-2.0, 12.0],
+    ])
+    .unwrap();
+    assert_eq!(section.fits(&notched, to, from)[left], Fit::Crossed);
+}
+
+#[test]
+fn an_outline_that_crosses_itself_is_refused() {
+    assert!(Outline::new(vec![[0.0, 0.0], [10.0, 10.0], [10.0, 0.0], [0.0, 10.0]]).is_none());
+    assert!(Outline::new(vec![[0.0, 0.0], [10.0, 0.0], [20.0, 0.0]]).is_none());
+    assert!(Outline::new(vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]).is_some());
 }
 
 #[test]

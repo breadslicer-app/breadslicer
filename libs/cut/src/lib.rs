@@ -9,7 +9,7 @@
 //! points on the mesh's edges, grouped into the pieces of the cross-section
 //! ([`SectionPiece`]), each an outline and the holes inside it. A cut takes
 //! all of them or only some ([`Section::fits`] tells which lie inside a
-//! rectangle on the plane): the faces at a piece left out stay whole, so
+//! shape on the plane, [`Outline`]): the faces at a piece left out stay whole, so
 //! only the chosen pieces are cut. [`Section::cut`] splits the faces at the
 //! chosen pieces, closes each side with a cap that keeps every point of the
 //! loops, and hands back the pieces of the model the cut leaves, each closed.
@@ -31,6 +31,7 @@ use std::fmt;
 use sc_mesh_core::IndexedMesh;
 
 pub use section::{CutModel, Fit, Section, SectionPiece};
+
 pub use split::{Cut, volume};
 
 /// A plane: the points `p` with `normal · p = offset`, `normal` of length 1.
@@ -89,32 +90,115 @@ impl Plane {
     }
 }
 
-/// A rectangle on a plane: its centre, and how far it reaches from it along
-/// the plane's [`Plane::frame`] directions.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Rect {
-    /// The centre, in the plane's frame.
-    pub center: [f64; 2],
-    /// Half the width along `u` and half the height along `v`.
-    pub half: [f64; 2],
+/// A shape on a plane that bounds a cut: a simple polygon (its edges meet
+/// only at its corners), in the plane's own frame or any frame the caller
+/// maps to ([`Section::fits`]). The Cut tool's four corners make one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Outline {
+    points: Vec<[f64; 2]>,
 }
 
-impl Rect {
-    fn contains(&self, p: [f64; 2]) -> bool {
-        (p[0] - self.center[0]).abs() <= self.half[0]
-            && (p[1] - self.center[1]).abs() <= self.half[1]
+impl Outline {
+    /// The polygon through `points` in order, or `None` when it has fewer
+    /// than three corners, no area, or edges that cross.
+    pub fn new(points: Vec<[f64; 2]>) -> Option<Self> {
+        (is_simple(&points) && polygon_area(&points).abs() > 1e-12).then_some(Self { points })
     }
 
-    fn corners(&self) -> [[f64; 2]; 4] {
-        let [x, y] = self.center;
-        let [w, h] = self.half;
-        [
-            [x - w, y - h],
-            [x + w, y - h],
-            [x + w, y + h],
-            [x - w, y + h],
-        ]
+    /// The rectangle around `center` reaching `half` along each direction.
+    pub fn rect(center: [f64; 2], half: [f64; 2]) -> Self {
+        let [x, y] = center;
+        let [w, h] = half;
+        Self {
+            points: vec![
+                [x - w, y - h],
+                [x + w, y - h],
+                [x + w, y + h],
+                [x - w, y + h],
+            ],
+        }
     }
+
+    pub fn points(&self) -> &[[f64; 2]] {
+        &self.points
+    }
+
+    /// Whether `p` lies inside (even-odd).
+    pub fn contains(&self, p: [f64; 2]) -> bool {
+        let ring = &self.points;
+        let mut holds = false;
+        for k in 0..ring.len() {
+            let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+            if (a[1] > p[1]) != (b[1] > p[1])
+                && p[0] < a[0] + (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1])
+            {
+                holds = !holds;
+            }
+        }
+        holds
+    }
+
+    /// Whether the segment from `a` to `b` meets one of the edges.
+    fn edge_meets(&self, a: [f64; 2], b: [f64; 2]) -> bool {
+        let ring = &self.points;
+        (0..ring.len()).any(|k| segments_meet(a, b, ring[k], ring[(k + 1) % ring.len()]))
+    }
+}
+
+/// Twice the signed area of a polygon.
+fn polygon_area(points: &[[f64; 2]]) -> f64 {
+    (0..points.len())
+        .map(|k| {
+            let (p, q) = (points[k], points[(k + 1) % points.len()]);
+            p[0] * q[1] - q[0] * p[1]
+        })
+        .sum()
+}
+
+/// Whether a polygon has three or more corners and no two of its edges meet
+/// but neighbours at their shared corner.
+pub fn is_simple(points: &[[f64; 2]]) -> bool {
+    let n = points.len();
+    if n < 3 || points.iter().flatten().any(|c| !c.is_finite()) {
+        return false;
+    }
+    for i in 0..n {
+        for j in i + 1..n {
+            if j == i + 1 || (i == 0 && j == n - 1) {
+                continue;
+            }
+            let (a, b) = (points[i], points[(i + 1) % n]);
+            let (c, d) = (points[j], points[(j + 1) % n]);
+            if segments_meet(a, b, c, d) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Whether segments `ab` and `cd` share a point.
+fn segments_meet(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
+    let side = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| {
+        (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    };
+    let within = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| {
+        r[0] >= p[0].min(q[0])
+            && r[0] <= p[0].max(q[0])
+            && r[1] >= p[1].min(q[1])
+            && r[1] <= p[1].max(q[1])
+    };
+    let (d1, d2) = (side(c, d, a), side(c, d, b));
+    let (d3, d4) = (side(a, b, c), side(a, b, d));
+    if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+    {
+        return true;
+    }
+    (d1 == 0.0 && within(c, d, a))
+        || (d2 == 0.0 && within(c, d, b))
+        || (d3 == 0.0 && within(a, b, c))
+        || (d4 == 0.0 && within(a, b, d))
 }
 
 /// Why a mesh could not be cut.

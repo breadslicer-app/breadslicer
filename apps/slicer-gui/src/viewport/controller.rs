@@ -51,6 +51,7 @@ use crate::build_volume::BuildVolume;
 use crate::camera::AxisView;
 use crate::clipboard;
 use crate::clipboard::Clipboard;
+use crate::cut_gizmo::{CutHandles, ScenePointer};
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::export_progress_panel::ExportProgressPanel;
 use crate::gizmo;
@@ -175,17 +176,18 @@ pub(crate) struct ViewportController {
     /// viewport pixels, and who takes the region it closes.
     lasso: RefCell<Option<Vec<[f32; 2]>>>,
     lasso_handler: RefCell<Option<LassoHandler>>,
-    /// The Cut tool (#56): who is offered a click in the Transform tab
-    /// first, as a ray in the world.
-    cut_picker: RefCell<Option<CutPicker>>,
+    /// The Cut tool (#56): who is offered the pointer in the Transform tab
+    /// first while it is open, and a press it took: where, and whether it
+    /// has moved yet.
+    cut_handles: RefCell<Option<Rc<dyn CutHandles>>>,
+    cut_press: Cell<Option<([f32; 2], bool)>>,
 }
 
 /// Who takes the region a lasso stroke closes.
 type LassoHandler = Rc<dyn Fn(LassoRegion)>;
 
-/// Takes a click's ray (origin and unit direction, world mm) and says
-/// whether it used it.
-type CutPicker = Rc<dyn Fn([f64; 3], [f64; 3]) -> bool>;
+/// How far a press the Cut tool took moves before it is a drag, pixels.
+const CUT_DRAG_PX: f32 = 3.0;
 
 /// A tool of a workspace tab that acts where the model is clicked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,7 +271,8 @@ impl ViewportController {
             brush_waiting: Cell::new(None),
             lasso: RefCell::new(None),
             lasso_handler: RefCell::new(None),
-            cut_picker: RefCell::new(None),
+            cut_handles: RefCell::new(None),
+            cut_press: Cell::new(None),
         }
     }
 
@@ -332,7 +335,8 @@ impl ViewportController {
             brush_waiting: Cell::new(None),
             lasso: RefCell::new(None),
             lasso_handler: RefCell::new(None),
-            cut_picker: RefCell::new(None),
+            cut_handles: RefCell::new(None),
+            cut_press: Cell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -2164,6 +2168,7 @@ impl ViewportController {
             return;
         };
         if !self.allows_transform_gizmo()
+            || self.cut_on()
             || self.repair_in_flight()
             || self.ui.upgrade().is_some_and(|ui| ui.get_loading())
             || matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. })
@@ -2503,7 +2508,7 @@ impl ViewportController {
         // Arming a focus (Translate, Rotate or Scale) is a transform tool and
         // is gated to editing sections; dropping focus (`None`) must
         // always work so entering Slice can clear it.
-        if focus != KbdFocus::None && !self.allows_transform_gizmo() {
+        if focus != KbdFocus::None && (!self.allows_transform_gizmo() || self.cut_on()) {
             return;
         }
         let Some(new_focus) = self
@@ -2537,7 +2542,7 @@ impl ViewportController {
     }
 
     pub(crate) fn on_pointer_down(&self, cursor: ScreenPoint, mut modifiers: PointerModifiers) {
-        if self.lasso_down(cursor) || self.brush_down(cursor, &modifiers) {
+        if self.lasso_down(cursor) || self.brush_down(cursor, &modifiers) || self.cut_down(cursor) {
             return;
         }
         // Shift+click with Add armed hangs the support from the nearest one
@@ -2560,7 +2565,7 @@ impl ViewportController {
             self.render.viewport(),
             cursor,
             modifiers,
-            self.allows_transform_gizmo(),
+            self.allows_transform_gizmo() && !self.cut_on(),
             self.supports_selectable(),
         );
         if let Some(ui) = self.ui.upgrade() {
@@ -2575,7 +2580,7 @@ impl ViewportController {
         if self.lasso_move(cursor) || self.brush_move(cursor, &modifiers) {
             return;
         }
-        if self.support_drag_move(cursor) {
+        if self.support_drag_move(cursor) || self.cut_move(cursor) {
             return;
         }
         self.tab_tool_hover(cursor, modifiers.shift);
@@ -2583,7 +2588,7 @@ impl ViewportController {
             self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
         }
-        if !self.allows_transform_gizmo() {
+        if !self.allows_transform_gizmo() || self.cut_on() {
             return;
         }
         if self.input.on_pointer_move(
@@ -2601,7 +2606,7 @@ impl ViewportController {
     /// Shift, the object joins the selection or leaves it, #13), or selects
     /// what a Shift drag's box touches, on top of the selection.
     pub(crate) fn on_pointer_up(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
-        if self.lasso_up(cursor) || self.brush_up() {
+        if self.lasso_up(cursor) || self.brush_up() || self.cut_up(cursor) {
             return;
         }
         if let Some(ui) = self.ui.upgrade() {
@@ -3151,43 +3156,120 @@ impl ViewportController {
         true
     }
 
-    /// Who takes the region a lasso stroke closes (the Hollow tab, #179).
-    /// Installs who is offered a click in the Transform tab first (#56).
-    pub(crate) fn set_cut_picker(&self, picker: CutPicker) {
-        *self.cut_picker.borrow_mut() = Some(picker);
+    /// Installs the Cut tool's handles: offered the pointer in the
+    /// Transform tab first while the tool is open (#56).
+    pub(crate) fn set_cut_handles(&self, handles: Rc<dyn CutHandles>) {
+        *self.cut_handles.borrow_mut() = Some(handles);
     }
 
-    /// Offers a click in the Transform tab to the Cut tool, as a ray.
-    fn cut_click(&self, cursor: ScreenPoint) -> bool {
+    /// The Cut tool's handles while it is open in the Transform tab: the
+    /// object's gizmo then goes, and the object does not move.
+    fn open_cut(&self) -> Option<Rc<dyn CutHandles>> {
         if self.session.section() != WorkspaceSection::Transform {
+            return None;
+        }
+        self.cut_handles.borrow().clone().filter(|h| h.active())
+    }
+
+    pub(crate) fn cut_on(&self) -> bool {
+        self.open_cut().is_some()
+    }
+
+    /// The pointer at `cursor`, as the Cut tool takes it: its ray, and how
+    /// the camera puts world points on the viewport now.
+    fn scene_pointer(&self, cursor: ScreenPoint) -> Option<ScenePointer> {
+        let vp = self.render.viewport()?;
+        let camera = self.camera.camera_cell().borrow().as_ref()?.clone();
+        let fov = crate::mesh_render::default_fov_y();
+        let (w, h) = (vp.width(), vp.height());
+        let ray = picking::ray_from_pixel(&camera, fov, w, h, cursor.x, cursor.y);
+        let (o, d) = (ray.origin, ray.direction);
+        Some(ScenePointer {
+            origin: [f64::from(o.x), f64::from(o.y), f64::from(o.z)],
+            direction: [f64::from(d.x), f64::from(d.y), f64::from(d.z)],
+            cursor: [f64::from(cursor.x), f64::from(cursor.y)],
+            project: Box::new(move |p: [f64; 3]| {
+                let at = glam::Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32);
+                picking::project_world_to_screen(&camera, fov, w, h, at)
+                    .map(|(x, y)| [f64::from(x), f64::from(y)])
+            }),
+        })
+    }
+
+    /// A left press with the Cut tool open: on its gizmo or plane, the
+    /// press is the tool's.
+    fn cut_down(&self, cursor: ScreenPoint) -> bool {
+        let Some(handles) = self.open_cut() else {
+            return false;
+        };
+        let Some(pointer) = self.scene_pointer(cursor) else {
+            return false;
+        };
+        if !handles.press(&pointer) {
             return false;
         }
-        let Some(picker) = self.cut_picker.borrow().clone() else {
+        self.cut_press.set(Some(([cursor.x, cursor.y], false)));
+        true
+    }
+
+    /// A move with the Cut tool open: drags what it took, or lights the
+    /// handle under the cursor.
+    fn cut_move(&self, cursor: ScreenPoint) -> bool {
+        let Some(handles) = self.cut_handles.borrow().clone() else {
             return false;
         };
-        let Some(vp) = self.render.viewport() else {
+        let pointer = self.scene_pointer(cursor);
+        match self.cut_press.get() {
+            Some((from, moved)) => {
+                let far = (cursor.x - from[0]).hypot(cursor.y - from[1]) > CUT_DRAG_PX;
+                if moved || far {
+                    self.cut_press.set(Some((from, true)));
+                    if let Some(pointer) = pointer {
+                        handles.drag(&pointer);
+                    }
+                }
+                true
+            }
+            None => {
+                if self.cut_on() {
+                    handles.hover(pointer.as_ref());
+                }
+                false
+            }
+        }
+    }
+
+    /// The release of a press the Cut tool took.
+    fn cut_up(&self, cursor: ScreenPoint) -> bool {
+        let Some((_, moved)) = self.cut_press.take() else {
             return false;
         };
-        let ray = {
-            let camera_slot = self.camera.camera_cell().borrow();
-            let Some(camera) = camera_slot.as_ref() else {
-                return false;
-            };
-            picking::ray_from_pixel(
-                camera,
-                crate::mesh_render::default_fov_y(),
-                vp.width(),
-                vp.height(),
-                cursor.x,
-                cursor.y,
-            )
+        if let Some(handles) = self.cut_handles.borrow().clone() {
+            handles.release(self.scene_pointer(cursor).as_ref(), moved);
+        }
+        self.mark_dirty();
+        true
+    }
+
+    /// Gives up a drag of the Cut tool's gizmo (a right press): the plane
+    /// goes back where it was. Whether there was one.
+    pub(crate) fn cancel_cut_drag(&self) -> bool {
+        if self.cut_press.take().is_none() {
+            return false;
+        }
+        if let Some(handles) = self.cut_handles.borrow().clone() {
+            handles.release(None, true);
+        }
+        true
+    }
+
+    /// Offers a click in the Transform tab to the Cut tool.
+    fn cut_click(&self, cursor: ScreenPoint) -> bool {
+        let Some(handles) = self.open_cut() else {
+            return false;
         };
-        let o = ray.origin;
-        let d = ray.direction;
-        picker(
-            [f64::from(o.x), f64::from(o.y), f64::from(o.z)],
-            [f64::from(d.x), f64::from(d.y), f64::from(d.z)],
-        )
+        self.scene_pointer(cursor)
+            .is_some_and(|pointer| handles.click(&pointer))
     }
 
     pub(crate) fn set_lasso_handler(&self, handler: Rc<dyn Fn(LassoRegion)>) {
@@ -3322,7 +3404,11 @@ impl ViewportController {
             self.mark_dirty();
         }
         self.input.on_pointer_leave();
-        self.set_preview_overlay(None);
+        if let Some(handles) = self.open_cut() {
+            handles.hover(None);
+        } else {
+            self.set_preview_overlay(None);
+        }
         if let Some(ui) = self.ui.upgrade() {
             ui.invoke_hollow_drain_hover(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, false, false);
         }
@@ -3334,7 +3420,11 @@ impl ViewportController {
     pub(crate) fn on_right_pointer_down(&self, x: f32, y: f32) {
         // A right press drops a stroke or a Supports drag in flight, and is
         // no more.
-        if self.cancel_lasso() || self.cancel_brush_stroke() || self.cancel_support_drag() {
+        if self.cancel_lasso()
+            || self.cancel_brush_stroke()
+            || self.cancel_support_drag()
+            || self.cancel_cut_drag()
+        {
             self.right_dropped_drag.set(true);
             return;
         }
@@ -4115,11 +4205,12 @@ impl ViewportController {
                 // tool, so its handles compose in Prepare and Transform:
                 // only the selection handed to the composer is gated, and the
                 // object tint keeps the full selection.
-                let gizmo_selection = if self.allows_transform_gizmo() && !self.brush_on() {
-                    selection_node_id
-                } else {
-                    None
-                };
+                let gizmo_selection =
+                    if self.allows_transform_gizmo() && !self.brush_on() && !self.cut_on() {
+                        selection_node_id
+                    } else {
+                        None
+                    };
                 let gizmo_frame = GizmoFrameComposer::compose(
                     &self.input,
                     spatial_for_render,

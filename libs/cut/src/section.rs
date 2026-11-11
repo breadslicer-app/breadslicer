@@ -16,7 +16,7 @@ use rayon::prelude::*;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::shells::FaceShells;
 
-use crate::{CutError, Plane, Rect, dot, is_closed};
+use crate::{CutError, Outline, Plane, dot, is_closed};
 
 /// A closed mesh ready to be cut: checked once, and its shells found once,
 /// for every plane tried on it.
@@ -278,25 +278,26 @@ impl Section {
         found
     }
 
-    /// Where each piece lies against `rect`, in the order of [`Self::pieces`].
+    /// Where each piece lies against `outline`, in the order of
+    /// [`Self::pieces`].
     ///
-    /// The rectangle lies in a frame of its own on the plane: `to_rect` takes
-    /// a point of the mesh to it, and `from_rect` a point of it back to the
+    /// The outline lies in a frame of its own on the plane: `to_frame` takes
+    /// a point of the mesh to it, and `from_frame` a point of it back to the
     /// mesh. Both are affine, so a model turned or scaled in the scene can
-    /// be cut by a rectangle drawn in the scene's frame.
+    /// be cut by an outline drawn in the scene's frame.
     pub fn fits(
         &self,
-        rect: &Rect,
-        to_rect: impl Fn([f64; 3]) -> [f64; 2],
-        from_rect: impl Fn([f64; 2]) -> [f64; 3],
+        outline: &Outline,
+        to_frame: impl Fn([f64; 3]) -> [f64; 2],
+        from_frame: impl Fn([f64; 2]) -> [f64; 3],
     ) -> Vec<Fit> {
-        let at: Vec<[f64; 2]> = self.points.iter().map(|&p| to_rect(p)).collect();
+        let at: Vec<[f64; 2]> = self.points.iter().map(|&p| to_frame(p)).collect();
         let (u, v) = self.plane.frame();
-        let corners: Vec<[f64; 2]> = rect
-            .corners()
+        let corners: Vec<[f64; 2]> = outline
+            .points()
             .iter()
             .map(|&c| {
-                let p = from_rect(c);
+                let p = from_frame(c);
                 [dot(p, u), dot(p, v)]
             })
             .collect();
@@ -306,17 +307,20 @@ impl Section {
                 let ring = &self.loops[piece.outer].points;
                 let inside = ring
                     .iter()
-                    .filter(|&&p| rect.contains(at[p as usize]))
+                    .filter(|&&p| outline.contains(at[p as usize]))
                     .count();
-                if inside == ring.len() {
+                let edge_crossed = || {
+                    (0..ring.len()).any(|k| {
+                        let a = at[ring[k] as usize];
+                        let b = at[ring[(k + 1) % ring.len()] as usize];
+                        outline.edge_meets(a, b)
+                    })
+                };
+                if inside == ring.len() && !edge_crossed() {
                     Fit::Inside
                 } else if inside > 0
                     || corners.iter().any(|&c| self.inside(c, piece.outer))
-                    || (0..ring.len()).any(|k| {
-                        let a = at[ring[k] as usize];
-                        let b = at[ring[(k + 1) % ring.len()] as usize];
-                        crosses(rect, a, b)
-                    })
+                    || edge_crossed()
                 {
                     Fit::Crossed
                 } else {
@@ -407,31 +411,4 @@ fn inside(at: [f64; 2], ring: &[u32], flat: &[[f64; 2]]) -> bool {
         }
     }
     holds
-}
-
-/// Whether the segment from `a` to `b` passes through `rect` (clipped
-/// against it, Liang-Barsky).
-fn crosses(rect: &Rect, a: [f64; 2], b: [f64; 2]) -> bool {
-    let d = [b[0] - a[0], b[1] - a[1]];
-    let (mut lo, mut hi) = (0.0f64, 1.0f64);
-    for axis in 0..2 {
-        let min = rect.center[axis] - rect.half[axis];
-        let max = rect.center[axis] + rect.half[axis];
-        if d[axis].abs() < 1e-15 {
-            if a[axis] < min || a[axis] > max {
-                return false;
-            }
-            continue;
-        }
-        let (mut t0, mut t1) = ((min - a[axis]) / d[axis], (max - a[axis]) / d[axis]);
-        if t0 > t1 {
-            std::mem::swap(&mut t0, &mut t1);
-        }
-        lo = lo.max(t0);
-        hi = hi.min(t1);
-        if lo > hi {
-            return false;
-        }
-    }
-    true
 }

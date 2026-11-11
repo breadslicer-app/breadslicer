@@ -5,8 +5,8 @@
 
 //! Headless tests of the Cut tool (#56): the cut is one undo step, the card
 //! says how many pieces it leaves before it is taken, a click on a part of
-//! the cut takes it or leaves it, and a bounded plane that crosses a part
-//! does not cut.
+//! the cut takes it or leaves it, a bounded plane that crosses a part does
+//! not cut, and the gizmo's handles move the plane in the scene.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -189,5 +189,121 @@ fn a_bounded_plane_across_a_part_does_not_cut() {
         assert!(f.window.get_cut_can_cut(), "{}", f.window.get_cut_warning());
         f.run.apply();
         assert_eq!(leaves(&f), 3);
+    });
+}
+
+/// A pointer at world `(x, y)` seen from straight above: 10 px a mm, the
+/// world origin at (400, 300).
+fn above(x: f64, y: f64) -> ScenePointer {
+    ScenePointer {
+        origin: [x, y, 100.0],
+        direction: [0.0, 0.0, -1.0],
+        cursor: [400.0 + x * 10.0, 300.0 - y * 10.0],
+        project: Box::new(|p| Some([400.0 + p[0] * 10.0, 300.0 - p[1] * 10.0])),
+    }
+}
+
+/// A pointer at world `(x, z)` seen from the front, looking along +y.
+fn front(x: f64, z: f64) -> ScenePointer {
+    ScenePointer {
+        origin: [x, -100.0, z],
+        direction: [0.0, 1.0, 0.0],
+        cursor: [400.0 + x * 10.0, 300.0 - z * 10.0],
+        project: Box::new(|p| Some([400.0 + p[0] * 10.0, 300.0 - p[2] * 10.0])),
+    }
+}
+
+/// Presses at `from`, drags to `to` and lets go there.
+fn drag(run: &CutRun, from: ScenePointer, to: ScenePointer) {
+    assert!(run.press(&from), "the press is on the gizmo");
+    run.drag(&to);
+    run.release(Some(&to), true);
+}
+
+#[test]
+fn a_corner_moves_on_the_plane_alone_and_bounds_it() {
+    on_fresh_slint_thread(|| {
+        let f = fixture(cube());
+        opened(&f);
+        // The cube spans x 0 to 20 round x 10; not bounded, the plane on
+        // show reaches 17 mm round it.
+        assert!(!f.run.settings.get().bounded);
+        drag(&f.run, above(27.0, 17.0), above(22.0, 12.0));
+        let s = f.run.settings.get();
+        assert!(s.bounded, "a corner moved bounds the plane");
+        assert!(f.window.get_cut_bounded());
+        assert_eq!(s.height, 0.0, "the plane stays where it was");
+        assert_eq!(s.tilt, [0.0; 2]);
+        assert_eq!(s.corners[2], [12.0, 12.0]);
+        assert_eq!(s.corners[0], [-17.0, -17.0], "the others stay");
+        assert_eq!(s.corners[1], [17.0, -17.0]);
+        // A corner may not cross the shape's edges: across the diagonal,
+        // it stays where it last was.
+        drag(&f.run, above(22.0, 12.0), above(10.0, -25.0));
+        assert_eq!(f.run.settings.get().corners[2], [12.0, 12.0]);
+        // The shape still lies round the cube: it cuts.
+        f.run.on_option(-1, 0.0);
+        land(&f.run);
+        assert!(f.window.get_cut_can_cut(), "{}", f.window.get_cut_warning());
+    });
+}
+
+#[test]
+fn the_arrow_moves_the_plane_and_the_rings_tilt_it() {
+    on_fresh_slint_thread(|| {
+        let f = fixture(cube());
+        opened(&f);
+        // Seen from the front the arrow stands up from the middle.
+        drag(&f.run, front(10.0, 4.0), front(10.0, 9.0));
+        let s = f.run.settings.get();
+        assert!((s.height - 5.0).abs() < 1e-9, "{}", s.height);
+        assert!((f64::from(f.window.get_cut_height()) - 5.0).abs() < 1e-5);
+        // The ring about y faces the eye from the front: its point on the
+        // right dragged 30 degrees up round the middle lifts the plane's
+        // right side.
+        let r = 20.0 * 0.28;
+        let (sin, cos) = 30f64.to_radians().sin_cos();
+        drag(
+            &f.run,
+            front(10.0 + r, 5.0),
+            front(10.0 + r * cos, 5.0 + r * sin),
+        );
+        let s = f.run.settings.get();
+        assert!((s.tilt[1] + 30.0).abs() < 1e-6, "{:?}", s.tilt);
+        assert!(s.tilt[0].abs() < 1e-9);
+        assert!((s.height - 5.0).abs() < 1e-9, "it turns about the middle");
+        assert!((f64::from(f.window.get_cut_tilt_y()) + 30.0).abs() < 1e-4);
+    });
+}
+
+#[test]
+fn a_drag_on_the_plane_moves_the_shape_and_a_press_without_one_clicks() {
+    on_fresh_slint_thread(|| {
+        let f = fixture(cube());
+        opened(&f);
+        f.run.on_option(3, 1.0);
+        // Wide enough that moved 3 mm it still lies round the cube.
+        f.run.on_option(4, 30.0);
+        f.run.on_option(5, 30.0);
+        let before = f.run.settings.get().offset();
+        drag(&f.run, above(14.0, 4.0), above(17.0, 6.0));
+        let after = f.run.settings.get().offset();
+        assert_eq!([after[0] - before[0], after[1] - before[1]], [3.0, 2.0]);
+        assert_eq!(f64::from(f.window.get_cut_offset_u()), after[0]);
+        // Given up, a drag puts the plane back.
+        assert!(f.run.press(&above(14.0, 4.0)));
+        f.run.drag(&above(18.0, 0.0));
+        f.run.release(None, true);
+        assert_eq!(f.run.settings.get().offset(), after);
+        // A press on the plane that does not move is a click: it leaves the
+        // cube's part of the cut, and nothing is left to cut.
+        f.run.on_option(-1, 0.0);
+        land(&f.run);
+        assert!(f.window.get_cut_can_cut());
+        assert!(f.run.press(&above(14.0, 4.0)));
+        f.run.release(Some(&above(14.0, 4.0)), false);
+        assert!(!f.window.get_cut_can_cut());
+        // Off the gizmo and the plane, a press is not the tool's.
+        assert!(!f.run.press(&above(80.0, 80.0)));
     });
 }
