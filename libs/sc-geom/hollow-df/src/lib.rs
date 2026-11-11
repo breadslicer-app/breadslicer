@@ -25,6 +25,7 @@ pub mod mesh;
 pub mod punch;
 pub mod shapes;
 mod smoothing;
+pub mod solid;
 pub mod topology;
 mod wall;
 
@@ -36,3 +37,4 @@ pub use engine::{
 };
 pub use hollowing::InfillMode;
 pub use mesh::{Aabb, IndexedMesh, Vec3};
+pub use solid::LassoRegion;

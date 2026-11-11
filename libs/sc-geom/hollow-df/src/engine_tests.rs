@@ -2139,3 +2139,96 @@ fn a_cone_drain_removes_whole_infill_members() {
         assert!(gone >= 1, "{outer} to {inner}: a strut reached");
     }
 }
+
+/// A drawn region seen from above (the camera looking down -z), whose side
+/// runs slanted across the grid: `x = 6 + 0.1·y` on the plate's plane.
+fn slanted_region(perspective: bool) -> crate::solid::LassoRegion {
+    let polygon = if perspective {
+        // In the tangent plane of an eye 60 mm above z = 0.
+        vec![[0.05, -0.5], [1.0, -0.5], [1.0, 0.5], [0.15, 0.5]]
+    } else {
+        vec![[3.0, -30.0], [30.0, -30.0], [30.0, 30.0], [9.0, 30.0]]
+    };
+    crate::solid::LassoRegion {
+        perspective,
+        origin: [0.0, 0.0, 60.0],
+        u: [1.0, 0.0, 0.0],
+        v: [0.0, -1.0, 0.0],
+        w: [0.0, 0.0, -1.0],
+        polygon,
+    }
+}
+
+/// #179: the cavity stops on the drawn region's surface, to within 0.05 mm,
+/// not on the voxels inside it; the hollow is that cavity.
+#[test]
+fn a_drawn_region_stays_solid_up_to_its_surface() {
+    let session = cube_session();
+    let plain = session
+        .preview(&HollowSettings::default(), Control::none())
+        .unwrap();
+    for perspective in [false, true] {
+        let region = slanted_region(perspective);
+        let prepared = region.prepared().expect("a region");
+        let settings = HollowSettings {
+            solid_areas: vec![SolidArea::Lasso(region)],
+            ..HollowSettings::default()
+        };
+        let preview = session.preview(&settings, Control::none()).unwrap();
+        assert!(preview.stats.removed_voxels < plain.stats.removed_voxels);
+        // No point of the cavity inside the region, and some on its surface.
+        let depths: Vec<f32> = preview
+            .cavity
+            .positions
+            .iter()
+            .map(|&p| prepared.signed_distance_mm(p))
+            .collect();
+        let deepest = depths.iter().copied().fold(f32::MIN, f32::max);
+        assert!(
+            deepest <= 0.05,
+            "perspective {perspective}: {deepest} mm in"
+        );
+        let on_surface = depths.iter().filter(|d| d.abs() <= 0.05).count();
+        assert!(
+            on_surface > 50,
+            "perspective {perspective}: {on_surface} on it"
+        );
+        // Away from the region the wall is untouched: the cavity still
+        // reaches the far side, 2 mm from x = -20.
+        let far = preview
+            .cavity
+            .positions
+            .iter()
+            .map(|p| p.x)
+            .fold(f32::MAX, f32::min);
+        assert!((far + 18.0).abs() < 0.1, "{far}");
+        let applied = session.apply(&settings, &[], Control::none()).unwrap();
+        assert!(is_edge_manifold(&applied.mesh));
+        assert!(contains_every_triangle(&applied.mesh, &preview.cavity));
+    }
+}
+
+/// #179: a region across the middle of a long block leaves a cavity on
+/// each side; neither is filled back.
+#[test]
+fn a_drawn_band_leaves_a_cavity_on_each_side() {
+    let block = tessellated_box([-30.0, -10.0, -10.0], [30.0, 10.0, 10.0], 8);
+    let session = Session::build(block, &GridRequest::default(), None, Control::none()).unwrap();
+    let band = crate::solid::LassoRegion {
+        perspective: false,
+        origin: [0.0, 0.0, 60.0],
+        u: [1.0, 0.0, 0.0],
+        v: [0.0, 1.0, 0.0],
+        w: [0.0, 0.0, -1.0],
+        polygon: vec![[-3.0, -20.0], [3.0, -20.0], [3.0, 20.0], [-3.0, 20.0]],
+    };
+    let settings = HollowSettings {
+        solid_areas: vec![SolidArea::Lasso(band)],
+        ..HollowSettings::default()
+    };
+    let preview = session.preview(&settings, Control::none()).unwrap();
+    let (_, shells) = face_shells(&preview.cavity);
+    assert_eq!(shells, 2);
+    let applied = session.apply(&settings, &[], Control::none()).unwrap();
+    assert!(is_edge_manifold(&applied.mesh));
+}

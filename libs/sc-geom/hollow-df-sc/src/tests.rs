@@ -617,3 +617,61 @@ fn a_plug_comes_back_standing_and_slices() {
         assert_eq!((polygons, holes), (1, 0), "a solid disc");
     }
 }
+
+/// #179: a region drawn in the world at the current pose keeps the same
+/// world material solid however the model is placed, turned or scaled: no
+/// point of the cavity, back in the world, is inside it.
+#[test]
+fn a_drawn_region_stays_solid_where_it_was_drawn() {
+    // Looking down -z from above, the region's side across x = 2.
+    let region = hollow_df::LassoRegion {
+        perspective: true,
+        origin: [0.0, 0.0, 80.0],
+        u: [1.0, 0.0, 0.0],
+        v: [0.0, -1.0, 0.0],
+        w: [0.0, 0.0, -1.0],
+        polygon: vec![[0.025, -1.0], [1.0, -1.0], [1.0, 1.0], [0.025, 1.0]],
+    };
+    let prepared = region.prepared().expect("a region");
+    let turn = 0.4f64;
+    for world in [
+        affine(
+            [
+                [turn.cos(), -turn.sin(), 0.0],
+                [turn.sin(), turn.cos(), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            [3.0, -2.0, 1.0],
+        ),
+        affine(
+            [[1.6, 0.0, 0.2], [0.0, 1.0, 0.0], [0.0, 0.0, 0.8]],
+            [1.0, 0.5, 0.0],
+        ),
+    ] {
+        let (scene, leaf) = scene_with(sphere_leaf_mesh(12.0), world.clone());
+        let plain = run(&scene, leaf, HollowRequest::default());
+        let drawn = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                solid_areas: vec![WorldSolidArea::Lasso(region.clone())],
+                prepared: Some(plain.prepared.clone()),
+                ..HollowRequest::default()
+            },
+        );
+        assert!(drawn.stats.removed_voxels < plain.stats.removed_voxels);
+        let HollowResult::Preview { cavity, .. } = &drawn.result else {
+            panic!("preview");
+        };
+        let deepest = cavity
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = world.apply_to_vertex(*v).coords();
+                prepared.signed_distance_mm(hollow_df::Vec3::new(p[0], p[1], p[2]))
+            })
+            .fold(f32::MIN, f32::max);
+        assert!(deepest <= 0.06, "{deepest} mm into the region");
+        assert!(deepest >= -0.06, "the cavity reaches the region: {deepest}");
+    }
+}
