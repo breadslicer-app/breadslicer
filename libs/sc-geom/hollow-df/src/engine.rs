@@ -538,6 +538,18 @@ impl SourceShell {
                 }
             }
         }
+        // The clean-up drops a triangle with no area: a needle (three
+        // corners in a line) on a closed source leaves a hole of 3 edges
+        // there. A source closed as it is goes in as it is.
+        if !defects.is_clean() {
+            let own = edge_manifold_defects(source);
+            if own.is_clean() {
+                return Self {
+                    mesh: None,
+                    defects: own,
+                };
+            }
+        }
         // Welding a clean, compact source changes only its vertex order:
         // keep the session's copy rather than a second one.
         let same = mesh.triangles.len() == source.triangles.len()

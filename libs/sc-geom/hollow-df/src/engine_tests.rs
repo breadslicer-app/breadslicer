@@ -2232,3 +2232,24 @@ fn a_drawn_band_leaves_a_cavity_on_each_side() {
     let applied = session.apply(&settings, &[], Control::none()).unwrap();
     assert!(is_edge_manifold(&applied.mesh));
 }
+
+/// A closed source with a needle, a triangle whose corners lie on a line,
+/// hollows: the clean-up that drops it would leave a hole of 3 edges (the
+/// Tortle Monk's, found with #179), so the source goes in as it is.
+#[test]
+fn a_closed_source_with_a_needle_hollows() {
+    let mut block = tessellated_box([-20.0; 3], [20.0; 3], 6);
+    let [a, b, c] = block.triangles[0];
+    let (pa, pb) = (block.positions[a as usize], block.positions[b as usize]);
+    block.positions.push(pa.add(pb).scale(0.5));
+    let m = (block.positions.len() - 1) as u32;
+    block.triangles[0] = [a, m, c];
+    block.triangles.push([m, b, c]);
+    block.triangles.push([a, b, m]);
+    assert!(is_edge_manifold(&block));
+    let session = Session::build(block, &GridRequest::default(), None, Control::none()).unwrap();
+    let applied = session
+        .apply(&HollowSettings::default(), &[], Control::none())
+        .expect("it hollows");
+    assert!(is_edge_manifold(&applied.mesh));
+}
