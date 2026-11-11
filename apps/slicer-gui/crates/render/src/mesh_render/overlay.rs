@@ -37,6 +37,9 @@ pub enum OverlayTint {
     /// the supports (#493). Not an overlay of its own: the support lines
     /// draw these.
     SupportBall = 7,
+    /// Where a support is recommended (#524): drawn on the model's surface,
+    /// hidden behind it like the scene, not over it.
+    Hint = 8,
 }
 
 /// The overlay as a whole: its pieces, each shared so a piece that did not
@@ -190,6 +193,19 @@ impl Renderer {
             &self.pipelines.mesh.models_bind_group_layout,
             pieces,
             "overlay",
+        );
+    }
+
+    /// Shows `pieces` on the models' surfaces, tested against the scene's
+    /// depth (`None` clears them): the marks of where supports are
+    /// recommended (#524).
+    pub(crate) fn set_hint_marks(&mut self, pieces: Option<&Overlay>) {
+        self.hints.install(
+            &self.core.device,
+            &self.core.queue,
+            &self.pipelines.mesh.models_bind_group_layout,
+            pieces,
+            "hint marks",
         );
     }
 }

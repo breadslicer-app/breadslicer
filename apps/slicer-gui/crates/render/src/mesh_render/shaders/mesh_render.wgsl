@@ -451,6 +451,10 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
     } else if (in.tint == 5u) {
         // Neither green nor red: not known yet whether it works.
         color = vec4<f32>(0.80, 0.80, 0.84, 0.60);
+    } else if (in.tint == 8u) {
+        // Where a support is recommended (#524): a clear green, unlit, so it
+        // reads the same on any face.
+        return vec4<f32>(0.42, 0.92, 0.62, 0.95);
     }
     return vec4<f32>(color.rgb * intensity, color.a);
 }

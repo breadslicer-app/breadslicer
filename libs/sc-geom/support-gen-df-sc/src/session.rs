@@ -1910,6 +1910,22 @@ impl DfSupportSession {
             .collect()
     }
 
+    /// Every tip with the outward normal of the surface it touches, where
+    /// it touches (#524): the places a run picked, for showing them.
+    pub fn tip_contacts(&self) -> Vec<([f64; 3], [f64; 3])> {
+        let c = &self.state.collections;
+        let of = |k: &support_gen_df::supports::support_primitives::contact_cone::types::ContactCone| {
+            let n = k.surface_normal.unwrap_or(Vec3::new(-k.normal.x, -k.normal.y, -k.normal.z));
+            ([k.pos.x, k.pos.y, k.pos.z], [n.x, n.y, n.z])
+        };
+        c.trunks
+            .values()
+            .filter_map(|t| t.contact_cone.as_ref().map(of))
+            .chain(c.branches.values().filter_map(|b| b.contact_cone.as_ref().map(of)))
+            .chain(c.leaves.values().map(|l| of(&l.contact_cone)))
+            .collect()
+    }
+
     /// Every support the person sees as one, with its id and the line it
     /// runs along (world mm), from its tip down: its joints, then the root it
     /// stands on or the knot it hangs from. What a box or a brush removes by

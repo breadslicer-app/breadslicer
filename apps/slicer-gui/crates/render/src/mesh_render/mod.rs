@@ -371,6 +371,9 @@ pub struct Renderer {
     /// the window's thread.
     adopted: scene_upload::UploadedMeshes,
     overlay: overlay::OverlaySlot,
+    /// The marks of where supports are recommended, drawn into the scene's
+    /// depth (#524).
+    hints: overlay::OverlaySlot,
     surface_paint: surface_paint::PaintSlot,
     /// The overhang map over the models of a workspace frame, when on.
     overhang_map: Option<OverhangMap>,
@@ -477,6 +480,7 @@ impl Renderer {
             world_boxes: WorldBoxes::default(),
             adopted: scene_upload::UploadedMeshes::default(),
             overlay: overlay::OverlaySlot::default(),
+            hints: overlay::OverlaySlot::default(),
             surface_paint: surface_paint::PaintSlot::default(),
             overhang_map: None,
             support_tips: Vec::new(),
@@ -1413,6 +1417,11 @@ impl Renderer {
                 }
             }
             if contents == FrameContents::Workspace {
+                self.hints.record(
+                    &mut pass,
+                    &self.pipelines.mesh.hint_pipeline,
+                    &self.pipelines.mesh.uniforms_bind_group,
+                );
                 self.overlay.record(
                     &mut pass,
                     &self.pipelines.mesh.overlay_pipeline,

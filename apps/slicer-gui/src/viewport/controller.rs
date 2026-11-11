@@ -116,6 +116,9 @@ pub(crate) struct ViewportController {
     /// Preview pieces drawn over the scene (a support or drain before it is
     /// placed, a hollow cavity), set by the tab drivers.
     overlay: RefCell<Option<crate::mesh_render::Overlay>>,
+    /// The marks of where supports are recommended (#524), drawn in the
+    /// Supports tab.
+    hint_marks: RefCell<Option<crate::mesh_render::Overlay>>,
     /// What a Repair run left broken, marked over the scene (#253).
     repair_marks: crate::repair_marks::MarksLayer,
     /// The overhang map's box, and the self-support angle it paints by.
@@ -254,6 +257,7 @@ impl ViewportController {
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
+            hint_marks: RefCell::new(None),
             repair_marks: Default::default(),
             overhang_map_on: Cell::new(false),
             hide_rafts_under_plate: Cell::new(true),
@@ -319,6 +323,7 @@ impl ViewportController {
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
+            hint_marks: RefCell::new(None),
             repair_marks: Default::default(),
             overhang_map_on: Cell::new(false),
             hide_rafts_under_plate: Cell::new(true),
@@ -1080,6 +1085,19 @@ impl ViewportController {
             .borrow()
             .as_ref()
             .is_some_and(|shown| Arc::ptr_eq(shown, pieces))
+    }
+
+    /// The marks of where supports are recommended now (#524).
+    #[cfg(test)]
+    pub(crate) fn hint_marks_for_test(&self) -> Option<crate::mesh_render::Overlay> {
+        self.hint_marks.borrow().clone()
+    }
+
+    /// Shows the marks of where supports are recommended (#524) until
+    /// replaced (`None` clears them).
+    pub(crate) fn set_hint_marks(&self, marks: Option<crate::mesh_render::Overlay>) {
+        *self.hint_marks.borrow_mut() = marks;
+        self.mark_dirty();
     }
 
     /// Shows `pieces` over the scene until replaced (`None` clears them).
@@ -4182,6 +4200,10 @@ impl ViewportController {
             .repair_marks
             .over(self.overlay.borrow().as_ref(), marks_shown);
         renderer.set_overlay(overlay.as_ref());
+        let hints = (self.session.section() == WorkspaceSection::Supports)
+            .then(|| self.hint_marks.borrow().clone())
+            .flatten();
+        renderer.set_hint_marks(hints.as_ref());
         let overhang_map = self.overhang_map();
         renderer.set_overhang_map(overhang_map);
         if overhang_map.is_some() {

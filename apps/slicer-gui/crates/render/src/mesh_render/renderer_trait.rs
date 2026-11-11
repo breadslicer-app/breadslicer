@@ -97,6 +97,10 @@ pub trait MeshRenderer {
     /// clears them). Re-uploads only when `pieces` is a different `Arc`.
     fn set_overlay(&mut self, _pieces: Option<&super::Overlay>) {}
 
+    /// Install the marks of where supports are recommended, drawn on the
+    /// models and hidden behind them (#524); `None` clears them.
+    fn set_hint_marks(&mut self, _pieces: Option<&super::Overlay>) {}
+
     /// Shows `layers`, the paint on the models' faces, tinted `tint`, in
     /// place of what was shown. A layer whose paint did not change keeps its
     /// buffer.
@@ -234,6 +238,10 @@ impl MeshRenderer for Renderer {
 
     fn set_overlay(&mut self, pieces: Option<&super::Overlay>) {
         Renderer::set_overlay(self, pieces);
+    }
+
+    fn set_hint_marks(&mut self, pieces: Option<&super::Overlay>) {
+        Renderer::set_hint_marks(self, pieces);
     }
 
     fn set_surface_paint(&mut self, layers: &[super::PaintLayer], tint: [f32; 4]) {

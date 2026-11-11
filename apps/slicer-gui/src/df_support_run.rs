@@ -178,6 +178,8 @@ pub(crate) struct DfSupportRun {
     prescan: RefCell<Prescan>,
     /// Supports computed while the person works on something else.
     ahead: RefCell<Ahead>,
+    /// Where supports are recommended while placed by hand (#524).
+    hints: RefCell<crate::support_hints::Hints>,
     /// When the scene last changed, live drag ticks included. Stamped by the
     /// scene subscription; that stamp is all the prescan costs an edit.
     last_change: Rc<Cell<Instant>>,
@@ -1474,6 +1476,7 @@ impl DfSupportRun {
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
             ahead: RefCell::new(Ahead::default()),
+            hints: RefCell::new(crate::support_hints::Hints::default()),
             last_change,
             prescan_timer: slint::Timer::default(),
             _scene_events: scene_events,
@@ -1947,6 +1950,9 @@ impl DfSupportRun {
                 return;
             }
         }
+        drop(prescan);
+        self.support_hints(&ui);
+        let mut prescan = self.prescan.borrow_mut();
         let tab_wants = matches!(
             ui.get_workspace_section(),
             WorkspaceSection::Hollow | WorkspaceSection::Supports
@@ -2101,6 +2107,123 @@ impl DfSupportRun {
             crate::breadcrumbs::note("supports: ahead started");
             ahead.running = Some((job, self.document.scene_revision(), key, lift));
         }
+    }
+
+    /// Keeps the recommended places in step (#524): with Add or Move tip
+    /// armed in the Supports tab, a run like Generate's works them out once
+    /// the models have been still a moment, and again only when the models,
+    /// their poses, the preset or the printer change; the rings show the
+    /// places no tip covers yet.
+    fn support_hints(&self, ui: &MainWindow) {
+        let on = ui.get_workspace_section() == WorkspaceSection::Supports
+            && matches!(ui.get_support_tool(), 1 | 3)
+            && !ui.get_loading();
+        let mut hints = self.hints.borrow_mut();
+        if !on {
+            if let Some((job, _)) = hints.running.take() {
+                job.cancel();
+            }
+            if hints.shown.take().is_some() {
+                self.ctrl.set_hint_marks(None);
+            }
+            return;
+        }
+        if let Some((job, _)) = &hints.running
+            && let Some(finished) = job.try_poll()
+        {
+            let (_, key) = hints.running.take().expect("checked above");
+            crate::breadcrumbs::note(&format!("supports: hints finished ok={}", finished.is_ok()));
+            if let Ok(outcome) = finished {
+                hints.ready = Some((key, Arc::new(crate::support_hints::hints_of(&outcome))));
+                hints.shown = None;
+            }
+        }
+        let request = self.request_for_selection();
+        let Some(key) = self.hints_key(&request) else {
+            return;
+        };
+        let ready = hints
+            .ready
+            .as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, h)| h.clone());
+        if ready.is_none() {
+            let running = hints.running.as_ref().is_some_and(|(_, k)| *k == key);
+            if !running {
+                if let Some((job, _)) = hints.running.take() {
+                    job.cancel();
+                }
+                let idle = self.handle.borrow().is_none() && !ui.get_support_gen_in_progress();
+                if idle
+                    && self.last_change.get().elapsed() >= SPECULATE_SETTLE
+                    && let Some(scene) = self.run_scene(None)
+                    && let Ok(job) = start_df_supports(&scene, request)
+                {
+                    crate::breadcrumbs::note("supports: hints started");
+                    hints.running = Some((job, key));
+                }
+            }
+            if hints.shown.take().is_some() {
+                self.ctrl.set_hint_marks(None);
+            }
+            return;
+        }
+        let ready = ready.expect("checked above");
+        let revision = self.document.scene_revision();
+        let drawn = (Arc::as_ptr(&ready) as usize, revision);
+        if hints.shown == Some(drawn) {
+            return;
+        }
+        // The tips in the scene, each with the reach of its set's preset.
+        let fallback = self.options.borrow().tip_reach_mm();
+        let tips: Vec<([f64; 3], f64)> = self
+            .document
+            .with_scene(|spatial| {
+                sets_in_force(spatial, &self.sessions)
+                    .into_iter()
+                    .flat_map(|drawn| {
+                        let reach = drawn
+                            .session
+                            .options()
+                            .map_or(fallback, |o| o.tip_reach_mm());
+                        drawn
+                            .session
+                            .tips()
+                            .into_iter()
+                            .map(move |(_, p)| (p, reach))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let left = crate::support_hints::uncovered(&ready, &tips);
+        let radius = (fallback * 0.25).clamp(0.3, 1.2);
+        let mesh = crate::support_hints::rings(&left, radius);
+        self.ctrl.set_hint_marks(Some(vec![Arc::new(mesh)].into()));
+        hints.shown = Some(drawn);
+    }
+
+    /// What the recommended places depend on: the request (preset, printer,
+    /// models) and every model it covers as it stands: its mesh and pose.
+    /// Supports placed by hand are not in it.
+    fn hints_key(&self, request: &DfSupportRequest) -> Option<String> {
+        let poses = self.document.with_scene(|spatial| {
+            crate::raft_clash::model_bottoms(spatial)
+                .into_iter()
+                .map(|(id, _)| id)
+                .filter(|id| request.models.as_ref().is_none_or(|m| m.contains(id)))
+                .filter_map(|id| {
+                    let query = spatial.leaf(id)?;
+                    let mesh = spatial.graph().leaf_mesh_arc(id)?;
+                    Some(format!(
+                        "{id:?}:{:?}:{:?}",
+                        Arc::as_ptr(mesh),
+                        query.world_transform()
+                    ))
+                })
+                .collect::<Vec<_>>()
+                .join(";")
+        })?;
+        (!poses.is_empty()).then(|| format!("{}|{poses}", ahead_key(request, false)))
     }
 
     /// A Generate press finds the supports generated ahead: pasted at once
@@ -10423,4 +10546,8 @@ mod hand_edit_tests {
     // A new raft redraws the sets already made (#519).
     #[path = "../../tests_raft_follows.rs"]
     mod raft_follows;
+
+    // Where supports are recommended while placed by hand (#524).
+    #[path = "../../tests_support_hints.rs"]
+    mod support_hints;
 }
