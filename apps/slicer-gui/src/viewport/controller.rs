@@ -2062,6 +2062,13 @@ impl ViewportController {
         if self.input.modal.get().is_some() {
             return;
         }
+        // In the Supports tab, Delete takes the selected supports alone.
+        if self.session.section() == WorkspaceSection::Supports {
+            if let Err(error) = self.session.document().delete_selected_supports() {
+                self.show_edit_rejected(error);
+            }
+            return;
+        }
         if !self.allows_layout_tools() {
             return;
         }
@@ -3833,6 +3840,11 @@ impl ViewportController {
         let Some(id) = document.selection_primary_node_id() else {
             return;
         };
+        // Several selected: each drops to the plate on its own (#516).
+        if code == 10 && document.selection_len() > 1 {
+            self.drop_each_to_plate();
+            return;
+        }
         if document.selection_len() > 1 && !lift_in_supports {
             return;
         }
@@ -3867,6 +3879,43 @@ impl ViewportController {
             }),
             Err(EditNotApplied::Rejected(reason)) => self.show_edit_rejected(reason),
             Err(_) => {}
+        }
+        self.readout_owed.set(true);
+        self.mark_dirty();
+    }
+
+    /// Drop to plate with several objects selected: each one's lowest point
+    /// to the plate, in one undo step (#516). Supports selected with them
+    /// are not dropped on their own: they follow their model.
+    fn drop_each_to_plate(&self) {
+        let document = self.session.document();
+        let edits: Vec<sc_scene_edit::SceneEdit> = document
+            .with_scene(|spatial| {
+                document
+                    .selection_node_ids()
+                    .into_iter()
+                    .filter(|&id| !shows_supports(spatial, id))
+                    .filter_map(|id| {
+                        let query = spatial.leaf(id)?;
+                        let before = query.local_transform();
+                        let after =
+                            super::numeric_transform::apply(&query, NumericEdit::DropToPlate)?;
+                        (after != before).then_some(sc_scene_edit::SceneEdit::SetLocalTransform {
+                            node_id: id,
+                            before,
+                            after,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !edits.is_empty() {
+            let edit = sc_scene_edit::SceneEdit::Compound(edits);
+            match document.apply_edit(edit.clone()) {
+                Ok(()) => document.push_edit(edit),
+                Err(EditNotApplied::Rejected(reason)) => self.show_edit_rejected(reason),
+                Err(_) => {}
+            }
         }
         self.readout_owed.set(true);
         self.mark_dirty();

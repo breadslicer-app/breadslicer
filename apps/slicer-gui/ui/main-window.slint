@@ -955,7 +955,8 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Delete");
                 enabled: root.has-scene && !root.loading && root.selected-object-index != -1
-                    && root.workspace-section == WorkspaceSection.Transform;
+                    && (root.workspace-section == WorkspaceSection.Transform
+                        || root.workspace-section == WorkspaceSection.Supports);
                 activated => {
                     root.delete-requested();
                 }
@@ -2592,7 +2593,8 @@ export component MainWindow inherits Window {
                 MenuItem {
                     title: @tr("MenuBar" => "Delete");
                     enabled: root.has-scene && !root.loading && root.selected-object-index != -1
-                    && root.workspace-section == WorkspaceSection.Transform;
+                    && (root.workspace-section == WorkspaceSection.Transform
+                        || root.workspace-section == WorkspaceSection.Supports);
                     activated => {
                         root.delete-requested();
                     }
