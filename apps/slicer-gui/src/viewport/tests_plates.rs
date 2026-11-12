@@ -299,8 +299,13 @@ fn arrange_works_on_the_active_plate_alone() {
     ctrl.add_plate();
     document.set_active_plate(1);
     let before = centre_of(&ctrl, leaves[0]);
-    crate::arrange_run::arrange_on_plates_now(document.as_ref(), &v, Default::default())
-        .expect("arranged");
+    crate::arrange_run::arrange_on_plates_now(
+        document.as_ref(),
+        &v,
+        Default::default(),
+        crate::arrange_run::ArrangeScope::ActivePlate,
+    )
+    .expect("arranged");
     assert!(
         near(centre_of(&ctrl, leaves[0]), before),
         "plate 0 untouched"
@@ -371,4 +376,41 @@ fn the_orbit_pivot_lands_on_any_plate() {
     );
     assert_eq!(source, super::super::orbit_pivot::PivotSource::Plate);
     assert!((pivot - second).length() < 1.0, "{pivot:?}");
+}
+
+/// The card's Arrange all arranges every plate with objects, each on its
+/// own (#545): a model on each plate, off to a side, both land on theirs.
+#[test]
+fn arrange_all_arranges_every_plate_on_its_own() {
+    let v = volume();
+    let second = offset(&v, 1);
+    let (ctrl, leaves) = window(&[
+        Vec3::new(-40.0, 18.0, 0.0),
+        second + Vec3::new(40.0, -18.0, 0.0),
+    ]);
+    let document = ctrl.document();
+    ctrl.add_plate();
+    let before = [centre_of(&ctrl, leaves[0]), centre_of(&ctrl, leaves[1])];
+    crate::arrange_run::arrange_on_plates_now(
+        document.as_ref(),
+        &v,
+        Default::default(),
+        crate::arrange_run::ArrangeScope::Plates,
+    )
+    .expect("arranged");
+    let after = [centre_of(&ctrl, leaves[0]), centre_of(&ctrl, leaves[1])];
+    assert!(
+        !near(after[0], before[0]) && !near(after[1], before[1]),
+        "both moved: {before:?} {after:?}"
+    );
+    for (c, at) in [(after[0], Vec3::ZERO), (after[1], second)] {
+        let c = c - at;
+        assert!(
+            c.x.abs() <= 50.0 && c.y.abs() <= 25.0,
+            "on its plate: {c:?}"
+        );
+    }
+    assert!(document.undo().expect("undoes"), "one step");
+    assert!(near(centre_of(&ctrl, leaves[0]), before[0]));
+    assert!(near(centre_of(&ctrl, leaves[1]), before[1]));
 }
