@@ -113,7 +113,7 @@ fn a_plate_added_goes_after_the_last_and_undoes_in_one_step() {
     ctrl.add_plate();
     ctrl.add_plate();
     assert_eq!(document.plates().count(), 3);
-    assert_eq!(document.plates().active(), 2, "the new plate is active");
+    assert_eq!(document.plates().active(), 0, "the active plate stays");
     assert!(document.is_dirty(), "the project changed");
     assert!(document.undo().expect("undoes"));
     assert_eq!(document.plates().count(), 2);
@@ -171,7 +171,12 @@ fn a_click_on_a_plate_or_a_model_on_it_makes_it_the_active_one() {
     let document = ctrl.document();
     ctrl.add_plate();
     ctrl.add_plate();
-    assert_eq!(document.plates().active(), 2);
+    assert_eq!(
+        document.plates().active(),
+        0,
+        "adding keeps the active plate"
+    );
+    document.set_active_plate(2);
     // Straight down at the empty middle of plate 1.
     let mut cam = OrbitCamera::new(offset(&v, 1), 200.0);
     cam.set_axis_view(AxisView::Top);
@@ -242,9 +247,9 @@ fn off_the_active_plate_the_models_dim() {
     assert!(ctrl.focus().is_empty());
     ctrl.add_plate();
     assert!(ctrl.dims_off_plate());
-    assert_eq!(ctrl.focus(), vec![leaves[1]], "plate 1 is active");
-    document.set_active_plate(0);
-    assert_eq!(ctrl.focus(), vec![leaves[0]]);
+    assert_eq!(ctrl.focus(), vec![leaves[0]], "plate 0 is active");
+    document.set_active_plate(1);
+    assert_eq!(ctrl.focus(), vec![leaves[1]]);
     document.set_selection(Selection::One(LeafId(leaves[1])));
     assert!(!ctrl.dims_off_plate(), "a selection is the focus");
     assert_eq!(ctrl.focus(), vec![leaves[1]]);
@@ -292,7 +297,7 @@ fn arrange_works_on_the_active_plate_alone() {
     ]);
     let document = ctrl.document();
     ctrl.add_plate();
-    assert_eq!(document.plates().active(), 1);
+    document.set_active_plate(1);
     let before = centre_of(&ctrl, leaves[0]);
     crate::arrange_run::arrange_on_plates_now(document.as_ref(), &v, Default::default())
         .expect("arranged");

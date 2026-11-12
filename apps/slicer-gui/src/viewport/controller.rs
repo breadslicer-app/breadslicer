@@ -3812,8 +3812,8 @@ impl ViewportController {
             .unwrap_or_default()
     }
 
-    /// Adds a plate after the last (#545), as one step of history, and makes
-    /// it the active one.
+    /// Adds a plate after the last (#545), as one step of history; the
+    /// active plate stays the active one.
     pub(crate) fn add_plate(&self) {
         let document = self.session.document();
         let plates = document.plates();
@@ -3821,7 +3821,13 @@ impl ViewportController {
             return;
         }
         let count = plates.count();
-        document.push_plates_edit(SceneEdit::Compound(Vec::new()), count, count + 1, count);
+        // The active plate stays the active one.
+        document.push_plates_edit(
+            SceneEdit::Compound(Vec::new()),
+            count,
+            count + 1,
+            plates.active(),
+        );
     }
 
     /// Takes the active plate off (#545) when no model stands on it: the
