@@ -347,7 +347,7 @@ fn land(document: &SceneDocument, pending: &Pending, made: Made) -> Landed {
 /// The plate's objects, everything staying where it is, and the selected
 /// models as the sources of the copies. `None` when no model is selected.
 fn gather_fill(document: &SceneDocument) -> Option<(Vec<Body>, Vec<Source>)> {
-    let gathered = gather(document, false)?;
+    let gathered = gather(document, false, None)?;
     let selected = document.selection_node_ids();
     let sessions = document.support_sessions();
     let sources: Vec<Source> = document

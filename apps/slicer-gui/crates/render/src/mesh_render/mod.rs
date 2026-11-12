@@ -1282,12 +1282,14 @@ impl Renderer {
         // the envelope alone is the framing AABB.
         let env_min = build_volume.envelope_min_mm();
         let env_max = build_volume.envelope_max_mm();
+        // Every plate is in it (#545): the depth range reaches the farthest.
+        let plates_max = env_max + crate::plates::extent(&build_volume, self.plates);
         let (framing_min, framing_max) = match installed {
             Some(inst) => {
                 let (smin, smax) = inst.gpu.aabb();
-                (smin.min(env_min), smax.max(env_max))
+                (smin.min(env_min), smax.max(plates_max))
             }
-            None => (env_min, env_max),
+            None => (env_min, plates_max),
         };
         let view_proj = frame::compute_view_proj(
             camera,

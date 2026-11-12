@@ -227,7 +227,7 @@ pub(crate) fn wire_viewport_input(
     }
     {
         let ctrl = ctrl.clone();
-        ui.on_plate_remove_requested(move || ctrl.remove_active_plate());
+        ui.on_plate_remove_requested(move |with_models| ctrl.remove_active_plate_with(with_models));
     }
     {
         let ctrl = ctrl.clone();

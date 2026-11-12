@@ -6974,6 +6974,26 @@ msgctxt "Inspector"
 msgid "Remove plate"
 msgstr "Quitar cama"
 
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Add a plate"
+msgstr "Agregar una cama"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Arrange this plate"
+msgstr "Acomodar esta cama"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Remove this plate (Shift: with its models)"
+msgstr "Quitar esta cama (Shift: con sus modelos)"
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "This plate has models on it. Shift+click the button to remove it with them."
+msgstr "Esta cama tiene modelos. Shift+clic en el botón para quitarla con ellos."
+
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "Go to the island"

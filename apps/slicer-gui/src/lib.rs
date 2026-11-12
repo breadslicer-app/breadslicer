@@ -51,6 +51,7 @@ mod model_import;
 mod orient_run;
 mod overhang_tips;
 mod pending_load;
+mod plate_layout;
 mod preferences_bus;
 mod preferences_filters;
 mod preferences_window;

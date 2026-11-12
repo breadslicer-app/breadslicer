@@ -10,7 +10,7 @@ import { AboutWindow } from "about-window.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
-import { CaptionButton, CaptionKind, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
+import { CaptionButton, CaptionKind, Icon, LayerRuler, PlateToolButton, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
 import { CutCard, ExportInspector, HollowInspector, OrientCard, OrientOption, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
@@ -703,7 +703,14 @@ export component MainWindow inherits Window {
     in property <int> active-plate: 0;
     in property <bool> active-plate-used;
     callback plate-add-requested();
-    callback plate-remove-requested();
+    // With the models on it (Shift on the plate's tool) or not.
+    callback plate-remove-requested(bool);
+    callback plate-arrange-requested();
+    // The active plate's tools in the view, by its back right corner
+    // (viewport pixels).
+    in property <bool> plate-tools-shown;
+    in property <length> plate-tools-x;
+    in property <length> plate-tools-y;
     callback arrange-fill-requested();
     callback arrange-finished();
     callback arrange-cancel();
@@ -1869,6 +1876,54 @@ export component MainWindow inherits Window {
                         border-color: #0e1011;
                     }
 
+                    // The active plate's tools (#545): add a plate, arrange
+                    // this one, remove it (Shift: with its models).
+                    if root.plate-tools-shown: Rectangle {
+                        x: max(4px, min(root.plate-tools-x + 10px, parent.width - self.width - 4px));
+                        y: max(4px, min(root.plate-tools-y, parent.height - self.height - 4px));
+                        width: 40px;
+                        height: plate-tools.preferred-height + 8px;
+                        border-radius: Theme.radius-lg;
+                        background: Theme.chrome;
+                        border-width: 1px;
+                        border-color: Theme.border;
+
+                        plate-tools := VerticalLayout {
+                            x: 4px;
+                            y: 4px;
+                            spacing: 2px;
+
+                            PlateToolButton {
+                                icon: Icons.plus;
+                                label: @tr("Workspace" => "Add a plate");
+                                enabled: root.plate-count < 32;
+                                pressed => {
+                                    root.plate-add-requested();
+                                }
+                            }
+                            PlateToolButton {
+                                icon: Icons.arrange;
+                                label: @tr("Workspace" => "Arrange this plate");
+                                pressed => {
+                                    root.plate-arrange-requested();
+                                }
+                            }
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.border;
+                            }
+                            PlateToolButton {
+                                icon: Icons.trash;
+                                label: @tr("Workspace" => "Remove this plate (Shift: with its models)");
+                                enabled: root.plate-count > 1;
+                                danger: true;
+                                pressed(shift) => {
+                                    root.plate-remove-requested(shift);
+                                }
+                            }
+                        }
+                    }
+
                     if root.gesture-tag != "": Rectangle {
                         x: max(4px, min(root.gesture-tag-x + 4px, parent.width - self.width - 4px));
                         y: max(4px, min(root.gesture-tag-y - self.height / 2, parent.height - self.height - 4px));
@@ -2208,7 +2263,7 @@ export component MainWindow inherits Window {
                                     root.plate-add-requested();
                                 }
                                 plate-remove => {
-                                    root.plate-remove-requested();
+                                    root.plate-remove-requested(false);
                                 }
                                 arrange-filling: root.arrange-filling;
                                 arrange-fill-progress: root.arrange-fill-progress;

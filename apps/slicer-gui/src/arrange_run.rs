@@ -96,6 +96,9 @@ struct Gathered {
     /// Per body, the support leaves whose set in force follows its model.
     follows: Vec<Vec<NodeId>>,
     names: Vec<String>,
+    /// Per body, the leaf that says which plate it stands on (#545): its
+    /// model, or the supports no model owns.
+    anchors: Vec<NodeId>,
 }
 
 /// A run in flight.
@@ -144,6 +147,11 @@ impl ArrangeRun {
         {
             let run = run.clone();
             ui.on_arrange_requested(move |selection| run.start(selection));
+        }
+        {
+            // The active plate's own Arrange (#545): all of its objects.
+            let run = run.clone();
+            ui.on_plate_arrange_requested(move || run.start(false));
         }
         {
             let run = run.clone();
@@ -202,10 +210,11 @@ impl ArrangeRun {
         {
             return;
         }
-        let Some(gathered) = gather(&self.document, selection) else {
+        let Some((gathered, plate)) =
+            job_on_plates(&self.document, &self.ctrl.build_volume(), selection)
+        else {
             return;
         };
-        let plate = self.plate();
         let settings = self.options.get().settings();
         *self.pending.borrow_mut() = Some(Pending {
             revision: self.document.scene_revision(),
@@ -393,8 +402,46 @@ fn affine(t: &Transform3D) -> AffineTransform3D {
 /// whose model is unknown stay where they are, and so does everything but
 /// the selected models when arranging the selection (#13). `None` when
 /// nothing would move.
-fn gather(document: &SceneDocument, selection: bool) -> Option<Gathered> {
-    gather_all(document, selection).filter(|g| g.bodies.iter().any(|b| !b.fixed))
+fn gather(
+    document: &SceneDocument,
+    selection: bool,
+    on: Option<(crate::build_volume::BuildVolume, crate::plates::Plates, u32)>,
+) -> Option<Gathered> {
+    let mut gathered = gather_all(document, selection)?;
+    if let Some((volume, plates, plate)) = on {
+        // The objects of one plate (#545): each body by its first leaf, a
+        // model or the supports no model owns.
+        let keep: Vec<bool> = document
+            .with_scene(|spatial| {
+                gathered
+                    .anchors
+                    .iter()
+                    .map(|&leaf| {
+                        crate::plate_layout::plate_of_leaf(spatial, &volume, plates, leaf)
+                            == Some(plate)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut i = 0;
+        gathered.bodies.retain(|_| {
+            i += 1;
+            keep.get(i - 1).copied().unwrap_or(false)
+        });
+        for list in [&mut gathered.leaves, &mut gathered.follows] {
+            let mut i = 0;
+            list.retain(|_| {
+                i += 1;
+                keep.get(i - 1).copied().unwrap_or(false)
+            });
+        }
+        let mut i = 0;
+        gathered.names.retain(|_| {
+            i += 1;
+            keep.get(i - 1).copied().unwrap_or(false)
+        });
+    }
+    Some(gathered).filter(|g| g.bodies.iter().any(|b| !b.fixed))
 }
 
 /// [`gather`], also when nothing would move.
@@ -409,6 +456,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             leaves: Vec::new(),
             follows: Vec::new(),
             names: Vec::new(),
+            anchors: Vec::new(),
         };
         let mut body_of: HashMap<NodeId, usize> = HashMap::new();
         let part = |leaf: NodeId| {
@@ -437,6 +485,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             gathered.leaves.push(vec![leaf]);
             gathered.follows.push(Vec::new());
             gathered.names.push(name(row));
+            gathered.anchors.push(leaf);
         }
         for (row, &leaf) in rows.iter().enumerate() {
             let Some(query) = spatial.leaf(leaf) else {
@@ -479,11 +528,54 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
                     gathered.leaves.push(Vec::new());
                     gathered.follows.push(Vec::new());
                     gathered.names.push(name(row));
+                    gathered.anchors.push(leaf);
                 }
             }
         }
         gathered
     })
+}
+
+/// What an Arrange press works on: the objects, and the plate they go on.
+/// With several plates (#545), the active plate's objects alone, on it.
+fn job_on_plates(
+    document: &SceneDocument,
+    volume: &crate::build_volume::BuildVolume,
+    selection: bool,
+) -> Option<(Gathered, Plate)> {
+    let plates = document.plates();
+    let on = (plates.count() > 1).then_some(plates.active());
+    let gathered = gather(document, selection, on.map(|p| (*volume, plates, p)))?;
+    let mut plate = plate_of(volume);
+    if let Some(p) = on {
+        let at = crate::plates::offset(volume, p);
+        let (dx, dy) = (f64::from(at.x), f64::from(at.y));
+        plate.min = [plate.min[0] + dx, plate.min[1] + dy];
+        plate.max = [plate.max[0] + dx, plate.max[1] + dy];
+    }
+    Some((gathered, plate))
+}
+
+/// An Arrange press on this thread, on the plates of `document` on
+/// `volume` (#545), applied as a run applies it: for tests.
+#[cfg(test)]
+pub(crate) fn arrange_on_plates_now(
+    document: &SceneDocument,
+    volume: &crate::build_volume::BuildVolume,
+    options: ArrangeOptions,
+) -> Option<Outcome> {
+    let (gathered, plate) = job_on_plates(document, volume, false)?;
+    let outcome = sc_arrange::arrange(
+        &gathered.bodies,
+        &plate,
+        &options.settings(),
+        &AtomicBool::new(false),
+    )
+    .ok()?;
+    let edit = arrangement_edit(document, &outcome, &gathered.leaves)?;
+    document.apply_edit(edit.clone()).ok()?;
+    document.push_edit(edit);
+    Some(outcome)
 }
 
 /// Arranges on this thread and applies the result, as a run does: for
@@ -495,7 +587,7 @@ pub(crate) fn arrange_now(
     options: ArrangeOptions,
     selection: bool,
 ) -> Option<Outcome> {
-    let gathered = gather(document, selection)?;
+    let gathered = gather(document, selection, None)?;
     let outcome = sc_arrange::arrange(
         &gathered.bodies,
         plate,

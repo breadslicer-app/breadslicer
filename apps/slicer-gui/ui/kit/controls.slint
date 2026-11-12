@@ -308,6 +308,56 @@ export component ToolButton inherits Rectangle {
     }
 }
 
+// A plate's tool in the view (#545): a tool button whose press tells
+// whether Shift was held.
+export component PlateToolButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> danger;
+    callback pressed(bool);
+
+    width: 32px;
+    height: 32px;
+    border-radius: Theme.radius;
+    background: touch.has-hover && root.enabled ? (root.danger ? #c42b1c40 : Theme.raised) : transparent;
+    opacity: root.enabled ? 1 : 0.4;
+    accessible-role: button;
+    accessible-label: self.label;
+    accessible-action-default => {
+        if self.enabled {
+            self.pressed(false);
+        }
+    }
+
+    Icon {
+        commands: root.icon;
+        size: 17px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        color: touch.has-hover && root.enabled ? Theme.text : Theme.text-muted;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        pointer-event(event) => {
+            if root.enabled && event.kind == PointerEventKind.up && event.button == PointerEventButton.left && self.has-hover {
+                root.pressed(event.modifiers.shift);
+            }
+        }
+        changed has-hover => {
+            if self.has-hover {
+                ToolTipState.text = root.label;
+                ToolTipState.button-right = root.absolute-position.x + root.width;
+                ToolTipState.button-top = root.absolute-position.y;
+                ToolTipState.button-height = root.height;
+            } else {
+                ToolTipState.text = "";
+            }
+        }
+    }
+}
+
 // A link to a page that supports the project: an amber heart and a short
 // label, quiet until hovered.
 export component SupportLink inherits Rectangle {

@@ -1669,26 +1669,7 @@ impl SceneDocument {
         if ids.is_empty() {
             return Ok(false);
         }
-        let edits = self
-            .with_scene(|spatial| {
-                if let [id] = ids[..] {
-                    return SceneEdit::remove_leaf_with_gc(spatial.graph(), id)
-                        .into_iter()
-                        .collect();
-                }
-                let mut scratch = spatial.graph().clone();
-                let mut edits = Vec::new();
-                for id in ids {
-                    let Some(edit) = SceneEdit::remove_leaf_with_gc(&scratch, id) else {
-                        continue;
-                    };
-                    if edit.apply_to_scene(&mut scratch).is_ok() {
-                        edits.push(edit);
-                    }
-                }
-                edits
-            })
-            .unwrap_or_default();
+        let edits = self.removal_edits(ids);
         let edit = match <[SceneEdit; 1]>::try_from(edits) {
             Ok([edit]) => edit,
             Err(edits) if edits.is_empty() => return Ok(false),
@@ -1702,6 +1683,34 @@ impl SceneDocument {
             Err(EditNotApplied::NoSceneLoaded) => Ok(false),
             Err(EditNotApplied::Rejected(error)) => Err(error),
         }
+    }
+
+    /// The edits that take the leaves `ids` off, each with the resources
+    /// only it used, in order: applied one after another, as a compound
+    /// does.
+    pub(crate) fn removal_edits(&self, ids: Vec<NodeId>) -> Vec<SceneEdit> {
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        self.with_scene(|spatial| {
+            if let [id] = ids[..] {
+                return SceneEdit::remove_leaf_with_gc(spatial.graph(), id)
+                    .into_iter()
+                    .collect();
+            }
+            let mut scratch = spatial.graph().clone();
+            let mut edits = Vec::new();
+            for id in ids {
+                let Some(edit) = SceneEdit::remove_leaf_with_gc(&scratch, id) else {
+                    continue;
+                };
+                if edit.apply_to_scene(&mut scratch).is_ok() {
+                    edits.push(edit);
+                }
+            }
+            edits
+        })
+        .unwrap_or_default()
     }
 
     /// What stays lit while something is selected (#523): the selection,

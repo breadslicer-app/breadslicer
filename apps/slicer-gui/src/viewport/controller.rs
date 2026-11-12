@@ -1005,7 +1005,7 @@ impl ViewportController {
                 .filter_map(|(id, plate)| {
                     let by =
                         crate::plates::offset(&bv, plate) - crate::plates::offset(&before, plate);
-                    moved_by(document, id, by)
+                    crate::plate_layout::moved_by(document, id, by)
                 })
                 .collect()
         } else {
@@ -3681,6 +3681,32 @@ impl ViewportController {
         }
     }
 
+    /// Where the active plate's tools stand in the view (#545): by its back
+    /// right corner, in viewport pixels. Only in the Transform tab, with a
+    /// scene.
+    fn plate_tools_at(&self) -> Option<[f32; 2]> {
+        let document = self.session.document();
+        if !document.is_loaded() || self.session.section() != WorkspaceSection::Transform {
+            return None;
+        }
+        let vp = self.render.viewport()?;
+        let camera = self.camera.camera_cell().borrow();
+        let camera = camera.as_ref()?;
+        let volume = self.session.build_volume();
+        let corner = crate::plates::offset(&volume, document.plates().active())
+            + glam::Vec3::new(volume.envelope_max_mm().x, volume.envelope_max_mm().y, 0.0);
+        let aspect = vp.width() / vp.height().max(1.0);
+        let view_proj = camera.projection(crate::mesh_render::default_fov_y(), aspect, 0.01, 100.0)
+            * camera.view_matrix();
+        let clip = view_proj * corner.extend(1.0);
+        if clip.w <= 0.0 {
+            return None;
+        }
+        let (x, y) = (clip.x / clip.w, clip.y / clip.w);
+        let pixel = [(x + 1.0) * 0.5 * vp.width(), (1.0 - y) * 0.5 * vp.height()];
+        pixel.iter().all(|c| c.is_finite()).then_some(pixel)
+    }
+
     /// Whether what stands off the active plate dims with nothing selected
     /// (#545): with more than one plate.
     fn dims_off_plate(&self) -> bool {
@@ -3716,7 +3742,9 @@ impl ViewportController {
         let plates = document.plates();
         let volume = self.session.build_volume();
         document
-            .with_scene(|spatial| plate_of_leaf_in(spatial, &volume, plates, leaf))
+            .with_scene(|spatial| {
+                crate::plate_layout::plate_of_leaf(spatial, &volume, plates, leaf)
+            })
             .flatten()
     }
 
@@ -3730,7 +3758,10 @@ impl ViewportController {
                 crate::raft_clash::model_bottoms(spatial)
                     .into_iter()
                     .filter_map(|(id, _)| {
-                        Some((id, plate_of_leaf_in(spatial, &volume, plates, id)?))
+                        Some((
+                            id,
+                            crate::plate_layout::plate_of_leaf(spatial, &volume, plates, id)?,
+                        ))
                     })
                     .collect()
             })
@@ -3754,6 +3785,13 @@ impl ViewportController {
     /// plates after it move up a place, with their models, as one step of
     /// history. The plate before becomes the active one.
     pub(crate) fn remove_active_plate(&self) {
+        self.remove_active_plate_with(false);
+    }
+
+    /// [`Self::remove_active_plate`]; `with_models` takes the models on it
+    /// and their supports off with it (Shift on the plate's tool). Without,
+    /// a plate with models stays and the status bar says how to take it off.
+    pub(crate) fn remove_active_plate_with(&self, with_models: bool) {
         let document = self.session.document();
         let plates = document.plates();
         let active = plates.active();
@@ -3761,20 +3799,33 @@ impl ViewportController {
             return;
         }
         let models = self.models_on_plates();
-        if models.iter().any(|&(_, plate)| plate == active) {
+        let on_it: Vec<sc_scene::NodeId> = models
+            .iter()
+            .filter(|&&(_, plate)| plate == active)
+            .map(|&(id, _)| id)
+            .collect();
+        if !on_it.is_empty() && !with_models {
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_status_notice(ctr!(
+                    "Workspace",
+                    "This plate has models on it. Shift+click the button to remove it with them."
+                ));
+            }
             return;
         }
         let volume = self.session.build_volume();
-        let moves: Vec<SceneEdit> = models
-            .into_iter()
-            .filter(|&(_, plate)| plate > active)
-            .filter_map(|(id, plate)| {
-                let by = crate::plates::offset(&volume, plate - 1)
-                    - crate::plates::offset(&volume, plate);
-                moved_by(document, id, by)
-            })
-            .collect();
-        let edit = SceneEdit::Compound(moves);
+        let mut edits = document.removal_edits(document.with_their_supports(on_it));
+        edits.extend(
+            models
+                .into_iter()
+                .filter(|&(_, plate)| plate > active)
+                .filter_map(|(id, plate)| {
+                    let by = crate::plates::offset(&volume, plate - 1)
+                        - crate::plates::offset(&volume, plate);
+                    crate::plate_layout::moved_by(document, id, by)
+                }),
+        );
+        let edit = SceneEdit::Compound(edits);
         if !edit.is_noop() && document.apply_edit(edit.clone()).is_err() {
             return;
         }
@@ -4471,6 +4522,14 @@ impl ViewportController {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
+        match self.plate_tools_at() {
+            Some([x, y]) => {
+                ui.set_plate_tools_x(x);
+                ui.set_plate_tools_y(y);
+                ui.set_plate_tools_shown(true);
+            }
+            None => ui.set_plate_tools_shown(false),
+        }
         if self.paint_owed.replace(false) {
             let layers = self.paint_layers();
             renderer.set_surface_paint(&layers, surface_paint_tint(&ui));
@@ -6428,45 +6487,6 @@ fn plate_length(mm: f32) -> String {
     } else {
         format!("{:.1}", tenths / 10.0)
     }
-}
-
-/// The plate the model `leaf` of `spatial` belongs to (#545): the one whose
-/// cell holds the middle of its footprint.
-fn plate_of_leaf_in(
-    spatial: &sc_mesh_spatial::SceneSpatial,
-    volume: &BuildVolume,
-    plates: crate::plates::Plates,
-    leaf: sc_scene::NodeId,
-) -> Option<u32> {
-    let query = spatial.leaf(leaf)?;
-    let aabb = query.transformed_aabb(query.world_transform())?;
-    let (min, max) = (aabb.min().coords(), aabb.max().coords());
-    Some(crate::plates::plate_of(
-        volume,
-        plates,
-        (min[0] + max[0]) / 2.0,
-        (min[1] + max[1]) / 2.0,
-    ))
-}
-
-/// The edit that moves the model `leaf` of `document` by `by` (mm) in the
-/// plate's plane, its supports following it (#545).
-fn moved_by(document: &SceneDocument, leaf: sc_scene::NodeId, by: glam::Vec3) -> Option<SceneEdit> {
-    let before = document
-        .with_scene(|spatial| spatial.leaf(leaf).map(|query| query.local_transform()))
-        .flatten()?;
-    let shift = Transform3D::Affine(
-        sc_mesh_core::transform::AffineTransform3D::from_translation([
-            f64::from(by.x),
-            f64::from(by.y),
-            0.0,
-        ]),
-    );
-    Some(SceneEdit::SetLocalTransform {
-        node_id: leaf,
-        before,
-        after: shift.compose(&before),
-    })
 }
 
 #[cfg(test)]

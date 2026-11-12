@@ -249,3 +249,64 @@ fn off_the_active_plate_the_models_dim() {
     assert!(!ctrl.dims_off_plate(), "a selection is the focus");
     assert_eq!(ctrl.focus(), vec![leaves[1]]);
 }
+
+/// Shift on the plate's remove tool takes its models off with it, and the
+/// plates after it move up with theirs, in one undo step (#545).
+#[test]
+fn a_plate_removed_with_its_models_takes_them_off_in_one_step() {
+    let v = volume();
+    let (ctrl, leaves) = window(&[Vec3::ZERO, offset(&v, 1), offset(&v, 2)]);
+    let document = ctrl.document();
+    ctrl.add_plate();
+    ctrl.add_plate();
+    document.set_active_plate(1);
+    ctrl.remove_active_plate_with(false);
+    assert_eq!(document.plates().count(), 3, "without Shift it stays");
+    ctrl.remove_active_plate_with(true);
+    assert_eq!(document.plates().count(), 2);
+    let gone = document
+        .with_scene(|spatial| spatial.leaf(leaves[1]).is_none())
+        .expect("a scene");
+    assert!(gone, "its model went with it");
+    assert!(
+        near(centre_of(&ctrl, leaves[2]), offset(&v, 1)),
+        "plate 2 is plate 1"
+    );
+    assert!(document.undo().expect("undoes"));
+    assert_eq!(document.plates().count(), 3);
+    assert!(near(centre_of(&ctrl, leaves[1]), offset(&v, 1)), "back");
+    assert!(near(centre_of(&ctrl, leaves[2]), offset(&v, 2)));
+}
+
+/// Arrange with several plates works on the active one alone (#545): its
+/// models are placed on it, the others stay where they are.
+#[test]
+fn arrange_works_on_the_active_plate_alone() {
+    let v = volume();
+    let second = offset(&v, 1);
+    // Two models off to a side of plate 1, one on plate 0.
+    let (ctrl, leaves) = window(&[
+        Vec3::new(-30.0, 0.0, 0.0),
+        second + Vec3::new(40.0, 15.0, 0.0),
+        second + Vec3::new(42.0, 18.0, 0.0),
+    ]);
+    let document = ctrl.document();
+    ctrl.add_plate();
+    assert_eq!(document.plates().active(), 1);
+    let before = centre_of(&ctrl, leaves[0]);
+    crate::arrange_run::arrange_on_plates_now(document.as_ref(), &v, Default::default())
+        .expect("arranged");
+    assert!(
+        near(centre_of(&ctrl, leaves[0]), before),
+        "plate 0 untouched"
+    );
+    for &leaf in &leaves[1..] {
+        let c = centre_of(&ctrl, leaf) - second;
+        assert!(c.x.abs() <= 50.0 && c.y.abs() <= 25.0, "on plate 1: {c:?}");
+    }
+    let (a, b) = (centre_of(&ctrl, leaves[1]), centre_of(&ctrl, leaves[2]));
+    assert!(
+        (a - b).length() >= 4.0,
+        "apart, not overlapping: {a:?} {b:?}"
+    );
+}

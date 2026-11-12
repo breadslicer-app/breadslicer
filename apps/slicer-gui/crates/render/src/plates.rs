@@ -92,6 +92,15 @@ pub fn offset(volume: &BuildVolume, index: u32) -> Vec3 {
     Vec3::new(col as f32 * px, row as f32 * py, 0.0)
 }
 
+/// How far the last column and the last row of `plates` stand from the
+/// first plate: what the plates take past its corner.
+pub fn extent(volume: &BuildVolume, plates: Plates) -> Vec3 {
+    let columns = plates.count().min(PLATES_PER_ROW);
+    let (px, _) = pitch(volume);
+    let last = offset(volume, plates.count() - 1);
+    Vec3::new((columns - 1) as f32 * px, last.y, 0.0)
+}
+
 /// The plate of `plates` whose cell holds `x, y`: the plate's footprint and
 /// half the room around it. `None` past every plate.
 pub fn cell_at(volume: &BuildVolume, plates: Plates, x: f32, y: f32) -> Option<u32> {
@@ -151,6 +160,14 @@ mod tests {
         // A model between two plates belongs to the nearer.
         assert_eq!(plate_of(&v, plates, 130.0, 0.0), 1);
         assert_eq!(plate_of(&v, plates, -500.0, 0.0), 0);
+    }
+
+    #[test]
+    fn the_plates_reach_to_their_last_column_and_row() {
+        let v = volume();
+        assert_eq!(extent(&v, Plates::one()), Vec3::ZERO);
+        assert_eq!(extent(&v, Plates::new(3, 0)), Vec3::new(480.0, 0.0, 0.0));
+        assert_eq!(extent(&v, Plates::new(6, 0)), Vec3::new(720.0, 140.0, 0.0));
     }
 
     #[test]
