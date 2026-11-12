@@ -583,3 +583,33 @@ fn the_selection_goes_to_another_plate_where_it_stood() {
     assert!(document.undo().expect("undoes"));
     assert!(near(centre_of(&ctrl, leaves[0]), before), "one step back");
 }
+
+/// Shift on the plus tool (#551): a new plate with a copy of every model of
+/// the active one, each where it stands on its plate; one undo step.
+#[test]
+fn shift_on_plus_duplicates_the_plate_with_its_models() {
+    let v = volume();
+    let (ctrl, leaves) = window(&[Vec3::new(-30.0, 10.0, 0.0), Vec3::new(20.0, -5.0, 0.0)]);
+    let document = ctrl.document();
+    ctrl.duplicate_active_plate();
+    assert_eq!(document.plates().count(), 2);
+    assert_eq!(document.plates().active(), 0, "the active plate stays");
+    let on = ctrl.models_on_plates();
+    assert_eq!(on.iter().filter(|&&(_, p)| p == 1).count(), 2, "{on:?}");
+    let copies: Vec<Vec3> = on
+        .iter()
+        .filter(|&&(id, p)| p == 1 && !leaves.contains(&id))
+        .map(|&(id, _)| centre_of(&ctrl, id) - offset(&v, 1))
+        .collect();
+    for original in [Vec3::new(-30.0, 10.0, 0.0), Vec3::new(20.0, -5.0, 0.0)] {
+        assert!(
+            copies
+                .iter()
+                .any(|&c| (c.truncate() - original.truncate()).length() < 0.01),
+            "{original:?} in {copies:?}"
+        );
+    }
+    assert!(document.undo().expect("undoes"));
+    assert_eq!(document.plates().count(), 1, "one step");
+    assert_eq!(ctrl.models_on_plates().len(), 2);
+}

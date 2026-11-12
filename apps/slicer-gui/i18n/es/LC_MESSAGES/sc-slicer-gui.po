@@ -7093,3 +7093,8 @@ msgstr "{}: laminada"
 msgctxt "SliceDialog"
 msgid "{}: not sliced"
 msgstr "{}: no se laminó"
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Add a plate. Shift: a copy of this one, with its models"
+msgstr "Agregar una cama. Shift: una copia de esta, con sus modelos"

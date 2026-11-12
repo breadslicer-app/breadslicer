@@ -1055,6 +1055,41 @@ impl ViewportController {
         self.mark_dirty();
     }
 
+    /// Adds a plate after the last with a copy of every model of the active
+    /// plate (#551), each where it stands on its plate, with its supports and
+    /// hollow: one step of history. The active plate stays the active one.
+    pub(crate) fn duplicate_active_plate(&self) {
+        let document = self.session.document();
+        let plates = document.plates();
+        if !document.is_loaded() || plates.count() >= crate::plates::MAX_PLATES {
+            return;
+        }
+        let source = plates.active();
+        let models: Vec<sc_scene::NodeId> = self
+            .models_on_plates()
+            .into_iter()
+            .filter(|&(_, plate)| plate == source)
+            .map(|(id, _)| id)
+            .collect();
+        let before = document.undo_len();
+        self.add_plate();
+        let volume = self.build_volume();
+        let by = crate::plates::offset(&volume, plates.count())
+            - crate::plates::offset(&volume, source);
+        for id in models {
+            if let Err(err) = clipboard::duplicate_by(
+                document,
+                id,
+                [f64::from(by.x), f64::from(by.y), 0.0],
+            ) {
+                crate::breadcrumbs::note(&format!("plates: a copy failed: {err}"));
+            }
+        }
+        document.join_last_steps(document.undo_len().saturating_sub(before));
+        document.set_selection(Selection::None);
+        self.mark_dirty();
+    }
+
     /// The plates models stand on, in their order (#549).
     pub(crate) fn plates_in_use(&self) -> Vec<u32> {
         let mut used: Vec<u32> = self
@@ -3949,7 +3984,7 @@ impl ViewportController {
         }
         if let Some(ui) = self.ui.upgrade() {
             let text = match hovered {
-                Some(0) => ctr!("Workspace", "Add a plate"),
+                Some(0) => ctr!("Workspace", "Add a plate. Shift: a copy of this one, with its models"),
                 Some(1) => ctr!("Workspace", "Arrange this plate"),
                 Some(_) => ctr!("Workspace", "Remove this plate (Shift: with its models)"),
                 None => slint::SharedString::default(),
@@ -3963,6 +3998,7 @@ impl ViewportController {
     /// the plate's models with it.
     fn run_plate_tool(&self, tool: u32, shift: bool) {
         match tool {
+            0 if shift => self.duplicate_active_plate(),
             0 => self.add_plate(),
             1 => {
                 if let Some(ui) = self.ui.upgrade() {
