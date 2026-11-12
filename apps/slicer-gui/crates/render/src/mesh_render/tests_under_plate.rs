@@ -1137,6 +1137,16 @@ fn every_plate_draws_where_it_stands() {
             .expect("RGBA")
             .save(name_path)
             .expect("the picture is written");
+        // The same name from under the plate: it reads the right way round.
+        let mut below = closer.clone();
+        below.distance = 60.0;
+        below.pitch = -0.6;
+        let shot = frame(&mut renderer, 5, &below, 1000, 560);
+        let below_path = std::path::PathBuf::from(&path).with_extension("below.png");
+        image::RgbaImage::from_raw(shot.width, shot.height, shot.rgba)
+            .expect("RGBA")
+            .save(below_path)
+            .expect("the picture is written");
         renderer.set_plate_tools(None);
     }
 }

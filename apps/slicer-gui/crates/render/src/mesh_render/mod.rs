@@ -1117,14 +1117,16 @@ impl Renderer {
             return;
         };
         let rows = raster.rows as f32;
-        let quads: Vec<pipelines::label::LabelVertex> = (0..raster.rows)
-            .flat_map(|k| {
-                pipelines::label::mark_quad(
-                    [x0, y0, x1, y1],
-                    [0.0, k as f32 / rows, 1.0, (k + 1) as f32 / rows],
-                )
-            })
-            .collect();
+        let row_uv = |k: u32| [0.0, k as f32 / rows, 1.0, (k + 1) as f32 / rows];
+        // Every name on top, then every one again facing down, so they read
+        // the right way round from under the plate too, as the label does.
+        let quads: Vec<pipelines::label::LabelVertex> =
+            (0..raster.rows)
+                .flat_map(|k| pipelines::label::mark_quad([x0, y0, x1, y1], row_uv(k)))
+                .chain((0..raster.rows).flat_map(|k| {
+                    pipelines::label::underside_mark_quad([x0, y0, x1, y1], row_uv(k))
+                }))
+                .collect();
         let uploaded = scoped(&self.core.device, || {
             let bind_group = self.coverage_bind_group(
                 "plate names",
@@ -1151,8 +1153,9 @@ impl Renderer {
     }
 
     /// Each plate's name on its rim (#545): quad `k` with instance `k`, so
-    /// the label shader moves it to plate `k` and fades it with the plate.
-    fn record_plate_names(&self, pass: &mut wgpu::RenderPass<'_>) {
+    /// the label shader moves it to plate `k` and fades it with the plate;
+    /// `underside`, the copies read from under the plate.
+    fn record_plate_names(&self, pass: &mut wgpu::RenderPass<'_>, underside: bool) {
         let Some((_, bind_group, vertices)) = &self.plate_names_state else {
             return;
         };
@@ -1161,9 +1164,11 @@ impl Renderer {
         pass.set_bind_group(1, bind_group, &[]);
         pass.set_vertex_buffer(0, vertices.slice(..));
         pass.set_stencil_reference(0);
-        let count = (self.plate_names.0.len() as u32).min(self.plates.count());
-        for k in 0..count {
-            pass.draw(6 * k..6 * k + 6, k..k + 1);
+        let rows = self.plate_names.0.len() as u32;
+        let first = if underside { 6 * rows } else { 0 };
+        for k in 0..rows.min(self.plates.count()) {
+            let at = first + 6 * k;
+            pass.draw(at..at + 6, k..k + 1);
         }
     }
 
@@ -1538,7 +1543,7 @@ impl Renderer {
                 self.record_cage(&mut pass, plate_buffers);
                 self.record_front_label(&mut pass, plate_buffers, LABEL_TOP);
                 self.record_plate_marks(&mut pass, false);
-                self.record_plate_names(&mut pass);
+                self.record_plate_names(&mut pass, false);
             }
 
             if scene_for_draws && let Some(inst) = installed {
@@ -1600,6 +1605,7 @@ impl Renderer {
                 // it as seen from below.
                 self.record_front_label(&mut pass, plate_buffers, LABEL_UNDERSIDE);
                 self.record_plate_marks(&mut pass, true);
+                self.record_plate_names(&mut pass, true);
                 // Last, over everything: an island's ring shows through the
                 // models and the plate (#538).
                 self.island_hidden.record(
