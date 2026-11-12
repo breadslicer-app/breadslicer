@@ -2,6 +2,8 @@
 //! network unioned into one solid, and the filter that drops beams a model on
 //! the plate is in the way of.
 
+use std::collections::HashMap;
+
 use super::generate_raft_from_footprint::generate_chamfered_base_from_polygons;
 use super::polygon_set_2d::{
     PolygonWithHoles, polygon_set_contains, polygon_set_to_shapes, ring_to_polygon,
@@ -86,6 +88,112 @@ pub fn filter_line_raft_edges(
         .collect()
 }
 
+/// A point this close to a cap's edge lies on it, mm.
+const ON_EDGE_MM: f64 = 1e-5;
+
+/// SoulCrafted: splits the flat faces (the caps) of `g` where a point of the
+/// mesh lies on one of their edges. Beams on one line (a grid lays them so)
+/// leave holes in the union with sides on that line, and earcut runs one cap
+/// edge past their corners while the walls stop there: a T in the mesh, open
+/// edges the slicer refuses. A split face becomes a fan about its centre, so
+/// every edge on the line meets one of the walls'. The geometry comes out
+/// without an index, uvs or groups; only its positions are read.
+fn split_at_t_junctions(g: &mut BufferGeometry) {
+    let Some(position) = g.position.take() else {
+        return;
+    };
+    let corners: Vec<[f32; 3]> = match &g.index {
+        Some(index) => index
+            .iter()
+            .map(|&i| {
+                let i = i as usize * 3;
+                [position[i], position[i + 1], position[i + 2]]
+            })
+            .collect(),
+        None => position
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| [p[0], p[1], p[2]])
+            .collect(),
+    };
+    // Every point once, by cell and by height.
+    let cell = |v: f64| (v / CELL_MM).floor() as i64;
+    const CELL_MM: f64 = 1.0;
+    let mut grid: HashMap<(i64, i64, u32), Vec<[f32; 3]>> = HashMap::new();
+    for p in &corners {
+        let points = grid
+            .entry((cell(f64::from(p[0])), cell(f64::from(p[1])), p[2].to_bits()))
+            .or_default();
+        if !points.contains(p) {
+            points.push(*p);
+        }
+    }
+    let on_edge = |a: [f32; 3], b: [f32; 3]| -> Vec<(f64, [f32; 3])> {
+        let (ax, ay) = (f64::from(a[0]), f64::from(a[1]));
+        let (dx, dy) = (f64::from(b[0]) - ax, f64::from(b[1]) - ay);
+        let len2 = dx * dx + dy * dy;
+        if len2 <= 0.0 {
+            return Vec::new();
+        }
+        let len = len2.sqrt();
+        let mut found = Vec::new();
+        let (x0, x1) = (cell(ax.min(ax + dx)), cell(ax.max(ax + dx)));
+        let (y0, y1) = (cell(ay.min(ay + dy)), cell(ay.max(ay + dy)));
+        for cx in x0..=x1 {
+            for cy in y0..=y1 {
+                let Some(points) = grid.get(&(cx, cy, a[2].to_bits())) else {
+                    continue;
+                };
+                for p in points {
+                    if *p == a || *p == b {
+                        continue;
+                    }
+                    let (px, py) = (f64::from(p[0]) - ax, f64::from(p[1]) - ay);
+                    let t = (px * dx + py * dy) / len2;
+                    if t > 0.0 && t < 1.0 && (px * dy - py * dx).abs() / len <= ON_EDGE_MM {
+                        found.push((t, *p));
+                    }
+                }
+            }
+        }
+        found.sort_by(|x, y| x.0.total_cmp(&y.0));
+        found
+    };
+    let mut out: Vec<f32> = Vec::with_capacity(position.len());
+    for t in corners.as_chunks::<3>().0 {
+        let [a, b, c] = *t;
+        let flat = a[2] == b[2] && b[2] == c[2];
+        let rims: Vec<Vec<(f64, [f32; 3])>> = if flat {
+            vec![on_edge(a, b), on_edge(b, c), on_edge(c, a)]
+        } else {
+            Vec::new()
+        };
+        if rims.iter().all(Vec::is_empty) {
+            for p in [a, b, c] {
+                out.extend_from_slice(&p);
+            }
+            continue;
+        }
+        let mut ring = Vec::new();
+        for (corner, rim) in [a, b, c].into_iter().zip(&rims) {
+            ring.push(corner);
+            ring.extend(rim.iter().map(|&(_, p)| p));
+        }
+        let centre = [0, 1, 2].map(|k| (a[k] + b[k] + c[k]) / 3.0);
+        for k in 0..ring.len() {
+            for p in [centre, ring[k], ring[(k + 1) % ring.len()]] {
+                out.extend_from_slice(&p);
+            }
+        }
+    }
+    g.position = Some(out);
+    g.index = None;
+    g.normal = None;
+    g.uv = None;
+    g.groups.clear();
+}
+
 /// `generateUnionedLineRaftMesh(edges, { widthMm, heightMm, borderProfile,
 /// chamferAngleDeg })`.
 pub fn generate_unioned_line_raft_mesh(
@@ -137,6 +245,7 @@ pub fn generate_unioned_line_raft_mesh(
                 steps: 1,
             },
         );
+        split_at_t_junctions(&mut g);
         g.compute_vertex_normals();
         g
     };
@@ -146,8 +255,10 @@ pub fn generate_unioned_line_raft_mesh(
     };
     // `generateChamferedBaseFromPolygons` hands the set to earcut, which may
     // trim its rings in place before the fallback extrusion reads them.
-    let chamfered = generate_chamfered_base_from_polygons(&mut polys, height, angle);
+    let mut chamfered = generate_chamfered_base_from_polygons(&mut polys, height, angle);
     if chamfered.vertex_count() > 0 {
+        split_at_t_junctions(&mut chamfered);
+        chamfered.compute_vertex_normals();
         return Ok(chamfered);
     }
     Ok(extrude(&polys))
@@ -176,8 +287,8 @@ mod tests {
         assert!(!points.is_empty());
         let seg = |p: Vector2, a: Vector2, b: Vector2| {
             let d = b.sub(a);
-            let t = (((p.x - a.x) * d.x + (p.y - a.y) * d.y) / (d.x * d.x + d.y * d.y))
-                .clamp(0.0, 1.0);
+            let t =
+                (((p.x - a.x) * d.x + (p.y - a.y) * d.y) / (d.x * d.x + d.y * d.y)).clamp(0.0, 1.0);
             (p.x - a.x - d.x * t).hypot(p.y - a.y - d.y * t)
         };
         let mut farthest: f64 = 0.0;
@@ -190,5 +301,48 @@ mod tests {
             farthest = farthest.max(near);
         }
         assert!(farthest <= width / 2.0 + 1e-3, "{farthest}");
+    }
+
+    /// Edges of `points` (three floats per corner) used by one face only,
+    /// with corners told apart by their position.
+    fn open_edges(points: &[f32]) -> usize {
+        let key = |p: &[f32; 3]| p.map(f32::to_bits);
+        let mut count: HashMap<([u32; 3], [u32; 3]), i32> = HashMap::new();
+        for t in points.as_chunks::<9>().0 {
+            let corners = [[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]];
+            for k in 0..3 {
+                let (a, b) = (key(&corners[k]), key(&corners[(k + 1) % 3]));
+                *count.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+        count.values().filter(|&&n| n == 1).count()
+    }
+
+    /// #530: beams on a 7 mm grid with diagonals leave holes whose sides lie
+    /// on the same line; the raft still closes, so the slicer takes it.
+    #[test]
+    fn beams_on_one_line_still_make_a_closed_raft() {
+        let n = |x: f64, y: f64| Vector2::new(x, y);
+        let mut edges = Vec::new();
+        for i in 0..4 {
+            for j in 0..3 {
+                let (x, y) = (7.0 * f64::from(i), 7.0 * f64::from(j));
+                if i < 3 {
+                    edges.push((n(x, y), n(x + 7.0, y)));
+                }
+                if j < 2 {
+                    edges.push((n(x, y), n(x, y + 7.0)));
+                }
+                if i < 3 && j < 2 && (i + j) % 2 == 0 {
+                    edges.push((n(x, y), n(x + 7.0, y + 7.0)));
+                }
+            }
+        }
+        for chamfer in [None, Some(45.0)] {
+            let mesh = generate_unioned_line_raft_mesh(&edges, 1.5, 0.6, None, chamfer).unwrap();
+            let points = mesh.position.as_ref().expect("a mesh");
+            assert!(!points.is_empty());
+            assert_eq!(open_edges(points), 0, "chamfer {chamfer:?}");
+        }
     }
 }
