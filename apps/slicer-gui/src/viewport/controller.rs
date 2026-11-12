@@ -1772,7 +1772,8 @@ impl ViewportController {
         let job = ImportJob {
             paths,
             standing: crate::arrange_run::standing_bodies(document),
-            plate: crate::arrange_run::plate_of(&volume),
+            // Onto the active plate (#548).
+            plate: crate::arrange_run::active_plate_job(document, &volume).1,
             build_volume: volume.volume(),
             revision: document.scene_revision(),
             recorded,
@@ -1797,7 +1798,7 @@ impl ViewportController {
                 ticket,
                 models,
                 crate::arrange_run::standing_bodies(document),
-                crate::arrange_run::plate_of(&self.session.build_volume()),
+                crate::arrange_run::active_plate_job(document, &self.session.build_volume()).1,
                 document.scene_revision(),
             );
             return;
@@ -4388,7 +4389,12 @@ impl ViewportController {
         }
         let volume = self.build_volume();
         let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
-        let centre = [f64::from(lo.x + hi.x) * 0.5, f64::from(lo.y + hi.y) * 0.5];
+        // The middle of the plate the model stands on (#548).
+        let on = crate::plates::offset(&volume, self.plate_of_leaf(id).unwrap_or(0));
+        let centre = [
+            f64::from((lo.x + hi.x) * 0.5 + on.x),
+            f64::from((lo.y + hi.y) * 0.5 + on.y),
+        ];
         let Some(edit) = NumericEdit::from_ui(code, f64::from(value), centre) else {
             return;
         };

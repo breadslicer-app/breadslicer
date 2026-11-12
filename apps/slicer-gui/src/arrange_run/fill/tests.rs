@@ -206,7 +206,7 @@ fn copies_of_two_models_mix_evenly() {
 #[test]
 fn a_fill_takes_at_most_the_copies_asked_for() {
     let (document, leaves) = cubes(&[[10.0, 10.0]]);
-    assert!(gather_fill(&document).is_none(), "nothing selected");
+    assert!(gather_fill(&document, None).is_none(), "nothing selected");
     select(&document, &leaves);
     let options = ArrangeOptions {
         max_copies: 3,
@@ -269,7 +269,7 @@ fn a_filled_copy_keeps_the_paint_of_its_model() {
 fn a_cancelled_or_stale_fill_adds_nothing() {
     let (document, leaves) = cubes(&[[10.0, 10.0]]);
     select(&document, &leaves);
-    let (bodies, sources) = gather_fill(&document).expect("a source");
+    let (bodies, sources) = gather_fill(&document, None).expect("a source");
     let settings = ArrangeOptions::default().settings();
     let cancelled = make(
         &bodies,

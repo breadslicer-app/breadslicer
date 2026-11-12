@@ -149,11 +149,12 @@ impl ArrangeRun {
         {
             return;
         }
-        let Some((bodies, sources)) = gather_fill(&self.document) else {
+        // With several plates, the active one alone (#548).
+        let (on, plate) = super::active_plate_job(&self.document, &self.ctrl.build_volume());
+        let Some((bodies, sources)) = gather_fill(&self.document, on) else {
             ui.set_arrange_last_run(ctr!("Inspector", "Select the models to copy."));
             return;
         };
-        let plate = self.plate();
         let options = self.options.get();
         let settings = options.settings();
         let limit = (options.max_copies > 0).then_some(options.max_copies as usize);
@@ -346,8 +347,11 @@ fn land(document: &SceneDocument, pending: &Pending, made: Made) -> Landed {
 
 /// The plate's objects, everything staying where it is, and the selected
 /// models as the sources of the copies. `None` when no model is selected.
-fn gather_fill(document: &SceneDocument) -> Option<(Vec<Body>, Vec<Source>)> {
-    let gathered = gather(document, false, None)?;
+fn gather_fill(
+    document: &SceneDocument,
+    on: Option<(crate::build_volume::BuildVolume, crate::plates::Plates, u32)>,
+) -> Option<(Vec<Body>, Vec<Source>)> {
+    let gathered = gather(document, false, on)?;
     let selected = document.selection_node_ids();
     let sessions = document.support_sessions();
     let sources: Vec<Source> = document
@@ -673,7 +677,18 @@ pub(crate) fn fill_now(
     plate: &Plate,
     options: super::ArrangeOptions,
 ) -> Option<(Filled, Duration)> {
-    let (bodies, sources) = gather_fill(document)?;
+    fill_on_now(document, None, plate, options)
+}
+
+/// [`fill_now`], gathering the objects of the plate `on` names (#548).
+#[cfg(test)]
+pub(crate) fn fill_on_now(
+    document: &SceneDocument,
+    on: Option<(crate::build_volume::BuildVolume, crate::plates::Plates, u32)>,
+    plate: &Plate,
+    options: super::ArrangeOptions,
+) -> Option<(Filled, Duration)> {
+    let (bodies, sources) = gather_fill(document, on)?;
     let pending = Pending {
         revision: document.scene_revision(),
         sources,
@@ -700,7 +715,7 @@ pub(crate) fn fill_now(
 /// for tests.
 #[cfg(test)]
 pub(crate) fn copied_set_now(document: &SceneDocument, placement: &Placement) -> Option<CopiedSet> {
-    let (_, sources) = gather_fill(document)?;
+    let (_, sources) = gather_fill(document, None)?;
     copied_set(sources.first()?, placement)
 }
 

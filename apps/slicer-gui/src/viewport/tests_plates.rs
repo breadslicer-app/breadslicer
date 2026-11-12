@@ -532,3 +532,29 @@ fn a_double_click_on_a_plate_name_edits_it() {
         "the whole name selected"
     );
 }
+
+/// Fill plate fills the active plate alone (#548): the copies stand on it,
+/// and the other plate is left as it is.
+#[test]
+fn fill_plate_fills_the_active_plate_alone() {
+    let v = volume();
+    let second = offset(&v, 1);
+    let (ctrl, leaves) = window(&[Vec3::new(-30.0, 0.0, 0.0), second]);
+    let document = ctrl.document();
+    ctrl.add_plate();
+    document.set_active_plate(1);
+    document.set_selection(Selection::One(LeafId(leaves[1])));
+    let before = centre_of(&ctrl, leaves[0]);
+    let added =
+        crate::arrange_run::fill_active_plate_now(document.as_ref(), &v, Default::default())
+            .expect("filled");
+    assert!(added > 3, "copies fill plate 1: {added}");
+    assert!(
+        near(centre_of(&ctrl, leaves[0]), before),
+        "plate 0 untouched"
+    );
+    let on_plates = ctrl.models_on_plates();
+    let on_second = on_plates.iter().filter(|&&(_, p)| p == 1).count();
+    assert_eq!(on_second, added + 1, "every copy on plate 1: {on_plates:?}");
+    assert_eq!(on_plates.iter().filter(|&&(_, p)| p == 0).count(), 1);
+}
