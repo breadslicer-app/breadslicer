@@ -17,6 +17,9 @@
 //! Leave as is keeps the file as it came. A file whose supports are fused
 //! into the model, in one shell, cannot be separated: a notice says so.
 //!
+//! Several files with supports that come in together get one question for
+//! all of them (#527): the answer is for every one, in one undo entry.
+//!
 //! A project is not looked at again when it opens: its objects are as the
 //! person left them. Each mesh is looked at once while the window is open,
 //! and an object left as is is not asked about again, even once Repair
@@ -68,6 +71,10 @@ struct Found {
     verdict: Verdict,
 }
 
+/// How long the question on files with supports waits for more files to
+/// come in (#527).
+const GATHER: Duration = Duration::from_millis(1000);
+
 type FoundSlot = Arc<Mutex<Option<Vec<Found>>>>;
 
 pub(crate) struct PresupportedImport {
@@ -90,6 +97,10 @@ pub(crate) struct PresupportedImport {
     /// The bodies of each imported set counted, by its mesh.
     bodies: RefCell<Vec<(Weak<IndexedMesh>, usize)>>,
     subscription: RefCell<Option<SceneSubscription>>,
+    /// Files with supports found, gathered for one question while more may
+    /// come in (#527): files sent one by one ask once.
+    gathered: RefCell<Vec<Found>>,
+    gather_timer: slint::Timer,
 }
 
 impl PresupportedImport {
@@ -114,6 +125,8 @@ impl PresupportedImport {
             declined: RefCell::new(Vec::new()),
             bodies: RefCell::new(Vec::new()),
             subscription: RefCell::new(None),
+            gathered: RefCell::new(Vec::new()),
+            gather_timer: slint::Timer::default(),
         });
         {
             let run = Rc::downgrade(&run);
@@ -380,11 +393,44 @@ impl PresupportedImport {
         };
         self.poll.stop();
         *self.slot.borrow_mut() = None;
-        for found in found {
+        let (separable, fused): (Vec<Found>, Vec<Found>) = found
+            .into_iter()
+            .filter(|found| self.still_shows(found.leaf, &found.mesh).is_some())
+            .partition(|found| matches!(found.verdict, Verdict::Separable(_)));
+        if let Some(found) = fused.into_iter().next() {
             self.offer(found);
         }
+        self.gathered.borrow_mut().extend(separable);
         // Models that came in while the worker was busy.
         self.start();
+        // The question waits a moment for files still coming in.
+        if self.slot.borrow().is_none() && !self.gathered.borrow().is_empty() {
+            let weak = Rc::downgrade(self);
+            self.gather_timer
+                .start(slint::TimerMode::SingleShot, GATHER, move || {
+                    if let Some(run) = weak.upgrade() {
+                        run.ask_gathered();
+                    }
+                });
+        }
+    }
+
+    /// Asks about the files with supports gathered: one question for all.
+    fn ask_gathered(self: &Rc<Self>) {
+        if self.slot.borrow().is_some() {
+            return;
+        }
+        let gathered: Vec<Found> = std::mem::take(&mut *self.gathered.borrow_mut())
+            .into_iter()
+            .filter(|found| self.still_shows(found.leaf, &found.mesh).is_some())
+            .collect();
+        if gathered.len() > 1 {
+            self.offer_many(gathered);
+        } else {
+            for found in gathered {
+                self.offer(found);
+            }
+        }
     }
 
     /// Whether `leaf` still shows `mesh`.
@@ -463,10 +509,10 @@ impl PresupportedImport {
                         match choice {
                             SeparateChoice::Leave => run.declined.borrow_mut().push(leaf),
                             SeparateChoice::Separate => {
-                                run.separate(leaf, &mesh, *presupported, false);
+                                run.separate(vec![(leaf, mesh, *presupported)], false);
                             }
                             SeparateChoice::Replace => {
-                                run.separate(leaf, &mesh, *presupported, true);
+                                run.separate(vec![(leaf, mesh, *presupported)], true);
                             }
                         }
                     },
@@ -475,26 +521,74 @@ impl PresupportedImport {
         }
     }
 
-    /// Puts the model and its supports in 2 objects where `leaf` stood, in
-    /// one undo entry, when `leaf` still shows `mesh`; with `replace`, the
-    /// model alone, waiting for supports made here, which join that entry.
-    fn separate(
-        &self,
-        leaf: NodeId,
-        mesh: &Weak<IndexedMesh>,
-        presupported: Presupported,
-        replace: bool,
-    ) {
-        if self.still_shows(leaf, mesh).is_none() {
-            return;
+    /// One question for several files with supports that came in together
+    /// (#527): the answer goes for all of them, in one undo entry.
+    fn offer_many(self: &Rc<Self>, found: Vec<Found>) {
+        let items: Vec<(NodeId, Weak<IndexedMesh>, Presupported)> = found
+            .into_iter()
+            .filter_map(|found| match found.verdict {
+                Verdict::Separable(presupported) => Some((found.leaf, found.mesh, *presupported)),
+                Verdict::Fused => None,
+            })
+            .collect();
+        let count = items.len();
+        crate::breadcrumbs::note(&format!(
+            "presupported: {count} files with supports at once"
+        ));
+        let mut names: Vec<String> = items
+            .iter()
+            .take(3)
+            .map(|(leaf, _, _)| self.name_of(*leaf).to_string())
+            .collect();
+        if count > 3 {
+            names.push("…".to_owned());
         }
-        let has_sets = {
-            let sessions = self.document.support_sessions();
+        let run = Rc::downgrade(self);
+        self.dialogs.show_separate_supports(
+            names.join(", ").into(),
+            move || InfoTexts {
+                heading: ctr!("SeparateSupportsDialog", "These files have supports"),
+                message: ctr!(
+                    "SeparateSupportsDialog",
+                    "{n} models came with their supports. Replace them all with supports made by Breadslicer, with the preset of the Supports tab, or separate them: each file's supports then go to an object of their own that moves with its model.",
+                    "{n} models came with their supports. Replace them all with supports made by Breadslicer, with the preset of the Supports tab, or separate them: each file's supports then go to an object of their own that moves with its model.",
+                    count
+                ),
+                details: Default::default(),
+            },
+            move |choice| {
+                let Some(run) = run.upgrade() else {
+                    return;
+                };
+                match choice {
+                    SeparateChoice::Leave => run
+                        .declined
+                        .borrow_mut()
+                        .extend(items.iter().map(|(leaf, _, _)| *leaf)),
+                    SeparateChoice::Separate => run.separate(items, false),
+                    SeparateChoice::Replace => run.separate(items, true),
+                }
+            },
+        );
+    }
+
+    /// Puts each model and its supports in 2 objects where its leaf stood,
+    /// all in one undo entry, for the leaves that still show their mesh;
+    /// with `replace`, the models alone, waiting for supports made here,
+    /// which join that entry.
+    fn separate(&self, items: Vec<(NodeId, Weak<IndexedMesh>, Presupported)>, replace: bool) {
+        let items: Vec<(NodeId, Presupported)> = items
+            .into_iter()
+            .filter(|(leaf, mesh, _)| self.still_shows(*leaf, mesh).is_some())
+            .map(|(leaf, _, presupported)| (leaf, presupported))
+            .collect();
+        let sessions = self.document.support_sessions();
+        let (items, made_here): (Vec<_>, Vec<_>) = items.into_iter().partition(|(leaf, _)| {
             self.document
-                .with_scene(|spatial| !sets_of_model(spatial, &sessions, leaf).is_empty())
+                .with_scene(|spatial| sets_of_model(spatial, &sessions, *leaf).is_empty())
                 .unwrap_or(false)
-        };
-        if has_sets {
+        });
+        if !made_here.is_empty() {
             // Its supports made here would lose their model.
             self.dialogs.show_info(|| InfoTexts {
                 heading: ctr!("SeparateSupportsDialog", "This file has supports"),
@@ -504,33 +598,46 @@ impl PresupportedImport {
                 ),
                 details: Default::default(),
             });
+        }
+        if items.is_empty() {
             return;
         }
-        let meta: Option<SceneMetadata> = self
-            .document
-            .with_scene(|spatial| spatial.graph().node(leaf).and_then(|n| n.meta.clone()))
-            .flatten();
-        let parts = if replace {
-            vec![(presupported.model, meta)]
+        let per_item = if replace { 1 } else { 2 };
+        let slots = self.document.allocate_leaf_slots(items.len() * per_item);
+        let mut edits = Vec::new();
+        let mut models = Vec::new();
+        for ((leaf, presupported), slots) in items.into_iter().zip(slots.chunks(per_item)) {
+            let meta: Option<SceneMetadata> = self
+                .document
+                .with_scene(|spatial| spatial.graph().node(leaf).and_then(|n| n.meta.clone()))
+                .flatten();
+            let parts = if replace {
+                vec![(presupported.model, meta)]
+            } else {
+                vec![(presupported.model, meta), (presupported.supports, None)]
+            };
+            let Some(edit) = self
+                .document
+                .with_scene(|spatial| split_edit(spatial.graph(), leaf, parts, slots))
+                .flatten()
+            else {
+                return;
+            };
+            edits.push(edit);
+            models.push(slots[0].0);
+        }
+        let edit = if edits.len() == 1 {
+            edits.remove(0)
         } else {
-            vec![(presupported.model, meta), (presupported.supports, None)]
-        };
-        let slots = self.document.allocate_leaf_slots(parts.len());
-        let Some(edit) = self
-            .document
-            .with_scene(|spatial| split_edit(spatial.graph(), leaf, parts, &slots))
-            .flatten()
-        else {
-            return;
+            sc_scene_edit::SceneEdit::Compound(edits)
         };
         self.quiet.set(true);
         let applied = self.document.apply_edit(edit.clone());
         self.quiet.set(false);
         match applied {
             Ok(()) => {
-                let (model, _) = slots[0];
                 if replace {
-                    self.document.push_edit_wanting(edit, &[model]);
+                    self.document.push_edit_wanting(edit, &models);
                 } else {
                     self.document.push_edit(edit);
                 }
@@ -543,7 +650,9 @@ impl PresupportedImport {
                         self.mark_seen(&mesh);
                     }
                 }
-                self.document.set_selection(Selection::One(LeafId(model)));
+                if let [model] = models[..] {
+                    self.document.set_selection(Selection::One(LeafId(model)));
+                }
                 if replace {
                     self.show_status(ctr!(
                         "SeparateSupportsDialog",
@@ -590,6 +699,8 @@ impl PresupportedImport {
             std::thread::sleep(Duration::from_millis(5));
             self.collect();
         }
+        self.gather_timer.stop();
+        self.ask_gathered();
     }
 }
 

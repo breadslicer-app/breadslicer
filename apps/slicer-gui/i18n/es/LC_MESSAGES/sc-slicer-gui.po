@@ -6948,3 +6948,15 @@ msgstr "Estos soportes se están rehaciendo para el modelo como está ahora; vol
 msgctxt "DfSupportDialog"
 msgid "The model changed under its supports: they are being made again, keeping your edits."
 msgstr "El modelo cambió debajo de sus soportes: se están rehaciendo, conservando tus ediciones."
+
+#: src/presupported_import.rs
+msgctxt "SeparateSupportsDialog"
+msgid "These files have supports"
+msgstr "Estos archivos traen soportes"
+
+#: src/presupported_import.rs
+msgctxt "SeparateSupportsDialog"
+msgid "{n} models came with their supports. Replace them all with supports made by Breadslicer, with the preset of the Supports tab, or separate them: each file's supports then go to an object of their own that moves with its model."
+msgid_plural "{n} models came with their supports. Replace them all with supports made by Breadslicer, with the preset of the Supports tab, or separate them: each file's supports then go to an object of their own that moves with its model."
+msgstr[0] "{n} modelo vino con sus soportes. Reemplazalo por soportes hechos por Breadslicer, con el preset de la pestaña Soportes, o separalos: los soportes del archivo pasan a un objeto propio que se mueve con su modelo."
+msgstr[1] "{n} modelos vinieron con sus soportes. Reemplazalos todos por soportes hechos por Breadslicer, con el preset de la pestaña Soportes, o separalos: los soportes de cada archivo pasan a un objeto propio que se mueve con su modelo."
