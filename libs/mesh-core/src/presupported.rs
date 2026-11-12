@@ -978,6 +978,19 @@ fn sort(mesh: &IndexedMesh, shells: &FaceShells) -> Sorted {
             cls[i] = Class::Support;
         }
     }
+    let segment_shell: Vec<usize> = cand_pieces.iter().map(|&p| piece_shell[p]).collect();
+    standing_on_model(
+        mesh,
+        shells,
+        &mut cls,
+        &Strays {
+            stray: &stray,
+            prim: &prim,
+            comp: &comp,
+            segments: &segments,
+            segment_shell: &segment_shell,
+        },
+    );
     // What is left and lies within the model's box is part of the model (a
     // separate eye, horn or bead); a shell that is no support candidate (a
     // blob, not a tube or a primitive) above the base and touching that box
@@ -1050,6 +1063,170 @@ fn sort(mesh: &IndexedMesh, shells: &FaceShells) -> Sorted {
         piece,
         piece_of_face,
     }
+}
+
+/// The widest a support standing on the model is, mm: a shaft thicker than
+/// this is a detail of the figure.
+const STANDING_MAX_RADIUS_MM: f64 = 1.0;
+/// A shaft is at least this many radii long.
+const SHAFT_MIN_LENGTH_RADII: f64 = 6.0;
+/// An end this close to the model's surface, past its own radius, touches
+/// it, mm: a tip goes into what it holds, a foot sits on it.
+const TOUCH_SLACK_MM: f64 = 0.3;
+
+/// The support candidates that never reached the base, for
+/// [`standing_on_model`].
+struct Strays<'a> {
+    stray: &'a [bool],
+    prim: &'a [bool],
+    comp: &'a [u32],
+    segments: &'a [Segment],
+    /// The shell of each segment.
+    segment_shell: &'a [usize],
+}
+
+/// Supports that never reached the base by the links of [`link_pairs`]: a
+/// shaft with a contact tip apart, whose tip touches the model and whose foot
+/// sits on the model (its own round base, under the belly) or on a support
+/// no axis fits (a trunk with a bend, which links nothing). And a lone ball
+/// of a support, no part of the figure, that touches nothing. Each group of strays is
+/// thin, made of primitives alone; anything else stays with the model.
+fn standing_on_model(mesh: &IndexedMesh, shells: &FaceShells, cls: &mut [Class], s: &Strays<'_>) {
+    let nb = cls.len();
+    let mut members: HashMap<u32, Vec<usize>> = HashMap::new();
+    for i in (0..nb).filter(|&i| s.stray[i] && cls[i] == Class::Unsorted) {
+        members.entry(s.comp[i]).or_default().push(i);
+    }
+    let mut groups: Vec<(Vec<usize>, Vec<usize>)> = members
+        .into_iter()
+        .filter(|(_, shells)| shells.iter().all(|&i| s.prim[i]))
+        .map(|(c, shells)| {
+            let segments: Vec<usize> = (0..s.segments.len())
+                .filter(|&j| s.comp[s.segment_shell[j]] == c)
+                .collect();
+            (shells, segments)
+        })
+        .filter(|(_, segments)| {
+            !segments.is_empty()
+                && segments
+                    .iter()
+                    .all(|&j| s.segments[j].widest() <= STANDING_MAX_RADIUS_MM)
+        })
+        .collect();
+    if groups.is_empty() {
+        return;
+    }
+    groups.sort_unstable();
+    // The model is not all sorted yet: what sticks out of it (an arm, a
+    // ledge) is still unsorted, and counts, unless it is a stray itself.
+    let (mut model, mut held) = (Vec::new(), Vec::new());
+    for (f, &label) in shells.labels().iter().enumerate() {
+        let shell = label as usize;
+        match cls[shell] {
+            Class::Model => model.push(f),
+            Class::Unsorted if !s.stray[shell] => model.push(f),
+            Class::Support | Class::Raft => held.push(f),
+            _ => {}
+        }
+    }
+    let touches = |p: V3, reach: f64| touches_faces(mesh, &model, p, reach);
+    let stands = |p: V3, reach: f64| touches(p, reach) || touches_faces(mesh, &held, p, reach);
+    for (group, segments) in groups {
+        let segs: Vec<&Segment> = segments.iter().map(|&j| &s.segments[j]).collect();
+        let tips: Vec<(V3, f64)> = segs
+            .iter()
+            .flat_map(|g| {
+                (0..2)
+                    .filter(|&e| g.tip[e])
+                    .map(|e| (g.ends[e], g.radii[e]))
+            })
+            .collect();
+        let support = if tips.is_empty() {
+            // A lone ball: one sphere that touches nothing.
+            let [ball] = segs[..] else { continue };
+            group.len() == 1
+                && ball.ends[0] == ball.ends[1]
+                && !touches(ball.ends[0], ball.radii[0] + TOUCH_SLACK_MM)
+        } else if group.len() < 2 || !segs.iter().any(|g| is_shaft(g)) {
+            // A lone cone is a horn or a fang of the figure: a support
+            // standing on the model is a shaft with a tip apart.
+            false
+        } else {
+            let foot = segs
+                .iter()
+                .flat_map(|g| {
+                    (0..2)
+                        .filter(|&e| !g.tip[e])
+                        .map(|e| (g.ends[e], g.radii[e]))
+                })
+                .min_by(|a, b| a.0[2].partial_cmp(&b.0[2]).unwrap_or(Ordering::Equal));
+            let tip_touches = tips.iter().any(|&(p, r)| touches(p, r + TOUCH_SLACK_MM));
+            foot.is_some_and(|(p, r)| {
+                tips.iter().any(|t| t.0[2] > p[2]) && stands(p, r + TOUCH_SLACK_MM)
+            }) && tip_touches
+        };
+        if support {
+            for i in group {
+                cls[i] = Class::Support;
+            }
+        }
+    }
+}
+
+/// Whether `segment` is a shaft: a cylinder, not a tip, many times longer
+/// than it is wide.
+fn is_shaft(segment: &Segment) -> bool {
+    let length = norm(sub(segment.ends[1], segment.ends[0]));
+    !segment.tip[0]
+        && !segment.tip[1]
+        && (segment.radii[0] - segment.radii[1]).abs() <= 0.12 * segment.widest()
+        && length >= SHAFT_MIN_LENGTH_RADII * segment.widest()
+}
+
+/// Whether a face of `faces` of `mesh` comes within `reach` of `p`.
+fn touches_faces(mesh: &IndexedMesh, faces: &[usize], p: V3, reach: f64) -> bool {
+    faces.par_iter().any(|&f| {
+        let [a, b, c] = mesh.faces()[f]
+            .vertices
+            .map(|v| point(&mesh.vertices()[v.get() as usize]));
+        let outside = (0..3).any(|k| {
+            a[k].min(b[k]).min(c[k]) > p[k] + reach || a[k].max(b[k]).max(c[k]) < p[k] - reach
+        });
+        !outside && norm(sub(p, closest_on_triangle(p, a, b, c))) <= reach
+    })
+}
+
+/// The point of the triangle `abc` closest to `p`.
+fn closest_on_triangle(p: V3, a: V3, b: V3, c: V3) -> V3 {
+    let (ab, ac, ap) = (sub(b, a), sub(c, a), sub(p, a));
+    let (d1, d2) = (dot(ab, ap), dot(ac, ap));
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return a;
+    }
+    let bp = sub(p, b);
+    let (d3, d4) = (dot(ab, bp), dot(ac, bp));
+    if d3 >= 0.0 && d4 <= d3 {
+        return b;
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        return add(a, scale(ab, d1 / (d1 - d3)));
+    }
+    let cp = sub(p, c);
+    let (d5, d6) = (dot(ab, cp), dot(ac, cp));
+    if d6 >= 0.0 && d5 <= d6 {
+        return c;
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        return add(a, scale(ac, d2 / (d2 - d6)));
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+        return add(b, scale(sub(c, b), (d4 - d3) / ((d4 - d3) + (d5 - d6))));
+    }
+    let denom = 1.0 / (va + vb + vc);
+    add(a, add(scale(ab, vb * denom), scale(ac, vc * denom)))
 }
 
 /// Cuts this far above the lowest point look for the pillars of fused

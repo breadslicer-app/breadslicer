@@ -1924,6 +1924,24 @@ pub fn build_auto_braced_snapshot(
     let mut braces = kept_braces;
     braces.extend(generated_braces);
     next.collections.braces = braces;
+    // SoulCrafted: a root holding neither a trunk nor a kickstand goes. A
+    // plate of several models is braced once per model, and each pass makes
+    // every auto kickstand again: the roots of those it dropped stayed on the
+    // raft as feet with nothing above them.
+    let held: HashSet<&str> = c
+        .trunks
+        .values()
+        .map(|t| t.root_id.as_str())
+        .chain(
+            stabiliser_state
+                .kickstands
+                .values()
+                .map(|k| k.root_id.as_str()),
+        )
+        .collect();
+    next.collections
+        .roots
+        .retain(|id, _| held.contains(id.as_str()));
     next.collections.kickstands = stabiliser_state.kickstands.clone();
     for k in stabiliser_state.kickstands.values() {
         if let Some(root) = stabiliser_state.roots.get(&k.root_id) {
