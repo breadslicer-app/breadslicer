@@ -189,10 +189,11 @@ pub(crate) fn review_slices(
     sets: &[SupportSet],
     raft_top_mm: Option<f64>,
     bare_tip_mm: Option<f64>,
+    origin: [f64; 2],
     cancel: &CancelToken,
     on_layer: &(dyn Fn(usize) + Sync),
 ) -> ReviewOutcome {
-    let frame = plate.frame();
+    let frame = plate.frame().with_origin(origin);
     let supports = KnownSupports {
         sets,
         tips: support_tips(sets, &frame),

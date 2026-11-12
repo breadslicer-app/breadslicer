@@ -791,6 +791,7 @@ impl AppState {
             ctrl.dialogs(),
             review_panel.clone(),
             repair_run.clone(),
+            ctrl.clone(),
         );
         let split_bodies = SplitBodies::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let presupported_import = crate::presupported_import::PresupportedImport::install(

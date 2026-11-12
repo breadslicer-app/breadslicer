@@ -213,7 +213,11 @@ impl SlicePanelBridge {
             &selection,
             snapshot.aa_level,
             self.document.scene_revision(),
-        );
+        )
+        .map(|params| SliceParams {
+            plate: self.document.slice_plate(),
+            ..params
+        });
         let held = self.document.slice_params();
         let geometry_changed = held
             .as_ref()
@@ -518,6 +522,7 @@ mod layer_values_cache_tests {
             first_layer_height: None,
             aa_level: AaLevel::Off,
             geometry: SceneRevision::from_top_edit_id(None),
+            plate: 0,
         }
     }
 
@@ -637,6 +642,7 @@ mod bridge_tests {
                 first_layer_height: None,
                 aa_level,
                 geometry: document.scene_revision(),
+                plate: 0,
             };
             let current = current_layer_values(&params).expect("the bundled profiles resolve");
             let hold = |layers: LayerValues| {

@@ -57,6 +57,7 @@ impl ReloadedSlices {
                 first_layer_height: self.first_layer_height,
                 aa_level: AaLevel::Off,
                 geometry,
+                plate: 0,
             },
             layers: self.layers,
         }

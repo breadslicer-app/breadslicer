@@ -391,6 +391,9 @@ pub struct Renderer {
     /// The names as uploaded: what they were made from, their texture and
     /// one quad per plate in its own frame.
     plate_names_state: Option<(u64, wgpu::BindGroup, wgpu::Buffer)>,
+    /// The plate the held slice was cut for (#547): the slice view's cut
+    /// shows on it.
+    cap_plate: u32,
     /// The rings of the islands an analysis found (#525), drawn over
     /// everything, the models included (#538).
     island_marks: overlay::OverlaySlot,
@@ -512,6 +515,7 @@ impl Renderer {
             plate_tools: None,
             plate_names: (Vec::new(), None),
             plate_names_state: None,
+            cap_plate: 0,
             island_marks: overlay::OverlaySlot::default(),
             island_hidden: overlay::OverlaySlot::default(),
             hint_source: None,
@@ -1669,7 +1673,13 @@ impl Renderer {
         pass.set_bind_group(0, &self.pipelines.cap.uniforms_bind_group, &[]);
         pass.set_bind_group(1, bind_group, &[]);
         pass.set_stencil_reference(0);
-        pass.draw(0..6, 0..1);
+        pass.draw(0..6, self.cap_plate..self.cap_plate + 1);
+    }
+
+    /// The plate the held slice was cut for, whose cut the slice view shows
+    /// (#547).
+    pub fn set_cap_plate(&mut self, plate: u32) {
+        self.cap_plate = plate;
     }
 
     /// Plate top: inner grid + outer rounded border at Z = 0. Depth-write off

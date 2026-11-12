@@ -7021,3 +7021,13 @@ msgid "{n} models came with their supports. Replace them all with supports made 
 msgid_plural "{n} models came with their supports. Replace them all with supports made by Breadslicer, with the preset of the Supports tab, or separate them: each file's supports then go to an object of their own that moves with its model."
 msgstr[0] "{n} modelo vino con sus soportes. Reemplazalo por soportes hechos por Breadslicer, con el preset de la pestaña Soportes, o separalos: los soportes del archivo pasan a un objeto propio que se mueve con su modelo."
 msgstr[1] "{n} modelos vinieron con sus soportes. Reemplazalos todos por soportes hechos por Breadslicer, con el preset de la pestaña Soportes, o separalos: los soportes de cada archivo pasan a un objeto propio que se mueve con su modelo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Plate"
+msgstr "Cama"
+
+#: src/slice_run.rs
+msgctxt "ErrorDialog"
+msgid "Nothing stands on “{}” to slice. Pick another plate in the Slice card, or move models onto this one."
+msgstr "No hay nada sobre “{}” para laminar. Elegí otra cama en la tarjeta Laminar o mové modelos a esta."

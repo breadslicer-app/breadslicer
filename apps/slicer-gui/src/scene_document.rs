@@ -736,6 +736,13 @@ impl SceneDocument {
         self.plates.get()
     }
 
+    /// The plate a slice is cut for (#547): the active one of several, 0
+    /// with one.
+    pub(crate) fn slice_plate(&self) -> u32 {
+        let plates = self.plates.get();
+        if plates.count() > 1 { plates.active() } else { 0 }
+    }
+
     /// Makes plate `index` the active one (#545). Not a step of history:
     /// which plate is active is not part of the project.
     pub(crate) fn set_active_plate(&self, index: u32) {

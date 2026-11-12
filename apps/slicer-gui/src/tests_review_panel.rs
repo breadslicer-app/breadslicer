@@ -178,8 +178,13 @@ fn an_empty_review_has_no_rows() {
 #[test]
 fn plate_points_are_world_points() {
     assert_eq!(
-        world(PlatePoint::new(8.33, -31.5, 1.05)),
+        world(PlatePoint::new(8.33, -31.5, 1.05), [0.0; 2]),
         [8.33, -31.5, 1.05]
+    );
+    // A slice of another plate (#547) stands where that plate does.
+    assert_eq!(
+        world(PlatePoint::new(8.0, -31.5, 1.0), [258.0, 0.0]),
+        [266.0, -31.5, 1.0]
     );
 }
 
@@ -677,7 +682,7 @@ mod model_poses {
     #[test]
     fn supports_are_not_models() {
         let model = Arc::new(unit_cube_mesh());
-        let poses = model_poses(&plate(&model, 0.0, &supports_mesh()));
+        let poses = model_poses(&plate(&model, 0.0, &supports_mesh()), 0);
         assert_eq!(poses.len(), 1);
         assert!(std::ptr::eq(poses[0].mesh.as_ptr(), Arc::as_ptr(&model)));
     }
@@ -685,8 +690,8 @@ mod model_poses {
     #[test]
     fn an_edit_of_the_supports_keeps_the_models_as_sliced() {
         let model = Arc::new(unit_cube_mesh());
-        let sliced = model_poses(&plate(&model, 0.0, &supports_mesh()));
-        let with_a_new_support = model_poses(&plate(&model, 0.0, &supports_mesh()));
+        let sliced = model_poses(&plate(&model, 0.0, &supports_mesh()), 0);
+        let with_a_new_support = model_poses(&plate(&model, 0.0, &supports_mesh()), 0);
         assert_eq!(sliced, with_a_new_support);
     }
 
@@ -694,11 +699,11 @@ mod model_poses {
     fn a_moved_or_re_meshed_model_is_a_change() {
         let model = Arc::new(unit_cube_mesh());
         let supports = supports_mesh();
-        let sliced = model_poses(&plate(&model, 0.0, &supports));
-        assert_ne!(sliced, model_poses(&plate(&model, 3.0, &supports)));
+        let sliced = model_poses(&plate(&model, 0.0, &supports), 0);
+        assert_ne!(sliced, model_poses(&plate(&model, 3.0, &supports), 0));
         // The same shape in a new mesh (a hollow swapped in) counts too.
         let re_meshed = Arc::new(unit_cube_mesh());
-        assert_ne!(sliced, model_poses(&plate(&re_meshed, 0.0, &supports)));
+        assert_ne!(sliced, model_poses(&plate(&re_meshed, 0.0, &supports), 0));
     }
 }
 
@@ -986,6 +991,7 @@ mod fix_all {
                 first_layer_height: None,
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
+                plate: 0,
             },
             layers: None,
         });
@@ -1741,6 +1747,7 @@ mod fix_all {
             &sets,
             panel.raft_top_mm(),
             Some(panel.born_tip_mm()),
+            [0.0; 2],
             &sc_sl1cer::CancelToken::default(),
             &|_| {},
         );
@@ -1770,6 +1777,7 @@ mod fix_all {
                 first_layer_height: None,
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
+                plate: 0,
             },
             layers: crate::slice_result::LayerValues::resolve(&printer_profile, &material, None),
         });

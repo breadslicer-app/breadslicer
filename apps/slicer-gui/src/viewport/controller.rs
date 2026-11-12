@@ -1002,13 +1002,36 @@ impl ViewportController {
         let build_volume = self.build_volume();
         let mut cell = self.render.renderer_cell().borrow_mut();
         let renderer = cell.as_mut()?;
-        self.session.document().with_scene(|spatial| {
-            print_file_preview::render_previews(
-                renderer.as_mut(),
-                spatial.graph(),
-                build_volume,
-                sizes,
-            )
+        let document = self.session.document();
+        let plates = document.plates();
+        // The plate the file prints, of several (#547).
+        let plate = document.slice_params().map_or(0, |params| params.plate);
+        let sessions = document.support_sessions();
+        document.with_scene(|spatial| {
+            if plates.count() > 1 {
+                let (graph, bounds) = crate::plate_layout::plate_pictures(
+                    spatial,
+                    &build_volume,
+                    plates,
+                    plate,
+                    &|leaf| crate::support_persist::model_of(&sessions, leaf),
+                );
+                print_file_preview::render_previews(
+                    renderer.as_mut(),
+                    &graph,
+                    build_volume,
+                    sizes,
+                    bounds,
+                )
+            } else {
+                print_file_preview::render_previews(
+                    renderer.as_mut(),
+                    spatial.graph(),
+                    build_volume,
+                    sizes,
+                    None,
+                )
+            }
         })?
     }
 
@@ -4023,6 +4046,17 @@ impl ViewportController {
         let plates = self.session.document().plates();
         ui.set_plate_count(plates.count() as i32);
         ui.set_active_plate(plates.active() as i32);
+        let names: Vec<slint::SharedString> = if plates.count() > 1 {
+            self.session
+                .document()
+                .plate_names()
+                .into_iter()
+                .map(Into::into)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        ui.set_plate_names(slint::ModelRc::new(slint::VecModel::from(names)));
         let active_used = plates.count() > 1
             && self
                 .models_on_plates()
@@ -4754,6 +4788,12 @@ impl ViewportController {
                 .hash(&mut key);
             key.finish()
         });
+        renderer.set_cap_plate(
+            self.session
+                .document()
+                .slice_params()
+                .map_or(0, |params| params.plate),
+        );
         let mut build_cap = || self.cap_raster(selected_layer, &build_volume);
         match renderer.update_cap(cap_key, &mut build_cap) {
             Ok(()) | Err(RenderError::DeviceLost) => {}

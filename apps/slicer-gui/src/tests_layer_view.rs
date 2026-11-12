@@ -504,6 +504,7 @@ fn controller_with_2_layers() -> ViewportController {
             first_layer_height: None,
             aa_level: AaLevel::Off,
             geometry,
+            plate: 0,
         },
         layers: None,
     });

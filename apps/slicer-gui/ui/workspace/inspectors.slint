@@ -2475,6 +2475,11 @@ export component SupportsInspector inherits VerticalLayout {
 }
 
 export component SliceInspector inherits VerticalLayout {
+    // The plates' names, with several (#547): the one picked is the one
+    // sliced, and the active one.
+    in property <[string]> plate-options;
+    in-out property <int> plate-current-index;
+    callback plate-picked(int);
     in property <[string]> printer-options;
     in-out property <int> printer-current-index: -1;
     in property <[string]> resin-options;
@@ -2552,6 +2557,16 @@ export component SliceInspector inherits VerticalLayout {
         title: @tr("Inspector" => "PRINT SETUP");
         vertical-stretch: 0;
 
+        if root.plate-options.length > 1: Field {
+            label: @tr("SlicePanel" => "Plate");
+            plate-combo := ComboBox {
+                model: root.plate-options;
+                current-index: root.plate-current-index;
+                selected => {
+                    root.plate-picked(plate-combo.current-index);
+                }
+            }
+        }
         Field {
             label: @tr("SlicePanel" => "Printer");
             printer-combo := ComboBox {

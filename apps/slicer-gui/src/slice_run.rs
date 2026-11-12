@@ -175,6 +175,9 @@ pub(crate) struct SliceRun {
     review: Rc<ReviewPanel>,
     // Repairs the objects a refused slice names (#407).
     repair: Rc<RepairRun>,
+    // The viewport, whose plates a slice of one of several is cut from
+    // (#547).
+    ctrl: Rc<crate::viewport::ViewportController>,
     // What asked for the slice in flight.
     trigger: Cell<SliceTrigger>,
     progress: Arc<SliceProgressCell>,
@@ -208,6 +211,7 @@ impl SliceRun {
         dialogs: Rc<DialogManager>,
         review: Rc<ReviewPanel>,
         repair: Rc<RepairRun>,
+        ctrl: Rc<crate::viewport::ViewportController>,
     ) -> Rc<Self> {
         let run = Rc::new(Self {
             ui: ui.as_weak(),
@@ -216,6 +220,7 @@ impl SliceRun {
             dialogs,
             review,
             repair,
+            ctrl,
             trigger: Cell::new(SliceTrigger::Button),
             progress: Arc::new(SliceProgressCell::default()),
             slot: Arc::new(Mutex::new(None)),
@@ -285,7 +290,7 @@ impl SliceRun {
             .document
             .print_selection()
             .in_force(&PrintDefaults::from(&snapshot));
-        let Some(current) = SliceParams::for_selection(
+        let Some(mut current) = SliceParams::for_selection(
             &selection,
             snapshot.aa_level,
             self.document.scene_revision(),
@@ -294,6 +299,7 @@ impl SliceRun {
             return false;
         };
 
+        current.plate = self.document.slice_plate();
         let held = self.document.slice_params();
         let geometry_changed = held
             .as_ref()
@@ -343,15 +349,60 @@ impl SliceRun {
             return false;
         };
         let sessions = self.document.support_sessions();
-        let Some((scene, supports, support_sets)) = self.document.with_scene(|spatial| {
-            (
-                spatial.graph().clone(),
-                support_persist::support_owners(spatial, &sessions),
-                support_persist::review_sets(spatial, &sessions),
-            )
-        }) else {
+        let plates = self.document.plates();
+        let volume = self.ctrl.build_volume();
+        let Some((scene, origin, supports, mut support_sets)) =
+            self.document.with_scene(|spatial| {
+                // One plate of several: its objects alone, at the origin.
+                let (scene, origin) = if plates.count() > 1 {
+                    crate::plate_layout::plate_scene(
+                        spatial,
+                        &volume,
+                        plates,
+                        current.plate,
+                        &|leaf| support_persist::model_of(&sessions, leaf),
+                    )
+                } else {
+                    (spatial.graph().clone(), [0.0; 2])
+                };
+                (
+                    scene,
+                    origin,
+                    support_persist::support_owners(spatial, &sessions),
+                    support_persist::review_sets(spatial, &sessions),
+                )
+            })
+        else {
             return false;
         };
+        support_sets.retain(|set| scene.node(set.leaf).is_some());
+        // A plate with nothing on it has nothing to slice (#547).
+        let bare = plates.count() > 1
+            && scene
+                .reachable_leaves(
+                    sc_scene::CsgPolicy::Descend,
+                    sc_scene::ReferencePolicy::Refuse,
+                )
+                .is_ok_and(|leaves| leaves.is_empty());
+        if bare {
+            let name = self
+                .document
+                .plate_names()
+                .get(current.plate as usize)
+                .cloned()
+                .unwrap_or_default();
+            self.dialogs.show_error(move || ErrorTexts {
+                heading: ctr!("ErrorDialog", "Cannot slice"),
+                context: None,
+                message: ctr!(
+                    "ErrorDialog",
+                    "Nothing stands on “{}” to slice. Pick another plate in the Slice card, or move models onto this one.",
+                    name
+                ),
+                details: Default::default(),
+            });
+            return false;
+        }
         // A real slice supersedes the "up to date" hint.
         self.hide_up_to_date_hint();
         current.geometry = self.document.scene_revision();
@@ -390,6 +441,7 @@ impl SliceRun {
                 supports,
                 support_sets,
                 fills: patches.fills,
+                origin,
             },
             cancel,
         );
@@ -761,6 +813,8 @@ struct SliceInputs {
     support_sets: Vec<SupportSet>,
     /// The cavities to fill (#132).
     fills: Vec<Arc<CavityFill>>,
+    /// Where the sliced plate's centre stands in the scene (#547).
+    origin: [f64; 2],
 }
 
 /// Loads the profiles and runs the shared slicing service, publishing progress
@@ -804,6 +858,7 @@ fn run_slice(
                     .raft_top_mm
                     .map(|top| plate.compensated_height_mm(top)),
                 inputs.bare_tip_mm,
+                inputs.origin,
                 cancel,
                 &|done| progress.record_review(done),
             );
@@ -1124,6 +1179,7 @@ mod progress_tests {
             supports: SupportOwners::new(),
             fills: Vec::new(),
             support_sets: Vec::new(),
+            origin: [0.0; 2],
         }
     }
 
@@ -1204,3 +1260,7 @@ mod tests_repair_on_slice;
 #[cfg(test)]
 #[path = "tests_repair_keeps_supports.rs"]
 mod tests_repair_keeps_supports;
+
+#[cfg(test)]
+#[path = "tests_slice_plates.rs"]
+mod tests_slice_plates;

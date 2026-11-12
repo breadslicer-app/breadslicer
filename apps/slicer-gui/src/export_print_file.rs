@@ -383,6 +383,7 @@ mod export_button_enabled_tests {
             first_layer_height: None,
             aa_level: AaLevel::Off,
             geometry: SceneRevision::from_top_edit_id(Some(3)),
+            plate: 0,
         }
     }
 
@@ -596,6 +597,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
                 first_layer_height: None,
                 aa_level: AaLevel::Off,
                 geometry: SceneRevision::from_top_edit_id(None),
+                plate: 0,
             },
             layers,
         }
@@ -926,6 +928,7 @@ mod prepare_export_tests {
                 first_layer_height: None,
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
+                plate: 0,
             },
             layers: None,
         });

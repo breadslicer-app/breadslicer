@@ -702,6 +702,10 @@ export component MainWindow inherits Window {
     in property <int> plate-count: 1;
     in property <int> active-plate: 0;
     in property <bool> active-plate-used;
+    // The plates' names, with several (#547).
+    in property <[string]> plate-names;
+    // A plate picked in the Slice card (#547): it becomes the active one.
+    callback plate-picked(int);
     callback plate-add-requested();
     // With the models on it (Shift on the plate's tool) or not.
     callback plate-remove-requested(bool);
@@ -1969,6 +1973,11 @@ export component MainWindow inherits Window {
                         padding: 12px;
 
                         SliceInspector {
+                            plate-options: root.plate-names;
+                            plate-current-index: root.active-plate;
+                            plate-picked(i) => {
+                                root.plate-picked(i);
+                            }
                             overhang-map-on <=> root.overhang-map-on;
                             overhang-map-limit: root.overhang-map-limit;
                             overhang-map-toggled(on) => {
