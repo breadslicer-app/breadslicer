@@ -104,8 +104,8 @@ pub(crate) fn plate_pictures(
             if let Some(aabb) = aabb {
                 let (lo, hi) = (aabb.min().coords(), aabb.max().coords());
                 let (lo, hi) = (
-                    glam::Vec3::new(lo[0] as f32, lo[1] as f32, lo[2] as f32),
-                    glam::Vec3::new(hi[0] as f32, hi[1] as f32, hi[2] as f32),
+                    glam::Vec3::new(lo[0], lo[1], lo[2]),
+                    glam::Vec3::new(hi[0], hi[1], hi[2]),
                 );
                 bounds = Some(bounds.map_or((lo, hi), |(a, b)| (a.min(lo), b.max(hi))));
             }

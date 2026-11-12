@@ -168,6 +168,13 @@ impl SliceTrigger {
     }
 }
 
+/// Told whether the slice in flight landed (#549).
+type Landed = Box<dyn FnOnce(bool)>;
+
+/// The slices of the plates not held now, with their reviews, for this many
+/// plates (#547).
+type KeptSlices = (u32, HashMap<u32, (SliceResult, ReviewOutcome)>);
+
 pub(crate) struct SliceRun {
     ui: slint::Weak<MainWindow>,
     bus: Rc<PreferencesBus>,
@@ -199,13 +206,13 @@ pub(crate) struct SliceRun {
     poll_timer: Rc<slint::Timer>,
     // Told when the slice in flight lands, or fails (#549): whether the
     // document now holds it.
-    landed: RefCell<Option<Box<dyn FnOnce(bool)>>>,
+    landed: RefCell<Option<Landed>>,
     // Slicing every plate in turn (#547).
     every_plate: Cell<bool>,
     // The slices of the plates not held now, with their reviews (#547):
     // making a plate the active one again brings its slice back while
     // nothing on it changed. For this many plates.
-    plate_slices: RefCell<(u32, HashMap<u32, (SliceResult, ReviewOutcome)>)>,
+    plate_slices: RefCell<KeptSlices>,
     // Follows the plates, to bring a plate's slice back.
     plates_watch: RefCell<Option<crate::scene_document::SceneSubscription>>,
     // Single-shot timer that lowers the "already up to date" hint after a
@@ -520,6 +527,9 @@ impl SliceRun {
             return;
         }
         self.every_plate.set(true);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_slice_every_plate_note(Default::default());
+        }
         let run = self.clone();
         let spawned = slint::spawn_local(async move {
             let document = run.document.clone();
@@ -558,13 +568,10 @@ impl SliceRun {
                 lines.push(ctr!("SliceDialog", "{}: not sliced", failed.join(" - ")).to_string());
             }
             crate::breadcrumbs::note(&format!("slice: every plate, {}", lines.join("; ")));
-            let message = lines.join("\n");
-            run.dialogs
-                .show_info(move || crate::error_dialog::InfoTexts {
-                    heading: ctr!("SliceDialog", "Every plate"),
-                    message: message.clone().into(),
-                    details: Default::default(),
-                });
+            // In the Slice card, under its button: no card to close.
+            if let Some(ui) = run.ui.upgrade() {
+                ui.set_slice_every_plate_note(lines.join("\n").into());
+            }
         });
         if let Err(err) = spawned {
             self.every_plate.set(false);
@@ -632,8 +639,12 @@ impl SliceRun {
             });
             return false;
         }
-        // A real slice supersedes the "up to date" hint.
+        // A real slice supersedes the "up to date" hint, and what a slice of
+        // every plate said, unless it is that run's own (#547).
         self.hide_up_to_date_hint();
+        if !self.every_plate.get() {
+            ui.set_slice_every_plate_note(Default::default());
+        }
         current.geometry = self.document.scene_revision();
         current.plate_key = self.document.plate_key(current.plate);
 
@@ -1104,8 +1115,10 @@ fn run_slice(
                 inputs
                     .raft_top_mm
                     .map(|top| plate.compensated_height_mm(top)),
-                inputs.bare_tip_mm,
-                inputs.origin,
+                crate::review::PlateReading {
+                    bare_tip_mm: inputs.bare_tip_mm,
+                    origin: inputs.origin,
+                },
                 cancel,
                 &|done| progress.record_review(done),
             );

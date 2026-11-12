@@ -7081,11 +7081,6 @@ msgstr "Laminar todas las camas"
 
 #: src/slice_run.rs
 msgctxt "SliceDialog"
-msgid "Every plate"
-msgstr "Todas las camas"
-
-#: src/slice_run.rs
-msgctxt "SliceDialog"
 msgid "{}: up to date"
 msgstr "{}: al día"
 

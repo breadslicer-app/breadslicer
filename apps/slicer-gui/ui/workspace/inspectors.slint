@@ -2503,8 +2503,10 @@ export component SliceInspector inherits VerticalLayout {
     in property <[string]> plate-options;
     in-out property <int> plate-current-index;
     callback plate-picked(int);
-    // Every plate sliced in turn, those up to date left as they are (#547).
+    // Every plate sliced in turn, those up to date left as they are (#547),
+    // and what it did.
     callback slice-every-plate();
+    in property <string> every-plate-note;
     in property <[string]> printer-options;
     in-out property <int> printer-current-index: -1;
     in property <[string]> resin-options;
@@ -2645,6 +2647,9 @@ export component SliceInspector inherits VerticalLayout {
         }
         if root.up-to-date: Note {
             text: @tr("SlicePanel" => "Slice is up to date.");
+        }
+        if root.every-plate-note != "": Note {
+            text: root.every-plate-note;
         }
     }
 

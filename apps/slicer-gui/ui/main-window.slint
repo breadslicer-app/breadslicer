@@ -537,6 +537,8 @@ export component MainWindow inherits Window {
     // match the held slice, then lowered again after a short delay; shows
     // the transient "already up to date" hint in the Slice panel.
     in property <bool> slice-up-to-date: false;
+    // What Slice every plate did, line by line, until the next slice (#547).
+    in property <string> slice-every-plate-note;
     // Slice control panel geometry (per-window live state). Same
     // anchor/offset model as the object-list panel; the defaults hug the
     // top-left corner, clear of the top-right object-list panel. Height
@@ -2001,6 +2003,7 @@ export component MainWindow inherits Window {
                             first-layer-height-text <=> root.slice-first-layer-height-text;
                             slicing: root.slicing-in-progress;
                             up-to-date: root.slice-up-to-date;
+                            every-plate-note: root.slice-every-plate-note;
                             layer-count: root.slice-layer-count;
                             selected-layer: root.selected-layer-index;
                             layer-image: root.slice-view-image;

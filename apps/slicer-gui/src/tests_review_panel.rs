@@ -1747,8 +1747,10 @@ mod fix_all {
             filled.as_ref(),
             &sets,
             panel.raft_top_mm(),
-            Some(panel.born_tip_mm()),
-            [0.0; 2],
+            crate::review::PlateReading {
+                bare_tip_mm: Some(panel.born_tip_mm()),
+                origin: [0.0; 2],
+            },
             &sc_sl1cer::CancelToken::default(),
             &|_| {},
         );
