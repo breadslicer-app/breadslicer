@@ -98,8 +98,10 @@ pub(crate) fn uncovered<'a>(hints: &'a [Hint], tips: &[([f64; 3], f64)]) -> Vec<
 const RING_LIFT_MM: f64 = 0.03;
 const RING_SIDES: usize = 20;
 
-/// How much larger an island's ring is than a recommended place's (#525).
-pub(crate) const ISLAND_RING_SCALE: f64 = 1.6;
+/// An island's ring, its outer radius per mm of the tip that goes there
+/// (#525): its hole a little wider than the tip's ball, so it says where
+/// the tip goes.
+pub(crate) const ISLAND_RING_PER_TIP: f64 = 1.26;
 
 /// The rings that mark `hints`, of outer radius `radius`, lying on the
 /// surface at each, in `tint`.

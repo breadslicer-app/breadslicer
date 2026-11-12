@@ -2220,7 +2220,7 @@ impl DfSupportRun {
                 ui.set_support_islands_left(i32::try_from(left.len()).unwrap_or(i32::MAX));
                 meshes.push(Arc::new(crate::support_hints::rings(
                     &left,
-                    radius * crate::support_hints::ISLAND_RING_SCALE,
+                    self.born_tip_mm() * crate::support_hints::ISLAND_RING_PER_TIP,
                     OverlayTint::Island,
                 )));
             }

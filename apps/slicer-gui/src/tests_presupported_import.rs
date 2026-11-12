@@ -231,6 +231,53 @@ fn replace_gives_the_model_supports_made_here_in_one_undo_step() {
     });
 }
 
+/// Three pre-supported files that come in together get one question
+/// (#527): Replace answers for all of them in one undo step, each model
+/// waiting for supports made here.
+#[test]
+fn files_with_supports_that_come_in_together_get_one_question() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a window");
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let dialogs = DialogManager::new(&bus);
+        dialogs.attach(&window);
+        let document = SceneDocument::new();
+        let run = PresupportedImport::install(&window, document.clone(), dialogs.clone());
+        let (mesh, model_faces) = presupported_mesh();
+        let mut graph = Scene::new();
+        for x in [0.0, 40.0, 80.0] {
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    at([x, 0.0, 0.0]),
+                    LeafPayload::Mesh(Arc::new(mesh.clone())),
+                )
+                .expect("leaf");
+            graph.add_root(leaf).expect("root");
+        }
+        document.install_graph(graph, PathBuf::from("/tmp/werewolves.stl"));
+        run.settle_for_test();
+        assert_eq!(dialogs.queued_for_test().len(), 1, "one question");
+        let message = window.get_message();
+        assert_eq!(message.kind, MessageKind::SeparateSupports);
+        assert!(message.text.starts_with("3 models"), "{}", message.text);
+        window.invoke_message_answered(MessageAnswer::Confirm);
+        assert!(!window.get_message_open(), "nothing more is asked");
+        let leaves = scene_leaves(&document);
+        assert_eq!(leaves.len(), 3, "the models alone");
+        assert!(leaves.iter().all(|(_, m)| m.faces().len() == model_faces));
+        let (_, wanted) = document.supports_wanted().expect("the models wait");
+        assert_eq!(wanted.ids().len(), 3, "every one");
+        assert!(document.undo().expect("undoes"));
+        assert_eq!(scene_leaves(&document).len(), 3, "the files back");
+        assert!(
+            scene_leaves(&document)
+                .iter()
+                .all(|(_, m)| m.faces().len() > model_faces)
+        );
+    });
+}
+
 fn world(document: &SceneDocument, leaf: NodeId) -> Transform3D {
     document
         .with_scene(|spatial| spatial.leaf(leaf).map(|q| q.world_transform()))
