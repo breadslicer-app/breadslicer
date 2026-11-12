@@ -40,6 +40,8 @@ pub enum OverlayTint {
     /// Where a support is recommended (#524): drawn on the model's surface,
     /// hidden behind it like the scene, not over it.
     Hint = 8,
+    /// An island an analysis found (#525): like [`Self::Hint`], in red.
+    Island = 9,
 }
 
 /// The overlay as a whole: its pieces, each shared so a piece that did not

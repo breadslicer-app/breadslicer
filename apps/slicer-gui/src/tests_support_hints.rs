@@ -18,13 +18,13 @@ fn rings(run: &DfSupportRun) -> usize {
         / (2 * 20)
 }
 
-/// Ticks the watcher until the recommended places are worked out.
+/// Ticks the watcher until the recommended places are worked out and shown.
 fn worked_out(window: &MainWindow, run: &DfSupportRun) {
     let start = Instant::now();
     loop {
         run.last_change.set(Instant::now() - Duration::from_secs(10));
         run.support_hints(window);
-        if run.hints.borrow().shown.is_some() {
+        if run.hints.borrow().ready.is_some() {
             return;
         }
         assert!(start.elapsed() < Duration::from_secs(120), "the run hangs");

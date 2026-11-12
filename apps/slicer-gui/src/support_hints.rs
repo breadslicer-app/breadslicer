@@ -13,6 +13,9 @@
 //! within the reach of that support's preset, as the overhang map's red
 //! goes (#484). Placing supports does not start the run again: only the
 //! models, their poses, the preset or the printer do.
+//!
+//! The islands an analysis found (#525) show the same way, as larger red
+//! rings, in the Supports tab whatever tool is armed.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,9 +41,12 @@ pub(crate) struct Hints {
     pub(crate) running: Option<(JobHandle<DfSupportOutcome>, String)>,
     /// The last run's places and what they are for.
     pub(crate) ready: Option<(String, Arc<Vec<Hint>>)>,
-    /// What the marks on show were drawn from: the places and the scene as
-    /// it stood.
-    pub(crate) shown: Option<(usize, SceneRevision)>,
+    /// The islands the last analysis found (#525), with the models they
+    /// were found on as they stood.
+    pub(crate) islands: Option<(String, Arc<Vec<Hint>>)>,
+    /// What the marks on show were drawn from: the places, the islands and
+    /// the scene as it stood.
+    pub(crate) shown: Option<(usize, usize, SceneRevision)>,
 }
 
 /// The places a run picked: every tip of every set it made.
@@ -92,9 +98,12 @@ pub(crate) fn uncovered<'a>(hints: &'a [Hint], tips: &[([f64; 3], f64)]) -> Vec<
 const RING_LIFT_MM: f64 = 0.03;
 const RING_SIDES: usize = 20;
 
+/// How much larger an island's ring is than a recommended place's (#525).
+pub(crate) const ISLAND_RING_SCALE: f64 = 1.6;
+
 /// The rings that mark `hints`, of outer radius `radius`, lying on the
-/// surface at each.
-pub(crate) fn rings(hints: &[&Hint], radius: f64) -> OverlayMesh {
+/// surface at each, in `tint`.
+pub(crate) fn rings(hints: &[&Hint], radius: f64, tint: OverlayTint) -> OverlayMesh {
     let inner = radius * 0.62;
     let mut positions = Vec::with_capacity(hints.len() * RING_SIDES * 2);
     let mut indices = Vec::with_capacity(hints.len() * RING_SIDES * 6);
@@ -125,7 +134,7 @@ pub(crate) fn rings(hints: &[&Hint], radius: f64) -> OverlayMesh {
     OverlayMesh {
         positions,
         indices,
-        tint: OverlayTint::Hint,
+        tint,
     }
 }
 
@@ -172,7 +181,7 @@ mod tests {
     #[test]
     fn a_ring_lies_on_the_surface_round_its_place() {
         let hint = at(2.0);
-        let mesh = rings(&[&hint], 0.5);
+        let mesh = rings(&[&hint], 0.5, OverlayTint::Hint);
         assert_eq!(mesh.positions.len(), RING_SIDES * 2);
         assert_eq!(mesh.indices.len(), RING_SIDES * 6);
         for p in &mesh.positions {
