@@ -2503,6 +2503,8 @@ export component SliceInspector inherits VerticalLayout {
     in property <[string]> plate-options;
     in-out property <int> plate-current-index;
     callback plate-picked(int);
+    // Every plate sliced in turn, those up to date left as they are (#547).
+    callback slice-every-plate();
     in property <[string]> printer-options;
     in-out property <int> printer-current-index: -1;
     in property <[string]> resin-options;
@@ -2631,6 +2633,14 @@ export component SliceInspector inherits VerticalLayout {
             enabled: root.printer-current-index >= 0 && root.resin-current-index >= 0 && !root.slicing && !root.review-fixing;
             clicked => {
                 root.slice-requested();
+            }
+        }
+        if root.plate-options.length > 1: ScButton {
+            text: @tr("SlicePanel" => "Slice every plate");
+            icon: Icons.slice;
+            enabled: root.printer-current-index >= 0 && root.resin-current-index >= 0 && !root.slicing && !root.review-fixing;
+            clicked => {
+                root.slice-every-plate();
             }
         }
         if root.up-to-date: Note {

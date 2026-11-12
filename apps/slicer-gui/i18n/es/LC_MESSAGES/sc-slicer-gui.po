@@ -7073,3 +7073,28 @@ msgstr "Mandar"
 msgctxt "SlicePanel"
 msgid "Export “{}”"
 msgstr "Exportar “{}”"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Slice every plate"
+msgstr "Laminar todas las camas"
+
+#: src/slice_run.rs
+msgctxt "SliceDialog"
+msgid "Every plate"
+msgstr "Todas las camas"
+
+#: src/slice_run.rs
+msgctxt "SliceDialog"
+msgid "{}: up to date"
+msgstr "{}: al día"
+
+#: src/slice_run.rs
+msgctxt "SliceDialog"
+msgid "{}: sliced"
+msgstr "{}: laminada"
+
+#: src/slice_run.rs
+msgctxt "SliceDialog"
+msgid "{}: not sliced"
+msgstr "{}: no se laminó"

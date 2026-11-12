@@ -200,6 +200,8 @@ pub(crate) struct SliceRun {
     // Told when the slice in flight lands, or fails (#549): whether the
     // document now holds it.
     landed: RefCell<Option<Box<dyn FnOnce(bool)>>>,
+    // Slicing every plate in turn (#547).
+    every_plate: Cell<bool>,
     // The slices of the plates not held now, with their reviews (#547):
     // making a plate the active one again brings its slice back while
     // nothing on it changed. For this many plates.
@@ -240,6 +242,7 @@ impl SliceRun {
             pending_fills: RefCell::new(Vec::new()),
             poll_timer: Rc::new(slint::Timer::default()),
             landed: RefCell::new(None),
+            every_plate: Cell::new(false),
             plate_slices: RefCell::new((1, HashMap::new())),
             plates_watch: RefCell::new(None),
             tooltip_timer: Rc::new(slint::Timer::default()),
@@ -271,6 +274,14 @@ impl SliceRun {
         {
             let run = run.clone();
             ui.on_slice_finished(move || run.finish());
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_slice_every_plate_requested(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.slice_every_plate();
+                }
+            });
         }
         {
             // Another plate made active brings its slice back (#547).
@@ -465,21 +476,100 @@ impl SliceRun {
         }
     }
 
-    /// Slices the active plate for an export of every plate (#549), and tells
-    /// `then` whether the document holds a slice of it that is up to date:
-    /// once the slice lands, or at once when none was needed or could start.
-    pub(crate) fn slice_then(self: &Rc<Self>, then: impl FnOnce(bool) + 'static) {
-        *self.landed.borrow_mut() = Some(Box::new(then));
+    /// Slices the active plate for every plate's slice or export (#547,
+    /// #549), and tells `then` what came of it: once the slice lands, or at
+    /// once when none was needed or could start.
+    pub(crate) fn slice_then(self: &Rc<Self>, then: impl FnOnce(PlateSliced) + 'static) {
+        type Then = Box<dyn FnOnce(PlateSliced)>;
+        let then: Rc<RefCell<Option<Then>>> = Rc::new(RefCell::new(Some(Box::new(then))));
+        let on_land = then.clone();
+        *self.landed.borrow_mut() = Some(Box::new(move |landed| {
+            if let Some(then) = on_land.borrow_mut().take() {
+                then(if landed {
+                    PlateSliced::Sliced
+                } else {
+                    PlateSliced::Failed
+                });
+            }
+        }));
         if self.start_with(SliceTrigger::EveryPlate) {
             return;
         }
-        let Some(then) = self.landed.borrow_mut().take() else {
-            return;
-        };
-        let held = self.document.slice_params();
-        then(held.is_some_and(|held| {
+        // No slice started: none was needed, or one could not start.
+        self.landed.borrow_mut().take();
+        let current = self.document.slice_params().is_some_and(|held| {
             held.plate == self.document.slice_plate() && !self.document.held_slice_changed()
-        }));
+        });
+        if let Some(then) = then.borrow_mut().take() {
+            then(if current {
+                PlateSliced::UpToDate
+            } else {
+                PlateSliced::Failed
+            });
+        }
+    }
+
+    /// Slices each plate with models on it in turn (#547), those already up
+    /// to date left as they are, and says which it sliced and which were.
+    pub(crate) fn slice_every_plate(self: &Rc<Self>) {
+        if self.every_plate.get() {
+            return;
+        }
+        let plates = self.ctrl.plates_in_use();
+        if plates.is_empty() {
+            return;
+        }
+        self.every_plate.set(true);
+        let run = self.clone();
+        let spawned = slint::spawn_local(async move {
+            let document = run.document.clone();
+            let back_to = document.plates().active();
+            let names = document.plate_names();
+            let name = |plate: u32| names.get(plate as usize).cloned().unwrap_or_default();
+            let mut sliced = Vec::new();
+            let mut current = Vec::new();
+            let mut failed = Vec::new();
+            for plate in plates {
+                document.set_active_plate(plate);
+                let (tx, rx) = futures_channel::oneshot::channel();
+                run.slice_then(move |outcome| {
+                    let _ = tx.send(outcome);
+                });
+                match rx.await.unwrap_or(PlateSliced::Failed) {
+                    PlateSliced::Sliced => sliced.push(name(plate)),
+                    PlateSliced::UpToDate => current.push(name(plate)),
+                    PlateSliced::Failed => {
+                        // The slice said why, or was cancelled.
+                        failed.push(name(plate));
+                        break;
+                    }
+                }
+            }
+            document.set_active_plate(back_to);
+            run.every_plate.set(false);
+            let mut lines = Vec::new();
+            if !current.is_empty() {
+                lines.push(ctr!("SliceDialog", "{}: up to date", current.join(" - ")).to_string());
+            }
+            if !sliced.is_empty() {
+                lines.push(ctr!("SliceDialog", "{}: sliced", sliced.join(" - ")).to_string());
+            }
+            if !failed.is_empty() {
+                lines.push(ctr!("SliceDialog", "{}: not sliced", failed.join(" - ")).to_string());
+            }
+            crate::breadcrumbs::note(&format!("slice: every plate, {}", lines.join("; ")));
+            let message = lines.join("\n");
+            run.dialogs
+                .show_info(move || crate::error_dialog::InfoTexts {
+                    heading: ctr!("SliceDialog", "Every plate"),
+                    message: message.clone().into(),
+                    details: Default::default(),
+                });
+        });
+        if let Err(err) = spawned {
+            self.every_plate.set(false);
+            eprintln!("Failed to spawn the every-plate slice: {err}");
+        }
     }
 
     /// Tells whoever waits for the slice in flight whether it landed.
@@ -1044,6 +1134,17 @@ fn run_slice(
                 .map(|completed| SliceRunOutcome::Completed(Box::new(completed)))
         }
     }
+}
+
+/// What came of slicing one plate of every plate's (#547).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlateSliced {
+    /// It was sliced now.
+    Sliced,
+    /// Its slice was up to date: nothing was sliced.
+    UpToDate,
+    /// It could not be sliced, or the slice was cancelled.
+    Failed,
 }
 
 /// Fingerprints the slice inputs off the event loop, with the scale

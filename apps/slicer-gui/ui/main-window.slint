@@ -625,6 +625,8 @@ export component MainWindow inherits Window {
     callback slice-export-requested();
     // Each plate with models sliced in turn, a file each (#549).
     callback slice-export-every-plate-requested();
+    // Each plate with models sliced in turn (#547).
+    callback slice-every-plate-requested();
     // Slice lifecycle: `slice-requested` from the panel button starts a
     // run; `slice-cancel-requested` from the modal trips the cancel
     // token; `slice-finished` is invoked from the Rust worker to drain
@@ -1983,6 +1985,9 @@ export component MainWindow inherits Window {
                             plate-current-index: root.active-plate;
                             plate-picked(i) => {
                                 root.plate-picked(i);
+                            }
+                            slice-every-plate => {
+                                root.slice-every-plate-requested();
                             }
                             overhang-map-on <=> root.overhang-map-on;
                             overhang-map-limit: root.overhang-map-limit;

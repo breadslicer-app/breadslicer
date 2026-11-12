@@ -439,10 +439,12 @@ async fn run_export_every_plate(
             .unwrap_or_default();
         document.set_active_plate(plate);
         let (tx, rx) = oneshot::channel();
-        slice.slice_then(move |landed| {
-            let _ = tx.send(landed);
+        slice.slice_then(move |outcome| {
+            let _ = tx.send(outcome);
         });
-        if !rx.await.unwrap_or(false) {
+        if rx.await.unwrap_or(crate::slice_run::PlateSliced::Failed)
+            == crate::slice_run::PlateSliced::Failed
+        {
             // The slice said why, or was cancelled.
             break;
         }

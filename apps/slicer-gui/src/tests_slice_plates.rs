@@ -213,13 +213,17 @@ fn a_slice_of_every_plate_hears_when_each_lands() {
             w.slice.slice_then(move |ok| heard.set(Some(ok)));
             assert_eq!(landed.get(), None, "plate {plate} slices first");
             w.finish();
-            assert_eq!(landed.take(), Some(true), "plate {plate} landed");
+            assert_eq!(
+                landed.take(),
+                Some(PlateSliced::Sliced),
+                "plate {plate} landed"
+            );
             assert_eq!(w.document.slice_params().map(|p| p.plate), Some(plate));
         }
         // The plate held already: told at once.
         let heard = landed.clone();
         w.slice.slice_then(move |ok| heard.set(Some(ok)));
-        assert_eq!(landed.take(), Some(true), "up to date");
+        assert_eq!(landed.take(), Some(PlateSliced::UpToDate), "up to date");
     });
 }
 
