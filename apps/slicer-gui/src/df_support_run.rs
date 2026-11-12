@@ -2196,7 +2196,9 @@ impl DfSupportRun {
             self.ctrl.set_hint_marks(None);
             return;
         }
-        // The tips in the scene, each with the reach of its set's preset.
+        // Where the supports in the scene touch the models, each with the
+        // reach of its set's preset: every piece's contacts, twigs and
+        // sticks too (#542), as the overhang map counts them (#484).
         let fallback = self.options.borrow().tip_reach_mm();
         let tips: Vec<([f64; 3], f64)> = self
             .document
@@ -2210,9 +2212,10 @@ impl DfSupportRun {
                             .map_or(fallback, |o| o.tip_reach_mm());
                         drawn
                             .session
-                            .tips()
+                            .pieces()
                             .into_iter()
-                            .map(move |(_, p)| (p, reach))
+                            .flat_map(|piece| piece.contacts)
+                            .map(move |contact| (contact.surface, reach))
                     })
                     .collect()
             })
@@ -2229,24 +2232,13 @@ impl DfSupportRun {
         }
         match &islands {
             Some(islands) => {
-                let left = crate::support_hints::uncovered(islands, &tips);
-                ui.set_support_islands_left(i32::try_from(left.len()).unwrap_or(i32::MAX));
-                hints.left = left.iter().map(|h| h.at).collect();
-                // The island the camera went to stands out (#538).
-                let (visited, rest): (Vec<_>, Vec<_>) =
-                    left.into_iter().partition(|h| hints.visited == Some(h.at));
-                let radius = self.born_tip_mm() * crate::support_hints::ISLAND_RING_PER_TIP;
-                meshes.push(Arc::new(crate::support_hints::rings(
-                    &rest,
-                    radius,
-                    OverlayTint::Island,
-                )));
-                if !visited.is_empty() {
-                    meshes.push(Arc::new(crate::support_hints::rings(
-                        &visited,
-                        radius * crate::support_hints::VISITED_RING_SCALE,
-                        OverlayTint::Island,
-                    )));
+                let contacts: Vec<[f64; 3]> = tips.iter().map(|t| t.0).collect();
+                let (left, waiting) =
+                    self.paint_islands(islands, &contacts, &mut hints, &mut meshes);
+                ui.set_support_islands_left(i32::try_from(left).unwrap_or(i32::MAX));
+                if waiting {
+                    // Drawn again once the models' adjacency is ready.
+                    hints.shown = None;
                 }
             }
             None => {
@@ -2255,6 +2247,114 @@ impl DfSupportRun {
             }
         }
         self.ctrl.set_hint_marks(Some(meshes.into()));
+    }
+
+    /// The islands of `islands` no support holds yet, painted on their
+    /// models (#542), into `meshes`, and kept in `hints.left`: the faces
+    /// looking down where each starts, seen where they show and,
+    /// fainter, through everything; a dot for an island too small for its
+    /// paint to read, and for one whose model's adjacency is still being
+    /// built (a worker builds it). The island the camera went to (#538) is
+    /// brighter. A support holds an island when one of `contacts` touches
+    /// its paint ([`crate::island_paint::held`]). Returns how many are left
+    /// and whether any waits for its model's adjacency.
+    fn paint_islands(
+        &self,
+        islands: &[Hint],
+        contacts: &[[f64; 3]],
+        hints: &mut crate::support_hints::Hints,
+        meshes: &mut Vec<Arc<OverlayMesh>>,
+    ) -> (usize, bool) {
+        use crate::island_paint::{DOT_UNDER_MM2, Paint, held, paint};
+        use crate::support_hints::{ISLAND_DOT_PER_TIP, VISITED_DOT_SCALE, dots};
+        let mut faces: Vec<[f32; 3]> = Vec::new();
+        let mut visited_faces: Vec<[f32; 3]> = Vec::new();
+        let mut dotted: Vec<&Hint> = Vec::new();
+        let mut visited_dot: Vec<&Hint> = Vec::new();
+        let mut waiting: Vec<NodeId> = Vec::new();
+        self.document.with_scene(|spatial| {
+            let models: Vec<NodeId> = crate::raft_clash::model_bottoms(spatial)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect();
+            let keep = |id: NodeId| models.contains(&id);
+            let mut marks = sc_mesh_spatial::WalkMarks::default();
+            let fallback = self.born_tip_mm().max(0.5);
+            hints.left.clear();
+            for island in islands {
+                let painted = paint(spatial, island, &keep, &mut marks);
+                if held(island, &painted, contacts, fallback) {
+                    continue;
+                }
+                hints.left.push(island.at);
+                let visited = hints.visited == Some(island.at);
+                let small = match painted {
+                    Paint::Faces { corners, area_mm2 } => {
+                        if visited {
+                            visited_faces.extend(corners);
+                        } else {
+                            faces.extend(corners);
+                        }
+                        area_mm2 < DOT_UNDER_MM2
+                    }
+                    Paint::Waiting(leaf) => {
+                        waiting.push(leaf);
+                        true
+                    }
+                    Paint::Nowhere => true,
+                };
+                if small {
+                    if visited {
+                        visited_dot.push(island);
+                    } else {
+                        dotted.push(island);
+                    }
+                }
+            }
+        });
+        for leaf in &waiting {
+            if hints.priming.contains(leaf) {
+                continue;
+            }
+            hints.priming.push(*leaf);
+            if let Some(job) = self
+                .document
+                .with_scene(|spatial| spatial.adjacency_job(*leaf))
+                .flatten()
+            {
+                std::thread::spawn(move || job.run());
+            }
+        }
+        let painted = |corners: Vec<[f32; 3]>, tint: OverlayTint| {
+            let indices = (0..corners.len() as u32).collect();
+            Arc::new(OverlayMesh {
+                positions: corners,
+                indices,
+                tint,
+            })
+        };
+        let through: Vec<[f32; 3]> = faces.iter().chain(&visited_faces).copied().collect();
+        if !through.is_empty() {
+            meshes.push(painted(through, OverlayTint::Island));
+        }
+        if !faces.is_empty() {
+            meshes.push(painted(faces, OverlayTint::IslandFace));
+        }
+        if !visited_faces.is_empty() {
+            meshes.push(painted(visited_faces, OverlayTint::IslandVisited));
+        }
+        let radius = self.born_tip_mm() * ISLAND_DOT_PER_TIP;
+        if !dotted.is_empty() {
+            meshes.push(Arc::new(dots(&dotted, radius, OverlayTint::IslandDot)));
+        }
+        if !visited_dot.is_empty() {
+            meshes.push(Arc::new(dots(
+                &visited_dot,
+                radius * VISITED_DOT_SCALE,
+                OverlayTint::IslandDot,
+            )));
+        }
+        (hints.left.len(), !waiting.is_empty())
     }
 
     /// The recommended places for the models as they stand, once worked out;

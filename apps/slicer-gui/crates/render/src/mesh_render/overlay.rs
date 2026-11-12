@@ -40,8 +40,16 @@ pub enum OverlayTint {
     /// Where a support is recommended (#524): drawn on the model's surface,
     /// hidden behind it like the scene, not over it.
     Hint = 8,
-    /// An island an analysis found (#525): like [`Self::Hint`], in red.
+    /// An island an analysis found (#525), painted on its model (#542): its
+    /// paint seen through everything, faint.
     Island = 9,
+    /// An island's paint on the model's faces, where they show (#542).
+    IslandFace = 10,
+    /// The dot of an island too small for its paint to read, over
+    /// everything (#542).
+    IslandDot = 11,
+    /// The paint of the island the camera went to (#538, #542): brighter.
+    IslandVisited = 12,
 }
 
 /// The overlay as a whole: its pieces, each shared so a piece that did not
@@ -212,12 +220,18 @@ impl Renderer {
             return;
         }
         self.hint_source = pieces.cloned();
-        let (islands, hints): (Vec<_>, Vec<_>) = pieces
-            .into_iter()
-            .flat_map(|p| p.iter().cloned())
-            .partition(|p| p.tint == OverlayTint::Island);
-        let hints: Overlay = hints.into();
-        let islands: Overlay = islands.into();
+        let all: Vec<Arc<OverlayMesh>> =
+            pieces.into_iter().flat_map(|p| p.iter().cloned()).collect();
+        let of = |keep: &dyn Fn(OverlayTint) -> bool| -> Overlay {
+            all.iter()
+                .filter(|p| keep(p.tint))
+                .cloned()
+                .collect::<Vec<_>>()
+                .into()
+        };
+        let islands = of(&|t| t == OverlayTint::IslandDot);
+        let hidden = of(&|t| t == OverlayTint::Island);
+        let hints = of(&|t| !matches!(t, OverlayTint::IslandDot | OverlayTint::Island));
         self.hints.install(
             &self.core.device,
             &self.core.queue,
@@ -231,6 +245,13 @@ impl Renderer {
             &self.pipelines.mesh.models_bind_group_layout,
             pieces.map(|_| &islands),
             "island marks",
+        );
+        self.island_hidden.install(
+            &self.core.device,
+            &self.core.queue,
+            &self.pipelines.mesh.models_bind_group_layout,
+            pieces.map(|_| &hidden),
+            "island paint hidden",
         );
     }
 }

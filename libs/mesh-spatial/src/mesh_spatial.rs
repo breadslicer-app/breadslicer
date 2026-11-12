@@ -88,6 +88,11 @@ impl MeshSpatial {
         self.adjacency.get_or_init(|| FaceAdjacency::new(mesh))
     }
 
+    /// Whether the face adjacency is built: asking for it now does not wait.
+    pub(crate) fn has_face_adjacency(&self) -> bool {
+        self.adjacency.get().is_some()
+    }
+
     /// AABB of `mesh.vertices` after applying `linear` (no
     /// translation). Tight: walks vertices directly rather than
     /// passing the local AABB through Arvo, so it does not inherit

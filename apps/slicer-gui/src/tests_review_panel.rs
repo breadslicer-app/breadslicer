@@ -2715,23 +2715,82 @@ mod fix_all {
         assert_eq!(unchanged(&before), unchanged(&after));
     }
 
-    /// How many island rings the Supports tab shows (#525).
-    fn island_rings(w: &IslandWindow) -> usize {
-        w.panel.ctrl.hint_marks_for_test().map_or(0, |marks| {
-            marks
+    /// How much of the islands' marks the Supports tab shows (#525, #542):
+    /// the corners of their paint and dots.
+    fn island_marks(w: &IslandWindow) -> usize {
+        island_tints(w).iter().map(|(_, n)| n).sum()
+    }
+
+    /// The islands' marks the Supports tab shows, by tint, with their
+    /// corners (#542).
+    fn island_tints(w: &IslandWindow) -> Vec<(crate::mesh_render::OverlayTint, usize)> {
+        use crate::mesh_render::OverlayTint as T;
+        w.panel
+            .ctrl
+            .hint_marks_for_test()
+            .map_or_else(Vec::new, |marks| {
+                marks
+                    .iter()
+                    .filter(|m| {
+                        matches!(
+                            m.tint,
+                            T::Island | T::IslandFace | T::IslandDot | T::IslandVisited
+                        )
+                    })
+                    .map(|m| (m.tint, m.positions.len()))
+                    .collect()
+            })
+    }
+
+    /// Runs the Supports tab's watcher until the islands are painted: their
+    /// models' adjacency is built on a worker (#542).
+    fn painted(w: &IslandWindow) {
+        use crate::mesh_render::OverlayTint as T;
+        for _ in 0..400 {
+            w.panel.supports.support_hints(&w.window);
+            if island_tints(w)
                 .iter()
-                .filter(|m| m.tint == crate::mesh_render::OverlayTint::Island)
-                .map(|m| m.positions.len())
-                .sum::<usize>()
-        }) / (2 * 20)
+                .any(|(t, _)| matches!(t, T::IslandFace | T::IslandVisited))
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("the islands are painted: {:?}", island_tints(w));
+    }
+
+    /// A support placed by hand on an island's paint, off the spot its
+    /// first tip was planned at, clears it (#542): the supports that hang
+    /// from the model itself count, as every other one does.
+    #[test]
+    fn a_support_on_an_islands_paint_clears_it() {
+        let (before, after) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            answer_the_question(&w, MessageAnswer::Cancel);
+            ANALYZE.set(true);
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            ANALYZE.set(false);
+            w.window.set_workspace_section(WorkspaceSection::Supports);
+            painted(&w);
+            let left = w.panel.supports.islands_left_for_test();
+            let before = w.window.get_support_islands_left();
+            let at = left[0];
+            let p = [at[0] as f32 + 0.25, at[1] as f32, at[2] as f32];
+            let (edit, refused) = w.panel.supports.add_supports_at(&[p]);
+            assert!(refused.is_empty(), "the tip takes: {edit:?} {refused:?}");
+            w.panel.supports.support_hints(&w.window);
+            (before, w.window.get_support_islands_left())
+        });
+        assert!(before > 0, "islands are left: {before}");
+        assert_eq!(after, before - 1, "the island supported clears");
     }
 
     /// Go to the island (#538): each press centres the camera on the next
-    /// island left, in turn, looking up at it from below; the ring of the
-    /// one it went to is the bigger one.
+    /// island left, in turn, looking up at it from below; the one it went to
+    /// is painted apart (#542).
     #[test]
     fn going_to_an_island_centres_on_each_one_left_in_turn_from_below() {
-        let (left, visits, bigger) = on_fresh_slint_thread(|| {
+        let (left, visits, tints) = on_fresh_slint_thread(|| {
             let w = island_window();
             answer_the_question(&w, MessageAnswer::Cancel);
             ANALYZE.set(true);
@@ -2748,21 +2807,9 @@ mod fix_all {
                 let cam = w.panel.ctrl.camera_for_test().expect("a camera");
                 visits.push((cam.target, cam.pitch));
             }
-            let marks = w.panel.ctrl.hint_marks_for_test().expect("marks");
-            let island_pieces: Vec<f32> = marks
-                .iter()
-                .filter(|m| m.tint == crate::mesh_render::OverlayTint::Island)
-                .map(|m| {
-                    let (lo, hi) = m
-                        .positions
-                        .iter()
-                        .fold((f32::MAX, f32::MIN), |(lo, hi), p| {
-                            (lo.min(p[0]), hi.max(p[0]))
-                        });
-                    hi - lo
-                })
-                .collect();
-            (left, visits, island_pieces)
+            painted(&w);
+            let tints = island_tints(&w);
+            (left, visits, tints)
         });
         assert!(!left.is_empty(), "islands are left");
         for (i, (target, pitch)) in visits.iter().enumerate() {
@@ -2780,13 +2827,13 @@ mod fix_all {
                 "press {i} looks from below: pitch {pitch}"
             );
         }
+        use crate::mesh_render::OverlayTint as T;
+        let visited = tints.iter().filter(|(t, _)| *t == T::IslandVisited).count();
+        let dots = tints.iter().filter(|(t, _)| *t == T::IslandDot).count();
         assert!(
-            bigger.len() == 2 || left.len() == 1,
-            "the visited ring is drawn apart: {bigger:?}"
+            visited == 1 || dots == 2 || (left.len() == 1 && dots == 1),
+            "the island it went to is painted apart: {tints:?}"
         );
-        if left.len() == 1 {
-            assert_eq!(bigger.len(), 1);
-        }
     }
 
     /// Analyze islands (#525): the slice asks nothing; the Supports tab
@@ -2806,7 +2853,7 @@ mod fix_all {
             // Out of the Supports tab nothing shows.
             w.window.set_workspace_section(WorkspaceSection::Slice);
             w.panel.supports.support_hints(&w.window);
-            let outside = island_rings(&w);
+            let outside = island_marks(&w);
 
             w.window.set_workspace_section(WorkspaceSection::Supports);
             w.panel.supports.support_hints(&w.window);
@@ -2814,7 +2861,7 @@ mod fix_all {
                 w.window.get_support_islands_left(),
                 held_islands(&w.panel).len(),
             );
-            let rings = island_rings(&w);
+            let rings = island_marks(&w);
 
             w.window.invoke_support_islands_add_requested();
             let fixing = w.panel.fixing();
@@ -2843,13 +2890,13 @@ mod fix_all {
                 .expect("the move applies");
             w.document.push_edit(edit);
             w.panel.supports.support_hints(&w.window);
-            let moved = (w.window.get_support_islands_left(), island_rings(&w));
+            let moved = (w.window.get_support_islands_left(), island_marks(&w));
             (asked, found, rings, outside, fixing, after, moved)
         });
         assert!(asked.is_empty(), "an analysis asks nothing: {asked:?}");
         assert!(found.0 > 0, "islands are found: {found:?}");
         assert_eq!(found.0 as usize, found.1, "each island counted once");
-        assert_eq!(rings, found.1, "each island marked");
+        assert!(rings > 0, "the islands are marked");
         assert_eq!(outside, 0, "marked in the Supports tab alone");
         assert!(fixing, "Support all starts the run");
         assert_eq!(after, 0, "no island left: {after}");

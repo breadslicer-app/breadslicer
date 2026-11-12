@@ -697,6 +697,12 @@ impl<'a> ObjectQuery<'a> {
     pub fn face_adjacency(&self) -> &'a FaceAdjacency {
         self.cache.face_adjacency(self.mesh)
     }
+
+    /// Whether [`Self::face_adjacency`] is built, so it answers at once
+    /// rather than building it on this thread.
+    pub fn has_face_adjacency(&self) -> bool {
+        self.cache.has_face_adjacency()
+    }
 }
 
 fn translate_aabb(aabb: Aabb, t: &[f64; 3]) -> Aabb {
