@@ -556,7 +556,7 @@ fn a_body_too_big_for_any_plate_waits_beside_the_last_plate_used() {
     let plates = plates_in_a_row(4, 60.0, 60.0);
     let across = crate::arrange_across(
         &bodies,
-        &vec![None; 2],
+        &[None; 2],
         &plates,
         &Settings::default(),
         &AtomicBool::new(false),

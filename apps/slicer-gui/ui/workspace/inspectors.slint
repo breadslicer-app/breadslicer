@@ -1104,10 +1104,10 @@ export component TransformInspector inherits VerticalLayout {
     // A model picked in the view comes into sight in the list (#558).
     changed selected-index => {
         if self.selected-index >= 0 {
-            if self.selected-index * 32px < -objects-box.viewport-y {
-                objects-box.viewport-y = -self.selected-index * 32px;
-            } else if self.selected-index * 32px + 30px > -objects-box.viewport-y + objects-box.visible-height {
-                objects-box.viewport-y = objects-box.visible-height - self.selected-index * 32px - 30px;
+            if self.selected-index * 32px < -objects-box.content-y {
+                objects-box.content-y = -self.selected-index * 32px;
+            } else if self.selected-index * 32px + 30px > -objects-box.content-y + objects-box.visible-height {
+                objects-box.content-y = objects-box.visible-height - self.selected-index * 32px - 30px;
             }
         }
     }

@@ -54,9 +54,7 @@ impl Placements {
     /// `leaf` was given `pose`, unless it was given one before: a model the
     /// app shows for the first time.
     pub(crate) fn note_first(&mut self, leaf: NodeId, pose: Pose) {
-        if !self.by_leaf.contains_key(&leaf) {
-            self.by_leaf.insert(leaf, vec![pose]);
-        }
+        self.by_leaf.entry(leaf).or_insert_with(|| vec![pose]);
     }
 
     /// `leaf` stands where the person put it, whatever pose it has now: a
