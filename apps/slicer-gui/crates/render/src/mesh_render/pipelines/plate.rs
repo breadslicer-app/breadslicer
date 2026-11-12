@@ -886,6 +886,20 @@ pub(in crate::mesh_render) fn plate_geometry(
         wall_indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
+    let label_quad = front_tab.map(|tab| {
+        let front = front_tab_geometry(tab, -outer_d, outer_w - radius, vertices.len() as u32);
+        vertices.extend(front.vertices);
+        top_indices.extend(front.top_indices);
+        solid_indices.extend(front.solid_indices);
+        bottom_indices.extend(front.bottom_indices);
+        let text_box = tab.text_box(-outer_d, outer_w - radius);
+        let top = label_quad(text_box);
+        // The plate is drawn without its thickness (#507): the copy read from
+        // below sits on the same plane as the one read from above.
+        let underside = underside_label_quad(text_box, z_top);
+        std::array::from_fn(|i| if i < 6 { top[i] } else { underside[i - 6] })
+    });
+
     // The tools' strip (#545): right of the back right corner, a hair over
     // the rim so neither fights the other for the depth.
     let tools_base = vertices.len() as u32;
@@ -911,20 +925,6 @@ pub(in crate::mesh_render) fn plate_geometry(
         tools_base + 2,
         tools_base + 3,
     ];
-
-    let label_quad = front_tab.map(|tab| {
-        let front = front_tab_geometry(tab, -outer_d, outer_w - radius, vertices.len() as u32);
-        vertices.extend(front.vertices);
-        top_indices.extend(front.top_indices);
-        solid_indices.extend(front.solid_indices);
-        bottom_indices.extend(front.bottom_indices);
-        let text_box = tab.text_box(-outer_d, outer_w - radius);
-        let top = label_quad(text_box);
-        // The plate is drawn without its thickness (#507): the copy read from
-        // below sits on the same plane as the one read from above.
-        let underside = underside_label_quad(text_box, z_top);
-        std::array::from_fn(|i| if i < 6 { top[i] } else { underside[i - 6] })
-    });
 
     PlateGeometry {
         vertices,
@@ -1119,7 +1119,8 @@ mod plate_geometry_tests {
         let g = plate_geometry(BuildVolume::new(192.0, 120.0, 200.0), None);
         let n = outline_len();
         // 5 envelope walls add 20 vertices (4 per quad).
-        assert_eq!(g.vertices.len(), 8 + 3 * n + 1 + 8 + 20);
+        // ... and the 4 corners of the tools' strip (#545), last.
+        assert_eq!(g.vertices.len(), 8 + 3 * n + 1 + 8 + 20 + 4);
 
         for v in &g.vertices[..4] {
             assert_eq!(v.kind, KIND_FLOOR);
@@ -1393,7 +1394,8 @@ mod plate_geometry_tests {
     fn the_front_tab_repeats_its_outline_once_per_kind_it_draws_with() {
         let g = plate_geometry(vol(), Some(tab()));
         let block = tab_outline_len();
-        let tab_vertices = &g.vertices[tab_off()..];
+        // The tools' strip (#545) comes after the tab: its 4 corners last.
+        let tab_vertices = &g.vertices[tab_off()..g.vertices.len() - 4];
 
         assert_eq!(tab_vertices.len(), 4 * block + 4);
         for v in &tab_vertices[4 * block..] {
