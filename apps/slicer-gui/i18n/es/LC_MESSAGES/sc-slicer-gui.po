@@ -6938,3 +6938,13 @@ msgstr "Analizar de nuevo"
 msgctxt "Inspector"
 msgid "Support all islands"
 msgstr "Poner soportes en todas las islas"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "These supports are being made again for the model as it is now; place it again in a moment."
+msgstr "Estos soportes se están rehaciendo para el modelo como está ahora; volvé a ponerlo en un momento."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The model changed under its supports: they are being made again, keeping your edits."
+msgstr "El modelo cambió debajo de sus soportes: se están rehaciendo, conservando tus ediciones."

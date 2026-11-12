@@ -48,7 +48,7 @@ use sc_geom::df_supports::zone_presets::{ZonePreset, figures_70, figures_150, mi
 use sc_geom::df_supports::{
     AddNote, AddOptions, BraceEnd, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
     DfSupportSession, EditError, EditPreview, HandBraceRefusal, HandEditKind, KeptEdits, LostEdit,
-    LostWhy, RaftMode, ScanCache, start_df_prescan, start_df_supports,
+    LostWhy, RaftMode, ScanCache, scene_model_leaves, start_df_prescan, start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
@@ -106,6 +106,22 @@ const PRESCAN_SETTLE: Duration = Duration::from_millis(500);
 /// How long the scene must sit still (and the Hollow tab idle) before the
 /// supports are generated ahead of a Generate press.
 const SPECULATE_SETTLE: Duration = Duration::from_millis(1500);
+
+/// How far from the model's new surface a tip may end and its supports stay
+/// as they are when the mesh changes under them (#526), mm: a tip goes into
+/// the model by its radius, so a surface this close still holds it.
+pub(crate) const HEAL_REACH_MM: f64 = 0.25;
+
+/// How [`DfSupportRun::heal_stale`] left a set out of date.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Healed {
+    /// In step again, as it was.
+    InForce,
+    /// Being made again, or to be once the run in flight is done.
+    Redoing,
+    /// Left as it is: nothing to do, or already tried for this state.
+    No,
+}
 
 /// Supports generated ahead of a Generate press, for the scene and request
 /// they were made for. A request is told apart by its printer figures and
@@ -248,6 +264,9 @@ pub(crate) struct DfSupportRun {
     /// next run makes again. Taken by the run it starts; a Generate press
     /// drops it.
     redo: RefCell<Option<Redo>>,
+    /// The states of sets out of date already made again on their own, or
+    /// found beyond keeping (#526): each is tried once.
+    healing_tried: RefCell<std::collections::HashSet<String>>,
 }
 
 /// The supports of one model made again from the card of supports out of
@@ -1506,6 +1525,7 @@ impl DfSupportRun {
             generated_raft_top: Cell::new(None),
             status_timer: slint::Timer::default(),
             redo: RefCell::new(None),
+            healing_tried: RefCell::new(std::collections::HashSet::new()),
         });
         {
             let weak = Rc::downgrade(&run);
@@ -1952,6 +1972,7 @@ impl DfSupportRun {
             }
         }
         drop(prescan);
+        self.heal_stale_sets(&ui);
         self.support_hints(&ui);
         let mut prescan = self.prescan.borrow_mut();
         let tab_wants = matches!(
@@ -4138,10 +4159,19 @@ impl DfSupportRun {
                     notice(key, heading, message.to_string());
                     HandEdit::Notified
                 }
-                NoSet::OutOfDate(leaf) => {
-                    self.show_out_of_date(leaf);
-                    HandEdit::Notified
-                }
+                // Brought back in step with the model and tried again, or
+                // made again on its own (#526); the card only when neither.
+                NoSet::OutOfDate(leaf) => match self.heal_stale(leaf) {
+                    Healed::InForce => return self.prepare_edit(ui, tool, points, how, refused),
+                    Healed::Redoing => failed(ctr!(
+                        "DfSupportDialog",
+                        "These supports are being made again for the model as it is now; place it again in a moment."
+                    )),
+                    Healed::No => {
+                        self.show_out_of_date(leaf);
+                        HandEdit::Notified
+                    }
+                },
                 NoSet::Failed(message) => failed(message),
             });
         }
@@ -4523,6 +4553,116 @@ impl DfSupportRun {
             None if model.is_some() => no_supports(),
             None if self.support_leaf().is_none() => no_supports(),
             None => NoSet::Failed(refusal(&EditError::NothingThere)),
+        }
+    }
+
+    /// Brings the supports of the leaf `leaf` back in step with their model
+    /// when they no longer are (#526), so no tool stops to ask for them to
+    /// be made again: a model whose mesh changed where it stands (Repair,
+    /// Hollow) keeps them as they are while every tip still touches it,
+    /// within [`HEAL_REACH_MM`]; supports whose own mesh changed keep their
+    /// data; anything else is made again on its own, keeping the edits made
+    /// by hand, once for the state the scene is in. Says how it went.
+    fn heal_stale(&self, leaf: NodeId) -> Healed {
+        let found = self
+            .document
+            .with_scene(|spatial| {
+                if in_force(spatial, &self.sessions, leaf).is_some() {
+                    return None;
+                }
+                let drawn = latest_drawing(&self.sessions, leaf)?;
+                let why = drawn.stale_why(spatial)?;
+                let (mesh, world) = crate::support_persist::model_state(spatial, drawn.model)?;
+                let shown = spatial.graph().leaf_mesh_arc(leaf)?.clone();
+                let key = format!(
+                    "{leaf:?}:{:?}:{:?}:{world:?}",
+                    Arc::as_ptr(&shown),
+                    Arc::as_ptr(&mesh)
+                );
+                Some((drawn, why, world, key))
+            })
+            .flatten();
+        let Some((drawn, why, world, key)) = found else {
+            return Healed::No;
+        };
+        if self.healing_tried.borrow().contains(&key) {
+            return Healed::No;
+        }
+        let rebased = match why {
+            StaleWhy::SupportsMesh => Some(drawn.session.clone()),
+            StaleWhy::ModelMesh if world == drawn.model_world => self
+                .document
+                .with_scene(|spatial| {
+                    let now = scene_model_leaves(spatial.graph(), Some(&[drawn.model]))
+                        .ok()?
+                        .pop()?
+                        .1;
+                    // The port is DragonFruit's code: a panic in it leaves
+                    // the set to be made again.
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        drawn.session.rebased(0, now, HEAL_REACH_MM)
+                    }))
+                    .ok()
+                    .flatten()
+                    .map(Arc::new)
+                })
+                .flatten(),
+            _ => None,
+        };
+        if let Some(session) = rebased {
+            crate::breadcrumbs::note(&format!(
+                "supports: kept in step with their model ({why:?})"
+            ));
+            record(&self.document, &self.sessions, leaf, drawn.model, session);
+            return Healed::InForce;
+        }
+        let Some(me) = self.me.borrow().upgrade() else {
+            return Healed::No;
+        };
+        let busy = self.handle.borrow().is_some()
+            || self.editing()
+            || self
+                .ui
+                .upgrade()
+                .is_none_or(|ui| ui.get_loading() || ui.get_support_gen_in_progress());
+        if busy {
+            return Healed::Redoing;
+        }
+        // Once for this state: Undo of the supports made again brings the
+        // state back, and they are not made again behind the person's back.
+        self.healing_tried.borrow_mut().insert(key);
+        crate::breadcrumbs::note(&format!("supports: made again on their own ({why:?})"));
+        let keep = drawn.session.hand_edited();
+        me.make_set_again(drawn.model, drawn.session, keep);
+        self.show_status(ctr!(
+            "DfSupportDialog",
+            "The model changed under its supports: they are being made again, keeping your edits."
+        ));
+        Healed::Redoing
+    }
+
+    /// Keeps every support set in step with its model while the scene is
+    /// quiet (#526): see [`Self::heal_stale`].
+    fn heal_stale_sets(&self, ui: &MainWindow) {
+        if ui.get_loading()
+            || ui.get_slicing_in_progress()
+            || ui.get_repairing_in_progress()
+            || self.handle.borrow().is_some()
+            || self.editing()
+            || self.last_change.get().elapsed() < SPECULATE_SETTLE
+        {
+            return;
+        }
+        let leaves: Vec<NodeId> = self
+            .document
+            .with_scene(|spatial| support_leaves(spatial).map(|(id, _)| id).collect())
+            .unwrap_or_default();
+        for leaf in leaves {
+            if model_of(&self.sessions, leaf).is_some() && self.heal_stale(leaf) == Healed::Redoing
+            {
+                // One run at a time.
+                return;
+            }
         }
     }
 

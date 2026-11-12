@@ -79,10 +79,9 @@ use crate::workspace_section::allows_repair;
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// How far, in mm, a support's tip may be from the repaired model and still
-/// hold it (#477). Repair welds within 0.005 mm of the mesh's own units and
-/// moves split copies 0.001 mm; a tip sinks into the model by its radius,
-/// 0.09 mm for the smallest.
-const TIP_STILL_TOUCHES_MM: f64 = 0.02;
+/// hold it (#477, #526): the reach the supports keep in step with their
+/// model by everywhere.
+const TIP_STILL_TOUCHES_MM: f64 = crate::df_support_run::HEAL_REACH_MM;
 
 /// A support set in force when the run started (#477).
 struct HeldSet {
@@ -541,26 +540,12 @@ impl RepairRun {
                 self.marks_shown.set(true);
                 self.refresh_marks(true);
                 let applied = settlement == RepairSettlement::Applied;
-                // The supports whose model the repair moved under their
-                // tips: out of date, which no card says until a hand edit
-                // finds them (#477).
-                let out_of_date = applied
-                    .then(|| out_of_date_names(&self.document, &completed.mended_sets))
-                    .flatten();
+                // The supports whose model the repair moved from under their
+                // tips are made again on their own, keeping the edits made by
+                // hand (#526): no card stops for them.
                 let CompletedRepair {
                     outcomes, elapsed, ..
                 } = completed;
-                if let Some(names) = out_of_date {
-                    self.dialogs.show_info(move || InfoTexts {
-                        heading: ctr!("RepairDialog", "Supports out of date"),
-                        message: ctr!(
-                            "RepairDialog",
-                            "Repair changed the surface where the supports of {} touch it, so they can no longer be edited by hand. Generate them again to edit them.",
-                            names
-                        ),
-                        details: Default::default(),
-                    });
-                }
                 // Never behind a notice someone may have turned off.
                 if let Some(note) = lost_paint.clone() {
                     self.dialogs.show_info(move || InfoTexts {
@@ -863,27 +848,6 @@ fn run_repair_watched(
     })
 }
 
-/// The names of the models of `mended` whose supports no longer touch
-/// them, as the object list names them, joined; `None` when there are none.
-fn out_of_date_names(document: &SceneDocument, mended: &[MendedSet]) -> Option<String> {
-    let models: Vec<NodeId> = mended
-        .iter()
-        .filter(|set| set.session.is_none())
-        .map(|set| set.model)
-        .collect();
-    if models.is_empty() {
-        return None;
-    }
-    let names = document
-        .with_scene(|spatial| object_names_by_leaf(spatial.graph()))
-        .unwrap_or_default();
-    let quoted: Vec<String> = models
-        .iter()
-        .map(|model| format!("“{}”", names.get(model).cloned().unwrap_or_default()))
-        .collect();
-    Some(quoted.join(", "))
-}
-
 /// The support sets in force in `document`'s scene, as a run starts.
 fn held_sets(document: &SceneDocument) -> Vec<HeldSet> {
     document
@@ -915,8 +879,17 @@ fn mended_sets(
             .is_some_and(|target| replacements.iter().any(|r| r.target == target))
     };
     held.iter()
-        .filter(|set| replaced(set.model) && !replaced(set.leaf))
+        .filter(|set| replaced(set.model) || replaced(set.leaf))
         .map(|set| {
+            // Supports whose own mesh alone was repaired keep their data
+            // (#526): the next edit draws them anew.
+            if !replaced(set.model) {
+                return MendedSet {
+                    leaf: set.leaf,
+                    model: set.model,
+                    session: Some(set.session.clone()),
+                };
+            }
             let now = scene_model_leaves(scene, Some(&[set.model]))
                 .ok()
                 .and_then(|mut models| models.pop())

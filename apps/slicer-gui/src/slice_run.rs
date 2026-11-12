@@ -145,13 +145,24 @@ enum SliceTrigger {
     Repair,
     /// Analyze islands, from the Supports tab (#525).
     Islands,
+    /// The analysis again, after the Repair it made on its own when the
+    /// slicer refused a mesh (#526).
+    IslandsRepaired,
 }
 
 impl SliceTrigger {
     /// Whether the person already asked for this slice, so a held one is
     /// replaced without asking.
     fn asked_for(self) -> bool {
-        matches!(self, Self::FixAll | Self::Repair | Self::Islands)
+        matches!(
+            self,
+            Self::FixAll | Self::Repair | Self::Islands | Self::IslandsRepaired
+        )
+    }
+
+    /// Whether the slice analyzes the islands for the Supports tab.
+    fn for_islands(self) -> bool {
+        matches!(self, Self::Islands | Self::IslandsRepaired)
     }
 }
 
@@ -300,7 +311,7 @@ impl SliceRun {
                 self.launch(current, trigger)
             }
             // The held slice already shows the islands: their marks again.
-            ReSliceDecision::Unchanged if trigger == SliceTrigger::Islands => {
+            ReSliceDecision::Unchanged if trigger.for_islands() => {
                 self.review.publish_islands();
                 false
             }
@@ -358,10 +369,8 @@ impl SliceRun {
         *self.cancel.borrow_mut() = Some(cancel.clone());
         *self.pending_params.borrow_mut() = Some(current.clone());
         self.trigger.set(trigger);
-        self.review.slice_started(
-            trigger == SliceTrigger::FixAll,
-            trigger == SliceTrigger::Islands,
-        );
+        self.review
+            .slice_started(trigger == SliceTrigger::FixAll, trigger.for_islands());
         let patches = self.review.fills_for_slice();
         *self.pending_fills.borrow_mut() = patches.ids;
 
@@ -545,9 +554,29 @@ impl SliceRun {
                     .document
                     .with_scene(|spatial| object_names_by_leaf(spatial.graph()))
                     .unwrap_or_default();
+                // An analysis of the islands repairs on its own and goes on
+                // (#526): the person asked for the islands, not for a card.
+                if self.trigger.get() == SliceTrigger::Islands
+                    && let Some(leaves) = repairable_leaves(&err)
+                {
+                    crate::breadcrumbs::note("slice: the islands analysis repairs on its own");
+                    let weak = Rc::downgrade(self);
+                    let started = self.repair.repair_for_slice(&leaves, move || {
+                        if let Some(run) = weak.upgrade() {
+                            run.start_with(SliceTrigger::IslandsRepaired);
+                        }
+                    });
+                    if started {
+                        return;
+                    }
+                }
                 // A slice that a Repair started offers no Repair again.
-                let to_repair =
-                    repairable_leaves(&err).filter(|_| self.trigger.get() != SliceTrigger::Repair);
+                let to_repair = repairable_leaves(&err).filter(|_| {
+                    !matches!(
+                        self.trigger.get(),
+                        SliceTrigger::Repair | SliceTrigger::IslandsRepaired
+                    )
+                });
                 match to_repair {
                     Some(leaves) => {
                         let weak = Rc::downgrade(self);

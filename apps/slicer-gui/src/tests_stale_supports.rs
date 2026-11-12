@@ -6,8 +6,10 @@
 //! The card of supports out of date (#408), through the window's callbacks:
 //! a slab's supports generated, edited by hand (a tip moved, a support
 //! removed, one added), then put out of date the way Repair does it, by a
-//! new mesh for the model in an undo step of its own. A click with a hand
-//! tool brings the card; its rows make the set again with the current
+//! new mesh for the model in an undo step of its own. Since #526 a click
+//! with a hand tool keeps the set in step with the new mesh, or makes it
+//! again on its own keeping the hand edits; the card comes up only when
+//! neither can be done. Its rows make the set again with the current
 //! settings, or keeping the hand edits where they still fit, in one undo
 //! step, with Cancel leaving everything as it was.
 
@@ -163,13 +165,15 @@ fn underside_raised(p: [f32; 3]) -> [f32; 3] {
     if p[2] < 0.01 { [p[0], p[1], 0.5] } else { p }
 }
 
-/// A click with Add on the model, whose supports are out of date, brings
-/// the card: it says why and offers the rows `hand_edited` says.
+/// The card of the model's supports out of date, as a click brings it
+/// when they could not be kept in step (#526): it says why and offers the
+/// rows `hand_edited` says.
 fn card_on_click(window: &MainWindow, run: &Rc<DfSupportRun>, hand_edited: bool) {
     close_messages(window);
     window.set_support_tool(1);
     let revision = run.document.scene_revision();
-    run.on_tool_click([25.0, 22.0, 9.0]);
+    let (leaf, _) = run.support_leaf().expect("the supports");
+    run.show_out_of_date(leaf);
     assert_eq!(
         run.document.scene_revision(),
         revision,
@@ -363,9 +367,14 @@ fn an_edit_that_no_longer_fits_is_listed() {
         let (_, stale_mesh) = run.support_leaf().expect("the supports");
         close_messages(&window);
         window.set_support_tool(1);
+        // The underside left the tips: the click makes the set again on
+        // its own, keeping the edits, with no card to answer (#526).
         run.on_tool_click([25.0, 22.0, 9.5]);
-        assert_eq!(window.get_message().kind, MessageKind::StaleSupports);
-        window.invoke_message_answered(MessageAnswer::KeepEdits);
+        assert!(!window.get_message_open(), "no card to answer");
+        assert!(
+            window.get_support_gen_in_progress(),
+            "made again on its own"
+        );
         until_generated(&window, &run);
         assert!(in_force_session(&run).is_some(), "the set is made again");
         let card = window.get_message();
@@ -392,6 +401,70 @@ fn an_edit_that_no_longer_fits_is_listed() {
         );
         assert!(document.undo().unwrap());
         assert!(Arc::ptr_eq(&run.support_leaf().unwrap().1, &stale_mesh));
+    });
+}
+
+/// A model whose mesh changed where it stands, its tips still on it (a
+/// repair, a hollow): a click edits its supports at once, with the edits of
+/// before kept, and no card (#526).
+#[test]
+fn a_click_on_a_model_remeshed_in_place_edits_its_supports_at_once() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (document, run, edited, _) = stale_slab(&window, true, same_shape);
+        let revision = document.scene_revision();
+        window.set_support_tool(1);
+        run.on_tool_click([25.0, 22.0, 9.0]);
+        settle_click(&run);
+        assert!(!window.get_message_open(), "no card");
+        assert!(!window.get_support_gen_in_progress(), "nothing made again");
+        assert_ne!(document.scene_revision(), revision, "the click edits");
+        let now = in_force_session(&run).expect("in force");
+        let before = tip_places(&edited);
+        let after = tip_places(&now);
+        assert_eq!(after.len(), before.len() + 1, "one support more");
+        assert!(before.iter().all(|t| after.contains(t)), "the edits stay");
+    });
+}
+
+/// The supports follow a new mesh of their model with no click at all,
+/// once the scene is quiet (#526); and a set made again on its own is made
+/// once: undone, it is left to the person, with the card.
+#[test]
+fn the_supports_keep_in_step_with_their_model_on_their_own() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (_, run, _, _) = stale_slab(&window, true, same_shape);
+        run.last_change
+            .set(Instant::now() - Duration::from_secs(10));
+        run.heal_stale_sets(&window);
+        assert!(in_force_session(&run).is_some(), "in step again");
+        assert!(!window.get_support_gen_in_progress());
+
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (document, run, _, _) = stale_slab(&window, true, underside_raised);
+        run.last_change
+            .set(Instant::now() - Duration::from_secs(10));
+        run.heal_stale_sets(&window);
+        assert!(
+            window.get_support_gen_in_progress(),
+            "made again on its own"
+        );
+        until_generated(&window, &run);
+        assert!(in_force_session(&run).is_some());
+        close_messages(&window);
+        assert!(document.undo().unwrap());
+        assert!(in_force_session(&run).is_none());
+        run.last_change
+            .set(Instant::now() - Duration::from_secs(10));
+        run.heal_stale_sets(&window);
+        assert!(
+            !window.get_support_gen_in_progress(),
+            "not again behind an undo"
+        );
+        window.set_support_tool(1);
+        run.on_tool_click([25.0, 22.0, 9.5]);
+        assert_eq!(window.get_message().kind, MessageKind::StaleSupports);
     });
 }
 
@@ -439,11 +512,12 @@ fn repair_leaves_a_sound_model_and_its_supports_in_force() {
 /// (`Mini4-40mm.stl`, 1.9 M faces) after its supports were generated welds
 /// 2 vertices, splits 2 edges and turns 3 faces: the model's mesh is
 /// another one, its supports are not touched, and the set is out of date
-/// because of the model's mesh. "Recalculate, keeping my edits" then puts
-/// back a support added by hand before the repair.
+/// because of the model's mesh. Since #526 the next click keeps the set in
+/// step with the repaired mini, the support added by hand before the repair
+/// still there, and no card comes up.
 #[test]
 #[ignore = "needs Damian's mini in C:/Users/dnaon/Downloads"]
-fn a_repaired_pre_supported_mini_puts_its_supports_out_of_date() {
+fn a_repaired_pre_supported_mini_keeps_its_supports_editable() {
     let path = std::path::Path::new("C:/Users/dnaon/Downloads/Mini4-40mm.stl");
     if !path.is_file() {
         eprintln!("skipping: the mini is not here");
@@ -541,20 +615,16 @@ fn a_repaired_pre_supported_mini_puts_its_supports_out_of_date() {
             .unwrap();
         assert_eq!(why, Some(StaleWhy::ModelMesh));
 
-        // The card, then Recalculate keeping the edit.
+        // A click keeps the set in step with the repaired mini (#526), the
+        // support added by hand still there.
         run.on_tool_click(added.map(|c| c as f32));
-        assert_eq!(window.get_message().kind, MessageKind::StaleSupports);
-        assert!(window.get_message().hand_edited);
-        window.invoke_message_answered(MessageAnswer::KeepEdits);
-        until_generated(&window, &run);
-        let card = window.get_message();
-        eprintln!("{}: {}", card.heading, card.text);
+        settle_click(&run);
+        assert!(!window.get_message_open(), "no card");
         let kept = in_force_session(&run).expect("in force again");
         assert!(
             kept.tip_near(tip, 1e-3).is_some(),
-            "the support added is back"
+            "the support added is still there"
         );
-        assert_eq!(card.text, "The edit made by hand was put back.");
     });
 }
 
