@@ -3954,11 +3954,12 @@ impl ViewportController {
     /// takes its place, the next one (or the one before, when it was the
     /// last), where they stood on it. One step of history; the plate they
     /// went to is the active one.
+    #[cfg(test)]
     pub(crate) fn remove_active_plate(&self) {
         self.remove_active_plate_with(false);
     }
 
-    /// [`Self::remove_active_plate`]; `with_models` takes the models on it
+    /// Takes the active plate off as `remove_active_plate` does; `with_models` takes the models on it
     /// and their supports off with it instead (Shift on the plate's tool).
     pub(crate) fn remove_active_plate_with(&self, with_models: bool) {
         let document = self.session.document();

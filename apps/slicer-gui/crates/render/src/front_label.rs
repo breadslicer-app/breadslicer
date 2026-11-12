@@ -481,7 +481,7 @@ mod front_label_tests {
         );
         let word: Vec<u8> = raster.texels.iter().step_by(2).copied().collect();
         assert!(word.iter().any(|&a| a > 192), "well inside");
-        assert!(word.iter().any(|&a| a == 0), "far outside");
+        assert!(word.contains(&0), "far outside");
         assert!(word.iter().any(|&a| a > 0 && a < 255), "fading between");
         assert!(raster.texels.iter().skip(1).step_by(2).all(|&a| a == 0));
         assert_eq!(raster.word_height + 2 * PAD, raster.height);

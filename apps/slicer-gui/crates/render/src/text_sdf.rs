@@ -55,9 +55,11 @@ pub(crate) struct GlyphField {
 }
 
 type Measured = Option<Arc<[GlyphField; PHASES]>>;
+/// The glyphs measured: by font, glyph and size.
+type Kept = Mutex<HashMap<(usize, u16, u32), Measured>>;
 
-fn kept() -> &'static Mutex<HashMap<(usize, u16, u32), Measured>> {
-    static KEPT: OnceLock<Mutex<HashMap<(usize, u16, u32), Measured>>> = OnceLock::new();
+fn kept() -> &'static Kept {
+    static KEPT: OnceLock<Kept> = OnceLock::new();
     KEPT.get_or_init(Default::default)
 }
 
