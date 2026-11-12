@@ -38,6 +38,45 @@ use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
 use support_gen_df::utils::collation::js_locale_compare;
 use support_gen_df::volume_analysis::islands::types::DetectedIsland;
 
+/// Every root of `state` holds a trunk or a kickstand: none stands alone on
+/// the raft as a foot with nothing above it.
+fn assert_no_root_alone(path: &str, state: &SupportState) {
+    let c = &state.collections;
+    let held: HashSet<&str> = c
+        .trunks
+        .values()
+        .map(|t| t.root_id.as_str())
+        .chain(c.kickstands.values().map(|k| k.root_id.as_str()))
+        .collect();
+    let alone: Vec<&String> = c
+        .roots
+        .keys()
+        .filter(|id| !held.contains(id.as_str()))
+        .collect();
+    assert!(
+        alone.is_empty(),
+        "{path}: roots with nothing above them: {alone:?}"
+    );
+}
+
+/// DragonFruit's snapshot without the roots it leaves holding nothing: the
+/// roots of the kickstands a pass drops stay in its store, as feet on the
+/// raft with nothing above them. Breadslicer drops them with their
+/// kickstands.
+fn without_roots_alone(snapshot: &Value) -> Value {
+    let mut snapshot = snapshot.clone();
+    let held: HashSet<String> = ["trunks", "kickstands"]
+        .iter()
+        .filter_map(|kind| snapshot[*kind].as_object())
+        .flat_map(|entities| entities.values())
+        .filter_map(|e| e["rootId"].as_str().map(str::to_owned))
+        .collect();
+    if let Some(roots) = snapshot["roots"].as_object_mut() {
+        roots.retain(|id, _| held.contains(id));
+    }
+    snapshot
+}
+
 fn fixture() -> Value {
     let text = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -264,7 +303,7 @@ fn auto_bracing_matches_dragonfruit() {
                 check(
                     &format!("{path}.support"),
                     &plan.support.collections,
-                    &expected["support"],
+                    &without_roots_alone(&expected["support"]),
                 );
                 let (analytics, oracle) =
                     df_analytics::comparable(&plan.analytics, &expected["analytics"]);
@@ -294,10 +333,28 @@ fn auto_bracing_matches_dragonfruit() {
                         counts,
                         &pass["counts"],
                     );
+                    assert_no_root_alone(&format!("{path}.braces[{p}]"), &next);
+                    // Bracing again what it braced, as a plate of several
+                    // models is braced once per model, leaves no root alone
+                    // either (the kickstands it makes again drop theirs).
+                    // Ids of its own, so the replay's counter stays DragonFruit's.
+                    let mut again_ids = 0usize;
+                    let (again, _) = build_auto_braced_snapshot(
+                        &next,
+                        &settings,
+                        &pass_live,
+                        &brace_meshes,
+                        &next,
+                        &mut || {
+                            again_ids += 1;
+                            format!("again-{again_ids}")
+                        },
+                    );
+                    assert_no_root_alone(&format!("{path}.braces[{p}] again"), &again);
                     check(
                         &format!("{path}.braces[{p}].snapshot"),
                         &next.collections,
-                        &pass["snapshot"],
+                        &without_roots_alone(&pass["snapshot"]),
                     );
                 }
             }
