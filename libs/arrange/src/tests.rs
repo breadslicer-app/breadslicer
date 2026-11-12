@@ -436,3 +436,133 @@ fn a_cancelled_fill_says_so() {
     );
     assert_eq!(out, Err(crate::Cancelled));
 }
+
+/// Plates `w` × `h` mm side by side, 40 mm apart.
+fn plates_in_a_row(count: usize, w: f64, h: f64) -> Vec<Plate> {
+    (0..count)
+        .map(|k| {
+            let x = k as f64 * (w + 40.0);
+            Plate {
+                min: [x, 0.0],
+                max: [x + w, h],
+                floor: 0.0,
+            }
+        })
+        .collect()
+}
+
+/// Whether the box of every part of `body`, moved by `p`, lies on `plate`.
+fn lies_on(body: &Body, p: Placement, plate: &Plate) -> bool {
+    boxes(body, Some(p)).iter().all(|(lo, hi)| {
+        lo[0] >= plate.min[0] - 1e-6
+            && lo[1] >= plate.min[1] - 1e-6
+            && hi[0] <= plate.max[0] + 1e-6
+            && hi[1] <= plate.max[1] + 1e-6
+    })
+}
+
+#[test]
+fn what_does_not_fit_on_a_plate_goes_on_the_next() {
+    let mesh = cube();
+    // A 60 × 60 plate with a 5 mm margin takes 4 boxes of 20 mm.
+    let bodies: Vec<Body> = (0..10)
+        .map(|k| {
+            body(vec![boxed(
+                &mesh,
+                [20.0, 20.0, 5.0],
+                [k as f64 * 25.0, 0.0, 0.0],
+            )])
+        })
+        .collect();
+    let plates = plates_in_a_row(8, 60.0, 60.0);
+    let settings = Settings {
+        turns: 1,
+        ..Settings::default()
+    };
+    let across = crate::arrange_across(
+        &bodies,
+        &vec![None; bodies.len()],
+        &plates,
+        &settings,
+        &AtomicBool::new(false),
+    )
+    .expect("not cancelled");
+    assert_eq!(across.plates_used, 3, "4 + 4 + 2");
+    assert!(across.left_off().is_empty());
+    let mut on = [0; 8];
+    for (b, placed) in bodies.iter().zip(&across.placements) {
+        let (p, placement) = placed.expect("placed");
+        assert!(lies_on(b, placement, &plates[p]), "on its plate");
+        on[p] += 1;
+    }
+    assert_eq!(&on[..3], &[4, 4, 2]);
+}
+
+#[test]
+fn a_body_that_stays_keeps_its_plate_and_the_others_keep_clear() {
+    let mesh = cube();
+    let plates = plates_in_a_row(4, 60.0, 60.0);
+    // A 40 mm box standing on the second plate, and 3 of 20 mm to place.
+    let mut bodies = vec![Body {
+        parts: vec![boxed(&mesh, [40.0, 40.0, 5.0], [110.0, 10.0, 0.0])],
+        fixed: true,
+    }];
+    bodies.extend((0..6).map(|k| {
+        body(vec![boxed(
+            &mesh,
+            [20.0, 20.0, 5.0],
+            [k as f64 * 25.0, 0.0, 0.0],
+        )])
+    }));
+    let mut stands_on = vec![None; bodies.len()];
+    stands_on[0] = Some(1);
+    let across = crate::arrange_across(
+        &bodies,
+        &stands_on,
+        &plates,
+        &Settings {
+            turns: 1,
+            ..Settings::default()
+        },
+        &AtomicBool::new(false),
+    )
+    .expect("not cancelled");
+    assert!(across.placements[0].is_none(), "it stays");
+    let fixed = boxes(&bodies[0], None)[0];
+    let mut on = [0; 4];
+    for (b, placed) in bodies.iter().zip(&across.placements).skip(1) {
+        let (p, placement) = placed.expect("placed");
+        assert!(lies_on(b, placement, &plates[p]));
+        let (lo, hi) = boxes(b, Some(placement))[0];
+        let apart = lo[0] >= fixed.1[0] + 1.0 - 1e-6
+            || hi[0] <= fixed.0[0] - 1.0 + 1e-6
+            || lo[1] >= fixed.1[1] + 1.0 - 1e-6
+            || hi[1] <= fixed.0[1] - 1.0 + 1e-6;
+        assert!(apart, "clear of the box that stays");
+        on[p] += 1;
+    }
+    // The first plate takes 4; the second, with the 40 mm box, none.
+    assert_eq!(on, [4, 0, 2, 0]);
+    assert_eq!(across.plates_used, 3);
+}
+
+#[test]
+fn a_body_too_big_for_any_plate_waits_beside_the_last_plate_used() {
+    let mesh = cube();
+    let bodies = vec![
+        body(vec![boxed(&mesh, [20.0, 20.0, 5.0], [0.0, 0.0, 0.0])]),
+        body(vec![boxed(&mesh, [90.0, 20.0, 5.0], [0.0, 40.0, 0.0])]),
+    ];
+    let plates = plates_in_a_row(4, 60.0, 60.0);
+    let across = crate::arrange_across(
+        &bodies,
+        &vec![None; 2],
+        &plates,
+        &Settings::default(),
+        &AtomicBool::new(false),
+    )
+    .expect("not cancelled");
+    assert_eq!(across.left_off(), vec![1]);
+    assert_eq!(across.plates_used, 1);
+    assert_eq!(across.placements[1].map(|(p, _)| p), Some(0));
+}

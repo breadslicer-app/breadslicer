@@ -60,6 +60,7 @@ fn payload() -> ProjectPayload {
         review_decisions: Vec::new(),
         plates: 0,
         plate_names: Vec::new(),
+        hand_placed: Vec::new(),
     }
 }
 
@@ -318,6 +319,26 @@ fn the_plates_come_back_with_the_settings() {
         .expect("parsed")
         .expect("this version");
     assert!(parsed.plates <= 1);
+}
+
+/// Where the models placed by hand stand comes back with the settings
+/// (#554), and nothing is written when there are none.
+#[test]
+fn the_models_placed_by_hand_come_back_with_the_settings() {
+    let pose = [
+        1_000_000, 0, 0, 0, 1_000_000, 0, 0, 0, 1_000_000, 12_500_000, -3_250_000, 4_000_000,
+    ];
+    let payload = ProjectPayload {
+        hand_placed: vec![pose],
+        ..ProjectPayload::default()
+    };
+    let text = serialize_settings(&payload, EmbedProfiles::No).expect("serialized");
+    let parsed = parse_settings(text.as_bytes(), &mut Vec::new())
+        .expect("parsed")
+        .expect("this version");
+    assert_eq!(parsed.hand_placed, vec![pose]);
+    let none = serialize_settings(&ProjectPayload::default(), EmbedProfiles::No).expect("written");
+    assert!(!none.contains("hand_placed"), "{none}");
 }
 
 /// The conformance files of the format (`test-data/bread-conformance`).

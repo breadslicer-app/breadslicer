@@ -31,6 +31,7 @@ mod export_progress_panel;
 mod failure_gate;
 mod frame_rate;
 mod graphics_status;
+mod hand_placed;
 mod hollow_persist;
 mod hollow_run;
 mod i18n;

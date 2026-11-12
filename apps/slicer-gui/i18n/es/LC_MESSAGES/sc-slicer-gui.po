@@ -7098,3 +7098,63 @@ msgstr "{}: no se laminó"
 msgctxt "Workspace"
 msgid "Add a plate. Shift: a copy of this one, with its models"
 msgstr "Agregar una cama. Shift: una copia de esta, con sus modelos"
+
+#: ui/message-layer.slint
+msgctxt "HandPlacedDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#: ui/message-layer.slint
+msgctxt "HandPlacedDialog"
+msgid "Arrange them too"
+msgstr "Acomodarlos también"
+
+#: ui/message-layer.slint
+msgctxt "HandPlacedDialog"
+msgid "Keep where I put them"
+msgstr "Dejarlos donde los puse"
+
+#: src/arrange_run.rs
+msgctxt "ArrangeDialog"
+msgid "Models placed by hand"
+msgstr "Modelos acomodados a mano"
+
+#: src/arrange_run.rs
+msgctxt "ArrangeDialog"
+msgid "{n} model was placed by hand. Arrange all can also find the best place for it."
+msgid_plural "{n} models were placed by hand. Arrange all can also find the best place for them."
+msgstr[0] "Acomodaste {n} modelo a mano. Acomodar todo también le puede buscar el mejor lugar."
+msgstr[1] "Acomodaste {n} modelos a mano. Acomodar todo también les puede buscar el mejor lugar."
+
+#: src/arrange_run.rs
+msgctxt "ArrangeDialog"
+msgid "{n} object is bigger than a plate. It is beside the plates, on the right."
+msgid_plural "{n} objects are bigger than a plate. They are beside the plates, on the right."
+msgstr[0] "{n} objeto es más grande que una cama. Quedó al lado de las camas, a la derecha."
+msgstr[1] "{n} objetos son más grandes que una cama. Quedaron al lado de las camas, a la derecha."
+
+#: src/arrange_run.rs
+msgctxt "Inspector"
+msgid "Arranged {n} object on {} plate(s) in {} s."
+msgid_plural "Arranged {n} objects on {} plate(s) in {} s."
+msgstr[0] "Se acomodó {n} objeto en {} cama(s) en {} s."
+msgstr[1] "Se acomodaron {n} objetos en {} cama(s) en {} s."
+
+#: src/arrange_run.rs
+msgctxt "Inspector"
+msgid "{n} plate added."
+msgid_plural "{n} plates added."
+msgstr[0] "Se agregó {n} cama."
+msgstr[1] "Se agregaron {n} camas."
+
+#: src/arrange_run.rs
+msgctxt "Inspector"
+msgid "{n} empty plate taken off."
+msgid_plural "{n} empty plates taken off."
+msgstr[0] "Se sacó {n} cama vacía."
+msgstr[1] "Se sacaron {n} camas vacías."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Imported onto {}."
+msgstr "Importado en {}."

@@ -1174,10 +1174,13 @@ impl ViewportController {
             Vec::new()
         };
         if !moves.is_empty() {
+            // Moved with their plate, not by hand (#554).
             let edit = SceneEdit::Compound(moves);
-            if document.apply_edit(edit.clone()).is_ok() {
-                document.push_edit(edit);
-            }
+            document.keeping_placements(|| {
+                if document.apply_edit(edit.clone()).is_ok() {
+                    document.push_edit(edit);
+                }
+            });
         }
         if self.session.set_build_volume(bv) {
             // `mark_dirty` owes the redraw, which the render path needs before
@@ -1845,7 +1848,7 @@ impl ViewportController {
         crate::breadcrumbs::note(&format!("load: {} files together", paths.len()));
         let job = OpeningJob {
             paths,
-            plate: crate::arrange_run::plate_of(&volume),
+            plates: crate::arrange_run::every_plate(&volume),
             build_volume: volume.volume(),
             revision: self.session.document().scene_revision(),
             device: WorkerDevice {
@@ -1885,11 +1888,13 @@ impl ViewportController {
                 token,
                 loss: loader.device_loss(),
             });
+        // On the first plate with room, then the next (#557).
+        let (standing, stands_on) = crate::arrange_run::standing_bodies(document, &volume);
         let job = ImportJob {
             paths,
-            standing: crate::arrange_run::standing_bodies(document),
-            // Onto the active plate (#548).
-            plate: crate::arrange_run::active_plate_job(document, &volume).1,
+            standing,
+            stands_on,
+            plates: crate::arrange_run::every_plate(&volume),
             build_volume: volume.volume(),
             revision: document.scene_revision(),
             recorded,
@@ -1910,11 +1915,12 @@ impl ViewportController {
             && let Some(ticket) = self.session.loader().begin_load()
         {
             crate::breadcrumbs::note("import: the plate changed, placed again");
+            let volume = self.session.build_volume();
             spawn_placement(
                 ticket,
                 models,
-                crate::arrange_run::standing_bodies(document),
-                crate::arrange_run::active_plate_job(document, &self.session.build_volume()).1,
+                crate::arrange_run::standing_bodies(document, &volume),
+                crate::arrange_run::every_plate(&volume),
                 document.scene_revision(),
             );
             return;
@@ -1936,14 +1942,25 @@ impl ViewportController {
             }
         }
         let placements = models.placements.clone();
-        match add_to_scene(
+        // The plates the files need beyond those there are, with the models
+        // in one step of history (#557).
+        let before = document.undo_len();
+        if !models.files.is_empty() {
+            for _ in document.plates().count()..models.plates {
+                self.add_plate();
+            }
+        }
+        let added = add_to_scene(
             document,
             &models.files,
             &placements,
             &models.primed,
             models.recorded,
-        ) {
+        );
+        document.join_last_steps(document.undo_len().saturating_sub(before));
+        match added {
             Ok(added) if !added.is_empty() => {
+                self.say_where_imported(&added);
                 // Each file keeps its import notes, with the scene's.
                 self.session.loader().note_imported(&models);
                 self.set_section(WorkspaceSection::Transform);
@@ -1965,6 +1982,49 @@ impl ViewportController {
         }
         self.report_import_failures(&models.failures);
         self.report_left_off(model_import::left_off(&models, &placements));
+    }
+
+    /// Says on which plates the models of an import went (#557), when not
+    /// on the active one alone.
+    fn say_where_imported(&self, added: &[sc_scene::NodeId]) {
+        let document = self.session.document();
+        let plates = document.plates();
+        if plates.count() < 2 {
+            return;
+        }
+        let volume = self.session.build_volume();
+        let mut on: Vec<u32> = document
+            .with_scene(|spatial| {
+                added
+                    .iter()
+                    .filter_map(|&leaf| {
+                        crate::plate_layout::plate_of_leaf(spatial, &volume, plates, leaf)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        on.sort_unstable();
+        on.dedup();
+        if on.is_empty() || on == [plates.active()] {
+            return;
+        }
+        let names = document.plate_names();
+        let named: Vec<&str> = on
+            .iter()
+            .filter_map(|&p| names.get(p as usize).map(String::as_str))
+            .collect();
+        if let Some(ui) = self.ui.upgrade() {
+            let text = ctr!("Workspace", "Imported onto {}.", named.join(", "));
+            ui.set_status_notice(text.clone());
+            let ui = self.ui.clone();
+            slint::Timer::single_shot(std::time::Duration::from_secs(6), move || {
+                if let Some(ui) = ui.upgrade()
+                    && ui.get_status_notice() == text
+                {
+                    ui.set_status_notice(Default::default());
+                }
+            });
+        }
     }
 
     /// Says which files of an import do not fit on the plate.
@@ -2141,6 +2201,9 @@ impl ViewportController {
         if !joined.models.is_empty() {
             document.set_selection(Selection::of(joined.models.iter().copied().map(LeafId)));
         }
+        // The files that did not fit on the first plate went on plates
+        // after it (#557): the scene opens with them.
+        document.open_with_plates(joined.plates);
         self.report_import_failures(&joined.failures);
         self.report_left_off(joined.left_off);
     }
@@ -4142,17 +4205,23 @@ impl ViewportController {
                 }),
         );
         let edit = SceneEdit::Compound(edits);
-        if !edit.is_noop() && document.apply_edit(edit.clone()).is_err() {
-            return;
+        // The models move with the plates, not by hand (#554).
+        let applied = document.keeping_placements(|| {
+            if !edit.is_noop() && document.apply_edit(edit.clone()).is_err() {
+                return false;
+            }
+            // The plates after it keep their names (#545).
+            let before = document.plate_names();
+            let mut after = before.clone();
+            if (active as usize) < after.len() {
+                after.remove(active as usize);
+            }
+            document.push_plates_edit(edit, before, after, active.min(last - 1));
+            true
+        });
+        if applied {
+            self.mark_dirty();
         }
-        // The plates after it keep their names (#545).
-        let before = document.plate_names();
-        let mut after = before.clone();
-        if (active as usize) < after.len() {
-            after.remove(active as usize);
-        }
-        document.push_plates_edit(edit, before, after, active.min(last - 1));
-        self.mark_dirty();
     }
 
     /// Shows the plates on the UI: how many, the active one and whether a

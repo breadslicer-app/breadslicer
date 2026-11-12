@@ -133,6 +133,7 @@ pub(crate) fn project_with_in_sync_slices() -> (Vec<u8>, String) {
         review_decisions: Vec::new(),
         plates: 0,
         plate_names: Vec::new(),
+        hand_placed: Vec::new(),
     };
 
     let mut bytes = Vec::new();

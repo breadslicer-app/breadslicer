@@ -26,7 +26,7 @@ import { ActionRow, DialogHead, DialogRule } from "kit/dialog.slint";
 // before the diagnostic log starts (Preferences > Privacy); `stale-supports`
 // is a notice that a model's supports are out of date, with the ways to make
 // them again (#408).
-export enum MessageKind { info, error, scene-change, slice-overwrite, recovery, diagnostics, diagnostic-log, stale-supports, add-supports, separate-supports }
+export enum MessageKind { info, error, scene-change, slice-overwrite, recovery, diagnostics, diagnostic-log, stale-supports, add-supports, separate-supports, hand-placed }
 
 // What the person did with the message. `cancel` is also Escape and Enter;
 // Rust reads it as "close" for a message with nothing to decide.
@@ -109,6 +109,7 @@ export component MessageLayer inherits Rectangle {
     property <MessageAnswer> go-ahead: root.kind == MessageKind.diagnostics ? MessageAnswer.export
         : root.kind == MessageKind.diagnostic-log ? MessageAnswer.confirm
         : root.kind == MessageKind.separate-supports ? MessageAnswer.confirm
+        : root.kind == MessageKind.hand-placed ? MessageAnswer.confirm
         : root.has-action ? MessageAnswer.confirm
         : MessageAnswer.cancel;
     // Whether Enter's button shows its ring: while the card has the keyboard.
@@ -163,7 +164,7 @@ export component MessageLayer inherits Rectangle {
                     // A notice with details is wider, so the report's
                     // lines fit on 1 line each.
                     root.kind == MessageKind.diagnostics || (root.notice && root.message.details != "") ? 600px
-                        : root.kind == MessageKind.slice-overwrite || root.kind == MessageKind.add-supports || root.kind == MessageKind.separate-supports ? 480px
+                        : root.kind == MessageKind.slice-overwrite || root.kind == MessageKind.add-supports || root.kind == MessageKind.separate-supports || root.kind == MessageKind.hand-placed ? 480px
                         : root.kind == MessageKind.diagnostic-log ? 540px
                         : 520px,
                     foot.preferred-width));
@@ -204,6 +205,7 @@ export component MessageLayer inherits Rectangle {
                         : root.kind == MessageKind.stale-supports || root.kind == MessageKind.add-supports || root.kind == MessageKind.separate-supports ? Icons.supports
                         : root.kind == MessageKind.scene-change ? (root.message.has-unsaved-changes ? Icons.save : Icons.file)
                         : root.kind == MessageKind.slice-overwrite ? Icons.warning
+                        : root.kind == MessageKind.hand-placed ? Icons.arrange
                         : root.kind == MessageKind.recovery ? Icons.history
                         : Icons.pulse;
                     // Yellow for what warns, red for an error, grey for the
@@ -214,7 +216,7 @@ export component MessageLayer inherits Rectangle {
                     title: root.notice ? (root.message.heading != "" ? root.message.heading : root.default-heading)
                         : root.kind == MessageKind.scene-change ? (root.message.closing ? @tr("ReplaceSceneDialog" => "Close the current scene?") : @tr("ReplaceSceneDialog" => "Replace the current scene?"))
                         : root.kind == MessageKind.slice-overwrite ? @tr("SliceOverwriteDialog" => "Re-slice this scene?")
-                        : root.kind == MessageKind.recovery || root.kind == MessageKind.add-supports || root.kind == MessageKind.separate-supports ? root.message.heading
+                        : root.kind == MessageKind.recovery || root.kind == MessageKind.add-supports || root.kind == MessageKind.separate-supports || root.kind == MessageKind.hand-placed ? root.message.heading
                         : root.kind == MessageKind.diagnostics ? @tr("DiagnosticsDialog" => "Export diagnostics")
                         : @tr("DiagnosticLogDialog" => "Save a diagnostic log?");
                     subtitle: root.notice ? root.message.context
@@ -474,7 +476,7 @@ export component MessageLayer inherits Rectangle {
                     }
                 }
 
-                if root.kind == MessageKind.add-supports || root.kind == MessageKind.separate-supports: VerticalLayout {
+                if root.kind == MessageKind.add-supports || root.kind == MessageKind.separate-supports || root.kind == MessageKind.hand-placed: VerticalLayout {
                     padding-left: 22px;
                     padding-right: 22px;
                     padding-top: 16px;
@@ -739,6 +741,30 @@ export component MessageLayer inherits Rectangle {
 
                     if root.kind == MessageKind.separate-supports: ScButton {
                         text: @tr("SeparateSupportsDialog" => "Replace with Breadslicer supports");
+                        min-width: 96px;
+                        kind: ButtonKind.primary;
+                        ring: root.keyboard;
+                        clicked => {
+                            root.answered(MessageAnswer.confirm);
+                        }
+                    }
+
+                    if root.kind == MessageKind.hand-placed: ScButton {
+                        text: @tr("HandPlacedDialog" => "Cancel");
+                        clicked => {
+                            root.answered(MessageAnswer.cancel);
+                        }
+                    }
+
+                    if root.kind == MessageKind.hand-placed: ScButton {
+                        text: @tr("HandPlacedDialog" => "Arrange them too");
+                        clicked => {
+                            root.answered(MessageAnswer.separate);
+                        }
+                    }
+
+                    if root.kind == MessageKind.hand-placed: ScButton {
+                        text: @tr("HandPlacedDialog" => "Keep where I put them");
                         min-width: 96px;
                         kind: ButtonKind.primary;
                         ring: root.keyboard;

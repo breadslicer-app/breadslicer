@@ -26,6 +26,7 @@ fn payload_with_refs() -> ProjectPayload {
         review_decisions: Vec::new(),
         plates: 0,
         plate_names: Vec::new(),
+        hand_placed: Vec::new(),
     }
 }
 
