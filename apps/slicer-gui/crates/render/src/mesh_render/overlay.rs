@@ -40,8 +40,16 @@ pub enum OverlayTint {
     /// Where a support is recommended (#524): drawn on the model's surface,
     /// hidden behind it like the scene, not over it.
     Hint = 8,
-    /// An island an analysis found (#525): like [`Self::Hint`], in red.
+    /// An island an analysis found (#525), painted on its model (#542): its
+    /// paint seen through everything, faint.
     Island = 9,
+    /// An island's paint on the model's faces, where they show (#542).
+    IslandFace = 10,
+    /// The dot of an island too small for its paint to read, over
+    /// everything (#542).
+    IslandDot = 11,
+    /// The paint of the island the camera went to (#538, #542): brighter.
+    IslandVisited = 12,
 }
 
 /// The overlay as a whole: its pieces, each shared so a piece that did not
@@ -215,7 +223,7 @@ impl Renderer {
         let (islands, hints): (Vec<_>, Vec<_>) = pieces
             .into_iter()
             .flat_map(|p| p.iter().cloned())
-            .partition(|p| p.tint == OverlayTint::Island);
+            .partition(|p| matches!(p.tint, OverlayTint::Island | OverlayTint::IslandDot));
         let hints: Overlay = hints.into();
         let islands: Overlay = islands.into();
         self.hints.install(

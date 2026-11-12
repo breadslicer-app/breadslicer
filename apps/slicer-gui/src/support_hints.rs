@@ -32,6 +32,9 @@ use crate::scene_document::SceneRevision;
 pub(crate) struct Hint {
     pub(crate) at: [f64; 3],
     pub(crate) normal: [f64; 3],
+    /// An island's size (#542): the radius of its largest section, mm; 0
+    /// for a recommended place.
+    pub(crate) size_mm: f64,
 }
 
 /// The recommendations' state.
@@ -48,6 +51,9 @@ pub(crate) struct Hints {
     pub(crate) left: Vec<[f64; 3]>,
     /// The island the camera last went to (#538): its ring stands out.
     pub(crate) visited: Option<[f64; 3]>,
+    /// The models whose face adjacency a worker was started on, for the
+    /// islands' paint (#542).
+    pub(crate) priming: Vec<sc_scene::NodeId>,
     /// What the marks on show were drawn from: the places, the islands and
     /// the scene as it stood.
     pub(crate) shown: Option<(usize, usize, SceneRevision)>,
@@ -67,7 +73,11 @@ pub(crate) fn hints_of(outcome: &DfSupportOutcome) -> Vec<Hint> {
         .sets
         .iter()
         .flat_map(|set| set.session.tip_contacts())
-        .map(|(at, normal)| Hint { at, normal })
+        .map(|(at, normal)| Hint {
+            at,
+            normal,
+            size_mm: 0.0,
+        })
         .collect()
 }
 
@@ -110,18 +120,28 @@ pub(crate) fn uncovered<'a>(hints: &'a [Hint], tips: &[([f64; 3], f64)]) -> Vec<
 const RING_LIFT_MM: f64 = 0.03;
 const RING_SIDES: usize = 20;
 
-/// An island's ring, its outer radius per mm of the tip that goes there
-/// (#525): its hole a little wider than the tip's ball, so it says where
-/// the tip goes.
-pub(crate) const ISLAND_RING_PER_TIP: f64 = 1.26;
+/// The dot of an island too small for its paint to read (#542), its radius
+/// per mm of the tip that goes there.
+pub(crate) const ISLAND_DOT_PER_TIP: f64 = 0.9;
 
-/// How much bigger the ring of the island the camera went to is (#538).
-pub(crate) const VISITED_RING_SCALE: f64 = 2.0;
+/// How much bigger the dot of the island the camera went to is (#538).
+pub(crate) const VISITED_DOT_SCALE: f64 = 1.6;
 
 /// The rings that mark `hints`, of outer radius `radius`, lying on the
 /// surface at each, in `tint`.
 pub(crate) fn rings(hints: &[&Hint], radius: f64, tint: OverlayTint) -> OverlayMesh {
-    let inner = radius * 0.62;
+    band(hints, radius * 0.62, radius, tint)
+}
+
+/// The dots that mark `hints`, of radius `radius`, lying on the surface at
+/// each, in `tint` (#542).
+pub(crate) fn dots(hints: &[&Hint], radius: f64, tint: OverlayTint) -> OverlayMesh {
+    band(hints, 0.0, radius, tint)
+}
+
+/// A band from `inner` to `radius` round each of `hints`: a ring, or a dot
+/// with `inner` at 0.
+fn band(hints: &[&Hint], inner: f64, radius: f64, tint: OverlayTint) -> OverlayMesh {
     let mut positions = Vec::with_capacity(hints.len() * RING_SIDES * 2);
     let mut indices = Vec::with_capacity(hints.len() * RING_SIDES * 6);
     for h in hints {
@@ -180,6 +200,7 @@ mod tests {
         Hint {
             at: [x, 0.0, 5.0],
             normal: [0.0, 0.0, -1.0],
+            size_mm: 0.0,
         }
     }
 

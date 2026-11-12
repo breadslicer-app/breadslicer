@@ -36,6 +36,7 @@ mod hollow_run;
 mod i18n;
 mod import_notes;
 mod imported_supports;
+mod island_paint;
 mod language;
 mod launch_files;
 mod layer_keys;

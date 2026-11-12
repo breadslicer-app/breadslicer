@@ -1018,7 +1018,11 @@ fn an_island_ring_shows_through_the_model_and_a_hint_ring_does_not() {
     let bare = frame(None);
     let hint = frame(Some(OverlayTint::Hint));
     let island = frame(Some(OverlayTint::Island));
-    assert_eq!(differs(&bare, &hint), 0, "a hint ring stays behind the model");
+    assert_eq!(
+        differs(&bare, &hint),
+        0,
+        "a hint ring stays behind the model"
+    );
     assert!(
         differs(&bare, &island) > 100,
         "an island ring shows through: {} pixels",

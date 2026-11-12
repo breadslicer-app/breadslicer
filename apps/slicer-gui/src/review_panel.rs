@@ -1475,6 +1475,9 @@ impl ReviewPanel {
                                     crate::support_hints::Hint {
                                         at: at.map(f64::from),
                                         normal: [0.0, 0.0, -1.0],
+                                        size_mm: finding
+                                            .largest_mm2
+                                            .map_or(0.0, |a| (a / std::f64::consts::PI).sqrt()),
                                     }
                                 })
                                 .collect(),

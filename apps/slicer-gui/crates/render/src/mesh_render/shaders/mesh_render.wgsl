@@ -456,8 +456,18 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
         // reads the same on any face.
         return vec4<f32>(0.42, 0.92, 0.62, 0.95);
     } else if (in.tint == 9u) {
-        // An island an analysis found (#525): a clear red, unlit.
-        return vec4<f32>(1.0, 0.34, 0.30, 0.95);
+        // An island an analysis found (#525, #542), seen through everything:
+        // a faint magenta, unlit, apart from the overhang map's red.
+        return vec4<f32>(0.92, 0.26, 0.86, 0.35);
+    } else if (in.tint == 10u) {
+        // An island painted on the model's faces where they show (#542).
+        color = vec4<f32>(0.92, 0.26, 0.86, 0.92);
+    } else if (in.tint == 11u) {
+        // The dot of an island too small for its paint to read (#542).
+        return vec4<f32>(0.96, 0.36, 0.92, 0.95);
+    } else if (in.tint == 12u) {
+        // The island the camera went to (#538, #542): a lighter magenta.
+        color = vec4<f32>(1.00, 0.62, 0.98, 0.95);
     }
     return vec4<f32>(color.rgb * intensity, color.a);
 }
