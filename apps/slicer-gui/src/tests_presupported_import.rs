@@ -278,6 +278,44 @@ fn files_with_supports_that_come_in_together_get_one_question() {
     });
 }
 
+/// The question on files with supports (#540) waits while the window loads
+/// a file and for a moment after the last model came in, no longer: then it
+/// asks at once.
+#[test]
+fn the_question_waits_for_files_still_loading_and_then_asks_at_once() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a window");
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let dialogs = DialogManager::new(&bus);
+        dialogs.attach(&window);
+        let document = SceneDocument::new();
+        let run = PresupportedImport::install(&window, document.clone(), dialogs.clone());
+        let (mesh, _) = presupported_mesh();
+        let mut graph = Scene::new();
+        for x in [0.0, 40.0] {
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    at([x, 0.0, 0.0]),
+                    LeafPayload::Mesh(Arc::new(mesh.clone())),
+                )
+                .expect("leaf");
+            graph.add_root(leaf).expect("root");
+        }
+        // Another file is still loading.
+        window.set_loading(true);
+        document.install_graph(graph, PathBuf::from("/tmp/werewolves.stl"));
+        run.work_for_test();
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        assert!(!run.tick_for_test(), "no question while a file loads");
+        assert!(dialogs.queued_for_test().is_empty());
+        window.set_loading(false);
+        assert!(run.tick_for_test(), "then it asks at once");
+        assert_eq!(dialogs.queued_for_test().len(), 1, "one question");
+        assert!(window.get_message().text.starts_with("2 models"));
+    });
+}
+
 fn world(document: &SceneDocument, leaf: NodeId) -> Transform3D {
     document
         .with_scene(|spatial| spatial.leaf(leaf).map(|q| q.world_transform()))

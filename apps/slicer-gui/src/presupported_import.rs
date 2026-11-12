@@ -32,7 +32,9 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use rayon::prelude::*;
 
 use sc_geom::df_supports::{is_any_support_mesh, is_imported_supports};
 use sc_mesh_core::IndexedMesh;
@@ -71,9 +73,10 @@ struct Found {
     verdict: Verdict,
 }
 
-/// How long the question on files with supports waits for more files to
-/// come in (#527).
-const GATHER: Duration = Duration::from_millis(1000);
+/// The question on files with supports waits for more files to come in
+/// (#527): while the window loads a file, and until no model has come in
+/// for this long (#540).
+const GATHER_QUIET: Duration = Duration::from_millis(500);
 
 type FoundSlot = Arc<Mutex<Option<Vec<Found>>>>;
 
@@ -101,6 +104,8 @@ pub(crate) struct PresupportedImport {
     /// come in (#527): files sent one by one ask once.
     gathered: RefCell<Vec<Found>>,
     gather_timer: slint::Timer,
+    /// When models last came in to be looked at (#540).
+    arrived: Cell<Option<Instant>>,
 }
 
 impl PresupportedImport {
@@ -127,6 +132,7 @@ impl PresupportedImport {
             subscription: RefCell::new(None),
             gathered: RefCell::new(Vec::new()),
             gather_timer: slint::Timer::default(),
+            arrived: Cell::new(None),
         });
         {
             let run = Rc::downgrade(&run);
@@ -347,6 +353,7 @@ impl PresupportedImport {
         if new.is_empty() {
             return;
         }
+        self.arrived.set(Some(Instant::now()));
         self.waiting.borrow_mut().extend(new);
         self.start();
     }
@@ -403,16 +410,37 @@ impl PresupportedImport {
         self.gathered.borrow_mut().extend(separable);
         // Models that came in while the worker was busy.
         self.start();
-        // The question waits a moment for files still coming in.
+        // The question waits for files still coming in.
         if self.slot.borrow().is_none() && !self.gathered.borrow().is_empty() {
             let weak = Rc::downgrade(self);
             self.gather_timer
-                .start(slint::TimerMode::SingleShot, GATHER, move || {
+                .start(slint::TimerMode::Repeated, POLL, move || {
                     if let Some(run) = weak.upgrade() {
-                        run.ask_gathered();
+                        run.ask_when_settled();
                     }
                 });
         }
+    }
+
+    /// Asks about the files gathered once no more seem to be coming: no
+    /// worker in flight, the window loading nothing, and no model come in
+    /// for [`GATHER_QUIET`].
+    fn ask_when_settled(self: &Rc<Self>) {
+        if !self.settled() {
+            return;
+        }
+        self.gather_timer.stop();
+        self.ask_gathered();
+    }
+
+    fn settled(&self) -> bool {
+        let loading = self.ui.upgrade().is_some_and(|ui| ui.get_loading());
+        self.slot.borrow().is_none()
+            && !loading
+            && self
+                .arrived
+                .get()
+                .is_none_or(|at| at.elapsed() >= GATHER_QUIET)
     }
 
     /// Asks about the files with supports gathered: one question for all.
@@ -691,6 +719,25 @@ impl PresupportedImport {
         );
     }
 
+    /// Waits for the worker in flight and takes what it found, without
+    /// asking: for tests, which have no event loop to run the timers.
+    #[cfg(test)]
+    pub(crate) fn work_for_test(self: &Rc<Self>) {
+        while self.slot.borrow().is_some() {
+            std::thread::sleep(Duration::from_millis(5));
+            self.collect();
+        }
+        self.gather_timer.stop();
+    }
+
+    /// What the gather timer does on its tick: asks once no more files seem
+    /// to be coming. Returns whether a question shows.
+    #[cfg(test)]
+    pub(crate) fn tick_for_test(self: &Rc<Self>) -> bool {
+        self.ask_when_settled();
+        self.gathered.borrow().is_empty()
+    }
+
     /// Waits for the worker in flight and asks about what it found: for
     /// tests, which have no event loop to run the timer.
     #[cfg(test)]
@@ -706,8 +753,10 @@ impl PresupportedImport {
 
 /// What each of `models` is, on the worker: only the ones with supports.
 fn look_at(models: Vec<(NodeId, Arc<IndexedMesh>)>) -> Vec<Found> {
+    // Each model on a thread of its own (#540): the question waits for the
+    // slowest, not for all of them one after another.
     models
-        .into_iter()
+        .into_par_iter()
         .filter_map(|(leaf, mesh)| {
             let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 match find_supports(&mesh) {
