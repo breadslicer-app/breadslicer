@@ -38,6 +38,12 @@ pub struct ProjectPayload {
     /// What the person decided about the review's findings (#432): the
     /// list is made again on every slice, and these are what stays.
     pub review_decisions: Vec<ReviewDecision>,
+    /// How many build plates the scene lays out (#545). 0 and 1 both mean
+    /// one: a project saved before plates came records none.
+    pub plates: u32,
+    /// The plates' names, in their order (#545); empty when the project
+    /// keeps none, so each plate takes its default name.
+    pub plate_names: Vec<String>,
 }
 
 /// A finding of the review the person chose to ignore, by kind and place, so

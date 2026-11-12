@@ -46,6 +46,9 @@ pub(super) struct Uniforms {
     /// The eye (#523): `w = 1` its position, `w = 0` (orthographic) the
     /// direction toward it, for the highlight and the rim.
     pub(super) eye: [f32; 4],
+    /// The plates (#545): how far apart they stand along X and Y, how many
+    /// and the active one ([`crate::plates`]).
+    pub(super) plates: [f32; 4],
 }
 
 /// World-space directional light. The fourth component carries the
@@ -100,7 +103,15 @@ pub(super) fn compute_view_proj(
     let diagonal = (aabb_max - aabb_min).length().max(1e-3);
     let aspect = width as f32 / height as f32;
     let view_mat = camera.view_matrix();
-    let near = (NEAR_MULT * diagonal).min(camera.distance * 0.01).max(1e-5);
+    let near = if camera.orthographic {
+        // The eye of an orthographic view stands as close to the target as
+        // the zoom; the planes reach behind it, so nothing between the eye
+        // and the scene's far side is cut (#545): many plates put models far
+        // from the target.
+        -(diagonal + camera.distance)
+    } else {
+        (NEAR_MULT * diagonal).min(camera.distance * 0.01).max(1e-5)
+    };
     let proj = camera.projection(fov_y, aspect, near, FAR_MULT * diagonal);
     proj * view_mat
 }
@@ -127,5 +138,36 @@ mod pack_light_dir_tests {
             [LIGHT_DIR[0], LIGHT_DIR[1], LIGHT_DIR[2]]
         );
         assert_eq!(ld[3], 3.5);
+    }
+}
+
+#[cfg(test)]
+mod near_plane_tests {
+    use super::*;
+
+    /// An orthographic view zoomed in keeps what stands between its eye and
+    /// the target, and behind the eye (#545): with many plates the target is
+    /// far from the models looked at.
+    #[test]
+    fn an_orthographic_view_cuts_nothing_in_front_of_its_target() {
+        let mut camera = OrbitCamera::new(Vec3::ZERO, 500.0);
+        camera.orthographic = true;
+        camera.target = Vec3::ZERO;
+        camera.distance = 10.0;
+        let view_proj = compute_view_proj(
+            &camera,
+            Vec3::new(-600.0, -300.0, 0.0),
+            Vec3::new(600.0, 300.0, 200.0),
+            800,
+            600,
+            0.8,
+        );
+        let toward_eye = (camera.eye() - camera.target).normalize();
+        for d in [5.0, 50.0, 400.0] {
+            let p = camera.target + toward_eye * d;
+            let clip = view_proj * p.extend(1.0);
+            let z = clip.z / clip.w;
+            assert!((0.0..=1.0).contains(&z), "{d} mm toward the eye: depth {z}");
+        }
     }
 }

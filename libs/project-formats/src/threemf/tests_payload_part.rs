@@ -46,6 +46,8 @@ mod serialize_tests {
             output_format: None,
             embedded: Vec::new(),
             review_decisions: Vec::new(),
+            plates: 0,
+            plate_names: Vec::new(),
         };
         let text = serialize_payload(&payload, None).expect("references serialize");
         assert_eq!(
@@ -148,6 +150,8 @@ mod serialize_tests {
                 bytes: b"marker-not-expected-in-part = true".to_vec(),
             }],
             review_decisions: Vec::new(),
+            plates: 0,
+            plate_names: Vec::new(),
         };
         let text = serialize_payload(&payload, None).expect("references serialize");
         assert!(!text.contains("marker-not-expected-in-part"));

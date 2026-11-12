@@ -1029,3 +1029,124 @@ fn an_island_ring_shows_through_the_model_and_a_hint_ring_does_not() {
         differs(&bare, &island)
     );
 }
+
+/// Every plate draws where it stands (#545): with two plates, the floor of
+/// the second fills a view of where it is, which shows only the ground with
+/// one; and a model on the second plate is no longer out of the volume.
+/// With `BREADSLICER_PLATES_SHOT` naming a PNG, five plates, the third
+/// active, are written there for a person to judge.
+#[test]
+fn every_plate_draws_where_it_stands() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let bv = BuildVolume::new(120.0, 80.0, 100.0);
+    let second = crate::plates::offset(&bv, 1);
+    let mut cube = square(20.0, 10.0);
+    for v in cube.vertices.iter_mut() {
+        let c = v.coords();
+        *v = Vertex::new([c[0] + second.x, c[1] + second.y, c[2]]);
+    }
+    let graph = scene_of(vec![cube]);
+    let frame = |renderer: &mut Renderer, count: u32, camera: &OrbitCamera, w: u32, h: u32| {
+        renderer.set_plates(crate::plates::Plates::new(
+            count,
+            count.saturating_sub(1).min(2),
+        ));
+        renderer.upload_scene(&graph).expect("upload the scene");
+        renderer
+            .workspace_pixels_for_test(
+                SceneRender {
+                    graph: &graph,
+                    selection: &[],
+                    gizmo: None,
+                    clip_z: None,
+                },
+                bv,
+                camera,
+                w,
+                h,
+            )
+            .expect("the frame is not refused")
+            .expect("a sized frame")
+    };
+    let mut over_second = OrbitCamera::new(second, 150.0);
+    over_second.target = second;
+    over_second.distance = 150.0;
+    over_second.set_axis_view(crate::camera::AxisView::Top);
+    let one = frame(&mut renderer, 1, &over_second, SIZE, SIZE).rgba;
+    let two = frame(&mut renderer, 2, &over_second, SIZE, SIZE).rgba;
+    let differs = one
+        .chunks(4)
+        .zip(two.chunks(4))
+        .filter(|(p, q)| (0..3).any(|k| p[k].abs_diff(q[k]) > 2))
+        .count();
+    assert!(
+        differs > (SIZE * SIZE / 4) as usize,
+        "the second plate's floor shows: {differs} pixels"
+    );
+    if let Some(path) = std::env::var_os("BREADSLICER_PLATES_SHOT") {
+        let mut wide = OrbitCamera::new(Vec3::new(200.0, 60.0, 0.0), 300.0);
+        wide.target = Vec3::new(240.0, 70.0, 0.0);
+        wide.distance = 520.0;
+        wide.pitch = 0.6;
+        wide.yaw = -1.75;
+        renderer.set_plate_tools(Some(Some(1)));
+        let names: Vec<String> = ["Plate 1", "Plate 2", "Esqueletos", "Plate 4", "Plate 5"]
+            .map(String::from)
+            .to_vec();
+        renderer.set_plate_names(
+            &names,
+            Some(crate::plates::NameEdit {
+                plate: 2,
+                caret: 4,
+                anchor: 10,
+            }),
+        );
+        let shot = frame(&mut renderer, 5, &wide, 1400, 820);
+        image::RgbaImage::from_raw(shot.width, shot.height, shot.rgba)
+            .expect("RGBA")
+            .save(&path)
+            .expect("the picture is written");
+        // Up close, the active plate's tools on its rim.
+        let corner = crate::plates::offset(&bv, 2) + Vec3::new(-20.0, 40.0, 0.0);
+        let mut close = OrbitCamera::new(corner, 60.0);
+        close.target = corner;
+        close.distance = 90.0;
+        close.pitch = 0.7;
+        close.yaw = -1.9;
+        let shot = frame(&mut renderer, 5, &close, 900, 600);
+        let close_path = std::path::PathBuf::from(&path).with_extension("close.png");
+        image::RgbaImage::from_raw(shot.width, shot.height, shot.rgba)
+            .expect("RGBA")
+            .save(close_path)
+            .expect("the picture is written");
+        // Up close on the name being edited, its first letters selected: the
+        // writing stays sharp however close the camera comes.
+        let [x0, y0, _, y1] = crate::plates::name_box(&bv);
+        let name_at = crate::plates::offset(&bv, 2) + Vec3::new(x0 + 14.0, (y0 + y1) / 2.0, 0.0);
+        let mut closer = OrbitCamera::new(name_at, 20.0);
+        closer.target = name_at;
+        closer.distance = 30.0;
+        closer.pitch = 1.0;
+        closer.yaw = -1.75;
+        let shot = frame(&mut renderer, 5, &closer, 1000, 560);
+        let name_path = std::path::PathBuf::from(&path).with_extension("name.png");
+        image::RgbaImage::from_raw(shot.width, shot.height, shot.rgba)
+            .expect("RGBA")
+            .save(name_path)
+            .expect("the picture is written");
+        // The same name from under the plate: it reads the right way round.
+        let mut below = closer.clone();
+        below.distance = 60.0;
+        below.pitch = -0.6;
+        let shot = frame(&mut renderer, 5, &below, 1000, 560);
+        let below_path = std::path::PathBuf::from(&path).with_extension("below.png");
+        image::RgbaImage::from_raw(shot.width, shot.height, shot.rgba)
+            .expect("RGBA")
+            .save(below_path)
+            .expect("the picture is written");
+        renderer.set_plate_tools(None);
+    }
+}

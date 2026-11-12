@@ -812,6 +812,8 @@ fn project_bytes(scene: &Scene) -> Vec<u8> {
         output_format: None,
         embedded: Vec::new(),
         review_decisions: Vec::new(),
+        plates: 0,
+        plate_names: Vec::new(),
     };
     let mut bytes = Vec::new();
     write_project(

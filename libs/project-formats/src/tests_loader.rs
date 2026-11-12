@@ -77,6 +77,8 @@ fn payload_with_ids() -> ProjectPayload {
         output_format: None,
         embedded: Vec::new(),
         review_decisions: Vec::new(),
+        plates: 0,
+        plate_names: Vec::new(),
     }
 }
 

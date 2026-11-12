@@ -631,7 +631,8 @@ impl RepairRun {
             SceneEvent::SelectionChanged
             | SceneEvent::SliceChanged
             | SceneEvent::DirtyChanged
-            | SceneEvent::Painted => {}
+            | SceneEvent::Painted
+            | SceneEvent::PlatesChanged => {}
         }
     }
 

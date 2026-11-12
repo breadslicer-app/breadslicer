@@ -494,6 +494,8 @@ mod unsaved_project_state_tests {
                 output_format: None,
                 embedded: Vec::new(),
                 review_decisions: Vec::new(),
+                plates: 0,
+                plate_names: Vec::new(),
             }
         );
     }
@@ -525,6 +527,8 @@ mod unsaved_project_state_tests {
                 bytes: b"kind = \"printer\"".to_vec(),
             }],
             review_decisions: Vec::new(),
+            plates: 0,
+            plate_names: Vec::new(),
         };
         let doc = SceneDocument::new();
         doc.install_project_graph(

@@ -33,6 +33,12 @@ pub const BREAD_SETTINGS_VERSION: i64 = 1;
 #[derive(Debug, Serialize, Deserialize)]
 struct SettingsDoc {
     version: i64,
+    /// How many build plates the scene lays out (#545); left out with one.
+    #[serde(default, skip_serializing_if = "one_plate")]
+    plates: u32,
+    /// The plates' names (#545), in their order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    plate_names: Vec<String>,
     #[serde(default)]
     profiles: ProfilesSection,
     #[serde(default, skip_serializing_if = "PrintSection::is_empty")]
@@ -43,6 +49,11 @@ struct SettingsDoc {
     /// The findings of the review the person chose to ignore (#432).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     ignored: Vec<IgnoredDoc>,
+}
+
+/// Whether `plates` is the one plate every scene has, not written.
+fn one_plate(plates: &u32) -> bool {
+    *plates <= 1
 }
 
 /// One entry of the `ignored` list.
@@ -93,6 +104,8 @@ pub(crate) fn serialize_settings(
     };
     toml_edit::ser::to_string(&SettingsDoc {
         version: BREAD_SETTINGS_VERSION,
+        plates: payload.plates,
+        plate_names: payload.plate_names.clone(),
         profiles: ProfilesSection {
             printer: payload.printer.clone(),
             resin: payload.resin.clone(),
@@ -188,6 +201,8 @@ pub(crate) fn parse_settings(
                 focus_um: entry.focus_um,
             })
             .collect(),
+        plates: doc.plates,
+        plate_names: doc.plate_names,
     }))
 }
 

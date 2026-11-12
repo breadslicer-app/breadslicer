@@ -70,6 +70,8 @@ const KIND_ENVELOPE_WALL_X_POS: u32 = 6;
 const KIND_ENVELOPE_WALL_Y_NEG: u32 = 7;
 const KIND_ENVELOPE_WALL_Y_POS: u32 = 8;
 const KIND_ENVELOPE_WALL_Z_POS: u32 = 9;
+/// The strip of the active plate's tools (#545), on its rim.
+const KIND_PLATE_TOOLS: u32 = 10;
 
 /// Plate thickness, mm. The plate extends from `Z = 0` (top, the
 /// build floor) down to `Z = -PLATE_THICKNESS_MM`.
@@ -108,6 +110,9 @@ const FRONT_TAB_SIDE_MARGIN_MM: f32 = 3.75;
 pub(in crate::mesh_render) struct FrontTab {
     text_half_width_mm: f32,
     text_height_mm: f32,
+    /// How far past the ink box the label's quad reaches, over the ink's
+    /// height: room for the edges of its distance field to fade out.
+    ink_pad: f32,
 }
 
 impl FrontTab {
@@ -119,7 +124,21 @@ impl FrontTab {
         Self {
             text_half_width_mm,
             text_height_mm,
+            ink_pad: 0.0,
         }
+    }
+
+    /// The same tab, its label's quad reaching `ink_pad` times the ink's
+    /// height past the ink box.
+    pub(in crate::mesh_render) fn with_ink_pad(self, ink_pad: f32) -> Self {
+        Self { ink_pad, ..self }
+    }
+
+    /// The label's quad around the ink box `text_box`.
+    fn label_box(&self, text_box: [f32; 4]) -> [f32; 4] {
+        let [x0, y0, x1, y1] = text_box;
+        let pad = self.ink_pad * (y1 - y0);
+        [x0 - pad, y0 - pad, x1 + pad, y1 + pad]
     }
 
     /// Sizes a tab around a label of the given width over height,
@@ -427,6 +446,9 @@ pub(in crate::mesh_render) struct PlateBuffers {
     /// `top_pipeline` after the mesh pass; the plate shader gates
     /// each fragment on the matching bit of `face_breach_mask`.
     pub(in crate::mesh_render) wall_index_buffer: wgpu::Buffer,
+    /// The quad of the active plate's tools (#545).
+    pub(in crate::mesh_render) tools_index_buffer: wgpu::Buffer,
+    pub(in crate::mesh_render) tools_index_count: u32,
     /// Vertex buffer for the front label's quad; `None` when the
     /// plate carries no tab.
     pub(in crate::mesh_render) label_vertex_buffer: Option<wgpu::Buffer>,
@@ -497,6 +519,14 @@ impl PlateBuffers {
             wgpu::BufferUsages::INDEX,
         )
         .map_err(refused)?;
+        let tools_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer plate tools ibo",
+            bytemuck::cast_slice(&geom.tools_indices),
+            wgpu::BufferUsages::INDEX,
+        )
+        .map_err(refused)?;
         let label_vertex_buffer = geom
             .label_quad
             .map(|quad| {
@@ -520,6 +550,8 @@ impl PlateBuffers {
             bottom_index_buffer,
             cage_index_buffer,
             wall_index_buffer,
+            tools_index_buffer,
+            tools_index_count: geom.tools_indices.len() as u32,
             top_index_count: geom.top_indices.len() as u32,
             solid_index_count: geom.solid_indices.len() as u32,
             bottom_index_count: geom.bottom_indices.len() as u32,
@@ -540,6 +572,8 @@ pub(in crate::mesh_render) struct PlateGeometry {
     pub(in crate::mesh_render) bottom_indices: Vec<u32>,
     pub(in crate::mesh_render) cage_indices: Vec<u32>,
     pub(in crate::mesh_render) wall_indices: Vec<u32>,
+    /// The quad of the active plate's tools (#545).
+    pub(in crate::mesh_render) tools_indices: Vec<u32>,
     /// The quads the front label draws on, alongside the tab that
     /// carries it: 6 vertices on top, then 6 on the underside.
     pub(in crate::mesh_render) label_quad: Option<[LabelVertex; 12]>,
@@ -875,13 +909,39 @@ pub(in crate::mesh_render) fn plate_geometry(
         top_indices.extend(front.top_indices);
         solid_indices.extend(front.solid_indices);
         bottom_indices.extend(front.bottom_indices);
-        let text_box = tab.text_box(-outer_d, outer_w - radius);
+        let text_box = tab.label_box(tab.text_box(-outer_d, outer_w - radius));
         let top = label_quad(text_box);
         // The plate is drawn without its thickness (#507): the copy read from
         // below sits on the same plane as the one read from above.
         let underside = underside_label_quad(text_box, z_top);
         std::array::from_fn(|i| if i < 6 { top[i] } else { underside[i - 6] })
     });
+
+    // The tools' strip (#545): right of the back right corner, a hair over
+    // the rim so neither fights the other for the depth.
+    let tools_base = vertices.len() as u32;
+    {
+        let left = build_volume.width_mm() / 2.0 + crate::plates::TOOL_INSET_MM;
+        let right = left + crate::plates::TOOL_MM;
+        let top = build_volume.depth_mm() / 2.0;
+        let bottom = top
+            - crate::plates::TOOL_COUNT as f32 * crate::plates::TOOL_MM
+            - (crate::plates::TOOL_COUNT - 1) as f32 * crate::plates::TOOL_GAP_MM;
+        for [x, y] in [[left, bottom], [right, bottom], [right, top], [left, top]] {
+            vertices.push(PlateVertex {
+                position: [x, y, z_top + 0.05],
+                kind: KIND_PLATE_TOOLS,
+            });
+        }
+    }
+    let tools_indices = vec![
+        tools_base,
+        tools_base + 1,
+        tools_base + 2,
+        tools_base,
+        tools_base + 2,
+        tools_base + 3,
+    ];
 
     PlateGeometry {
         vertices,
@@ -890,6 +950,7 @@ pub(in crate::mesh_render) fn plate_geometry(
         bottom_indices,
         cage_indices,
         wall_indices,
+        tools_indices,
         label_quad,
     }
 }
@@ -1075,7 +1136,8 @@ mod plate_geometry_tests {
         let g = plate_geometry(BuildVolume::new(192.0, 120.0, 200.0), None);
         let n = outline_len();
         // 5 envelope walls add 20 vertices (4 per quad).
-        assert_eq!(g.vertices.len(), 8 + 3 * n + 1 + 8 + 20);
+        // ... and the 4 corners of the tools' strip (#545), last.
+        assert_eq!(g.vertices.len(), 8 + 3 * n + 1 + 8 + 20 + 4);
 
         for v in &g.vertices[..4] {
             assert_eq!(v.kind, KIND_FLOOR);
@@ -1349,7 +1411,8 @@ mod plate_geometry_tests {
     fn the_front_tab_repeats_its_outline_once_per_kind_it_draws_with() {
         let g = plate_geometry(vol(), Some(tab()));
         let block = tab_outline_len();
-        let tab_vertices = &g.vertices[tab_off()..];
+        // The tools' strip (#545) comes after the tab: its 4 corners last.
+        let tab_vertices = &g.vertices[tab_off()..g.vertices.len() - 4];
 
         assert_eq!(tab_vertices.len(), 4 * block + 4);
         for v in &tab_vertices[4 * block..] {

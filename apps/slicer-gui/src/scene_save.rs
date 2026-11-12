@@ -477,6 +477,8 @@ mod scene_save_tests {
                 bytes: b"kind = \"printer\"".to_vec(),
             }],
             review_decisions: Vec::new(),
+            plates: 0,
+            plate_names: Vec::new(),
         }
     }
 

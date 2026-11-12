@@ -703,11 +703,35 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
 /// out, being the answer to an overhang rather than one. `flags.w` is 1 for a
 /// support mesh: from under the plate, what of it lies below the rafts' top
 /// fades with the plate (#481).
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn build_model_entries(
     graph: &Scene,
     selection: &[NodeId],
-    focus: &[NodeId],
+    focus: Option<&[NodeId]>,
     build_volume: BuildVolume,
+    boxes: &mut WorldBoxes,
+    overhang_map: bool,
+) -> Result<Vec<ModelEntry>> {
+    build_model_entries_on(
+        graph,
+        selection,
+        focus,
+        build_volume,
+        crate::plates::Plates::one(),
+        boxes,
+        overhang_map,
+    )
+}
+
+/// [`build_model_entries`] on several plates (#545): an object breaches when
+/// it reaches past the volume of the plate it belongs to (the one whose cell
+/// holds the middle of its footprint), not the first plate's.
+pub(super) fn build_model_entries_on(
+    graph: &Scene,
+    selection: &[NodeId],
+    focus: Option<&[NodeId]>,
+    build_volume: BuildVolume,
+    plates: crate::plates::Plates,
     boxes: &mut WorldBoxes,
     overhang_map: bool,
 ) -> Result<Vec<ModelEntry>> {
@@ -716,18 +740,23 @@ pub(super) fn build_model_entries(
         CsgPolicy::Descend,
         |node_id, world_transform, mesh| {
             let selected = selection.binary_search(&node_id).is_ok();
-            // Out of focus: something else is selected (#523).
-            let dimmed = !focus.is_empty() && focus.binary_search(&node_id).is_err();
+            // Out of focus: something else is selected (#523), or it stands
+            // on a plate other than the active one (#545).
+            let dimmed = focus.is_some_and(|focus| focus.binary_search(&node_id).is_err());
             let transform_mat = transform_to_mat4(world_transform);
             // The envelope is an axis-aligned box, so it contains the world
             // box if and only if it contains every vertex, and therefore every
             // triangle.
-            let breaches = !build_volume.volume().contains(&boxes.world_box(
+            let world_box = boxes.world_box(
                 entries.len(),
                 mesh,
                 shared_mesh(graph, node_id, mesh),
                 &transform_mat,
-            ));
+            );
+            let breaches =
+                !build_volume
+                    .volume()
+                    .contains(&on_its_plate(&world_box, &build_volume, plates));
             let supports = sc_geom::df_supports::is_any_support_mesh(mesh);
             let drawn_as = if overhang_map && !supports {
                 MODEL_OVERHANG_MAP
@@ -898,6 +927,7 @@ pub(super) const FACE_BIT_Z_NEG: u32 = 1 << 5;
 /// in the shader's bit layout (the `FACE_BIT_*` constants). A leaf crosses a
 /// wall when the box of its world-transformed vertices reaches strictly past
 /// it, which is when some vertex does.
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn build_envelope_warning_mask(
     graph: &Scene,
     build_volume: BuildVolume,
@@ -921,6 +951,75 @@ pub(super) fn build_envelope_warning_mask(
         },
     )?;
     Ok(crossed.iter().fold(0, |mask, wall| mask | face_bit(wall)))
+}
+
+/// `world_box` moved by the offset of the plate it belongs to, so it is
+/// held against the first plate's volume as against its own (#545).
+fn on_its_plate(world_box: &Aabb, volume: &BuildVolume, plates: crate::plates::Plates) -> Aabb {
+    if world_box.is_empty() || plates.count() <= 1 {
+        return *world_box;
+    }
+    let (min, max) = (world_box.min().coords(), world_box.max().coords());
+    let plate = crate::plates::plate_of(
+        volume,
+        plates,
+        (min[0] + max[0]) / 2.0,
+        (min[1] + max[1]) / 2.0,
+    );
+    let at = crate::plates::offset(volume, plate);
+    let shift = |v: [f32; 3]| Vertex::new([v[0] - at.x, v[1] - at.y, v[2]]);
+    Aabb::from_min_max(shift(min), shift(max))
+}
+
+/// [`build_envelope_warning_mask`] on several plates (#545): each model is
+/// held against the volume of the plate it belongs to (the one whose cell
+/// holds the middle of its footprint). Returns the walls crossed, as that
+/// mask, and which plates they belong to, one bit each.
+pub(super) fn build_plate_warning_masks(
+    graph: &Scene,
+    build_volume: BuildVolume,
+    plates: crate::plates::Plates,
+    boxes: &mut WorldBoxes,
+) -> Result<(u32, u32)> {
+    let volume = build_volume.volume();
+    let mut crossed = Walls::default();
+    let mut breached = 0u32;
+    let mut index = 0;
+    graph.for_each_expanded_leaf::<SceneError, _>(
+        CsgPolicy::Descend,
+        |node_id, world_transform, mesh| {
+            let world_box = boxes.world_box(
+                index,
+                mesh,
+                shared_mesh(graph, node_id, mesh),
+                &transform_to_mat4(world_transform),
+            );
+            index += 1;
+            if world_box.is_empty() {
+                return Ok(());
+            }
+            let (min, max) = (world_box.min().coords(), world_box.max().coords());
+            let plate = crate::plates::plate_of(
+                &build_volume,
+                plates,
+                (min[0] + max[0]) / 2.0,
+                (min[1] + max[1]) / 2.0,
+            );
+            let at = crate::plates::offset(&build_volume, plate);
+            let shift = |v: [f32; 3]| Vertex::new([v[0] - at.x, v[1] - at.y, v[2]]);
+            let local = Aabb::from_min_max(shift(min), shift(max));
+            let walls = volume.walls_crossed_by(&local);
+            if walls.iter().next().is_some() {
+                breached |= 1 << plate;
+            }
+            crossed |= walls;
+            Ok(())
+        },
+    )?;
+    Ok((
+        crossed.iter().fold(0, |mask, wall| mask | face_bit(wall)),
+        breached,
+    ))
 }
 
 /// Returns the bit of `wall` in the mask that the plate shader reads.
@@ -1592,7 +1691,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &g,
             &[],
-            &[],
+            None,
             permissive_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1628,7 +1727,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             permissive_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1644,7 +1743,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[nth_leaf(&graph, 1)],
-            &[],
+            None,
             permissive_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1663,7 +1762,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[graph.roots()[0]],
-            &[],
+            None,
             permissive_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1708,7 +1807,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             snug_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1725,7 +1824,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             snug_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1741,7 +1840,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             snug_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1759,13 +1858,44 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             snug_volume(),
             &mut WorldBoxes::default(),
             false,
         )
         .expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
+    }
+
+    /// On a plate other than the first, an object inside its plate does not
+    /// breach (#545): it keeps its model's or its supports' colour; past its
+    /// plate's wall it does.
+    #[test]
+    fn flags_y_is_held_against_the_plate_the_leaf_stands_on() {
+        let v = snug_volume();
+        let second = crate::plates::offset(&v, 1);
+        let plates = crate::plates::Plates::new(2, 0);
+        let breach = |at: [f64; 3]| {
+            let graph = unit_triangle_graph_at(at);
+            build_model_entries_on(
+                &graph,
+                &[],
+                None,
+                v,
+                plates,
+                &mut WorldBoxes::default(),
+                false,
+            )
+            .expect("clean graph")[0]
+                .flags[1]
+        };
+        assert_eq!(breach([f64::from(second.x), 0.0, 1.0]), 0, "inside plate 1");
+        assert_eq!(
+            breach([f64::from(second.x) + 49.5, 0.0, 1.0]),
+            1,
+            "past its wall"
+        );
+        assert_eq!(breach([0.0, 0.0, 1.0]), 0, "inside plate 0");
     }
 
     #[test]
@@ -1776,7 +1906,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             snug_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1969,7 +2099,7 @@ mod transform_to_mat4_tests {
         let leaf = nth_leaf(&graph, 0);
         let mut boxes = WorldBoxes::default();
         let frame = |graph: &Scene, boxes: &mut WorldBoxes| {
-            let entries = build_model_entries(graph, &[], &[], snug_volume(), boxes, false)
+            let entries = build_model_entries(graph, &[], None, snug_volume(), boxes, false)
                 .expect("clean graph");
             let mask =
                 build_envelope_warning_mask(graph, snug_volume(), boxes).expect("clean graph");
@@ -2009,7 +2139,7 @@ mod transform_to_mat4_tests {
         graph.add_root(leaf).expect("root");
         let volume = snug_volume();
         let mut boxes = WorldBoxes::default();
-        build_model_entries(&graph, &[leaf], &[], volume, &mut boxes, false).expect("clean graph");
+        build_model_entries(&graph, &[leaf], None, volume, &mut boxes, false).expect("clean graph");
         let start = std::time::Instant::now();
         while boxes.hulls.get(&mesh).is_none() {
             assert!(start.elapsed().as_secs() < 30, "the hull never arrived");
@@ -2043,7 +2173,7 @@ mod transform_to_mat4_tests {
             let hull = boxes.hulls.get(&mesh).expect("a ready hull");
             assert!(hull.world_box(&matrix).is_some(), "the hull answers");
             let walked = leaf_world_box(&mesh, &matrix);
-            let entries = build_model_entries(&graph, &[leaf], &[], volume, &mut boxes, false)
+            let entries = build_model_entries(&graph, &[leaf], None, volume, &mut boxes, false)
                 .expect("clean graph");
             let mask =
                 build_envelope_warning_mask(&graph, volume, &mut boxes).expect("clean graph");

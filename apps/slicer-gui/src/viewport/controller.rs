@@ -72,7 +72,7 @@ use crate::preferences_bus::PreferencesBus;
 use crate::preferences_bus::PreferencesSnapshot;
 use crate::print_file_preview;
 use crate::save_progress_panel::SaveProgressPanel;
-use crate::scene_document::{EditNotApplied, SceneDocument, SceneEvent};
+use crate::scene_document::{EditNotApplied, SceneDocument, SceneEdit, SceneEvent};
 use crate::scene_loader::{Finished, LoadTicket, PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
 use crate::support_persist::install_sets;
@@ -88,6 +88,15 @@ pub(crate) const ISLAND_VIEW_PITCH: f32 = -0.61;
 /// How often the window is pinged while the overhang map waits for the
 /// surface around a model's vertices, read on a worker (#498).
 const MAP_WAIT_PING_MS: u64 = 100;
+
+/// A plate's name being edited where it lies (#545): the plate, the text so
+/// far, and the bytes its caret and the selection's other end stand at.
+pub(crate) struct NameBeingEdited {
+    pub(crate) plate: u32,
+    pub(crate) text: String,
+    pub(crate) caret: usize,
+    pub(crate) anchor: usize,
+}
 
 pub(crate) struct ViewportController {
     ui: slint::Weak<MainWindow>,
@@ -191,11 +200,23 @@ pub(crate) struct ViewportController {
     /// The focus of the last frame (#523), with the scene revision and the
     /// selection it was worked out for.
     focus_cache: FocusCache,
+    /// The active plate's tool under the pointer (#545).
+    plate_tool_hovered: Cell<Option<u32>>,
+    /// A plate's name being edited (#545): the plate, the text so far and
+    /// the byte its caret stands at.
+    plate_name_edit: RefCell<Option<NameBeingEdited>>,
+    /// The last click on a plate's name: when, and which plate, for a
+    /// double click.
+    plate_name_click: Cell<Option<(std::time::Instant, u32)>>,
 }
 
 type FocusCache = RefCell<
     Option<(
-        (crate::scene_document::SceneRevision, Vec<sc_scene::NodeId>),
+        (
+            crate::scene_document::SceneRevision,
+            Vec<sc_scene::NodeId>,
+            crate::plates::Plates,
+        ),
         Vec<sc_scene::NodeId>,
     )>,
 >;
@@ -292,6 +313,9 @@ impl ViewportController {
             cut_handles: RefCell::new(None),
             cut_press: Cell::new(None),
             focus_cache: RefCell::new(None),
+            plate_tool_hovered: Cell::new(None),
+            plate_name_edit: RefCell::new(None),
+            plate_name_click: Cell::new(None),
         }
     }
 
@@ -358,6 +382,9 @@ impl ViewportController {
             cut_handles: RefCell::new(None),
             cut_press: Cell::new(None),
             focus_cache: RefCell::new(None),
+            plate_tool_hovered: Cell::new(None),
+            plate_name_edit: RefCell::new(None),
+            plate_name_click: Cell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -613,6 +640,7 @@ impl ViewportController {
             SceneEvent::Installed => self.on_scene_installed(),
             SceneEvent::Cleared => self.on_scene_cleared(),
             SceneEvent::Painted => self.mark_dirty(),
+            SceneEvent::PlatesChanged => self.on_plates_changed(),
             SceneEvent::SelectionChanged => {
                 self.on_modal_transform_finish(false);
                 self.mirror_selection_to_ui();
@@ -625,6 +653,10 @@ impl ViewportController {
                 // live graph each frame, so a transform tick needs no extra
                 // upload.
                 self.mark_dirty();
+                // Whether the active plate is empty, once a gesture lands.
+                if !self.gesture_active() {
+                    self.mirror_plates_to_ui();
+                }
             }
             SceneEvent::Restructured => {
                 // A structural edit (leaf added or removed, mesh resource added
@@ -638,6 +670,7 @@ impl ViewportController {
                 if let Some(ui) = self.ui.upgrade() {
                     self.refresh_object_list_on(&ui);
                 }
+                self.mirror_plates_to_ui();
                 self.mark_dirty();
             }
             SceneEvent::SliceChanged => {
@@ -862,6 +895,7 @@ impl ViewportController {
         self.mirror_dirty_state_to_ui();
         self.mirror_title_to_ui();
         self.mirror_slice_layer_count_to_ui();
+        self.mirror_plates_to_ui();
         self.mark_dirty();
     }
 
@@ -983,6 +1017,29 @@ impl ViewportController {
     /// the next render rebuilds the plate and the cage for the new envelope.
     /// The camera keeps its position.
     pub(crate) fn set_build_volume(&self, bv: BuildVolume) {
+        let before = self.session.build_volume();
+        let document = self.session.document();
+        // The models of the plates past the first move with their plate
+        // (#545): the plates stand by the printer's size.
+        let moves: Vec<SceneEdit> = if before != bv && document.plates().count() > 1 {
+            self.models_on_plates()
+                .into_iter()
+                .filter(|&(_, plate)| plate > 0)
+                .filter_map(|(id, plate)| {
+                    let by =
+                        crate::plates::offset(&bv, plate) - crate::plates::offset(&before, plate);
+                    crate::plate_layout::moved_by(document, id, by)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !moves.is_empty() {
+            let edit = SceneEdit::Compound(moves);
+            if document.apply_edit(edit.clone()).is_ok() {
+                document.push_edit(edit);
+            }
+        }
         if self.session.set_build_volume(bv) {
             // `mark_dirty` owes the redraw, which the render path needs before
             // it paints.
@@ -1531,7 +1588,35 @@ impl ViewportController {
 
     pub(crate) fn on_frame_view(&self) {
         if self.camera.on_frame_view() {
+            self.frame_every_plate();
             self.mark_dirty();
+        }
+    }
+
+    /// With more than one plate, frames them all (#545), keeping the
+    /// direction they are seen from.
+    fn frame_every_plate(&self) {
+        let plates = self.session.document().plates();
+        let Some(vp) = self.render.viewport() else {
+            return;
+        };
+        if plates.count() <= 1 {
+            return;
+        }
+        let volume = self.session.build_volume();
+        let (mut lo, mut hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+        for i in 1..plates.count() {
+            let at = crate::plates::offset(&volume, i);
+            lo = lo.min(volume.envelope_min_mm() + at);
+            hi = hi.max(volume.envelope_max_mm() + at);
+        }
+        if let Some(cam) = self.camera.camera_cell().borrow_mut().as_mut() {
+            cam.frame_bounds(
+                lo,
+                hi,
+                crate::mesh_render::default_fov_y(),
+                vp.width() / vp.height().max(1.0),
+            );
         }
     }
 
@@ -2382,14 +2467,14 @@ impl ViewportController {
             return;
         };
         self.input.modal.set(Some(gesture));
-        if let Err(error) =
-            self.session
-                .document()
-                .apply_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
-                    node_id: gesture.node_id,
-                    before,
-                    after,
-                })
+        if let Err(error) = self
+            .session
+            .document()
+            .apply_edit(SceneEdit::SetLocalTransform {
+                node_id: gesture.node_id,
+                before,
+                after,
+            })
         {
             self.on_modal_transform_finish(false);
             if let EditNotApplied::Rejected(reason) = error {
@@ -2466,13 +2551,13 @@ impl ViewportController {
             .flatten();
         if let Some(current) = current {
             if confirm {
-                document.push_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+                document.push_edit(SceneEdit::SetLocalTransform {
                     node_id: gesture.node_id,
                     before: gesture.original,
                     after: current,
                 });
             } else {
-                let _ = document.apply_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+                let _ = document.apply_edit(SceneEdit::SetLocalTransform {
                     node_id: gesture.node_id,
                     before: current,
                     after: gesture.original,
@@ -2637,6 +2722,7 @@ impl ViewportController {
             return;
         }
         self.tab_tool_hover(cursor, modifiers.shift);
+        self.plate_tool_hover(cursor);
         if self.input.modal.get().is_some() {
             self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
@@ -2680,6 +2766,14 @@ impl ViewportController {
         match outcome {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
             PointerUpOutcome::Click(cursor) => {
+                if let Some(plate) = self.plate_name_under(cursor) {
+                    self.plate_name_clicked(plate);
+                    return;
+                }
+                if let Some(tool) = self.plate_tool_under(cursor) {
+                    self.run_plate_tool(tool, modifiers.shift);
+                    return;
+                }
                 let forced = modifiers.shift && self.add_support_armed();
                 if modifiers.shift && !forced {
                     self.run_toggle_pick_at(cursor);
@@ -3219,13 +3313,29 @@ impl ViewportController {
     /// only when the scene or the selection changed.
     fn focus(&self) -> Vec<sc_scene::NodeId> {
         let document = self.session.document();
-        let key = (document.scene_revision(), document.selection_node_ids());
+        let key = (
+            document.scene_revision(),
+            document.selection_node_ids(),
+            document.plates(),
+        );
         if let Some((at, focus)) = self.focus_cache.borrow().as_ref()
             && *at == key
         {
             return focus.clone();
         }
-        let focus = document.focus_ids();
+        let mut focus = document.focus_ids();
+        // With several plates and nothing selected, the active plate's models
+        // and their supports stay lit (#545).
+        if focus.is_empty() && self.dims_off_plate() {
+            let active = document.plates().active();
+            let models: Vec<sc_scene::NodeId> = self
+                .models_on_plates()
+                .into_iter()
+                .filter(|&(_, plate)| plate == active)
+                .map(|(id, _)| id)
+                .collect();
+            focus = document.with_their_supports(models);
+        }
         *self.focus_cache.borrow_mut() = Some((key, focus.clone()));
         focus
     }
@@ -3585,12 +3695,345 @@ impl ViewportController {
             return;
         };
         match pick {
-            Some(node_id) => self
-                .session
-                .document()
-                .set_selection(Selection::One(LeafId(node_id))),
-            None => self.on_clear_selection(),
+            Some(node_id) => {
+                let document = self.session.document();
+                document.set_selection(Selection::One(LeafId(node_id)));
+                // Picking a model makes its plate the active one (#545).
+                if let Some(plate) = self.plate_of_leaf(node_id) {
+                    document.set_active_plate(plate);
+                }
+            }
+            None => {
+                self.on_clear_selection();
+                // A click on a plate's floor makes it the active one (#545).
+                if let Some(plate) = self.plate_under(cursor) {
+                    self.session.document().set_active_plate(plate);
+                }
+            }
         }
+    }
+
+    /// Whether the active plate's tools show (#545): in the Transform tab,
+    /// with a scene.
+    fn plate_tools_shown(&self) -> bool {
+        self.session.document().is_loaded() && self.session.section() == WorkspaceSection::Transform
+    }
+
+    /// The tool of the active plate under `cursor` (#545): 0 add a plate,
+    /// 1 arrange it, 2 remove it.
+    fn plate_tool_under(&self, cursor: ScreenPoint) -> Option<u32> {
+        if !self.plate_tools_shown() {
+            return None;
+        }
+        let vp = self.render.viewport()?;
+        let camera = self.camera.camera_cell().borrow();
+        let ray = picking::ray_from_pixel(
+            camera.as_ref()?,
+            crate::mesh_render::default_fov_y(),
+            vp.width(),
+            vp.height(),
+            cursor.x,
+            cursor.y,
+        );
+        let (x, y) = picking::ray_z_plane_intersection(&ray, 0.0)?;
+        let volume = self.session.build_volume();
+        let at = crate::plates::offset(&volume, self.session.document().plates().active());
+        crate::plates::tool_at(&volume, x - at.x, y - at.y)
+    }
+
+    /// The plate whose name is under `cursor` (#545).
+    fn plate_name_under(&self, cursor: ScreenPoint) -> Option<u32> {
+        let document = self.session.document();
+        if !document.is_loaded() {
+            return None;
+        }
+        let vp = self.render.viewport()?;
+        let camera = self.camera.camera_cell().borrow();
+        let ray = picking::ray_from_pixel(
+            camera.as_ref()?,
+            crate::mesh_render::default_fov_y(),
+            vp.width(),
+            vp.height(),
+            cursor.x,
+            cursor.y,
+        );
+        let (x, y) = picking::ray_z_plane_intersection(&ray, 0.0)?;
+        let volume = self.session.build_volume();
+        let plates = document.plates();
+        let plate = crate::plates::cell_at(&volume, plates, x, y)?;
+        let at = crate::plates::offset(&volume, plate);
+        crate::plates::on_name(&volume, x - at.x, y - at.y).then_some(plate)
+    }
+
+    /// A click on plate `plate`'s name (#545): it makes the plate the active
+    /// one; a second one soon after on the same name edits it.
+    fn plate_name_clicked(&self, plate: u32) {
+        let document = self.session.document();
+        document.set_active_plate(plate);
+        let now = std::time::Instant::now();
+        let double = self.plate_name_click.get().is_some_and(|(at, p)| {
+            p == plate && now.duration_since(at) <= std::time::Duration::from_millis(450)
+        });
+        self.plate_name_click.set((!double).then_some((now, plate)));
+        if double {
+            self.start_plate_name_edit(plate);
+        }
+    }
+
+    /// Starts editing plate `plate`'s name where it lies (#545): the keys go
+    /// to the window's hidden field, the whole name selected, so typing
+    /// replaces it and an arrow key keeps it.
+    pub(crate) fn start_plate_name_edit(&self, plate: u32) {
+        let Some(name) = self
+            .session
+            .document()
+            .plate_names()
+            .get(plate as usize)
+            .cloned()
+        else {
+            return;
+        };
+        let caret = name.len();
+        *self.plate_name_edit.borrow_mut() = Some(NameBeingEdited {
+            plate,
+            text: name.clone(),
+            caret,
+            anchor: 0,
+        });
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_plate_name_text(name.into());
+            ui.invoke_focus_plate_name(0, caret as i32);
+        }
+        self.mark_dirty();
+    }
+
+    /// The name being edited is now `text`, the caret at byte `caret` and
+    /// the selection from there to byte `anchor`.
+    pub(crate) fn plate_name_edited(&self, text: &str, caret: usize, anchor: usize) {
+        if let Some(edit) = self.plate_name_edit.borrow_mut().as_mut() {
+            edit.text.clear();
+            edit.text.push_str(text);
+            edit.caret = caret.min(text.len());
+            edit.anchor = anchor.min(text.len());
+        }
+        self.mark_dirty();
+    }
+
+    /// Ends the edit of a plate's name: `keep` calls the plate by it, as one
+    /// step of history; otherwise the plate keeps the name it had.
+    pub(crate) fn plate_name_done(&self, keep: bool) {
+        let Some(NameBeingEdited { plate, text, .. }) = self.plate_name_edit.borrow_mut().take()
+        else {
+            return;
+        };
+        if keep {
+            self.session.document().rename_plate(plate, &text);
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            ui.invoke_end_plate_name();
+        }
+        self.mark_dirty();
+    }
+
+    /// Follows the pointer over the active plate's tools (#545): the one
+    /// under it lights up and the status bar says what it does.
+    fn plate_tool_hover(&self, cursor: ScreenPoint) {
+        let hovered = self.plate_tool_under(cursor);
+        if self.plate_tool_hovered.replace(hovered) == hovered {
+            return;
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            let text = match hovered {
+                Some(0) => ctr!("Workspace", "Add a plate"),
+                Some(1) => ctr!("Workspace", "Arrange this plate"),
+                Some(_) => ctr!("Workspace", "Remove this plate (Shift: with its models)"),
+                None => slint::SharedString::default(),
+            };
+            ui.set_status_notice(text);
+        }
+        self.mark_dirty();
+    }
+
+    /// Runs the active plate's tool `tool` (#545); `shift` makes Remove take
+    /// the plate's models with it.
+    fn run_plate_tool(&self, tool: u32, shift: bool) {
+        match tool {
+            0 => self.add_plate(),
+            1 => {
+                if let Some(ui) = self.ui.upgrade() {
+                    ui.invoke_plate_arrange_requested();
+                }
+            }
+            _ => self.remove_active_plate_with(shift),
+        }
+    }
+
+    /// Whether what stands off the active plate dims with nothing selected
+    /// (#545): with more than one plate.
+    fn dims_off_plate(&self) -> bool {
+        let document = self.session.document();
+        document.plates().count() > 1 && document.selection_len() == 0
+    }
+
+    /// The plate whose floor is under `cursor` (#545).
+    fn plate_under(&self, cursor: ScreenPoint) -> Option<u32> {
+        let vp = self.render.viewport()?;
+        let camera = self.camera.camera_cell().borrow();
+        let ray = picking::ray_from_pixel(
+            camera.as_ref()?,
+            crate::mesh_render::default_fov_y(),
+            vp.width(),
+            vp.height(),
+            cursor.x,
+            cursor.y,
+        );
+        let (x, y) = picking::ray_z_plane_intersection(&ray, 0.0)?;
+        crate::plates::plate_at(
+            &self.session.build_volume(),
+            self.session.document().plates(),
+            x,
+            y,
+        )
+    }
+
+    /// The plate the model `leaf` belongs to (#545): the one whose cell
+    /// holds the middle of its footprint.
+    fn plate_of_leaf(&self, leaf: sc_scene::NodeId) -> Option<u32> {
+        let document = self.session.document();
+        let plates = document.plates();
+        let volume = self.session.build_volume();
+        document
+            .with_scene(|spatial| {
+                crate::plate_layout::plate_of_leaf(spatial, &volume, plates, leaf)
+            })
+            .flatten()
+    }
+
+    /// The models of the scene with the plate each belongs to (#545).
+    pub(crate) fn models_on_plates(&self) -> Vec<(sc_scene::NodeId, u32)> {
+        let document = self.session.document();
+        let plates = document.plates();
+        let volume = self.session.build_volume();
+        document
+            .with_scene(|spatial| {
+                crate::raft_clash::model_bottoms(spatial)
+                    .into_iter()
+                    .filter_map(|(id, _)| {
+                        Some((
+                            id,
+                            crate::plate_layout::plate_of_leaf(spatial, &volume, plates, id)?,
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Adds a plate after the last (#545), as one step of history; the
+    /// active plate stays the active one.
+    pub(crate) fn add_plate(&self) {
+        let document = self.session.document();
+        let plates = document.plates();
+        if !document.is_loaded() || plates.count() >= crate::plates::MAX_PLATES {
+            return;
+        }
+        let before = document.plate_names();
+        let mut after = before.clone();
+        after.push(SceneDocument::new_plate_name(&before));
+        // The active plate stays the active one.
+        document.push_plates_edit(
+            SceneEdit::Compound(Vec::new()),
+            before,
+            after,
+            plates.active(),
+        );
+    }
+
+    /// Takes the active plate off (#545): the plates after it move up a
+    /// place with their models, and the models on it go to the plate that
+    /// takes its place, the next one (or the one before, when it was the
+    /// last), where they stood on it. One step of history; the plate they
+    /// went to is the active one.
+    #[cfg(test)]
+    pub(crate) fn remove_active_plate(&self) {
+        self.remove_active_plate_with(false);
+    }
+
+    /// Takes the active plate off as `remove_active_plate` does; `with_models` takes the models on it
+    /// and their supports off with it instead (Shift on the plate's tool).
+    pub(crate) fn remove_active_plate_with(&self, with_models: bool) {
+        let document = self.session.document();
+        let plates = document.plates();
+        let active = plates.active();
+        if plates.count() <= 1 {
+            return;
+        }
+        let last = plates.count() - 1;
+        let volume = self.session.build_volume();
+        let models = self.models_on_plates();
+        let on_it: Vec<sc_scene::NodeId> = models
+            .iter()
+            .filter(|&&(_, plate)| plate == active)
+            .map(|&(id, _)| id)
+            .collect();
+        let mut edits = if with_models {
+            document.removal_edits(document.with_their_supports(on_it))
+        } else if active == last {
+            // The last plate's models go to the one before.
+            let by =
+                crate::plates::offset(&volume, active - 1) - crate::plates::offset(&volume, active);
+            on_it
+                .into_iter()
+                .filter_map(|id| crate::plate_layout::moved_by(document, id, by))
+                .collect()
+        } else {
+            // The next plate comes to its place: they stay where they are.
+            Vec::new()
+        };
+        edits.extend(
+            models
+                .into_iter()
+                .filter(|&(_, plate)| plate > active)
+                .filter_map(|(id, plate)| {
+                    let by = crate::plates::offset(&volume, plate - 1)
+                        - crate::plates::offset(&volume, plate);
+                    crate::plate_layout::moved_by(document, id, by)
+                }),
+        );
+        let edit = SceneEdit::Compound(edits);
+        if !edit.is_noop() && document.apply_edit(edit.clone()).is_err() {
+            return;
+        }
+        // The plates after it keep their names (#545).
+        let before = document.plate_names();
+        let mut after = before.clone();
+        if (active as usize) < after.len() {
+            after.remove(active as usize);
+        }
+        document.push_plates_edit(edit, before, after, active.min(last - 1));
+        self.mark_dirty();
+    }
+
+    /// Shows the plates on the UI: how many, the active one and whether a
+    /// model stands on it (#545).
+    fn mirror_plates_to_ui(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let plates = self.session.document().plates();
+        ui.set_plate_count(plates.count() as i32);
+        ui.set_active_plate(plates.active() as i32);
+        let active_used = plates.count() > 1
+            && self
+                .models_on_plates()
+                .iter()
+                .any(|&(_, plate)| plate == plates.active());
+        ui.set_active_plate_used(active_used);
+    }
+
+    fn on_plates_changed(&self) {
+        self.mirror_plates_to_ui();
+        self.mark_dirty();
     }
 
     /// Pastes the clipboard's fragment into the current scene near the cursor's
@@ -3927,13 +4370,13 @@ impl ViewportController {
             self.readout_owed.set(true);
             return;
         };
-        let applied = document.apply_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+        let applied = document.apply_edit(SceneEdit::SetLocalTransform {
             node_id: id,
             before,
             after,
         });
         match applied {
-            Ok(()) => document.push_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+            Ok(()) => document.push_edit(SceneEdit::SetLocalTransform {
                 node_id: id,
                 before,
                 after,
@@ -3950,7 +4393,7 @@ impl ViewportController {
     /// are not dropped on their own: they follow their model.
     fn drop_each_to_plate(&self) {
         let document = self.session.document();
-        let edits: Vec<sc_scene_edit::SceneEdit> = document
+        let edits: Vec<SceneEdit> = document
             .with_scene(|spatial| {
                 document
                     .selection_node_ids()
@@ -3961,7 +4404,7 @@ impl ViewportController {
                         let before = query.local_transform();
                         let after =
                             super::numeric_transform::apply(&query, NumericEdit::DropToPlate)?;
-                        (after != before).then_some(sc_scene_edit::SceneEdit::SetLocalTransform {
+                        (after != before).then_some(SceneEdit::SetLocalTransform {
                             node_id: id,
                             before,
                             after,
@@ -3971,7 +4414,7 @@ impl ViewportController {
             })
             .unwrap_or_default();
         if !edits.is_empty() {
-            let edit = sc_scene_edit::SceneEdit::Compound(edits);
+            let edit = SceneEdit::Compound(edits);
             match document.apply_edit(edit.clone()) {
                 Ok(()) => document.push_edit(edit),
                 Err(EditNotApplied::Rejected(reason)) => self.show_edit_rejected(reason),
@@ -4229,6 +4672,27 @@ impl ViewportController {
         let (shown_up_to, lines) = self.under_plate_supports();
         renderer.set_support_lines(shown_up_to, lines.as_ref());
         renderer.set_supports_hidden(self.supports_hidden());
+        renderer.set_plates(self.session.document().plates());
+        renderer.set_dim_all(self.dims_off_plate());
+        renderer.set_plate_tools(
+            self.plate_tools_shown()
+                .then(|| self.plate_tool_hovered.get()),
+        );
+        {
+            let mut names = self.session.document().plate_names();
+            let edit = self.plate_name_edit.borrow();
+            let editing = edit.as_ref().map(|edit| {
+                if let Some(name) = names.get_mut(edit.plate as usize) {
+                    name.clone_from(&edit.text);
+                }
+                crate::plates::NameEdit {
+                    plate: edit.plate as usize,
+                    caret: edit.caret,
+                    anchor: edit.anchor,
+                }
+            });
+            renderer.set_plate_names(&names, editing);
+        }
         renderer.set_focus(&self.focus());
 
         let Some(ui) = self.ui.upgrade() else {
@@ -6192,3 +6656,7 @@ fn plate_length(mm: f32) -> String {
         format!("{:.1}", tenths / 10.0)
     }
 }
+
+#[cfg(test)]
+#[path = "tests_plates.rs"]
+mod tests_plates;

@@ -82,8 +82,12 @@ pub use readback::FramePixels;
 use render_size::clamp_render_size;
 pub use renderer_trait::MeshRenderer;
 pub use scene_upload::GpuScene;
+#[cfg(feature = "test-support")]
+use scene_upload::build_envelope_warning_mask;
+#[cfg(any(test, feature = "test-support"))]
+use scene_upload::build_model_entries;
 use scene_upload::{
-    MODEL_ENTRY_SIZE, WorldBoxes, build_envelope_warning_mask, build_model_entries,
+    MODEL_ENTRY_SIZE, WorldBoxes, build_model_entries_on, build_plate_warning_masks,
     renderable_leaf_count,
 };
 pub use support_lines::SupportLines;
@@ -374,6 +378,19 @@ pub struct Renderer {
     /// The marks of where supports are recommended, drawn into the scene's
     /// depth (#524).
     hints: overlay::OverlaySlot,
+    /// The scene's plates (#545): every plate piece is drawn once for each.
+    plates: crate::plates::Plates,
+    /// Out of focus dims even with nothing in focus ([`Self::set_dim_all`]).
+    dim_all: bool,
+    /// The active plate's tools (#545): shown or not, and the one under the
+    /// pointer.
+    plate_tools: Option<Option<u32>>,
+    /// The plates' names to show (#545), and the one being edited with the
+    /// byte its caret stands at.
+    plate_names: (Vec<String>, Option<crate::plates::NameEdit>),
+    /// The names as uploaded: what they were made from, their texture and
+    /// one quad per plate in its own frame.
+    plate_names_state: Option<(u64, wgpu::BindGroup, wgpu::Buffer)>,
     /// The rings of the islands an analysis found (#525), drawn over
     /// everything, the models included (#538).
     island_marks: overlay::OverlaySlot,
@@ -441,7 +458,7 @@ impl Renderer {
         if from_scratch {
             self.world_boxes.clear();
         }
-        build_model_entries(graph, &[], &[], build_volume, &mut self.world_boxes, false)
+        build_model_entries(graph, &[], None, build_volume, &mut self.world_boxes, false)
             .expect("entries");
         if warnings {
             build_envelope_warning_mask(graph, build_volume, &mut self.world_boxes).expect("mask");
@@ -490,6 +507,11 @@ impl Renderer {
             adopted: scene_upload::UploadedMeshes::default(),
             overlay: overlay::OverlaySlot::default(),
             hints: overlay::OverlaySlot::default(),
+            plates: crate::plates::Plates::one(),
+            dim_all: false,
+            plate_tools: None,
+            plate_names: (Vec::new(), None),
+            plate_names_state: None,
             island_marks: overlay::OverlaySlot::default(),
             island_hidden: overlay::OverlaySlot::default(),
             hint_source: None,
@@ -767,7 +789,8 @@ impl Renderer {
             self.pipelines.label_state = LabelState::Off;
             return Ok(());
         };
-        let tab = FrontTab::around_label(raster.aspect(), raster.height_over_word());
+        let tab = FrontTab::around_label(raster.aspect(), raster.height_over_word())
+            .with_ink_pad(raster.pad_over_height());
         match self.upload_label_texture(&raster) {
             Ok(bind_group) => {
                 self.pipelines.label_state = LabelState::Shown {
@@ -818,7 +841,7 @@ impl Renderer {
             let bind_group = self.coverage_bind_group(
                 "plate marks",
                 wgpu::TextureFormat::Rg8Unorm,
-                &raster.coverage,
+                &raster.texels,
                 raster.width,
                 raster.height,
                 &self.pipelines.label.texture_bind_group_layout,
@@ -882,7 +905,7 @@ impl Renderer {
             self.coverage_bind_group(
                 "front label",
                 wgpu::TextureFormat::Rg8Unorm,
-                &raster.coverage,
+                &raster.texels,
                 raster.width,
                 raster.height,
                 &self.pipelines.label.texture_bind_group_layout,
@@ -1048,6 +1071,114 @@ impl Renderer {
         self.supports_hidden = hidden;
     }
 
+    /// The scene's plates for the frames to come (#545).
+    pub fn set_plates(&mut self, plates: crate::plates::Plates) {
+        self.plates = plates;
+    }
+
+    /// Whether what is not in focus dims even when nothing is (#545): with
+    /// several plates and nothing selected, every object off the active
+    /// plate dims, and with the active plate empty, every object.
+    pub fn set_dim_all(&mut self, on: bool) {
+        self.dim_all = on;
+    }
+
+    /// The plates' names for the frames to come (#545), one per plate in
+    /// their order; `editing`, the plate whose name is being edited and the
+    /// byte of it its caret stands at.
+    pub fn set_plate_names(&mut self, names: &[String], editing: Option<crate::plates::NameEdit>) {
+        if self.plate_names.0 != names || self.plate_names.1 != editing {
+            self.plate_names = (names.to_vec(), editing);
+        }
+    }
+
+    /// Makes the names' texture and quads for `volume` when what they show
+    /// changed.
+    fn ensure_plate_names(&mut self, volume: &BuildVolume) {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.plate_names.hash(&mut hasher);
+        volume.width_mm().to_bits().hash(&mut hasher);
+        volume.depth_mm().to_bits().hash(&mut hasher);
+        let key = hasher.finish();
+        if self
+            .plate_names_state
+            .as_ref()
+            .is_some_and(|(k, _, _)| *k == key)
+        {
+            return;
+        }
+        self.plate_names_state = None;
+        let [x0, y0, x1, y1] = crate::plates::name_box(volume);
+        let aspect = (x1 - x0) / (y1 - y0);
+        let (names, editing) = &self.plate_names;
+        let Some(raster) = crate::front_label::rasterise_plate_names(names, aspect, *editing)
+        else {
+            return;
+        };
+        let rows = raster.rows as f32;
+        let row_uv = |k: u32| [0.0, k as f32 / rows, 1.0, (k + 1) as f32 / rows];
+        // Every name on top, then every one again facing down, so they read
+        // the right way round from under the plate too, as the label does.
+        let quads: Vec<pipelines::label::LabelVertex> =
+            (0..raster.rows)
+                .flat_map(|k| pipelines::label::mark_quad([x0, y0, x1, y1], row_uv(k)))
+                .chain((0..raster.rows).flat_map(|k| {
+                    pipelines::label::underside_mark_quad([x0, y0, x1, y1], row_uv(k))
+                }))
+                .collect();
+        let uploaded = scoped(&self.core.device, || {
+            let bind_group = self.coverage_bind_group(
+                "plate names",
+                wgpu::TextureFormat::Rgba8Unorm,
+                &raster.texels,
+                raster.width,
+                raster.height,
+                &self.pipelines.label.texture_bind_group_layout,
+                &self.pipelines.label.sampler,
+            );
+            let vertices = wgpu::util::DeviceExt::create_buffer_init(
+                &self.core.device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("mesh-viewer plate names vbo"),
+                    contents: bytemuck::cast_slice(&quads),
+                    usage: wgpu::BufferUsages::VERTEX,
+                },
+            );
+            (bind_group, vertices)
+        });
+        if let Ok((bind_group, vertices)) = uploaded {
+            self.plate_names_state = Some((key, bind_group, vertices));
+        }
+    }
+
+    /// Each plate's name on its rim (#545): quad `k` with instance `k`, so
+    /// the label shader moves it to plate `k` and fades it with the plate;
+    /// `underside`, the copies read from under the plate.
+    fn record_plate_names(&self, pass: &mut wgpu::RenderPass<'_>, underside: bool) {
+        let Some((_, bind_group, vertices)) = &self.plate_names_state else {
+            return;
+        };
+        pass.set_pipeline(&self.pipelines.label.pipeline);
+        pass.set_bind_group(0, &self.pipelines.label.uniforms_bind_group, &[]);
+        pass.set_bind_group(1, bind_group, &[]);
+        pass.set_vertex_buffer(0, vertices.slice(..));
+        pass.set_stencil_reference(0);
+        let rows = self.plate_names.0.len() as u32;
+        let first = if underside { 6 * rows } else { 0 };
+        for k in 0..rows.min(self.plates.count()) {
+            let at = first + 6 * k;
+            pass.draw(at..at + 6, k..k + 1);
+        }
+    }
+
+    /// The active plate's tools for the frames to come (#545): `None`
+    /// hides them; `Some(hovered)` shows them, the tool under the pointer
+    /// lit.
+    pub fn set_plate_tools(&mut self, tools: Option<Option<u32>>) {
+        self.plate_tools = tools;
+    }
+
     /// What stays lit in the frames to come while something is selected
     /// (#523): every other object is dimmed. Empty dims nothing.
     pub fn set_focus(&mut self, focus: &[NodeId]) {
@@ -1192,6 +1323,7 @@ impl Renderer {
 
         self.ensure_msaa(width, height)?;
         self.ensure_targets(width, height)?;
+        self.ensure_plate_names(&build_volume);
         let plate_buffers =
             self.ensure_plate_buffers(build_volume, self.pipelines.label_state.tab())?;
         let plate_buffers = &plate_buffers;
@@ -1216,11 +1348,12 @@ impl Renderer {
         let mut support_objects: Vec<bool> = Vec::new();
         self.surface_normals.clear_frame();
         let scene_for_draws = if let (Some(inst), Some(graph_data)) = (installed, graph) {
-            match build_model_entries(
+            match build_model_entries_on(
                 graph_data,
                 selection,
-                &self.focus,
+                (self.dim_all || !self.focus.is_empty()).then_some(self.focus.as_slice()),
                 build_volume,
+                self.plates,
                 &mut self.world_boxes,
                 overhang_map.is_some(),
             ) {
@@ -1262,12 +1395,14 @@ impl Renderer {
         // the envelope alone is the framing AABB.
         let env_min = build_volume.envelope_min_mm();
         let env_max = build_volume.envelope_max_mm();
+        // Every plate is in it (#545): the depth range reaches the farthest.
+        let plates_max = env_max + crate::plates::extent(&build_volume, self.plates);
         let (framing_min, framing_max) = match installed {
             Some(inst) => {
                 let (smin, smax) = inst.gpu.aabb();
-                (smin.min(env_min), smax.max(env_max))
+                (smin.min(env_min), smax.max(plates_max))
             }
-            None => (env_min, env_max),
+            None => (env_min, plates_max),
         };
         let view_proj = frame::compute_view_proj(
             camera,
@@ -1286,9 +1421,11 @@ impl Renderer {
         // discarded. A leaf-walk failure on the same graph already caused
         // `scene_for_draws` to fall to false above, so falling back to 0 here
         // keeps the wall-warning state consistent with the skipped mesh draws.
-        let face_breach_mask = graph
-            .and_then(|g| build_envelope_warning_mask(g, build_volume, &mut self.world_boxes).ok())
-            .unwrap_or(0);
+        let (face_breach_mask, breached_plates) = graph
+            .and_then(|g| {
+                build_plate_warning_masks(g, build_volume, self.plates, &mut self.world_boxes).ok()
+            })
+            .unwrap_or((0, 0));
         // From under the plate, the plate and the rafts fade out (#481); a
         // picture of the print has neither.
         let under_plate = if contents == FrameContents::Workspace {
@@ -1306,7 +1443,15 @@ impl Renderer {
                 env_max.z,
                 crate::under_plate::hidden_below_mm(raft_top_mm),
             ],
-            face_breach_mask: [face_breach_mask, 0, 0, 0],
+            // z: the plate's tools, 0 hidden, 1 shown, 2 + i tool i under the
+            // pointer (#545).
+            face_breach_mask: [
+                face_breach_mask,
+                breached_plates,
+                self.plate_tools
+                    .map_or(0, |hovered| hovered.map_or(1, |i| 2 + i)),
+                0,
+            ],
             overhang: overhang_map.map_or([0.0; 4], |map| {
                 let [limit, radians, contact, _] = map.uniform(env_min.z);
                 [limit, radians, contact, tip_cell_mm]
@@ -1327,6 +1472,15 @@ impl Renderer {
             } else {
                 let e = camera.eye();
                 [e.x, e.y, e.z, 1.0]
+            },
+            plates: {
+                let (px, py) = crate::plates::pitch(&build_volume);
+                [
+                    px,
+                    py,
+                    self.plates.count() as f32,
+                    self.plates.active() as f32,
+                ]
             },
         };
         self.core.queue.write_buffer(
@@ -1385,9 +1539,11 @@ impl Renderer {
             if contents == FrameContents::Workspace {
                 self.record_plate_solid(&mut pass, plate_buffers);
                 self.record_plate_top(&mut pass, plate_buffers);
+                self.record_plate_tools(&mut pass, plate_buffers);
                 self.record_cage(&mut pass, plate_buffers);
                 self.record_front_label(&mut pass, plate_buffers, LABEL_TOP);
                 self.record_plate_marks(&mut pass, false);
+                self.record_plate_names(&mut pass, false);
             }
 
             if scene_for_draws && let Some(inst) = installed {
@@ -1449,6 +1605,7 @@ impl Renderer {
                 // it as seen from below.
                 self.record_front_label(&mut pass, plate_buffers, LABEL_UNDERSIDE);
                 self.record_plate_marks(&mut pass, true);
+                self.record_plate_names(&mut pass, true);
                 // Last, over everything: an island's ring shows through the
                 // models and the plate (#538).
                 self.island_hidden.record(
@@ -1492,7 +1649,11 @@ impl Renderer {
             wgpu::IndexFormat::Uint32,
         );
         pass.set_stencil_reference(0);
-        pass.draw_indexed(0..plate_buffers.solid_index_count, 0, 0..1);
+        pass.draw_indexed(
+            0..plate_buffers.solid_index_count,
+            0,
+            0..self.plates.count(),
+        );
     }
 
     /// Slice-view cap: a flat quad at the clip height textured with the current
@@ -1522,19 +1683,35 @@ impl Renderer {
             plate_buffers.top_index_buffer.slice(..),
             wgpu::IndexFormat::Uint32,
         );
-        pass.draw_indexed(0..plate_buffers.top_index_count, 0, 0..1);
+        pass.draw_indexed(0..plate_buffers.top_index_count, 0, 0..self.plates.count());
     }
 
     /// Cage: 12 wireframe edges sharing the plate vertex buffer; the line-list
     /// index buffer picks the cage corner range. Relies on the vertex buffer
     /// and uniforms bind group set by [`Self::record_plate_solid`].
+    /// The active plate's tools (#545), on its rim: one instance, the active
+    /// plate's. Relies on the bind group set by [`Self::record_plate_solid`].
+    fn record_plate_tools(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
+        if self.plate_tools.is_none() {
+            return;
+        }
+        pass.set_pipeline(&self.pipelines.plate.top_pipeline);
+        pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
+        pass.set_index_buffer(
+            plate_buffers.tools_index_buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        let active = self.plates.active();
+        pass.draw_indexed(0..plate_buffers.tools_index_count, 0, active..active + 1);
+    }
+
     fn record_cage(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
         pass.set_pipeline(&self.pipelines.plate.line_pipeline);
         pass.set_index_buffer(
             plate_buffers.cage_index_buffer.slice(..),
             wgpu::IndexFormat::Uint32,
         );
-        pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
+        pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..self.plates.count());
     }
 
     /// The numbers along the plate's rulers, with the label's pipeline:
@@ -1556,9 +1733,9 @@ impl Renderer {
         pass.set_stencil_reference(0);
         let half = *count / 2;
         if underside {
-            pass.draw(half..*count, 0..1);
+            pass.draw(half..*count, 0..self.plates.count());
         } else {
-            pass.draw(0..half, 0..1);
+            pass.draw(0..half, 0..self.plates.count());
         }
     }
 
@@ -1584,7 +1761,7 @@ impl Renderer {
         pass.set_bind_group(1, bind_group, &[]);
         pass.set_vertex_buffer(0, quad.slice(..));
         pass.set_stencil_reference(0);
-        pass.draw(vertices, 0..1);
+        pass.draw(vertices, 0..self.plates.count());
     }
 
     /// Marks what is selected into the stencil whole, through whatever stands
@@ -1820,7 +1997,7 @@ impl Renderer {
             wgpu::IndexFormat::Uint32,
         );
         pass.set_stencil_reference(0);
-        pass.draw_indexed(0..plate_buffers.wall_index_count, 0, 0..1);
+        pass.draw_indexed(0..plate_buffers.wall_index_count, 0, 0..self.plates.count());
     }
 
     /// Plate bottom: drawn last in the main pass with alpha blending and
@@ -1843,7 +2020,11 @@ impl Renderer {
             wgpu::IndexFormat::Uint32,
         );
         pass.set_stencil_reference(0);
-        pass.draw_indexed(0..plate_buffers.bottom_index_count, 0, 0..1);
+        pass.draw_indexed(
+            0..plate_buffers.bottom_index_count,
+            0,
+            0..self.plates.count(),
+        );
     }
 
     /// Outline post-pass: dilate the stencil set by the mesh pass to draw a

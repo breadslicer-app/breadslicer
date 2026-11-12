@@ -135,6 +135,20 @@ pub trait MeshRenderer {
     /// Leaves the support meshes out of the view, lines and all (#512).
     fn set_supports_hidden(&mut self, _hidden: bool) {}
 
+    /// The scene's plates (#545): each drawn where it stands, the active one
+    /// marked.
+    fn set_plates(&mut self, _plates: crate::plates::Plates) {}
+
+    /// Whether out of focus dims with nothing in focus too (#545).
+    fn set_dim_all(&mut self, _on: bool) {}
+
+    /// The active plate's tools (#545): `None` hides them, `Some(hovered)`
+    /// shows them with the tool under the pointer lit.
+    fn set_plate_tools(&mut self, _tools: Option<Option<u32>>) {}
+
+    /// The plates' names (#545), and the one being edited with its caret.
+    fn set_plate_names(&mut self, _names: &[String], _editing: Option<crate::plates::NameEdit>) {}
+
     /// What stays lit while something is selected (#523); the rest dims.
     fn set_focus(&mut self, _focus: &[sc_scene::NodeId]) {}
 
@@ -274,6 +288,22 @@ impl MeshRenderer for Renderer {
 
     fn set_supports_hidden(&mut self, hidden: bool) {
         Renderer::set_supports_hidden(self, hidden);
+    }
+
+    fn set_plates(&mut self, plates: crate::plates::Plates) {
+        Renderer::set_plates(self, plates);
+    }
+
+    fn set_dim_all(&mut self, on: bool) {
+        Renderer::set_dim_all(self, on);
+    }
+
+    fn set_plate_tools(&mut self, tools: Option<Option<u32>>) {
+        Renderer::set_plate_tools(self, tools);
+    }
+
+    fn set_plate_names(&mut self, names: &[String], editing: Option<crate::plates::NameEdit>) {
+        Renderer::set_plate_names(self, names, editing);
     }
 
     fn set_focus(&mut self, focus: &[sc_scene::NodeId]) {

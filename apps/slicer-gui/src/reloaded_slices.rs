@@ -180,6 +180,8 @@ mod reloaded_slices_tests {
             output_format: None,
             embedded: Vec::new(),
             review_decisions: Vec::new(),
+            plates: 0,
+            plate_names: Vec::new(),
         }
     }
 

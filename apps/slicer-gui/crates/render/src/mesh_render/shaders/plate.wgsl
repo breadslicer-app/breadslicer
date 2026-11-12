@@ -39,9 +39,19 @@ struct Uniforms {
     env_max: vec4<f32>,
     face_breach_mask: vec4<u32>,
     overhang: vec4<f32>,
+    under_plate: vec4<f32>,
+    eye: vec4<f32>,
+    plates: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
+
+// The plates of the scene (#545): xy = how far apart they stand, centre to
+// centre, z = how many, w = the active one. Plate `i` stands at column
+// i % 4 and row i / 4 from the first, which is centred on the origin.
+fn plate_offset(i: u32) -> vec3<f32> {
+    return vec3<f32>(f32(i % 4u) * u.plates.x, f32(i / 4u) * u.plates.y, 0.0);
+}
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -50,17 +60,135 @@ struct VsIn {
 
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
+    // On the plate drawn, as the first stands: the grid, the rulers and the
+    // cage are measured from its corners whichever plate it is.
     @location(0) world_pos: vec3<f32>,
     @location(1) @interpolate(flat) kind: u32,
+    @location(2) @interpolate(flat) plate: u32,
 };
 
+// One instance per plate (#545), moved to where it stands.
 @vertex
-fn vs_main(in: VsIn) -> VsOut {
+fn vs_main(in: VsIn, @builtin(instance_index) plate: u32) -> VsOut {
     var out: VsOut;
-    out.clip_pos = u.view_proj * vec4<f32>(in.position, 1.0);
+    out.clip_pos = u.view_proj * vec4<f32>(in.position + plate_offset(plate), 1.0);
     out.world_pos = in.position;
     out.kind = in.kind;
+    out.plate = plate;
     return out;
+}
+
+// Whether `plate` is one of several and not the active one (#545): it shows
+// its floor alone, fainter, as an object out of focus does.
+fn inactive_plate(plate: u32) -> bool {
+    return u.plates.z > 1.5 && f32(plate) != u.plates.w;
+}
+
+// How opaque the floor of an inactive plate is.
+const INACTIVE_PLATE_ALPHA: f32 = 0.45;
+
+// The active plate's tools (#545): squares on the rim right of the back
+// right corner, as `crate::plates` lays them out, with the app's icons drawn
+// in their 24-unit box.
+const TOOL_MM: f32 = 14.0;
+const TOOL_GAP_MM: f32 = 2.5;
+const TOOL_INSET_MM: f32 = 5.0;
+// `chrome`, `raised` and `border` of the theme; the icon in `text-muted`,
+// lit `text`; the remove tool lit in the caption's close red.
+const TOOL_BACK: vec3<f32> = vec3<f32>(0.086, 0.094, 0.102);
+const TOOL_HOVER: vec3<f32> = vec3<f32>(0.141, 0.153, 0.169);
+const TOOL_EDGE: vec3<f32> = vec3<f32>(0.239, 0.259, 0.282);
+const TOOL_ICON: vec3<f32> = vec3<f32>(0.545, 0.584, 0.616);
+const TOOL_ICON_LIT: vec3<f32> = vec3<f32>(0.933, 0.941, 0.949);
+const TOOL_DANGER: vec3<f32> = vec3<f32>(0.769, 0.169, 0.110);
+
+// Distance from `p` to the segment `a`-`b`.
+fn segment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let ab = b - a;
+    let t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+    return length(p - (a + ab * t));
+}
+
+// Distance from `p` to the outline of the box `lo`-`hi`.
+fn box_outline(p: vec2<f32>, lo: vec2<f32>, hi: vec2<f32>) -> f32 {
+    return min(
+        min(segment(p, lo, vec2<f32>(hi.x, lo.y)), segment(p, vec2<f32>(hi.x, lo.y), hi)),
+        min(segment(p, hi, vec2<f32>(lo.x, hi.y)), segment(p, vec2<f32>(lo.x, hi.y), lo)),
+    );
+}
+
+// Distance from `p`, in the icon's 24-unit box (y down), to icon `i`'s
+// strokes: Icons.plus, Icons.arrange, Icons.trash.
+fn tool_icon(i: u32, p: vec2<f32>) -> f32 {
+    if i == 0u {
+        return min(segment(p, vec2<f32>(12.0, 5.0), vec2<f32>(12.0, 19.0)),
+                   segment(p, vec2<f32>(5.0, 12.0), vec2<f32>(19.0, 12.0)));
+    }
+    if i == 1u {
+        return min(
+            min(box_outline(p, vec2<f32>(4.0, 4.0), vec2<f32>(10.5, 10.5)),
+                box_outline(p, vec2<f32>(13.5, 4.0), vec2<f32>(20.0, 10.5))),
+            min(box_outline(p, vec2<f32>(4.0, 13.5), vec2<f32>(10.5, 20.0)),
+                box_outline(p, vec2<f32>(13.5, 13.5), vec2<f32>(20.0, 20.0))),
+        );
+    }
+    var d = segment(p, vec2<f32>(4.0, 7.0), vec2<f32>(20.0, 7.0));
+    d = min(d, segment(p, vec2<f32>(9.5, 7.0), vec2<f32>(9.5, 4.0)));
+    d = min(d, segment(p, vec2<f32>(9.5, 4.0), vec2<f32>(14.5, 4.0)));
+    d = min(d, segment(p, vec2<f32>(14.5, 4.0), vec2<f32>(14.5, 7.0)));
+    d = min(d, segment(p, vec2<f32>(6.0, 7.0), vec2<f32>(7.0, 20.0)));
+    d = min(d, segment(p, vec2<f32>(7.0, 20.0), vec2<f32>(17.0, 20.0)));
+    d = min(d, segment(p, vec2<f32>(17.0, 20.0), vec2<f32>(18.0, 7.0)));
+    d = min(d, segment(p, vec2<f32>(10.0, 11.0), vec2<f32>(10.0, 16.5)));
+    d = min(d, segment(p, vec2<f32>(14.0, 11.0), vec2<f32>(14.0, 16.5)));
+    return d;
+}
+
+// A fragment of the tools' strip at `local` (the plate's frame).
+fn plate_tools(local: vec2<f32>) -> vec4<f32> {
+    let shown = u.face_breach_mask.z;
+    if shown == 0u {
+        discard;
+    }
+    let left = u.env_max.x + TOOL_INSET_MM;
+    let down = u.env_max.y - local.y;
+    let step = TOOL_MM + TOOL_GAP_MM;
+    // Tool by tool, changing in the middle of the gap between two, where
+    // nothing is drawn: the derivatives never see the jump.
+    let i = u32(max(floor((down + TOOL_GAP_MM * 0.5) / step), 0.0));
+    let within = down - f32(i) * step;
+    if within < 0.0 || within > TOOL_MM || i > 2u {
+        discard;
+    }
+    // In the tool's 24-unit box, y down as the icons are drawn.
+    let p = vec2<f32>(local.x - left, within) * (24.0 / TOOL_MM);
+    let aa = max(fwidth(p.x), fwidth(p.y));
+    // A square with rounded corners, its edge a hairline.
+    let r = 3.0;
+    let q = abs(p - vec2<f32>(12.0)) - vec2<f32>(12.0 - r);
+    let outside = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    if outside > aa {
+        discard;
+    }
+    let hovered = shown == 2u + i;
+    // Add with 32 plates, remove with 1: nothing to do there.
+    let enabled = (i != 0u || u.plates.z < 31.5) && (i != 2u || u.plates.z > 1.5);
+    var colour = select(TOOL_BACK, TOOL_HOVER, hovered && enabled);
+    if hovered && enabled && i == 2u {
+        colour = mix(TOOL_BACK, TOOL_DANGER, 0.45);
+    }
+    colour = mix(colour, TOOL_EDGE, hairline(abs(outside + 0.6), aa, 1.0));
+    let ink = select(TOOL_ICON, TOOL_ICON_LIT, hovered && enabled);
+    let icon = clamp(1.0 - (tool_icon(i, p) - 0.8) / max(aa, 1e-3), 0.0, 1.0);
+    colour = mix(colour, ink, icon * select(0.4, 1.0, enabled));
+    let edge_alpha = clamp(0.5 - outside / max(aa, 1e-3), 0.0, 1.0);
+    return vec4<f32>(colour, 0.96 * edge_alpha * (1.0 - u.env_min.w));
+}
+
+// Whether a model crosses plate `plate`'s walls: bit `plate` of
+// face_breach_mask.y (#545).
+fn breached_plate(plate: u32) -> bool {
+    return ((u.face_breach_mask.y >> plate) & 1u) != 0u;
 }
 
 // Colours are Breadslicer's theme tokens (`ui/kit/theme.slint`, dark),
@@ -75,6 +203,8 @@ const FLOOR_GRID: vec3<f32> = vec3<f32>(0.122, 0.141, 0.157);
 const FLOOR_GRID_MAJOR: vec3<f32> = vec3<f32>(0.192, 0.224, 0.247);
 // The floor's outline, `border-strong` #3c454d.
 const FLOOR_EDGE: vec3<f32> = vec3<f32>(0.235, 0.271, 0.302);
+// The edge of the active plate among several (#545): the selection's amber.
+const ACTIVE_EDGE: vec3<f32> = vec3<f32>(1.0, 0.68, 0.28);
 // Cage lines and brackets: `text-muted` #8b959d.
 const CAGE_COLOUR: vec3<f32> = vec3<f32>(0.545, 0.584, 0.616);
 // The rim around the floor: the background, so the plate reads as a
@@ -113,7 +243,7 @@ fn to_step(x: f32, step: f32) -> f32 {
     return min(f, 1.0 - f) * step;
 }
 
-fn floor_colour(world_xy: vec2<f32>) -> vec3<f32> {
+fn floor_colour(world_xy: vec2<f32>, plate: u32) -> vec3<f32> {
     let lo = u.env_min.xy;
     let hi = u.env_max.xy;
     let local = world_xy - lo;
@@ -133,6 +263,9 @@ fn floor_colour(world_xy: vec2<f32>) -> vec3<f32> {
     var colour = mix(FLOOR_BASE, FLOOR_GRID, minor_shown);
     colour = mix(colour, FLOOR_GRID_MAJOR, major);
     let edge = min(min(world_xy.x - lo.x, hi.x - world_xy.x), min(world_xy.y - lo.y, hi.y - world_xy.y));
+    if u.plates.z > 1.5 && f32(plate) == u.plates.w {
+        return mix(colour, ACTIVE_EDGE, hairline(edge, aa, 3.0));
+    }
     return mix(colour, FLOOR_EDGE, hairline(edge, aa, 1.5));
 }
 
@@ -238,23 +371,33 @@ fn plate_face(colour: vec3<f32>, alpha: f32) -> vec4<f32> {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if in.kind == 0u {
-        let grid = floor_colour(in.world_pos.xy);
+        let grid = floor_colour(in.world_pos.xy, in.plate);
         // Bit 5 of face_breach_mask flags a breach below Z = 0. When
         // it is set, paint the same diagonal stripe pattern used by
         // the wall pass directly over the grid; the indicator is
         // visible across the entire build floor regardless of where
         // the offending vertex lies in XY.
-        if (u.face_breach_mask.x & (1u << 5u)) != 0u {
+        if (u.face_breach_mask.x & (1u << 5u)) != 0u && breached_plate(in.plate) {
             let s = in.world_pos.x + in.world_pos.y;
             let phase = fract(s / WALL_STRIPE_PERIOD_MM);
             if phase < WALL_STRIPE_DUTY {
                 return plate_face(WALL_WARNING_COLOUR, 1.0);
             }
         }
-        return plate_face(grid, 1.0);
+        return plate_face(grid, select(1.0, INACTIVE_PLATE_ALPHA, inactive_plate(in.plate)));
+    }
+    if in.kind == 10u {
+        return plate_tools(in.world_pos.xy);
     }
     if in.kind == 2u {
-        return plate_face(rim_colour(in.world_pos.xy), 1.0);
+        return plate_face(
+            rim_colour(in.world_pos.xy),
+            select(1.0, INACTIVE_PLATE_ALPHA, inactive_plate(in.plate)),
+        );
+    }
+    // An inactive plate has no cage nor warning walls (#545).
+    if inactive_plate(in.plate) {
+        discard;
     }
     if in.kind == 3u || in.kind == 4u {
         // The plate is a drawing on the ground, not a slab (#507): its
@@ -268,7 +411,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // pixels regardless of the blend state.
         let face_idx = in.kind - 5u;
         let breached = (u.face_breach_mask.x >> face_idx) & 1u;
-        if breached == 0u {
+        if breached == 0u || !breached_plate(in.plate) {
             discard;
         }
         let s = wall_stripe_coord(in.kind, in.world_pos);

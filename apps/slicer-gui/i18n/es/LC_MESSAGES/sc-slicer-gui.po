@@ -6941,6 +6941,57 @@ msgstr "Poner soportes en todas las islas"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
+msgid "PLATES"
+msgstr "CAMAS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "{} of {}"
+msgstr "{} de {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Plate {} is active. Click a plate, or a model on it, to make it the active one."
+msgstr "La cama {} está activa. Hacé clic en una cama, o en un modelo sobre ella, para activarla."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Add plates to lay out more prints side by side, then slice the one to print."
+msgstr "Agregá camas para armar más impresiones una al lado de la otra; después laminás la que vas a imprimir."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Removing the active plate moves its models to the plate that takes its place. Shift+click the plate's own remove tool to remove them with it."
+msgstr "Al quitar la cama activa, sus modelos pasan a la cama que queda en su lugar. Con Shift+clic en la papelera de la cama se van con ella."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Add plate"
+msgstr "Agregar cama"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Remove plate"
+msgstr "Quitar cama"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Add a plate"
+msgstr "Agregar una cama"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Arrange this plate"
+msgstr "Acomodar esta cama"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Remove this plate (Shift: with its models)"
+msgstr "Quitar esta cama (Shift: con sus modelos)"
+
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
 msgid "Go to the island"
 msgstr "Ir a la isla"
 

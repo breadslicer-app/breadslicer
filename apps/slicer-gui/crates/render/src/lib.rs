@@ -20,8 +20,10 @@ pub mod graphics_adapter;
 mod i18n;
 pub mod mesh_render;
 pub mod picking;
+pub mod plates;
 pub mod print_file_preview;
 pub mod slice_cap;
+mod text_sdf;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 #[cfg(test)]

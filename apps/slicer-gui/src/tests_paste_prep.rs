@@ -364,6 +364,16 @@ fn a_pasted_copy_keeps_its_hollow_and_supports_and_prints_the_same() {
         assert!(copy_set.session.hand_edited(), "the hand edit came along");
         let copy_set_mesh = mesh_of(&document, copy_set.leaf);
         assert!(!Arc::ptr_eq(&copy_set_mesh, &original_set_mesh));
+        // Drawn as supports, as the model's are.
+        assert!(
+            sc_geom::df_supports::is_any_support_mesh(&original_set_mesh),
+            "the model's supports read as supports"
+        );
+        assert!(
+            sc_geom::df_supports::is_any_support_mesh(&copy_set_mesh),
+            "the copy's supports read as supports: {:?}",
+            copy_set_mesh.meta()
+        );
         assert_eq!(
             copy_set_mesh.vertices().len(),
             original_set_mesh.vertices().len()

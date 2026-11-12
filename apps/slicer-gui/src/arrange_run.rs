@@ -96,17 +96,31 @@ struct Gathered {
     /// Per body, the support leaves whose set in force follows its model.
     follows: Vec<Vec<NodeId>>,
     names: Vec<String>,
+    /// Per body, the leaf that says which plate it stands on (#545): its
+    /// model, or the supports no model owns.
+    anchors: Vec<NodeId>,
 }
 
 /// A run in flight.
 struct Pending {
     revision: SceneRevision,
-    leaves: Vec<Vec<NodeId>>,
-    names: Vec<String>,
+    /// Per plate arranged (#545), each body's leaves and name.
+    leaves: Vec<Vec<Vec<NodeId>>>,
+    names: Vec<Vec<String>>,
     started: Instant,
 }
 
-type ArrangeSlot = Arc<Mutex<Option<Result<Option<Outcome>, String>>>>;
+/// Which plates an Arrange press works on (#545).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ArrangeScope {
+    /// Every plate with objects, each on its own: the card's buttons and A.
+    Plates,
+    /// The active plate alone: its own tool.
+    ActivePlate,
+}
+
+/// The worker's outcome: one per plate arranged.
+type ArrangeSlot = Arc<Mutex<Option<Result<Option<Vec<Outcome>>, String>>>>;
 
 pub(crate) struct ArrangeRun {
     ui: slint::Weak<MainWindow>,
@@ -143,7 +157,12 @@ impl ArrangeRun {
         run.push_options(ui);
         {
             let run = run.clone();
-            ui.on_arrange_requested(move |selection| run.start(selection));
+            ui.on_arrange_requested(move |selection| run.start(selection, ArrangeScope::Plates));
+        }
+        {
+            // The active plate's own Arrange (#545): all of its objects.
+            let run = run.clone();
+            ui.on_plate_arrange_requested(move || run.start(false, ArrangeScope::ActivePlate));
         }
         {
             let run = run.clone();
@@ -190,7 +209,7 @@ impl ArrangeRun {
     }
 
     /// Arrange all, or (`selection`) the selected models alone.
-    pub(crate) fn start(self: &Rc<Self>, selection: bool) {
+    pub(crate) fn start(self: &Rc<Self>, selection: bool, scope: ArrangeScope) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -202,30 +221,42 @@ impl ArrangeRun {
         {
             return;
         }
-        let Some(gathered) = gather(&self.document, selection) else {
+        let jobs = jobs_on_plates(&self.document, &self.ctrl.build_volume(), selection, scope);
+        if jobs.is_empty() {
             return;
-        };
-        let plate = self.plate();
+        }
         let settings = self.options.get().settings();
+        let mut leaves = Vec::new();
+        let mut names = Vec::new();
+        let mut work = Vec::new();
+        for (gathered, plate) in jobs {
+            leaves.push(gathered.leaves);
+            names.push(gathered.names);
+            work.push((gathered.bodies, plate));
+        }
         *self.pending.borrow_mut() = Some(Pending {
             revision: self.document.scene_revision(),
-            leaves: gathered.leaves,
-            names: gathered.names,
+            leaves,
+            names,
             started: Instant::now(),
         });
         self.cancel.store(false, Ordering::Relaxed);
         ui.set_arranging(true);
         crate::breadcrumbs::note(&format!(
-            "arrange: {} object(s), selection {selection}",
-            gathered.bodies.len()
+            "arrange: {} plate(s), {} object(s), selection {selection}",
+            work.len(),
+            work.iter().map(|(b, _)| b.len()).sum::<usize>()
         ));
         let slot = self.slot.clone();
         let cancel = self.cancel.clone();
         let ui_weak = self.ui.clone();
-        let bodies = gathered.bodies;
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                sc_arrange::arrange(&bodies, &plate, &settings, &cancel).ok()
+                work.iter()
+                    .map(|(bodies, plate)| {
+                        sc_arrange::arrange(bodies, plate, &settings, &cancel).ok()
+                    })
+                    .collect::<Option<Vec<Outcome>>>()
             }))
             .map_err(|payload| panic_message(&payload));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
@@ -258,8 +289,8 @@ impl ArrangeRun {
         let (Some(result), Some(pending)) = (taken, pending) else {
             return;
         };
-        let outcome = match result {
-            Ok(Some(outcome)) => outcome,
+        let outcomes = match result {
+            Ok(Some(outcomes)) => outcomes,
             // Cancelled.
             Ok(None) => return,
             Err(panic) => {
@@ -279,13 +310,25 @@ impl ArrangeRun {
             ));
             return;
         }
-        crate::breadcrumbs::note(&format!(
-            "arrange: footprints {:?}, search {:?}",
-            outcome.timings.footprints, outcome.timings.search
-        ));
-        let Some(edit) = arrangement_edit(&self.document, &outcome, &pending.leaves) else {
-            ui.set_arrange_last_run(ctr!("Inspector", "Everything is already in place."));
-            return;
+        for outcome in &outcomes {
+            crate::breadcrumbs::note(&format!(
+                "arrange: footprints {:?}, search {:?}",
+                outcome.timings.footprints, outcome.timings.search
+            ));
+        }
+        // Each plate's moves, in one undo step.
+        let mut edits: Vec<SceneEdit> = outcomes
+            .iter()
+            .zip(&pending.leaves)
+            .filter_map(|(outcome, leaves)| arrangement_edit(&self.document, outcome, leaves))
+            .collect();
+        let edit = match edits.len() {
+            0 => {
+                ui.set_arrange_last_run(ctr!("Inspector", "Everything is already in place."));
+                return;
+            }
+            1 => edits.remove(0),
+            _ => SceneEdit::Compound(edits),
         };
         match self.document.apply_edit(edit.clone()) {
             Ok(()) => self.document.push_edit(edit),
@@ -303,11 +346,20 @@ impl ArrangeRun {
             }
             Err(EditNotApplied::NoSceneLoaded) => return,
         }
-        let moved = outcome.placements.iter().flatten().count();
-        let left_off: Vec<String> = outcome
-            .left_off()
-            .into_iter()
-            .filter_map(|i| pending.names.get(i).cloned())
+        let moved: usize = outcomes
+            .iter()
+            .map(|o| o.placements.iter().flatten().count())
+            .sum();
+        let left_off: Vec<String> = outcomes
+            .iter()
+            .zip(&pending.names)
+            .flat_map(|(outcome, names)| {
+                outcome
+                    .left_off()
+                    .into_iter()
+                    .filter_map(|i| names.get(i).cloned())
+                    .collect::<Vec<_>>()
+            })
             .collect();
         let seconds = pending.started.elapsed().as_secs_f64();
         ui.set_arrange_last_run(last_run_text(moved, left_off.len(), seconds).into());
@@ -393,8 +445,46 @@ fn affine(t: &Transform3D) -> AffineTransform3D {
 /// whose model is unknown stay where they are, and so does everything but
 /// the selected models when arranging the selection (#13). `None` when
 /// nothing would move.
-fn gather(document: &SceneDocument, selection: bool) -> Option<Gathered> {
-    gather_all(document, selection).filter(|g| g.bodies.iter().any(|b| !b.fixed))
+fn gather(
+    document: &SceneDocument,
+    selection: bool,
+    on: Option<(crate::build_volume::BuildVolume, crate::plates::Plates, u32)>,
+) -> Option<Gathered> {
+    let mut gathered = gather_all(document, selection)?;
+    if let Some((volume, plates, plate)) = on {
+        // The objects of one plate (#545): each body by its first leaf, a
+        // model or the supports no model owns.
+        let keep: Vec<bool> = document
+            .with_scene(|spatial| {
+                gathered
+                    .anchors
+                    .iter()
+                    .map(|&leaf| {
+                        crate::plate_layout::plate_of_leaf(spatial, &volume, plates, leaf)
+                            == Some(plate)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut i = 0;
+        gathered.bodies.retain(|_| {
+            i += 1;
+            keep.get(i - 1).copied().unwrap_or(false)
+        });
+        for list in [&mut gathered.leaves, &mut gathered.follows] {
+            let mut i = 0;
+            list.retain(|_| {
+                i += 1;
+                keep.get(i - 1).copied().unwrap_or(false)
+            });
+        }
+        let mut i = 0;
+        gathered.names.retain(|_| {
+            i += 1;
+            keep.get(i - 1).copied().unwrap_or(false)
+        });
+    }
+    Some(gathered).filter(|g| g.bodies.iter().any(|b| !b.fixed))
 }
 
 /// [`gather`], also when nothing would move.
@@ -409,6 +499,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             leaves: Vec::new(),
             follows: Vec::new(),
             names: Vec::new(),
+            anchors: Vec::new(),
         };
         let mut body_of: HashMap<NodeId, usize> = HashMap::new();
         let part = |leaf: NodeId| {
@@ -437,6 +528,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             gathered.leaves.push(vec![leaf]);
             gathered.follows.push(Vec::new());
             gathered.names.push(name(row));
+            gathered.anchors.push(leaf);
         }
         for (row, &leaf) in rows.iter().enumerate() {
             let Some(query) = spatial.leaf(leaf) else {
@@ -479,11 +571,72 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
                     gathered.leaves.push(Vec::new());
                     gathered.follows.push(Vec::new());
                     gathered.names.push(name(row));
+                    gathered.anchors.push(leaf);
                 }
             }
         }
         gathered
     })
+}
+
+/// What an Arrange press works on: the objects, and the plate they go on.
+/// With several plates (#545), each plate's objects on it, plate by plate:
+/// every plate with objects to move, or the active one alone.
+fn jobs_on_plates(
+    document: &SceneDocument,
+    volume: &crate::build_volume::BuildVolume,
+    selection: bool,
+    scope: ArrangeScope,
+) -> Vec<(Gathered, Plate)> {
+    let plates = document.plates();
+    if plates.count() == 1 {
+        return gather(document, selection, None)
+            .map(|g| vec![(g, plate_of(volume))])
+            .unwrap_or_default();
+    }
+    let which: Vec<u32> = match scope {
+        ArrangeScope::ActivePlate => vec![plates.active()],
+        ArrangeScope::Plates => (0..plates.count()).collect(),
+    };
+    which
+        .into_iter()
+        .filter_map(|p| {
+            let gathered = gather(document, selection, Some((*volume, plates, p)))?;
+            let mut plate = plate_of(volume);
+            let at = crate::plates::offset(volume, p);
+            let (dx, dy) = (f64::from(at.x), f64::from(at.y));
+            plate.min = [plate.min[0] + dx, plate.min[1] + dy];
+            plate.max = [plate.max[0] + dx, plate.max[1] + dy];
+            Some((gathered, plate))
+        })
+        .collect()
+}
+
+/// An Arrange press on this thread, on the plates of `document` on
+/// `volume` (#545), applied as a run applies it: for tests.
+#[cfg(test)]
+pub(crate) fn arrange_on_plates_now(
+    document: &SceneDocument,
+    volume: &crate::build_volume::BuildVolume,
+    options: ArrangeOptions,
+    scope: ArrangeScope,
+) -> Option<usize> {
+    let mut edits = Vec::new();
+    for (gathered, plate) in jobs_on_plates(document, volume, false, scope) {
+        let outcome = sc_arrange::arrange(
+            &gathered.bodies,
+            &plate,
+            &options.settings(),
+            &AtomicBool::new(false),
+        )
+        .ok()?;
+        edits.extend(arrangement_edit(document, &outcome, &gathered.leaves));
+    }
+    let count = edits.len();
+    let edit = SceneEdit::Compound(edits);
+    document.apply_edit(edit.clone()).ok()?;
+    document.push_edit(edit);
+    Some(count)
 }
 
 /// Arranges on this thread and applies the result, as a run does: for
@@ -495,7 +648,7 @@ pub(crate) fn arrange_now(
     options: ArrangeOptions,
     selection: bool,
 ) -> Option<Outcome> {
-    let gathered = gather(document, selection)?;
+    let gathered = gather(document, selection, None)?;
     let outcome = sc_arrange::arrange(
         &gathered.bodies,
         plate,

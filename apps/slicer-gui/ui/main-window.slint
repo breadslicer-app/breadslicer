@@ -697,6 +697,31 @@ export component MainWindow inherits Window {
     in property <float> arrange-max-copies: 0;
     // Arrange all (false) or the selection (true).
     callback arrange-requested(bool);
+    // The scene's plates (#545): how many, the active one (from 0) and
+    // whether a model stands on it.
+    in property <int> plate-count: 1;
+    in property <int> active-plate: 0;
+    in property <bool> active-plate-used;
+    callback plate-add-requested();
+    // With the models on it (Shift on the plate's tool) or not.
+    callback plate-remove-requested(bool);
+    // The Arrange tool of the active plate, drawn on its rim (#545).
+    callback plate-arrange-requested();
+    // A plate's name being edited where it lies on the plate (#545): the keys
+    // go to a hidden field, the name shows on the plate as it is typed.
+    in-out property <string> plate-name-text;
+    // The text, the byte the caret stands at and the byte the selection's
+    // other end stands at (the caret's own when nothing is selected).
+    callback plate-name-edited(string, int, int);
+    // Done: kept (Enter, or the field left) or not (Escape).
+    callback plate-name-done(bool);
+    public function focus-plate-name(anchor: int, caret: int) {
+        plate-name-input.focus();
+        plate-name-input.set-selection-offsets(anchor, caret);
+    }
+    public function end-plate-name() {
+        mv.focus-viewport();
+    }
     callback arrange-fill-requested();
     callback arrange-finished();
     callback arrange-cancel();
@@ -2194,6 +2219,15 @@ export component MainWindow inherits Window {
                                 arrange-margin: root.arrange-margin;
                                 arrange-turns: root.arrange-turns;
                                 arrange-shadow-only: root.arrange-shadow-only;
+                                plate-count: root.plate-count;
+                                active-plate: root.active-plate;
+                                active-plate-used: root.active-plate-used;
+                                plate-add => {
+                                    root.plate-add-requested();
+                                }
+                                plate-remove => {
+                                    root.plate-remove-requested(false);
+                                }
                                 arrange-filling: root.arrange-filling;
                                 arrange-fill-progress: root.arrange-fill-progress;
                                 arrange-max-copies: root.arrange-max-copies;
@@ -3024,6 +3058,49 @@ export component MainWindow inherits Window {
     changed start-open => {
         if (!root.start-open) {
             mv.focus-viewport();
+        }
+    }
+
+    // The hidden field a plate's name is typed in (#545).
+    plate-name-scope := FocusScope {
+        x: 0;
+        y: 0;
+        width: 1px;
+        height: 1px;
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.plate-name-done(false);
+                return accept;
+            }
+            return reject;
+        }
+
+        plate-name-input := TextInput {
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            single-line: true;
+            text <=> root.plate-name-text;
+            edited => {
+                root.plate-name-edited(self.text, self.cursor-position-byte-offset, self.anchor-position-byte-offset);
+            }
+            cursor-position-changed(point) => {
+                root.plate-name-edited(self.text, self.cursor-position-byte-offset, self.anchor-position-byte-offset);
+            }
+            // Ctrl+A leaves the caret where it is and moves only the anchor.
+            changed anchor-position-byte-offset => {
+                root.plate-name-edited(self.text, self.cursor-position-byte-offset, self.anchor-position-byte-offset);
+            }
+            accepted => {
+                root.plate-name-done(true);
+            }
+            changed has-focus => {
+                if (!self.has-focus) {
+                    root.plate-name-done(true);
+                }
+            }
         }
     }
 
