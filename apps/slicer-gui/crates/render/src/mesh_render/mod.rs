@@ -82,7 +82,7 @@ pub use readback::FramePixels;
 use render_size::clamp_render_size;
 pub use renderer_trait::MeshRenderer;
 pub use scene_upload::GpuScene;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 use scene_upload::build_envelope_warning_mask;
 use scene_upload::{
     MODEL_ENTRY_SIZE, WorldBoxes, build_model_entries, build_plate_warning_masks,
@@ -378,6 +378,8 @@ pub struct Renderer {
     hints: overlay::OverlaySlot,
     /// The scene's plates (#545): every plate piece is drawn once for each.
     plates: crate::plates::Plates,
+    /// Out of focus dims even with nothing in focus ([`Self::set_dim_all`]).
+    dim_all: bool,
     /// The rings of the islands an analysis found (#525), drawn over
     /// everything, the models included (#538).
     island_marks: overlay::OverlaySlot,
@@ -445,7 +447,7 @@ impl Renderer {
         if from_scratch {
             self.world_boxes.clear();
         }
-        build_model_entries(graph, &[], &[], build_volume, &mut self.world_boxes, false)
+        build_model_entries(graph, &[], None, build_volume, &mut self.world_boxes, false)
             .expect("entries");
         if warnings {
             build_envelope_warning_mask(graph, build_volume, &mut self.world_boxes).expect("mask");
@@ -495,6 +497,7 @@ impl Renderer {
             overlay: overlay::OverlaySlot::default(),
             hints: overlay::OverlaySlot::default(),
             plates: crate::plates::Plates::one(),
+            dim_all: false,
             island_marks: overlay::OverlaySlot::default(),
             island_hidden: overlay::OverlaySlot::default(),
             hint_source: None,
@@ -1058,6 +1061,13 @@ impl Renderer {
         self.plates = plates;
     }
 
+    /// Whether what is not in focus dims even when nothing is (#545): with
+    /// several plates and nothing selected, every object off the active
+    /// plate dims, and with the active plate empty, every object.
+    pub fn set_dim_all(&mut self, on: bool) {
+        self.dim_all = on;
+    }
+
     /// What stays lit in the frames to come while something is selected
     /// (#523): every other object is dimmed. Empty dims nothing.
     pub fn set_focus(&mut self, focus: &[NodeId]) {
@@ -1229,7 +1239,7 @@ impl Renderer {
             match build_model_entries(
                 graph_data,
                 selection,
-                &self.focus,
+                (self.dim_all || !self.focus.is_empty()).then_some(self.focus.as_slice()),
                 build_volume,
                 &mut self.world_boxes,
                 overhang_map.is_some(),

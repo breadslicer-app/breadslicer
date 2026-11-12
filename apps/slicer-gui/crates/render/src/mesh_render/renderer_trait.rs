@@ -139,6 +139,9 @@ pub trait MeshRenderer {
     /// marked.
     fn set_plates(&mut self, _plates: crate::plates::Plates) {}
 
+    /// Whether out of focus dims with nothing in focus too (#545).
+    fn set_dim_all(&mut self, _on: bool) {}
+
     /// What stays lit while something is selected (#523); the rest dims.
     fn set_focus(&mut self, _focus: &[sc_scene::NodeId]) {}
 
@@ -282,6 +285,10 @@ impl MeshRenderer for Renderer {
 
     fn set_plates(&mut self, plates: crate::plates::Plates) {
         Renderer::set_plates(self, plates);
+    }
+
+    fn set_dim_all(&mut self, on: bool) {
+        Renderer::set_dim_all(self, on);
     }
 
     fn set_focus(&mut self, focus: &[sc_scene::NodeId]) {

@@ -78,6 +78,15 @@ fn vs_main(in: VsIn, @builtin(instance_index) plate: u32) -> VsOut {
     return out;
 }
 
+// Whether `plate` is one of several and not the active one (#545): it shows
+// its floor alone, fainter, as an object out of focus does.
+fn inactive_plate(plate: u32) -> bool {
+    return u.plates.z > 1.5 && f32(plate) != u.plates.w;
+}
+
+// How opaque the floor of an inactive plate is.
+const INACTIVE_PLATE_ALPHA: f32 = 0.45;
+
 // Whether a model crosses plate `plate`'s walls: bit `plate` of
 // face_breach_mask.y (#545).
 fn breached_plate(plate: u32) -> bool {
@@ -277,10 +286,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 return plate_face(WALL_WARNING_COLOUR, 1.0);
             }
         }
-        return plate_face(grid, 1.0);
+        return plate_face(grid, select(1.0, INACTIVE_PLATE_ALPHA, inactive_plate(in.plate)));
     }
     if in.kind == 2u {
-        return plate_face(rim_colour(in.world_pos.xy), 1.0);
+        return plate_face(
+            rim_colour(in.world_pos.xy),
+            select(1.0, INACTIVE_PLATE_ALPHA, inactive_plate(in.plate)),
+        );
+    }
+    // An inactive plate has no cage nor warning walls (#545).
+    if inactive_plate(in.plate) {
+        discard;
     }
     if in.kind == 3u || in.kind == 4u {
         // The plate is a drawing on the ground, not a slab (#507): its

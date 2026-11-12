@@ -230,3 +230,22 @@ fn a_project_keeps_how_many_plates_it_has() {
     reopened.clear_scene();
     assert_eq!(reopened.plates().count(), 1, "a cleared scene has one");
 }
+
+/// With several plates and nothing selected, what stands on the active plate
+/// stays lit and the rest dims (#545); with a selection, the selection does.
+#[test]
+fn off_the_active_plate_the_models_dim() {
+    let v = volume();
+    let (ctrl, leaves) = window(&[Vec3::ZERO, offset(&v, 1)]);
+    let document = ctrl.document();
+    assert!(!ctrl.dims_off_plate(), "one plate dims nothing");
+    assert!(ctrl.focus().is_empty());
+    ctrl.add_plate();
+    assert!(ctrl.dims_off_plate());
+    assert_eq!(ctrl.focus(), vec![leaves[1]], "plate 1 is active");
+    document.set_active_plate(0);
+    assert_eq!(ctrl.focus(), vec![leaves[0]]);
+    document.set_selection(Selection::One(LeafId(leaves[1])));
+    assert!(!ctrl.dims_off_plate(), "a selection is the focus");
+    assert_eq!(ctrl.focus(), vec![leaves[1]]);
+}

@@ -1374,7 +1374,7 @@ fn an_upload_keeps_the_world_boxes_of_meshes_still_drawn() {
     let mut renderer = renderer_on(&device, &queue);
     renderer.upload_scene(&graph).expect("upload");
     let frame = |renderer: &mut Renderer, graph: &Scene| {
-        build_model_entries(graph, &[], &[], TEST_BV, &mut renderer.world_boxes, false)
+        build_model_entries(graph, &[], None, TEST_BV, &mut renderer.world_boxes, false)
             .expect("entries");
     };
     frame(&mut renderer, &graph);

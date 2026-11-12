@@ -328,8 +328,11 @@ impl OrbitCamera {
         let px = (2.0 * x / width.max(1.0) - 1.0) * width.max(1.0) / height.max(1.0) * tan_half;
         let py = (1.0 - 2.0 * y / height.max(1.0)) * tan_half;
         if self.orthographic {
+            // From behind the eye, as far as the view's planes reach (#545):
+            // what stands between the eye and the target is picked too.
+            let back = self.view_radius.max(self.detail_radius) * 4.0 + self.distance;
             (
-                inverse.transform_point3(Vec3::new(px * self.distance, py * self.distance, 0.0)),
+                inverse.transform_point3(Vec3::new(px * self.distance, py * self.distance, back)),
                 inverse.transform_vector3(-Vec3::Z).normalize(),
             )
         } else {

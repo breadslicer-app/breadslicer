@@ -1739,7 +1739,7 @@ impl SceneDocument {
 
     /// `ids`, followed by the supports of each model among them that are not
     /// among them already: its support sets and its imported supports.
-    fn with_their_supports(&self, ids: Vec<NodeId>) -> Vec<NodeId> {
+    pub(crate) fn with_their_supports(&self, ids: Vec<NodeId>) -> Vec<NodeId> {
         let sessions = self.support_sessions();
         self.with_scene(|spatial| {
             let mut all = ids.clone();

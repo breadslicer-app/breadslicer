@@ -195,7 +195,11 @@ pub(crate) struct ViewportController {
 
 type FocusCache = RefCell<
     Option<(
-        (crate::scene_document::SceneRevision, Vec<sc_scene::NodeId>),
+        (
+            crate::scene_document::SceneRevision,
+            Vec<sc_scene::NodeId>,
+            crate::plates::Plates,
+        ),
         Vec<sc_scene::NodeId>,
     )>,
 >;
@@ -3277,13 +3281,29 @@ impl ViewportController {
     /// only when the scene or the selection changed.
     fn focus(&self) -> Vec<sc_scene::NodeId> {
         let document = self.session.document();
-        let key = (document.scene_revision(), document.selection_node_ids());
+        let key = (
+            document.scene_revision(),
+            document.selection_node_ids(),
+            document.plates(),
+        );
         if let Some((at, focus)) = self.focus_cache.borrow().as_ref()
             && *at == key
         {
             return focus.clone();
         }
-        let focus = document.focus_ids();
+        let mut focus = document.focus_ids();
+        // With several plates and nothing selected, the active plate's models
+        // and their supports stay lit (#545).
+        if focus.is_empty() && self.dims_off_plate() {
+            let active = document.plates().active();
+            let models: Vec<sc_scene::NodeId> = self
+                .models_on_plates()
+                .into_iter()
+                .filter(|&(_, plate)| plate == active)
+                .map(|(id, _)| id)
+                .collect();
+            focus = document.with_their_supports(models);
+        }
         *self.focus_cache.borrow_mut() = Some((key, focus.clone()));
         focus
     }
@@ -3659,6 +3679,13 @@ impl ViewportController {
                 }
             }
         }
+    }
+
+    /// Whether what stands off the active plate dims with nothing selected
+    /// (#545): with more than one plate.
+    fn dims_off_plate(&self) -> bool {
+        let document = self.session.document();
+        document.plates().count() > 1 && document.selection_len() == 0
     }
 
     /// The plate whose floor is under `cursor` (#545).
@@ -4438,6 +4465,7 @@ impl ViewportController {
         renderer.set_support_lines(shown_up_to, lines.as_ref());
         renderer.set_supports_hidden(self.supports_hidden());
         renderer.set_plates(self.session.document().plates());
+        renderer.set_dim_all(self.dims_off_plate());
         renderer.set_focus(&self.focus());
 
         let Some(ui) = self.ui.upgrade() else {

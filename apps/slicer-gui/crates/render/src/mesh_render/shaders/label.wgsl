@@ -39,6 +39,8 @@ struct VsIn {
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    // How opaque the writing is: fainter by an inactive plate (#545).
+    @location(1) @interpolate(flat) shown: f32,
 };
 
 // One instance per plate (#545): each plate's label and rulers by it.
@@ -46,6 +48,7 @@ struct VsOut {
 fn vs_main(in: VsIn, @builtin(instance_index) plate: u32) -> VsOut {
     var out: VsOut;
     out.clip_pos = u.view_proj * vec4<f32>(in.position + plate_offset(plate), 1.0);
+    out.shown = select(1.0, 0.45, u.plates.z > 1.5 && f32(plate) != u.plates.w);
     out.uv = in.uv;
     return out;
 }
@@ -65,5 +68,5 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let colour = select(WORD_COLOUR, NAME_COLOUR, coverage.g > coverage.r);
     // Unlike the plate's faces, the writing stays from under the plate: its
     // copy facing down reads the right way round from there (#507).
-    return vec4<f32>(colour, max(coverage.r, coverage.g));
+    return vec4<f32>(colour, max(coverage.r, coverage.g) * in.shown);
 }

@@ -1049,7 +1049,7 @@ fn every_plate_draws_where_it_stands() {
         *v = Vertex::new([c[0] + second.x, c[1] + second.y, c[2]]);
     }
     let graph = scene_of(vec![cube]);
-    let mut frame = |renderer: &mut Renderer, count: u32, camera: &OrbitCamera, w: u32, h: u32| {
+    let frame = |renderer: &mut Renderer, count: u32, camera: &OrbitCamera, w: u32, h: u32| {
         renderer.set_plates(crate::plates::Plates::new(
             count,
             count.saturating_sub(1).min(2),

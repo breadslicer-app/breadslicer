@@ -706,7 +706,7 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
 pub(super) fn build_model_entries(
     graph: &Scene,
     selection: &[NodeId],
-    focus: &[NodeId],
+    focus: Option<&[NodeId]>,
     build_volume: BuildVolume,
     boxes: &mut WorldBoxes,
     overhang_map: bool,
@@ -716,8 +716,9 @@ pub(super) fn build_model_entries(
         CsgPolicy::Descend,
         |node_id, world_transform, mesh| {
             let selected = selection.binary_search(&node_id).is_ok();
-            // Out of focus: something else is selected (#523).
-            let dimmed = !focus.is_empty() && focus.binary_search(&node_id).is_err();
+            // Out of focus: something else is selected (#523), or it stands
+            // on a plate other than the active one (#545).
+            let dimmed = focus.is_some_and(|focus| focus.binary_search(&node_id).is_err());
             let transform_mat = transform_to_mat4(world_transform);
             // The envelope is an axis-aligned box, so it contains the world
             // box if and only if it contains every vertex, and therefore every
@@ -1644,7 +1645,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &g,
             &[],
-            &[],
+            None,
             permissive_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1680,7 +1681,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             permissive_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1696,7 +1697,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[nth_leaf(&graph, 1)],
-            &[],
+            None,
             permissive_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1715,7 +1716,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[graph.roots()[0]],
-            &[],
+            None,
             permissive_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1760,7 +1761,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             snug_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1777,7 +1778,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             snug_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1793,7 +1794,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             snug_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1811,7 +1812,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             snug_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -1828,7 +1829,7 @@ mod transform_to_mat4_tests {
         let entries = build_model_entries(
             &graph,
             &[],
-            &[],
+            None,
             snug_volume(),
             &mut WorldBoxes::default(),
             false,
@@ -2021,7 +2022,7 @@ mod transform_to_mat4_tests {
         let leaf = nth_leaf(&graph, 0);
         let mut boxes = WorldBoxes::default();
         let frame = |graph: &Scene, boxes: &mut WorldBoxes| {
-            let entries = build_model_entries(graph, &[], &[], snug_volume(), boxes, false)
+            let entries = build_model_entries(graph, &[], None, snug_volume(), boxes, false)
                 .expect("clean graph");
             let mask =
                 build_envelope_warning_mask(graph, snug_volume(), boxes).expect("clean graph");
@@ -2061,7 +2062,7 @@ mod transform_to_mat4_tests {
         graph.add_root(leaf).expect("root");
         let volume = snug_volume();
         let mut boxes = WorldBoxes::default();
-        build_model_entries(&graph, &[leaf], &[], volume, &mut boxes, false).expect("clean graph");
+        build_model_entries(&graph, &[leaf], None, volume, &mut boxes, false).expect("clean graph");
         let start = std::time::Instant::now();
         while boxes.hulls.get(&mesh).is_none() {
             assert!(start.elapsed().as_secs() < 30, "the hull never arrived");
@@ -2095,7 +2096,7 @@ mod transform_to_mat4_tests {
             let hull = boxes.hulls.get(&mesh).expect("a ready hull");
             assert!(hull.world_box(&matrix).is_some(), "the hull answers");
             let walked = leaf_world_box(&mesh, &matrix);
-            let entries = build_model_entries(&graph, &[leaf], &[], volume, &mut boxes, false)
+            let entries = build_model_entries(&graph, &[leaf], None, volume, &mut boxes, false)
                 .expect("clean graph");
             let mask =
                 build_envelope_warning_mask(&graph, volume, &mut boxes).expect("clean graph");
