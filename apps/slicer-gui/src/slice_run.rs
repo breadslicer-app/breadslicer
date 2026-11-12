@@ -309,7 +309,7 @@ impl SliceRun {
         let held = self.document.slice_params();
         let geometry_changed = held
             .as_ref()
-            .is_some_and(|held| self.document.slice_geometry_changed(held.geometry));
+            .is_some() && self.document.held_slice_changed();
         // A profile edited in place keeps its id: read what it resolves to now.
         let layers_changed = held.is_some()
             && layers_changed(
@@ -357,8 +357,7 @@ impl SliceRun {
         };
         let held = self.document.slice_params();
         then(held.is_some_and(|held| {
-            held.plate == self.document.slice_plate()
-                && !self.document.slice_geometry_changed(held.geometry)
+            held.plate == self.document.slice_plate() && !self.document.held_slice_changed()
         }));
     }
 
@@ -425,6 +424,7 @@ impl SliceRun {
         // A real slice supersedes the "up to date" hint.
         self.hide_up_to_date_hint();
         current.geometry = self.document.scene_revision();
+        current.plate_key = self.document.plate_key(current.plate);
 
         self.progress.completed.store(0, Ordering::Relaxed);
         self.progress.total.store(0, Ordering::Relaxed);

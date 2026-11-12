@@ -39,6 +39,10 @@ pub(crate) struct SliceParams {
     pub geometry: SceneRevision,
     /// The plate sliced, of several (#547); 0 with one.
     pub plate: u32,
+    /// What the plate's objects were when it was sliced, of several
+    /// ([`SceneDocument::plate_key`](crate::scene_document::SceneDocument::plate_key)):
+    /// edits on the other plates leave its slice current.
+    pub plate_key: Option<u64>,
 }
 
 impl SliceParams {
@@ -56,6 +60,7 @@ impl SliceParams {
             aa_level,
             geometry,
             plate: 0,
+            plate_key: None,
         })
     }
 }
@@ -174,6 +179,7 @@ mod decide_re_slice_tests {
             aa_level: AaLevel::Off,
             geometry: SceneRevision::from_top_edit_id(Some(7)),
             plate: 0,
+            plate_key: None,
         }
     }
 
@@ -382,6 +388,7 @@ mod for_selection_tests {
                 aa_level: AaLevel::X4,
                 geometry: geometry(),
                 plate: 0,
+                plate_key: None,
             }),
         );
     }

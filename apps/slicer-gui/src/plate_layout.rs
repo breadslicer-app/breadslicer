@@ -33,6 +33,20 @@ pub(crate) fn plate_of_leaf(
     ))
 }
 
+/// The plate the object `leaf` belongs to (#547): a support leaf the plate of
+/// the model it stands on, else the one under its own footprint.
+pub(crate) fn plate_holding(
+    spatial: &SceneSpatial,
+    volume: &BuildVolume,
+    plates: Plates,
+    leaf: NodeId,
+    model_of: &dyn Fn(NodeId) -> Option<NodeId>,
+) -> Option<u32> {
+    model_of(leaf)
+        .and_then(|model| plate_of_leaf(spatial, volume, plates, model))
+        .or_else(|| plate_of_leaf(spatial, volume, plates, leaf))
+}
+
 /// The scene as plate `plate` of `plates` prints (#547): the objects on it
 /// alone, each support leaf with the model it stands on, moved so the plate's
 /// centre is the origin, as a printer's one plate is. And where that centre
@@ -47,9 +61,7 @@ pub(crate) fn plate_scene(
     let mut scene = spatial.graph().clone();
     let leaves: Vec<NodeId> = (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect();
     for leaf in leaves {
-        let on = model_of(leaf)
-            .and_then(|model| plate_of_leaf(spatial, volume, plates, model))
-            .or_else(|| plate_of_leaf(spatial, volume, plates, leaf));
+        let on = plate_holding(spatial, volume, plates, leaf, model_of);
         if on != Some(plate) {
             let _ = scene.remove_leaf(leaf);
         }
@@ -84,9 +96,7 @@ pub(crate) fn plate_pictures(
     let mut bounds: Option<(glam::Vec3, glam::Vec3)> = None;
     let leaves: Vec<NodeId> = (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect();
     for leaf in leaves {
-        let on = model_of(leaf)
-            .and_then(|model| plate_of_leaf(spatial, volume, plates, model))
-            .or_else(|| plate_of_leaf(spatial, volume, plates, leaf));
+        let on = plate_holding(spatial, volume, plates, leaf, model_of);
         if on == Some(plate) {
             let aabb = spatial
                 .leaf(leaf)

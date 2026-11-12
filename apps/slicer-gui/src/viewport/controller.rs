@@ -1122,6 +1122,7 @@ impl ViewportController {
     pub(crate) fn set_build_volume(&self, bv: BuildVolume) {
         let before = self.session.build_volume();
         let document = self.session.document();
+        document.set_plate_volume(bv);
         // The models of the plates past the first move with their plate
         // (#545): the plates stand by the printer's size.
         let moves: Vec<SceneEdit> = if before != bv && document.plates().count() > 1 {

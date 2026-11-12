@@ -1621,14 +1621,22 @@ impl ReviewPanel {
     fn is_stale(&self) -> bool {
         self.document
             .slice_params()
-            .is_some_and(|params| self.document.slice_geometry_changed(params.geometry))
+            .is_some()
+            && self.document.held_slice_changed()
     }
 
     /// The scene's models as they stand now.
     fn current_models(&self) -> Option<Vec<ModelPose>> {
         let plate = self.document.slice_plate();
-        self.document
-            .with_scene(|spatial| model_poses(spatial, plate))
+        // The models of the plate sliced alone (#547): the others move freely.
+        let on_plate = self.document.plate_leaves(plate);
+        self.document.with_scene(|spatial| {
+            let mut poses = model_poses(spatial, plate);
+            if let Some(on_plate) = &on_plate {
+                poses.retain(|pose| on_plate.contains(&pose.leaf));
+            }
+            poses
+        })
     }
 
     /// Where the plate the held review read stands in the scene (#547).

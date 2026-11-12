@@ -992,6 +992,7 @@ mod fix_all {
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
                 plate: 0,
+                plate_key: None,
             },
             layers: None,
         });
@@ -1778,6 +1779,7 @@ mod fix_all {
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
                 plate: 0,
+                plate_key: None,
             },
             layers: crate::slice_result::LayerValues::resolve(&printer_profile, &material, None),
         });

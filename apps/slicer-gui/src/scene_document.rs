@@ -356,6 +356,8 @@ pub(crate) struct SceneDocument {
     /// The scene's plates and which is active (#545); a project carries how
     /// many.
     plates: Cell<crate::plates::Plates>,
+    /// The size the plates stand by (#547): the printer's, once known.
+    plate_volume: Cell<Option<crate::build_volume::BuildVolume>>,
     /// The plates' names, one per plate, in their order (#545): a plate
     /// keeps its name when the plates before it go.
     plate_names: RefCell<Vec<String>>,
@@ -494,6 +496,7 @@ impl SceneDocument {
             project_state_generation: Cell::new(0),
             review_decisions: RefCell::default(),
             plates: Cell::new(crate::plates::Plates::one()),
+            plate_volume: Cell::new(None),
             plate_names: RefCell::new(default_plate_names(1)),
             support_sessions: Rc::default(),
             support_follow: Cell::new(None),
@@ -734,6 +737,66 @@ impl SceneDocument {
     /// The scene's plates and which is active (#545).
     pub(crate) fn plates(&self) -> crate::plates::Plates {
         self.plates.get()
+    }
+
+    /// The size the plates stand by (#547), as the printer's is set.
+    pub(crate) fn set_plate_volume(&self, volume: crate::build_volume::BuildVolume) {
+        self.plate_volume.set(Some(volume));
+    }
+
+    /// The objects that stand on plate `plate`, of several (#547), in the
+    /// list's order. `None` with one plate, or before the plates' size is
+    /// known.
+    pub(crate) fn plate_leaves(&self, plate: u32) -> Option<Vec<NodeId>> {
+        let plates = self.plates.get();
+        if plates.count() < 2 {
+            return None;
+        }
+        let volume = self.plate_volume.get()?;
+        let sessions = self.support_sessions.clone();
+        self.with_scene(|spatial| {
+            (0..)
+                .map_while(|i| spatial.leaf_id_at_index(i))
+                .filter(|&leaf| {
+                    crate::plate_layout::plate_holding(spatial, &volume, plates, leaf, &|l| {
+                        crate::support_persist::model_of(&sessions, l)
+                    }) == Some(plate)
+                })
+                .collect()
+        })
+    }
+
+    /// What plate `plate`'s objects are, as a number (#547): which, where
+    /// they stand and with what mesh. It changes when anything on the plate
+    /// does, and only then. `None` as [`Self::plate_leaves`].
+    pub(crate) fn plate_key(&self, plate: u32) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let leaves = self.plate_leaves(plate)?;
+        self.with_scene(|spatial| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            for leaf in leaves {
+                leaf.hash(&mut hasher);
+                if let Some(query) = spatial.leaf(leaf) {
+                    format!("{:?}", query.world_transform()).hash(&mut hasher);
+                    (std::ptr::from_ref(query.mesh()) as usize).hash(&mut hasher);
+                    (query.mesh().vertices.len(), query.mesh().faces.len()).hash(&mut hasher);
+                }
+            }
+            hasher.finish()
+        })
+    }
+
+    /// Whether the held slice no longer shows what it was cut from: with
+    /// several plates, whether anything on its plate changed (#547); with one,
+    /// whether the scene did. `true` with no slice held.
+    pub(crate) fn held_slice_changed(&self) -> bool {
+        let Some(params) = self.slice_params() else {
+            return true;
+        };
+        match params.plate_key {
+            Some(key) => self.plate_key(params.plate) != Some(key),
+            None => self.slice_geometry_changed(params.geometry),
+        }
     }
 
     /// The plate a slice is cut for (#547): the active one of several, 0

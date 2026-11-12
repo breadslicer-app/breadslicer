@@ -31,6 +31,8 @@ struct Window {
     ctrl: Rc<ViewportController>,
     document: Rc<SceneDocument>,
     slice: Rc<SliceRun>,
+    /// The cube on the first plate and the one on the second.
+    cubes: [NodeId; 2],
 }
 
 /// A cube `size` mm on a side standing on the plate at `x`, `y`.
@@ -60,8 +62,8 @@ fn two_plates() -> Window {
     ctrl.set_build_volume(volume);
     let second = crate::plates::offset(&volume, 1);
     let mut graph = Scene::new();
-    cube_at(&mut graph, 10.0, -50.0, 0.0);
-    cube_at(&mut graph, 20.0, f64::from(second.x), f64::from(second.y));
+    let first = cube_at(&mut graph, 10.0, -50.0, 0.0);
+    let other = cube_at(&mut graph, 20.0, f64::from(second.x), f64::from(second.y));
     let document = ctrl.document();
     document.install_graph(graph, PathBuf::from("plates.bread"));
     ctrl.add_plate();
@@ -99,6 +101,7 @@ fn two_plates() -> Window {
         ctrl,
         document,
         slice,
+        cubes: [first, other],
     }
 }
 
@@ -217,5 +220,29 @@ fn a_slice_of_every_plate_hears_when_each_lands() {
         let heard = landed.clone();
         w.slice.slice_then(move |ok| heard.set(Some(ok)));
         assert_eq!(landed.take(), Some(true), "up to date");
+    });
+}
+
+/// An edit on another plate leaves the held slice current; one on its own
+/// plate does not (#547).
+#[test]
+fn only_the_sliced_plate_makes_its_slice_old() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        w.document.set_active_plate(0);
+        w.press_slice();
+        assert!(!w.document.held_slice_changed());
+        let nudge = |leaf| {
+            let edit =
+                crate::plate_layout::moved_by(&w.document, leaf, glam::Vec3::new(3.0, 0.0, 0.0))
+                    .expect("a move");
+            w.document.apply_edit(edit.clone()).expect("applies");
+            w.document.push_edit(edit);
+        };
+        nudge(w.cubes[1]);
+        assert!(!w.document.held_slice_changed(), "the other plate moved");
+        nudge(w.cubes[0]);
+        assert!(w.document.held_slice_changed(), "its own plate moved");
+        let _ = &w.ctrl;
     });
 }

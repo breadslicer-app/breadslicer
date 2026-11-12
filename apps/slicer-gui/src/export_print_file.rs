@@ -186,7 +186,7 @@ fn prepare_export_of(
     scene: Option<Scene>,
 ) -> Result<ExportJob, ExportFailure> {
     let held = document.held_slice().ok_or(ExportFailure::NoSlice)?;
-    if document.slice_geometry_changed(held.params.geometry) {
+    if document.held_slice_changed() {
         return Err(ExportFailure::Stale);
     }
     let scene = scene.ok_or(ExportFailure::NoSlice)?;
@@ -578,6 +578,7 @@ mod export_button_enabled_tests {
             aa_level: AaLevel::Off,
             geometry: SceneRevision::from_top_edit_id(Some(3)),
             plate: 0,
+            plate_key: None,
         }
     }
 
@@ -792,6 +793,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
                 aa_level: AaLevel::Off,
                 geometry: SceneRevision::from_top_edit_id(None),
                 plate: 0,
+                plate_key: None,
             },
             layers,
         }
@@ -1123,6 +1125,7 @@ mod prepare_export_tests {
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
                 plate: 0,
+                plate_key: None,
             },
             layers: None,
         });

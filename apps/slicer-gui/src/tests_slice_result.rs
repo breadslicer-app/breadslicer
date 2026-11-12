@@ -70,6 +70,7 @@ fn sample_result(geometry: SceneRevision) -> SliceResult {
             aa_level: AaLevel::Off,
             geometry,
             plate: 0,
+            plate_key: None,
         },
         layers: None,
     }
