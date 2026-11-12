@@ -306,6 +306,7 @@ export component MainWindow inherits Window {
     in property <int> support-islands-left: -1;
     callback support-islands-analyze-requested();
     callback support-islands-add-requested();
+    callback support-islands-go-requested();
     callback imported-supports-replace-requested();
     callback support-raft-off-requested();
     callback support-raft-ignore-requested();
@@ -2330,6 +2331,9 @@ export component MainWindow inherits Window {
                                 islands-busy: root.slicing-in-progress || root.review-fixing;
                                 analyze-islands => {
                                     root.support-islands-analyze-requested();
+                                }
+                                go-to-island => {
+                                    root.support-islands-go-requested();
                                 }
                                 support-islands => {
                                     root.support-islands-add-requested();

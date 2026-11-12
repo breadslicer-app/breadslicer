@@ -85,6 +85,9 @@ use crate::viewport::support_drag::{
 };
 use crate::{MainWindow, WorkspaceSection};
 
+/// How much around an island a jump to it frames (#538), in mm.
+const ISLAND_VIEW_RADIUS_MM: f32 = 12.0;
+
 /// An overlay piece of a mesh in world coordinates.
 pub(crate) fn overlay_of(mesh: &sc_mesh_core::IndexedMesh, tint: OverlayTint) -> OverlayMesh {
     OverlayMesh {
@@ -1605,6 +1608,15 @@ impl DfSupportRun {
         }
         {
             let weak = Rc::downgrade(&run);
+            let ui_weak = ui.as_weak();
+            ui.on_support_islands_go_requested(move || {
+                if let (Some(run), Some(ui)) = (weak.upgrade(), ui_weak.upgrade()) {
+                    run.go_to_island(&ui);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
             ui.on_support_raft_lift_requested(move || {
                 if let Some(run) = weak.upgrade() {
                     run.lift_for_warning();
@@ -2179,6 +2191,7 @@ impl DfSupportRun {
         }
         hints.shown = Some(drawn);
         if ready.is_none() && islands.is_none() {
+            hints.left.clear();
             ui.set_support_islands_left(-1);
             self.ctrl.set_hint_marks(None);
             return;
@@ -2218,13 +2231,28 @@ impl DfSupportRun {
             Some(islands) => {
                 let left = crate::support_hints::uncovered(islands, &tips);
                 ui.set_support_islands_left(i32::try_from(left.len()).unwrap_or(i32::MAX));
+                hints.left = left.iter().map(|h| h.at).collect();
+                // The island the camera went to stands out (#538).
+                let (visited, rest): (Vec<_>, Vec<_>) =
+                    left.into_iter().partition(|h| hints.visited == Some(h.at));
+                let radius = self.born_tip_mm() * crate::support_hints::ISLAND_RING_PER_TIP;
                 meshes.push(Arc::new(crate::support_hints::rings(
-                    &left,
-                    self.born_tip_mm() * crate::support_hints::ISLAND_RING_PER_TIP,
+                    &rest,
+                    radius,
                     OverlayTint::Island,
                 )));
+                if !visited.is_empty() {
+                    meshes.push(Arc::new(crate::support_hints::rings(
+                        &visited,
+                        radius * crate::support_hints::VISITED_RING_SCALE,
+                        OverlayTint::Island,
+                    )));
+                }
             }
-            None => ui.set_support_islands_left(-1),
+            None => {
+                hints.left.clear();
+                ui.set_support_islands_left(-1);
+            }
         }
         self.ctrl.set_hint_marks(Some(meshes.into()));
     }
@@ -2272,6 +2300,32 @@ impl DfSupportRun {
         let mut hints = self.hints.borrow_mut();
         hints.islands = places.and_then(|places| Some((key?, Arc::new(places))));
         hints.shown = None;
+    }
+
+    /// The islands left as last marked (#538).
+    #[cfg(test)]
+    pub(crate) fn islands_left_for_test(&self) -> Vec<[f64; 3]> {
+        self.hints.borrow().left.clone()
+    }
+
+    /// Goes to the next island left (#538), in turn: the camera centres on
+    /// it, looking up at it from below, and its ring stands out.
+    pub(crate) fn go_to_island(&self, ui: &MainWindow) {
+        let next = {
+            let mut hints = self.hints.borrow_mut();
+            let next = crate::support_hints::next_island(&hints.left, hints.visited);
+            hints.visited = next;
+            hints.shown = None;
+            next
+        };
+        let Some(at) = next else {
+            return;
+        };
+        self.support_hints(ui);
+        self.ctrl.look_at_island(
+            glam::Vec3::from(at.map(|c| c as f32)),
+            ISLAND_VIEW_RADIUS_MM,
+        );
     }
 
     /// What the recommended places depend on: the request (preset, printer,

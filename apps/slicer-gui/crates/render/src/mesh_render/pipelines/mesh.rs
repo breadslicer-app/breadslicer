@@ -54,6 +54,9 @@ pub(in crate::mesh_render) struct MeshPipeline {
     /// The overlay drawn into the scene's depth, hidden behind the models:
     /// the marks of where supports are recommended (#524).
     pub(in crate::mesh_render) hint_pipeline: wgpu::RenderPipeline,
+    /// The overlay drawn over everything, depth neither tested nor written:
+    /// the rings of the islands (#538).
+    pub(in crate::mesh_render) island_mark_pipeline: wgpu::RenderPipeline,
     /// The supports as lines from under the plate (#493): each dash a quad
     /// widened on screen, and the balls at the tips. Both are tested against
     /// the scene's depth without writing it, and blended over it.
@@ -414,6 +417,30 @@ impl MeshPipeline {
             cache: None,
         });
 
+        let island_mark_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer island mark pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<GpuVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                })],
+            },
+            primitive: open,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                ..depth_tested.clone()
+            }),
+            multisample,
+            fragment: Some(blended("fs_overlay")),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let fade_depth = |label: &'static str, marking: bool| {
             let face = if marking {
                 wgpu::StencilFaceState {
@@ -564,6 +591,7 @@ impl MeshPipeline {
             cap_pipeline,
             overlay_pipeline,
             hint_pipeline,
+            island_mark_pipeline,
             line_pipeline,
             ball_pipeline,
             fade_depth_pipeline,

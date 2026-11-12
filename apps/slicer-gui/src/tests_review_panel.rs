@@ -2726,6 +2726,69 @@ mod fix_all {
         }) / (2 * 20)
     }
 
+    /// Go to the island (#538): each press centres the camera on the next
+    /// island left, in turn, looking up at it from below; the ring of the
+    /// one it went to is the bigger one.
+    #[test]
+    fn going_to_an_island_centres_on_each_one_left_in_turn_from_below() {
+        let (left, visits, bigger) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            answer_the_question(&w, MessageAnswer::Cancel);
+            ANALYZE.set(true);
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            ANALYZE.set(false);
+            w.window.set_workspace_section(WorkspaceSection::Supports);
+            w.panel.supports.support_hints(&w.window);
+            w.panel.ctrl.set_viewport_for_test(800.0, 600.0);
+            w.panel.ctrl.frame_camera_for_test();
+            let left = w.panel.supports.islands_left_for_test();
+            let mut visits = Vec::new();
+            for _ in 0..=left.len() {
+                w.window.invoke_support_islands_go_requested();
+                let cam = w.panel.ctrl.camera_for_test().expect("a camera");
+                visits.push((cam.target, cam.pitch));
+            }
+            let marks = w.panel.ctrl.hint_marks_for_test().expect("marks");
+            let island_pieces: Vec<f32> = marks
+                .iter()
+                .filter(|m| m.tint == crate::mesh_render::OverlayTint::Island)
+                .map(|m| {
+                    let (lo, hi) = m
+                        .positions
+                        .iter()
+                        .fold((f32::MAX, f32::MIN), |(lo, hi), p| {
+                            (lo.min(p[0]), hi.max(p[0]))
+                        });
+                    hi - lo
+                })
+                .collect();
+            (left, visits, island_pieces)
+        });
+        assert!(!left.is_empty(), "islands are left");
+        for (i, (target, pitch)) in visits.iter().enumerate() {
+            let at = left[i % left.len()];
+            let d = (0..3)
+                .map(|k| (target[k] - at[k] as f32).abs())
+                .fold(0.0, f32::max);
+            assert!(
+                d < 1e-3,
+                "press {i} centres on island {}: {target:?} vs {at:?}",
+                i % left.len()
+            );
+            assert!(
+                *pitch <= crate::viewport::ISLAND_VIEW_PITCH + 1e-6,
+                "press {i} looks from below: pitch {pitch}"
+            );
+        }
+        assert!(
+            bigger.len() == 2 || left.len() == 1,
+            "the visited ring is drawn apart: {bigger:?}"
+        );
+        if left.len() == 1 {
+            assert_eq!(bigger.len(), 1);
+        }
+    }
+
     /// Analyze islands (#525): the slice asks nothing; the Supports tab
     /// marks each island and counts them; Support all places their tips and
     /// slices again, after which none is left; moving a model takes the

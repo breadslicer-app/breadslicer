@@ -1978,6 +1978,7 @@ export component SupportsInspector inherits VerticalLayout {
     in property <bool> islands-busy;
     callback analyze-islands();
     callback support-islands();
+    callback go-to-island();
 
     spacing: 12px;
 
@@ -2178,6 +2179,14 @@ export component SupportsInspector inherits VerticalLayout {
             enabled: root.has-scene && !root.running && !root.islands-busy;
             clicked => {
                 root.analyze-islands();
+            }
+        }
+        if root.islands-left > 0: ScButton {
+            text: root.islands-left == 1 ? @tr("Inspector" => "Go to the island") : @tr("Inspector" => "Go to the next island");
+            icon: Icons.target;
+            enabled: !root.islands-busy;
+            clicked => {
+                root.go-to-island();
             }
         }
         if root.islands-left > 0: ScButton {

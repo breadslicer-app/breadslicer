@@ -374,6 +374,12 @@ pub struct Renderer {
     /// The marks of where supports are recommended, drawn into the scene's
     /// depth (#524).
     hints: overlay::OverlaySlot,
+    /// The rings of the islands an analysis found (#525), drawn over
+    /// everything, the models included (#538).
+    island_marks: overlay::OverlaySlot,
+    /// The marks last handed to [`Self::set_hint_marks`], split between
+    /// `hints` and `island_marks`.
+    hint_source: Option<Overlay>,
     surface_paint: surface_paint::PaintSlot,
     /// The overhang map over the models of a workspace frame, when on.
     overhang_map: Option<OverhangMap>,
@@ -481,6 +487,8 @@ impl Renderer {
             adopted: scene_upload::UploadedMeshes::default(),
             overlay: overlay::OverlaySlot::default(),
             hints: overlay::OverlaySlot::default(),
+            island_marks: overlay::OverlaySlot::default(),
+            hint_source: None,
             surface_paint: surface_paint::PaintSlot::default(),
             overhang_map: None,
             support_tips: Vec::new(),
@@ -1437,6 +1445,13 @@ impl Renderer {
                 // it as seen from below.
                 self.record_front_label(&mut pass, plate_buffers, LABEL_UNDERSIDE);
                 self.record_plate_marks(&mut pass, true);
+                // Last, over everything: an island's ring shows through the
+                // models and the plate (#538).
+                self.island_marks.record(
+                    &mut pass,
+                    &self.pipelines.mesh.island_mark_pipeline,
+                    &self.pipelines.mesh.uniforms_bind_group,
+                );
             }
         }
         if outline {
