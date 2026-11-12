@@ -58,6 +58,7 @@ fn payload() -> ProjectPayload {
             },
         ],
         review_decisions: Vec::new(),
+        plates: 0,
     }
 }
 
@@ -289,6 +290,33 @@ fn the_review_decisions_come_back_with_the_settings() {
     // None: the settings say nothing of them.
     let none = serialize_settings(&ProjectPayload::default(), EmbedProfiles::No).expect("written");
     assert!(!none.contains("ignored"), "{none}");
+}
+
+/// How many plates the scene has comes back with the settings (#545); one
+/// is not written, and settings with none read as one.
+#[test]
+fn the_plates_come_back_with_the_settings() {
+    let payload = ProjectPayload {
+        plates: 3,
+        ..ProjectPayload::default()
+    };
+    let text = serialize_settings(&payload, EmbedProfiles::No).expect("serialized");
+    let mut warnings = Vec::new();
+    let parsed = parse_settings(text.as_bytes(), &mut warnings)
+        .expect("parsed")
+        .expect("this version");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(parsed.plates, 3);
+    let one = ProjectPayload {
+        plates: 1,
+        ..ProjectPayload::default()
+    };
+    let text = serialize_settings(&one, EmbedProfiles::No).expect("written");
+    assert!(!text.contains("plates"), "{text}");
+    let parsed = parse_settings(text.as_bytes(), &mut Vec::new())
+        .expect("parsed")
+        .expect("this version");
+    assert!(parsed.plates <= 1);
 }
 
 /// The conformance files of the format (`test-data/bread-conformance`).

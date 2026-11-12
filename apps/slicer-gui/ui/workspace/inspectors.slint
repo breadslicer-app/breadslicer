@@ -1158,6 +1158,12 @@ export component TransformInspector inherits VerticalLayout {
     in property <bool> arrange-filling;
     in property <string> arrange-fill-progress;
     in property <float> arrange-max-copies;
+    // The scene's plates (#545).
+    in property <int> plate-count: 1;
+    in property <int> active-plate: 0;
+    in property <bool> active-plate-used;
+    callback plate-add();
+    callback plate-remove();
     // Arrange all (false) or the selection (true).
     callback arrange-requested(bool);
     callback arrange-fill-requested();
@@ -1216,6 +1222,40 @@ export component TransformInspector inherits VerticalLayout {
                 }
                 toggled => {
                     root.object-toggled(i);
+                }
+            }
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "PLATES");
+        note: root.plate-count > 1 ? @tr("Inspector" => "{} of {}", root.active-plate + 1, root.plate-count) : "";
+
+        Note {
+            text: root.plate-count > 1
+                ? @tr("Inspector" => "Plate {} is active. Click a plate, or a model on it, to make it the active one.", root.active-plate + 1)
+                : @tr("Inspector" => "Add plates to lay out more prints side by side, then slice the one to print.");
+        }
+        if root.plate-count > 1 && root.active-plate-used: Note {
+            text: @tr("Inspector" => "Move or delete the models on the active plate to remove it.");
+        }
+        HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Add plate");
+                icon: Icons.plus;
+                enabled: root.plate-count < 32;
+                clicked => {
+                    root.plate-add();
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Remove plate");
+                icon: Icons.trash;
+                enabled: root.plate-count > 1 && !root.active-plate-used;
+                clicked => {
+                    root.plate-remove();
                 }
             }
         }

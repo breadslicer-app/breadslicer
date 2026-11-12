@@ -46,6 +46,9 @@ pub(super) struct Uniforms {
     /// The eye (#523): `w = 1` its position, `w = 0` (orthographic) the
     /// direction toward it, for the highlight and the rim.
     pub(super) eye: [f32; 4],
+    /// The plates (#545): how far apart they stand along X and Y, how many
+    /// and the active one ([`crate::plates`]).
+    pub(super) plates: [f32; 4],
 }
 
 /// World-space directional light. The fourth component carries the

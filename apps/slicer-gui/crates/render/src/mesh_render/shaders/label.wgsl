@@ -15,9 +15,19 @@ struct Uniforms {
     env_max: vec4<f32>,
     face_breach_mask: vec4<u32>,
     overhang: vec4<f32>,
+    under_plate: vec4<f32>,
+    eye: vec4<f32>,
+    plates: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
+// The plates of the scene (#545): xy = how far apart they stand, centre to
+// centre, z = how many, w = the active one. Plate `i` stands at column
+// i % 4 and row i / 4 from the first, which is centred on the origin.
+fn plate_offset(i: u32) -> vec3<f32> {
+    return vec3<f32>(f32(i % 4u) * u.plates.x, f32(i / 4u) * u.plates.y, 0.0);
+}
+
 @group(1) @binding(0) var label_tex: texture_2d<f32>;
 @group(1) @binding(1) var label_samp: sampler;
 
@@ -31,10 +41,11 @@ struct VsOut {
     @location(0) uv: vec2<f32>,
 };
 
+// One instance per plate (#545): each plate's label and rulers by it.
 @vertex
-fn vs_main(in: VsIn) -> VsOut {
+fn vs_main(in: VsIn, @builtin(instance_index) plate: u32) -> VsOut {
     var out: VsOut;
-    out.clip_pos = u.view_proj * vec4<f32>(in.position, 1.0);
+    out.clip_pos = u.view_proj * vec4<f32>(in.position + plate_offset(plate), 1.0);
     out.uv = in.uv;
     return out;
 }

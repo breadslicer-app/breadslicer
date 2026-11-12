@@ -223,6 +223,14 @@ pub(crate) fn wire_viewport_input(
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_plate_add_requested(move || ctrl.add_plate());
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_plate_remove_requested(move || ctrl.remove_active_plate());
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_axis_view_requested(move |code| ctrl.on_axis_view(code));
     }
     {

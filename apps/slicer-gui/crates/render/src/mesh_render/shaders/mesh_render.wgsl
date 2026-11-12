@@ -32,6 +32,9 @@ struct Uniforms {
     // The eye (#523): w = 1, its position; w = 0 (orthographic), the
     // direction toward it.
     eye: vec4<f32>,
+    // The plates (#545): xy = how far apart they stand, z = how many,
+    // w = the active one.
+    plates: vec4<f32>,
 };
 
 struct ModelEntry {
@@ -333,11 +336,10 @@ fn surface_color(
         let map_n = select(-flat_n, normalize(surface.xyz), reads_surface);
         washed = overhang_paint(washed, map_n, world_pos);
     }
-    // Componentwise envelope test: a fragment outside on any axis
-    // is painted in the full warning amber instead of the wash.
-    let lo = u.env_min.xyz;
-    let hi = u.env_max.xyz;
-    let outside = any(world_pos < lo) || any(world_pos > hi);
+    // Componentwise envelope test: a fragment outside on any axis of the
+    // plate under it (#545) is painted in the full warning amber instead of
+    // the wash.
+    let outside = outside_plates(world_pos);
     let final_color = select(washed, WARNING_OUTSIDE, outside);
     // The overhang map is an analysis view, tuned under the single light
     // it was made with: its colours are read as they were (#91, #523).
@@ -346,6 +348,19 @@ fn surface_color(
     // Past the build volume the warning's amber is lit alike, map or not.
     let lit = select(studio(final_color, n, world_pos, shiny), flat_light, mapped && !outside);
     return select(lit, lit * OUT_OF_FOCUS, (selected & 2u) != 0u);
+}
+
+// Whether `p` is outside the build volume of the plate whose cell holds it
+// (#545): the nearest plate's, or outside every plate past the last.
+fn outside_plates(p: vec3<f32>) -> bool {
+    let col = clamp(round(p.x / u.plates.x), 0.0, 3.0);
+    let row = max(round(p.y / u.plates.y), 0.0);
+    let index = row * 4.0 + col;
+    if index >= u.plates.z {
+        return true;
+    }
+    let local = p - vec3<f32>(col * u.plates.x, row * u.plates.y, 0.0);
+    return any(local < u.env_min.xyz) || any(local > u.env_max.xyz);
 }
 
 @fragment

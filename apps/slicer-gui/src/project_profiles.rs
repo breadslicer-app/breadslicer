@@ -161,6 +161,7 @@ mod project_profiles_tests {
             output_format: None,
             embedded: Vec::new(),
             review_decisions: Vec::new(),
+            plates: 0,
         };
         assert_eq!(
             profile_ref_warnings(&payload, &libraries),
@@ -185,6 +186,7 @@ mod project_profiles_tests {
             output_format: None,
             embedded: Vec::new(),
             review_decisions: Vec::new(),
+            plates: 0,
         };
         complete_embedded_documents(&mut payload, &libraries);
         assert_eq!(
@@ -207,6 +209,7 @@ mod project_profiles_tests {
             output_format: None,
             embedded: Vec::new(),
             review_decisions: Vec::new(),
+            plates: 0,
         };
         complete_embedded_documents(&mut payload, &libraries);
         assert!(payload.embedded.is_empty());
@@ -232,6 +235,7 @@ mod project_profiles_tests {
             output_format: None,
             embedded: Vec::new(),
             review_decisions: Vec::new(),
+            plates: 0,
         };
         complete_embedded_documents(&mut payload, &libraries);
         assert_eq!(
@@ -274,6 +278,7 @@ mod project_profiles_tests {
                 bytes: b"kind = \"held-printer\"".to_vec(),
             }],
             review_decisions: Vec::new(),
+            plates: 0,
         };
         complete_embedded_documents(&mut payload, &libraries);
         assert_eq!(

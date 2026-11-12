@@ -135,6 +135,10 @@ pub trait MeshRenderer {
     /// Leaves the support meshes out of the view, lines and all (#512).
     fn set_supports_hidden(&mut self, _hidden: bool) {}
 
+    /// The scene's plates (#545): each drawn where it stands, the active one
+    /// marked.
+    fn set_plates(&mut self, _plates: crate::plates::Plates) {}
+
     /// What stays lit while something is selected (#523); the rest dims.
     fn set_focus(&mut self, _focus: &[sc_scene::NodeId]) {}
 
@@ -274,6 +278,10 @@ impl MeshRenderer for Renderer {
 
     fn set_supports_hidden(&mut self, hidden: bool) {
         Renderer::set_supports_hidden(self, hidden);
+    }
+
+    fn set_plates(&mut self, plates: crate::plates::Plates) {
+        Renderer::set_plates(self, plates);
     }
 
     fn set_focus(&mut self, focus: &[sc_scene::NodeId]) {

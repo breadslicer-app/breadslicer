@@ -153,7 +153,7 @@ pub use sc_slicer_gui_ui::*;
 use sc_slicer_gui_base::{breadcrumbs, startup_timing};
 pub use sc_slicer_gui_render::{build_volume, camera, graphics_adapter, mesh_render};
 use sc_slicer_gui_render::{
-    front_label, gizmo, picking, print_file_preview, slice_cap, under_plate,
+    front_label, gizmo, picking, plates, print_file_preview, slice_cap, under_plate,
 };
 
 use crate::app_state::AppState;

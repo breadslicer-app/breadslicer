@@ -82,8 +82,10 @@ pub use readback::FramePixels;
 use render_size::clamp_render_size;
 pub use renderer_trait::MeshRenderer;
 pub use scene_upload::GpuScene;
+#[cfg(any(test, feature = "test-support"))]
+use scene_upload::build_envelope_warning_mask;
 use scene_upload::{
-    MODEL_ENTRY_SIZE, WorldBoxes, build_envelope_warning_mask, build_model_entries,
+    MODEL_ENTRY_SIZE, WorldBoxes, build_model_entries, build_plate_warning_masks,
     renderable_leaf_count,
 };
 pub use support_lines::SupportLines;
@@ -374,6 +376,8 @@ pub struct Renderer {
     /// The marks of where supports are recommended, drawn into the scene's
     /// depth (#524).
     hints: overlay::OverlaySlot,
+    /// The scene's plates (#545): every plate piece is drawn once for each.
+    plates: crate::plates::Plates,
     /// The rings of the islands an analysis found (#525), drawn over
     /// everything, the models included (#538).
     island_marks: overlay::OverlaySlot,
@@ -490,6 +494,7 @@ impl Renderer {
             adopted: scene_upload::UploadedMeshes::default(),
             overlay: overlay::OverlaySlot::default(),
             hints: overlay::OverlaySlot::default(),
+            plates: crate::plates::Plates::one(),
             island_marks: overlay::OverlaySlot::default(),
             island_hidden: overlay::OverlaySlot::default(),
             hint_source: None,
@@ -1048,6 +1053,11 @@ impl Renderer {
         self.supports_hidden = hidden;
     }
 
+    /// The scene's plates for the frames to come (#545).
+    pub fn set_plates(&mut self, plates: crate::plates::Plates) {
+        self.plates = plates;
+    }
+
     /// What stays lit in the frames to come while something is selected
     /// (#523): every other object is dimmed. Empty dims nothing.
     pub fn set_focus(&mut self, focus: &[NodeId]) {
@@ -1286,9 +1296,11 @@ impl Renderer {
         // discarded. A leaf-walk failure on the same graph already caused
         // `scene_for_draws` to fall to false above, so falling back to 0 here
         // keeps the wall-warning state consistent with the skipped mesh draws.
-        let face_breach_mask = graph
-            .and_then(|g| build_envelope_warning_mask(g, build_volume, &mut self.world_boxes).ok())
-            .unwrap_or(0);
+        let (face_breach_mask, breached_plates) = graph
+            .and_then(|g| {
+                build_plate_warning_masks(g, build_volume, self.plates, &mut self.world_boxes).ok()
+            })
+            .unwrap_or((0, 0));
         // From under the plate, the plate and the rafts fade out (#481); a
         // picture of the print has neither.
         let under_plate = if contents == FrameContents::Workspace {
@@ -1306,7 +1318,7 @@ impl Renderer {
                 env_max.z,
                 crate::under_plate::hidden_below_mm(raft_top_mm),
             ],
-            face_breach_mask: [face_breach_mask, 0, 0, 0],
+            face_breach_mask: [face_breach_mask, breached_plates, 0, 0],
             overhang: overhang_map.map_or([0.0; 4], |map| {
                 let [limit, radians, contact, _] = map.uniform(env_min.z);
                 [limit, radians, contact, tip_cell_mm]
@@ -1327,6 +1339,15 @@ impl Renderer {
             } else {
                 let e = camera.eye();
                 [e.x, e.y, e.z, 1.0]
+            },
+            plates: {
+                let (px, py) = crate::plates::pitch(&build_volume);
+                [
+                    px,
+                    py,
+                    self.plates.count() as f32,
+                    self.plates.active() as f32,
+                ]
             },
         };
         self.core.queue.write_buffer(
@@ -1492,7 +1513,11 @@ impl Renderer {
             wgpu::IndexFormat::Uint32,
         );
         pass.set_stencil_reference(0);
-        pass.draw_indexed(0..plate_buffers.solid_index_count, 0, 0..1);
+        pass.draw_indexed(
+            0..plate_buffers.solid_index_count,
+            0,
+            0..self.plates.count(),
+        );
     }
 
     /// Slice-view cap: a flat quad at the clip height textured with the current
@@ -1522,7 +1547,7 @@ impl Renderer {
             plate_buffers.top_index_buffer.slice(..),
             wgpu::IndexFormat::Uint32,
         );
-        pass.draw_indexed(0..plate_buffers.top_index_count, 0, 0..1);
+        pass.draw_indexed(0..plate_buffers.top_index_count, 0, 0..self.plates.count());
     }
 
     /// Cage: 12 wireframe edges sharing the plate vertex buffer; the line-list
@@ -1534,7 +1559,7 @@ impl Renderer {
             plate_buffers.cage_index_buffer.slice(..),
             wgpu::IndexFormat::Uint32,
         );
-        pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
+        pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..self.plates.count());
     }
 
     /// The numbers along the plate's rulers, with the label's pipeline:
@@ -1556,9 +1581,9 @@ impl Renderer {
         pass.set_stencil_reference(0);
         let half = *count / 2;
         if underside {
-            pass.draw(half..*count, 0..1);
+            pass.draw(half..*count, 0..self.plates.count());
         } else {
-            pass.draw(0..half, 0..1);
+            pass.draw(0..half, 0..self.plates.count());
         }
     }
 
@@ -1584,7 +1609,7 @@ impl Renderer {
         pass.set_bind_group(1, bind_group, &[]);
         pass.set_vertex_buffer(0, quad.slice(..));
         pass.set_stencil_reference(0);
-        pass.draw(vertices, 0..1);
+        pass.draw(vertices, 0..self.plates.count());
     }
 
     /// Marks what is selected into the stencil whole, through whatever stands
@@ -1820,7 +1845,7 @@ impl Renderer {
             wgpu::IndexFormat::Uint32,
         );
         pass.set_stencil_reference(0);
-        pass.draw_indexed(0..plate_buffers.wall_index_count, 0, 0..1);
+        pass.draw_indexed(0..plate_buffers.wall_index_count, 0, 0..self.plates.count());
     }
 
     /// Plate bottom: drawn last in the main pass with alpha blending and
@@ -1843,7 +1868,11 @@ impl Renderer {
             wgpu::IndexFormat::Uint32,
         );
         pass.set_stencil_reference(0);
-        pass.draw_indexed(0..plate_buffers.bottom_index_count, 0, 0..1);
+        pass.draw_indexed(
+            0..plate_buffers.bottom_index_count,
+            0,
+            0..self.plates.count(),
+        );
     }
 
     /// Outline post-pass: dilate the stencil set by the mesh pass to draw a

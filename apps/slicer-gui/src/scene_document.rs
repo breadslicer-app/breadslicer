@@ -135,6 +135,9 @@ pub(crate) enum SceneEvent {
     /// Nothing made from the geometry is touched, so listeners that mirror it
     /// have nothing to do; the viewport shows the new paint.
     Painted,
+    /// The scene's plates changed (#545): how many, or which is active.
+    /// Nothing in the scene moved by it; the viewport shows the plates.
+    PlatesChanged,
     /// The undo or redo stack changed (push, undo, redo, or install/clear when
     /// the stacks were non-empty).
     UndoStackChanged,
@@ -163,6 +166,9 @@ struct HistoryEntry {
     /// The entry changes marks the scene does not hold, and nothing else
     /// (#512): its edit is empty, Undo and Redo run the step instead.
     marks: Option<MarksStep>,
+    /// How many plates the scene had before the entry and after it (#545):
+    /// Undo and Redo set them back, with the edit's model moves.
+    plates: Option<(u32, u32)>,
 }
 
 impl HistoryEntry {
@@ -243,6 +249,7 @@ fn split_payload(
         output_format,
         embedded,
         review_decisions,
+        plates: _,
     } = payload;
     (
         PrintSelection {
@@ -339,6 +346,9 @@ pub(crate) struct SceneDocument {
     /// The findings the person chose to ignore (#432): the Review card
     /// keeps these up to date, and a project carries them.
     review_decisions: RefCell<Vec<ReviewDecision>>,
+    /// The scene's plates and which is active (#545); a project carries how
+    /// many.
+    plates: Cell<crate::plates::Plates>,
     /// The editable DragonFruit support sessions, one set per model, shared
     /// with the support driver: a save keeps each set's session in force as
     /// data, and opening a `.bread` puts the rebuilt ones here.
@@ -473,6 +483,7 @@ impl SceneDocument {
             scene_generation: Cell::new(0),
             project_state_generation: Cell::new(0),
             review_decisions: RefCell::default(),
+            plates: Cell::new(crate::plates::Plates::one()),
             support_sessions: Rc::default(),
             support_follow: Cell::new(None),
             hollows: Rc::default(),
@@ -560,6 +571,8 @@ impl SceneDocument {
         self.bump_scene_generation();
         *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
+        let plates = project_payload.as_ref().map_or(1, |p| p.plates);
+        self.plates.set(crate::plates::Plates::new(plates, 0));
         let (selection, embedded, decisions) = match project_payload {
             Some(payload) => {
                 self.origin.set(DocumentOrigin::Project);
@@ -601,6 +614,7 @@ impl SceneDocument {
         self.origin.set(DocumentOrigin::PlainMesh);
         *self.print_selection.borrow_mut() = PrintSelection::default();
         self.embedded_profiles.borrow_mut().clear();
+        self.plates.set(crate::plates::Plates::one());
         self.selection.set(Selection::None);
         let stacks_changed = self.clear_history();
         self.save_point.set(None);
@@ -678,7 +692,44 @@ impl SceneDocument {
             output_format,
             embedded: self.embedded_profiles.borrow().clone(),
             review_decisions: self.review_decisions.borrow().clone(),
+            // One plate is what a project without plates has (#545).
+            plates: match self.plates.get().count() {
+                1 => 0,
+                count => count,
+            },
         }
+    }
+
+    /// The scene's plates and which is active (#545).
+    pub(crate) fn plates(&self) -> crate::plates::Plates {
+        self.plates.get()
+    }
+
+    /// Makes plate `index` the active one (#545). Not a step of history:
+    /// which plate is active is not part of the project.
+    pub(crate) fn set_active_plate(&self, index: u32) {
+        let plates = self.plates.get();
+        let next = plates.with_active(index);
+        if next != plates {
+            self.plates.set(next);
+            self.notify(SceneEvent::PlatesChanged);
+        }
+    }
+
+    /// Sets how many plates the scene has, `active` the active one, and
+    /// tells the listeners.
+    fn put_plates(&self, count: u32, active: u32) {
+        self.plates.set(crate::plates::Plates::new(count, active));
+        self.notify(SceneEvent::PlatesChanged);
+    }
+
+    /// Records `edit`, already applied, with the plates going from `before`
+    /// to `after` (#545), `active` the active one after it: one entry of
+    /// history, which Undo takes back whole. The edit moves the models of
+    /// the plates that move; it may be empty.
+    pub(crate) fn push_plates_edit(&self, edit: SceneEdit, before: u32, after: u32, active: u32) {
+        self.put_plates(after, active);
+        self.push_entry(edit, &[], Some((before, after)));
     }
 
     /// The findings the person chose to ignore, as a project keeps them
@@ -1174,6 +1225,12 @@ impl SceneDocument {
     /// Breadslicer supports removes a model's imported supports in an entry
     /// that its new supports then complete (#259).
     pub(crate) fn push_edit_wanting(&self, edit: SceneEdit, wanting: &[NodeId]) {
+        self.push_entry(edit, wanting, None);
+    }
+
+    /// [`Self::push_edit_wanting`], with the plates it changes (#545): an
+    /// entry that changes them is kept with an empty edit too.
+    fn push_entry(&self, edit: SceneEdit, wanting: &[NodeId], plates: Option<(u32, u32)>) {
         let mut committed = crate::support_follow::commit(self, edit);
         for model in wanting {
             if !committed.regenerate.contains(model) {
@@ -1181,7 +1238,7 @@ impl SceneDocument {
             }
         }
         let (edit, moved) = (committed.edit, committed.moved);
-        if edit.is_noop() {
+        if edit.is_noop() && plates.is_none() {
             return;
         }
         let edit = self.with_paint_carried(edit);
@@ -1209,6 +1266,7 @@ impl SceneDocument {
                 wants,
                 paint_only,
                 marks: None,
+                plates,
             });
         }
         self.redo_stack.borrow_mut().clear();
@@ -1255,6 +1313,7 @@ impl SceneDocument {
                 wants,
                 paint_only: false,
                 marks: Some(step),
+                plates: None,
             });
         }
         self.redo_stack.borrow_mut().clear();
@@ -2099,6 +2158,9 @@ impl SceneDocument {
             }
         }
         crate::breadcrumbs::note(&format!("edit: undo {}", edit_label(&entry.edit)));
+        if let Some((before, _)) = entry.plates {
+            self.put_plates(before, self.plates.get().active());
+        }
         let mut redo = self.redo_stack.borrow_mut();
         if redo.len() == UNDO_STACK_CAP {
             redo.pop_front();
@@ -2141,6 +2203,9 @@ impl SceneDocument {
             }
         }
         crate::breadcrumbs::note(&format!("edit: redo {}", edit_label(&entry.edit)));
+        if let Some((_, after)) = entry.plates {
+            self.put_plates(after, self.plates.get().active());
+        }
         let mut undo = self.undo_stack.borrow_mut();
         if undo.len() == UNDO_STACK_CAP
             && let Some(gone) = undo.pop_front()

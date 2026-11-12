@@ -1598,7 +1598,10 @@ impl ReviewPanel {
                 }
                 self.push(None);
             }
-            SceneEvent::SelectionChanged | SceneEvent::DirtyChanged | SceneEvent::Painted => {}
+            SceneEvent::SelectionChanged
+            | SceneEvent::DirtyChanged
+            | SceneEvent::Painted
+            | SceneEvent::PlatesChanged => {}
         }
     }
 

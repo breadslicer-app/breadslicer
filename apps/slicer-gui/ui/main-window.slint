@@ -697,6 +697,13 @@ export component MainWindow inherits Window {
     in property <float> arrange-max-copies: 0;
     // Arrange all (false) or the selection (true).
     callback arrange-requested(bool);
+    // The scene's plates (#545): how many, the active one (from 0) and
+    // whether a model stands on it.
+    in property <int> plate-count: 1;
+    in property <int> active-plate: 0;
+    in property <bool> active-plate-used;
+    callback plate-add-requested();
+    callback plate-remove-requested();
     callback arrange-fill-requested();
     callback arrange-finished();
     callback arrange-cancel();
@@ -2194,6 +2201,15 @@ export component MainWindow inherits Window {
                                 arrange-margin: root.arrange-margin;
                                 arrange-turns: root.arrange-turns;
                                 arrange-shadow-only: root.arrange-shadow-only;
+                                plate-count: root.plate-count;
+                                active-plate: root.active-plate;
+                                active-plate-used: root.active-plate-used;
+                                plate-add => {
+                                    root.plate-add-requested();
+                                }
+                                plate-remove => {
+                                    root.plate-remove-requested();
+                                }
                                 arrange-filling: root.arrange-filling;
                                 arrange-fill-progress: root.arrange-fill-progress;
                                 arrange-max-copies: root.arrange-max-copies;

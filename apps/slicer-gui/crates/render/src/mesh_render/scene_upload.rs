@@ -898,6 +898,7 @@ pub(super) const FACE_BIT_Z_NEG: u32 = 1 << 5;
 /// in the shader's bit layout (the `FACE_BIT_*` constants). A leaf crosses a
 /// wall when the box of its world-transformed vertices reaches strictly past
 /// it, which is when some vertex does.
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn build_envelope_warning_mask(
     graph: &Scene,
     build_volume: BuildVolume,
@@ -921,6 +922,57 @@ pub(super) fn build_envelope_warning_mask(
         },
     )?;
     Ok(crossed.iter().fold(0, |mask, wall| mask | face_bit(wall)))
+}
+
+/// [`build_envelope_warning_mask`] on several plates (#545): each model is
+/// held against the volume of the plate it belongs to (the one whose cell
+/// holds the middle of its footprint). Returns the walls crossed, as that
+/// mask, and which plates they belong to, one bit each.
+pub(super) fn build_plate_warning_masks(
+    graph: &Scene,
+    build_volume: BuildVolume,
+    plates: crate::plates::Plates,
+    boxes: &mut WorldBoxes,
+) -> Result<(u32, u32)> {
+    let volume = build_volume.volume();
+    let mut crossed = Walls::default();
+    let mut breached = 0u32;
+    let mut index = 0;
+    graph.for_each_expanded_leaf::<SceneError, _>(
+        CsgPolicy::Descend,
+        |node_id, world_transform, mesh| {
+            let world_box = boxes.world_box(
+                index,
+                mesh,
+                shared_mesh(graph, node_id, mesh),
+                &transform_to_mat4(world_transform),
+            );
+            index += 1;
+            if world_box.is_empty() {
+                return Ok(());
+            }
+            let (min, max) = (world_box.min().coords(), world_box.max().coords());
+            let plate = crate::plates::plate_of(
+                &build_volume,
+                plates,
+                (min[0] + max[0]) / 2.0,
+                (min[1] + max[1]) / 2.0,
+            );
+            let at = crate::plates::offset(&build_volume, plate);
+            let shift = |v: [f32; 3]| Vertex::new([v[0] - at.x, v[1] - at.y, v[2]]);
+            let local = Aabb::from_min_max(shift(min), shift(max));
+            let walls = volume.walls_crossed_by(&local);
+            if walls.iter().next().is_some() {
+                breached |= 1 << plate;
+            }
+            crossed |= walls;
+            Ok(())
+        },
+    )?;
+    Ok((
+        crossed.iter().fold(0, |mask, wall| mask | face_bit(wall)),
+        breached,
+    ))
 }
 
 /// Returns the bit of `wall` in the mask that the plate shader reads.

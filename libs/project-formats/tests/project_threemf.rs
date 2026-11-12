@@ -58,6 +58,7 @@ fn full_payload() -> ProjectPayload {
             },
         ],
         review_decisions: Vec::new(),
+        plates: 0,
     }
 }
 
