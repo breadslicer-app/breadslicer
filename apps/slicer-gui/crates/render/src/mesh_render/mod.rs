@@ -377,6 +377,9 @@ pub struct Renderer {
     /// The rings of the islands an analysis found (#525), drawn over
     /// everything, the models included (#538).
     island_marks: overlay::OverlaySlot,
+    /// The islands' paint where something stands in front of it (#542):
+    /// seen through the models, never laid over what shows.
+    island_hidden: overlay::OverlaySlot,
     /// The marks last handed to [`Self::set_hint_marks`], split between
     /// `hints` and `island_marks`.
     hint_source: Option<Overlay>,
@@ -488,6 +491,7 @@ impl Renderer {
             overlay: overlay::OverlaySlot::default(),
             hints: overlay::OverlaySlot::default(),
             island_marks: overlay::OverlaySlot::default(),
+            island_hidden: overlay::OverlaySlot::default(),
             hint_source: None,
             surface_paint: surface_paint::PaintSlot::default(),
             overhang_map: None,
@@ -1447,6 +1451,11 @@ impl Renderer {
                 self.record_plate_marks(&mut pass, true);
                 // Last, over everything: an island's ring shows through the
                 // models and the plate (#538).
+                self.island_hidden.record(
+                    &mut pass,
+                    &self.pipelines.mesh.island_hidden_pipeline,
+                    &self.pipelines.mesh.uniforms_bind_group,
+                );
                 self.island_marks.record(
                     &mut pass,
                     &self.pipelines.mesh.island_mark_pipeline,

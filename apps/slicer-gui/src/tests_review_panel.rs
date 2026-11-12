@@ -2759,6 +2759,32 @@ mod fix_all {
         panic!("the islands are painted: {:?}", island_tints(w));
     }
 
+    /// A support placed by hand on an island's paint, off the spot its
+    /// first tip was planned at, clears it (#542): the supports that hang
+    /// from the model itself count, as every other one does.
+    #[test]
+    fn a_support_on_an_islands_paint_clears_it() {
+        let (before, after) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            answer_the_question(&w, MessageAnswer::Cancel);
+            ANALYZE.set(true);
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            ANALYZE.set(false);
+            w.window.set_workspace_section(WorkspaceSection::Supports);
+            painted(&w);
+            let left = w.panel.supports.islands_left_for_test();
+            let before = w.window.get_support_islands_left();
+            let at = left[0];
+            let p = [at[0] as f32 + 0.25, at[1] as f32, at[2] as f32];
+            let (edit, refused) = w.panel.supports.add_supports_at(&[p]);
+            assert!(refused.is_empty(), "the tip takes: {edit:?} {refused:?}");
+            w.panel.supports.support_hints(&w.window);
+            (before, w.window.get_support_islands_left())
+        });
+        assert!(before > 0, "islands are left: {before}");
+        assert_eq!(after, before - 1, "the island supported clears");
+    }
+
     /// Go to the island (#538): each press centres the camera on the next
     /// island left, in turn, looking up at it from below; the one it went to
     /// is painted apart (#542).

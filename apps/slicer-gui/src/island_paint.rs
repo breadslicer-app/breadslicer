@@ -28,6 +28,78 @@ const LIFT_MM: f32 = 0.02;
 /// An island painted on less than this also gets a dot, mm².
 pub(crate) const DOT_UNDER_MM2: f64 = 1.0;
 
+/// How near a support's contact must come to an island's paint to hold
+/// it, mm: about a tip's ball.
+pub(crate) const HOLDS_WITHIN_MM: f64 = 0.25;
+
+/// Whether a support touching the models at `contacts` holds `island`
+/// (#542): one comes within [`HOLDS_WITHIN_MM`] of its paint, or, while it
+/// has none, within `fallback_mm` of the spot its first tip was planned at.
+/// A support next to the island, not on it, does not.
+pub(crate) fn held(island: &Hint, paint: &Paint, contacts: &[[f64; 3]], fallback_mm: f64) -> bool {
+    let reach = f64::from(reach_mm(island)) + HOLDS_WITHIN_MM + fallback_mm;
+    let near: Vec<Vec3> = contacts
+        .iter()
+        .filter(|c| (0..3).map(|k| (c[k] - island.at[k]).powi(2)).sum::<f64>() <= reach * reach)
+        .map(|c| Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32))
+        .collect();
+    if near.is_empty() {
+        return false;
+    }
+    match paint {
+        Paint::Faces { corners, .. } if !corners.is_empty() => {
+            let within = HOLDS_WITHIN_MM as f32;
+            corners.as_chunks::<3>().0.iter().any(|t| {
+                let t = [Vec3::from(t[0]), Vec3::from(t[1]), Vec3::from(t[2])];
+                near.iter()
+                    .any(|&p| closest_on_triangle(p, t).distance(p) <= within)
+            })
+        }
+        _ => {
+            let at = Vec3::new(
+                island.at[0] as f32,
+                island.at[1] as f32,
+                island.at[2] as f32,
+            );
+            near.iter().any(|p| p.distance(at) <= fallback_mm as f32)
+        }
+    }
+}
+
+/// The point of triangle `t` nearest `p` (Ericson, Real-Time Collision
+/// Detection, 5.1.5).
+fn closest_on_triangle(p: Vec3, [a, b, c]: [Vec3; 3]) -> Vec3 {
+    let (ab, ac, ap) = (b - a, c - a, p - a);
+    let (d1, d2) = (ab.dot(ap), ac.dot(ap));
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return a;
+    }
+    let bp = p - b;
+    let (d3, d4) = (ab.dot(bp), ac.dot(bp));
+    if d3 >= 0.0 && d4 <= d3 {
+        return b;
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        return a + ab * (d1 / (d1 - d3));
+    }
+    let cp = p - c;
+    let (d5, d6) = (ab.dot(cp), ac.dot(cp));
+    if d6 >= 0.0 && d5 <= d6 {
+        return c;
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        return a + ac * (d2 / (d2 - d6));
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    }
+    let denom = 1.0 / (va + vb + vc);
+    a + ab * (vb * denom) + ac * (vc * denom)
+}
+
 /// An island's paint.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Paint {
@@ -241,5 +313,17 @@ mod tests {
             .with_scene(|spatial| paint(spatial, &away, &keep, &mut marks))
             .expect("a scene");
         assert_eq!(none, Paint::Nowhere);
+
+        // A support touching the paint holds the island; one beside it or
+        // on the top of the box does not (#542).
+        let painted = document
+            .with_scene(|spatial| paint(spatial, &island, &keep, &mut marks))
+            .expect("a scene");
+        assert!(held(&island, &painted, &[[1.6, 1.4, 4.9]], 0.5));
+        assert!(!held(&island, &painted, &[[2.4, 1.0, 5.0]], 0.5));
+        assert!(!held(&island, &painted, &[[1.0, 1.0, 9.0]], 0.5));
+        // With no paint, only near the spot planned.
+        assert!(held(&island, &Paint::Nowhere, &[[1.3, 1.0, 5.0]], 0.5));
+        assert!(!held(&island, &Paint::Nowhere, &[[1.8, 1.0, 5.0]], 0.5));
     }
 }
