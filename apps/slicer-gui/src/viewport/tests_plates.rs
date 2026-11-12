@@ -121,15 +121,46 @@ fn a_plate_added_goes_after_the_last_and_undoes_in_one_step() {
     assert_eq!(document.plates().count(), 3);
 }
 
+/// A plate with a model on it goes too (#545): the next plate takes its
+/// place and its models with it; the last plate's go to the one before.
 #[test]
-fn a_plate_with_a_model_on_it_stays() {
+fn a_plate_removed_hands_its_models_to_the_plate_in_its_place() {
     let v = volume();
-    let (ctrl, _) = window(&[Vec3::ZERO, offset(&v, 1)]);
+    let (ctrl, leaves) = window(&[
+        Vec3::new(10.0, 5.0, 0.0),
+        offset(&v, 2) + Vec3::new(-10.0, 0.0, 0.0),
+    ]);
     let document = ctrl.document();
     ctrl.add_plate();
+    ctrl.add_plate();
+    // The first plate, with a model, and the second empty: the second
+    // takes its place and the model.
+    document.set_active_plate(0);
+    ctrl.remove_active_plate();
+    assert_eq!(document.plates().count(), 2);
+    assert_eq!(document.plates().active(), 0, "the plate that took them");
+    assert!(
+        near(centre_of(&ctrl, leaves[0]), Vec3::new(10.0, 5.0, 0.0)),
+        "on it, where it was"
+    );
+    assert!(near(
+        centre_of(&ctrl, leaves[1]),
+        offset(&v, 1) + Vec3::new(-10.0, 0.0, 0.0)
+    ));
+    // The last plate's model goes to the one before, where it stood.
     document.set_active_plate(1);
     ctrl.remove_active_plate();
-    assert_eq!(document.plates().count(), 2, "the model keeps its plate");
+    assert_eq!(document.plates().count(), 1);
+    assert!(near(
+        centre_of(&ctrl, leaves[1]),
+        Vec3::new(-10.0, 0.0, 0.0)
+    ));
+    assert!(document.undo().expect("undoes"));
+    assert_eq!(document.plates().count(), 2);
+    assert!(near(
+        centre_of(&ctrl, leaves[1]),
+        offset(&v, 1) + Vec3::new(-10.0, 0.0, 0.0)
+    ));
 }
 
 #[test]
@@ -144,7 +175,7 @@ fn removing_a_plate_moves_the_plates_after_it_up_with_their_models() {
     document.set_active_plate(1);
     ctrl.remove_active_plate();
     assert_eq!(document.plates().count(), 5);
-    assert_eq!(document.plates().active(), 0);
+    assert_eq!(document.plates().active(), 1, "the plate in its place");
     assert!(
         near(centre_of(&ctrl, leaves[0]), Vec3::ZERO),
         "plate 0 stays"
@@ -265,8 +296,6 @@ fn a_plate_removed_with_its_models_takes_them_off_in_one_step() {
     ctrl.add_plate();
     ctrl.add_plate();
     document.set_active_plate(1);
-    ctrl.remove_active_plate_with(false);
-    assert_eq!(document.plates().count(), 3, "without Shift it stays");
     ctrl.remove_active_plate_with(true);
     assert_eq!(document.plates().count(), 2);
     let gone = document

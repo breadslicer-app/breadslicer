@@ -1237,7 +1237,7 @@ export component TransformInspector inherits VerticalLayout {
                 : @tr("Inspector" => "Add plates to lay out more prints side by side, then slice the one to print.");
         }
         if root.plate-count > 1 && root.active-plate-used: Note {
-            text: @tr("Inspector" => "Move or delete the models on the active plate to remove it.");
+            text: @tr("Inspector" => "Removing the active plate moves its models to the plate that takes its place. Shift+click the plate's own remove tool to remove them with it.");
         }
         HorizontalLayout {
             spacing: 8px;
@@ -1253,7 +1253,7 @@ export component TransformInspector inherits VerticalLayout {
             ScButton {
                 text: @tr("Inspector" => "Remove plate");
                 icon: Icons.trash;
-                enabled: root.plate-count > 1 && !root.active-plate-used;
+                enabled: root.plate-count > 1;
                 clicked => {
                     root.plate-remove();
                 }

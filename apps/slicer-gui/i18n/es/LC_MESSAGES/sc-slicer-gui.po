@@ -6961,8 +6961,8 @@ msgstr "Agregá camas para armar más impresiones una al lado de la otra; despu�
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
-msgid "Move or delete the models on the active plate to remove it."
-msgstr "Para quitar la cama activa, mové o borrá los modelos que tiene."
+msgid "Removing the active plate moves its models to the plate that takes its place. Shift+click the plate's own remove tool to remove them with it."
+msgstr "Al quitar la cama activa, sus modelos pasan a la cama que queda en su lugar. Con Shift+clic en la papelera de la cama se van con ella."
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
@@ -6989,10 +6989,6 @@ msgctxt "Workspace"
 msgid "Remove this plate (Shift: with its models)"
 msgstr "Quitar esta cama (Shift: con sus modelos)"
 
-#: src/viewport/controller.rs
-msgctxt "Workspace"
-msgid "This plate has models on it. Shift+click the button to remove it with them."
-msgstr "Esta cama tiene modelos. Shift+clic en el botón para quitarla con ellos."
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"

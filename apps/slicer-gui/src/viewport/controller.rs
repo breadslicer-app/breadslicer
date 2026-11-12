@@ -3830,16 +3830,17 @@ impl ViewportController {
         );
     }
 
-    /// Takes the active plate off (#545) when no model stands on it: the
-    /// plates after it move up a place, with their models, as one step of
-    /// history. The plate before becomes the active one.
+    /// Takes the active plate off (#545): the plates after it move up a
+    /// place with their models, and the models on it go to the plate that
+    /// takes its place, the next one (or the one before, when it was the
+    /// last), where they stood on it. One step of history; the plate they
+    /// went to is the active one.
     pub(crate) fn remove_active_plate(&self) {
         self.remove_active_plate_with(false);
     }
 
     /// [`Self::remove_active_plate`]; `with_models` takes the models on it
-    /// and their supports off with it (Shift on the plate's tool). Without,
-    /// a plate with models stays and the status bar says how to take it off.
+    /// and their supports off with it instead (Shift on the plate's tool).
     pub(crate) fn remove_active_plate_with(&self, with_models: bool) {
         let document = self.session.document();
         let plates = document.plates();
@@ -3847,23 +3848,28 @@ impl ViewportController {
         if plates.count() <= 1 {
             return;
         }
+        let last = plates.count() - 1;
+        let volume = self.session.build_volume();
         let models = self.models_on_plates();
         let on_it: Vec<sc_scene::NodeId> = models
             .iter()
             .filter(|&&(_, plate)| plate == active)
             .map(|&(id, _)| id)
             .collect();
-        if !on_it.is_empty() && !with_models {
-            if let Some(ui) = self.ui.upgrade() {
-                ui.set_status_notice(ctr!(
-                    "Workspace",
-                    "This plate has models on it. Shift+click the button to remove it with them."
-                ));
-            }
-            return;
-        }
-        let volume = self.session.build_volume();
-        let mut edits = document.removal_edits(document.with_their_supports(on_it));
+        let mut edits = if with_models {
+            document.removal_edits(document.with_their_supports(on_it))
+        } else if active == last {
+            // The last plate's models go to the one before.
+            let by =
+                crate::plates::offset(&volume, active - 1) - crate::plates::offset(&volume, active);
+            on_it
+                .into_iter()
+                .filter_map(|id| crate::plate_layout::moved_by(document, id, by))
+                .collect()
+        } else {
+            // The next plate comes to its place: they stay where they are.
+            Vec::new()
+        };
         edits.extend(
             models
                 .into_iter()
@@ -3882,7 +3888,7 @@ impl ViewportController {
             edit,
             plates.count(),
             plates.count() - 1,
-            active.saturating_sub(1),
+            active.min(last - 1),
         );
         self.mark_dirty();
     }
