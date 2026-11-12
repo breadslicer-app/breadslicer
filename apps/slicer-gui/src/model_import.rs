@@ -95,6 +95,8 @@ pub(crate) struct PreparedModels {
     /// plate as it stood at `revision`. `None` leaves it on the plate's
     /// middle.
     pub(crate) placements: Vec<Option<Placement>>,
+    /// How many plates the scene needs for them (#557).
+    pub(crate) plates: u32,
     pub(crate) revision: SceneRevision,
     /// Whether the models land as an undo step. `false` for the files that
     /// came with the one a fresh scene opened from: together they are the
@@ -130,14 +132,20 @@ pub(crate) struct JoinedModels {
     /// The models of every file opened, to select; none for a file opened
     /// alone.
     pub(crate) models: Vec<NodeId>,
+    /// How many plates the files take (#557): those that do not fit on the
+    /// first go on plates after it.
+    pub(crate) plates: u32,
 }
 
 /// What an import starts with, taken on the UI thread.
 pub(crate) struct ImportJob {
     pub(crate) paths: Vec<PathBuf>,
-    /// The plate's objects as they stand: kept clear of.
+    /// The plates' objects as they stand: kept clear of, and the plate each
+    /// stands on, an index into `plates`.
     pub(crate) standing: Vec<Body>,
-    pub(crate) plate: Plate,
+    pub(crate) stands_on: Vec<Option<usize>>,
+    /// The plates, in the order the files fill them (#557).
+    pub(crate) plates: Vec<Plate>,
     pub(crate) build_volume: sc_print_primitives::BuildVolume,
     pub(crate) revision: SceneRevision,
     pub(crate) recorded: bool,
@@ -150,7 +158,8 @@ pub(crate) struct ImportJob {
 /// thread (#391).
 pub(crate) struct OpeningJob {
     pub(crate) paths: Vec<PathBuf>,
-    pub(crate) plate: Plate,
+    /// The plates, in the order the files fill them (#557).
+    pub(crate) plates: Vec<Plate>,
     pub(crate) build_volume: sc_print_primitives::BuildVolume,
     /// The empty scene's revision, for when no file can be read.
     pub(crate) revision: SceneRevision,
@@ -178,6 +187,7 @@ pub(crate) fn spawn_import(ticket: LoadTicket, job: ImportJob, sink: LoadProgres
                 files: Vec::new(),
                 failures: paths.into_iter().map(|p| (p, err.to_string())).collect(),
                 placements: Vec::new(),
+                plates: 1,
                 revision,
                 recorded,
                 meshes: Vec::new(),
@@ -236,13 +246,16 @@ fn prepare_opening(job: OpeningJob, sink: &LoadProgressSink) -> anyhow::Result<O
             files: Vec::new(),
             failures,
             placements: Vec::new(),
+            plates: 1,
             revision: job.revision,
             recorded: false,
             meshes: Vec::new(),
             primed: Vec::new(),
         }));
     };
-    let placements = place_files(standing_of(&opened.scene), &files, &job.plate);
+    let standing = standing_of(&opened.scene);
+    let on_first = vec![Some(0); standing.len()];
+    let (placements, plates) = place_files(standing, on_first, &files, &job.plates);
     let mut models = Vec::new();
     if !files.is_empty() {
         models = model_leaves(&opened.scene);
@@ -260,6 +273,7 @@ fn prepare_opening(job: OpeningJob, sink: &LoadProgressSink) -> anyhow::Result<O
         failures,
         left_off,
         models,
+        plates,
     };
     Ok(Opening::Scene(path, Box::new(prepared)))
 }
@@ -321,8 +335,8 @@ pub(crate) fn read_all(
 pub(crate) fn spawn_placement(
     ticket: LoadTicket,
     mut models: PreparedModels,
-    standing: Vec<Body>,
-    plate: Plate,
+    (standing, stands_on): (Vec<Body>, Vec<Option<usize>>),
+    plates: Vec<Plate>,
     revision: SceneRevision,
 ) {
     std::thread::spawn(move || {
@@ -331,9 +345,11 @@ pub(crate) fn spawn_placement(
             .first()
             .map(|file| file.path.clone())
             .unwrap_or_default();
-        let placements = guard_worker(|| Ok(place_files(standing, &models.files, &plate)));
+        let placed = guard_worker(|| Ok(place_files(standing, stands_on, &models.files, &plates)));
         // A panic leaves them on the plate's middle, still added.
-        models.placements = placements.unwrap_or_default();
+        let (placements, count) = placed.unwrap_or_else(|_| (Vec::new(), 1));
+        models.placements = placements;
+        models.plates = count;
         models.revision = revision;
         ticket.deposit_models(first, models);
     });
@@ -351,7 +367,7 @@ pub(crate) fn prepare_models(job: ImportJob, sink: &LoadProgressSink) -> Prepare
             Err(err) => failures.push((path, format!("{err:#}"))),
         }
     }
-    let placements = place_files(job.standing, &files, &job.plate);
+    let (placements, plates) = place_files(job.standing, job.stands_on, &files, &job.plates);
     // The caches build while the meshes upload.
     let (meshes, primed) = std::thread::scope(|scope| {
         let primers: Vec<_> = files
@@ -374,6 +390,7 @@ pub(crate) fn prepare_models(job: ImportJob, sink: &LoadProgressSink) -> Prepare
         files,
         failures,
         placements,
+        plates,
         revision: job.revision,
         recorded: job.recorded,
         meshes,
@@ -542,15 +559,27 @@ fn model_leaves(scene: &Scene) -> Vec<NodeId> {
         .collect()
 }
 
-/// Per file, where it goes on `plate`, clear of `standing`; `None` for each
-/// when the arrangement finds nothing to place.
+/// Per file, where it goes on `plates`, clear of `standing`, which stands on
+/// the plates `stands_on` names (#557): on the first plate with room, else
+/// the next, nothing that stands moving. Also how many plates that takes;
+/// `None` for each file, and the plates as they are, when the arrangement
+/// finds nothing to place.
 pub(crate) fn place_files(
     standing: Vec<Body>,
+    mut stands_on: Vec<Option<usize>>,
     files: &[ImportedFile],
-    plate: &Plate,
-) -> Vec<Option<Placement>> {
+    plates: &[Plate],
+) -> (Vec<Option<Placement>>, u32) {
     let first = standing.len();
     let mut bodies = standing;
+    stands_on.resize(first, None);
+    stands_on.extend(std::iter::repeat_n(None, files.len()));
+    let held = stands_on
+        .iter()
+        .flatten()
+        .map(|&p| p as u32 + 1)
+        .max()
+        .unwrap_or(1);
     bodies.extend(files.iter().map(|file| {
         Body {
             parts: file
@@ -564,9 +593,23 @@ pub(crate) fn place_files(
             fixed: false,
         }
     }));
-    match sc_arrange::arrange(&bodies, plate, &import_settings(), &AtomicBool::new(false)) {
-        Ok(outcome) => outcome.placements.into_iter().skip(first).collect(),
-        Err(_) => vec![None; files.len()],
+    match sc_arrange::arrange_across(
+        &bodies,
+        &stands_on,
+        plates,
+        &import_settings(),
+        &AtomicBool::new(false),
+    ) {
+        Ok(across) => (
+            across
+                .placements
+                .into_iter()
+                .skip(first)
+                .map(|p| p.map(|(_, placement)| placement))
+                .collect(),
+            held.max(across.plates_used as u32),
+        ),
+        Err(_) => (vec![None; files.len()], held),
     }
 }
 

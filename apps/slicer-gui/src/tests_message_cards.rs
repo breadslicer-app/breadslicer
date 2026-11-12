@@ -306,6 +306,22 @@ fn separate_supports(shown: &Shown) {
     );
 }
 
+fn hand_placed(shown: &Shown) {
+    shown.manager.show_hand_placed(
+        || InfoTexts {
+            heading: ctr!("ArrangeDialog", "Models placed by hand"),
+            message: ctr!(
+                "ArrangeDialog",
+                "{n} model was placed by hand. Arrange all can also find the best place for it.",
+                "{n} models were placed by hand. Arrange all can also find the best place for them.",
+                3
+            ),
+            details: Default::default(),
+        },
+        |_| {},
+    );
+}
+
 fn recovery(shown: &Shown) {
     shown.manager.show_recovery(
         vec![
@@ -415,6 +431,11 @@ const CASES: &[Case] = &[
     Case {
         name: "separar-soportes",
         show: separate_supports,
+        primary: true,
+    },
+    Case {
+        name: "acomodados-a-mano",
+        show: hand_placed,
         primary: true,
     },
     Case {

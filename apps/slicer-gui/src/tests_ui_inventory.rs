@@ -80,6 +80,38 @@ fn the_pictures_of_the_app_are_written_when_asked() {
                 &format!("{language}-4-slice-ruler"),
             );
         });
+        // Many objects: the list keeps to five rows and scrolls (#558); the
+        // one picked in the view comes into sight.
+        let list_dir = dir.clone();
+        on_fresh_slint_thread(move || {
+            let window = MainWindow::new().expect("a main window");
+            slint::select_bundled_translation(language).expect("bundled language");
+            window.show().expect("the window shows");
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(1600.0, 1000.0));
+            window.set_has_scene(true);
+            window.set_workspace_section(WorkspaceSection::Transform);
+            let rows: Vec<slint::StandardListViewItem> = (1..=40)
+                .map(|n| {
+                    slint::StandardListViewItem::from(slint::SharedString::from(format!(
+                        "Boar Updated ({n})"
+                    )))
+                })
+                .collect();
+            window.set_object_list(slint::ModelRc::new(slint::VecModel::from(rows)));
+            write(
+                window.window(),
+                &list_dir,
+                &format!("{language}-1-transform-objects"),
+            );
+            window.set_selected_object_index(22);
+            write(
+                window.window(),
+                &list_dir,
+                &format!("{language}-1-transform-objects-picked"),
+            );
+        });
         let dir = dir.clone();
         on_fresh_slint_thread(move || {
             let window = PreferencesWindow::new().expect("a preferences window");

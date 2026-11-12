@@ -64,6 +64,11 @@ fn box_mesh() -> IndexedMesh {
 /// A window on boxes at `places`, under a group root as a loader makes,
 /// on [`volume`]'s plates; their leaves in order.
 fn window(places: &[Vec3]) -> (ViewportController, Vec<NodeId>) {
+    window_of(places, 1.0)
+}
+
+/// [`window`] on boxes `scale` times as big.
+fn window_of(places: &[Vec3], scale: f64) -> (ViewportController, Vec<NodeId>) {
     let ctrl = ViewportController::new_for_test();
     ctrl.set_build_volume(volume());
     let mut g = Scene::new();
@@ -72,11 +77,10 @@ fn window(places: &[Vec3]) -> (ViewportController, Vec<NodeId>) {
     let mesh = Arc::new(box_mesh());
     let mut leaves = Vec::new();
     for p in places {
-        let at = Transform3D::Affine(AffineTransform3D::from_translation([
-            f64::from(p.x),
-            f64::from(p.y),
-            0.0,
-        ]));
+        let at = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+            [[scale, 0.0, 0.0], [0.0, scale, 0.0], [0.0, 0.0, scale]],
+            [f64::from(p.x), f64::from(p.y), 0.0],
+        ));
         let leaf = g
             .add_leaf(None, at, LeafPayload::Mesh(mesh.clone()))
             .expect("leaf");
@@ -407,10 +411,17 @@ fn the_orbit_pivot_lands_on_any_plate() {
     assert!((pivot - second).length() < 1.0, "{pivot:?}");
 }
 
-/// The card's Arrange all arranges every plate with objects, each on its
-/// own (#545): a model on each plate, off to a side, both land on theirs.
+/// Whether `c`, a centre, lies on plate `plate` of [`volume`].
+fn on_plate(c: Vec3, plate: u32) -> bool {
+    let c = c - offset(&volume(), plate);
+    c.x.abs() <= 50.0 && c.y.abs() <= 25.0
+}
+
+/// Arrange all packs every plate's models for the fewest plates (#554): a
+/// model on each of 2 plates both land on the first, and the second, left
+/// empty, goes; one Undo puts both back with the plate.
 #[test]
-fn arrange_all_arranges_every_plate_on_its_own() {
+fn arrange_all_packs_every_plate_for_the_fewest_plates() {
     let v = volume();
     let second = offset(&v, 1);
     let (ctrl, leaves) = window(&[
@@ -420,28 +431,152 @@ fn arrange_all_arranges_every_plate_on_its_own() {
     let document = ctrl.document();
     ctrl.add_plate();
     let before = [centre_of(&ctrl, leaves[0]), centre_of(&ctrl, leaves[1])];
-    crate::arrange_run::arrange_on_plates_now(
+    let applied = crate::arrange_run::arrange_on_plates_now(
         document.as_ref(),
         &v,
         Default::default(),
         crate::arrange_run::ArrangeScope::Plates,
     )
     .expect("arranged");
-    let after = [centre_of(&ctrl, leaves[0]), centre_of(&ctrl, leaves[1])];
-    assert!(
-        !near(after[0], before[0]) && !near(after[1], before[1]),
-        "both moved: {before:?} {after:?}"
-    );
-    for (c, at) in [(after[0], Vec3::ZERO), (after[1], second)] {
-        let c = c - at;
-        assert!(
-            c.x.abs() <= 50.0 && c.y.abs() <= 25.0,
-            "on its plate: {c:?}"
-        );
+    assert_eq!((applied.plates_before, applied.plates), (2, 1));
+    assert_eq!(document.plates().count(), 1, "the emptied plate goes");
+    for &leaf in &leaves {
+        assert!(on_plate(centre_of(&ctrl, leaf), 0));
     }
     assert!(document.undo().expect("undoes"), "one step");
+    assert_eq!(document.plates().count(), 2);
     assert!(near(centre_of(&ctrl, leaves[0]), before[0]));
     assert!(near(centre_of(&ctrl, leaves[1]), before[1]));
+}
+
+/// What does not fit on a plate goes to plates added after it (#554): 10
+/// boxes of 20 mm, 4 to a plate, take 3 plates.
+#[test]
+fn arrange_all_adds_plates_for_what_does_not_fit() {
+    let v = volume();
+    let places: Vec<Vec3> = (0..10)
+        .map(|k| Vec3::new(k as f32 * 3.0 - 15.0, 0.0, 0.0))
+        .collect();
+    let (ctrl, leaves) = window_of(&places, 5.0);
+    let document = ctrl.document();
+    let applied = crate::arrange_run::arrange_on_plates_now(
+        document.as_ref(),
+        &v,
+        Default::default(),
+        crate::arrange_run::ArrangeScope::Plates,
+    )
+    .expect("arranged");
+    assert_eq!(applied.plates, 3);
+    assert!(applied.left_off.is_empty());
+    assert_eq!(document.plates().count(), 3);
+    let mut on = [0; 3];
+    for &leaf in &leaves {
+        let c = centre_of(&ctrl, leaf);
+        let plate = (0..3).find(|&p| on_plate(c, p)).expect("on a plate");
+        on[plate as usize] += 1;
+    }
+    assert_eq!(on, [4, 4, 2]);
+    assert!(document.undo().expect("undoes"), "one step");
+    assert_eq!(document.plates().count(), 1);
+}
+
+/// The plate's own Arrange packs its plate alone, and what does not fit
+/// goes to plates added at the end (#554).
+#[test]
+fn a_plates_own_arrange_sends_what_does_not_fit_to_new_plates() {
+    let v = volume();
+    let places: Vec<Vec3> = (0..6)
+        .map(|k| Vec3::new(k as f32 * 3.0 - 9.0, 0.0, 0.0))
+        .collect();
+    let (ctrl, leaves) = window_of(&places, 5.0);
+    let document = ctrl.document();
+    crate::arrange_run::arrange_on_plates_now(
+        document.as_ref(),
+        &v,
+        Default::default(),
+        crate::arrange_run::ArrangeScope::ActivePlate,
+    )
+    .expect("arranged");
+    assert_eq!(document.plates().count(), 2);
+    let on_second = leaves
+        .iter()
+        .filter(|&&leaf| on_plate(centre_of(&ctrl, leaf), 1))
+        .count();
+    assert_eq!(on_second, 2);
+}
+
+/// A model moved by hand counts as placed by hand (#554) until Arrange
+/// places it or Undo takes the move back; kept, it stays where it is and
+/// the others keep clear of it.
+#[test]
+fn a_model_placed_by_hand_may_stay_where_it_is() {
+    let v = volume();
+    let places: Vec<Vec3> = (0..3)
+        .map(|k| Vec3::new(k as f32 * 3.0 - 3.0, 0.0, 0.0))
+        .collect();
+    let (ctrl, leaves) = window_of(&places, 5.0);
+    let document = ctrl.document();
+    let by_hand = |document: &SceneDocument| {
+        crate::arrange_run::placed_by_hand(document, &v, crate::arrange_run::ArrangeScope::Plates)
+    };
+    assert_eq!(by_hand(&document), 0, "as they came");
+    let edit = crate::plate_layout::moved_by(&document, leaves[0], Vec3::new(25.0, 10.0, 0.0))
+        .expect("a move");
+    document.apply_edit(edit.clone()).expect("applies");
+    document.push_edit(edit);
+    assert_eq!(by_hand(&document), 1, "moved by hand");
+    assert!(document.undo().expect("undoes"));
+    assert_eq!(by_hand(&document), 0, "the move undone");
+    assert!(document.redo().expect("redoes"));
+    let kept = centre_of(&ctrl, leaves[0]);
+    crate::arrange_run::arrange_across_now(
+        document.as_ref(),
+        &v,
+        Default::default(),
+        crate::arrange_run::ArrangeScope::Plates,
+        true,
+    )
+    .expect("arranged");
+    assert!(near(centre_of(&ctrl, leaves[0]), kept), "it stayed");
+    assert_eq!(by_hand(&document), 1, "still by hand");
+    for &leaf in &leaves[1..] {
+        let c = centre_of(&ctrl, leaf);
+        assert!(
+            (c - kept).x.abs() >= 20.0 || (c - kept).y.abs() >= 20.0,
+            "clear"
+        );
+    }
+    // Arranged too, it is not by hand any more.
+    crate::arrange_run::arrange_across_now(
+        document.as_ref(),
+        &v,
+        Default::default(),
+        crate::arrange_run::ArrangeScope::Plates,
+        false,
+    )
+    .expect("arranged");
+    assert_eq!(by_hand(&document), 0);
+}
+
+/// A project keeps which models were placed by hand (#554).
+#[test]
+fn a_project_keeps_the_models_placed_by_hand() {
+    let v = volume();
+    let (ctrl, leaves) = window_of(&[Vec3::ZERO, Vec3::new(30.0, 0.0, 0.0)], 2.0);
+    let document = ctrl.document();
+    let edit = crate::plate_layout::moved_by(&document, leaves[1], Vec3::new(5.0, 5.0, 0.0))
+        .expect("a move");
+    document.apply_edit(edit.clone()).expect("applies");
+    document.push_edit(edit);
+    let payload = document.compose_project_payload(&Default::default());
+    assert_eq!(payload.hand_placed.len(), 1);
+    let graph = document
+        .with_scene(|spatial| spatial.graph().clone())
+        .expect("a scene");
+    let reopened = SceneDocument::new();
+    reopened.install_project_graph(graph, "hand.bread".into(), payload);
+    assert_eq!(reopened.hand_placed(), vec![leaves[1]]);
+    let _ = v;
 }
 
 /// Plates are "Plate N" as they come (#545), and keep their names when one
@@ -612,4 +747,39 @@ fn shift_on_plus_duplicates_the_plate_with_its_models() {
     assert!(document.undo().expect("undoes"));
     assert_eq!(document.plates().count(), 1, "one step");
     assert_eq!(ctrl.models_on_plates().len(), 2);
+}
+
+/// A paste with no room on the plates goes on a plate added after the last
+/// (#557), in one step of history with it; the next paste fills that plate
+/// before another is added.
+#[test]
+fn a_paste_with_no_room_goes_on_a_new_plate() {
+    let v = volume();
+    // Two boxes of 40 mm fill the plate of 100 x 50.
+    let (ctrl, leaves) = window_of(
+        &[Vec3::new(-25.0, 0.0, 0.0), Vec3::new(25.0, 0.0, 0.0)],
+        10.0,
+    );
+    let document = ctrl.document();
+    document.set_selection(Selection::One(LeafId(leaves[0])));
+    let mut clipboard = clipboard::clipboard_from_document_selection(&document).expect("copies");
+    let steps = document.undo_len();
+
+    let copy = clipboard::paste(&document, &clipboard, [0.0, 0.0], &v)
+        .expect("pastes")
+        .expect("a copy");
+    clipboard.bump_cascade();
+    assert_eq!(document.plates().count(), 2, "a plate added");
+    assert_eq!(document.undo_len(), steps + 1, "one step");
+    assert!(on_plate(centre_of(&ctrl, copy), 1), "on the new plate");
+
+    let next = clipboard::paste(&document, &clipboard, [0.0, 0.0], &v)
+        .expect("pastes")
+        .expect("a copy");
+    assert_eq!(document.plates().count(), 2, "the new plate had room");
+    assert!(on_plate(centre_of(&ctrl, next), 1));
+
+    assert!(document.undo().expect("undoes"));
+    assert!(document.undo().expect("undoes"));
+    assert_eq!(document.plates().count(), 1, "the plate goes with the copy");
 }

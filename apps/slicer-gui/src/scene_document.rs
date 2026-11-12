@@ -257,6 +257,7 @@ fn split_payload(
         review_decisions,
         plates: _,
         plate_names: _,
+        hand_placed: _,
     } = payload;
     (
         PrintSelection {
@@ -361,6 +362,9 @@ pub(crate) struct SceneDocument {
     /// The plates' names, one per plate, in their order (#545): a plate
     /// keeps its name when the plates before it go.
     plate_names: RefCell<Vec<String>>,
+    /// The poses each model was given (#554): a model standing on none of
+    /// them was placed by hand.
+    placements: RefCell<crate::hand_placed::Placements>,
     /// The editable DragonFruit support sessions, one set per model, shared
     /// with the support driver: a save keeps each set's session in force as
     /// data, and opening a `.bread` puts the rebuilt ones here.
@@ -498,6 +502,7 @@ impl SceneDocument {
             plates: Cell::new(crate::plates::Plates::one()),
             plate_volume: Cell::new(None),
             plate_names: RefCell::new(default_plate_names(1)),
+            placements: RefCell::default(),
             support_sessions: Rc::default(),
             support_follow: Cell::new(None),
             hollows: Rc::default(),
@@ -598,6 +603,19 @@ impl SceneDocument {
         self.plates
             .set(crate::plates::Plates::new(names.len() as u32, 0));
         *self.plate_names.borrow_mut() = names;
+        // Each model is where it was given to stand, but those a project
+        // keeps as placed by hand (#554).
+        let by_hand: Vec<crate::hand_placed::Pose> = project_payload
+            .as_ref()
+            .map(|p| {
+                p.hand_placed
+                    .iter()
+                    .map(crate::hand_placed::loaded)
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.placements.borrow_mut().clear();
+        self.note_first_placements(&by_hand);
         let (selection, embedded, decisions) = match project_payload {
             Some(payload) => {
                 self.origin.set(DocumentOrigin::Project);
@@ -641,6 +659,7 @@ impl SceneDocument {
         self.embedded_profiles.borrow_mut().clear();
         self.plates.set(crate::plates::Plates::one());
         *self.plate_names.borrow_mut() = default_plate_names(1);
+        self.placements.borrow_mut().clear();
         self.selection.set(Selection::None);
         let stacks_changed = self.clear_history();
         self.save_point.set(None);
@@ -731,7 +750,86 @@ impl SceneDocument {
                     names
                 }
             },
+            hand_placed: self.hand_placed_poses(),
         }
+    }
+
+    /// The models placed by hand (#554), in the list's order: each stands
+    /// where the app did not put it.
+    pub(crate) fn hand_placed(&self) -> Vec<NodeId> {
+        let placements = self.placements.borrow();
+        self.with_scene(|spatial| {
+            crate::hand_placed::models(spatial)
+                .into_iter()
+                .filter(|&leaf| {
+                    crate::hand_placed::pose_of(spatial, leaf)
+                        .is_some_and(|pose| placements.by_hand(leaf, &pose))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    /// Where the models placed by hand stand, as a project keeps them.
+    fn hand_placed_poses(&self) -> Vec<[i64; 12]> {
+        let by_hand = self.hand_placed();
+        self.with_scene(|spatial| {
+            by_hand
+                .iter()
+                .filter_map(|&leaf| crate::hand_placed::pose_of(spatial, leaf))
+                .map(|pose| crate::hand_placed::saved(&pose))
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    /// `leaves` stand where the app put them (#554): Arrange, or a move of
+    /// the plates.
+    pub(crate) fn note_placed(&self, leaves: &[NodeId]) {
+        let mut placements = self.placements.borrow_mut();
+        self.with_scene(|spatial| {
+            for &leaf in leaves {
+                if let Some(pose) = crate::hand_placed::pose_of(spatial, leaf) {
+                    placements.note(leaf, pose);
+                }
+            }
+        });
+    }
+
+    /// Runs `move_them`, which moves models as the plates move (#554), and
+    /// keeps each model that was not placed by hand as not placed by hand.
+    pub(crate) fn keeping_placements<R>(&self, move_them: impl FnOnce() -> R) -> R {
+        let by_hand = self.hand_placed();
+        let placed: Vec<NodeId> = self
+            .with_scene(crate::hand_placed::models)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|leaf| !by_hand.contains(leaf))
+            .collect();
+        let out = move_them();
+        self.note_placed(&placed);
+        out
+    }
+
+    /// Each model the app shows for the first time stands where it was given
+    /// to; one standing at one of `by_hand` was placed by hand.
+    fn note_first_placements(&self, by_hand: &[crate::hand_placed::Pose]) {
+        let mut placements = self.placements.borrow_mut();
+        self.with_scene(|spatial| {
+            for leaf in crate::hand_placed::models(spatial) {
+                let Some(pose) = crate::hand_placed::pose_of(spatial, leaf) else {
+                    continue;
+                };
+                let kept = by_hand
+                    .iter()
+                    .any(|p| p.iter().zip(&pose).all(|(a, b)| (a - b).abs() < 1e-5));
+                if kept {
+                    placements.mark_by_hand(leaf);
+                } else {
+                    placements.note_first(leaf, pose);
+                }
+            }
+        });
     }
 
     /// The scene's plates and which is active (#545).
@@ -803,7 +901,11 @@ impl SceneDocument {
     /// with one.
     pub(crate) fn slice_plate(&self) -> u32 {
         let plates = self.plates.get();
-        if plates.count() > 1 { plates.active() } else { 0 }
+        if plates.count() > 1 {
+            plates.active()
+        } else {
+            0
+        }
     }
 
     /// Makes plate `index` the active one (#545). Not a step of history:
@@ -829,6 +931,22 @@ impl SceneDocument {
             .map(|n| format!("Plate {n}"))
             .find(|name| !names.contains(name))
             .expect("a free number")
+    }
+
+    /// Gives a scene just opened `count` plates (#557), when it has fewer:
+    /// the files opened with it took them. Not a step of history: it is how
+    /// the scene opened.
+    pub(crate) fn open_with_plates(&self, count: u32) {
+        let mut names = self.plate_names();
+        if count as usize <= names.len() {
+            return;
+        }
+        while (names.len() as u32) < count.min(crate::plates::MAX_PLATES) {
+            let name = Self::new_plate_name(&names);
+            names.push(name);
+        }
+        let active = self.plates.get().active();
+        self.put_plates(names, active);
     }
 
     /// Sets the plates to `names`, `active` the active one, and tells the
@@ -1426,6 +1544,8 @@ impl SceneDocument {
                 moved.session,
             );
         }
+        // A model this edit brought in stands where it was given to (#554).
+        self.note_first_placements(&[]);
         self.notify(SceneEvent::UndoStackChanged);
         self.notify_dirty_change(was_dirty);
     }

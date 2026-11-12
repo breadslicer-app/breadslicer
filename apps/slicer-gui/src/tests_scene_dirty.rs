@@ -496,6 +496,7 @@ mod unsaved_project_state_tests {
                 review_decisions: Vec::new(),
                 plates: 0,
                 plate_names: Vec::new(),
+                hand_placed: Vec::new(),
             }
         );
     }
@@ -529,6 +530,7 @@ mod unsaved_project_state_tests {
             review_decisions: Vec::new(),
             plates: 0,
             plate_names: Vec::new(),
+            hand_placed: Vec::new(),
         };
         let doc = SceneDocument::new();
         doc.install_project_graph(

@@ -44,6 +44,10 @@ pub struct ProjectPayload {
     /// The plates' names, in their order (#545); empty when the project
     /// keeps none, so each plate takes its default name.
     pub plate_names: Vec<String>,
+    /// Where the models placed by hand stand (#554): each one's world
+    /// transform in millionths, the linear part row by row, then the move
+    /// (mm). Arrange asks before it moves one of these.
+    pub hand_placed: Vec<[i64; 12]>,
 }
 
 /// A finding of the review the person chose to ignore, by kind and place, so

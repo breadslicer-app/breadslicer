@@ -534,9 +534,14 @@ fn a_pasted_copy_keeps_the_paint_and_then_goes_its_own_way() {
         let faces = paint_top(&document, leaf, 9.0);
         assert!(faces > 0);
         let clip: Clipboard = clipboard_from_document_selection(&document).expect("the model");
-        let copy = clipboard::paste(&document, &clip, [120.0, 40.0], 0.0)
-            .unwrap()
-            .expect("pasted");
+        let copy = clipboard::paste(
+            &document,
+            &clip,
+            [120.0, 40.0],
+            &crate::build_volume::NO_PRINTER_BUILD_VOLUME,
+        )
+        .unwrap()
+        .expect("pasted");
         let of = |id| {
             document
                 .surface_tags(id, PaintKind::Detail)

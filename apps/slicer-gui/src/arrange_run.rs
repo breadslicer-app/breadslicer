@@ -20,6 +20,10 @@
 //!
 //! Fill bed (#356, [`fill`]) leaves everything where it is and fills the
 //! room left with copies of the selected models.
+//!
+//! Arrange all ([`across`], #554) packs every plate's models for the fewest
+//! plates, adding plates as they are needed; it asks first when models were
+//! placed by hand, which may stay where they are.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -28,7 +32,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
-use sc_arrange::{Body, Outcome, Part, Plate, Settings};
+use sc_arrange::{Across, Body, Outcome, Part, Placement, Plate, Settings};
 use sc_geom::df_supports::is_any_support_mesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
@@ -36,13 +40,14 @@ use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
 use crate::MainWindow;
-use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
+use crate::error_dialog::{DialogManager, ErrorTexts, HandPlacedChoice, InfoTexts};
 use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision};
 use crate::support_persist::{in_force, model_of};
 use crate::viewport::ViewportController;
 
+mod across;
 mod fill;
 
 #[cfg(test)]
@@ -122,6 +127,16 @@ pub(crate) enum ArrangeScope {
 /// The worker's outcome: one per plate arranged.
 type ArrangeSlot = Arc<Mutex<Option<Result<Option<Vec<Outcome>>, String>>>>;
 
+/// An Arrange all's outcome (#554).
+type AcrossSlot = Arc<Mutex<Option<Result<Option<Across>, String>>>>;
+
+/// An Arrange all in flight (#554).
+struct AcrossPending {
+    revision: SceneRevision,
+    job: across::Job,
+    started: Instant,
+}
+
 pub(crate) struct ArrangeRun {
     ui: slint::Weak<MainWindow>,
     document: Rc<SceneDocument>,
@@ -130,6 +145,8 @@ pub(crate) struct ArrangeRun {
     options: Cell<ArrangeOptions>,
     slot: ArrangeSlot,
     pending: RefCell<Option<Pending>>,
+    across_slot: AcrossSlot,
+    across: RefCell<Option<AcrossPending>>,
     cancel: Arc<AtomicBool>,
     fill: fill::Fill,
 }
@@ -151,6 +168,8 @@ impl ArrangeRun {
             options: Cell::new(ArrangeOptions::default()),
             slot: Arc::new(Mutex::new(None)),
             pending: RefCell::new(None),
+            across_slot: Arc::new(Mutex::new(None)),
+            across: RefCell::new(None),
             cancel: Arc::new(AtomicBool::new(false)),
             fill: fill::Fill::default(),
         });
@@ -221,6 +240,10 @@ impl ArrangeRun {
         {
             return;
         }
+        if !selection {
+            self.ask_then_arrange(scope);
+            return;
+        }
         let jobs = jobs_on_plates(&self.document, &self.ctrl.build_volume(), selection, scope);
         if jobs.is_empty() {
             return;
@@ -264,12 +287,167 @@ impl ArrangeRun {
         });
     }
 
-    /// The printer's plate.
+    /// Arrange all over the plates (#554): asks first whether models placed
+    /// by hand stay where they are.
+    fn ask_then_arrange(self: &Rc<Self>, scope: ArrangeScope) {
+        let volume = self.ctrl.build_volume();
+        let count = across::by_hand(&self.document, &volume, scope);
+        if count == 0 {
+            self.arrange_across(scope, false);
+            return;
+        }
+        let run = self.clone();
+        self.dialogs.show_hand_placed(
+            move || InfoTexts {
+                heading: ctr!("ArrangeDialog", "Models placed by hand"),
+                message: ctr!(
+                    "ArrangeDialog",
+                    "{n} model was placed by hand. Arrange all can also find the best place for it.",
+                    "{n} models were placed by hand. Arrange all can also find the best place for them.",
+                    count
+                ),
+                details: Default::default(),
+            },
+            move |choice| match choice {
+                HandPlacedChoice::Keep => run.arrange_across(scope, true),
+                HandPlacedChoice::ArrangeToo => run.arrange_across(scope, false),
+                HandPlacedChoice::Cancel => {}
+            },
+        );
+    }
+
+    /// Starts an Arrange all of `scope` on a worker (#554); with
+    /// `keep_by_hand`, the models placed by hand stay where they are.
+    fn arrange_across(self: &Rc<Self>, scope: ArrangeScope, keep_by_hand: bool) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if ui.get_arranging() {
+            return;
+        }
+        let Some(job) = across::job(
+            &self.document,
+            &self.ctrl.build_volume(),
+            scope,
+            keep_by_hand,
+        ) else {
+            ui.set_arrange_last_run(ctr!("Inspector", "Everything is already in place."));
+            return;
+        };
+        let settings = self.options.get().settings();
+        let (bodies, stands_on, plates) = (
+            job.bodies.clone(),
+            job.stands_on.clone(),
+            job.plates.clone(),
+        );
+        crate::breadcrumbs::note(&format!(
+            "arrange: across the plates, {} object(s), keep by hand {keep_by_hand}",
+            bodies.len()
+        ));
+        *self.across.borrow_mut() = Some(AcrossPending {
+            revision: self.document.scene_revision(),
+            job,
+            started: Instant::now(),
+        });
+        self.cancel.store(false, Ordering::Relaxed);
+        ui.set_arranging(true);
+        let slot = self.across_slot.clone();
+        let cancel = self.cancel.clone();
+        let ui_weak = self.ui.clone();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sc_arrange::arrange_across(&bodies, &stands_on, &plates, &settings, &cancel).ok()
+            }))
+            .map_err(|payload| panic_message(&payload));
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
+            let _ = ui_weak.upgrade_in_event_loop(|ui| ui.invoke_arrange_finished());
+        });
+    }
+
+    /// Applies an Arrange all's result (#554), when the scene is still the
+    /// one it was worked out for.
+    fn finish_across(&self, ui: &MainWindow, pending: AcrossPending) {
+        let taken = self
+            .across_slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let across = match taken {
+            Some(Ok(Some(across))) => across,
+            // Cancelled.
+            None | Some(Ok(None)) => return,
+            Some(Err(panic)) => {
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("ArrangeDialog", "Arrange failed"),
+                    context: None,
+                    message: ctr!("ArrangeDialog", "The arrangement stopped unexpectedly."),
+                    details: panic.as_str().into(),
+                });
+                return;
+            }
+        };
+        crate::breadcrumbs::note(&format!(
+            "arrange: footprints {:?}, search {:?}, {} plate(s)",
+            across.timings.footprints, across.timings.search, across.plates_used
+        ));
+        if self.document.scene_revision() != pending.revision {
+            ui.set_arrange_last_run(ctr!(
+                "Inspector",
+                "The scene changed while arranging; nothing was moved."
+            ));
+            return;
+        }
+        let applied = match across::apply(&self.document, &pending.job, &across) {
+            Ok(Some(applied)) => applied,
+            Ok(None) => {
+                ui.set_arrange_last_run(ctr!("Inspector", "Everything is already in place."));
+                return;
+            }
+            Err(EditNotApplied::Rejected(error)) => {
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("ArrangeDialog", "Arrange failed"),
+                    context: None,
+                    message: ctr!(
+                        "ArrangeDialog",
+                        "The scene rejected the arrangement; nothing was moved."
+                    ),
+                    details: error.to_string().into(),
+                });
+                return;
+            }
+            Err(EditNotApplied::NoSceneLoaded) => return,
+        };
+        let seconds = pending.started.elapsed().as_secs_f64();
+        ui.set_arrange_last_run(across_text(&applied, seconds).into());
+        if !applied.left_off.is_empty() {
+            let count = applied.left_off.len();
+            let names = applied.left_off.join("\n");
+            self.dialogs.show_info(move || InfoTexts {
+                heading: ctr!("ArrangeDialog", "Not everything fits"),
+                message: ctr!(
+                    "ArrangeDialog",
+                    "{n} object is bigger than a plate. It is beside the plates, on the right.",
+                    "{n} objects are bigger than a plate. They are beside the plates, on the right.",
+                    count
+                ),
+                details: names.as_str().into(),
+            });
+        }
+    }
+
     /// Takes the worker's result on the UI thread and applies it, when the
     /// scene is still the one it was worked out for.
     fn finish(&self) {
         if self.fill.is_running() {
             self.finish_fill();
+            return;
+        }
+        let across = self.across.borrow_mut().take();
+        if let Some(pending) = across {
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_arranging(false);
+                self.finish_across(&ui, pending);
+            }
             return;
         }
         let taken = self
@@ -390,21 +568,78 @@ pub(crate) fn plate_of(volume: &crate::build_volume::BuildVolume) -> Plate {
     }
 }
 
-/// The plate's objects as they stand, each model with its supports, none of
-/// them to move: what models imported into the scene keep clear of (#384).
-pub(crate) fn standing_bodies(document: &SceneDocument) -> Vec<Body> {
-    gather_all(document, false)
-        .map(|gathered| {
+/// The plates' objects as they stand, each model with its supports, none of
+/// them to move: what models imported into the scene keep clear of (#384),
+/// with the plate each stands on (#557).
+pub(crate) fn standing_bodies(
+    document: &SceneDocument,
+    volume: &crate::build_volume::BuildVolume,
+) -> (Vec<Body>, Vec<Option<usize>>) {
+    let Some(gathered) = gather_all(document, false) else {
+        return (Vec::new(), Vec::new());
+    };
+    let plates = document.plates();
+    let on: Vec<Option<usize>> = document
+        .with_scene(|spatial| {
             gathered
-                .bodies
-                .into_iter()
-                .map(|body| Body {
-                    fixed: true,
-                    ..body
+                .anchors
+                .iter()
+                .map(|&leaf| {
+                    crate::plate_layout::plate_of_leaf(spatial, volume, plates, leaf)
+                        .map(|p| p as usize)
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let bodies = gathered
+        .bodies
+        .into_iter()
+        .map(|body| Body {
+            fixed: true,
+            ..body
+        })
+        .collect();
+    (bodies, on)
+}
+
+/// Every plate a scene may have on `volume`, in their order (#557).
+pub(crate) fn every_plate(volume: &crate::build_volume::BuildVolume) -> Vec<Plate> {
+    (0..crate::plates::MAX_PLATES)
+        .map(|p| across::plate_at(volume, p))
+        .collect()
+}
+
+/// The card's line after an Arrange all (#554).
+fn across_text(applied: &across::Applied, seconds: f64) -> String {
+    let time = format!("{seconds:.1}");
+    let placed = applied.moved - applied.left_off.len();
+    let mut line = ctr!(
+        "Inspector",
+        "Arranged {n} object on {} plate(s) in {} s.",
+        "Arranged {n} objects on {} plate(s) in {} s.",
+        placed,
+        applied.plates,
+        time
+    )
+    .to_string();
+    if applied.plates > applied.plates_before {
+        line.push(' ');
+        line.push_str(&ctr!(
+            "Inspector",
+            "{n} plate added.",
+            "{n} plates added.",
+            applied.plates - applied.plates_before
+        ));
+    } else if applied.plates < applied.plates_before {
+        line.push(' ');
+        line.push_str(&ctr!(
+            "Inspector",
+            "{n} empty plate taken off.",
+            "{n} empty plates taken off.",
+            applied.plates_before - applied.plates
+        ));
+    }
+    line
 }
 
 /// The card's line after a run.
@@ -641,31 +876,49 @@ pub(crate) fn fill_active_plate_now(
     fill::fill_on_now(document, on, &plate, options).map(|(filled, _)| filled.copies.len())
 }
 
-/// An Arrange press on this thread, on the plates of `document` on
-/// `volume` (#545), applied as a run applies it: for tests.
+/// An Arrange all on this thread, on the plates of `document` on `volume`
+/// (#554), applied as a run applies it: for tests.
 #[cfg(test)]
 pub(crate) fn arrange_on_plates_now(
     document: &SceneDocument,
     volume: &crate::build_volume::BuildVolume,
     options: ArrangeOptions,
     scope: ArrangeScope,
-) -> Option<usize> {
-    let mut edits = Vec::new();
-    for (gathered, plate) in jobs_on_plates(document, volume, false, scope) {
-        let outcome = sc_arrange::arrange(
-            &gathered.bodies,
-            &plate,
-            &options.settings(),
-            &AtomicBool::new(false),
-        )
-        .ok()?;
-        edits.extend(arrangement_edit(document, &outcome, &gathered.leaves));
-    }
-    let count = edits.len();
-    let edit = SceneEdit::Compound(edits);
-    document.apply_edit(edit.clone()).ok()?;
-    document.push_edit(edit);
-    Some(count)
+) -> Option<across::Applied> {
+    arrange_across_now(document, volume, options, scope, false)
+}
+
+/// [`arrange_on_plates_now`], the models placed by hand staying where they
+/// are with `keep_by_hand`.
+#[cfg(test)]
+pub(crate) fn arrange_across_now(
+    document: &SceneDocument,
+    volume: &crate::build_volume::BuildVolume,
+    options: ArrangeOptions,
+    scope: ArrangeScope,
+    keep_by_hand: bool,
+) -> Option<across::Applied> {
+    let job = across::job(document, volume, scope, keep_by_hand)?;
+    let across = sc_arrange::arrange_across(
+        &job.bodies,
+        &job.stands_on,
+        &job.plates,
+        &options.settings(),
+        &AtomicBool::new(false),
+    )
+    .ok()?;
+    across::apply(document, &job, &across).ok().flatten()
+}
+
+/// How many models placed by hand an Arrange of `scope` asks about: for
+/// tests.
+#[cfg(test)]
+pub(crate) fn placed_by_hand(
+    document: &SceneDocument,
+    volume: &crate::build_volume::BuildVolume,
+    scope: ArrangeScope,
+) -> usize {
+    across::by_hand(document, volume, scope)
 }
 
 /// Arranges on this thread and applies the result, as a run does: for
@@ -697,10 +950,24 @@ fn arrangement_edit(
     outcome: &Outcome,
     leaves: &[Vec<NodeId>],
 ) -> Option<SceneEdit> {
-    let mut edits: Vec<SceneEdit> = document
+    let mut edits = motion_edits(document, &outcome.placements, leaves);
+    match edits.len() {
+        0 => None,
+        1 => edits.pop(),
+        _ => Some(SceneEdit::Compound(edits)),
+    }
+}
+
+/// The edits that move each placed body's leaves where `placements` say.
+fn motion_edits(
+    document: &SceneDocument,
+    placements: &[Option<Placement>],
+    leaves: &[Vec<NodeId>],
+) -> Vec<SceneEdit> {
+    document
         .with_scene(|spatial| {
             let mut edits = Vec::new();
-            for (placement, leaves) in outcome.placements.iter().zip(leaves) {
+            for (placement, leaves) in placements.iter().zip(leaves) {
                 let Some(placement) = placement else {
                     continue;
                 };
@@ -725,10 +992,5 @@ fn arrangement_edit(
             }
             edits
         })
-        .unwrap_or_default();
-    match edits.len() {
-        0 => None,
-        1 => edits.pop(),
-        _ => Some(SceneEdit::Compound(edits)),
-    }
+        .unwrap_or_default()
 }

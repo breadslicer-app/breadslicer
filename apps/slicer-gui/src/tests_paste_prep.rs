@@ -168,9 +168,14 @@ fn copy(document: &SceneDocument, leaf: NodeId) -> Clipboard {
 
 /// Pastes `clipboard` into `document`, centred near `at` on the plate.
 fn paste(document: &SceneDocument, clipboard: &mut Clipboard, at: [f64; 2]) -> NodeId {
-    let copy = clipboard::paste(document, clipboard, at, 0.0)
-        .expect("the scene takes it")
-        .expect("pasted");
+    let copy = clipboard::paste(
+        document,
+        clipboard,
+        at,
+        &crate::build_volume::NO_PRINTER_BUILD_VOLUME,
+    )
+    .expect("the scene takes it")
+    .expect("pasted");
     clipboard.bump_cascade();
     copy
 }
@@ -357,7 +362,12 @@ fn a_pasted_copy_keeps_its_hollow_and_supports_and_prints_the_same() {
         );
         assert!((copy_at[2] - at[2]).abs() < 1e-12, "at the model's height");
         let shift = [copy_at[0] - at[0], copy_at[1] - at[1]];
-        assert!(shift[0] > 30.0, "beside the model: {shift:?}");
+        // Clear of the model, on the plate (#557).
+        assert!(
+            shift[0].abs() > 30.0 || shift[1].abs() > 30.0,
+            "beside the model: {shift:?}"
+        );
+        assert_eq!(document.plates().count(), 1, "on the plate it has");
         // With a set of its own, in force, hand edit and all.
         let copy_set = set_of(&document, copy).expect("the copy's set is in force");
         assert_ne!(copy_set.leaf, original_set.leaf);

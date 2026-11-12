@@ -479,6 +479,7 @@ mod scene_save_tests {
             review_decisions: Vec::new(),
             plates: 0,
             plate_names: Vec::new(),
+            hand_placed: Vec::new(),
         }
     }
 

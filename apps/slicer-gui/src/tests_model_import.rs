@@ -354,6 +354,45 @@ fn a_model_that_does_not_fit_goes_beside_the_plate() {
     });
 }
 
+/// A model with no room on the first plate goes on the next (#557), and
+/// on a plate added after the last when none has room; nothing that stood
+/// there moves, and one Undo takes the model and the plate away.
+#[test]
+fn a_model_with_no_room_on_the_first_plate_goes_on_a_new_plate() {
+    on_fresh_slint_thread(|| {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let volume = NO_PRINTER_BUILD_VOLUME;
+        let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+        // A base that leaves no room on the first plate.
+        let full = [hi.x - lo.x - 12.0, hi.y - lo.y - 12.0, 10.0];
+        let dragon = write_box(dir.path(), "dragon.stl", [20.0, 20.0, 15.0]);
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        scene_with_a_box(&document, full);
+        let before = rows(&document);
+
+        ctrl.open_models(vec![dragon]);
+        finish_loads(&ctrl);
+
+        assert_eq!(document.plates().count(), 2, "a plate added");
+        assert_eq!(rows(&document)[0], before[0], "the base did not move");
+        let added = leaves(&document)[1];
+        let f = footprint(&document, added);
+        let second = crate::plates::offset(&volume, 1);
+        let moved = [
+            f[0] - second.x,
+            f[1] - second.y,
+            f[2] - second.x,
+            f[3] - second.y,
+        ];
+        assert!(on_plate(moved), "on the second plate: {f:?}");
+
+        ctrl.on_undo_requested();
+        assert_eq!(rows(&document), before, "one Undo takes it away");
+        assert_eq!(document.plates().count(), 1, "and the plate");
+    });
+}
+
 /// Models opened together in a window without a scene open one: the first
 /// opens it as any file does, the others join it, all part of the opening
 /// (nothing to undo, nothing unsaved).
@@ -633,10 +672,12 @@ fn an_import_brings_the_pick_structure_of_its_meshes_built() {
     let document = SceneDocument::new();
     let base = scene_with_a_box(&document, [40.0, 30.0, 10.0]);
     let volume = NO_PRINTER_BUILD_VOLUME;
+    let (standing, stands_on) = crate::arrange_run::standing_bodies(&document, &volume);
     let job = ImportJob {
         paths: vec![goblin, pair],
-        standing: crate::arrange_run::standing_bodies(&document),
-        plate: crate::arrange_run::plate_of(&volume),
+        standing,
+        stands_on,
+        plates: crate::arrange_run::every_plate(&volume),
         build_volume: volume.volume(),
         revision: document.scene_revision(),
         recorded: true,

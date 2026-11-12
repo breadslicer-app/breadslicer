@@ -39,6 +39,9 @@ struct SettingsDoc {
     /// The plates' names (#545), in their order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     plate_names: Vec<String>,
+    /// Where the models placed by hand stand (#554).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hand_placed: Vec<[i64; 12]>,
     #[serde(default)]
     profiles: ProfilesSection,
     #[serde(default, skip_serializing_if = "PrintSection::is_empty")]
@@ -106,6 +109,7 @@ pub(crate) fn serialize_settings(
         version: BREAD_SETTINGS_VERSION,
         plates: payload.plates,
         plate_names: payload.plate_names.clone(),
+        hand_placed: payload.hand_placed.clone(),
         profiles: ProfilesSection {
             printer: payload.printer.clone(),
             resin: payload.resin.clone(),
@@ -203,6 +207,7 @@ pub(crate) fn parse_settings(
             .collect(),
         plates: doc.plates,
         plate_names: doc.plate_names,
+        hand_placed: doc.hand_placed,
     }))
 }
 

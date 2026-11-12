@@ -64,6 +64,18 @@ pub(crate) enum SeparateChoice {
     Replace,
 }
 
+/// The answer to "models placed by hand" before Arrange all (#554).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HandPlacedChoice {
+    /// They stay where they are, and the rest is packed around them (also
+    /// Enter).
+    Keep,
+    /// They are arranged with the rest.
+    ArrangeToo,
+    /// Close or Escape: nothing is arranged.
+    Cancel,
+}
+
 /// The answer to "supports out of date" (#408).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StaleSupportsChoice {
@@ -228,6 +240,12 @@ enum Entry {
         context: SharedString,
         on_choice: Box<dyn FnOnce(SeparateChoice)>,
     },
+    /// Arrange all, with models placed by hand (#554): keep them where they
+    /// are, or arrange them too?
+    HandPlaced {
+        build_texts: Box<dyn Fn() -> InfoTexts>,
+        on_choice: Box<dyn FnOnce(HandPlacedChoice)>,
+    },
     Recovery {
         /// 1 line per scene.
         scenes: SharedString,
@@ -255,6 +273,7 @@ impl Entry {
             | Self::SliceOverwrite { .. }
             | Self::AddSupports { .. }
             | Self::SeparateSupports { .. }
+            | Self::HandPlaced { .. }
             | Self::Recovery { .. } => MessageClass::MustAnswer,
         }
     }
@@ -348,6 +367,12 @@ impl Entry {
                 message.text = texts.message;
                 message.context = context.clone();
             }
+            Self::HandPlaced { build_texts, .. } => {
+                let texts = build_texts();
+                message.kind = MessageKind::HandPlaced;
+                message.heading = texts.heading;
+                message.text = texts.message;
+            }
             Self::Diagnostics { has_scene, .. } => {
                 message.kind = MessageKind::Diagnostics;
                 message.has_scene = *has_scene;
@@ -414,6 +439,12 @@ impl Entry {
                 MessageAnswer::Separate => SeparateChoice::Separate,
                 // Anything else leaves the file as it came.
                 _ => SeparateChoice::Leave,
+            }),
+            Self::HandPlaced { on_choice, .. } => on_choice(match answer {
+                MessageAnswer::Confirm => HandPlacedChoice::Keep,
+                MessageAnswer::Separate => HandPlacedChoice::ArrangeToo,
+                // Anything else arranges nothing.
+                _ => HandPlacedChoice::Cancel,
             }),
             Self::Diagnostics {
                 has_scene, on_save, ..
@@ -799,6 +830,30 @@ impl DialogManager {
         self.enqueue(Entry::SeparateSupports {
             build_texts: Box::new(build_texts),
             context,
+            on_choice: Box::new(on_choice),
+        });
+    }
+
+    /// Asks, before Arrange all, whether the models placed by hand stay
+    /// where they are (#554). Calls `on_choice` once: Keep (also Enter),
+    /// Arrange them too, or Cancel (also Escape), which arranges nothing.
+    /// Must run on the Slint UI thread.
+    pub(crate) fn show_hand_placed(
+        self: &Rc<Self>,
+        build_texts: impl Fn() -> InfoTexts + 'static,
+        on_choice: impl FnOnce(HandPlacedChoice) + 'static,
+    ) {
+        let asking = self
+            .queue
+            .borrow()
+            .iter()
+            .any(|e| matches!(e, Entry::HandPlaced { .. }));
+        if asking {
+            return;
+        }
+        crate::breadcrumbs::note(&format!("message: {}", build_texts().heading));
+        self.enqueue(Entry::HandPlaced {
+            build_texts: Box::new(build_texts),
             on_choice: Box::new(on_choice),
         });
     }

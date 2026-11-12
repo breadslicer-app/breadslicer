@@ -94,15 +94,17 @@ pub(crate) fn clipboard_from_document_selection(doc: &SceneDocument) -> Option<C
 }
 
 /// Pastes `clipboard` into `doc`'s scene, centred near `target` (world mm,
-/// on the plate's floor at `floor_z`) and clear of what stands there: on the
+/// on the floor of `volume`'s plates) and clear of what stands there: on the
 /// plate, or with supports at the copied model's height, which they still
-/// hold. One undo entry, the copy selected. Returns the copy's leaf; `None`
-/// when no scene is loaded or the clipboard holds nothing to paste.
+/// hold. With no room by `target`, on the first plate with room, or on a
+/// plate added after the last (#557). One undo entry with that plate, the
+/// copy selected. Returns the copy's leaf; `None` when no scene is loaded
+/// or the clipboard holds nothing to paste.
 pub(crate) fn paste(
     doc: &SceneDocument,
     clipboard: &Clipboard,
     target: [f64; 2],
-    floor_z: f64,
+    volume: &crate::build_volume::BuildVolume,
 ) -> Result<Option<NodeId>, SceneError> {
     let Some(fragment_aabb) = clipboard.world_aabb() else {
         return Ok(None);
@@ -110,18 +112,51 @@ pub(crate) fn paste(
     let Some(obstacles) = doc.with_scene(placement::obstacle_aabbs_for_scene) else {
         return Ok(None);
     };
-    let placed = placement::paste_translation_for_fragment(
+    let count = doc.plates().count() as usize;
+    let areas: Vec<placement::Area> = crate::arrange_run::every_plate(volume)
+        .into_iter()
+        .map(|plate| (plate.min, plate.max))
+        .collect();
+    let spot = placement::paste_spot(
         &fragment_aabb,
         target,
-        floor_z,
+        f64::from(volume.envelope_min_mm().z),
         clipboard.cascade_count(),
         &obstacles,
+        &areas[..count.min(areas.len())],
+        areas.get(count).copied(),
     );
-    let prep = &clipboard.prep;
-    if prep.is_empty() {
-        return doc.paste_fragment(clipboard.fragment(), placed);
+    let before = doc.undo_len();
+    if spot.new_plate {
+        let names = doc.plate_names();
+        let mut after = names.clone();
+        after.push(SceneDocument::new_plate_name(&names));
+        doc.push_plates_edit(
+            sc_scene_edit::SceneEdit::Compound(Vec::new()),
+            names,
+            after,
+            doc.plates().active(),
+        );
     }
-    prep.paste(doc, clipboard.fragment(), prep.translation(placed))
+    let prep = &clipboard.prep;
+    let pasted = if prep.is_empty() {
+        doc.paste_fragment(clipboard.fragment(), spot.at)
+    } else {
+        prep.paste(doc, clipboard.fragment(), prep.translation(spot.at))
+    };
+    if spot.new_plate {
+        match &pasted {
+            // The plate and the copy, one step.
+            Ok(Some(_)) => doc.join_last_steps(doc.undo_len().saturating_sub(before)),
+            // Nothing landed: the plate goes too.
+            _ => {
+                if doc.undo().unwrap_or(false) {
+                    doc.drop_last_redo();
+                }
+            }
+        }
+    }
+    pasted
 }
 
 /// Makes a copy of the model `leaf` of `doc`, with its hollow and supports as
