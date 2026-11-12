@@ -470,15 +470,26 @@ fn frame_of(
         .expect("a sized frame")
 }
 
-/// How many pixels of `frame` take the support lines' amber, whole or
-/// blended at an edge: the plate's greys have their channels level.
-fn amber_pixels(frame: &FramePixels) -> usize {
-    frame
-        .rgba
+/// How many pixels the support lines `lines` (and the balls at their tips)
+/// change, seen by `camera` with the supports shown up to `shown_up_to_mm`:
+/// the frame with them against the same frame without them.
+fn line_pixels(
+    renderer: &mut Renderer,
+    graph: &Scene,
+    camera: &OrbitCamera,
+    shown_up_to_mm: f32,
+    lines: &Arc<SupportLines>,
+) -> usize {
+    renderer.set_support_lines(shown_up_to_mm, None);
+    let bare = frame_of(renderer, graph, camera, 128);
+    renderer.set_support_lines(shown_up_to_mm, Some(lines));
+    let drawn = frame_of(renderer, graph, camera, 128);
+    bare.rgba
         .as_chunks::<4>()
         .0
         .iter()
-        .filter(|p| p[0] > 100 && p[0] > p[1] + 25 && p[1] > p[2] + 25)
+        .zip(drawn.rgba.as_chunks::<4>().0)
+        .filter(|(a, b)| (0..3).any(|k| a[k].abs_diff(b[k]) > 40))
         .count()
 }
 
@@ -510,13 +521,12 @@ fn from_under_the_plate_the_supports_turn_into_lines() {
         &[vec![[0.0, 0.0, 12.0], [0.0, 0.0, 1.0]]],
         &[([0.0, 0.0, 12.0], 1.5)],
     ));
-    renderer.set_support_lines(-1.0, Some(&lines));
-    let drawn = frame_of(&mut renderer, &graph, &under(), 128);
-    assert!(amber_pixels(&drawn) > 20, "{}", amber_pixels(&drawn));
+    let drawn = line_pixels(&mut renderer, &graph, &under(), -1.0, &lines);
+    assert!(drawn > 20, "{drawn}");
 
     // From above nothing fades and no line is drawn.
-    let from_above = frame_of(&mut renderer, &graph, &above(), 128);
-    assert_eq!(amber_pixels(&from_above), 0);
+    let from_above = line_pixels(&mut renderer, &graph, &above(), -1.0, &lines);
+    assert_eq!(from_above, 0);
     let whole = pixels_drawn(&mut renderer, &graph, &above(), 0.0, 128);
     assert!(whole > 100, "{whole}");
 }
@@ -536,17 +546,15 @@ fn a_support_line_behind_the_model_does_not_show() {
         &[vec![[-10.0, 0.0, 7.0], [10.0, 0.0, 7.0]]],
         &[],
     ));
-    renderer.set_support_lines(-1.0, Some(&lines));
-    let behind = frame_of(&mut renderer, &graph, &under(), 128);
-    assert_eq!(amber_pixels(&behind), 0);
+    let behind = line_pixels(&mut renderer, &graph, &under(), -1.0, &lines);
+    assert_eq!(behind, 0);
     // The same line under the slab shows.
     let lines = Arc::new(SupportLines::new(
         &[vec![[-10.0, 0.0, 3.0], [10.0, 0.0, 3.0]]],
         &[],
     ));
-    renderer.set_support_lines(-1.0, Some(&lines));
-    let below = frame_of(&mut renderer, &graph, &under(), 128);
-    assert!(amber_pixels(&below) > 20, "{}", amber_pixels(&below));
+    let below = line_pixels(&mut renderer, &graph, &under(), -1.0, &lines);
+    assert!(below > 20, "{below}");
 }
 
 /// While the plate fades, what of a support fades with it goes evenly
@@ -831,4 +839,127 @@ fn hidden_supports_draw_nothing_and_models_still_draw() {
         let drawn = frame(&mut renderer, &model, &[], pitch).rgba;
         assert!(differs(&bare, &drawn) > 100, "a model still draws");
     }
+}
+
+/// The scene as it looks, for a person to judge (#523): with
+/// `BREADSLICER_SCENE_SHOT` naming a folder and `BREADSLICER_SCENE_MODEL` /
+/// `BREADSLICER_SCENE_SUPPORTS` binary STLs of a model and its supports,
+/// three copies side by side on an M7 Pro's plate, written as `none.png`
+/// (nothing selected) and `selected.png` (the middle model selected, its
+/// supports in focus with it), plus `close.png`, the selected one up close.
+#[test]
+fn the_scene_picture_is_written_when_asked() {
+    let (Some(dir), Some(model), Some(supports)) = (
+        std::env::var_os("BREADSLICER_SCENE_SHOT"),
+        std::env::var_os("BREADSLICER_SCENE_MODEL"),
+        std::env::var_os("BREADSLICER_SCENE_SUPPORTS"),
+    ) else {
+        return;
+    };
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let read = |path: &std::ffi::OsStr, name: Option<&str>| {
+        let data = std::fs::read(path).expect("the STL reads");
+        let n = u32::from_le_bytes(data[80..84].try_into().unwrap()) as usize;
+        let mut vertices = Vec::with_capacity(n * 3);
+        let mut faces = Vec::with_capacity(n);
+        for t in 0..n {
+            let at = 84 + t * 50 + 12;
+            for k in 0..3 {
+                let f = |i: usize| {
+                    f32::from_le_bytes(
+                        data[at + k * 12 + i * 4..at + k * 12 + i * 4 + 4]
+                            .try_into()
+                            .unwrap(),
+                    )
+                };
+                vertices.push(Vertex::new([f(0), f(1), f(2)]));
+            }
+            let b = (t * 3) as u32;
+            faces.push(IndexedTriangle::from_raw_indices([b, b + 1, b + 2]));
+        }
+        let meta = name.map(|name| MeshMetadata {
+            name: Some(name.to_owned()),
+            ..Default::default()
+        });
+        Arc::new(IndexedMesh::new(meta, vertices, faces))
+    };
+    let model = read(&model, None);
+    let supports = read(&supports, Some(DF_SUPPORT_MESH_NAME));
+    // Centred on the plate, its lowest point on it.
+    let (lo, hi) = model.vertices().iter().chain(supports.vertices()).fold(
+        ([f32::MAX; 3], [f32::MIN; 3]),
+        |(lo, hi), v| {
+            let p = v.as_array();
+            (
+                std::array::from_fn(|k| lo[k].min(p[k])),
+                std::array::from_fn(|k| hi[k].max(p[k])),
+            )
+        },
+    );
+    let mut graph = Scene::new();
+    let root = graph.add_group(None, Transform3D::Identity);
+    graph.add_root(root).expect("group root");
+    let mut leaves = Vec::new();
+    for (k, dx) in [-62.0f64, 0.0, 62.0].into_iter().enumerate() {
+        let at = [
+            dx - f64::from(lo[0] + hi[0]) / 2.0,
+            f64::from(k as f32 * 3.0) - f64::from(lo[1] + hi[1]) / 2.0,
+            -f64::from(lo[2]),
+        ];
+        let mut pair = Vec::new();
+        for mesh in [&model, &supports] {
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation(at)),
+                    LeafPayload::Mesh(mesh.clone()),
+                )
+                .expect("add leaf");
+            graph.add_child(root, leaf).expect("attach leaf");
+            pair.push(leaf);
+        }
+        leaves.push(pair);
+    }
+    renderer.upload_scene(&graph).expect("upload the scene");
+    let bv = BuildVolume::new(223.642, 126.976, 230.0);
+    let dir = std::path::PathBuf::from(dir);
+    let shot = |renderer: &mut Renderer, name: &str, selection: &[NodeId], camera: &OrbitCamera| {
+        let mut sorted = selection.to_vec();
+        sorted.sort_unstable();
+        let (w, h) = (1400, 820);
+        let frame = renderer
+            .workspace_pixels_for_test(
+                SceneRender {
+                    graph: &graph,
+                    selection: &sorted,
+                    gizmo: None,
+                    clip_z: None,
+                },
+                bv,
+                camera,
+                w,
+                h,
+            )
+            .expect("the frame is not refused")
+            .expect("a sized frame");
+        image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
+            .expect("RGBA")
+            .save(dir.join(name))
+            .expect("the picture is written");
+    };
+    let mut wide = OrbitCamera::new(Vec3::new(0.0, 0.0, 20.0), 100.0);
+    wide.target = Vec3::new(0.0, 0.0, 20.0);
+    wide.distance = 230.0;
+    wide.pitch = 0.42;
+    wide.yaw = -1.45;
+    renderer.set_focus(&[]);
+    shot(&mut renderer, "none.png", &[], &wide);
+    renderer.set_focus(&leaves[1]);
+    shot(&mut renderer, "selected.png", &leaves[1][..1], &wide);
+    let mut close = wide.clone();
+    close.target = Vec3::new(0.0, 0.0, 22.0);
+    close.distance = 110.0;
+    shot(&mut renderer, "close.png", &leaves[1][..1], &close);
 }

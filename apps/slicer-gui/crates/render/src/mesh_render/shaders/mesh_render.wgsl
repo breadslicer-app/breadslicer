@@ -29,12 +29,17 @@ struct Uniforms {
     // huge one keeps it), y = half the width of a dash, pixels, zw = the
     // target's size, pixels.
     under_plate: vec4<f32>,
+    // The eye (#523): w = 1, its position; w = 0 (orthographic), the
+    // direction toward it.
+    eye: vec4<f32>,
 };
 
 struct ModelEntry {
     model: mat4x4<f32>,
     // Per-object flag word, written every frame.
-    //   flags.x = selection bit (0 = not selected, 1 = selected)
+    //   flags.x = bit 0 selected; bit 1 out of focus: something else is
+    //             selected and this is not it nor its supports or model,
+    //             so it is drawn dimmed (#523)
     //   flags.y = envelope-breach bit (1 if any vertex of this object
     //             falls outside the build envelope; drives the mild
     //             interior wash so the object reads as "offending"
@@ -261,8 +266,45 @@ fn fades_under_plate(supports: u32, cut_z: f32) -> bool {
         && (cut_z < u.env_max.w || cut_z > u.under_plate.x);
 }
 
+// The colours of a model and of a support mesh (#523): a warm light grey,
+// and a darker slate, so supports stand apart from what they hold.
+const MODEL_COLOR: vec3<f32> = vec3<f32>(0.82, 0.82, 0.80);
+const SUPPORT_COLOR: vec3<f32> = vec3<f32>(0.38, 0.44, 0.53);
+// What is out of focus while something else is selected is drawn at this
+// share of its light (#523).
+const OUT_OF_FOCUS: f32 = 0.5;
+// A second, cooler light from the other side, how much of it, and the soft
+// highlight and rim that make folds read (#523).
+const FILL_DIR: vec3<f32> = vec3<f32>(-0.62, -0.47, 0.36);
+const FILL: f32 = 0.35;
+
+// The direction from `world_pos` toward the eye.
+fn toward_eye(world_pos: vec3<f32>) -> vec3<f32> {
+    return select(normalize(u.eye.xyz), normalize(u.eye.xyz - world_pos), u.eye.w > 0.5);
+}
+
+// `color` lit as the scene is (#523): a sky and ground ambient, the key
+// light on either side of a face, a cooler fill, and for `shiny` a soft
+// highlight and a rim along the silhouette.
+fn studio(color: vec3<f32>, normal: vec3<f32>, world_pos: vec3<f32>, shiny: f32) -> vec3<f32> {
+    let v = toward_eye(world_pos);
+    // Faced to the eye: lighting is the same whichever way a face winds.
+    let n = select(normal, -normal, dot(normal, v) < 0.0);
+    let l = normalize(u.light_dir.xyz);
+    let hemi = mix(0.20, 0.34, n.z * 0.5 + 0.5);
+    let key = abs(dot(n, l));
+    let fill = max(dot(n, normalize(FILL_DIR)), 0.0) * FILL;
+    let h = normalize(l + v);
+    let spec = pow(max(dot(n, h), 0.0), 40.0) * 0.20 * shiny;
+    let rim = pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.10 * shiny;
+    // Never past full light, so no colour burns out (the overhang map's red
+    // least of all).
+    return color * min(hemi + 0.72 * key + fill, 1.0) + vec3<f32>(spec + rim);
+}
+
 // A fragment of a model or a support as the main pass paints it: lit, with
-// the selection's highlight, the overhang map and the envelope's warnings.
+// the overhang map and the envelope's warnings, dimmed when out of focus.
+// What is selected keeps its own colours: the outline marks it (#523).
 fn surface_color(
     world_pos: vec3<f32>,
     normal: vec3<f32>,
@@ -270,22 +312,15 @@ fn surface_color(
     breaches: u32,
     tint: u32,
     surface: vec4<f32>,
+    supports: u32,
 ) -> vec3<f32> {
     // The interpolated smooth normal; a vertex without one shades flat from
     // screen-space derivatives.
     let flat_n = normalize(cross(dpdx(world_pos), dpdy(world_pos)));
     let has_normal = dot(normal, normal) > 1e-12;
     let n = select(flat_n, normalize(normal), has_normal);
-    let l = normalize(u.light_dir.xyz);
-    // abs() makes lighting orientation-agnostic, safe for any winding.
-    let lambert = abs(dot(n, l));
-    let ambient = 0.25;
-    let intensity = ambient + (1.0 - ambient) * lambert;
-    let unselected = vec3<f32>(0.75, 0.78, 0.85);
-    let highlighted = vec3<f32>(1.00, 0.78, 0.42);
     let mapped = tint == MODEL_OVERHANG_MAP;
-    let selection_tint = select(1.0, OVERHANG_SELECTED_TINT, mapped);
-    let base_color = mix(unselected, highlighted, f32(selected) * selection_tint);
+    let base_color = select(MODEL_COLOR, SUPPORT_COLOR, supports == 1u);
     var washed = mix(base_color, WARNING_WASH, f32(breaches) * WARNING_WASH_STRENGTH);
     if (mapped) {
         // `flat_n` runs right-to-down across the screen, into it: the face
@@ -304,7 +339,13 @@ fn surface_color(
     let hi = u.env_max.xyz;
     let outside = any(world_pos < lo) || any(world_pos > hi);
     let final_color = select(washed, WARNING_OUTSIDE, outside);
-    return final_color * intensity;
+    // The overhang map is an analysis view, tuned under the single light
+    // it was made with: its colours are read as they were (#91, #523).
+    let flat_light = final_color * (0.25 + 0.75 * abs(dot(n, normalize(u.light_dir.xyz))));
+    let shiny = select(1.0, 0.4, supports == 1u);
+    // Past the build volume the warning's amber is lit alike, map or not.
+    let lit = select(studio(final_color, n, world_pos, shiny), flat_light, mapped && !outside);
+    return select(lit, lit * OUT_OF_FOCUS, (selected & 2u) != 0u);
 }
 
 @fragment
@@ -324,6 +365,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         in.breaches,
         in.tint,
         in.surface,
+        in.supports,
     );
     return vec4<f32>(color, 1.0);
 }
@@ -336,6 +378,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_support_fade_depth(in: VsOut) -> @location(0) vec4<f32> {
     if (in.cut_z > u.light_dir.w || !fades_under_plate(in.supports, in.cut_z)) {
+        discard;
+    }
+    return vec4<f32>(0.0);
+}
+
+// What is selected, marked into the stencil through whatever stands in
+// front (#523): the outline then runs round its silhouette alone. Only what
+// is drawn: not above the slice clip, nor what fades from under the plate.
+@fragment
+fn fs_mark(in: VsOut) -> @location(0) vec4<f32> {
+    if (in.cut_z > u.light_dir.w || fades_under_plate(in.supports, in.cut_z)) {
         discard;
     }
     return vec4<f32>(0.0);
@@ -355,6 +408,7 @@ fn fs_support_fade(in: VsOut) -> @location(0) vec4<f32> {
         in.breaches,
         in.tint,
         in.surface,
+        in.supports,
     );
     return vec4<f32>(color, 1.0 - u.env_min.w);
 }
@@ -374,12 +428,8 @@ fn fs_cap(in: VsOut) -> @location(0) vec4<f32> {
     }
     // The cut faces down, toward the camera under the plate.
     let n = vec3<f32>(0.0, 0.0, -1.0);
-    let lambert = abs(dot(n, normalize(u.light_dir.xyz)));
-    let intensity = 0.25 + 0.75 * lambert;
-    let unselected = vec3<f32>(0.75, 0.78, 0.85);
-    let highlighted = vec3<f32>(1.00, 0.78, 0.42);
-    let base_color = mix(unselected, highlighted, f32(in.selected));
-    return vec4<f32>(base_color * intensity, 1.0);
+    let lit = studio(SUPPORT_COLOR, n, in.world_pos, 0.4);
+    return vec4<f32>(select(lit, lit * OUT_OF_FOCUS, (in.selected & 2u) != 0u), 1.0);
 }
 
 // Preview overlays (a support before it is placed, a hollow cavity, a drain):
@@ -405,9 +455,11 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(color.rgb * intensity, color.a);
 }
 
-// The supports as lines from under the plate (#493), in the theme's amber,
-// as opaque as the supports have faded.
-const SUPPORT_LINE_COLOR: vec3<f32> = vec3<f32>(1.00, 0.66, 0.24);
+// The supports as lines from under the plate (#493), white (#523), as
+// opaque as the supports have faded.
+const SUPPORT_LINE_COLOR: vec3<f32> = vec3<f32>(0.92, 0.94, 0.96);
+// The balls at their tips stay in the amber (#523): the lines go white.
+const SUPPORT_BALL_COLOR: vec3<f32> = vec3<f32>(1.00, 0.66, 0.24);
 
 struct LineIn {
     @builtin(vertex_index) corner: u32,
@@ -458,5 +510,5 @@ fn fs_support_ball(in: VsOut) -> @location(0) vec4<f32> {
     let n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
     let lambert = abs(dot(n, normalize(u.light_dir.xyz)));
     let intensity = 0.45 + 0.55 * lambert;
-    return vec4<f32>(SUPPORT_LINE_COLOR * intensity, u.env_min.w);
+    return vec4<f32>(SUPPORT_BALL_COLOR * intensity, u.env_min.w);
 }

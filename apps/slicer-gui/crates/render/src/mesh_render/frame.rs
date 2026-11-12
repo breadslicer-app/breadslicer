@@ -43,6 +43,9 @@ pub(super) struct Uniforms {
     /// above which a support mesh fades out, half a dash's width in pixels
     /// and the target's size.
     pub(super) under_plate: [f32; 4],
+    /// The eye (#523): `w = 1` its position, `w = 0` (orthographic) the
+    /// direction toward it, for the highlight and the rim.
+    pub(super) eye: [f32; 4],
 }
 
 /// World-space directional light. The fourth component carries the

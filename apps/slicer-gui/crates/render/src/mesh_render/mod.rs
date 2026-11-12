@@ -392,6 +392,9 @@ pub struct Renderer {
     /// Leaves the support meshes out of the view, as the Hollow tab's lasso
     /// does to keep the model clear (#512).
     supports_hidden: bool,
+    /// What stays lit while something is selected, sorted (#523): the
+    /// selection with its supports or its model. Empty dims nothing.
+    focus: Vec<NodeId>,
     target_manager: TargetManager,
 }
 
@@ -426,7 +429,7 @@ impl Renderer {
         if from_scratch {
             self.world_boxes.clear();
         }
-        build_model_entries(graph, &[], build_volume, &mut self.world_boxes, false)
+        build_model_entries(graph, &[], &[], build_volume, &mut self.world_boxes, false)
             .expect("entries");
         if warnings {
             build_envelope_warning_mask(graph, build_volume, &mut self.world_boxes).expect("mask");
@@ -482,6 +485,7 @@ impl Renderer {
             raft_top_mm: 0.0,
             supports_shown_up_to_mm: f32::MAX,
             supports_hidden: false,
+            focus: Vec::new(),
             support_lines: support_lines::LinesSlot::default(),
             target_manager: TargetManager {
                 msaa: None,
@@ -1028,6 +1032,15 @@ impl Renderer {
         self.supports_hidden = hidden;
     }
 
+    /// What stays lit in the frames to come while something is selected
+    /// (#523): every other object is dimmed. Empty dims nothing.
+    pub fn set_focus(&mut self, focus: &[NodeId]) {
+        self.focus.clear();
+        self.focus.extend_from_slice(focus);
+        self.focus.sort_unstable();
+        self.focus.dedup();
+    }
+
     /// From under the plate, the supports drawn as lines (#493): the height
     /// above which the support meshes fade with the plate (`f32::MAX` keeps
     /// them, below 0 fades them whole), and the lines drawn in their place
@@ -1190,6 +1203,7 @@ impl Renderer {
             match build_model_entries(
                 graph_data,
                 selection,
+                &self.focus,
                 build_volume,
                 &mut self.world_boxes,
                 overhang_map.is_some(),
@@ -1291,6 +1305,13 @@ impl Renderer {
                 width as f32,
                 height as f32,
             ],
+            eye: if camera.orthographic {
+                let toward = camera.eye() - camera.target;
+                [toward.x, toward.y, toward.z, 0.0]
+            } else {
+                let e = camera.eye();
+                [e.x, e.y, e.z, 1.0]
+            },
         };
         self.core.queue.write_buffer(
             &self.pipelines.mesh.uniform_buffer,
@@ -1360,6 +1381,7 @@ impl Renderer {
                     &[]
                 };
                 self.record_mesh_objects(&mut pass, inst, selection, hidden);
+                self.record_selection_marks(&mut pass, inst, selection, hidden, &support_objects);
                 if supports_hidden {
                     // Nothing of the supports: no cuts, lines or fades.
                 } else if under_plate > 0.0 && raft_top_mm > 0.0 {
@@ -1530,6 +1552,51 @@ impl Renderer {
         pass.set_vertex_buffer(0, quad.slice(..));
         pass.set_stencil_reference(0);
         pass.draw(vertices, 0..1);
+    }
+
+    /// Marks what is selected into the stencil whole, through whatever stands
+    /// in front of it, with the supports in focus with it (#523): the outline
+    /// post-pass then runs round the silhouette alone, not round every shaft
+    /// that crosses in front of the model.
+    fn record_selection_marks(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        inst: &InstalledScene,
+        selection: &[NodeId],
+        hidden: &[bool],
+        supports: &[bool],
+    ) {
+        if selection.is_empty() {
+            return;
+        }
+        pass.set_pipeline(&self.pipelines.mesh.mark_pipeline);
+        pass.set_bind_group(
+            MeshBindGroup::Uniforms.idx(),
+            &self.pipelines.mesh.uniforms_bind_group,
+            &[],
+        );
+        pass.set_stencil_reference(1);
+        for (i, obj) in inst.gpu.objects().iter().enumerate() {
+            if hidden.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let id = obj.node_id();
+            let marked = selection.binary_search(&id).is_ok()
+                || (supports.get(i).copied().unwrap_or(false)
+                    && self.focus.binary_search(&id).is_ok());
+            if !marked {
+                continue;
+            }
+            let offset = (i as u64 * inst.gpu.model_stride()) as u32;
+            pass.set_bind_group(
+                MeshBindGroup::Models.idx(),
+                &inst.models_bind_group,
+                &[offset],
+            );
+            pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
+            pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..obj.index_count(), 0, 0..1);
+        }
     }
 
     /// 1 draw call per installed scene object. The models bind group is rebound

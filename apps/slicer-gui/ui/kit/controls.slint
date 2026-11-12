@@ -99,7 +99,7 @@ export component ScButton inherits Rectangle {
         height: parent.height + 6px;
         border-radius: Theme.radius + 3px;
         border-width: 1.5px;
-        border-color: Theme.accent.transparentize(0.45);
+        border-color: Theme.indicator.transparentize(0.45);
     }
 
     layout := HorizontalLayout {
@@ -188,7 +188,7 @@ export component WorkflowTab inherits Rectangle {
     Rectangle {
         y: parent.height - self.height;
         height: 2px;
-        background: root.active ? Theme.accent : transparent;
+        background: root.active ? Theme.indicator : transparent;
     }
 
     touch := TouchArea {
@@ -259,7 +259,7 @@ export component ToolButton inherits Rectangle {
         y: 6px;
         width: 2px;
         height: parent.height - 12px;
-        background: Theme.accent;
+        background: Theme.indicator;
     }
     opacity: root.enabled ? 1 : 0.4;
     accessible-role: button;
@@ -332,8 +332,8 @@ export component SupportLink inherits Rectangle {
             commands: Icons.heart;
             size: 12px;
             y: (parent.height - self.height) / 2;
-            color: Theme.accent;
-            fill: Theme.accent;
+            color: Theme.brand;
+            fill: Theme.brand;
         }
         Text {
             text: root.label;
@@ -372,7 +372,7 @@ export component Card inherits Rectangle {
         y: 8px;
         width: 2px;
         height: 12px;
-        background: Theme.accent;
+        background: Theme.indicator;
     }
 
     VerticalLayout {
@@ -395,7 +395,7 @@ export component Card inherits Rectangle {
                     font-size: 10.5px;
                     font-weight: 600;
                     letter-spacing: 1px;
-                    color: root.highlighted ? Theme.accent : Theme.text-faint;
+                    color: root.highlighted ? Theme.indicator : Theme.text-faint;
                     vertical-alignment: center;
                 }
                 VerticalLayout {
@@ -404,7 +404,7 @@ export component Card inherits Rectangle {
 
                     Rectangle {
                         height: 1px;
-                        background: root.highlighted ? Theme.accent.transparentize(0.6) : Theme.border;
+                        background: root.highlighted ? Theme.indicator.transparentize(0.6) : Theme.border;
                     }
                 }
                 if root.note != "": Text {
@@ -507,6 +507,34 @@ export component Note inherits Text {
     wrap: word-wrap;
 }
 
+// A warning: a short paragraph in the warning yellow, with the warning
+// sign beside it (#523). Laid out by hand, not in a nested layout: a wrapped
+// text in a layout under an `if` was measured one line high.
+export component WarningNote inherits Rectangle {
+    in property <string> text;
+    preferred-height: body.preferred-height;
+    min-height: body.preferred-height;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+
+    Icon {
+        x: 0;
+        y: 1px;
+        size: 14px;
+        color: Theme.warning;
+        commands: Icons.warning;
+    }
+    body := Text {
+        x: 20px;
+        y: 0;
+        width: root.width - 20px;
+        text: root.text;
+        font-size: Theme.font-sm;
+        color: Theme.warning;
+        wrap: word-wrap;
+    }
+}
+
 // A coloured status dot.
 export component Dot inherits Rectangle {
     in property <brush> tint: Theme.success;
@@ -562,7 +590,7 @@ export component NumberField inherits HorizontalLayout {
         height: 26px;
         background: Theme.well;
         border-width: 1px;
-        border-color: input.has-focus ? Theme.accent : Theme.border;
+        border-color: input.has-focus ? Theme.indicator : Theme.border;
         border-radius: Theme.radius;
 
         HorizontalLayout {
@@ -734,7 +762,7 @@ export component ScCheckBox inherits Rectangle {
                 height: 14px;
                 border-radius: Theme.radius-sm;
                 border-width: 1px;
-                border-color: root.checked ? Theme.action : scope.has-focus ? Theme.accent : Theme.border-strong;
+                border-color: root.checked ? Theme.action : scope.has-focus ? Theme.indicator : Theme.border-strong;
                 background: root.checked ? Theme.action : touch.has-hover ? Theme.hover : Theme.well;
 
                 if root.checked: Icon {
@@ -862,7 +890,7 @@ export component ScComboBox inherits Rectangle {
                     if i == root.current-index: Rectangle {
                         x: 0;
                         width: 2px;
-                        background: Theme.accent;
+                        background: Theme.indicator;
                     }
                     Text {
                         x: 9px;
@@ -901,7 +929,7 @@ export component ScLineEdit inherits Rectangle {
     horizontal-stretch: 1;
     background: Theme.well;
     border-width: 1px;
-    border-color: input.has-focus ? Theme.accent : Theme.border;
+    border-color: input.has-focus ? Theme.indicator : Theme.border;
     border-radius: Theme.radius;
     opacity: self.enabled ? 1 : 0.5;
     forward-focus: input;
@@ -1028,7 +1056,7 @@ export component ScProgress inherits Rectangle {
         x: 0;
         width: (root.indeterminate ? 0.3 : Math.clamp(root.progress, 0, 1)) * parent.width;
         border-radius: 2px;
-        background: Theme.accent;
+        background: Theme.indicator;
     }
 }
 
@@ -1152,14 +1180,14 @@ export component LayerRuler inherits Rectangle {
         border-radius: Theme.radius-sm;
         background: Theme.chrome;
         border-width: 1px;
-        border-color: Theme.accent;
+        border-color: Theme.indicator;
 
         tag := Text {
             text: Math.round(root.value);
             font-family: Theme.mono;
             font-size: 13px;
             font-weight: 700;
-            color: Theme.accent;
+            color: Theme.indicator;
             horizontal-alignment: center;
             vertical-alignment: center;
         }

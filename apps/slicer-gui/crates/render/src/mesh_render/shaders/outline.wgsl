@@ -97,5 +97,5 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     // Match the warm tint hue from `mesh_render.wgsl` so the highlight
     // and outline read as one stylistic choice.
-    return vec4<f32>(1.0, 0.6, 0.2, opacity);
+    return vec4<f32>(1.0, 0.68, 0.28, opacity);
 }

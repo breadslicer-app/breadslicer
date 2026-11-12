@@ -1374,7 +1374,7 @@ fn an_upload_keeps_the_world_boxes_of_meshes_still_drawn() {
     let mut renderer = renderer_on(&device, &queue);
     renderer.upload_scene(&graph).expect("upload");
     let frame = |renderer: &mut Renderer, graph: &Scene| {
-        build_model_entries(graph, &[], TEST_BV, &mut renderer.world_boxes, false)
+        build_model_entries(graph, &[], &[], TEST_BV, &mut renderer.world_boxes, false)
             .expect("entries");
     };
     frame(&mut renderer, &graph);
@@ -2863,7 +2863,10 @@ fn the_ring_lies_on_the_surface_at_its_radius() {
         .flat_map(|y| (0..128).map(move |x| (x, y)))
         .filter(|&(x, y)| {
             let (a, b) = (pixel(&ringed, x, y), pixel(&bare, x, y));
-            i32::from(a[0]) - i32::from(b[0]) > 60
+            // How much redder than green the pixel turned: on a light model
+            // the red has little room to rise, the green falls (#523).
+            let redness = |p: [u8; 3]| i32::from(p[0]) - i32::from(p[1]);
+            redness(a) - redness(b) > 120
         })
         .collect();
     assert!(!changed.is_empty(), "the ring shows");

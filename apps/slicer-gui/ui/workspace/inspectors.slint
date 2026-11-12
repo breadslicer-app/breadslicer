@@ -11,7 +11,7 @@ import { ScrollView } from "std-widgets.slint";
 import { ScCheckBox as CheckBox, ScComboBox as ComboBox, ScLineEdit as LineEdit, ScProgress as ProgressIndicator, ScSlider as Slider } from "../kit/controls.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
-import { ButtonKind, Card, DisclosureChevron, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile } from "../kit/controls.slint";
+import { ButtonKind, Card, DisclosureChevron, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile, WarningNote } from "../kit/controls.slint";
 
 // One finding of the slice review (#90), as Rust lays it out.
 export struct ReviewRow {
@@ -80,7 +80,7 @@ component ObjectRow inherits Rectangle {
             height: 14px;
             y: (parent.height - self.height) / 2;
             border-radius: 1.5px;
-            background: root.selected ? Theme.accent : transparent;
+            background: root.selected ? Theme.selection : transparent;
         }
         Text {
             text: root.text;
@@ -315,7 +315,7 @@ component OrientOptionCard inherits Rectangle {
     min-height: rows.preferred-height;
     border-radius: Theme.radius;
     border-width: 1px;
-    border-color: root.selected ? Theme.accent : touch.has-hover ? Theme.border-strong : Theme.border-soft;
+    border-color: root.selected ? Theme.indicator : touch.has-hover ? Theme.border-strong : Theme.border-soft;
     background: touch.has-hover ? Theme.hover : Theme.well;
     accessible-role: button;
     accessible-label: root.option.letter + " " + root.option.tips;
@@ -336,7 +336,7 @@ component OrientOptionCard inherits Rectangle {
                 text: root.option.letter;
                 font-weight: 700;
                 font-size: Theme.font;
-                color: root.selected ? Theme.accent : Theme.text;
+                color: root.selected ? Theme.indicator : Theme.text;
             }
             Text {
                 text: root.option.tips;
@@ -735,9 +735,8 @@ export component OrientCard inherits Card {
     if root.status != "": Note {
         text: root.status;
     }
-    if root.warning != "": Note {
+    if root.warning != "": WarningNote {
         text: root.warning;
-        color: Theme.warning;
     }
     for option[i] in root.options: OrientOptionCard {
         option: option;
@@ -912,9 +911,8 @@ export component CutCard inherits Card {
     if root.status != "": Note {
         text: root.status;
     }
-    if root.warning != "": Note {
+    if root.warning != "": WarningNote {
         text: root.warning;
-        color: Theme.warning;
     }
     HorizontalLayout {
         spacing: 8px;
@@ -1604,7 +1602,7 @@ export component HollowInspector inherits VerticalLayout {
     Card {
         title: @tr("Inspector" => "HOLLOWING");
         note: root.running ? @tr("Inspector" => "Working") : root.model-state == 1 ? @tr("Inspector" => "Hollow") : "";
-        note-color: Theme.accent;
+        note-color: Theme.indicator;
 
         if !root.selection-valid: Note {
             text: @tr("Inspector" => "Select a model to hollow it.");
@@ -2049,7 +2047,7 @@ export component SupportsInspector inherits VerticalLayout {
     Card {
         title: @tr("Inspector" => "AUTO SUPPORTS");
         note: root.running ? @tr("Inspector" => "Working") : "";
-        note-color: Theme.accent;
+        note-color: Theme.indicator;
 
         LabeledRow {
             label: @tr("Inspector" => "Preset");
@@ -2106,7 +2104,7 @@ export component SupportsInspector inherits VerticalLayout {
     if root.add-tool-on: Card {
         title: @tr("Inspector" => "ADD SUPPORT");
         note: root.tip-label;
-        note-color: Theme.accent;
+        note-color: Theme.indicator;
 
         LabeledRow {
             label: @tr("Inspector" => "Tip");
@@ -2646,9 +2644,8 @@ export component SliceInspector inherits VerticalLayout {
                 if root.review-state == 3: Note {
                     text: @tr("Review" => "This slice was not reviewed. Slice again to check it.");
                 }
-                if root.review-stale: Note {
+                if root.review-stale: WarningNote {
                     text: @tr("Review" => "The scene changed since this slice. Slice again to review it.");
-                    color: Theme.warning;
                 }
                 if root.review-message != "": Note {
                     text: root.review-message;

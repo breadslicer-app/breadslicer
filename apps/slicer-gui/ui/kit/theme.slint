@@ -40,12 +40,20 @@ export global Theme {
     out property <brush> action-hover: dark ? #ffffff : #323940;
     out property <brush> on-action: dark ? #101214 : #f3f5f6;
 
-    // Indicators and states.
+    // Where you are (the tab, the tool, the card in use, a focused field,
+    // progress): light, as the primary action (#523).
+    out property <brush> indicator: dark ? #e8ecef : #22272b;
+    // The amber of bread, kept for what is selected (the scene's selection,
+    // its rows in the list) and for the brand (the logo, the support links,
+    // an unsaved scene) (#523).
     out property <brush> accent: dark ? #e2a750 : #b97a1c;
     out property <brush> accent-hover: dark ? #edb866 : #a56b14;
     out property <brush> on-accent: #15181a;
+    out property <brush> selection: dark ? #e2a750 : #b97a1c;
+    out property <brush> brand: dark ? #e2a750 : #b97a1c;
     out property <brush> success: dark ? #5fc08f : #2f8f5e;
-    out property <brush> warning: dark ? #e2a750 : #b97a1c;
+    // Warnings: a yellow of their own, apart from the selection's amber.
+    out property <brush> warning: dark ? #e9c85a : #8a6d08;
     out property <brush> danger: dark ? #f06a6a : #cc3d3d;
     // Painted faces in the 3D view, and what stands for them in the panels
     // (#183). Provisional, Damian picks it: it must not read as the amber of

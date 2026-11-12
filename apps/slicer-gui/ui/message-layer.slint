@@ -206,10 +206,10 @@ export component MessageLayer inherits Rectangle {
                         : root.kind == MessageKind.slice-overwrite ? Icons.warning
                         : root.kind == MessageKind.recovery ? Icons.history
                         : Icons.pulse;
-                    // Amber for what warns, red for an error, grey for the
-                    // rest: amber is never the thing to press (#507).
+                    // Yellow for what warns, red for an error, grey for the
+                    // rest (#507, #523).
                     tint: root.kind == MessageKind.error ? Theme.danger
-                        : root.kind == MessageKind.slice-overwrite || root.kind == MessageKind.stale-supports || root.kind == MessageKind.add-supports ? Theme.accent
+                        : root.kind == MessageKind.slice-overwrite || root.kind == MessageKind.stale-supports || root.kind == MessageKind.add-supports ? Theme.warning
                         : Theme.text-soft;
                     title: root.notice ? (root.message.heading != "" ? root.message.heading : root.default-heading)
                         : root.kind == MessageKind.scene-change ? (root.message.closing ? @tr("ReplaceSceneDialog" => "Close the current scene?") : @tr("ReplaceSceneDialog" => "Replace the current scene?"))
