@@ -89,6 +89,15 @@ pub(crate) const ISLAND_VIEW_PITCH: f32 = -0.61;
 /// surface around a model's vertices, read on a worker (#498).
 const MAP_WAIT_PING_MS: u64 = 100;
 
+/// A plate's name being edited where it lies (#545): the plate, the text so
+/// far, and the bytes its caret and the selection's other end stand at.
+pub(crate) struct NameBeingEdited {
+    pub(crate) plate: u32,
+    pub(crate) text: String,
+    pub(crate) caret: usize,
+    pub(crate) anchor: usize,
+}
+
 pub(crate) struct ViewportController {
     ui: slint::Weak<MainWindow>,
     session: SessionState,
@@ -195,7 +204,7 @@ pub(crate) struct ViewportController {
     plate_tool_hovered: Cell<Option<u32>>,
     /// A plate's name being edited (#545): the plate, the text so far and
     /// the byte its caret stands at.
-    plate_name_edit: RefCell<Option<(u32, String, usize)>>,
+    plate_name_edit: RefCell<Option<NameBeingEdited>>,
     /// The last click on a plate's name: when, and which plate, for a
     /// double click.
     plate_name_click: Cell<Option<(std::time::Instant, u32)>>,
@@ -3772,7 +3781,8 @@ impl ViewportController {
     }
 
     /// Starts editing plate `plate`'s name where it lies (#545): the keys go
-    /// to the window's hidden field, the caret at the name's end.
+    /// to the window's hidden field, the whole name selected, so typing
+    /// replaces it and an arrow key keeps it.
     pub(crate) fn start_plate_name_edit(&self, plate: u32) {
         let Some(name) = self
             .session
@@ -3784,20 +3794,27 @@ impl ViewportController {
             return;
         };
         let caret = name.len();
-        *self.plate_name_edit.borrow_mut() = Some((plate, name.clone(), caret));
+        *self.plate_name_edit.borrow_mut() = Some(NameBeingEdited {
+            plate,
+            text: name.clone(),
+            caret,
+            anchor: 0,
+        });
         if let Some(ui) = self.ui.upgrade() {
             ui.set_plate_name_text(name.into());
-            ui.invoke_focus_plate_name(caret as i32);
+            ui.invoke_focus_plate_name(0, caret as i32);
         }
         self.mark_dirty();
     }
 
-    /// The name being edited is now `text`, the caret at byte `caret`.
-    pub(crate) fn plate_name_edited(&self, text: &str, caret: usize) {
-        if let Some((_, t, c)) = self.plate_name_edit.borrow_mut().as_mut() {
-            t.clear();
-            t.push_str(text);
-            *c = caret.min(text.len());
+    /// The name being edited is now `text`, the caret at byte `caret` and
+    /// the selection from there to byte `anchor`.
+    pub(crate) fn plate_name_edited(&self, text: &str, caret: usize, anchor: usize) {
+        if let Some(edit) = self.plate_name_edit.borrow_mut().as_mut() {
+            edit.text.clear();
+            edit.text.push_str(text);
+            edit.caret = caret.min(text.len());
+            edit.anchor = anchor.min(text.len());
         }
         self.mark_dirty();
     }
@@ -3805,7 +3822,8 @@ impl ViewportController {
     /// Ends the edit of a plate's name: `keep` calls the plate by it, as one
     /// step of history; otherwise the plate keeps the name it had.
     pub(crate) fn plate_name_done(&self, keep: bool) {
-        let Some((plate, text, _)) = self.plate_name_edit.borrow_mut().take() else {
+        let Some(NameBeingEdited { plate, text, .. }) = self.plate_name_edit.borrow_mut().take()
+        else {
             return;
         };
         if keep {
@@ -4662,11 +4680,15 @@ impl ViewportController {
         {
             let mut names = self.session.document().plate_names();
             let edit = self.plate_name_edit.borrow();
-            let editing = edit.as_ref().map(|(plate, text, caret)| {
-                if let Some(name) = names.get_mut(*plate as usize) {
-                    name.clone_from(text);
+            let editing = edit.as_ref().map(|edit| {
+                if let Some(name) = names.get_mut(edit.plate as usize) {
+                    name.clone_from(&edit.text);
                 }
-                (*plate as usize, *caret)
+                crate::plates::NameEdit {
+                    plate: edit.plate as usize,
+                    caret: edit.caret,
+                    anchor: edit.anchor,
+                }
             });
             renderer.set_plate_names(&names, editing);
         }

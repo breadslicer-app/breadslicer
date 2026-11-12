@@ -23,6 +23,15 @@ pub const PLATE_GAP_MM: f32 = 40.0;
 /// The most plates a scene lays out.
 pub const MAX_PLATES: u32 = 32;
 
+/// A plate's name being edited where it lies (#545): the plate, and the
+/// bytes of its name the caret and the selection's other end stand at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NameEdit {
+    pub plate: usize,
+    pub caret: usize,
+    pub anchor: usize,
+}
+
 /// The plates of a scene and which is active.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Plates {

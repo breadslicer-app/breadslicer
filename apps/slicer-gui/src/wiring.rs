@@ -231,8 +231,12 @@ pub(crate) fn wire_viewport_input(
     }
     {
         let ctrl = ctrl.clone();
-        ui.on_plate_name_edited(move |text, caret| {
-            ctrl.plate_name_edited(text.as_str(), usize::try_from(caret).unwrap_or(0));
+        ui.on_plate_name_edited(move |text, caret, anchor| {
+            ctrl.plate_name_edited(
+                text.as_str(),
+                usize::try_from(caret).unwrap_or(0),
+                usize::try_from(anchor).unwrap_or(0),
+            );
         });
     }
     {

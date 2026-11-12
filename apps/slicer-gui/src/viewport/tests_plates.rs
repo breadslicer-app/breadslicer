@@ -473,15 +473,15 @@ fn a_plate_name_is_edited_in_place_and_undoes() {
     let document = ctrl.document();
     ctrl.add_plate();
     ctrl.start_plate_name_edit(1);
-    ctrl.plate_name_edited("Esqueletos", 10);
+    ctrl.plate_name_edited("Esqueletos", 10, 10);
     ctrl.plate_name_done(true);
     assert_eq!(document.plate_names(), ["Plate 1", "Esqueletos"]);
     ctrl.start_plate_name_edit(0);
-    ctrl.plate_name_edited("Nada", 4);
+    ctrl.plate_name_edited("Nada", 4, 4);
     ctrl.plate_name_done(false);
     assert_eq!(document.plate_names()[0], "Plate 1", "Escape keeps it");
     ctrl.start_plate_name_edit(0);
-    ctrl.plate_name_edited("   ", 3);
+    ctrl.plate_name_edited("   ", 3, 3);
     ctrl.plate_name_done(true);
     assert_eq!(
         document.plate_names()[0],
@@ -522,10 +522,13 @@ fn a_double_click_on_a_plate_name_edits_it() {
     );
     ctrl.plate_name_clicked(1);
     assert_eq!(
-        ctrl.plate_name_edit
-            .borrow()
-            .as_ref()
-            .map(|(p, t, _)| (*p, t.clone())),
-        Some((1, "Plate 2".to_owned()))
+        ctrl.plate_name_edit.borrow().as_ref().map(|e| (
+            e.plate,
+            e.text.clone(),
+            e.anchor,
+            e.caret
+        )),
+        Some((1, "Plate 2".to_owned(), 0, 7)),
+        "the whole name selected"
     );
 }

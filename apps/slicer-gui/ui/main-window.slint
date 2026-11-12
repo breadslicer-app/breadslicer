@@ -710,13 +710,14 @@ export component MainWindow inherits Window {
     // A plate's name being edited where it lies on the plate (#545): the keys
     // go to a hidden field, the name shows on the plate as it is typed.
     in-out property <string> plate-name-text;
-    // The text and the byte the caret stands at.
-    callback plate-name-edited(string, int);
+    // The text, the byte the caret stands at and the byte the selection's
+    // other end stands at (the caret's own when nothing is selected).
+    callback plate-name-edited(string, int, int);
     // Done: kept (Enter, or the field left) or not (Escape).
     callback plate-name-done(bool);
-    public function focus-plate-name(at: int) {
+    public function focus-plate-name(anchor: int, caret: int) {
         plate-name-input.focus();
-        plate-name-input.set-selection-offsets(at, at);
+        plate-name-input.set-selection-offsets(anchor, caret);
     }
     public function end-plate-name() {
         mv.focus-viewport();
@@ -3083,10 +3084,14 @@ export component MainWindow inherits Window {
             single-line: true;
             text <=> root.plate-name-text;
             edited => {
-                root.plate-name-edited(self.text, self.cursor-position-byte-offset);
+                root.plate-name-edited(self.text, self.cursor-position-byte-offset, self.anchor-position-byte-offset);
             }
             cursor-position-changed(point) => {
-                root.plate-name-edited(self.text, self.cursor-position-byte-offset);
+                root.plate-name-edited(self.text, self.cursor-position-byte-offset, self.anchor-position-byte-offset);
+            }
+            // Ctrl+A leaves the caret where it is and moves only the anchor.
+            changed anchor-position-byte-offset => {
+                root.plate-name-edited(self.text, self.cursor-position-byte-offset, self.anchor-position-byte-offset);
             }
             accepted => {
                 root.plate-name-done(true);

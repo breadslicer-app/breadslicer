@@ -147,7 +147,7 @@ pub trait MeshRenderer {
     fn set_plate_tools(&mut self, _tools: Option<Option<u32>>) {}
 
     /// The plates' names (#545), and the one being edited with its caret.
-    fn set_plate_names(&mut self, _names: &[String], _editing: Option<(usize, usize)>) {}
+    fn set_plate_names(&mut self, _names: &[String], _editing: Option<crate::plates::NameEdit>) {}
 
     /// What stays lit while something is selected (#523); the rest dims.
     fn set_focus(&mut self, _focus: &[sc_scene::NodeId]) {}
@@ -302,7 +302,7 @@ impl MeshRenderer for Renderer {
         Renderer::set_plate_tools(self, tools);
     }
 
-    fn set_plate_names(&mut self, names: &[String], editing: Option<(usize, usize)>) {
+    fn set_plate_names(&mut self, names: &[String], editing: Option<crate::plates::NameEdit>) {
         Renderer::set_plate_names(self, names, editing);
     }
 

@@ -387,7 +387,7 @@ pub struct Renderer {
     plate_tools: Option<Option<u32>>,
     /// The plates' names to show (#545), and the one being edited with the
     /// byte its caret stands at.
-    plate_names: (Vec<String>, Option<(usize, usize)>),
+    plate_names: (Vec<String>, Option<crate::plates::NameEdit>),
     /// The names as uploaded: what they were made from, their texture and
     /// one quad per plate in its own frame.
     plate_names_state: Option<(u64, wgpu::BindGroup, wgpu::Buffer)>,
@@ -789,7 +789,8 @@ impl Renderer {
             self.pipelines.label_state = LabelState::Off;
             return Ok(());
         };
-        let tab = FrontTab::around_label(raster.aspect(), raster.height_over_word());
+        let tab = FrontTab::around_label(raster.aspect(), raster.height_over_word())
+            .with_ink_pad(raster.pad_over_height());
         match self.upload_label_texture(&raster) {
             Ok(bind_group) => {
                 self.pipelines.label_state = LabelState::Shown {
@@ -840,7 +841,7 @@ impl Renderer {
             let bind_group = self.coverage_bind_group(
                 "plate marks",
                 wgpu::TextureFormat::Rg8Unorm,
-                &raster.coverage,
+                &raster.texels,
                 raster.width,
                 raster.height,
                 &self.pipelines.label.texture_bind_group_layout,
@@ -904,7 +905,7 @@ impl Renderer {
             self.coverage_bind_group(
                 "front label",
                 wgpu::TextureFormat::Rg8Unorm,
-                &raster.coverage,
+                &raster.texels,
                 raster.width,
                 raster.height,
                 &self.pipelines.label.texture_bind_group_layout,
@@ -1085,7 +1086,7 @@ impl Renderer {
     /// The plates' names for the frames to come (#545), one per plate in
     /// their order; `editing`, the plate whose name is being edited and the
     /// byte of it its caret stands at.
-    pub fn set_plate_names(&mut self, names: &[String], editing: Option<(usize, usize)>) {
+    pub fn set_plate_names(&mut self, names: &[String], editing: Option<crate::plates::NameEdit>) {
         if self.plate_names.0 != names || self.plate_names.1 != editing {
             self.plate_names = (names.to_vec(), editing);
         }
@@ -1127,8 +1128,8 @@ impl Renderer {
         let uploaded = scoped(&self.core.device, || {
             let bind_group = self.coverage_bind_group(
                 "plate names",
-                wgpu::TextureFormat::Rg8Unorm,
-                &raster.coverage,
+                wgpu::TextureFormat::Rgba8Unorm,
+                &raster.texels,
                 raster.width,
                 raster.height,
                 &self.pipelines.label.texture_bind_group_layout,

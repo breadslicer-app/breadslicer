@@ -1096,7 +1096,14 @@ fn every_plate_draws_where_it_stands() {
         let names: Vec<String> = ["Plate 1", "Plate 2", "Esqueletos", "Plate 4", "Plate 5"]
             .map(String::from)
             .to_vec();
-        renderer.set_plate_names(&names, Some((2, 4)));
+        renderer.set_plate_names(
+            &names,
+            Some(crate::plates::NameEdit {
+                plate: 2,
+                caret: 4,
+                anchor: 10,
+            }),
+        );
         let shot = frame(&mut renderer, 5, &wide, 1400, 820);
         image::RgbaImage::from_raw(shot.width, shot.height, shot.rgba)
             .expect("RGBA")
@@ -1114,6 +1121,21 @@ fn every_plate_draws_where_it_stands() {
         image::RgbaImage::from_raw(shot.width, shot.height, shot.rgba)
             .expect("RGBA")
             .save(close_path)
+            .expect("the picture is written");
+        // Up close on the name being edited, its first letters selected: the
+        // writing stays sharp however close the camera comes.
+        let [x0, y0, _, y1] = crate::plates::name_box(&bv);
+        let name_at = crate::plates::offset(&bv, 2) + Vec3::new(x0 + 14.0, (y0 + y1) / 2.0, 0.0);
+        let mut closer = OrbitCamera::new(name_at, 20.0);
+        closer.target = name_at;
+        closer.distance = 30.0;
+        closer.pitch = 1.0;
+        closer.yaw = -1.75;
+        let shot = frame(&mut renderer, 5, &closer, 1000, 560);
+        let name_path = std::path::PathBuf::from(&path).with_extension("name.png");
+        image::RgbaImage::from_raw(shot.width, shot.height, shot.rgba)
+            .expect("RGBA")
+            .save(name_path)
             .expect("the picture is written");
         renderer.set_plate_tools(None);
     }

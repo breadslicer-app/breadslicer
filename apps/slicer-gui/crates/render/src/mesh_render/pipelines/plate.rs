@@ -110,6 +110,9 @@ const FRONT_TAB_SIDE_MARGIN_MM: f32 = 3.75;
 pub(in crate::mesh_render) struct FrontTab {
     text_half_width_mm: f32,
     text_height_mm: f32,
+    /// How far past the ink box the label's quad reaches, over the ink's
+    /// height: room for the edges of its distance field to fade out.
+    ink_pad: f32,
 }
 
 impl FrontTab {
@@ -121,7 +124,21 @@ impl FrontTab {
         Self {
             text_half_width_mm,
             text_height_mm,
+            ink_pad: 0.0,
         }
+    }
+
+    /// The same tab, its label's quad reaching `ink_pad` times the ink's
+    /// height past the ink box.
+    pub(in crate::mesh_render) fn with_ink_pad(self, ink_pad: f32) -> Self {
+        Self { ink_pad, ..self }
+    }
+
+    /// The label's quad around the ink box `text_box`.
+    fn label_box(&self, text_box: [f32; 4]) -> [f32; 4] {
+        let [x0, y0, x1, y1] = text_box;
+        let pad = self.ink_pad * (y1 - y0);
+        [x0 - pad, y0 - pad, x1 + pad, y1 + pad]
     }
 
     /// Sizes a tab around a label of the given width over height,
@@ -892,7 +909,7 @@ pub(in crate::mesh_render) fn plate_geometry(
         top_indices.extend(front.top_indices);
         solid_indices.extend(front.solid_indices);
         bottom_indices.extend(front.bottom_indices);
-        let text_box = tab.text_box(-outer_d, outer_w - radius);
+        let text_box = tab.label_box(tab.text_box(-outer_d, outer_w - radius));
         let top = label_quad(text_box);
         // The plate is drawn without its thickness (#507): the copy read from
         // below sits on the same plane as the one read from above.
