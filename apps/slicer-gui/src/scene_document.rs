@@ -166,9 +166,10 @@ struct HistoryEntry {
     /// The entry changes marks the scene does not hold, and nothing else
     /// (#512): its edit is empty, Undo and Redo run the step instead.
     marks: Option<MarksStep>,
-    /// How many plates the scene had before the entry and after it (#545):
-    /// Undo and Redo set them back, with the edit's model moves.
-    plates: Option<(u32, u32)>,
+    /// The plates' names before the entry and after it (#545): how many and
+    /// what they are called. Undo and Redo set them back, with the edit's
+    /// model moves.
+    plates: Option<(Vec<String>, Vec<String>)>,
 }
 
 impl HistoryEntry {
@@ -237,6 +238,11 @@ pub(crate) enum DocumentOrigin {
     Project,
 }
 
+/// The names of `count` new plates: "Plate 1" to "Plate `count`" (#545).
+pub(crate) fn default_plate_names(count: u32) -> Vec<String> {
+    (1..=count).map(|n| format!("Plate {n}")).collect()
+}
+
 /// Splits a project payload into the scene's own choices, the embedded
 /// profile documents it carries and the review decisions kept with it.
 fn split_payload(
@@ -250,6 +256,7 @@ fn split_payload(
         embedded,
         review_decisions,
         plates: _,
+        plate_names: _,
     } = payload;
     (
         PrintSelection {
@@ -349,6 +356,9 @@ pub(crate) struct SceneDocument {
     /// The scene's plates and which is active (#545); a project carries how
     /// many.
     plates: Cell<crate::plates::Plates>,
+    /// The plates' names, one per plate, in their order (#545): a plate
+    /// keeps its name when the plates before it go.
+    plate_names: RefCell<Vec<String>>,
     /// The editable DragonFruit support sessions, one set per model, shared
     /// with the support driver: a save keeps each set's session in force as
     /// data, and opening a `.bread` puts the rebuilt ones here.
@@ -484,6 +494,7 @@ impl SceneDocument {
             project_state_generation: Cell::new(0),
             review_decisions: RefCell::default(),
             plates: Cell::new(crate::plates::Plates::one()),
+            plate_names: RefCell::new(default_plate_names(1)),
             support_sessions: Rc::default(),
             support_follow: Cell::new(None),
             hollows: Rc::default(),
@@ -571,8 +582,19 @@ impl SceneDocument {
         self.bump_scene_generation();
         *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
-        let plates = project_payload.as_ref().map_or(1, |p| p.plates);
-        self.plates.set(crate::plates::Plates::new(plates, 0));
+        let names = project_payload.as_ref().map_or_else(
+            || default_plate_names(1),
+            |p| {
+                if p.plate_names.is_empty() {
+                    default_plate_names(p.plates.max(1))
+                } else {
+                    p.plate_names.clone()
+                }
+            },
+        );
+        self.plates
+            .set(crate::plates::Plates::new(names.len() as u32, 0));
+        *self.plate_names.borrow_mut() = names;
         let (selection, embedded, decisions) = match project_payload {
             Some(payload) => {
                 self.origin.set(DocumentOrigin::Project);
@@ -615,6 +637,7 @@ impl SceneDocument {
         *self.print_selection.borrow_mut() = PrintSelection::default();
         self.embedded_profiles.borrow_mut().clear();
         self.plates.set(crate::plates::Plates::one());
+        *self.plate_names.borrow_mut() = default_plate_names(1);
         self.selection.set(Selection::None);
         let stacks_changed = self.clear_history();
         self.save_point.set(None);
@@ -697,6 +720,14 @@ impl SceneDocument {
                 1 => 0,
                 count => count,
             },
+            plate_names: {
+                let names = self.plate_names.borrow().clone();
+                if names == default_plate_names(1) {
+                    Vec::new()
+                } else {
+                    names
+                }
+            },
         }
     }
 
@@ -716,20 +747,59 @@ impl SceneDocument {
         }
     }
 
-    /// Sets how many plates the scene has, `active` the active one, and
-    /// tells the listeners.
-    fn put_plates(&self, count: u32, active: u32) {
-        self.plates.set(crate::plates::Plates::new(count, active));
+    /// The plates' names, in their order (#545).
+    pub(crate) fn plate_names(&self) -> Vec<String> {
+        self.plate_names.borrow().clone()
+    }
+
+    /// The name a plate added after `names` takes: "Plate N", the first N
+    /// from how many there are then, past every name already taken.
+    pub(crate) fn new_plate_name(names: &[String]) -> String {
+        (names.len() + 1..)
+            .map(|n| format!("Plate {n}"))
+            .find(|name| !names.contains(name))
+            .expect("a free number")
+    }
+
+    /// Sets the plates to `names`, `active` the active one, and tells the
+    /// listeners.
+    fn put_plates(&self, names: Vec<String>, active: u32) {
+        self.plates
+            .set(crate::plates::Plates::new(names.len() as u32, active));
+        *self.plate_names.borrow_mut() = names;
         self.notify(SceneEvent::PlatesChanged);
     }
 
     /// Records `edit`, already applied, with the plates going from `before`
-    /// to `after` (#545), `active` the active one after it: one entry of
-    /// history, which Undo takes back whole. The edit moves the models of
-    /// the plates that move; it may be empty.
-    pub(crate) fn push_plates_edit(&self, edit: SceneEdit, before: u32, after: u32, active: u32) {
-        self.put_plates(after, active);
+    /// to `after` (#545), by their names, `active` the active one after it:
+    /// one entry of history, which Undo takes back whole. The edit moves the
+    /// models of the plates that move; it may be empty.
+    pub(crate) fn push_plates_edit(
+        &self,
+        edit: SceneEdit,
+        before: Vec<String>,
+        after: Vec<String>,
+        active: u32,
+    ) {
+        self.put_plates(after.clone(), active);
         self.push_entry(edit, &[], Some((before, after)));
+    }
+
+    /// Calls plate `index` `name` (#545), as one step of history. Nothing
+    /// happens for a blank name or the one it has.
+    pub(crate) fn rename_plate(&self, index: u32, name: &str) {
+        let name = name.trim();
+        let before = self.plate_names();
+        let Some(old) = before.get(index as usize) else {
+            return;
+        };
+        if name.is_empty() || name == old {
+            return;
+        }
+        let mut after = before.clone();
+        after[index as usize] = name.to_owned();
+        let active = self.plates.get().active();
+        self.push_plates_edit(SceneEdit::Compound(Vec::new()), before, after, active);
     }
 
     /// The findings the person chose to ignore, as a project keeps them
@@ -1230,7 +1300,12 @@ impl SceneDocument {
 
     /// [`Self::push_edit_wanting`], with the plates it changes (#545): an
     /// entry that changes them is kept with an empty edit too.
-    fn push_entry(&self, edit: SceneEdit, wanting: &[NodeId], plates: Option<(u32, u32)>) {
+    fn push_entry(
+        &self,
+        edit: SceneEdit,
+        wanting: &[NodeId],
+        plates: Option<(Vec<String>, Vec<String>)>,
+    ) {
         let mut committed = crate::support_follow::commit(self, edit);
         for model in wanting {
             if !committed.regenerate.contains(model) {
@@ -2167,8 +2242,8 @@ impl SceneDocument {
             }
         }
         crate::breadcrumbs::note(&format!("edit: undo {}", edit_label(&entry.edit)));
-        if let Some((before, _)) = entry.plates {
-            self.put_plates(before, self.plates.get().active());
+        if let Some((before, _)) = &entry.plates {
+            self.put_plates(before.clone(), self.plates.get().active());
         }
         let mut redo = self.redo_stack.borrow_mut();
         if redo.len() == UNDO_STACK_CAP {
@@ -2212,8 +2287,8 @@ impl SceneDocument {
             }
         }
         crate::breadcrumbs::note(&format!("edit: redo {}", edit_label(&entry.edit)));
-        if let Some((_, after)) = entry.plates {
-            self.put_plates(after, self.plates.get().active());
+        if let Some((_, after)) = &entry.plates {
+            self.put_plates(after.clone(), self.plates.get().active());
         }
         let mut undo = self.undo_stack.borrow_mut();
         if undo.len() == UNDO_STACK_CAP

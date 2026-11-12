@@ -41,6 +41,9 @@ pub struct ProjectPayload {
     /// How many build plates the scene lays out (#545). 0 and 1 both mean
     /// one: a project saved before plates came records none.
     pub plates: u32,
+    /// The plates' names, in their order (#545); empty when the project
+    /// keeps none, so each plate takes its default name.
+    pub plate_names: Vec<String>,
 }
 
 /// A finding of the review the person chose to ignore, by kind and place, so

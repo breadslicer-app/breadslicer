@@ -193,6 +193,12 @@ pub(crate) struct ViewportController {
     focus_cache: FocusCache,
     /// The active plate's tool under the pointer (#545).
     plate_tool_hovered: Cell<Option<u32>>,
+    /// A plate's name being edited (#545): the plate, the text so far and
+    /// the byte its caret stands at.
+    plate_name_edit: RefCell<Option<(u32, String, usize)>>,
+    /// The last click on a plate's name: when, and which plate, for a
+    /// double click.
+    plate_name_click: Cell<Option<(std::time::Instant, u32)>>,
 }
 
 type FocusCache = RefCell<
@@ -299,6 +305,8 @@ impl ViewportController {
             cut_press: Cell::new(None),
             focus_cache: RefCell::new(None),
             plate_tool_hovered: Cell::new(None),
+            plate_name_edit: RefCell::new(None),
+            plate_name_click: Cell::new(None),
         }
     }
 
@@ -366,6 +374,8 @@ impl ViewportController {
             cut_press: Cell::new(None),
             focus_cache: RefCell::new(None),
             plate_tool_hovered: Cell::new(None),
+            plate_name_edit: RefCell::new(None),
+            plate_name_click: Cell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -2747,6 +2757,10 @@ impl ViewportController {
         match outcome {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
             PointerUpOutcome::Click(cursor) => {
+                if let Some(plate) = self.plate_name_under(cursor) {
+                    self.plate_name_clicked(plate);
+                    return;
+                }
                 if let Some(tool) = self.plate_tool_under(cursor) {
                     self.run_plate_tool(tool, modifiers.shift);
                     return;
@@ -3718,6 +3732,91 @@ impl ViewportController {
         crate::plates::tool_at(&volume, x - at.x, y - at.y)
     }
 
+    /// The plate whose name is under `cursor` (#545).
+    fn plate_name_under(&self, cursor: ScreenPoint) -> Option<u32> {
+        let document = self.session.document();
+        if !document.is_loaded() {
+            return None;
+        }
+        let vp = self.render.viewport()?;
+        let camera = self.camera.camera_cell().borrow();
+        let ray = picking::ray_from_pixel(
+            camera.as_ref()?,
+            crate::mesh_render::default_fov_y(),
+            vp.width(),
+            vp.height(),
+            cursor.x,
+            cursor.y,
+        );
+        let (x, y) = picking::ray_z_plane_intersection(&ray, 0.0)?;
+        let volume = self.session.build_volume();
+        let plates = document.plates();
+        let plate = crate::plates::cell_at(&volume, plates, x, y)?;
+        let at = crate::plates::offset(&volume, plate);
+        crate::plates::on_name(&volume, x - at.x, y - at.y).then_some(plate)
+    }
+
+    /// A click on plate `plate`'s name (#545): it makes the plate the active
+    /// one; a second one soon after on the same name edits it.
+    fn plate_name_clicked(&self, plate: u32) {
+        let document = self.session.document();
+        document.set_active_plate(plate);
+        let now = std::time::Instant::now();
+        let double = self.plate_name_click.get().is_some_and(|(at, p)| {
+            p == plate && now.duration_since(at) <= std::time::Duration::from_millis(450)
+        });
+        self.plate_name_click.set((!double).then_some((now, plate)));
+        if double {
+            self.start_plate_name_edit(plate);
+        }
+    }
+
+    /// Starts editing plate `plate`'s name where it lies (#545): the keys go
+    /// to the window's hidden field, the caret at the name's end.
+    pub(crate) fn start_plate_name_edit(&self, plate: u32) {
+        let Some(name) = self
+            .session
+            .document()
+            .plate_names()
+            .get(plate as usize)
+            .cloned()
+        else {
+            return;
+        };
+        let caret = name.len();
+        *self.plate_name_edit.borrow_mut() = Some((plate, name.clone(), caret));
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_plate_name_text(name.into());
+            ui.invoke_focus_plate_name(caret as i32);
+        }
+        self.mark_dirty();
+    }
+
+    /// The name being edited is now `text`, the caret at byte `caret`.
+    pub(crate) fn plate_name_edited(&self, text: &str, caret: usize) {
+        if let Some((_, t, c)) = self.plate_name_edit.borrow_mut().as_mut() {
+            t.clear();
+            t.push_str(text);
+            *c = caret.min(text.len());
+        }
+        self.mark_dirty();
+    }
+
+    /// Ends the edit of a plate's name: `keep` calls the plate by it, as one
+    /// step of history; otherwise the plate keeps the name it had.
+    pub(crate) fn plate_name_done(&self, keep: bool) {
+        let Some((plate, text, _)) = self.plate_name_edit.borrow_mut().take() else {
+            return;
+        };
+        if keep {
+            self.session.document().rename_plate(plate, &text);
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            ui.invoke_end_plate_name();
+        }
+        self.mark_dirty();
+    }
+
     /// Follows the pointer over the active plate's tools (#545): the one
     /// under it lights up and the status bar says what it does.
     fn plate_tool_hover(&self, cursor: ScreenPoint) {
@@ -3820,12 +3919,14 @@ impl ViewportController {
         if !document.is_loaded() || plates.count() >= crate::plates::MAX_PLATES {
             return;
         }
-        let count = plates.count();
+        let before = document.plate_names();
+        let mut after = before.clone();
+        after.push(SceneDocument::new_plate_name(&before));
         // The active plate stays the active one.
         document.push_plates_edit(
             SceneEdit::Compound(Vec::new()),
-            count,
-            count + 1,
+            before,
+            after,
             plates.active(),
         );
     }
@@ -3884,12 +3985,13 @@ impl ViewportController {
         if !edit.is_noop() && document.apply_edit(edit.clone()).is_err() {
             return;
         }
-        document.push_plates_edit(
-            edit,
-            plates.count(),
-            plates.count() - 1,
-            active.min(last - 1),
-        );
+        // The plates after it keep their names (#545).
+        let before = document.plate_names();
+        let mut after = before.clone();
+        if (active as usize) < after.len() {
+            after.remove(active as usize);
+        }
+        document.push_plates_edit(edit, before, after, active.min(last - 1));
         self.mark_dirty();
     }
 
@@ -4557,6 +4659,17 @@ impl ViewportController {
             self.plate_tools_shown()
                 .then(|| self.plate_tool_hovered.get()),
         );
+        {
+            let mut names = self.session.document().plate_names();
+            let edit = self.plate_name_edit.borrow();
+            let editing = edit.as_ref().map(|(plate, text, caret)| {
+                if let Some(name) = names.get_mut(*plate as usize) {
+                    name.clone_from(text);
+                }
+                (*plate as usize, *caret)
+            });
+            renderer.set_plate_names(&names, editing);
+        }
         renderer.set_focus(&self.focus());
 
         let Some(ui) = self.ui.upgrade() else {

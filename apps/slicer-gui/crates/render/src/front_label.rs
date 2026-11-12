@@ -171,6 +171,195 @@ pub fn rasterise_plate_marks(
     })
 }
 
+/// The plates' names (#545), one row per plate, bottom-to-top as the other
+/// rasters: row `k` (from the bottom) is plate `k`'s. Two channels as
+/// [`LabelRaster`]'s: the name in the first, and in the second the outline of
+/// the field while it is being edited.
+pub struct NamesRaster {
+    pub(crate) coverage: Vec<u8>,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    /// The rows, one per plate.
+    pub(crate) rows: u32,
+}
+
+impl std::fmt::Debug for NamesRaster {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NamesRaster")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("rows", &self.rows)
+            .finish_non_exhaustive()
+    }
+}
+
+/// How tall a name's row is, px.
+const NAME_ROW_PX: u32 = 56;
+
+/// Rasterises `names` into rows `aspect` times as wide as tall: each name
+/// left-aligned on one baseline, made smaller when it would not fit. With
+/// `editing` (a plate, and the byte where the caret stands in its name),
+/// that row also holds the caret and the field's outline.
+pub fn rasterise_plate_names(
+    names: &[String],
+    aspect: f32,
+    editing: Option<(usize, usize)>,
+) -> Option<NamesRaster> {
+    if names.is_empty() {
+        return None;
+    }
+    let row_h = NAME_ROW_PX;
+    let width = ((row_h as f32 * aspect).round() as u32).max(row_h);
+    let rows = names.len() as u32;
+    let height = row_h * rows;
+    let mut coverage = vec![0u8; (width * height * 2) as usize];
+    let pad = (row_h as f32 * 0.18).round() as i32;
+    for (k, name) in names.iter().enumerate() {
+        let caret = editing.and_then(|(plate, byte)| (plate == k).then_some(byte));
+        let bottom = k as u32 * row_h;
+        let room = width as i32 - 2 * pad;
+        // The name at the size of the row, smaller when too long.
+        let mut px = row_h as f32 * 0.62;
+        let mut laid = baseline_line(name, px, caret);
+        if let Some(line) = &laid
+            && line.advance > room as f32
+        {
+            px *= room as f32 / line.advance;
+            laid = baseline_line(name, px, caret);
+        }
+        let baseline = bottom as i32 + (row_h as f32 * 0.30).round() as i32;
+        if let Some(line) = &laid {
+            for &(x, y, alpha) in &line.ink {
+                let (cx, cy) = (pad + x, baseline + y);
+                if cx < 0
+                    || cy < bottom as i32
+                    || cx >= width as i32
+                    || cy >= (bottom + row_h) as i32
+                {
+                    continue;
+                }
+                let texel = (cy as u32 * width + cx as u32) as usize;
+                coverage[texel * 2] = coverage[texel * 2].max(alpha);
+            }
+        }
+        if let Some(byte) = caret {
+            // The caret: a bar at the pen's place for `byte`.
+            let at = laid.as_ref().map_or(0.0, |line| line.pen_at(byte)).round() as i32 + pad;
+            let (y0, y1) = (
+                bottom as i32 + (row_h as f32 * 0.16) as i32,
+                bottom as i32 + (row_h as f32 * 0.86) as i32,
+            );
+            for y in y0..y1 {
+                for x in at..at + 3 {
+                    if x >= 0 && x < width as i32 {
+                        let texel = (y as u32 * width + x as u32) as usize;
+                        coverage[texel * 2] = 255;
+                    }
+                }
+            }
+            // The field's outline, a line two px wide.
+            for y in bottom..bottom + row_h {
+                for x in 0..width {
+                    let edge = x < 2 || x >= width - 2 || y < bottom + 2 || y >= bottom + row_h - 2;
+                    if edge {
+                        coverage[((y * width + x) * 2 + 1) as usize] = 255;
+                    }
+                }
+            }
+        }
+    }
+    Some(NamesRaster {
+        coverage,
+        width,
+        height,
+        rows,
+    })
+}
+
+/// A line of ink on its baseline: each texel as `(x, y, alpha)` from the
+/// pen's start and the baseline (y up), and the pen's place after each glyph.
+struct BaselineLine {
+    ink: Vec<(i32, i32, u8)>,
+    /// The pen's x before each glyph, with the byte its cluster starts at.
+    pens: Vec<(usize, f32)>,
+    advance: f32,
+}
+
+impl BaselineLine {
+    /// The pen's x where the caret stands before `byte`.
+    fn pen_at(&self, byte: usize) -> f32 {
+        self.pens
+            .iter()
+            .find(|(cluster, _)| *cluster >= byte)
+            .map_or(self.advance, |(_, x)| *x)
+    }
+}
+
+/// Shapes and rasterises `text` at `px` per em on its baseline. With
+/// nothing to draw, a line with no ink, so the caret still has a place.
+fn baseline_line(text: &str, px: f32, _caret: Option<usize>) -> Option<BaselineLine> {
+    let font = FontRef::from_index(UI_FONT, 0)?;
+    let mut context = ScaleContext::new();
+    let mut scaler = context.builder(font).size(px).hint(false).build();
+    let shaped = shape_clusters(text, px)?;
+    let mut ink = Vec::new();
+    for (placed, _) in &shaped.0 {
+        let Some(image) = Render::new(&[Source::Outline]).render(&mut scaler, placed.id) else {
+            continue;
+        };
+        let place = image.placement;
+        let pen = placed.pen_x.round() as i32;
+        for row in 0..place.height {
+            let y = place.top - 1 - row as i32;
+            for col in 0..place.width {
+                let alpha = image.data[(row * place.width + col) as usize];
+                if alpha > 0 {
+                    ink.push((pen + place.left + col as i32, y, alpha));
+                }
+            }
+        }
+    }
+    Some(BaselineLine {
+        ink,
+        pens: shaped
+            .0
+            .iter()
+            .map(|(placed, cluster)| (*cluster, placed.pen_x))
+            .collect(),
+        advance: shaped.1,
+    })
+}
+
+/// [`shape`], with each glyph's cluster (the byte of `text` it starts at)
+/// and the line's whole advance.
+fn shape_clusters(text: &str, px: f32) -> Option<(Vec<(PlacedGlyph, usize)>, f32)> {
+    let font = harfrust::FontRef::new(UI_FONT).ok()?;
+    let shaper_data = harfrust::ShaperData::new(&font);
+    let shaper = shaper_data.shaper(&font).build();
+    let mut buffer = harfrust::UnicodeBuffer::new();
+    buffer.push_str(text);
+    buffer.guess_segment_properties();
+    let shaped = shaper.shape(buffer, harfrust::ShapeOptions::default());
+    let scale = px / shaper.units_per_em() as f32;
+    let mut pen_x = 0.0;
+    let mut placed = Vec::new();
+    for (info, position) in shaped
+        .glyph_infos()
+        .iter()
+        .zip(shaped.glyph_positions().iter())
+    {
+        placed.push((
+            PlacedGlyph {
+                id: info.glyph_id as u16,
+                pen_x: pen_x + position.x_offset as f32 * scale,
+            },
+            info.cluster as usize,
+        ));
+        pen_x += position.x_advance as f32 * scale;
+    }
+    Some((placed, pen_x))
+}
+
 /// One line of ink: single-channel coverage, bottom-to-top, cropped.
 struct Line {
     coverage: Vec<u8>,

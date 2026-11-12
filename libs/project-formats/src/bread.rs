@@ -36,6 +36,9 @@ struct SettingsDoc {
     /// How many build plates the scene lays out (#545); left out with one.
     #[serde(default, skip_serializing_if = "one_plate")]
     plates: u32,
+    /// The plates' names (#545), in their order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    plate_names: Vec<String>,
     #[serde(default)]
     profiles: ProfilesSection,
     #[serde(default, skip_serializing_if = "PrintSection::is_empty")]
@@ -102,6 +105,7 @@ pub(crate) fn serialize_settings(
     toml_edit::ser::to_string(&SettingsDoc {
         version: BREAD_SETTINGS_VERSION,
         plates: payload.plates,
+        plate_names: payload.plate_names.clone(),
         profiles: ProfilesSection {
             printer: payload.printer.clone(),
             resin: payload.resin.clone(),
@@ -198,6 +202,7 @@ pub(crate) fn parse_settings(
             })
             .collect(),
         plates: doc.plates,
+        plate_names: doc.plate_names,
     }))
 }
 

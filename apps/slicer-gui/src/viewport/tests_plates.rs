@@ -443,3 +443,89 @@ fn arrange_all_arranges_every_plate_on_its_own() {
     assert!(near(centre_of(&ctrl, leaves[0]), before[0]));
     assert!(near(centre_of(&ctrl, leaves[1]), before[1]));
 }
+
+/// Plates are "Plate N" as they come (#545), and keep their names when one
+/// before them goes: with Plate 2 removed, Plate 3 stays Plate 3; the next
+/// one added takes the first number no plate has.
+#[test]
+fn plates_keep_their_names_when_one_before_them_goes() {
+    let (ctrl, _) = window(&[Vec3::ZERO]);
+    let document = ctrl.document();
+    ctrl.add_plate();
+    ctrl.add_plate();
+    assert_eq!(document.plate_names(), ["Plate 1", "Plate 2", "Plate 3"]);
+    document.set_active_plate(1);
+    ctrl.remove_active_plate();
+    assert_eq!(document.plate_names(), ["Plate 1", "Plate 3"]);
+    ctrl.add_plate();
+    assert_eq!(document.plate_names(), ["Plate 1", "Plate 3", "Plate 4"]);
+    assert!(document.undo().expect("undoes"));
+    assert!(document.undo().expect("undoes"));
+    assert_eq!(document.plate_names(), ["Plate 1", "Plate 2", "Plate 3"]);
+}
+
+/// A plate's name edited where it lies (#545): what is typed is the
+/// plate's name once kept, as one undo step; Escape leaves it as it was,
+/// and a blank name changes nothing.
+#[test]
+fn a_plate_name_is_edited_in_place_and_undoes() {
+    let (ctrl, _) = window(&[Vec3::ZERO]);
+    let document = ctrl.document();
+    ctrl.add_plate();
+    ctrl.start_plate_name_edit(1);
+    ctrl.plate_name_edited("Esqueletos", 10);
+    ctrl.plate_name_done(true);
+    assert_eq!(document.plate_names(), ["Plate 1", "Esqueletos"]);
+    ctrl.start_plate_name_edit(0);
+    ctrl.plate_name_edited("Nada", 4);
+    ctrl.plate_name_done(false);
+    assert_eq!(document.plate_names()[0], "Plate 1", "Escape keeps it");
+    ctrl.start_plate_name_edit(0);
+    ctrl.plate_name_edited("   ", 3);
+    ctrl.plate_name_done(true);
+    assert_eq!(
+        document.plate_names()[0],
+        "Plate 1",
+        "a blank name is no name"
+    );
+    assert!(document.undo().expect("undoes"));
+    assert_eq!(document.plate_names(), ["Plate 1", "Plate 2"]);
+    // The project keeps the names.
+    assert!(document.redo().expect("redoes"));
+    let payload = document.compose_project_payload(&Default::default());
+    assert_eq!(payload.plate_names, ["Plate 1", "Esqueletos"]);
+    let reopened = SceneDocument::new();
+    reopened.install_project_graph(Scene::new(), PathBuf::from("<test>.bread"), payload);
+    assert_eq!(reopened.plate_names(), ["Plate 1", "Esqueletos"]);
+}
+
+/// A double click on a plate's name starts its edit; one click makes the
+/// plate active (#545).
+#[test]
+fn a_double_click_on_a_plate_name_edits_it() {
+    let v = volume();
+    let (ctrl, _) = window(&[Vec3::ZERO]);
+    let document = ctrl.document();
+    ctrl.add_plate();
+    let [x0, y0, x1, y1] = crate::plates::name_box(&v);
+    let on_name = offset(&v, 1) + Vec3::new((x0 + x1) / 2.0, (y0 + y1) / 2.0, 0.0);
+    let mut cam = OrbitCamera::new(on_name, 200.0);
+    cam.set_axis_view(AxisView::Top);
+    ctrl.set_camera_for_test(cam);
+    let centre = ScreenPoint { x: 100.0, y: 100.0 };
+    assert_eq!(ctrl.plate_name_under(centre), Some(1));
+    ctrl.plate_name_clicked(1);
+    assert_eq!(document.plates().active(), 1);
+    assert!(
+        ctrl.plate_name_edit.borrow().is_none(),
+        "one click does not edit"
+    );
+    ctrl.plate_name_clicked(1);
+    assert_eq!(
+        ctrl.plate_name_edit
+            .borrow()
+            .as_ref()
+            .map(|(p, t, _)| (*p, t.clone())),
+        Some((1, "Plate 2".to_owned()))
+    );
+}

@@ -102,6 +102,7 @@ fn extract_payload(
                 embedded: collect_embedded(package, warnings),
                 review_decisions: Vec::new(),
                 plates: 0,
+                plate_names: Vec::new(),
             }),
             slice_fingerprint,
         )),

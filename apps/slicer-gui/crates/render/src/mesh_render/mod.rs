@@ -385,6 +385,12 @@ pub struct Renderer {
     /// The active plate's tools (#545): shown or not, and the one under the
     /// pointer.
     plate_tools: Option<Option<u32>>,
+    /// The plates' names to show (#545), and the one being edited with the
+    /// byte its caret stands at.
+    plate_names: (Vec<String>, Option<(usize, usize)>),
+    /// The names as uploaded: what they were made from, their texture and
+    /// one quad per plate in its own frame.
+    plate_names_state: Option<(u64, wgpu::BindGroup, wgpu::Buffer)>,
     /// The rings of the islands an analysis found (#525), drawn over
     /// everything, the models included (#538).
     island_marks: overlay::OverlaySlot,
@@ -504,6 +510,8 @@ impl Renderer {
             plates: crate::plates::Plates::one(),
             dim_all: false,
             plate_tools: None,
+            plate_names: (Vec::new(), None),
+            plate_names_state: None,
             island_marks: overlay::OverlaySlot::default(),
             island_hidden: overlay::OverlaySlot::default(),
             hint_source: None,
@@ -1074,6 +1082,90 @@ impl Renderer {
         self.dim_all = on;
     }
 
+    /// The plates' names for the frames to come (#545), one per plate in
+    /// their order; `editing`, the plate whose name is being edited and the
+    /// byte of it its caret stands at.
+    pub fn set_plate_names(&mut self, names: &[String], editing: Option<(usize, usize)>) {
+        if self.plate_names.0 != names || self.plate_names.1 != editing {
+            self.plate_names = (names.to_vec(), editing);
+        }
+    }
+
+    /// Makes the names' texture and quads for `volume` when what they show
+    /// changed.
+    fn ensure_plate_names(&mut self, volume: &BuildVolume) {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.plate_names.hash(&mut hasher);
+        volume.width_mm().to_bits().hash(&mut hasher);
+        volume.depth_mm().to_bits().hash(&mut hasher);
+        let key = hasher.finish();
+        if self
+            .plate_names_state
+            .as_ref()
+            .is_some_and(|(k, _, _)| *k == key)
+        {
+            return;
+        }
+        self.plate_names_state = None;
+        let [x0, y0, x1, y1] = crate::plates::name_box(volume);
+        let aspect = (x1 - x0) / (y1 - y0);
+        let (names, editing) = &self.plate_names;
+        let Some(raster) = crate::front_label::rasterise_plate_names(names, aspect, *editing)
+        else {
+            return;
+        };
+        let rows = raster.rows as f32;
+        let quads: Vec<pipelines::label::LabelVertex> = (0..raster.rows)
+            .flat_map(|k| {
+                pipelines::label::mark_quad(
+                    [x0, y0, x1, y1],
+                    [0.0, k as f32 / rows, 1.0, (k + 1) as f32 / rows],
+                )
+            })
+            .collect();
+        let uploaded = scoped(&self.core.device, || {
+            let bind_group = self.coverage_bind_group(
+                "plate names",
+                wgpu::TextureFormat::Rg8Unorm,
+                &raster.coverage,
+                raster.width,
+                raster.height,
+                &self.pipelines.label.texture_bind_group_layout,
+                &self.pipelines.label.sampler,
+            );
+            let vertices = wgpu::util::DeviceExt::create_buffer_init(
+                &self.core.device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("mesh-viewer plate names vbo"),
+                    contents: bytemuck::cast_slice(&quads),
+                    usage: wgpu::BufferUsages::VERTEX,
+                },
+            );
+            (bind_group, vertices)
+        });
+        if let Ok((bind_group, vertices)) = uploaded {
+            self.plate_names_state = Some((key, bind_group, vertices));
+        }
+    }
+
+    /// Each plate's name on its rim (#545): quad `k` with instance `k`, so
+    /// the label shader moves it to plate `k` and fades it with the plate.
+    fn record_plate_names(&self, pass: &mut wgpu::RenderPass<'_>) {
+        let Some((_, bind_group, vertices)) = &self.plate_names_state else {
+            return;
+        };
+        pass.set_pipeline(&self.pipelines.label.pipeline);
+        pass.set_bind_group(0, &self.pipelines.label.uniforms_bind_group, &[]);
+        pass.set_bind_group(1, bind_group, &[]);
+        pass.set_vertex_buffer(0, vertices.slice(..));
+        pass.set_stencil_reference(0);
+        let count = (self.plate_names.0.len() as u32).min(self.plates.count());
+        for k in 0..count {
+            pass.draw(6 * k..6 * k + 6, k..k + 1);
+        }
+    }
+
     /// The active plate's tools for the frames to come (#545): `None`
     /// hides them; `Some(hovered)` shows them, the tool under the pointer
     /// lit.
@@ -1225,6 +1317,7 @@ impl Renderer {
 
         self.ensure_msaa(width, height)?;
         self.ensure_targets(width, height)?;
+        self.ensure_plate_names(&build_volume);
         let plate_buffers =
             self.ensure_plate_buffers(build_volume, self.pipelines.label_state.tab())?;
         let plate_buffers = &plate_buffers;
@@ -1444,6 +1537,7 @@ impl Renderer {
                 self.record_cage(&mut pass, plate_buffers);
                 self.record_front_label(&mut pass, plate_buffers, LABEL_TOP);
                 self.record_plate_marks(&mut pass, false);
+                self.record_plate_names(&mut pass);
             }
 
             if scene_for_draws && let Some(inst) = installed {

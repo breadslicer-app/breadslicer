@@ -101,6 +101,29 @@ pub fn tool_at(volume: &BuildVolume, x: f32, y: f32) -> Option<u32> {
     (i < TOOL_COUNT as f32 && within <= TOOL_MM).then_some(i as u32)
 }
 
+/// A plate's name (#545) lies on its rim behind its back edge, from its
+/// back left corner: a strip this tall, mm.
+pub const NAME_H_MM: f32 = 7.0;
+/// How far behind the plate's back edge the strip starts, mm.
+pub const NAME_GAP_MM: f32 = 4.0;
+/// The longest the strip runs along the back edge, mm.
+pub const NAME_MAX_W_MM: f32 = 70.0;
+
+/// The strip a plate of `volume` shows its name in, in the plate's own
+/// frame: `[min_x, min_y, max_x, max_y]`.
+pub fn name_box(volume: &BuildVolume) -> [f32; 4] {
+    let x0 = -volume.width_mm() / 2.0;
+    let y0 = volume.depth_mm() / 2.0 + NAME_GAP_MM;
+    let w = NAME_MAX_W_MM.min(volume.width_mm() * 0.6);
+    [x0, y0, x0 + w, y0 + NAME_H_MM]
+}
+
+/// Whether `x, y` of a plate's own frame is on its name.
+pub fn on_name(volume: &BuildVolume, x: f32, y: f32) -> bool {
+    let [x0, y0, x1, y1] = name_box(volume);
+    (x0..=x1).contains(&x) && (y0..=y1).contains(&y)
+}
+
 /// How far apart the plates of `volume` stand, from one's centre to the
 /// next one's, along X and along Y.
 pub fn pitch(volume: &BuildVolume) -> (f32, f32) {
@@ -208,6 +231,15 @@ mod tests {
         assert_eq!(tool_at(&v, 112.0, 51.0), None, "behind the plate");
         assert_eq!(tool_at(&v, 102.0, 43.0), None, "on the plate's edge");
         assert_eq!(tool_at(&v, 112.0, 35.75), None, "between two");
+    }
+
+    #[test]
+    fn the_name_lies_behind_the_back_left_corner() {
+        let v = volume();
+        // The plate is 200 x 100: its back left corner is at -100, 50.
+        assert!(on_name(&v, -95.0, 57.0));
+        assert!(!on_name(&v, -95.0, 52.0), "between the edge and the name");
+        assert!(!on_name(&v, -20.0, 57.0), "past its end");
     }
 
     #[test]

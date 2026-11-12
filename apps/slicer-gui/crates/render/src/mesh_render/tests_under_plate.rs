@@ -1093,13 +1093,17 @@ fn every_plate_draws_where_it_stands() {
         wide.pitch = 0.6;
         wide.yaw = -1.75;
         renderer.set_plate_tools(Some(Some(1)));
+        let names: Vec<String> = ["Plate 1", "Plate 2", "Esqueletos", "Plate 4", "Plate 5"]
+            .map(String::from)
+            .to_vec();
+        renderer.set_plate_names(&names, Some((2, 4)));
         let shot = frame(&mut renderer, 5, &wide, 1400, 820);
         image::RgbaImage::from_raw(shot.width, shot.height, shot.rgba)
             .expect("RGBA")
             .save(&path)
             .expect("the picture is written");
         // Up close, the active plate's tools on its rim.
-        let corner = crate::plates::offset(&bv, 2) + Vec3::new(70.0, 30.0, 0.0);
+        let corner = crate::plates::offset(&bv, 2) + Vec3::new(-20.0, 40.0, 0.0);
         let mut close = OrbitCamera::new(corner, 60.0);
         close.target = corner;
         close.distance = 90.0;

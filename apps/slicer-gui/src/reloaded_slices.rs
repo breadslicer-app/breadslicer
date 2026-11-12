@@ -181,6 +181,7 @@ mod reloaded_slices_tests {
             embedded: Vec::new(),
             review_decisions: Vec::new(),
             plates: 0,
+            plate_names: Vec::new(),
         }
     }
 

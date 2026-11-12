@@ -132,6 +132,7 @@ pub(crate) fn project_with_in_sync_slices() -> (Vec<u8>, String) {
         embedded: Vec::new(),
         review_decisions: Vec::new(),
         plates: 0,
+        plate_names: Vec::new(),
     };
 
     let mut bytes = Vec::new();
