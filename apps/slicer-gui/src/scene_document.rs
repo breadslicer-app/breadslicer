@@ -2373,6 +2373,60 @@ impl SceneDocument {
         Ok(true)
     }
 
+    /// Forgets the step Redo would make again (#552): a copy made for a drag
+    /// that never moved it is gone for good.
+    pub(crate) fn drop_last_redo(&self) {
+        self.redo_stack.borrow_mut().pop_back();
+        self.notify(SceneEvent::UndoStackChanged);
+    }
+
+    /// How many steps of history Undo can take back now.
+    pub(crate) fn undo_len(&self) -> usize {
+        self.undo_stack.borrow().len()
+    }
+
+    /// Joins the `count` newest steps of history into one, which Undo takes
+    /// back whole (#551, #552): a duplicate and the move that placed it, or
+    /// a plate and the copies made on it. Steps that change marks only are
+    /// left as they are.
+    pub(crate) fn join_last_steps(&self, count: usize) {
+        let mut undo = self.undo_stack.borrow_mut();
+        if count < 2 || undo.len() < count {
+            return;
+        }
+        let from = undo.len() - count;
+        if undo.iter().skip(from).any(|entry| entry.marks.is_some()) {
+            return;
+        }
+        let tail: Vec<HistoryEntry> = undo.drain(from..).collect();
+        let before = tail
+            .iter()
+            .find_map(|entry| entry.plates.as_ref().map(|(before, _)| before.clone()));
+        let after = tail
+            .iter()
+            .rev()
+            .find_map(|entry| entry.plates.as_ref().map(|(_, after)| after.clone()));
+        let mut edits = Vec::with_capacity(tail.len());
+        let mut last = None;
+        for entry in tail {
+            edits.push(entry.edit);
+            last = Some((entry.id, entry.wants));
+        }
+        let Some((id, wants)) = last else {
+            return;
+        };
+        undo.push_back(HistoryEntry {
+            id,
+            edit: SceneEdit::Compound(edits),
+            wants,
+            paint_only: false,
+            marks: None,
+            plates: before.zip(after),
+        });
+        drop(undo);
+        self.notify(SceneEvent::UndoStackChanged);
+    }
+
     /// Registers a listener. Returns a handle whose `Drop` removes the
     /// listener. Listeners fire in registration order.
     pub(crate) fn subscribe<F>(self: &Rc<Self>, listener: F) -> SceneSubscription

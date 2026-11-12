@@ -759,3 +759,88 @@ fn r_without_an_axis_from_a_slanted_view_keeps_turning_about_the_view() {
     let l = linear(&ctrl, 0);
     assert!((l[2][2] - 1.0).abs() > 1e-3, "{l:?}");
 }
+
+fn alt() -> PointerModifiers {
+    PointerModifiers {
+        alt: true,
+        ..Default::default()
+    }
+}
+
+/// How many objects the scene holds.
+fn rows(ctrl: &ViewportController) -> usize {
+    ctrl.document()
+        .with_scene(|spatial| (0..).map_while(|i| spatial.leaf_id_at_index(i)).count())
+        .unwrap_or(0)
+}
+
+/// Alt on a drag of a model moves a copy of it (#552): the model stays, the
+/// copy is the selection, and the copy and its move are one step.
+#[test]
+fn an_alt_drag_moves_a_copy_and_leaves_the_model() {
+    let ctrl = slanted(&[(0.0, 0.0)]);
+    let press = pixel(&ctrl, top_face(&ctrl, 0.0, 0.0));
+    ctrl.on_pointer_down(press, alt());
+    let to = ScreenPoint::new(press.x + 80.0, press.y);
+    ctrl.on_pointer_move(to, alt());
+    assert_eq!(
+        rows(&ctrl),
+        2,
+        "the copy follows the pointer while dragging"
+    );
+    ctrl.on_pointer_up(to, alt());
+    assert!(
+        close(translation(&ctrl, 0), Vec3::new(0.0, 0.0, 10.0), 1e-9),
+        "the model stays"
+    );
+    assert!(
+        !close(translation(&ctrl, 1), Vec3::new(0.0, 0.0, 10.0), 1.0),
+        "the copy moved"
+    );
+    assert_eq!(selected(&ctrl), vec![leaf(&ctrl, 1)]);
+    let document = ctrl.document();
+    assert!(document.undo().unwrap());
+    assert!(!document.can_undo(), "one step");
+    assert_eq!(rows(&ctrl), 1);
+}
+
+/// An Alt drag cancelled leaves no copy, nothing to undo or redo (#552).
+#[test]
+fn an_alt_drag_cancelled_leaves_no_copy() {
+    let ctrl = slanted(&[(0.0, 0.0)]);
+    let press = pixel(&ctrl, top_face(&ctrl, 0.0, 0.0));
+    ctrl.on_pointer_down(press, alt());
+    ctrl.on_pointer_move(ScreenPoint::new(press.x + 80.0, press.y), alt());
+    ctrl.on_clear_selection();
+    ctrl.on_pointer_up(ScreenPoint::new(press.x + 80.0, press.y), alt());
+    assert_eq!(rows(&ctrl), 1);
+    assert!(!ctrl.document().can_undo());
+    assert!(!ctrl.document().can_redo());
+}
+
+/// Alt on the Move gizmo moves a copy of the selected model (#552).
+#[test]
+fn alt_on_the_move_gizmo_moves_a_copy() {
+    let ctrl = slanted(&[(0.0, 0.0)]);
+    select(&ctrl, &[0]);
+    let pivot = Vec3::new(0.0, 0.0, 10.0);
+    let scale =
+        crate::gizmo::gizmo_scale(&camera(&ctrl), pivot, default_fov_y(), H).expect("in view");
+    let press = pixel(&ctrl, pivot + Vec3::X * scale * 1.1);
+    ctrl.on_pointer_down(press, alt());
+    assert!(matches!(
+        ctrl.gizmo_state_for_test(),
+        GizmoState::Drag {
+            op: DragOp::Translate { .. },
+            ..
+        }
+    ));
+    let to = ScreenPoint::new(press.x + 60.0, press.y);
+    ctrl.on_pointer_move(to, alt());
+    ctrl.on_pointer_up(to, alt());
+    assert_eq!(rows(&ctrl), 2);
+    assert!(close(translation(&ctrl, 0), pivot, 1e-9), "the model stays");
+    assert!(translation(&ctrl, 1).x > 1.0, "the copy moved along X");
+    assert!(ctrl.document().undo().unwrap());
+    assert!(!ctrl.document().can_undo(), "one step");
+}

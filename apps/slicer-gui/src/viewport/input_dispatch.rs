@@ -113,6 +113,9 @@ pub(super) struct InputDispatch {
     box_from: Cell<Option<ScreenPoint>>,
     /// A press on a model that may become a move of it (#209).
     pending_body: Cell<Option<PendingBody>>,
+    /// A drag moving copies made with Alt (#552): how many steps of history
+    /// there were before them.
+    drag_copy: Cell<Option<usize>>,
     /// The gizmo the user picked (#274, #276) and the rail's tool.
     look: Cell<GizmoLook>,
 }
@@ -130,6 +133,7 @@ impl InputDispatch {
             hovering: Cell::new(false),
             box_from: Cell::new(None),
             pending_body: Cell::new(None),
+            drag_copy: Cell::new(None),
             look: Cell::new(GizmoLook::default()),
         }
     }
@@ -257,10 +261,41 @@ impl InputDispatch {
                 selection_id: document.selection_primary_node_id(),
                 group: &group,
                 press: cursor,
-                modifiers,
+                modifiers: modifiers.clone(),
                 look: self.look.get(),
             };
             self.gizmo_fsm.try_start_drag(ctx);
+        }
+        // Alt on the Move gizmo moves a copy of the selection (#552): made in
+        // place, and the same handle grabbed on it.
+        if allow_transforms
+            && modifiers.alt
+            && matches!(
+                self.gizmo_fsm.current(),
+                GizmoState::Drag {
+                    op: super::gizmo_drag::DragOp::Translate { .. }
+                        | super::gizmo_drag::DragOp::Plane { .. },
+                    ..
+                }
+            )
+        {
+            self.gizmo_fsm.abort(document);
+            if self
+                .copy_for_drag(document, &document.selection_node_ids())
+                .is_some()
+            {
+                let group = document.selection_node_ids();
+                self.gizmo_fsm.try_start_drag(GizmoStartCtx {
+                    document,
+                    camera,
+                    viewport,
+                    selection_id: document.selection_primary_node_id(),
+                    group: &group,
+                    press: cursor,
+                    modifiers: modifiers.clone(),
+                    look: self.look.get(),
+                });
+            }
         }
         let grabbed = matches!(self.gizmo_fsm.current(), GizmoState::Drag { .. });
         let boxing = shift && !grabbed;
@@ -278,6 +313,55 @@ impl InputDispatch {
             self.pending_body.set(pending);
         }
         boxing
+    }
+
+    /// Makes a copy in place of each of `leaves` for a drag with Alt to move
+    /// (#552), and selects the copies. `None` when none could be made.
+    fn copy_for_drag(
+        &self,
+        document: &Rc<SceneDocument>,
+        leaves: &[NodeId],
+    ) -> Option<Vec<NodeId>> {
+        let before = document.undo_len();
+        let copies: Vec<NodeId> = leaves
+            .iter()
+            .filter_map(|&leaf| {
+                crate::clipboard::duplicate_by(document, leaf, [0.0; 3])
+                    .ok()
+                    .flatten()
+            })
+            .collect();
+        if copies.len() != leaves.len() {
+            // Partly made: nothing is kept.
+            document.join_last_steps(document.undo_len().saturating_sub(before));
+            if document.undo_len() > before {
+                let _ = document.undo();
+            }
+            return None;
+        }
+        self.drag_copy.set(Some(before));
+        document.set_selection(Selection::of(copies.iter().map(|&id| LeafId(id))));
+        Some(copies)
+    }
+
+    /// A drag of copies made with Alt ended with a move (#552): the copies and
+    /// their move are one step of history.
+    fn keep_drag_copy(&self, document: &Rc<SceneDocument>) {
+        if let Some(before) = self.drag_copy.take() {
+            document.join_last_steps(document.undo_len().saturating_sub(before));
+        }
+    }
+
+    /// A drag of copies made with Alt ended without a move, or was cancelled
+    /// (#552): the copies go.
+    fn drop_drag_copy(&self, document: &Rc<SceneDocument>) {
+        if let Some(before) = self.drag_copy.take() {
+            document.join_last_steps(document.undo_len().saturating_sub(before));
+            if document.undo_len() > before {
+                let _ = document.undo();
+                document.drop_last_redo();
+            }
+        }
     }
 
     /// The model a click at `cursor` selects and the world point the click
@@ -329,10 +413,20 @@ impl InputDispatch {
             document.set_selection(Selection::One(LeafId(pending.node_id)));
             group = vec![pending.node_id];
         }
+        // Alt drags a copy (#552): made in place, the original stays.
+        let mut node_id = pending.node_id;
+        if modifiers.alt
+            && let Some(copies) = self.copy_for_drag(document, &group)
+        {
+            if let Some(k) = group.iter().position(|&id| id == node_id) {
+                node_id = copies[k];
+            }
+            group = copies;
+        }
         self.gizmo_fsm.clear_hover();
         self.gizmo_fsm.start_body_drag(BodyCtx {
             document,
-            node_id: pending.node_id,
+            node_id,
             grab: pending.grab,
             group: &group,
             press: pending.press,
@@ -422,11 +516,14 @@ impl InputDispatch {
             )
         {
             self.gizmo_fsm.abort(document);
+            self.drop_drag_copy(document);
             return PointerUpOutcome::Click(cursor);
         }
         if self.gizmo_fsm.commit_drag(document) {
+            self.keep_drag_copy(document);
             return PointerUpOutcome::DragCommitted;
         }
+        self.drop_drag_copy(document);
         match (outcome, box_from) {
             (ClickOrDrag::Click, _) => PointerUpOutcome::Click(cursor),
             (ClickOrDrag::Drag, Some(from)) => PointerUpOutcome::BoxSelect { from, to: cursor },
@@ -470,7 +567,9 @@ impl InputDispatch {
     /// dirty).
     pub(super) fn abort_gizmo_drag(&self, document: &Rc<SceneDocument>) -> bool {
         self.pending_body.set(None);
-        if self.gizmo_fsm.abort(document) {
+        let aborted = self.gizmo_fsm.abort(document);
+        self.drop_drag_copy(document);
+        if aborted {
             self.input_state.set_idle();
             true
         } else {

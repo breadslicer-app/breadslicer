@@ -160,6 +160,11 @@ impl Prep {
     }
 
     /// Whether the copy is a plain paste: no hollow made here, no supports.
+    /// Where the model stood when it was taken, its world translation.
+    pub(crate) fn at(&self) -> [f64; 3] {
+        self.at
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.hollow.is_none() && !self.has_supports()
     }

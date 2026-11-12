@@ -124,6 +124,26 @@ pub(crate) fn paste(
     prep.paste(doc, clipboard.fragment(), prep.translation(placed))
 }
 
+/// Makes a copy of the model `leaf` of `doc`, with its hollow and supports as
+/// a paste carries them, standing `by` (mm) from where it stands (#551,
+/// #552): one undo entry, the copy selected. Returns the copy's leaf.
+pub(crate) fn duplicate_by(
+    doc: &SceneDocument,
+    leaf: NodeId,
+    by: [f64; 3],
+) -> Result<Option<NodeId>, SceneError> {
+    let Some(fragment) = fragment_of(doc, leaf) else {
+        return Ok(None);
+    };
+    let prep = Prep::of(doc, leaf);
+    let at = prep.at();
+    let translation = [at[0] + by[0], at[1] + by[1], at[2] + by[2]];
+    if prep.is_empty() {
+        return doc.paste_fragment(&fragment, translation);
+    }
+    prep.paste(doc, &fragment, translation)
+}
+
 /// Builds a single-leaf [`SceneFragment`] from `doc`'s current selection, or
 /// `None` when no scene is loaded, nothing is selected, or the selected node is
 /// not a mesh-backed leaf.
@@ -136,7 +156,11 @@ pub(crate) fn paste(
 /// [`sc_scene::Scene::find_mesh_resource_by_arc`] instead of pushing a fresh
 /// `AddMeshResource` edit.
 pub(crate) fn fragment_from_document_selection(doc: &SceneDocument) -> Option<SceneFragment> {
-    let node_id = doc.selection_primary_node_id()?;
+    fragment_of(doc, doc.selection_primary_node_id()?)
+}
+
+/// [`fragment_from_document_selection`] of the leaf `node_id`.
+fn fragment_of(doc: &SceneDocument, node_id: NodeId) -> Option<SceneFragment> {
     let (arc, world_xform, paint) = doc
         .with_scene(|spatial| {
             let graph = spatial.graph();
