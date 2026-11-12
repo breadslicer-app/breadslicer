@@ -143,8 +143,13 @@ pub(crate) struct PrintEstimate {
 
 /// The estimate of the held slice, or why there is none (no slice, a stale
 /// one, a print configuration that does not resolve).
-pub(crate) fn estimate_held_slice(document: &SceneDocument) -> Result<PrintEstimate, String> {
-    let job = prepare_export(document).map_err(|err| err.to_string())?;
+/// `scene` is what the slice cut: the plate it was cut for, of several
+/// (#547).
+pub(crate) fn estimate_held_slice(
+    document: &SceneDocument,
+    scene: Option<Scene>,
+) -> Result<PrintEstimate, String> {
+    let job = prepare_export_of(document, scene).map_err(|err| err.to_string())?;
     let program = job.program();
     Ok(PrintEstimate {
         time_sec: program.print_time_sec.value(),
@@ -168,14 +173,23 @@ pub(crate) fn format_duration(sec: f64) -> String {
 
 /// Build the export from the held slice and the profiles it was cut under,
 /// reading those profiles from the installed libraries.
+#[cfg(test)]
 fn prepare_export(document: &SceneDocument) -> Result<ExportJob, ExportFailure> {
+    let scene = document.with_scene(|spatial| spatial.graph().clone());
+    prepare_export_of(document, scene)
+}
+
+/// [`prepare_export`] of `scene`, what the held slice cut: the plate it was
+/// cut for, of several (#547).
+fn prepare_export_of(
+    document: &SceneDocument,
+    scene: Option<Scene>,
+) -> Result<ExportJob, ExportFailure> {
     let held = document.held_slice().ok_or(ExportFailure::NoSlice)?;
-    if document.slice_geometry_changed(held.params.geometry) {
+    if document.held_slice_changed() {
         return Err(ExportFailure::Stale);
     }
-    let scene = document
-        .with_scene(|spatial| spatial.graph().clone())
-        .ok_or(ExportFailure::NoSlice)?;
+    let scene = scene.ok_or(ExportFailure::NoSlice)?;
     let (printer, material) = load_selected_profiles(&held.params.printer, &held.params.resin)
         .map_err(|err| ExportFailure::Prepare(Box::new(err)))?;
     export_job(held, &scene, &printer, &material)
@@ -234,9 +248,15 @@ pub(crate) fn wire_export_print_file(
         let export_progress = ctrl.export_progress();
         let default_stem = scene_export::default_export_stem(&document);
         let previews_from = ctrl.clone();
+        // The plate the held slice was cut for (#547).
+        let scene = document
+            .slice_params()
+            .and_then(|params| ctrl.scene_of_plate(params.plate))
+            .map(|(scene, _)| scene);
         if let Err(err) = slint::spawn_local(async move {
             run_export_flow(
                 document,
+                scene,
                 dialogs,
                 export_progress,
                 format,
@@ -258,6 +278,7 @@ pub(crate) fn wire_export_print_file(
 /// nothing.
 async fn run_export_flow(
     document: Rc<SceneDocument>,
+    scene: Option<Scene>,
     dialogs: Rc<DialogManager>,
     export_progress: Rc<ExportProgressPanel>,
     format: PrinterFileFormat,
@@ -266,7 +287,7 @@ async fn run_export_flow(
 ) {
     // Before the dialog: asking for a filename and refusing afterwards is the
     // ordering to avoid.
-    let job = match prepare_export(&document) {
+    let job = match prepare_export_of(&document, scene) {
         Ok(job) => job,
         Err(err) => {
             show_export_failure(&dialogs, None, err);
@@ -283,32 +304,7 @@ async fn run_export_flow(
         return;
     };
     let previews = previews_for(format);
-
-    export_progress.begin();
-    crate::breadcrumbs::started("export");
-    let sink = export_progress.sink();
-    let (tx, rx) = oneshot::channel();
-    let worker_target = target.clone();
-    std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // The writer reports no progress of its own, so the panel names the
-            // phase and nothing finer.
-            sink.set(ExportPhase::Write, 0, 1);
-            let written = job
-                .write(&worker_target, format, previews.as_ref())
-                .map_err(ExportFailure::Write);
-            sink.set(ExportPhase::Write, 1, 1);
-            written
-        }))
-        .unwrap_or_else(|payload| Err(ExportFailure::Panicked(panic_message(&payload))));
-        // Deliver on the UI thread so the awaiting task wakes there.
-        let _ = slint::invoke_from_event_loop(move || {
-            let _ = tx.send(result);
-        });
-    });
-
-    let outcome = rx.await;
-    export_progress.end();
+    let outcome = write_job(&export_progress, job, target.clone(), format, previews).await;
     let ended = match &outcome {
         Ok(Ok(())) => "ok".to_owned(),
         Ok(Err(err)) => format!("failed: {err}"),
@@ -322,6 +318,185 @@ async fn run_export_flow(
         // there is nothing left to report to.
         Err(_canceled) => {}
     }
+}
+
+/// Writes `job` to `target` on a worker thread, the panel showing it, and
+/// waits for it on the UI thread. `Err` when the app closed on the way.
+async fn write_job(
+    export_progress: &Rc<ExportProgressPanel>,
+    job: ExportJob,
+    target: PathBuf,
+    format: PrinterFileFormat,
+    previews: Option<PrintPreviews>,
+) -> Result<Result<(), ExportFailure>, oneshot::Canceled> {
+    export_progress.begin();
+    crate::breadcrumbs::started("export");
+    let sink = export_progress.sink();
+    let (tx, rx) = oneshot::channel();
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // The writer reports no progress of its own, so the panel names the
+            // phase and nothing finer.
+            sink.set(ExportPhase::Write, 0, 1);
+            let written = job
+                .write(&target, format, previews.as_ref())
+                .map_err(ExportFailure::Write);
+            sink.set(ExportPhase::Write, 1, 1);
+            written
+        }))
+        .unwrap_or_else(|payload| Err(ExportFailure::Panicked(panic_message(&payload))));
+        // Deliver on the UI thread so the awaiting task wakes there.
+        let _ = slint::invoke_from_event_loop(move || {
+            let _ = tx.send(result);
+        });
+    });
+    let outcome = rx.await;
+    export_progress.end();
+    outcome
+}
+
+/// Wires Export every plate (#549): each plate with models on it sliced in
+/// turn and written to one folder, a file per plate named after it.
+pub(crate) fn wire_export_every_plate(
+    ui: &MainWindow,
+    ctrl: Rc<ViewportController>,
+    panel: Rc<SlicePanelBridge>,
+    slice: Rc<crate::slice_run::SliceRun>,
+) {
+    ui.on_slice_export_every_plate_requested(move || {
+        let Some(format) = panel.selected_print_format() else {
+            return;
+        };
+        let (ctrl, slice) = (ctrl.clone(), slice.clone());
+        if let Err(err) = slint::spawn_local(async move {
+            run_export_every_plate(ctrl, slice, format).await;
+        }) {
+            eprintln!("Failed to spawn the every-plate export: {err}");
+        }
+    });
+}
+
+/// A plate's name as a file name may have it: what Windows refuses in one
+/// becomes a dash.
+fn file_stem_of(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '-',
+            c if c.is_control() => '-',
+            c => c,
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_end_matches('.').trim();
+    if trimmed.is_empty() {
+        "plate".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// The file of plate `name` in `folder`: the project's name and the plate's.
+fn plate_file(folder: &Path, stem: Option<&str>, name: &str, format: PrinterFileFormat) -> PathBuf {
+    let plate = file_stem_of(name);
+    let file = match stem {
+        Some(stem) => format!("{} - {plate}.{}", file_stem_of(stem), format.extension()),
+        None => format!("{plate}.{}", format.extension()),
+    };
+    folder.join(file)
+}
+
+/// Asks for a folder, then slices each plate with models on it in turn and
+/// writes its file there. Stops at the first plate that cannot be sliced or
+/// written, saying which.
+async fn run_export_every_plate(
+    ctrl: Rc<ViewportController>,
+    slice: Rc<crate::slice_run::SliceRun>,
+    format: PrinterFileFormat,
+) {
+    let document = ctrl.document();
+    let dialogs = ctrl.dialogs();
+    let plates = ctrl.plates_in_use();
+    if plates.is_empty() {
+        return;
+    }
+    let Some(folder) = dialogs
+        .file_dialog()
+        .set_title(ctr!("FileDialog", "Folder for the plates' printer files").to_string())
+        .pick_folder()
+        .await
+        .map(|h| h.path().to_path_buf())
+    else {
+        return;
+    };
+    let stem = scene_export::default_export_stem(&document);
+    let back_to = document.plates().active();
+    let mut written = Vec::new();
+    for plate in plates {
+        let name = document
+            .plate_names()
+            .get(plate as usize)
+            .cloned()
+            .unwrap_or_default();
+        document.set_active_plate(plate);
+        let (tx, rx) = oneshot::channel();
+        slice.slice_then(move |outcome| {
+            let _ = tx.send(outcome);
+        });
+        if rx.await.unwrap_or(crate::slice_run::PlateSliced::Failed)
+            == crate::slice_run::PlateSliced::Failed
+        {
+            // The slice said why, or was cancelled.
+            break;
+        }
+        let scene = ctrl.scene_of_plate(plate).map(|(scene, _)| scene);
+        let job = match prepare_export_of(&document, scene) {
+            Ok(job) => job,
+            Err(err) => {
+                show_export_failure(&dialogs, None, err);
+                break;
+            }
+        };
+        let target = plate_file(&folder, stem.as_deref(), &name, format);
+        let previews = ctrl.print_file_previews(format);
+        match write_job(
+            &ctrl.export_progress(),
+            job,
+            target.clone(),
+            format,
+            previews,
+        )
+        .await
+        {
+            Ok(Ok(())) => written.push(target),
+            Ok(Err(err)) => {
+                show_export_failure(&dialogs, Some(&target), err);
+                break;
+            }
+            Err(_closing) => return,
+        }
+    }
+    document.set_active_plate(back_to);
+    crate::breadcrumbs::note(&format!("export: every plate, {} file(s)", written.len()));
+    if written.is_empty() {
+        return;
+    }
+    let listed: Vec<String> = written
+        .iter()
+        .filter_map(|path| path.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+    let count = written.len();
+    let shown = folder.display().to_string();
+    dialogs.show_info(move || crate::error_dialog::InfoTexts {
+        heading: ctr!("ExportDialog", "Plates exported"),
+        message: ctr!(
+            "ExportDialog",
+            "Wrote {n} printer file to {}.",
+            "Wrote {n} printer files to {}.",
+            count,
+            shown
+        ),
+        details: listed.join("\n").into(),
+    });
 }
 
 fn show_export_failure(dialogs: &Rc<DialogManager>, target: Option<&Path>, err: ExportFailure) {
@@ -357,6 +532,27 @@ async fn pick_printer_file_target(
 }
 
 #[cfg(test)]
+mod plate_file_tests {
+    use super::*;
+
+    #[test]
+    fn a_plates_file_carries_the_projects_name_and_its_own() {
+        let format = PrinterFileFormat::Goo(sc_sla_formats::GooVersion::V3_0);
+        let path = plate_file(Path::new("out"), Some("minis"), "Plate 2", format);
+        assert_eq!(
+            path,
+            Path::new("out").join(format!("minis - Plate 2.{}", format.extension()))
+        );
+        let bare = plate_file(Path::new("out"), None, "Esqueletos: grandes?", format);
+        assert_eq!(
+            bare.file_name().unwrap().to_string_lossy(),
+            format!("Esqueletos- grandes-.{}", format.extension())
+        );
+        assert_eq!(file_stem_of("  ..  "), "plate");
+    }
+}
+
+#[cfg(test)]
 mod format_duration_tests {
     use super::format_duration;
 
@@ -383,6 +579,8 @@ mod export_button_enabled_tests {
             first_layer_height: None,
             aa_level: AaLevel::Off,
             geometry: SceneRevision::from_top_edit_id(Some(3)),
+            plate: 0,
+            plate_key: None,
         }
     }
 
@@ -596,6 +794,8 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
                 first_layer_height: None,
                 aa_level: AaLevel::Off,
                 geometry: SceneRevision::from_top_edit_id(None),
+                plate: 0,
+                plate_key: None,
             },
             layers,
         }
@@ -926,6 +1126,8 @@ mod prepare_export_tests {
                 first_layer_height: None,
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
+                plate: 0,
+                plate_key: None,
             },
             layers: None,
         });

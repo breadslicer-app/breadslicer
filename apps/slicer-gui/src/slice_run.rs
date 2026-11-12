@@ -65,7 +65,7 @@ use crate::repair_report::object_names_by_leaf;
 use crate::repair_run::RepairRun;
 use crate::review::{ReviewOutcome, SupportSet, erased_stack, review_slices};
 use crate::review_panel::ReviewPanel;
-use crate::scene_document::SceneDocument;
+use crate::scene_document::{SceneDocument, SceneEvent};
 use crate::slice_projection::{SliceFailure, current_layer_values, load_selected_profiles};
 use crate::slice_result::{
     LayerValues, ReSliceDecision, SliceParams, SliceResult, decide_re_slice, layers_changed,
@@ -148,6 +148,8 @@ enum SliceTrigger {
     /// The analysis again, after the Repair it made on its own when the
     /// slicer refused a mesh (#526).
     IslandsRepaired,
+    /// Export every plate, slicing each in turn (#549).
+    EveryPlate,
 }
 
 impl SliceTrigger {
@@ -156,7 +158,7 @@ impl SliceTrigger {
     fn asked_for(self) -> bool {
         matches!(
             self,
-            Self::FixAll | Self::Repair | Self::Islands | Self::IslandsRepaired
+            Self::FixAll | Self::Repair | Self::Islands | Self::IslandsRepaired | Self::EveryPlate
         )
     }
 
@@ -165,6 +167,13 @@ impl SliceTrigger {
         matches!(self, Self::Islands | Self::IslandsRepaired)
     }
 }
+
+/// Told whether the slice in flight landed (#549).
+type Landed = Box<dyn FnOnce(bool)>;
+
+/// The slices of the plates not held now, with their reviews, for this many
+/// plates (#547).
+type KeptSlices = (u32, HashMap<u32, (SliceResult, ReviewOutcome)>);
 
 pub(crate) struct SliceRun {
     ui: slint::Weak<MainWindow>,
@@ -175,6 +184,9 @@ pub(crate) struct SliceRun {
     review: Rc<ReviewPanel>,
     // Repairs the objects a refused slice names (#407).
     repair: Rc<RepairRun>,
+    // The viewport, whose plates a slice of one of several is cut from
+    // (#547).
+    ctrl: Rc<crate::viewport::ViewportController>,
     // What asked for the slice in flight.
     trigger: Cell<SliceTrigger>,
     progress: Arc<SliceProgressCell>,
@@ -192,6 +204,17 @@ pub(crate) struct SliceRun {
     // Poll timer driving the modal's progress readout. Behind an `Rc` so its
     // own callback can stop it through a `Weak` without a cycle.
     poll_timer: Rc<slint::Timer>,
+    // Told when the slice in flight lands, or fails (#549): whether the
+    // document now holds it.
+    landed: RefCell<Option<Landed>>,
+    // Slicing every plate in turn (#547).
+    every_plate: Cell<bool>,
+    // The slices of the plates not held now, with their reviews (#547):
+    // making a plate the active one again brings its slice back while
+    // nothing on it changed. For this many plates.
+    plate_slices: RefCell<KeptSlices>,
+    // Follows the plates, to bring a plate's slice back.
+    plates_watch: RefCell<Option<crate::scene_document::SceneSubscription>>,
     // Single-shot timer that lowers the "already up to date" hint after a
     // delay. Restarted on each unchanged press so repeated presses keep it
     // visible; stopped when a real slice starts.
@@ -208,6 +231,7 @@ impl SliceRun {
         dialogs: Rc<DialogManager>,
         review: Rc<ReviewPanel>,
         repair: Rc<RepairRun>,
+        ctrl: Rc<crate::viewport::ViewportController>,
     ) -> Rc<Self> {
         let run = Rc::new(Self {
             ui: ui.as_weak(),
@@ -216,6 +240,7 @@ impl SliceRun {
             dialogs,
             review,
             repair,
+            ctrl,
             trigger: Cell::new(SliceTrigger::Button),
             progress: Arc::new(SliceProgressCell::default()),
             slot: Arc::new(Mutex::new(None)),
@@ -223,6 +248,10 @@ impl SliceRun {
             pending_params: RefCell::new(None),
             pending_fills: RefCell::new(Vec::new()),
             poll_timer: Rc::new(slint::Timer::default()),
+            landed: RefCell::new(None),
+            every_plate: Cell::new(false),
+            plate_slices: RefCell::new((1, HashMap::new())),
+            plates_watch: RefCell::new(None),
             tooltip_timer: Rc::new(slint::Timer::default()),
         });
         {
@@ -253,7 +282,120 @@ impl SliceRun {
             let run = run.clone();
             ui.on_slice_finished(move || run.finish());
         }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_slice_every_plate_requested(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.slice_every_plate();
+                }
+            });
+        }
+        {
+            // Another plate made active brings its slice back (#547).
+            let weak = Rc::downgrade(&run);
+            let watch = run.document.subscribe(move |event| {
+                let Some(run) = weak.upgrade() else {
+                    return;
+                };
+                match event {
+                    SceneEvent::PlatesChanged => {
+                        run.bring_back_plate_slice();
+                    }
+                    SceneEvent::Installed | SceneEvent::Cleared => {
+                        run.plate_slices.borrow_mut().1.clear();
+                    }
+                    _ => {}
+                }
+            });
+            *run.plate_slices_watch() = Some(watch);
+        }
         run
+    }
+
+    fn plate_slices_watch(
+        &self,
+    ) -> std::cell::RefMut<'_, Option<crate::scene_document::SceneSubscription>> {
+        self.plates_watch.borrow_mut()
+    }
+
+    /// Keeps the slice held now, with its review, aside for its plate while
+    /// another plate's is held (#547).
+    fn keep_held_slice(&self) {
+        let (Some(held), Some(outcome)) = (self.document.held_slice(), self.review.held_outcome())
+        else {
+            return;
+        };
+        let count = self.document.plates().count();
+        let mut kept = self.plate_slices.borrow_mut();
+        if kept.0 != count {
+            *kept = (count, HashMap::new());
+        }
+        kept.1.insert(held.params.plate, (held, outcome));
+    }
+
+    /// Brings back the slice of the plate to slice now, kept aside, when
+    /// nothing on that plate changed since and the profiles in force still
+    /// give it (#547). Says whether it did.
+    fn bring_back_plate_slice(&self) -> bool {
+        let Some(ui) = self.ui.upgrade() else {
+            return false;
+        };
+        let plates = self.document.plates();
+        if plates.count() < 2 || ui.get_slicing_in_progress() || self.review.fixing() {
+            return false;
+        }
+        let plate = self.document.slice_plate();
+        if self
+            .document
+            .slice_params()
+            .is_some_and(|held| held.plate == plate)
+        {
+            return false;
+        }
+        let Some((kept, outcome)) = ({
+            let mut kept = self.plate_slices.borrow_mut();
+            if kept.0 != plates.count() {
+                *kept = (plates.count(), HashMap::new());
+            }
+            kept.1.remove(&plate)
+        }) else {
+            return false;
+        };
+        let snapshot = self.bus.snapshot();
+        let selection = self
+            .document
+            .print_selection()
+            .in_force(&PrintDefaults::from(&snapshot));
+        let current = SliceParams::for_selection(
+            &selection,
+            snapshot.aa_level,
+            self.document.scene_revision(),
+        )
+        .map(|params| SliceParams { plate, ..params });
+        let still = kept.params.plate_key.is_some()
+            && self.document.plate_key(plate) == kept.params.plate_key
+            && current.as_ref().is_some_and(|current| {
+                decide_re_slice(
+                    Some(&kept.params),
+                    current,
+                    false,
+                    layers_changed(kept.layers, current_layer_values(current)),
+                ) == ReSliceDecision::Unchanged
+            });
+        if !still {
+            return false;
+        }
+        self.keep_held_slice();
+        let layer_count = kept.contours.schedule().total_layers();
+        let replaced = self.document.set_slice_result(kept);
+        self.review.slice_replaced(replaced);
+        ui.set_slice_layer_count(layer_count as i32);
+        ui.set_selected_layer_index(layer_count.saturating_sub(1) as f32);
+        // Its review again, asking nothing.
+        self.review.slice_started(false, true);
+        self.review.show(outcome);
+        crate::breadcrumbs::note(&format!("slice: plate {plate}'s slice brought back"));
+        true
     }
 
     /// Handles a Slice press. Resolves the inputs in force, then decides
@@ -285,7 +427,7 @@ impl SliceRun {
             .document
             .print_selection()
             .in_force(&PrintDefaults::from(&snapshot));
-        let Some(current) = SliceParams::for_selection(
+        let Some(mut current) = SliceParams::for_selection(
             &selection,
             snapshot.aa_level,
             self.document.scene_revision(),
@@ -294,10 +436,14 @@ impl SliceRun {
             return false;
         };
 
+        current.plate = self.document.slice_plate();
+        // The plate's own slice, kept aside, while still current (#547).
+        if self.bring_back_plate_slice() {
+            self.show_up_to_date_hint();
+            return false;
+        }
         let held = self.document.slice_params();
-        let geometry_changed = held
-            .as_ref()
-            .is_some_and(|held| self.document.slice_geometry_changed(held.geometry));
+        let geometry_changed = held.as_ref().is_some() && self.document.held_slice_changed();
         // A profile edited in place keeps its id: read what it resolves to now.
         let layers_changed = held.is_some()
             && layers_changed(
@@ -322,6 +468,11 @@ impl SliceRun {
                 false
             }
             ReSliceDecision::Changed if trigger.asked_for() => self.launch(current, trigger),
+            // Another plate's slice is held: it is kept aside, nothing to
+            // overwrite (#547).
+            ReSliceDecision::Changed if held.as_ref().is_some_and(|h| h.plate != current.plate) => {
+                self.launch(current, trigger)
+            }
             ReSliceDecision::Changed => {
                 let this = self.clone();
                 self.dialogs.show_slice_overwrite_confirm(move || {
@@ -329,6 +480,110 @@ impl SliceRun {
                 });
                 false
             }
+        }
+    }
+
+    /// Slices the active plate for every plate's slice or export (#547,
+    /// #549), and tells `then` what came of it: once the slice lands, or at
+    /// once when none was needed or could start.
+    pub(crate) fn slice_then(self: &Rc<Self>, then: impl FnOnce(PlateSliced) + 'static) {
+        type Then = Box<dyn FnOnce(PlateSliced)>;
+        let then: Rc<RefCell<Option<Then>>> = Rc::new(RefCell::new(Some(Box::new(then))));
+        let on_land = then.clone();
+        *self.landed.borrow_mut() = Some(Box::new(move |landed| {
+            if let Some(then) = on_land.borrow_mut().take() {
+                then(if landed {
+                    PlateSliced::Sliced
+                } else {
+                    PlateSliced::Failed
+                });
+            }
+        }));
+        if self.start_with(SliceTrigger::EveryPlate) {
+            return;
+        }
+        // No slice started: none was needed, or one could not start.
+        self.landed.borrow_mut().take();
+        let current = self.document.slice_params().is_some_and(|held| {
+            held.plate == self.document.slice_plate() && !self.document.held_slice_changed()
+        });
+        if let Some(then) = then.borrow_mut().take() {
+            then(if current {
+                PlateSliced::UpToDate
+            } else {
+                PlateSliced::Failed
+            });
+        }
+    }
+
+    /// Slices each plate with models on it in turn (#547), those already up
+    /// to date left as they are, and says which it sliced and which were.
+    pub(crate) fn slice_every_plate(self: &Rc<Self>) {
+        if self.every_plate.get() {
+            return;
+        }
+        let plates = self.ctrl.plates_in_use();
+        if plates.is_empty() {
+            return;
+        }
+        self.every_plate.set(true);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_slice_every_plate_note(Default::default());
+        }
+        let run = self.clone();
+        let spawned = slint::spawn_local(async move {
+            let document = run.document.clone();
+            let back_to = document.plates().active();
+            let names = document.plate_names();
+            let name = |plate: u32| names.get(plate as usize).cloned().unwrap_or_default();
+            let mut sliced = Vec::new();
+            let mut current = Vec::new();
+            let mut failed = Vec::new();
+            for plate in plates {
+                document.set_active_plate(plate);
+                let (tx, rx) = futures_channel::oneshot::channel();
+                run.slice_then(move |outcome| {
+                    let _ = tx.send(outcome);
+                });
+                match rx.await.unwrap_or(PlateSliced::Failed) {
+                    PlateSliced::Sliced => sliced.push(name(plate)),
+                    PlateSliced::UpToDate => current.push(name(plate)),
+                    PlateSliced::Failed => {
+                        // The slice said why, or was cancelled.
+                        failed.push(name(plate));
+                        break;
+                    }
+                }
+            }
+            document.set_active_plate(back_to);
+            run.every_plate.set(false);
+            let mut lines = Vec::new();
+            if !current.is_empty() {
+                lines.push(ctr!("SliceDialog", "{}: up to date", current.join(" - ")).to_string());
+            }
+            if !sliced.is_empty() {
+                lines.push(ctr!("SliceDialog", "{}: sliced", sliced.join(" - ")).to_string());
+            }
+            if !failed.is_empty() {
+                lines.push(ctr!("SliceDialog", "{}: not sliced", failed.join(" - ")).to_string());
+            }
+            crate::breadcrumbs::note(&format!("slice: every plate, {}", lines.join("; ")));
+            // In the Slice card, under its button: no card to close.
+            if let Some(ui) = run.ui.upgrade() {
+                ui.set_slice_every_plate_note(lines.join("\n").into());
+            }
+        });
+        if let Err(err) = spawned {
+            self.every_plate.set(false);
+            eprintln!("Failed to spawn the every-plate slice: {err}");
+        }
+    }
+
+    /// Tells whoever waits for the slice in flight whether it landed.
+    fn tell_landed(&self, landed: bool) {
+        let then = self.landed.borrow_mut().take();
+        if let Some(then) = then {
+            then(landed);
         }
     }
 
@@ -343,18 +598,55 @@ impl SliceRun {
             return false;
         };
         let sessions = self.document.support_sessions();
-        let Some((scene, supports, support_sets)) = self.document.with_scene(|spatial| {
+        let plates = self.document.plates();
+        // One plate of several: its objects alone, at the origin.
+        let Some((scene, origin)) = self.ctrl.scene_of_plate(current.plate) else {
+            return false;
+        };
+        let Some((supports, mut support_sets)) = self.document.with_scene(|spatial| {
             (
-                spatial.graph().clone(),
                 support_persist::support_owners(spatial, &sessions),
                 support_persist::review_sets(spatial, &sessions),
             )
         }) else {
             return false;
         };
-        // A real slice supersedes the "up to date" hint.
+        support_sets.retain(|set| scene.node(set.leaf).is_some());
+        // A plate with nothing on it has nothing to slice (#547).
+        let bare = plates.count() > 1
+            && scene
+                .reachable_leaves(
+                    sc_scene::CsgPolicy::Descend,
+                    sc_scene::ReferencePolicy::Refuse,
+                )
+                .is_ok_and(|leaves| leaves.is_empty());
+        if bare {
+            let name = self
+                .document
+                .plate_names()
+                .get(current.plate as usize)
+                .cloned()
+                .unwrap_or_default();
+            self.dialogs.show_error(move || ErrorTexts {
+                heading: ctr!("ErrorDialog", "Cannot slice"),
+                context: None,
+                message: ctr!(
+                    "ErrorDialog",
+                    "Nothing stands on “{}” to slice. Pick another plate in the Slice card, or move models onto this one.",
+                    name
+                ),
+                details: Default::default(),
+            });
+            return false;
+        }
+        // A real slice supersedes the "up to date" hint, and what a slice of
+        // every plate said, unless it is that run's own (#547).
         self.hide_up_to_date_hint();
+        if !self.every_plate.get() {
+            ui.set_slice_every_plate_note(Default::default());
+        }
         current.geometry = self.document.scene_revision();
+        current.plate_key = self.document.plate_key(current.plate);
 
         self.progress.completed.store(0, Ordering::Relaxed);
         self.progress.total.store(0, Ordering::Relaxed);
@@ -370,7 +662,11 @@ impl SliceRun {
         *self.pending_params.borrow_mut() = Some(current.clone());
         self.trigger.set(trigger);
         self.review
-            .slice_started(trigger == SliceTrigger::FixAll, trigger.for_islands());
+            // A slice of every plate asks nothing on the way (#549).
+            .slice_started(
+                trigger == SliceTrigger::FixAll,
+                trigger.for_islands() || trigger == SliceTrigger::EveryPlate,
+            );
         let patches = self.review.fills_for_slice();
         *self.pending_fills.borrow_mut() = patches.ids;
 
@@ -390,6 +686,7 @@ impl SliceRun {
                 supports,
                 support_sets,
                 fills: patches.fills,
+                origin,
             },
             cancel,
         );
@@ -518,6 +815,14 @@ impl SliceRun {
         match result {
             Ok(SliceRunOutcome::Completed(completed)) => {
                 if let Some(params) = pending {
+                    // Another plate's slice held: kept aside for it (#547).
+                    if self
+                        .document
+                        .slice_params()
+                        .is_some_and(|held| held.plate != params.plate)
+                    {
+                        self.keep_held_slice();
+                    }
                     let layer_count = completed.contours.schedule().total_layers();
                     let replaced = self.document.set_slice_result(SliceResult {
                         contours: completed.contours,
@@ -538,15 +843,20 @@ impl SliceRun {
                     // to the slice now held, which cured these fills.
                     self.review.fills_landed(fill_ids);
                     self.review.show(completed.review);
+                    self.tell_landed(true);
+                } else {
+                    self.tell_landed(false);
                 }
             }
             Ok(SliceRunOutcome::Cancelled) => {
+                self.tell_landed(false);
                 // A cancelled run carries no data; any prior result stays.
                 // A Fix All run whose slice this was is cancelled with it
                 // (#163).
                 self.review.slice_ended_without_result(true);
             }
             Err(err) => {
+                self.tell_landed(false);
                 self.review.slice_ended_without_result(false);
                 // The objects a failure names, as the object list names them
                 // now.
@@ -761,6 +1071,8 @@ struct SliceInputs {
     support_sets: Vec<SupportSet>,
     /// The cavities to fill (#132).
     fills: Vec<Arc<CavityFill>>,
+    /// Where the sliced plate's centre stands in the scene (#547).
+    origin: [f64; 2],
 }
 
 /// Loads the profiles and runs the shared slicing service, publishing progress
@@ -803,7 +1115,10 @@ fn run_slice(
                 inputs
                     .raft_top_mm
                     .map(|top| plate.compensated_height_mm(top)),
-                inputs.bare_tip_mm,
+                crate::review::PlateReading {
+                    bare_tip_mm: inputs.bare_tip_mm,
+                    origin: inputs.origin,
+                },
                 cancel,
                 &|done| progress.record_review(done),
             );
@@ -832,6 +1147,17 @@ fn run_slice(
                 .map(|completed| SliceRunOutcome::Completed(Box::new(completed)))
         }
     }
+}
+
+/// What came of slicing one plate of every plate's (#547).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlateSliced {
+    /// It was sliced now.
+    Sliced,
+    /// Its slice was up to date: nothing was sliced.
+    UpToDate,
+    /// It could not be sliced, or the slice was cancelled.
+    Failed,
 }
 
 /// Fingerprints the slice inputs off the event loop, with the scale
@@ -1124,6 +1450,7 @@ mod progress_tests {
             supports: SupportOwners::new(),
             fills: Vec::new(),
             support_sets: Vec::new(),
+            origin: [0.0; 2],
         }
     }
 
@@ -1204,3 +1531,7 @@ mod tests_repair_on_slice;
 #[cfg(test)]
 #[path = "tests_repair_keeps_supports.rs"]
 mod tests_repair_keeps_supports;
+
+#[cfg(test)]
+#[path = "tests_slice_plates.rs"]
+mod tests_slice_plates;

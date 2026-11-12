@@ -265,10 +265,6 @@ impl ArrangeRun {
     }
 
     /// The printer's plate.
-    fn plate(&self) -> Plate {
-        plate_of(&self.ctrl.build_volume())
-    }
-
     /// Takes the worker's result on the UI thread and applies it, when the
     /// scene is still the one it was worked out for.
     fn finish(&self) {
@@ -610,6 +606,39 @@ fn jobs_on_plates(
             Some((gathered, plate))
         })
         .collect()
+}
+
+/// What a run on the active plate of `document` on `volume` takes (#548): the
+/// plate to gather the objects of, with several, and the area it covers.
+pub(crate) fn active_plate_job(
+    document: &SceneDocument,
+    volume: &crate::build_volume::BuildVolume,
+) -> (
+    Option<(crate::build_volume::BuildVolume, crate::plates::Plates, u32)>,
+    Plate,
+) {
+    let plates = document.plates();
+    let mut plate = plate_of(volume);
+    if plates.count() == 1 {
+        return (None, plate);
+    }
+    let at = crate::plates::offset(volume, plates.active());
+    let (dx, dy) = (f64::from(at.x), f64::from(at.y));
+    plate.min = [plate.min[0] + dx, plate.min[1] + dy];
+    plate.max = [plate.max[0] + dx, plate.max[1] + dy];
+    (Some((*volume, plates, plates.active())), plate)
+}
+
+/// A Fill press on this thread, on the active plate of `document` on
+/// `volume` (#548), applied as a run applies it: for tests.
+#[cfg(test)]
+pub(crate) fn fill_active_plate_now(
+    document: &SceneDocument,
+    volume: &crate::build_volume::BuildVolume,
+    options: ArrangeOptions,
+) -> Option<usize> {
+    let (on, plate) = active_plate_job(document, volume);
+    fill::fill_on_now(document, on, &plate, options).map(|(filled, _)| filled.copies.len())
 }
 
 /// An Arrange press on this thread, on the plates of `document` on

@@ -227,6 +227,17 @@ pub(crate) fn wire_viewport_input(
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_plate_send_requested({
+            let ctrl = ctrl.clone();
+            move |plate| ctrl.send_selection_to_plate(u32::try_from(plate).unwrap_or(0))
+        });
+        ui.on_plate_picked(move |plate| {
+            ctrl.document()
+                .set_active_plate(u32::try_from(plate).unwrap_or(0));
+        });
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_plate_remove_requested(move |with_models| ctrl.remove_active_plate_with(with_models));
     }
     {

@@ -537,6 +537,8 @@ export component MainWindow inherits Window {
     // match the held slice, then lowered again after a short delay; shows
     // the transient "already up to date" hint in the Slice panel.
     in property <bool> slice-up-to-date: false;
+    // What Slice every plate did, line by line, until the next slice (#547).
+    in property <string> slice-every-plate-note;
     // Slice control panel geometry (per-window live state). Same
     // anchor/offset model as the object-list panel; the defaults hug the
     // top-left corner, clear of the top-right object-list panel. Height
@@ -623,6 +625,10 @@ export component MainWindow inherits Window {
     // The Slice panel's export action: write the held slice as the
     // selected printer file.
     callback slice-export-requested();
+    // Each plate with models sliced in turn, a file each (#549).
+    callback slice-export-every-plate-requested();
+    // Each plate with models sliced in turn (#547).
+    callback slice-every-plate-requested();
     // Slice lifecycle: `slice-requested` from the panel button starts a
     // run; `slice-cancel-requested` from the modal trips the cancel
     // token; `slice-finished` is invoked from the Rust worker to drain
@@ -702,6 +708,12 @@ export component MainWindow inherits Window {
     in property <int> plate-count: 1;
     in property <int> active-plate: 0;
     in property <bool> active-plate-used;
+    // The plates' names, with several (#547).
+    in property <[string]> plate-names;
+    // A plate picked in the Slice card (#547): it becomes the active one.
+    callback plate-picked(int);
+    // The selection sent to another plate (#549).
+    callback plate-send-requested(int);
     callback plate-add-requested();
     // With the models on it (Shift on the plate's tool) or not.
     callback plate-remove-requested(bool);
@@ -1582,7 +1594,9 @@ export component MainWindow inherits Window {
                         }
                         if root.workspace-section == WorkspaceSection.Export: ToolButton {
                             icon: Icons.file;
-                            label: @tr("SlicePanel" => "Export for printer");
+                            label: root.plate-count > 1
+                                ? @tr("SlicePanel" => "Export “{}”", root.plate-names[root.active-plate])
+                                : @tr("SlicePanel" => "Export for printer");
                             active: true;
                             enabled: root.slice-export-enabled && !root.slicing-in-progress
                                 && !root.saving-in-progress;
@@ -1969,6 +1983,14 @@ export component MainWindow inherits Window {
                         padding: 12px;
 
                         SliceInspector {
+                            plate-options: root.plate-names;
+                            plate-current-index: root.active-plate;
+                            plate-picked(i) => {
+                                root.plate-picked(i);
+                            }
+                            slice-every-plate => {
+                                root.slice-every-plate-requested();
+                            }
                             overhang-map-on <=> root.overhang-map-on;
                             overhang-map-limit: root.overhang-map-limit;
                             overhang-map-toggled(on) => {
@@ -1981,6 +2003,7 @@ export component MainWindow inherits Window {
                             first-layer-height-text <=> root.slice-first-layer-height-text;
                             slicing: root.slicing-in-progress;
                             up-to-date: root.slice-up-to-date;
+                            every-plate-note: root.slice-every-plate-note;
                             layer-count: root.slice-layer-count;
                             selected-layer: root.selected-layer-index;
                             layer-image: root.slice-view-image;
@@ -2222,6 +2245,11 @@ export component MainWindow inherits Window {
                                 plate-count: root.plate-count;
                                 active-plate: root.active-plate;
                                 active-plate-used: root.active-plate-used;
+                                plate-names: root.plate-names;
+                                can-send: root.has-scene && root.selection-valid;
+                                plate-send(i) => {
+                                    root.plate-send-requested(i);
+                                }
                                 plate-add => {
                                     root.plate-add-requested();
                                 }
@@ -2427,6 +2455,8 @@ export component MainWindow inherits Window {
                                 format-current-index <=> root.slice-print-format-current-index;
                                 format-note: root.slice-print-format-note;
                                 export-enabled: root.slice-export-enabled;
+                                plate-count: root.plate-count;
+                                plate-name: root.plate-count > 1 ? root.plate-names[root.active-plate] : "";
                                 busy: root.slicing-in-progress || root.saving-in-progress || root.loading;
                                 has-scene: root.has-scene;
                                 format-picked(i) => {
@@ -2434,6 +2464,9 @@ export component MainWindow inherits Window {
                                 }
                                 export-printer-file => {
                                     root.slice-export-requested();
+                                }
+                                export-every-plate => {
+                                    root.slice-export-every-plate-requested();
                                 }
                                 save-project => {
                                     root.save-requested();

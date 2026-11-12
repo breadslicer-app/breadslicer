@@ -213,11 +213,15 @@ impl SlicePanelBridge {
             &selection,
             snapshot.aa_level,
             self.document.scene_revision(),
-        );
+        )
+        .map(|params| SliceParams {
+            plate: self.document.slice_plate(),
+            ..params
+        });
         let held = self.document.slice_params();
         let geometry_changed = held
             .as_ref()
-            .is_some_and(|held| self.document.slice_geometry_changed(held.geometry));
+            .is_some() && self.document.held_slice_changed();
         // A profile saved in place keeps its id: compare what it resolves to.
         let layers_changed = match (&held, &current) {
             (Some(_), Some(current)) => layers_changed(
@@ -518,6 +522,8 @@ mod layer_values_cache_tests {
             first_layer_height: None,
             aa_level: AaLevel::Off,
             geometry: SceneRevision::from_top_edit_id(None),
+            plate: 0,
+            plate_key: None,
         }
     }
 
@@ -637,6 +643,8 @@ mod bridge_tests {
                 first_layer_height: None,
                 aa_level,
                 geometry: document.scene_revision(),
+                plate: 0,
+                plate_key: None,
             };
             let current = current_layer_values(&params).expect("the bundled profiles resolve");
             let hold = |layers: LayerValues| {

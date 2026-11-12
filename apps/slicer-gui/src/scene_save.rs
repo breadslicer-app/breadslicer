@@ -1092,6 +1092,8 @@ mod scene_save_tests {
                     first_layer_height: None,
                     aa_level: AaLevel::Off,
                     geometry: doc.scene_revision(),
+                    plate: 0,
+                    plate_key: None,
                 },
                 layers: None,
             });
@@ -1153,6 +1155,8 @@ mod scene_save_tests {
                     first_layer_height: None,
                     aa_level: AaLevel::Off,
                     geometry: doc.scene_revision(),
+                    plate: 0,
+                    plate_key: None,
                 },
                 layers: None,
             });
@@ -1223,6 +1227,8 @@ mod scene_save_tests {
                     first_layer_height: Some(height),
                     aa_level: AaLevel::Off,
                     geometry: doc.scene_revision(),
+                    plate: 0,
+                    plate_key: None,
                 },
                 layers: None,
             });

@@ -183,18 +183,24 @@ struct ModelPose {
     leaf: NodeId,
     world: Transform3D,
     mesh: Weak<IndexedMesh>,
+    /// The plate the slice is cut for (#547): another plate's slice puts
+    /// the marks elsewhere.
+    plate: u32,
 }
 
 impl PartialEq for ModelPose {
     fn eq(&self, other: &Self) -> bool {
-        self.leaf == other.leaf && self.world == other.world && self.mesh.ptr_eq(&other.mesh)
+        self.leaf == other.leaf
+            && self.world == other.world
+            && self.mesh.ptr_eq(&other.mesh)
+            && self.plate == other.plate
     }
 }
 
 /// Every model of `spatial` with its world pose and mesh, in row order.
 /// Generated supports are left out: adding a support keeps the models where
 /// the review saw them.
-fn model_poses(spatial: &SceneSpatial) -> Vec<ModelPose> {
+fn model_poses(spatial: &SceneSpatial, plate: u32) -> Vec<ModelPose> {
     let scene = spatial.graph();
     (0..)
         .map_while(|i| spatial.leaf_id_at_index(i))
@@ -207,6 +213,7 @@ fn model_poses(spatial: &SceneSpatial) -> Vec<ModelPose> {
                 leaf,
                 world: scene.world_transform_of(leaf).ok()?,
                 mesh: Arc::downgrade(mesh),
+                plate,
             })
         })
         .collect()
@@ -1350,13 +1357,15 @@ impl ReviewPanel {
     /// slice a Fix All pass asked for, goes on with the run (#163). Any other
     /// slice ends with the question about its islands (#437).
     pub(crate) fn show(self: &Rc<Self>, outcome: ReviewOutcome) {
+        let origin = origin_of(&outcome);
         let hollows = match &outcome {
             ReviewOutcome::Reviewed { findings, .. } => findings
                 .iter()
                 .map(|finding| match finding.fix {
-                    Some(SuggestedFix::AddDrain { at } | SuggestedFix::Fill { at, .. }) => {
-                        self.hollow.hollow_at(world(at)).map(|(_, drains)| drains)
-                    }
+                    Some(SuggestedFix::AddDrain { at } | SuggestedFix::Fill { at, .. }) => self
+                        .hollow
+                        .hollow_at(world(at, origin))
+                        .map(|(_, drains)| drains),
                     _ => None,
                 })
                 .collect(),
@@ -1450,7 +1459,10 @@ impl ReviewPanel {
             let held = self.held.borrow();
             match held.as_ref() {
                 Some(held) if self.fixes_apply(held) => match &held.outcome {
-                    ReviewOutcome::Reviewed { findings, .. } => {
+                    ReviewOutcome::Reviewed {
+                        findings, frame, ..
+                    } => {
+                        let origin = frame.origin();
                         let marks = self.marks.borrow();
                         let tips: Vec<(usize, [f32; 3])> =
                             self.islands_plan().first_tips().collect();
@@ -1467,11 +1479,11 @@ impl ReviewPanel {
                                         .map(|(_, at)| *at)
                                         .or(match finding.fix {
                                             Some(SuggestedFix::AddSupport { at }) => {
-                                                Some(world(at))
+                                                Some(world(at, origin))
                                             }
                                             _ => None,
                                         })
-                                        .unwrap_or_else(|| world(finding.focus));
+                                        .unwrap_or_else(|| world(finding.focus, origin));
                                     crate::support_hints::Hint {
                                         at: at.map(f64::from),
                                         normal: [0.0, 0.0, -1.0],
@@ -1609,12 +1621,36 @@ impl ReviewPanel {
     fn is_stale(&self) -> bool {
         self.document
             .slice_params()
-            .is_some_and(|params| self.document.slice_geometry_changed(params.geometry))
+            .is_some()
+            && self.document.held_slice_changed()
     }
 
     /// The scene's models as they stand now.
     fn current_models(&self) -> Option<Vec<ModelPose>> {
-        self.document.with_scene(model_poses)
+        let plate = self.document.slice_plate();
+        // The models of the plate sliced alone (#547): the others move freely.
+        let on_plate = self.document.plate_leaves(plate);
+        self.document.with_scene(|spatial| {
+            let mut poses = model_poses(spatial, plate);
+            if let Some(on_plate) = &on_plate {
+                poses.retain(|pose| on_plate.contains(&pose.leaf));
+            }
+            poses
+        })
+    }
+
+    /// The held review's outcome, for the slice of a plate kept aside while
+    /// another plate's is held (#547).
+    pub(crate) fn held_outcome(&self) -> Option<ReviewOutcome> {
+        self.held.borrow().as_ref().map(|held| held.outcome.clone())
+    }
+
+    /// Where the plate the held review read stands in the scene (#547).
+    fn origin(&self) -> [f64; 2] {
+        self.held
+            .borrow()
+            .as_ref()
+            .map_or([0.0; 2], |held| origin_of(&held.outcome))
     }
 
     /// Whether the held review's fixes still land where the slice saw them:
@@ -1774,7 +1810,7 @@ impl ReviewPanel {
         ui.set_selected_layer_index(layer as f32);
         self.ctrl.on_selected_layer_changed();
         self.ctrl.set_review_highlight(finding.footprint.clone());
-        let at = world(finding.focus);
+        let at = world(finding.focus, self.origin());
         self.ctrl
             .centre_camera_on(glam::Vec3::from(at), JUMP_RADIUS_MM);
     }
@@ -1859,12 +1895,14 @@ impl ReviewPanel {
             }
             // A small trap offers its fill, unless a hollow made here holds
             // it: that row's button is the drain tool, as a large cavity's.
-            Some(SuggestedFix::Fill { at, .. }) if self.hollow.hollow_at(world(at)).is_none() => {
+            Some(SuggestedFix::Fill { at, .. })
+                if self.hollow.hollow_at(world(at, self.origin())).is_none() =>
+            {
                 self.toggle_fill(id);
                 return;
             }
             Some(SuggestedFix::AddDrain { at } | SuggestedFix::Fill { at, .. }) => {
-                if self.open_drain_tool(world(at)) {
+                if self.open_drain_tool(world(at, self.origin())) {
                     return;
                 }
                 Some(ctr!(
@@ -1918,7 +1956,7 @@ impl ReviewPanel {
                 frame: Some(frame),
             }
             .of(finding, at),
-            _ => vec![(world(at), PointPlan::default())],
+            _ => vec![(world(at, [0.0; 2]), PointPlan::default())],
         }
     }
 
@@ -1971,8 +2009,16 @@ fn let_go(slice: SliceResult) {
 
 /// A plate point as the scene's world coordinates: the same frame, in single
 /// precision.
-fn world(point: PlatePoint) -> [f32; 3] {
-    [point.x_mm, point.y_mm, point.z_mm].map(|c| c as f32)
+fn world(point: PlatePoint, origin: [f64; 2]) -> [f32; 3] {
+    [point.x_mm + origin[0], point.y_mm + origin[1], point.z_mm].map(|c| c as f32)
+}
+
+/// Where the plate `outcome` reviewed stands in the scene (#547).
+fn origin_of(outcome: &ReviewOutcome) -> [f64; 2] {
+    match outcome {
+        ReviewOutcome::Reviewed { frame, .. } => frame.origin(),
+        ReviewOutcome::Cancelled | ReviewOutcome::Failed(_) => [0.0; 2],
+    }
 }
 
 /// Whether two support points are the same spot, found twice.
@@ -2152,11 +2198,15 @@ impl IslandTips<'_> {
                 .of_growth(growth)
                 .map(|tip| {
                     let known = PointPlan {
-                        others: tip.others.iter().copied().map(world).collect(),
+                        others: tip
+                            .others
+                            .iter()
+                            .map(|&other| world(other, self.origin()))
+                            .collect(),
                         holds: Some(hold.clone()),
                         ..PointPlan::default()
                     };
-                    (world(tip.at), known)
+                    (world(tip.at, self.origin()), known)
                 })
                 .collect();
         }
@@ -2167,18 +2217,27 @@ impl IslandTips<'_> {
                 .map(|(k, tip)| {
                     let hold = self.hold(&self.islands[island].start);
                     let plan = PointPlan {
-                        others: tip.others.iter().copied().map(world).collect(),
+                        others: tip
+                            .others
+                            .iter()
+                            .map(|&other| world(other, self.origin()))
+                            .collect(),
                         holds: (k == 0).then_some(hold),
                         after: None,
                         size: tip
                             .small
                             .then(|| sc_geom::df_supports::zone_presets::smallest_size().id),
                     };
-                    (world(tip.at), plan)
+                    (world(tip.at, self.origin()), plan)
                 })
                 .collect(),
-            _ => vec![(world(at), PointPlan::default())],
+            _ => vec![(world(at, self.origin()), PointPlan::default())],
         }
+    }
+
+    /// Where the plate the review read stands in the scene (#547).
+    fn origin(&self) -> [f64; 2] {
+        self.frame.map_or([0.0; 2], PlateFrame::origin)
     }
 
     /// What each region of `findings` has and wants: the tips under what it

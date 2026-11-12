@@ -16,9 +16,17 @@ struct Uniforms {
     env_max: vec4<f32>,
     face_breach_mask: vec4<u32>,
     overhang: vec4<f32>,
+    under_plate: vec4<f32>,
+    eye: vec4<f32>,
+    plates: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
+// The plates of the scene (#545): xy = how far apart they stand. The cut
+// shows on the plate the slice was cut for, the instance drawn (#547).
+fn plate_offset(i: u32) -> vec2<f32> {
+    return vec2<f32>(f32(i % 4u) * u.plates.x, f32(i / 4u) * u.plates.y);
+}
 @group(1) @binding(0) var cap_tex: texture_2d<f32>;
 @group(1) @binding(1) var cap_samp: sampler;
 
@@ -28,7 +36,10 @@ struct VsOut {
 };
 
 @vertex
-fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
+fn vs_main(
+    @builtin(vertex_index) vid: u32,
+    @builtin(instance_index) plate: u32,
+) -> VsOut {
     // Two triangles over the unit square; uv = fraction across the
     // build area, with (0, 0) at the minimum-X, minimum-Y corner to
     // match the coverage raster's bottom-to-top row order.
@@ -41,7 +52,7 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
         vec2<f32>(0.0, 1.0),
     );
     let c = corners[vid];
-    let world_xy = mix(u.env_min.xy, u.env_max.xy, c);
+    let world_xy = mix(u.env_min.xy, u.env_max.xy, c) + plate_offset(plate);
     let clip_z = u.light_dir.w;
 
     var out: VsOut;

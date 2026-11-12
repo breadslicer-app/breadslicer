@@ -75,6 +75,7 @@ fn window_with(graph: Scene) -> Window {
         dialogs.clone(),
         review,
         repair,
+        ctrl.clone(),
     );
     ctrl.set_section(WorkspaceSection::Slice);
     Window {

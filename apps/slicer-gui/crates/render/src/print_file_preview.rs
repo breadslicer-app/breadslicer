@@ -27,8 +27,10 @@ pub fn render_previews(
     graph: &Scene,
     build_volume: BuildVolume,
     sizes: PreviewSizes,
+    bounds: Option<(Vec3, Vec3)>,
 ) -> Option<PrintPreviews> {
-    let camera = camera_framing(renderer.scene_bounds()?);
+    // What the file prints, or else the whole scene (#547).
+    let camera = camera_framing(bounds.or_else(|| renderer.scene_bounds())?);
     Some(PrintPreviews {
         small: render_one(renderer, graph, build_volume, &camera, sizes.small)?,
         large: render_one(renderer, graph, build_volume, &camera, sizes.large)?,

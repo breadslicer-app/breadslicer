@@ -146,6 +146,9 @@ pub trait MeshRenderer {
     /// shows them with the tool under the pointer lit.
     fn set_plate_tools(&mut self, _tools: Option<Option<u32>>) {}
 
+    /// The plate the held slice was cut for (#547).
+    fn set_cap_plate(&mut self, _plate: u32) {}
+
     /// The plates' names (#545), and the one being edited with its caret.
     fn set_plate_names(&mut self, _names: &[String], _editing: Option<crate::plates::NameEdit>) {}
 
@@ -300,6 +303,10 @@ impl MeshRenderer for Renderer {
 
     fn set_plate_tools(&mut self, tools: Option<Option<u32>>) {
         Renderer::set_plate_tools(self, tools);
+    }
+
+    fn set_cap_plate(&mut self, plate: u32) {
+        Renderer::set_cap_plate(self, plate);
     }
 
     fn set_plate_names(&mut self, names: &[String], editing: Option<crate::plates::NameEdit>) {

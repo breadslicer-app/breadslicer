@@ -532,3 +532,54 @@ fn a_double_click_on_a_plate_name_edits_it() {
         "the whole name selected"
     );
 }
+
+/// Fill plate fills the active plate alone (#548): the copies stand on it,
+/// and the other plate is left as it is.
+#[test]
+fn fill_plate_fills_the_active_plate_alone() {
+    let v = volume();
+    let second = offset(&v, 1);
+    let (ctrl, leaves) = window(&[Vec3::new(-30.0, 0.0, 0.0), second]);
+    let document = ctrl.document();
+    ctrl.add_plate();
+    document.set_active_plate(1);
+    document.set_selection(Selection::One(LeafId(leaves[1])));
+    let before = centre_of(&ctrl, leaves[0]);
+    let added =
+        crate::arrange_run::fill_active_plate_now(document.as_ref(), &v, Default::default())
+            .expect("filled");
+    assert!(added > 3, "copies fill plate 1: {added}");
+    assert!(
+        near(centre_of(&ctrl, leaves[0]), before),
+        "plate 0 untouched"
+    );
+    let on_plates = ctrl.models_on_plates();
+    let on_second = on_plates.iter().filter(|&&(_, p)| p == 1).count();
+    assert_eq!(on_second, added + 1, "every copy on plate 1: {on_plates:?}");
+    assert_eq!(on_plates.iter().filter(|&&(_, p)| p == 0).count(), 1);
+}
+
+/// The selection sent to another plate (#549) stands there where it stood on
+/// its own, as one undo step, and that plate is the active one.
+#[test]
+fn the_selection_goes_to_another_plate_where_it_stood() {
+    let v = volume();
+    let (ctrl, leaves) = window(&[Vec3::new(-30.0, 10.0, 0.0), Vec3::new(20.0, 0.0, 0.0)]);
+    let document = ctrl.document();
+    ctrl.add_plate();
+    ctrl.add_plate();
+    document.set_selection(Selection::One(LeafId(leaves[0])));
+    let before = centre_of(&ctrl, leaves[0]);
+    ctrl.send_selection_to_plate(2);
+    assert!(
+        near(centre_of(&ctrl, leaves[0]), before + offset(&v, 2)),
+        "on plate 2 where it stood"
+    );
+    assert!(
+        near(centre_of(&ctrl, leaves[1]), Vec3::new(20.0, 0.0, 0.0)),
+        "the other stays"
+    );
+    assert_eq!(document.plates().active(), 2);
+    assert!(document.undo().expect("undoes"));
+    assert!(near(centre_of(&ctrl, leaves[0]), before), "one step back");
+}

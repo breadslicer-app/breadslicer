@@ -179,6 +179,15 @@ pub(crate) fn erased_stack(
     erase_stack([erased], &models, schedule)
 }
 
+/// How the review reads a plate of the scene: the contact of the tips a plate
+/// with no set would get (#444), and where the plate's centre stands in the
+/// scene (#547).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PlateReading {
+    pub(crate) bare_tip_mm: Option<f64>,
+    pub(crate) origin: [f64; 2],
+}
+
 /// Reviews `plate`: its models, with `filled`, the stack of the cavities
 /// filled on this slice, as model; and what is known of its supports as
 /// data, standing on a raft whose top is `raft_top_mm` above the plate, or
@@ -188,11 +197,15 @@ pub(crate) fn review_slices(
     filled: Option<&ContourStack>,
     sets: &[SupportSet],
     raft_top_mm: Option<f64>,
-    bare_tip_mm: Option<f64>,
+    reading: PlateReading,
     cancel: &CancelToken,
     on_layer: &(dyn Fn(usize) + Sync),
 ) -> ReviewOutcome {
-    let frame = plate.frame();
+    let PlateReading {
+        bare_tip_mm,
+        origin,
+    } = reading;
+    let frame = plate.frame().with_origin(origin);
     let supports = KnownSupports {
         sets,
         tips: support_tips(sets, &frame),

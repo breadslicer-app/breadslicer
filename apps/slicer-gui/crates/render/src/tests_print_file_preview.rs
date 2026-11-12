@@ -65,7 +65,7 @@ fn state_with_a_scene() -> Rc<RefCell<MockRendererState>> {
 
 fn previews_from(state: &Rc<RefCell<MockRendererState>>) -> Option<sc_sla_formats::PrintPreviews> {
     let mut renderer = MockRenderer::new(state.clone());
-    render_previews(&mut renderer, &scene(), NO_PRINTER_BUILD_VOLUME, SIZES)
+    render_previews(&mut renderer, &scene(), NO_PRINTER_BUILD_VOLUME, SIZES, None)
 }
 
 #[test]

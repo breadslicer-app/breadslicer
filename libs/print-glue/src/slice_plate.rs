@@ -98,6 +98,9 @@ pub struct SlicedPlate {
 pub struct PlateFrame {
     factors: [f64; 3],
     pivots: LeafPivots,
+    /// Where the sliced plate's centre stands in the scene, mm: a run of one
+    /// of several plates slices its models moved to the origin (#547).
+    origin: [f64; 2],
 }
 
 impl Default for PlateFrame {
@@ -106,15 +109,33 @@ impl Default for PlateFrame {
         Self {
             factors: [1.0; 3],
             pivots: Vec::new(),
+            origin: [0.0; 2],
         }
     }
 }
 
 impl PlateFrame {
+    /// The same frame for a run of the plate whose centre stands at `origin`
+    /// in the scene (#547): its points move to the origin before anything.
+    pub fn with_origin(self, origin: [f64; 2]) -> Self {
+        Self { origin, ..self }
+    }
+
+    /// Where the sliced plate's centre stands in the scene, mm: what a point
+    /// of the run's slices is moved by to stand where the scene has it.
+    pub fn origin(&self) -> [f64; 2] {
+        self.origin
+    }
+
     /// Return where `point` (millimetres, as the scene has it) of `leaf`
     /// lands in the sliced leaves, once scaled about that leaf's pivot in X
     /// and Y and about the plate in Z.
     pub fn point_mm(&self, leaf: NodeId, point: [f64; 3]) -> [f64; 3] {
+        let point = [
+            point[0] - self.origin[0],
+            point[1] - self.origin[1],
+            point[2],
+        ];
         let [fx, fy, fz] = self.factors;
         let [cx, cy] = self
             .pivots
@@ -168,6 +189,7 @@ impl SlicedPlate {
         PlateFrame {
             factors: scale_factors(self.scale),
             pivots: self.pivots.clone(),
+            origin: [0.0; 2],
         }
     }
 

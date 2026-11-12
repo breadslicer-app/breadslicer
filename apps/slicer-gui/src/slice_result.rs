@@ -37,6 +37,12 @@ pub(crate) struct SliceParams {
     pub first_layer_height: Option<PositiveFiniteMm>,
     pub aa_level: AaLevel,
     pub geometry: SceneRevision,
+    /// The plate sliced, of several (#547); 0 with one.
+    pub plate: u32,
+    /// What the plate's objects were when it was sliced, of several
+    /// ([`SceneDocument::plate_key`](crate::scene_document::SceneDocument::plate_key)):
+    /// edits on the other plates leave its slice current.
+    pub plate_key: Option<u64>,
 }
 
 impl SliceParams {
@@ -53,6 +59,8 @@ impl SliceParams {
             first_layer_height: selection.first_layer_height(),
             aa_level,
             geometry,
+            plate: 0,
+            plate_key: None,
         })
     }
 }
@@ -140,7 +148,8 @@ pub(crate) fn decide_re_slice(
     let scalars_match = held.printer == current.printer
         && held.resin == current.resin
         && held.first_layer_height == current.first_layer_height
-        && held.aa_level == current.aa_level;
+        && held.aa_level == current.aa_level
+        && held.plate == current.plate;
     if scalars_match && !geometry_changed && !layers_changed {
         ReSliceDecision::Unchanged
     } else {
@@ -169,6 +178,8 @@ mod decide_re_slice_tests {
             first_layer_height: Some(PositiveFiniteMm::new(0.05).expect("valid length")),
             aa_level: AaLevel::Off,
             geometry: SceneRevision::from_top_edit_id(Some(7)),
+            plate: 0,
+            plate_key: None,
         }
     }
 
@@ -376,6 +387,8 @@ mod for_selection_tests {
                 first_layer_height: Some(height),
                 aa_level: AaLevel::X4,
                 geometry: geometry(),
+                plate: 0,
+                plate_key: None,
             }),
         );
     }
