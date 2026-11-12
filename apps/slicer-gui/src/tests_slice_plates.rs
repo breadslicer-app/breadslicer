@@ -246,3 +246,42 @@ fn only_the_sliced_plate_makes_its_slice_old() {
         let _ = &w.ctrl;
     });
 }
+
+/// Each plate keeps its slice (#547): back on a plate sliced before, with
+/// nothing on it changed, its slice is held again without slicing.
+#[test]
+fn back_on_a_plate_its_slice_comes_back() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        w.document.set_active_plate(0);
+        w.press_slice();
+        w.document.set_active_plate(1);
+        w.press_slice();
+        assert_eq!(w.document.slice_params().map(|p| p.plate), Some(1));
+        w.document.set_active_plate(0);
+        assert_eq!(
+            w.document.slice_params().map(|p| p.plate),
+            Some(0),
+            "plate 0's slice is back"
+        );
+        assert!(!w.document.held_slice_changed());
+        // A Slice press now slices nothing.
+        w.window.invoke_slice_requested();
+        assert!(!w.window.get_slicing_in_progress(), "up to date");
+        // Plate 1 back too, until something on it changes.
+        w.document.set_active_plate(1);
+        assert_eq!(w.document.slice_params().map(|p| p.plate), Some(1));
+        w.document.set_active_plate(0);
+        let edit =
+            crate::plate_layout::moved_by(&w.document, w.cubes[1], glam::Vec3::new(3.0, 0.0, 0.0))
+                .expect("a move");
+        w.document.apply_edit(edit.clone()).expect("applies");
+        w.document.push_edit(edit);
+        w.document.set_active_plate(1);
+        assert_eq!(
+            w.document.slice_params().map(|p| p.plate),
+            Some(0),
+            "plate 1 changed: its slice is not brought back"
+        );
+    });
+}

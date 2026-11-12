@@ -1639,6 +1639,12 @@ impl ReviewPanel {
         })
     }
 
+    /// The held review's outcome, for the slice of a plate kept aside while
+    /// another plate's is held (#547).
+    pub(crate) fn held_outcome(&self) -> Option<ReviewOutcome> {
+        self.held.borrow().as_ref().map(|held| held.outcome.clone())
+    }
+
     /// Where the plate the held review read stands in the scene (#547).
     fn origin(&self) -> [f64; 2] {
         self.held
