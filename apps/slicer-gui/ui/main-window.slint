@@ -301,6 +301,11 @@ export component MainWindow inherits Window {
     // selected model's imported supports, 0 for none.
     in property <int> imported-support-bodies;
     callback imported-supports-remove-requested();
+    // The islands an analysis found (#525): how many no tip covers yet, -1
+    // with no analysis of the models as they stand.
+    in property <int> support-islands-left: -1;
+    callback support-islands-analyze-requested();
+    callback support-islands-add-requested();
     callback imported-supports-replace-requested();
     callback support-raft-off-requested();
     callback support-raft-ignore-requested();
@@ -2321,6 +2326,14 @@ export component MainWindow inherits Window {
                                     root.support-lines-under-plate-toggled(on);
                                 }
                                 imported-bodies: root.imported-support-bodies;
+                                islands-left: root.support-islands-left;
+                                islands-busy: root.slicing-in-progress || root.review-fixing;
+                                analyze-islands => {
+                                    root.support-islands-analyze-requested();
+                                }
+                                support-islands => {
+                                    root.support-islands-add-requested();
+                                }
                                 remove-imported => {
                                     root.imported-supports-remove-requested();
                                 }

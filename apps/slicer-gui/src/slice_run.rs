@@ -143,13 +143,15 @@ enum SliceTrigger {
     FixAll,
     /// A Repair asked for from the card of a refused slice (#407).
     Repair,
+    /// Analyze islands, from the Supports tab (#525).
+    Islands,
 }
 
 impl SliceTrigger {
     /// Whether the person already asked for this slice, so a held one is
     /// replaced without asking.
     fn asked_for(self) -> bool {
-        matches!(self, Self::FixAll | Self::Repair)
+        matches!(self, Self::FixAll | Self::Repair | Self::Islands)
     }
 }
 
@@ -225,6 +227,14 @@ impl SliceRun {
             });
         }
         {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_islands_analyze_requested(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.start_with(SliceTrigger::Islands);
+                }
+            });
+        }
+        {
             let run = run.clone();
             ui.on_slice_cancel_requested(move || run.cancel());
         }
@@ -289,6 +299,11 @@ impl SliceRun {
             ReSliceDecision::Unchanged if self.review.fills_pending() => {
                 self.launch(current, trigger)
             }
+            // The held slice already shows the islands: their marks again.
+            ReSliceDecision::Unchanged if trigger == SliceTrigger::Islands => {
+                self.review.publish_islands();
+                false
+            }
             ReSliceDecision::Unchanged => {
                 // The held slice already matches the inputs; nothing to
                 // recompute. Surface the transient "up to date" hint.
@@ -343,7 +358,10 @@ impl SliceRun {
         *self.cancel.borrow_mut() = Some(cancel.clone());
         *self.pending_params.borrow_mut() = Some(current.clone());
         self.trigger.set(trigger);
-        self.review.slice_started(trigger == SliceTrigger::FixAll);
+        self.review.slice_started(
+            trigger == SliceTrigger::FixAll,
+            trigger == SliceTrigger::Islands,
+        );
         let patches = self.review.fills_for_slice();
         *self.pending_fills.borrow_mut() = patches.ids;
 

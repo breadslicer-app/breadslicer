@@ -930,6 +930,8 @@ mod fix_all {
         static TIPS_IN_MODEL: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
         /// The resin of the supports of the last project slice, in mm³.
         static SUPPORT_RESIN: Cell<f64> = const { Cell::new(0.0) };
+        /// Whether a test's slice is an analysis of the islands (#525).
+        static ANALYZE: Cell<bool> = const { Cell::new(false) };
     }
 
     /// [`slice_with`], the review given `extra` findings too.
@@ -943,7 +945,7 @@ mod fix_all {
         let scene = document
             .with_scene(|spatial| spatial.graph().clone())
             .expect("a scene");
-        panel.slice_started(by_fix_all);
+        panel.slice_started(by_fix_all, ANALYZE.get());
         let patches = panel.fills_for_slice();
         let leaves = slice_scene(&scene, profile).expect("the scene slices");
         let filled = fill_stack(patches.fills.iter().map(|f| &**f), profile.layer_schedule());
@@ -1708,7 +1710,7 @@ mod fix_all {
             .expect("a scene");
         let (printer_profile, material) =
             crate::slice_projection::load_selected_profiles(printer, resin).expect("profiles");
-        panel.slice_started(by_fix_all);
+        panel.slice_started(by_fix_all, false);
         let patches = panel.fills_for_slice();
         let params = sc_print_glue::SlicingParams {
             layer_height_request: None,
@@ -2711,6 +2713,84 @@ mod fix_all {
                 .collect()
         };
         assert_eq!(unchanged(&before), unchanged(&after));
+    }
+
+    /// How many island rings the Supports tab shows (#525).
+    fn island_rings(w: &IslandWindow) -> usize {
+        w.panel.ctrl.hint_marks_for_test().map_or(0, |marks| {
+            marks
+                .iter()
+                .filter(|m| m.tint == crate::mesh_render::OverlayTint::Island)
+                .map(|m| m.positions.len())
+                .sum::<usize>()
+        }) / (2 * 20)
+    }
+
+    /// Analyze islands (#525): the slice asks nothing; the Supports tab
+    /// marks each island and counts them; Support all places their tips and
+    /// slices again, after which none is left; moving a model takes the
+    /// marks away.
+    #[test]
+    fn analyzing_islands_marks_them_in_the_supports_tab_and_supports_them_all() {
+        let (asked, found, rings, outside, fixing, after, moved) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            answer_the_question(&w, MessageAnswer::Cancel);
+            ANALYZE.set(true);
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            ANALYZE.set(false);
+            let asked = w.panel.ctrl.dialogs().queued_for_test();
+
+            // Out of the Supports tab nothing shows.
+            w.window.set_workspace_section(WorkspaceSection::Slice);
+            w.panel.supports.support_hints(&w.window);
+            let outside = island_rings(&w);
+
+            w.window.set_workspace_section(WorkspaceSection::Supports);
+            w.panel.supports.support_hints(&w.window);
+            let found = (
+                w.window.get_support_islands_left(),
+                held_islands(&w.panel).len(),
+            );
+            let rings = island_rings(&w);
+
+            w.window.invoke_support_islands_add_requested();
+            let fixing = w.panel.fixing();
+            let _ = wait_fix_all(&w.panel);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            w.panel.supports.support_hints(&w.window);
+            let after = w.window.get_support_islands_left();
+
+            // A model moved: the analysis no longer holds.
+            let leaf = w
+                .document
+                .with_scene(|spatial| crate::raft_clash::model_bottoms(spatial)[0].0)
+                .expect("a model");
+            let before = w
+                .document
+                .with_scene(|spatial| spatial.graph().world_transform_of(leaf).ok())
+                .flatten()
+                .expect("its pose");
+            let edit = sc_scene_edit::SceneEdit::SetLocalTransform {
+                node_id: leaf,
+                before,
+                after: Transform3D::Affine(AffineTransform3D::from_translation([9.0, 0.0, 0.0])),
+            };
+            w.document
+                .apply_edit(edit.clone())
+                .expect("the move applies");
+            w.document.push_edit(edit);
+            w.panel.supports.support_hints(&w.window);
+            let moved = (w.window.get_support_islands_left(), island_rings(&w));
+            (asked, found, rings, outside, fixing, after, moved)
+        });
+        assert!(asked.is_empty(), "an analysis asks nothing: {asked:?}");
+        assert!(found.0 > 0, "islands are found: {found:?}");
+        assert_eq!(found.0 as usize, found.1, "each island counted once");
+        assert_eq!(rings, found.1, "each island marked");
+        assert_eq!(outside, 0, "marked in the Supports tab alone");
+        assert!(fixing, "Support all starts the run");
+        assert_eq!(after, 0, "no island left: {after}");
+        assert_eq!(moved, (-1, 0), "a moved model takes the marks away");
     }
 
     /// An ignored island is out of the question, and a slice with nothing

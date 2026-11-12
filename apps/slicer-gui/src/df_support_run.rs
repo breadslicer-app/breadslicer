@@ -72,6 +72,7 @@ use crate::scene_document::{
     leaf_mesh_swap,
 };
 use crate::slice_projection::load_selected_profiles;
+use crate::support_hints::Hint;
 use crate::support_persist::{
     DrawnSet, StaleWhy, SupportSessions, in_force, latest_drawing, model_of, record, sets_in_force,
     sets_of_model, support_leaf, support_leaves,
@@ -2113,16 +2114,16 @@ impl DfSupportRun {
     /// armed in the Supports tab, a run like Generate's works them out once
     /// the models have been still a moment, and again only when the models,
     /// their poses, the preset or the printer change; the rings show the
-    /// places no tip covers yet.
-    fn support_hints(&self, ui: &MainWindow) {
-        let on = ui.get_workspace_section() == WorkspaceSection::Supports
-            && matches!(ui.get_support_tool(), 1 | 3)
-            && !ui.get_loading();
+    /// places no tip covers yet. The islands an analysis found (#525) show
+    /// in the tab with them, while the models stand as analyzed.
+    pub(crate) fn support_hints(&self, ui: &MainWindow) {
+        let tab = ui.get_workspace_section() == WorkspaceSection::Supports && !ui.get_loading();
+        let armed = tab && matches!(ui.get_support_tool(), 1 | 3);
         let mut hints = self.hints.borrow_mut();
-        if !on {
-            if let Some((job, _)) = hints.running.take() {
-                job.cancel();
-            }
+        if !armed && let Some((job, _)) = hints.running.take() {
+            job.cancel();
+        }
+        if !tab {
             if hints.shown.take().is_some() {
                 self.ctrl.set_hint_marks(None);
             }
@@ -2135,43 +2136,30 @@ impl DfSupportRun {
             crate::breadcrumbs::note(&format!("supports: hints finished ok={}", finished.is_ok()));
             if let Ok(outcome) = finished {
                 hints.ready = Some((key, Arc::new(crate::support_hints::hints_of(&outcome))));
-                hints.shown = None;
             }
         }
-        let request = self.request_for_selection();
-        let Some(key) = self.hints_key(&request) else {
-            return;
+        let ready = if armed {
+            self.ready_hints(ui, &mut hints)
+        } else {
+            None
         };
-        let ready = hints
-            .ready
+        let islands = hints
+            .islands
             .as_ref()
-            .filter(|(k, _)| *k == key)
-            .map(|(_, h)| h.clone());
-        if ready.is_none() {
-            let running = hints.running.as_ref().is_some_and(|(_, k)| *k == key);
-            if !running {
-                if let Some((job, _)) = hints.running.take() {
-                    job.cancel();
-                }
-                let idle = self.handle.borrow().is_none() && !ui.get_support_gen_in_progress();
-                if idle
-                    && self.last_change.get().elapsed() >= SPECULATE_SETTLE
-                    && let Some(scene) = self.run_scene(None)
-                    && let Ok(job) = start_df_supports(&scene, request)
-                {
-                    crate::breadcrumbs::note("supports: hints started");
-                    hints.running = Some((job, key));
-                }
-            }
-            if hints.shown.take().is_some() {
-                self.ctrl.set_hint_marks(None);
-            }
+            .filter(|(key, _)| self.models_key(None).as_deref() == Some(key.as_str()))
+            .map(|(_, places)| places.clone());
+        let revision = self.document.scene_revision();
+        let ptr = |places: &Option<Arc<Vec<Hint>>>| {
+            places.as_ref().map_or(0, |p| Arc::as_ptr(p) as usize)
+        };
+        let drawn = (ptr(&ready), ptr(&islands), revision);
+        if hints.shown == Some(drawn) {
             return;
         }
-        let ready = ready.expect("checked above");
-        let revision = self.document.scene_revision();
-        let drawn = (Arc::as_ptr(&ready) as usize, revision);
-        if hints.shown == Some(drawn) {
+        hints.shown = Some(drawn);
+        if ready.is_none() && islands.is_none() {
+            ui.set_support_islands_left(-1);
+            self.ctrl.set_hint_marks(None);
             return;
         }
         // The tips in the scene, each with the reach of its set's preset.
@@ -2195,22 +2183,92 @@ impl DfSupportRun {
                     .collect()
             })
             .unwrap_or_default();
-        let left = crate::support_hints::uncovered(&ready, &tips);
         let radius = (fallback * 0.25).clamp(0.3, 1.2);
-        let mesh = crate::support_hints::rings(&left, radius);
-        self.ctrl.set_hint_marks(Some(vec![Arc::new(mesh)].into()));
-        hints.shown = Some(drawn);
+        let mut meshes = Vec::new();
+        if let Some(ready) = &ready {
+            let left = crate::support_hints::uncovered(ready, &tips);
+            meshes.push(Arc::new(crate::support_hints::rings(
+                &left,
+                radius,
+                OverlayTint::Hint,
+            )));
+        }
+        match &islands {
+            Some(islands) => {
+                let left = crate::support_hints::uncovered(islands, &tips);
+                ui.set_support_islands_left(i32::try_from(left.len()).unwrap_or(i32::MAX));
+                meshes.push(Arc::new(crate::support_hints::rings(
+                    &left,
+                    radius * crate::support_hints::ISLAND_RING_SCALE,
+                    OverlayTint::Island,
+                )));
+            }
+            None => ui.set_support_islands_left(-1),
+        }
+        self.ctrl.set_hint_marks(Some(meshes.into()));
+    }
+
+    /// The recommended places for the models as they stand, once worked out;
+    /// starts the run that works them out when it is time.
+    fn ready_hints(
+        &self,
+        ui: &MainWindow,
+        hints: &mut crate::support_hints::Hints,
+    ) -> Option<Arc<Vec<Hint>>> {
+        let request = self.request_for_selection();
+        let key = self.hints_key(&request)?;
+        let ready = hints
+            .ready
+            .as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, h)| h.clone());
+        if ready.is_some() {
+            return ready;
+        }
+        let running = hints.running.as_ref().is_some_and(|(_, k)| *k == key);
+        if !running {
+            if let Some((job, _)) = hints.running.take() {
+                job.cancel();
+            }
+            let idle = self.handle.borrow().is_none() && !ui.get_support_gen_in_progress();
+            if idle
+                && self.last_change.get().elapsed() >= SPECULATE_SETTLE
+                && let Some(scene) = self.run_scene(None)
+                && let Ok(job) = start_df_supports(&scene, request)
+            {
+                crate::breadcrumbs::note("supports: hints started");
+                hints.running = Some((job, key));
+            }
+        }
+        None
+    }
+
+    /// The islands an analysis found (#525), at the places their tips go:
+    /// marked in the Supports tab while the models stand as they do now.
+    /// `None` takes them away.
+    pub(crate) fn set_island_marks(&self, places: Option<Vec<Hint>>) {
+        let key = self.models_key(None);
+        let mut hints = self.hints.borrow_mut();
+        hints.islands = places.and_then(|places| Some((key?, Arc::new(places))));
+        hints.shown = None;
     }
 
     /// What the recommended places depend on: the request (preset, printer,
     /// models) and every model it covers as it stands: its mesh and pose.
     /// Supports placed by hand are not in it.
     fn hints_key(&self, request: &DfSupportRequest) -> Option<String> {
+        let poses = self.models_key(request.models.as_deref())?;
+        Some(format!("{}|{poses}", ahead_key(request, false)))
+    }
+
+    /// Every model of the scene, or of `only`, as it stands: its mesh and
+    /// pose. `None` with no model.
+    fn models_key(&self, only: Option<&[NodeId]>) -> Option<String> {
         let poses = self.document.with_scene(|spatial| {
             crate::raft_clash::model_bottoms(spatial)
                 .into_iter()
                 .map(|(id, _)| id)
-                .filter(|id| request.models.as_ref().is_none_or(|m| m.contains(id)))
+                .filter(|id| only.is_none_or(|m| m.contains(id)))
                 .filter_map(|id| {
                     let query = spatial.leaf(id)?;
                     let mesh = spatial.graph().leaf_mesh_arc(id)?;
@@ -2223,7 +2281,7 @@ impl DfSupportRun {
                 .collect::<Vec<_>>()
                 .join(";")
         })?;
-        (!poses.is_empty()).then(|| format!("{}|{poses}", ahead_key(request, false)))
+        (!poses.is_empty()).then_some(poses)
     }
 
     /// A Generate press finds the supports generated ahead: pasted at once

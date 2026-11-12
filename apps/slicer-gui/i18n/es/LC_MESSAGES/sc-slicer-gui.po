@@ -6894,3 +6894,47 @@ msgid "The raft of 1 set of supports changed; the supports stayed where they wer
 msgid_plural "The raft of {n} sets of supports changed; the supports stayed where they were."
 msgstr[0] "Cambió la balsa de 1 juego de soportes; los soportes quedaron donde estaban."
 msgstr[1] "Cambió la balsa de {n} juegos de soportes; los soportes quedaron donde estaban."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "ISLANDS"
+msgstr "ISLAS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "{n} left"
+msgid_plural "{n} left"
+msgstr[0] "queda {n}"
+msgstr[1] "quedan {n}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Slices the plate and marks in red where a part starts with nothing under it."
+msgstr "Lamina la plataforma y marca en rojo dónde empieza una parte sin nada abajo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "No island is left without a support."
+msgstr "No queda ninguna isla sin soporte."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "{n} island without a support, marked in red."
+msgid_plural "{n} islands without a support, marked in red."
+msgstr[0] "{n} isla sin soporte, marcada en rojo."
+msgstr[1] "{n} islas sin soporte, marcadas en rojo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Analyze islands"
+msgstr "Analizar islas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Analyze again"
+msgstr "Analizar de nuevo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Support all islands"
+msgstr "Poner soportes en todas las islas"

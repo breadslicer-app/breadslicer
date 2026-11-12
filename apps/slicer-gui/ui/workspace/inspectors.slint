@@ -1971,6 +1971,13 @@ export component SupportsInspector inherits VerticalLayout {
     in property <int> imported-bodies;
     callback remove-imported();
     callback replace-imported();
+    // The islands an analysis found (#525): how many no tip covers yet, -1
+    // with no analysis of the models as they stand; whether a slice or Fix
+    // All is busy; and the ways to find them and to support them all.
+    in property <int> islands-left: -1;
+    in property <bool> islands-busy;
+    callback analyze-islands();
+    callback support-islands();
 
     spacing: 12px;
 
@@ -2148,6 +2155,38 @@ export component SupportsInspector inherits VerticalLayout {
         if root.add-note != "": Note {
             text: root.add-note;
             color: root.add-note-warns ? Theme.danger : Theme.text-soft;
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "ISLANDS");
+        note: root.islands-left > 0 ? @tr("Inspector" => "{n} left" | "{n} left" % root.islands-left) : "";
+        note-color: Theme.warning;
+
+        if root.islands-left < 0: Note {
+            text: @tr("Inspector" => "Slices the plate and marks in red where a part starts with nothing under it.");
+        }
+        if root.islands-left == 0: Note {
+            text: @tr("Inspector" => "No island is left without a support.");
+        }
+        if root.islands-left > 0: Note {
+            text: @tr("Inspector" => "{n} island without a support, marked in red." | "{n} islands without a support, marked in red." % root.islands-left);
+        }
+        ScButton {
+            text: root.islands-left < 0 ? @tr("Inspector" => "Analyze islands") : @tr("Inspector" => "Analyze again");
+            icon: Icons.search;
+            enabled: root.has-scene && !root.running && !root.islands-busy;
+            clicked => {
+                root.analyze-islands();
+            }
+        }
+        if root.islands-left > 0: ScButton {
+            text: @tr("Inspector" => "Support all islands");
+            kind: ButtonKind.primary;
+            enabled: !root.running && !root.islands-busy;
+            clicked => {
+                root.support-islands();
+            }
         }
     }
 

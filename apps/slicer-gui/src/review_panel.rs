@@ -244,6 +244,9 @@ pub(crate) struct ReviewPanel {
     notes_open: Cell<bool>,
     /// Whether Fix All asked for the slice in flight.
     fix_all_slicing: Cell<bool>,
+    /// Whether the slice in flight analyzes the islands for the Supports
+    /// tab (#525): no question at its end.
+    analyzing: Cell<bool>,
     /// The Fix All press being carried out (#163), pass by pass.
     run: RefCell<Option<FixRun>>,
     /// Fix All's supports being placed off the UI thread (#390): how far
@@ -362,6 +365,7 @@ impl ReviewPanel {
             marks: RefCell::new(ReviewMarks::default()),
             notes_open: Cell::new(false),
             fix_all_slicing: Cell::new(false),
+            analyzing: Cell::new(false),
             run: RefCell::new(None),
             placing: RefCell::new(None),
             before_run: RefCell::new(None),
@@ -397,6 +401,14 @@ impl ReviewPanel {
             });
         }
         panel.install_marks(ui);
+        {
+            let weak = Rc::downgrade(&panel);
+            ui.on_support_islands_add_requested(move || {
+                if let Some(panel) = weak.upgrade() {
+                    panel.add_island_supports();
+                }
+            });
+        }
         {
             let weak = Rc::downgrade(&panel);
             ui.on_review_raft_off_requested(move |id| {
@@ -498,9 +510,11 @@ impl ReviewPanel {
         *self.reslice.borrow_mut() = Some(Box::new(reslice));
     }
 
-    /// A slice is starting: it is Fix All's when Fix All asked for it.
-    pub(crate) fn slice_started(&self, by_fix_all: bool) {
+    /// A slice is starting: it is Fix All's when Fix All asked for it, and
+    /// an analysis of the islands (#525) when the Supports tab asked for it.
+    pub(crate) fn slice_started(&self, by_fix_all: bool, for_islands: bool) {
         self.fix_all_slicing.set(by_fix_all);
+        self.analyzing.set(for_islands);
         if let Some(before) = self.before_run.borrow_mut().take() {
             let_go(before.slice);
         }
@@ -1360,6 +1374,7 @@ impl ReviewPanel {
                 .restore_decisions(&self.document.review_decisions(), models);
         }
         let by_run = self.fix_all_slicing.replace(false);
+        let analyzing = self.analyzing.replace(false);
         let yes = by_run
             && self
                 .run
@@ -1395,6 +1410,7 @@ impl ReviewPanel {
         } else {
             0
         };
+        self.publish_islands();
         if yes {
             self.push(Some(self.after_yes()));
             return;
@@ -1420,9 +1436,56 @@ impl ReviewPanel {
                 passes
             ),
         }));
-        if !by_run {
+        // An analysis asked from the Supports tab answers there (#525).
+        if !by_run && !analyzing {
             self.ask_for_supports();
         }
+    }
+
+    /// Hands the held review's islands to the Supports tab (#525): marked
+    /// where their first tip goes, or where they are when no tip fits,
+    /// while the models stand as sliced. None when they no longer do.
+    pub(crate) fn publish_islands(&self) {
+        let places = {
+            let held = self.held.borrow();
+            match held.as_ref() {
+                Some(held) if self.fixes_apply(held) => match &held.outcome {
+                    ReviewOutcome::Reviewed { findings, .. } => {
+                        let marks = self.marks.borrow();
+                        let tips: Vec<(usize, [f32; 3])> =
+                            self.islands_plan().first_tips().collect();
+                        Some(
+                            findings
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, finding)| finding.check == CheckKind::Island)
+                                .filter(|(_, finding)| !marks.is_left(&FindingKey::of(finding)))
+                                .map(|(i, finding)| {
+                                    let at = tips
+                                        .iter()
+                                        .find(|(k, _)| *k == i)
+                                        .map(|(_, at)| *at)
+                                        .or(match finding.fix {
+                                            Some(SuggestedFix::AddSupport { at }) => {
+                                                Some(world(at))
+                                            }
+                                            _ => None,
+                                        })
+                                        .unwrap_or_else(|| world(finding.focus));
+                                    crate::support_hints::Hint {
+                                        at: at.map(f64::from),
+                                        normal: [0.0, 0.0, -1.0],
+                                    }
+                                })
+                                .collect(),
+                        )
+                    }
+                    ReviewOutcome::Cancelled | ReviewOutcome::Failed(_) => None,
+                },
+                _ => None,
+            }
+        };
+        self.supports.set_island_marks(places);
     }
 
     /// What the card says of the review that follows a Yes.
