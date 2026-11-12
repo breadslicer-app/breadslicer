@@ -748,3 +748,38 @@ fn shift_on_plus_duplicates_the_plate_with_its_models() {
     assert_eq!(document.plates().count(), 1, "one step");
     assert_eq!(ctrl.models_on_plates().len(), 2);
 }
+
+/// A paste with no room on the plates goes on a plate added after the last
+/// (#557), in one step of history with it; the next paste fills that plate
+/// before another is added.
+#[test]
+fn a_paste_with_no_room_goes_on_a_new_plate() {
+    let v = volume();
+    // Two boxes of 40 mm fill the plate of 100 x 50.
+    let (ctrl, leaves) = window_of(
+        &[Vec3::new(-25.0, 0.0, 0.0), Vec3::new(25.0, 0.0, 0.0)],
+        10.0,
+    );
+    let document = ctrl.document();
+    document.set_selection(Selection::One(LeafId(leaves[0])));
+    let mut clipboard = clipboard::clipboard_from_document_selection(&document).expect("copies");
+    let steps = document.undo_len();
+
+    let copy = clipboard::paste(&document, &clipboard, [0.0, 0.0], &v)
+        .expect("pastes")
+        .expect("a copy");
+    clipboard.bump_cascade();
+    assert_eq!(document.plates().count(), 2, "a plate added");
+    assert_eq!(document.undo_len(), steps + 1, "one step");
+    assert!(on_plate(centre_of(&ctrl, copy), 1), "on the new plate");
+
+    let next = clipboard::paste(&document, &clipboard, [0.0, 0.0], &v)
+        .expect("pastes")
+        .expect("a copy");
+    assert_eq!(document.plates().count(), 2, "the new plate had room");
+    assert!(on_plate(centre_of(&ctrl, next), 1));
+
+    assert!(document.undo().expect("undoes"));
+    assert!(document.undo().expect("undoes"));
+    assert_eq!(document.plates().count(), 1, "the plate goes with the copy");
+}

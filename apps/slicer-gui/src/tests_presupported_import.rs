@@ -558,9 +558,14 @@ fn a_copy_of_the_model_takes_its_imported_supports_along() {
         select(doc, model);
         let clipboard =
             crate::clipboard::clipboard_from_document_selection(doc).expect("a clipboard");
-        let copy = crate::clipboard::paste(doc, &clipboard, [80.0, 0.0], 0.0)
-            .expect("pastes")
-            .expect("a copy");
+        let copy = crate::clipboard::paste(
+            doc,
+            &clipboard,
+            [80.0, 0.0],
+            &crate::build_volume::NO_PRINTER_BUILD_VOLUME,
+        )
+        .expect("pastes")
+        .expect("a copy");
         assert_eq!(scene_leaves(doc).len(), 4);
         let theirs = doc
             .with_scene(|spatial| imported_of(spatial, copy, None))

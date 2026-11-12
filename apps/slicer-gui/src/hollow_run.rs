@@ -3201,9 +3201,14 @@ mod tests {
             let before = plugs(&document);
             let mut clipboard = crate::clipboard::clipboard_from_document_selection(&document)
                 .expect("the hollow copies");
-            let copy = crate::clipboard::paste(&document, &clipboard, [150.0, 50.0], 0.0)
-                .unwrap()
-                .expect("pasted");
+            let copy = crate::clipboard::paste(
+                &document,
+                &clipboard,
+                [150.0, 50.0],
+                &crate::build_volume::NO_PRINTER_BUILD_VOLUME,
+            )
+            .unwrap()
+            .expect("pasted");
             clipboard.bump_cascade();
             document.set_selection(Selection::One(LeafId(copy)));
             let at = match document

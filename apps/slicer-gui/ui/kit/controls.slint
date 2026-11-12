@@ -390,6 +390,16 @@ export component Card inherits Rectangle {
             HorizontalLayout {
                 spacing: 8px;
 
+                // A card that folds says so (#558).
+                if root.collapsible: VerticalLayout {
+                    alignment: center;
+
+                    DisclosureChevron {
+                        open: root.expanded;
+                        size: 8px;
+                        color: Theme.text-faint;
+                    }
+                }
                 Text {
                     text: root.title;
                     font-size: 10.5px;

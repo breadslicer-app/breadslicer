@@ -4322,7 +4322,7 @@ impl ViewportController {
             self.session.document(),
             clipboard,
             [world_x as f64, world_y as f64],
-            floor_z,
+            &self.build_volume(),
         ) {
             Ok(Some(_)) => {
                 self.mark_dirty();

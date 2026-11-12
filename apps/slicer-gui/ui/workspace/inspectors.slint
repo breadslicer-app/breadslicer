@@ -1100,6 +1100,17 @@ export component TransformInspector inherits VerticalLayout {
     in property <[bool]> selected-rows;
     in property <int> selected-count;
     in property <bool> needs-repair;
+
+    // A model picked in the view comes into sight in the list (#558).
+    changed selected-index => {
+        if self.selected-index >= 0 {
+            if self.selected-index * 32px < -objects-box.viewport-y {
+                objects-box.viewport-y = -self.selected-index * 32px;
+            } else if self.selected-index * 32px + 30px > -objects-box.viewport-y + objects-box.visible-height {
+                objects-box.viewport-y = objects-box.visible-height - self.selected-index * 32px - 30px;
+            }
+        }
+    }
     // What the MESH CHECK card says when a mesh does not slice: its short
     // status and which objects, why, and what to do (see `mesh_check.rs`).
     in property <string> check-note;
@@ -1212,14 +1223,21 @@ export component TransformInspector inherits VerticalLayout {
     Card {
         title: @tr("Inspector" => "OBJECTS");
         note: root.objects.length;
+        collapsible: true;
 
         if root.objects.length == 0: Note {
             text: @tr("Inspector" => "Open or drop a model to start.");
         }
-        VerticalLayout {
-            spacing: 2px;
+        // Five rows at most; past that the list scrolls in its own box and
+        // the cards below stay where they are (#558).
+        objects-box := ScrollView {
+            height: min(root.objects.length, 5) * 32px - (root.objects.length > 0 ? 2px : 0px);
 
-            for item[i] in root.objects: ObjectRow {
+            VerticalLayout {
+                spacing: 2px;
+                alignment: start;
+
+                for item[i] in root.objects: ObjectRow {
                 text: item.text;
                 selected: i == root.selected-index || root.selected-rows[i];
                 clicked => {
@@ -1228,6 +1246,7 @@ export component TransformInspector inherits VerticalLayout {
                 toggled => {
                     root.object-toggled(i);
                 }
+            }
             }
         }
     }

@@ -87,28 +87,146 @@ pub(crate) fn paste_translation_for_fragment(
     let target_y = target_world_xy[1] + cascade;
 
     let initial = [target_x - centre_x, target_y - centre_y, floor_z - fmin[2]];
-
-    if !overlaps_any(&fmin, &fmax, initial, obstacles) {
-        return initial;
-    }
-
     let ring_step = extent_x.max(extent_y).max(MIN_RING_RADIUS_MM);
-    for radius_mult in RING_RADII_MULTIPLIERS {
-        let radius = ring_step * radius_mult;
-        for k in 0..RING_ANGLE_COUNT {
-            let angle = (k as f64) * std::f64::consts::TAU / (RING_ANGLE_COUNT as f64);
-            let candidate = [
-                initial[0] + radius * angle.cos(),
-                initial[1] + radius * angle.sin(),
-                initial[2],
-            ];
-            if !overlaps_any(&fmin, &fmax, candidate, obstacles) {
-                return candidate;
+    std::iter::once(initial)
+        .chain(
+            RING_RADII_MULTIPLIERS
+                .into_iter()
+                .flat_map(move |radius_mult| {
+                    let radius = ring_step * radius_mult;
+                    (0..RING_ANGLE_COUNT).map(move |k| {
+                        let angle = (k as f64) * std::f64::consts::TAU / (RING_ANGLE_COUNT as f64);
+                        [
+                            initial[0] + radius * angle.cos(),
+                            initial[1] + radius * angle.sin(),
+                            initial[2],
+                        ]
+                    })
+                }),
+        )
+        .find(|&candidate| !overlaps_any(&fmin, &fmax, candidate, obstacles))
+        .unwrap_or(initial)
+}
+
+/// A plate's area on the floor: its least and greatest X and Y, in mm.
+pub(crate) type Area = ([f64; 2], [f64; 2]);
+
+/// How far apart, in mm, the spots a paste tries on a plate stand.
+const SCAN_STEP_MM: f64 = 2.0;
+
+/// Where a paste lands: the translation, and whether a plate has to be
+/// added after the last for it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Spot {
+    pub(crate) at: [f64; 3],
+    pub(crate) new_plate: bool,
+}
+
+/// Where a paste lands on the plates (#557): by the cursor, as
+/// [`paste_translation_for_fragment`] looks, when that spot is on a plate
+/// and clear; if not, the first spot clear on the first plate with room;
+/// if none has room, on `next`, the plate added after the last.
+/// With no plate to add, by the cursor as before. The boxes are what is
+/// kept clear, as by the cursor.
+pub(crate) fn paste_spot(
+    fragment_aabb: &Aabb,
+    target_world_xy: [f64; 2],
+    floor_z: f64,
+    cascade_count: u32,
+    obstacles: &[Aabb],
+    plates: &[Area],
+    next: Option<Area>,
+) -> Spot {
+    let (fmin, fmax) = aabb_f64(fragment_aabb);
+    let inside = |t: [f64; 3], area: &Area| {
+        fmin[0] + t[0] >= area.0[0]
+            && fmax[0] + t[0] <= area.1[0]
+            && fmin[1] + t[1] >= area.0[1]
+            && fmax[1] + t[1] <= area.1[1]
+    };
+    let by_cursor = paste_translation_for_fragment(
+        fragment_aabb,
+        target_world_xy,
+        floor_z,
+        cascade_count,
+        obstacles,
+    );
+    if plates.iter().any(|area| inside(by_cursor, area))
+        && !overlaps_any(&fmin, &fmax, by_cursor, obstacles)
+    {
+        return Spot {
+            at: by_cursor,
+            new_plate: false,
+        };
+    }
+    let z = floor_z - fmin[2];
+    for area in plates {
+        if let Some(at) = clear_spot_on(&fmin, &fmax, z, area, obstacles) {
+            return Spot {
+                at,
+                new_plate: false,
+            };
+        }
+    }
+    match next {
+        // Where the next copies leave room for each other; its middle when
+        // the copy is bigger than a plate.
+        Some(area) => Spot {
+            at: clear_spot_on(&fmin, &fmax, z, &area, &[]).unwrap_or([
+                0.5 * (area.0[0] + area.1[0]) - 0.5 * (fmin[0] + fmax[0]),
+                0.5 * (area.0[1] + area.1[1]) - 0.5 * (fmin[1] + fmax[1]),
+                z,
+            ]),
+            new_plate: true,
+        },
+        None => Spot {
+            at: by_cursor,
+            new_plate: false,
+        },
+    }
+}
+
+/// The first spot on `area`, row by row from its front left corner, where
+/// the box `fmin`..`fmax` lies wholly on it and clear of `obstacles`.
+fn clear_spot_on(
+    fmin: &[f64; 3],
+    fmax: &[f64; 3],
+    z: f64,
+    area: &Area,
+    obstacles: &[Aabb],
+) -> Option<[f64; 3]> {
+    let (x0, x1) = (area.0[0] - fmin[0], area.1[0] - fmax[0]);
+    let (y0, y1) = (area.0[1] - fmin[1], area.1[1] - fmax[1]);
+    if x1 < x0 || y1 < y0 {
+        return None;
+    }
+    // Only what stands over the plate can be in the way.
+    let near: Vec<Aabb> = obstacles
+        .iter()
+        .filter(|obstacle| {
+            if obstacle.is_empty() {
+                return false;
+            }
+            let (omin, omax) = aabb_f64(obstacle);
+            omin[0] < area.1[0] && area.0[0] < omax[0] && omin[1] < area.1[1] && area.0[1] < omax[1]
+        })
+        .copied()
+        .collect();
+    let steps = |from: f64, to: f64| {
+        let count = ((to - from) / SCAN_STEP_MM).floor() as usize;
+        (0..=count)
+            .map(move |k| from + k as f64 * SCAN_STEP_MM)
+            .chain((to > from).then_some(to))
+    };
+    for y in steps(y0, y1) {
+        for x in steps(x0, x1) {
+            let at = [x, y, z];
+            if !overlaps_any(fmin, fmax, at, &near) {
+                return Some(at);
             }
         }
     }
-
-    initial
+    None
 }
 
 /// Gathers the world-space AABBs of every reachable leaf in `spatial`: the
@@ -185,6 +303,105 @@ mod placement_tests {
 
     fn aabb(min: [f32; 3], max: [f32; 3]) -> Aabb {
         Aabb::from_min_max(Vertex::new(min), Vertex::new(max))
+    }
+
+    /// Two plates of 100 x 50 side by side, as `plates::offset` lays them.
+    const PLATE_0: Area = ([-50.0, -25.0], [50.0, 25.0]);
+    const PLATE_1: Area = ([90.0, -25.0], [190.0, 25.0]);
+    const PLATE_2: Area = ([230.0, -25.0], [330.0, 25.0]);
+
+    fn box40() -> Aabb {
+        aabb([-20.0, -20.0, 0.0], [20.0, 20.0, 10.0])
+    }
+
+    #[test]
+    fn a_paste_by_the_cursor_stays_there_when_it_is_on_a_plate_and_clear() {
+        let spot = paste_spot(
+            &box40(),
+            [-25.0, 0.0],
+            0.0,
+            0,
+            &[],
+            &[PLATE_0],
+            Some(PLATE_1),
+        );
+        assert_eq!(spot.at, [-25.0, 0.0, 0.0]);
+        assert!(!spot.new_plate);
+    }
+
+    #[test]
+    fn a_paste_off_the_plates_goes_to_the_first_plate_with_room() {
+        // The cursor beside the plates: the copy lands on plate 0 all the same.
+        let spot = paste_spot(
+            &box40(),
+            [400.0, 0.0],
+            0.0,
+            0,
+            &[],
+            &[PLATE_0],
+            Some(PLATE_1),
+        );
+        assert!(!spot.new_plate);
+        let at = spot.at;
+        assert!(at[0] - 20.0 >= -50.0 && at[0] + 20.0 <= 50.0, "{at:?}");
+        assert!(at[1] - 20.0 >= -25.0 && at[1] + 20.0 <= 25.0, "{at:?}");
+    }
+
+    #[test]
+    fn a_paste_with_no_room_on_any_plate_asks_for_a_new_one() {
+        // Plate 0 holds two boxes of 40: a third one does not fit.
+        let full = [
+            aabb([-45.0, -20.0, 0.0], [-5.0, 20.0, 10.0]),
+            aabb([5.0, -20.0, 0.0], [45.0, 20.0, 10.0]),
+        ];
+        let spot = paste_spot(
+            &box40(),
+            [0.0, 0.0],
+            0.0,
+            0,
+            &full,
+            &[PLATE_0],
+            Some(PLATE_1),
+        );
+        assert!(spot.new_plate);
+        let at = spot.at;
+        assert!(
+            at[0] - 20.0 >= 90.0 && at[0] + 20.0 <= 190.0,
+            "on the new plate: {at:?}"
+        );
+        // From its front left corner, so the next copy has room beside it.
+        assert_eq!((at[0], at[1]), (110.0, -5.0));
+    }
+
+    #[test]
+    fn a_full_first_plate_sends_the_paste_to_the_next_with_room() {
+        let full = [
+            aabb([-45.0, -20.0, 0.0], [-5.0, 20.0, 10.0]),
+            aabb([5.0, -20.0, 0.0], [45.0, 20.0, 10.0]),
+            aabb([90.0, -25.0, 0.0], [130.0, 15.0, 10.0]),
+        ];
+        let spot = paste_spot(
+            &box40(),
+            [0.0, 0.0],
+            0.0,
+            0,
+            &full,
+            &[PLATE_0, PLATE_1],
+            Some(PLATE_2),
+        );
+        assert!(!spot.new_plate);
+        assert!(
+            spot.at[0] - 20.0 >= 130.0 && spot.at[0] + 20.0 <= 190.0,
+            "{:?}",
+            spot.at
+        );
+    }
+
+    #[test]
+    fn with_no_plate_left_to_add_the_paste_stays_by_the_cursor() {
+        let full = [aabb([-50.0, -25.0, 0.0], [50.0, 25.0, 10.0])];
+        let spot = paste_spot(&box40(), [0.0, 0.0], 0.0, 0, &full, &[PLATE_0], None);
+        assert!(!spot.new_plate);
     }
 
     /// Returns a 2 x 2 x 2 box centred on the origin in XY, its floor at Z = 0.
