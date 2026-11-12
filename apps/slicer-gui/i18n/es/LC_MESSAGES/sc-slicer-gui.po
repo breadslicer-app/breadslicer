@@ -7068,3 +7068,8 @@ msgstr "Mandar la selección a"
 msgctxt "Inspector"
 msgid "Send"
 msgstr "Mandar"
+
+#: ui/workspace/inspectors.slint ui/main-window.slint
+msgctxt "SlicePanel"
+msgid "Export “{}”"
+msgstr "Exportar “{}”"

@@ -1590,7 +1590,9 @@ export component MainWindow inherits Window {
                         }
                         if root.workspace-section == WorkspaceSection.Export: ToolButton {
                             icon: Icons.file;
-                            label: @tr("SlicePanel" => "Export for printer");
+                            label: root.plate-count > 1
+                                ? @tr("SlicePanel" => "Export “{}”", root.plate-names[root.active-plate])
+                                : @tr("SlicePanel" => "Export for printer");
                             active: true;
                             enabled: root.slice-export-enabled && !root.slicing-in-progress
                                 && !root.saving-in-progress;
@@ -2446,6 +2448,7 @@ export component MainWindow inherits Window {
                                 format-note: root.slice-print-format-note;
                                 export-enabled: root.slice-export-enabled;
                                 plate-count: root.plate-count;
+                                plate-name: root.plate-count > 1 ? root.plate-names[root.active-plate] : "";
                                 busy: root.slicing-in-progress || root.saving-in-progress || root.loading;
                                 has-scene: root.has-scene;
                                 format-picked(i) => {

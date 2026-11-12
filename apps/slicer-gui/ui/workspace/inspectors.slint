@@ -2901,6 +2901,8 @@ export component ExportInspector inherits VerticalLayout {
     callback export-printer-file();
     // With several plates (#549): each plate sliced in turn, a file each.
     in property <int> plate-count: 1;
+    // The plate the file is of, with several (#547).
+    in property <string> plate-name;
     callback export-every-plate();
     callback save-project();
     callback export-mesh();
@@ -2925,7 +2927,9 @@ export component ExportInspector inherits VerticalLayout {
             text: root.format-note;
         }
         ScButton {
-            text: @tr("SlicePanel" => "Export for printer");
+            text: root.plate-count > 1 && root.plate-name != ""
+                ? @tr("SlicePanel" => "Export “{}”", root.plate-name)
+                : @tr("SlicePanel" => "Export for printer");
             icon: Icons.file;
             kind: ButtonKind.primary;
             button-height: 38px;
