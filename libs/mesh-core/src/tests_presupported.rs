@@ -222,6 +222,55 @@ fn a_presupported_file_comes_apart_into_its_model_and_its_supports() {
 }
 
 #[test]
+fn a_support_standing_on_the_model_and_a_lone_ball_come_off_with_the_supports() {
+    let (mut b, mut model_faces) = {
+        let (mesh, faces) = presupported();
+        let b = Builder {
+            vertices: mesh.vertices().to_vec(),
+            faces: mesh.faces().to_vec(),
+        };
+        (b, faces)
+    };
+    let before = b.faces.len();
+    // An arm over a ledge, both parts of the figure, and an eye on its front.
+    b.cuboid([10.0, -2.0, 20.0], [18.0, 2.0, 24.0]);
+    b.cuboid([10.0, -4.0, 10.0], [16.0, 4.0, 12.0]);
+    b.sphere([0.0, -10.0, 20.0], 0.5, 8, 6);
+    model_faces += b.faces.len() - before;
+    // A shaft standing on the ledge with its tip under the arm, a shell
+    // apart from it, and the ball of a support left alone in the air.
+    b.frustum([14.0, 0.0], [12.0, 19.2], [0.5, 0.5], 8);
+    b.frustum([14.0, 0.0], [19.2, 20.0], [0.5, 0.15], 8);
+    b.sphere([-14.0, 0.0, 15.0], 0.5, 8, 6);
+    let mesh = b.mesh();
+    let found = find_supports(&mesh).expect("supports found");
+    assert_eq!(
+        found.model.faces().len(),
+        model_faces,
+        "the figure, its arm, its ledge and its eye"
+    );
+    assert_eq!(found.support_shells, 2 * SUPPORT_SPOTS.len() + 3);
+}
+
+#[test]
+fn a_lone_cone_on_the_model_stays_with_it() {
+    // A fang under the figure's chin: a cone touching the model, no shaft.
+    let (mesh, model_faces) = presupported();
+    let mut b = Builder {
+        vertices: mesh.vertices().to_vec(),
+        faces: mesh.faces().to_vec(),
+    };
+    let before = b.faces.len();
+    b.cuboid([10.0, -4.0, 10.0], [16.0, 4.0, 12.0]);
+    b.frustum([14.0, 0.0], [12.0, 13.0], [0.8, 0.4], 12);
+    let found = find_supports(&b.mesh()).expect("supports found");
+    assert_eq!(
+        found.model.faces().len(),
+        model_faces + b.faces.len() - before
+    );
+}
+
+#[test]
 fn a_model_without_supports_is_left_alone() {
     // Twelve letters standing on the plate: many shells, no supports.
     let mut b = Builder::default();
