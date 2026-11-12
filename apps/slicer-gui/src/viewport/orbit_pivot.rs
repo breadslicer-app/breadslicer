@@ -63,7 +63,7 @@ pub(super) fn choose(
     {
         return (ray.origin + ray.direction * t, PivotSource::Surface);
     }
-    if let Some(point) = plate_hit(&ray, build_volume) {
+    if let Some(point) = plate_hit(&ray, build_volume, document.plates()) {
         return (point, PivotSource::Plate);
     }
     (focus_point(camera, &ray), PivotSource::Focus)
@@ -173,14 +173,12 @@ fn surface_t(ray: &Ray, spatial: &SceneSpatial) -> Option<f32> {
     picking::pick_object_where(ray, spatial, |_| true).map(|(_, t)| t)
 }
 
-/// Where the ray meets the plate, when it lands inside the plate's outline.
-fn plate_hit(ray: &Ray, build_volume: BuildVolume) -> Option<Vec3> {
-    let (min, max) = (
-        build_volume.envelope_min_mm(),
-        build_volume.envelope_max_mm(),
-    );
-    let (x, y) = picking::ray_z_plane_intersection(ray, min.z)?;
-    (min.x <= x && x <= max.x && min.y <= y && y <= max.y).then_some(Vec3::new(x, y, min.z))
+/// Where the ray meets a plate, when it lands inside the outline of one of
+/// `plates` (#545).
+fn plate_hit(ray: &Ray, build_volume: BuildVolume, plates: crate::plates::Plates) -> Option<Vec3> {
+    let floor = build_volume.envelope_min_mm().z;
+    let (x, y) = picking::ray_z_plane_intersection(ray, floor)?;
+    crate::plates::plate_at(&build_volume, plates, x, y).map(|_| Vec3::new(x, y, floor))
 }
 
 /// The point on the ray at the camera's focus distance: on the plane through

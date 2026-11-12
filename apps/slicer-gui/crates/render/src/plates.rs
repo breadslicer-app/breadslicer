@@ -74,6 +74,33 @@ impl Plates {
     }
 }
 
+/// The tools of the active plate (#545) lie on its rim, right of its back
+/// right corner, one under the other: Add a plate, Arrange this plate,
+/// Remove this plate. Each is a square this wide, mm.
+pub const TOOL_MM: f32 = 14.0;
+/// The room between two tools, mm.
+pub const TOOL_GAP_MM: f32 = 2.5;
+/// How far right of the plate's edge the tools stand, mm.
+pub const TOOL_INSET_MM: f32 = 5.0;
+/// How many tools.
+pub const TOOL_COUNT: u32 = 3;
+
+/// The tool of a plate of `volume` at `x, y` of the plate's own frame
+/// (its centre the origin): 0 add, 1 arrange, 2 remove.
+pub fn tool_at(volume: &BuildVolume, x: f32, y: f32) -> Option<u32> {
+    let left = volume.width_mm() / 2.0 + TOOL_INSET_MM;
+    if x < left || x > left + TOOL_MM {
+        return None;
+    }
+    let down = volume.depth_mm() / 2.0 - y;
+    if down < 0.0 {
+        return None;
+    }
+    let i = (down / (TOOL_MM + TOOL_GAP_MM)).floor();
+    let within = down - i * (TOOL_MM + TOOL_GAP_MM);
+    (i < TOOL_COUNT as f32 && within <= TOOL_MM).then_some(i as u32)
+}
+
 /// How far apart the plates of `volume` stand, from one's centre to the
 /// next one's, along X and along Y.
 pub fn pitch(volume: &BuildVolume) -> (f32, f32) {
@@ -168,6 +195,19 @@ mod tests {
         assert_eq!(extent(&v, Plates::one()), Vec3::ZERO);
         assert_eq!(extent(&v, Plates::new(3, 0)), Vec3::new(480.0, 0.0, 0.0));
         assert_eq!(extent(&v, Plates::new(6, 0)), Vec3::new(720.0, 140.0, 0.0));
+    }
+
+    #[test]
+    fn the_tools_stand_right_of_the_back_right_corner() {
+        let v = volume();
+        // The plate is 200 x 100: its back right corner is at 100, 50.
+        assert_eq!(tool_at(&v, 112.0, 43.0), Some(0));
+        assert_eq!(tool_at(&v, 112.0, 43.0 - 16.5), Some(1));
+        assert_eq!(tool_at(&v, 112.0, 43.0 - 33.0), Some(2));
+        assert_eq!(tool_at(&v, 112.0, 43.0 - 49.5), None, "past the last");
+        assert_eq!(tool_at(&v, 112.0, 51.0), None, "behind the plate");
+        assert_eq!(tool_at(&v, 102.0, 43.0), None, "on the plate's edge");
+        assert_eq!(tool_at(&v, 112.0, 35.75), None, "between two");
     }
 
     #[test]

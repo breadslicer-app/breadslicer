@@ -380,6 +380,9 @@ pub struct Renderer {
     plates: crate::plates::Plates,
     /// Out of focus dims even with nothing in focus ([`Self::set_dim_all`]).
     dim_all: bool,
+    /// The active plate's tools (#545): shown or not, and the one under the
+    /// pointer.
+    plate_tools: Option<Option<u32>>,
     /// The rings of the islands an analysis found (#525), drawn over
     /// everything, the models included (#538).
     island_marks: overlay::OverlaySlot,
@@ -498,6 +501,7 @@ impl Renderer {
             hints: overlay::OverlaySlot::default(),
             plates: crate::plates::Plates::one(),
             dim_all: false,
+            plate_tools: None,
             island_marks: overlay::OverlaySlot::default(),
             island_hidden: overlay::OverlaySlot::default(),
             hint_source: None,
@@ -1068,6 +1072,13 @@ impl Renderer {
         self.dim_all = on;
     }
 
+    /// The active plate's tools for the frames to come (#545): `None`
+    /// hides them; `Some(hovered)` shows them, the tool under the pointer
+    /// lit.
+    pub fn set_plate_tools(&mut self, tools: Option<Option<u32>>) {
+        self.plate_tools = tools;
+    }
+
     /// What stays lit in the frames to come while something is selected
     /// (#523): every other object is dimmed. Empty dims nothing.
     pub fn set_focus(&mut self, focus: &[NodeId]) {
@@ -1330,7 +1341,15 @@ impl Renderer {
                 env_max.z,
                 crate::under_plate::hidden_below_mm(raft_top_mm),
             ],
-            face_breach_mask: [face_breach_mask, breached_plates, 0, 0],
+            // z: the plate's tools, 0 hidden, 1 shown, 2 + i tool i under the
+            // pointer (#545).
+            face_breach_mask: [
+                face_breach_mask,
+                breached_plates,
+                self.plate_tools
+                    .map_or(0, |hovered| hovered.map_or(1, |i| 2 + i)),
+                0,
+            ],
             overhang: overhang_map.map_or([0.0; 4], |map| {
                 let [limit, radians, contact, _] = map.uniform(env_min.z);
                 [limit, radians, contact, tip_cell_mm]
@@ -1418,6 +1437,7 @@ impl Renderer {
             if contents == FrameContents::Workspace {
                 self.record_plate_solid(&mut pass, plate_buffers);
                 self.record_plate_top(&mut pass, plate_buffers);
+                self.record_plate_tools(&mut pass, plate_buffers);
                 self.record_cage(&mut pass, plate_buffers);
                 self.record_front_label(&mut pass, plate_buffers, LABEL_TOP);
                 self.record_plate_marks(&mut pass, false);
@@ -1565,6 +1585,22 @@ impl Renderer {
     /// Cage: 12 wireframe edges sharing the plate vertex buffer; the line-list
     /// index buffer picks the cage corner range. Relies on the vertex buffer
     /// and uniforms bind group set by [`Self::record_plate_solid`].
+    /// The active plate's tools (#545), on its rim: one instance, the active
+    /// plate's. Relies on the bind group set by [`Self::record_plate_solid`].
+    fn record_plate_tools(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
+        if self.plate_tools.is_none() {
+            return;
+        }
+        pass.set_pipeline(&self.pipelines.plate.top_pipeline);
+        pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
+        pass.set_index_buffer(
+            plate_buffers.tools_index_buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        let active = self.plates.active();
+        pass.draw_indexed(0..plate_buffers.tools_index_count, 0, active..active + 1);
+    }
+
     fn record_cage(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
         pass.set_pipeline(&self.pipelines.plate.line_pipeline);
         pass.set_index_buffer(

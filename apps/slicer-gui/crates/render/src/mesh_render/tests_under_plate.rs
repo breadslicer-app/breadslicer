@@ -1092,10 +1092,25 @@ fn every_plate_draws_where_it_stands() {
         wide.distance = 520.0;
         wide.pitch = 0.6;
         wide.yaw = -1.75;
+        renderer.set_plate_tools(Some(Some(1)));
         let shot = frame(&mut renderer, 5, &wide, 1400, 820);
         image::RgbaImage::from_raw(shot.width, shot.height, shot.rgba)
             .expect("RGBA")
-            .save(path)
+            .save(&path)
             .expect("the picture is written");
+        // Up close, the active plate's tools on its rim.
+        let corner = crate::plates::offset(&bv, 2) + Vec3::new(70.0, 30.0, 0.0);
+        let mut close = OrbitCamera::new(corner, 60.0);
+        close.target = corner;
+        close.distance = 90.0;
+        close.pitch = 0.7;
+        close.yaw = -1.9;
+        let shot = frame(&mut renderer, 5, &close, 900, 600);
+        let close_path = std::path::PathBuf::from(&path).with_extension("close.png");
+        image::RgbaImage::from_raw(shot.width, shot.height, shot.rgba)
+            .expect("RGBA")
+            .save(close_path)
+            .expect("the picture is written");
+        renderer.set_plate_tools(None);
     }
 }

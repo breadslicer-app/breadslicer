@@ -142,6 +142,10 @@ pub trait MeshRenderer {
     /// Whether out of focus dims with nothing in focus too (#545).
     fn set_dim_all(&mut self, _on: bool) {}
 
+    /// The active plate's tools (#545): `None` hides them, `Some(hovered)`
+    /// shows them with the tool under the pointer lit.
+    fn set_plate_tools(&mut self, _tools: Option<Option<u32>>) {}
+
     /// What stays lit while something is selected (#523); the rest dims.
     fn set_focus(&mut self, _focus: &[sc_scene::NodeId]) {}
 
@@ -289,6 +293,10 @@ impl MeshRenderer for Renderer {
 
     fn set_dim_all(&mut self, on: bool) {
         Renderer::set_dim_all(self, on);
+    }
+
+    fn set_plate_tools(&mut self, tools: Option<Option<u32>>) {
+        Renderer::set_plate_tools(self, tools);
     }
 
     fn set_focus(&mut self, focus: &[sc_scene::NodeId]) {

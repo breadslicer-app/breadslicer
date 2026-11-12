@@ -191,6 +191,8 @@ pub(crate) struct ViewportController {
     /// The focus of the last frame (#523), with the scene revision and the
     /// selection it was worked out for.
     focus_cache: FocusCache,
+    /// The active plate's tool under the pointer (#545).
+    plate_tool_hovered: Cell<Option<u32>>,
 }
 
 type FocusCache = RefCell<
@@ -296,6 +298,7 @@ impl ViewportController {
             cut_handles: RefCell::new(None),
             cut_press: Cell::new(None),
             focus_cache: RefCell::new(None),
+            plate_tool_hovered: Cell::new(None),
         }
     }
 
@@ -362,6 +365,7 @@ impl ViewportController {
             cut_handles: RefCell::new(None),
             cut_press: Cell::new(None),
             focus_cache: RefCell::new(None),
+            plate_tool_hovered: Cell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -2699,6 +2703,7 @@ impl ViewportController {
             return;
         }
         self.tab_tool_hover(cursor, modifiers.shift);
+        self.plate_tool_hover(cursor);
         if self.input.modal.get().is_some() {
             self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
@@ -2742,6 +2747,10 @@ impl ViewportController {
         match outcome {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
             PointerUpOutcome::Click(cursor) => {
+                if let Some(tool) = self.plate_tool_under(cursor) {
+                    self.run_plate_tool(tool, modifiers.shift);
+                    return;
+                }
                 let forced = modifiers.shift && self.add_support_armed();
                 if modifiers.shift && !forced {
                     self.run_toggle_pick_at(cursor);
@@ -3681,30 +3690,65 @@ impl ViewportController {
         }
     }
 
-    /// Where the active plate's tools stand in the view (#545): by its back
-    /// right corner, in viewport pixels. Only in the Transform tab, with a
-    /// scene.
-    fn plate_tools_at(&self) -> Option<[f32; 2]> {
-        let document = self.session.document();
-        if !document.is_loaded() || self.session.section() != WorkspaceSection::Transform {
+    /// Whether the active plate's tools show (#545): in the Transform tab,
+    /// with a scene.
+    fn plate_tools_shown(&self) -> bool {
+        self.session.document().is_loaded() && self.session.section() == WorkspaceSection::Transform
+    }
+
+    /// The tool of the active plate under `cursor` (#545): 0 add a plate,
+    /// 1 arrange it, 2 remove it.
+    fn plate_tool_under(&self, cursor: ScreenPoint) -> Option<u32> {
+        if !self.plate_tools_shown() {
             return None;
         }
         let vp = self.render.viewport()?;
         let camera = self.camera.camera_cell().borrow();
-        let camera = camera.as_ref()?;
+        let ray = picking::ray_from_pixel(
+            camera.as_ref()?,
+            crate::mesh_render::default_fov_y(),
+            vp.width(),
+            vp.height(),
+            cursor.x,
+            cursor.y,
+        );
+        let (x, y) = picking::ray_z_plane_intersection(&ray, 0.0)?;
         let volume = self.session.build_volume();
-        let corner = crate::plates::offset(&volume, document.plates().active())
-            + glam::Vec3::new(volume.envelope_max_mm().x, volume.envelope_max_mm().y, 0.0);
-        let aspect = vp.width() / vp.height().max(1.0);
-        let view_proj = camera.projection(crate::mesh_render::default_fov_y(), aspect, 0.01, 100.0)
-            * camera.view_matrix();
-        let clip = view_proj * corner.extend(1.0);
-        if clip.w <= 0.0 {
-            return None;
+        let at = crate::plates::offset(&volume, self.session.document().plates().active());
+        crate::plates::tool_at(&volume, x - at.x, y - at.y)
+    }
+
+    /// Follows the pointer over the active plate's tools (#545): the one
+    /// under it lights up and the status bar says what it does.
+    fn plate_tool_hover(&self, cursor: ScreenPoint) {
+        let hovered = self.plate_tool_under(cursor);
+        if self.plate_tool_hovered.replace(hovered) == hovered {
+            return;
         }
-        let (x, y) = (clip.x / clip.w, clip.y / clip.w);
-        let pixel = [(x + 1.0) * 0.5 * vp.width(), (1.0 - y) * 0.5 * vp.height()];
-        pixel.iter().all(|c| c.is_finite()).then_some(pixel)
+        if let Some(ui) = self.ui.upgrade() {
+            let text = match hovered {
+                Some(0) => ctr!("Workspace", "Add a plate"),
+                Some(1) => ctr!("Workspace", "Arrange this plate"),
+                Some(_) => ctr!("Workspace", "Remove this plate (Shift: with its models)"),
+                None => slint::SharedString::default(),
+            };
+            ui.set_status_notice(text);
+        }
+        self.mark_dirty();
+    }
+
+    /// Runs the active plate's tool `tool` (#545); `shift` makes Remove take
+    /// the plate's models with it.
+    fn run_plate_tool(&self, tool: u32, shift: bool) {
+        match tool {
+            0 => self.add_plate(),
+            1 => {
+                if let Some(ui) = self.ui.upgrade() {
+                    ui.invoke_plate_arrange_requested();
+                }
+            }
+            _ => self.remove_active_plate_with(shift),
+        }
     }
 
     /// Whether what stands off the active plate dims with nothing selected
@@ -3778,7 +3822,6 @@ impl ViewportController {
         }
         let count = plates.count();
         document.push_plates_edit(SceneEdit::Compound(Vec::new()), count, count + 1, count);
-        self.frame_plate(count);
     }
 
     /// Takes the active plate off (#545) when no model stands on it: the
@@ -3835,25 +3878,6 @@ impl ViewportController {
             plates.count() - 1,
             active.saturating_sub(1),
         );
-        self.mark_dirty();
-    }
-
-    /// Frames plate `index` in the view, keeping the direction it is seen
-    /// from (#545).
-    fn frame_plate(&self, index: u32) {
-        let Some(vp) = self.render.viewport() else {
-            return;
-        };
-        let volume = self.session.build_volume();
-        let at = crate::plates::offset(&volume, index);
-        if let Some(cam) = self.camera.camera_cell().borrow_mut().as_mut() {
-            cam.frame_bounds(
-                volume.envelope_min_mm() + at,
-                volume.envelope_max_mm() + at,
-                crate::mesh_render::default_fov_y(),
-                vp.width() / vp.height().max(1.0),
-            );
-        }
         self.mark_dirty();
     }
 
@@ -4517,19 +4541,15 @@ impl ViewportController {
         renderer.set_supports_hidden(self.supports_hidden());
         renderer.set_plates(self.session.document().plates());
         renderer.set_dim_all(self.dims_off_plate());
+        renderer.set_plate_tools(
+            self.plate_tools_shown()
+                .then(|| self.plate_tool_hovered.get()),
+        );
         renderer.set_focus(&self.focus());
 
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        match self.plate_tools_at() {
-            Some([x, y]) => {
-                ui.set_plate_tools_x(x);
-                ui.set_plate_tools_y(y);
-                ui.set_plate_tools_shown(true);
-            }
-            None => ui.set_plate_tools_shown(false),
-        }
         if self.paint_owed.replace(false) {
             let layers = self.paint_layers();
             renderer.set_surface_paint(&layers, surface_paint_tint(&ui));

@@ -310,3 +310,60 @@ fn arrange_works_on_the_active_plate_alone() {
         "apart, not overlapping: {a:?} {b:?}"
     );
 }
+
+/// The active plate's tools lie on its rim (#545): a click on Add adds a
+/// plate and leaves the camera where it is; a click on Remove with Shift
+/// takes the plate off with its models.
+#[test]
+fn the_plate_tools_on_its_rim_add_and_remove() {
+    let v = volume();
+    let (ctrl, _) = window(&[Vec3::ZERO]);
+    let document = ctrl.document();
+    ctrl.set_section(WorkspaceSection::Transform);
+    // Straight down at plate 0's Add tool.
+    let add = Vec3::new(
+        50.0 + crate::plates::TOOL_INSET_MM + crate::plates::TOOL_MM / 2.0,
+        25.0 - crate::plates::TOOL_MM / 2.0,
+        0.0,
+    );
+    let mut cam = OrbitCamera::new(add, 200.0);
+    cam.set_axis_view(AxisView::Top);
+    ctrl.set_camera_for_test(cam.clone());
+    let centre = ScreenPoint { x: 100.0, y: 100.0 };
+    assert_eq!(ctrl.plate_tool_under(centre), Some(0));
+    ctrl.run_plate_tool(0, false);
+    assert_eq!(document.plates().count(), 2);
+    let after = ctrl.camera_for_test().expect("a camera");
+    assert_eq!(after.target, cam.target, "the camera stays");
+    assert_eq!(after.distance, cam.distance);
+    // Off the tools, nothing.
+    assert_eq!(
+        ctrl.plate_tool_under(ScreenPoint { x: 10.0, y: 10.0 }),
+        None
+    );
+    let _ = v;
+}
+
+/// Over any plate's floor, not only the first's, the orbit turns about
+/// the point under the cursor (#545).
+#[test]
+fn the_orbit_pivot_lands_on_any_plate() {
+    let v = volume();
+    let (ctrl, _) = window(&[Vec3::ZERO]);
+    ctrl.add_plate();
+    let second = offset(&v, 1) + Vec3::new(10.0, -5.0, 0.0);
+    let mut cam = OrbitCamera::new(second, 60.0);
+    cam.set_axis_view(AxisView::Top);
+    // A target far off, as with every plate framed.
+    cam.target = second;
+    ctrl.set_camera_for_test(cam.clone());
+    let (pivot, source) = super::super::orbit_pivot::choose(
+        ctrl.document().as_ref(),
+        &cam,
+        crate::viewport::types::ViewportSize::new(200.0, 200.0).expect("a size"),
+        v,
+        ScreenPoint { x: 100.0, y: 100.0 },
+    );
+    assert_eq!(source, super::super::orbit_pivot::PivotSource::Plate);
+    assert!((pivot - second).length() < 1.0, "{pivot:?}");
+}

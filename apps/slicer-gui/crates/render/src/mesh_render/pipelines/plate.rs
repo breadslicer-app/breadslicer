@@ -70,6 +70,8 @@ const KIND_ENVELOPE_WALL_X_POS: u32 = 6;
 const KIND_ENVELOPE_WALL_Y_NEG: u32 = 7;
 const KIND_ENVELOPE_WALL_Y_POS: u32 = 8;
 const KIND_ENVELOPE_WALL_Z_POS: u32 = 9;
+/// The strip of the active plate's tools (#545), on its rim.
+const KIND_PLATE_TOOLS: u32 = 10;
 
 /// Plate thickness, mm. The plate extends from `Z = 0` (top, the
 /// build floor) down to `Z = -PLATE_THICKNESS_MM`.
@@ -427,6 +429,9 @@ pub(in crate::mesh_render) struct PlateBuffers {
     /// `top_pipeline` after the mesh pass; the plate shader gates
     /// each fragment on the matching bit of `face_breach_mask`.
     pub(in crate::mesh_render) wall_index_buffer: wgpu::Buffer,
+    /// The quad of the active plate's tools (#545).
+    pub(in crate::mesh_render) tools_index_buffer: wgpu::Buffer,
+    pub(in crate::mesh_render) tools_index_count: u32,
     /// Vertex buffer for the front label's quad; `None` when the
     /// plate carries no tab.
     pub(in crate::mesh_render) label_vertex_buffer: Option<wgpu::Buffer>,
@@ -497,6 +502,14 @@ impl PlateBuffers {
             wgpu::BufferUsages::INDEX,
         )
         .map_err(refused)?;
+        let tools_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer plate tools ibo",
+            bytemuck::cast_slice(&geom.tools_indices),
+            wgpu::BufferUsages::INDEX,
+        )
+        .map_err(refused)?;
         let label_vertex_buffer = geom
             .label_quad
             .map(|quad| {
@@ -520,6 +533,8 @@ impl PlateBuffers {
             bottom_index_buffer,
             cage_index_buffer,
             wall_index_buffer,
+            tools_index_buffer,
+            tools_index_count: geom.tools_indices.len() as u32,
             top_index_count: geom.top_indices.len() as u32,
             solid_index_count: geom.solid_indices.len() as u32,
             bottom_index_count: geom.bottom_indices.len() as u32,
@@ -540,6 +555,8 @@ pub(in crate::mesh_render) struct PlateGeometry {
     pub(in crate::mesh_render) bottom_indices: Vec<u32>,
     pub(in crate::mesh_render) cage_indices: Vec<u32>,
     pub(in crate::mesh_render) wall_indices: Vec<u32>,
+    /// The quad of the active plate's tools (#545).
+    pub(in crate::mesh_render) tools_indices: Vec<u32>,
     /// The quads the front label draws on, alongside the tab that
     /// carries it: 6 vertices on top, then 6 on the underside.
     pub(in crate::mesh_render) label_quad: Option<[LabelVertex; 12]>,
@@ -869,6 +886,32 @@ pub(in crate::mesh_render) fn plate_geometry(
         wall_indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
+    // The tools' strip (#545): right of the back right corner, a hair over
+    // the rim so neither fights the other for the depth.
+    let tools_base = vertices.len() as u32;
+    {
+        let left = build_volume.width_mm() / 2.0 + crate::plates::TOOL_INSET_MM;
+        let right = left + crate::plates::TOOL_MM;
+        let top = build_volume.depth_mm() / 2.0;
+        let bottom = top
+            - crate::plates::TOOL_COUNT as f32 * crate::plates::TOOL_MM
+            - (crate::plates::TOOL_COUNT - 1) as f32 * crate::plates::TOOL_GAP_MM;
+        for [x, y] in [[left, bottom], [right, bottom], [right, top], [left, top]] {
+            vertices.push(PlateVertex {
+                position: [x, y, z_top + 0.05],
+                kind: KIND_PLATE_TOOLS,
+            });
+        }
+    }
+    let tools_indices = vec![
+        tools_base,
+        tools_base + 1,
+        tools_base + 2,
+        tools_base,
+        tools_base + 2,
+        tools_base + 3,
+    ];
+
     let label_quad = front_tab.map(|tab| {
         let front = front_tab_geometry(tab, -outer_d, outer_w - radius, vertices.len() as u32);
         vertices.extend(front.vertices);
@@ -890,6 +933,7 @@ pub(in crate::mesh_render) fn plate_geometry(
         bottom_indices,
         cage_indices,
         wall_indices,
+        tools_indices,
         label_quad,
     }
 }

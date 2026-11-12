@@ -87,6 +87,104 @@ fn inactive_plate(plate: u32) -> bool {
 // How opaque the floor of an inactive plate is.
 const INACTIVE_PLATE_ALPHA: f32 = 0.45;
 
+// The active plate's tools (#545): squares on the rim right of the back
+// right corner, as `crate::plates` lays them out, with the app's icons drawn
+// in their 24-unit box.
+const TOOL_MM: f32 = 14.0;
+const TOOL_GAP_MM: f32 = 2.5;
+const TOOL_INSET_MM: f32 = 5.0;
+// `chrome`, `raised` and `border` of the theme; the icon in `text-muted`,
+// lit `text`; the remove tool lit in the caption's close red.
+const TOOL_BACK: vec3<f32> = vec3<f32>(0.086, 0.094, 0.102);
+const TOOL_HOVER: vec3<f32> = vec3<f32>(0.141, 0.153, 0.169);
+const TOOL_EDGE: vec3<f32> = vec3<f32>(0.239, 0.259, 0.282);
+const TOOL_ICON: vec3<f32> = vec3<f32>(0.545, 0.584, 0.616);
+const TOOL_ICON_LIT: vec3<f32> = vec3<f32>(0.933, 0.941, 0.949);
+const TOOL_DANGER: vec3<f32> = vec3<f32>(0.769, 0.169, 0.110);
+
+// Distance from `p` to the segment `a`-`b`.
+fn segment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let ab = b - a;
+    let t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+    return length(p - (a + ab * t));
+}
+
+// Distance from `p` to the outline of the box `lo`-`hi`.
+fn box_outline(p: vec2<f32>, lo: vec2<f32>, hi: vec2<f32>) -> f32 {
+    return min(
+        min(segment(p, lo, vec2<f32>(hi.x, lo.y)), segment(p, vec2<f32>(hi.x, lo.y), hi)),
+        min(segment(p, hi, vec2<f32>(lo.x, hi.y)), segment(p, vec2<f32>(lo.x, hi.y), lo)),
+    );
+}
+
+// Distance from `p`, in the icon's 24-unit box (y down), to icon `i`'s
+// strokes: Icons.plus, Icons.arrange, Icons.trash.
+fn tool_icon(i: u32, p: vec2<f32>) -> f32 {
+    if i == 0u {
+        return min(segment(p, vec2<f32>(12.0, 5.0), vec2<f32>(12.0, 19.0)),
+                   segment(p, vec2<f32>(5.0, 12.0), vec2<f32>(19.0, 12.0)));
+    }
+    if i == 1u {
+        return min(
+            min(box_outline(p, vec2<f32>(4.0, 4.0), vec2<f32>(10.5, 10.5)),
+                box_outline(p, vec2<f32>(13.5, 4.0), vec2<f32>(20.0, 10.5))),
+            min(box_outline(p, vec2<f32>(4.0, 13.5), vec2<f32>(10.5, 20.0)),
+                box_outline(p, vec2<f32>(13.5, 13.5), vec2<f32>(20.0, 20.0))),
+        );
+    }
+    var d = segment(p, vec2<f32>(4.0, 7.0), vec2<f32>(20.0, 7.0));
+    d = min(d, segment(p, vec2<f32>(9.5, 7.0), vec2<f32>(9.5, 4.0)));
+    d = min(d, segment(p, vec2<f32>(9.5, 4.0), vec2<f32>(14.5, 4.0)));
+    d = min(d, segment(p, vec2<f32>(14.5, 4.0), vec2<f32>(14.5, 7.0)));
+    d = min(d, segment(p, vec2<f32>(6.0, 7.0), vec2<f32>(7.0, 20.0)));
+    d = min(d, segment(p, vec2<f32>(7.0, 20.0), vec2<f32>(17.0, 20.0)));
+    d = min(d, segment(p, vec2<f32>(17.0, 20.0), vec2<f32>(18.0, 7.0)));
+    d = min(d, segment(p, vec2<f32>(10.0, 11.0), vec2<f32>(10.0, 16.5)));
+    d = min(d, segment(p, vec2<f32>(14.0, 11.0), vec2<f32>(14.0, 16.5)));
+    return d;
+}
+
+// A fragment of the tools' strip at `local` (the plate's frame).
+fn plate_tools(local: vec2<f32>) -> vec4<f32> {
+    let shown = u.face_breach_mask.z;
+    if shown == 0u {
+        discard;
+    }
+    let left = u.env_max.x + TOOL_INSET_MM;
+    let down = u.env_max.y - local.y;
+    let step = TOOL_MM + TOOL_GAP_MM;
+    // Tool by tool, changing in the middle of the gap between two, where
+    // nothing is drawn: the derivatives never see the jump.
+    let i = u32(max(floor((down + TOOL_GAP_MM * 0.5) / step), 0.0));
+    let within = down - f32(i) * step;
+    if within < 0.0 || within > TOOL_MM || i > 2u {
+        discard;
+    }
+    // In the tool's 24-unit box, y down as the icons are drawn.
+    let p = vec2<f32>(local.x - left, within) * (24.0 / TOOL_MM);
+    let aa = max(fwidth(p.x), fwidth(p.y));
+    // A square with rounded corners, its edge a hairline.
+    let r = 3.0;
+    let q = abs(p - vec2<f32>(12.0)) - vec2<f32>(12.0 - r);
+    let outside = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    if outside > aa {
+        discard;
+    }
+    let hovered = shown == 2u + i;
+    // Add with 32 plates, remove with 1: nothing to do there.
+    let enabled = (i != 0u || u.plates.z < 31.5) && (i != 2u || u.plates.z > 1.5);
+    var colour = select(TOOL_BACK, TOOL_HOVER, hovered && enabled);
+    if hovered && enabled && i == 2u {
+        colour = mix(TOOL_BACK, TOOL_DANGER, 0.45);
+    }
+    colour = mix(colour, TOOL_EDGE, hairline(abs(outside + 0.6), aa, 1.0));
+    let ink = select(TOOL_ICON, TOOL_ICON_LIT, hovered && enabled);
+    let icon = clamp(1.0 - (tool_icon(i, p) - 0.8) / max(aa, 1e-3), 0.0, 1.0);
+    colour = mix(colour, ink, icon * select(0.4, 1.0, enabled));
+    let edge_alpha = clamp(0.5 - outside / max(aa, 1e-3), 0.0, 1.0);
+    return vec4<f32>(colour, 0.96 * edge_alpha * (1.0 - u.env_min.w));
+}
+
 // Whether a model crosses plate `plate`'s walls: bit `plate` of
 // face_breach_mask.y (#545).
 fn breached_plate(plate: u32) -> bool {
@@ -287,6 +385,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             }
         }
         return plate_face(grid, select(1.0, INACTIVE_PLATE_ALPHA, inactive_plate(in.plate)));
+    }
+    if in.kind == 10u {
+        return plate_tools(in.world_pos.xy);
     }
     if in.kind == 2u {
         return plate_face(
