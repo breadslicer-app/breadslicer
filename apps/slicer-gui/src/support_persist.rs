@@ -51,7 +51,7 @@ pub(crate) struct DrawnSet {
     mesh: Arc<IndexedMesh>,
     /// The model's mesh and world transform then.
     model_mesh: Arc<IndexedMesh>,
-    model_world: Transform3D,
+    pub(crate) model_world: Transform3D,
     /// Not in the scene yet: its first tip makes it (#444), and `leaf` is
     /// the model's until then.
     pub(crate) unborn: bool,
@@ -62,7 +62,10 @@ pub(crate) type SupportSessions = Vec<DrawnSet>;
 
 /// The model `model` as the drawing of a set records it: its mesh and
 /// world transform.
-fn model_state(spatial: &SceneSpatial, model: NodeId) -> Option<(Arc<IndexedMesh>, Transform3D)> {
+pub(crate) fn model_state(
+    spatial: &SceneSpatial,
+    model: NodeId,
+) -> Option<(Arc<IndexedMesh>, Transform3D)> {
     let mesh = spatial.graph().leaf_mesh_arc(model)?.clone();
     Some((mesh, spatial.leaf(model)?.world_transform()))
 }

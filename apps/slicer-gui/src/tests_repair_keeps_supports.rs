@@ -477,3 +477,54 @@ fn a_real_model_keeps_its_supports_through_the_cards_repair() {
         );
     });
 }
+
+/// Analyze islands on a model the slicer refuses (#526): Repair runs on its
+/// own and the analysis goes on, with no card to answer and no question at
+/// its end; the supports stay editable on the repaired model, so a hand
+/// edit goes through at once.
+#[test]
+fn analyzing_islands_repairs_on_its_own_and_keeps_the_supports() {
+    on_fresh_slint_thread(|| {
+        for defect in [Defect::Crack, Defect::Hole] {
+            let w = window_with(one(slab(Some(defect))));
+            w.generate();
+            w.ctrl.set_section(WorkspaceSection::Supports);
+            w.window.invoke_support_islands_analyze_requested();
+            w.finish_slice();
+            assert!(
+                !w.window.get_message_open(),
+                "{defect:?}: no card to answer"
+            );
+            assert!(
+                w.window.get_repairing_in_progress(),
+                "{defect:?}: Repair runs on its own"
+            );
+            w.finish_repair();
+            assert!(
+                w.window.get_slicing_in_progress(),
+                "{defect:?}: the analysis goes on"
+            );
+            w.finish_slice();
+            let cards = w.close_cards();
+            assert!(
+                cards
+                    .iter()
+                    .all(|c| !c.contains("have no support") && c != "Supports out of date"),
+                "{defect:?}: {cards:?}"
+            );
+            assert!(w.document.slice_params().is_some(), "{defect:?}: sliced");
+            assert_eq!(
+                w.window.get_workspace_section(),
+                WorkspaceSection::Supports,
+                "{defect:?}: back on the Supports tab"
+            );
+            let in_force = w
+                .document
+                .with_scene(|spatial| {
+                    support_persist::sets_in_force(spatial, &w.document.support_sessions()).len()
+                })
+                .unwrap_or_default();
+            assert_eq!(in_force, 1, "{defect:?}: the supports stay editable");
+        }
+    });
+}
