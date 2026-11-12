@@ -84,8 +84,10 @@ pub use renderer_trait::MeshRenderer;
 pub use scene_upload::GpuScene;
 #[cfg(feature = "test-support")]
 use scene_upload::build_envelope_warning_mask;
+#[cfg(any(test, feature = "test-support"))]
+use scene_upload::build_model_entries;
 use scene_upload::{
-    MODEL_ENTRY_SIZE, WorldBoxes, build_model_entries, build_plate_warning_masks,
+    MODEL_ENTRY_SIZE, WorldBoxes, build_model_entries_on, build_plate_warning_masks,
     renderable_leaf_count,
 };
 pub use support_lines::SupportLines;
@@ -1247,11 +1249,12 @@ impl Renderer {
         let mut support_objects: Vec<bool> = Vec::new();
         self.surface_normals.clear_frame();
         let scene_for_draws = if let (Some(inst), Some(graph_data)) = (installed, graph) {
-            match build_model_entries(
+            match build_model_entries_on(
                 graph_data,
                 selection,
                 (self.dim_all || !self.focus.is_empty()).then_some(self.focus.as_slice()),
                 build_volume,
+                self.plates,
                 &mut self.world_boxes,
                 overhang_map.is_some(),
             ) {

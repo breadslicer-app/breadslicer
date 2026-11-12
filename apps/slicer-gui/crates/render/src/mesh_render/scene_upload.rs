@@ -703,11 +703,35 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
 /// out, being the answer to an overhang rather than one. `flags.w` is 1 for a
 /// support mesh: from under the plate, what of it lies below the rafts' top
 /// fades with the plate (#481).
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn build_model_entries(
     graph: &Scene,
     selection: &[NodeId],
     focus: Option<&[NodeId]>,
     build_volume: BuildVolume,
+    boxes: &mut WorldBoxes,
+    overhang_map: bool,
+) -> Result<Vec<ModelEntry>> {
+    build_model_entries_on(
+        graph,
+        selection,
+        focus,
+        build_volume,
+        crate::plates::Plates::one(),
+        boxes,
+        overhang_map,
+    )
+}
+
+/// [`build_model_entries`] on several plates (#545): an object breaches when
+/// it reaches past the volume of the plate it belongs to (the one whose cell
+/// holds the middle of its footprint), not the first plate's.
+pub(super) fn build_model_entries_on(
+    graph: &Scene,
+    selection: &[NodeId],
+    focus: Option<&[NodeId]>,
+    build_volume: BuildVolume,
+    plates: crate::plates::Plates,
     boxes: &mut WorldBoxes,
     overhang_map: bool,
 ) -> Result<Vec<ModelEntry>> {
@@ -723,12 +747,16 @@ pub(super) fn build_model_entries(
             // The envelope is an axis-aligned box, so it contains the world
             // box if and only if it contains every vertex, and therefore every
             // triangle.
-            let breaches = !build_volume.volume().contains(&boxes.world_box(
+            let world_box = boxes.world_box(
                 entries.len(),
                 mesh,
                 shared_mesh(graph, node_id, mesh),
                 &transform_mat,
-            ));
+            );
+            let breaches =
+                !build_volume
+                    .volume()
+                    .contains(&on_its_plate(&world_box, &build_volume, plates));
             let supports = sc_geom::df_supports::is_any_support_mesh(mesh);
             let drawn_as = if overhang_map && !supports {
                 MODEL_OVERHANG_MAP
@@ -923,6 +951,24 @@ pub(super) fn build_envelope_warning_mask(
         },
     )?;
     Ok(crossed.iter().fold(0, |mask, wall| mask | face_bit(wall)))
+}
+
+/// `world_box` moved by the offset of the plate it belongs to, so it is
+/// held against the first plate's volume as against its own (#545).
+fn on_its_plate(world_box: &Aabb, volume: &BuildVolume, plates: crate::plates::Plates) -> Aabb {
+    if world_box.is_empty() || plates.count() <= 1 {
+        return *world_box;
+    }
+    let (min, max) = (world_box.min().coords(), world_box.max().coords());
+    let plate = crate::plates::plate_of(
+        volume,
+        plates,
+        (min[0] + max[0]) / 2.0,
+        (min[1] + max[1]) / 2.0,
+    );
+    let at = crate::plates::offset(volume, plate);
+    let shift = |v: [f32; 3]| Vertex::new([v[0] - at.x, v[1] - at.y, v[2]]);
+    Aabb::from_min_max(shift(min), shift(max))
 }
 
 /// [`build_envelope_warning_mask`] on several plates (#545): each model is
@@ -1819,6 +1865,37 @@ mod transform_to_mat4_tests {
         )
         .expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
+    }
+
+    /// On a plate other than the first, an object inside its plate does not
+    /// breach (#545): it keeps its model's or its supports' colour; past its
+    /// plate's wall it does.
+    #[test]
+    fn flags_y_is_held_against_the_plate_the_leaf_stands_on() {
+        let v = snug_volume();
+        let second = crate::plates::offset(&v, 1);
+        let plates = crate::plates::Plates::new(2, 0);
+        let breach = |at: [f64; 3]| {
+            let graph = unit_triangle_graph_at(at);
+            build_model_entries_on(
+                &graph,
+                &[],
+                None,
+                v,
+                plates,
+                &mut WorldBoxes::default(),
+                false,
+            )
+            .expect("clean graph")[0]
+                .flags[1]
+        };
+        assert_eq!(breach([f64::from(second.x), 0.0, 1.0]), 0, "inside plate 1");
+        assert_eq!(
+            breach([f64::from(second.x) + 49.5, 0.0, 1.0]),
+            1,
+            "past its wall"
+        );
+        assert_eq!(breach([0.0, 0.0, 1.0]), 0, "inside plate 0");
     }
 
     #[test]
