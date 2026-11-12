@@ -1162,8 +1162,13 @@ export component TransformInspector inherits VerticalLayout {
     in property <int> plate-count: 1;
     in property <int> active-plate: 0;
     in property <bool> active-plate-used;
+    // The plates' names (#547), and whether a selection can be sent to
+    // another plate (#549).
+    in property <[string]> plate-names;
+    in property <bool> can-send;
     callback plate-add();
     callback plate-remove();
+    callback plate-send(int);
     // Arrange all (false) or the selection (true).
     callback arrange-requested(bool);
     callback arrange-fill-requested();
@@ -1233,11 +1238,29 @@ export component TransformInspector inherits VerticalLayout {
 
         Note {
             text: root.plate-count > 1
-                ? @tr("Inspector" => "Plate {} is active. Click a plate, or a model on it, to make it the active one.", root.active-plate + 1)
+                ? @tr("Inspector" => "“{}” is active. Click a plate, or a model on it, to make it the active one.", root.plate-names[root.active-plate])
                 : @tr("Inspector" => "Add plates to lay out more prints side by side, then slice the one to print.");
         }
         if root.plate-count > 1 && root.active-plate-used: Note {
             text: @tr("Inspector" => "Removing the active plate moves its models to the plate that takes its place. Shift+click the plate's own remove tool to remove them with it.");
+        }
+        if root.plate-count > 1 && root.can-send: Field {
+            label: @tr("Inspector" => "Send the selection to");
+            HorizontalLayout {
+                spacing: 8px;
+
+                send-combo := ComboBox {
+                    horizontal-stretch: 1;
+                    model: root.plate-names;
+                    current-index: root.active-plate;
+                }
+                ScButton {
+                    text: @tr("Inspector" => "Send");
+                    clicked => {
+                        root.plate-send(send-combo.current-index);
+                    }
+                }
+            }
         }
         HorizontalLayout {
             spacing: 8px;
@@ -2876,6 +2899,9 @@ export component ExportInspector inherits VerticalLayout {
     in property <bool> has-scene;
     callback format-picked(int);
     callback export-printer-file();
+    // With several plates (#549): each plate sliced in turn, a file each.
+    in property <int> plate-count: 1;
+    callback export-every-plate();
     callback save-project();
     callback export-mesh();
 
@@ -2910,6 +2936,17 @@ export component ExportInspector inherits VerticalLayout {
         }
         if !root.export-enabled: Note {
             text: @tr("Inspector" => "Slice first: the printer file is written from the held slice.");
+        }
+        if root.plate-count > 1: ScButton {
+            text: @tr("SlicePanel" => "Export every plate");
+            icon: Icons.file;
+            enabled: root.format-options.length > 0 && root.has-scene && !root.busy;
+            clicked => {
+                root.export-every-plate();
+            }
+        }
+        if root.plate-count > 1: Note {
+            text: @tr("Inspector" => "Slices each plate with models on it in turn and writes a file for each, named after the plate.");
         }
     }
 

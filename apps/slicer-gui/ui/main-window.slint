@@ -623,6 +623,8 @@ export component MainWindow inherits Window {
     // The Slice panel's export action: write the held slice as the
     // selected printer file.
     callback slice-export-requested();
+    // Each plate with models sliced in turn, a file each (#549).
+    callback slice-export-every-plate-requested();
     // Slice lifecycle: `slice-requested` from the panel button starts a
     // run; `slice-cancel-requested` from the modal trips the cancel
     // token; `slice-finished` is invoked from the Rust worker to drain
@@ -706,6 +708,8 @@ export component MainWindow inherits Window {
     in property <[string]> plate-names;
     // A plate picked in the Slice card (#547): it becomes the active one.
     callback plate-picked(int);
+    // The selection sent to another plate (#549).
+    callback plate-send-requested(int);
     callback plate-add-requested();
     // With the models on it (Shift on the plate's tool) or not.
     callback plate-remove-requested(bool);
@@ -2231,6 +2235,11 @@ export component MainWindow inherits Window {
                                 plate-count: root.plate-count;
                                 active-plate: root.active-plate;
                                 active-plate-used: root.active-plate-used;
+                                plate-names: root.plate-names;
+                                can-send: root.has-scene && root.selection-valid;
+                                plate-send(i) => {
+                                    root.plate-send-requested(i);
+                                }
                                 plate-add => {
                                     root.plate-add-requested();
                                 }
@@ -2436,6 +2445,7 @@ export component MainWindow inherits Window {
                                 format-current-index <=> root.slice-print-format-current-index;
                                 format-note: root.slice-print-format-note;
                                 export-enabled: root.slice-export-enabled;
+                                plate-count: root.plate-count;
                                 busy: root.slicing-in-progress || root.saving-in-progress || root.loading;
                                 has-scene: root.has-scene;
                                 format-picked(i) => {
@@ -2443,6 +2453,9 @@ export component MainWindow inherits Window {
                                 }
                                 export-printer-file => {
                                     root.slice-export-requested();
+                                }
+                                export-every-plate => {
+                                    root.slice-export-every-plate-requested();
                                 }
                                 save-project => {
                                     root.save-requested();

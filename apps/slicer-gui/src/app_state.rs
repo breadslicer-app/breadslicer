@@ -793,6 +793,12 @@ impl AppState {
             repair_run.clone(),
             ctrl.clone(),
         );
+        crate::export_print_file::wire_export_every_plate(
+            ui,
+            ctrl.clone(),
+            slice_panel.clone(),
+            slice_run.clone(),
+        );
         let split_bodies = SplitBodies::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let presupported_import = crate::presupported_import::PresupportedImport::install(
             ui,

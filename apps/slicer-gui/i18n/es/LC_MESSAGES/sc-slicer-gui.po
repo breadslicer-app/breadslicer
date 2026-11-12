@@ -6951,8 +6951,8 @@ msgstr "{} de {}"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
-msgid "Plate {} is active. Click a plate, or a model on it, to make it the active one."
-msgstr "La cama {} está activa. Hacé clic en una cama, o en un modelo sobre ella, para activarla."
+msgid "“{}” is active. Click a plate, or a model on it, to make it the active one."
+msgstr "“{}” está activa. Hacé clic en una cama, o en un modelo sobre ella, para activarla."
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
@@ -7031,3 +7031,40 @@ msgstr "Cama"
 msgctxt "ErrorDialog"
 msgid "Nothing stands on “{}” to slice. Pick another plate in the Slice card, or move models onto this one."
 msgstr "No hay nada sobre “{}” para laminar. Elegí otra cama en la tarjeta Laminar o mové modelos a esta."
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Export every plate"
+msgstr "Exportar todas las camas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Slices each plate with models on it in turn and writes a file for each, named after the plate."
+msgstr "Lamina una por una las camas que tienen modelos y escribe un archivo por cama, con su nombre."
+
+#: src/export_print_file.rs
+msgctxt "FileDialog"
+msgid "Folder for the plates' printer files"
+msgstr "Carpeta para los archivos de impresora de las camas"
+
+#: src/export_print_file.rs
+msgctxt "ExportDialog"
+msgid "Plates exported"
+msgstr "Camas exportadas"
+
+#: src/export_print_file.rs
+msgctxt "ExportDialog"
+msgid "Wrote {n} printer file to {}."
+msgid_plural "Wrote {n} printer files to {}."
+msgstr[0] "Se escribió {n} archivo de impresora en {}."
+msgstr[1] "Se escribieron {n} archivos de impresora en {}."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Send the selection to"
+msgstr "Mandar la selección a"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Send"
+msgstr "Mandar"

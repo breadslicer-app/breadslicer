@@ -148,6 +148,8 @@ enum SliceTrigger {
     /// The analysis again, after the Repair it made on its own when the
     /// slicer refused a mesh (#526).
     IslandsRepaired,
+    /// Export every plate, slicing each in turn (#549).
+    EveryPlate,
 }
 
 impl SliceTrigger {
@@ -156,7 +158,7 @@ impl SliceTrigger {
     fn asked_for(self) -> bool {
         matches!(
             self,
-            Self::FixAll | Self::Repair | Self::Islands | Self::IslandsRepaired
+            Self::FixAll | Self::Repair | Self::Islands | Self::IslandsRepaired | Self::EveryPlate
         )
     }
 
@@ -195,6 +197,9 @@ pub(crate) struct SliceRun {
     // Poll timer driving the modal's progress readout. Behind an `Rc` so its
     // own callback can stop it through a `Weak` without a cycle.
     poll_timer: Rc<slint::Timer>,
+    // Told when the slice in flight lands, or fails (#549): whether the
+    // document now holds it.
+    landed: RefCell<Option<Box<dyn FnOnce(bool)>>>,
     // Single-shot timer that lowers the "already up to date" hint after a
     // delay. Restarted on each unchanged press so repeated presses keep it
     // visible; stopped when a real slice starts.
@@ -228,6 +233,7 @@ impl SliceRun {
             pending_params: RefCell::new(None),
             pending_fills: RefCell::new(Vec::new()),
             poll_timer: Rc::new(slint::Timer::default()),
+            landed: RefCell::new(None),
             tooltip_timer: Rc::new(slint::Timer::default()),
         });
         {
@@ -338,6 +344,32 @@ impl SliceRun {
         }
     }
 
+    /// Slices the active plate for an export of every plate (#549), and tells
+    /// `then` whether the document holds a slice of it that is up to date:
+    /// once the slice lands, or at once when none was needed or could start.
+    pub(crate) fn slice_then(self: &Rc<Self>, then: impl FnOnce(bool) + 'static) {
+        *self.landed.borrow_mut() = Some(Box::new(then));
+        if self.start_with(SliceTrigger::EveryPlate) {
+            return;
+        }
+        let Some(then) = self.landed.borrow_mut().take() else {
+            return;
+        };
+        let held = self.document.slice_params();
+        then(held.is_some_and(|held| {
+            held.plate == self.document.slice_plate()
+                && !self.document.slice_geometry_changed(held.geometry)
+        }));
+    }
+
+    /// Tells whoever waits for the slice in flight whether it landed.
+    fn tell_landed(&self, landed: bool) {
+        let then = self.landed.borrow_mut().take();
+        if let Some(then) = then {
+            then(landed);
+        }
+    }
+
     /// Clones the scene, resets the modal readout, captures the run's inputs,
     /// and spawns the worker. Reached for a first slice, or once a re-slice
     /// over stale data is confirmed. The scene clone and the geometry marker
@@ -350,29 +382,16 @@ impl SliceRun {
         };
         let sessions = self.document.support_sessions();
         let plates = self.document.plates();
-        let volume = self.ctrl.build_volume();
-        let Some((scene, origin, supports, mut support_sets)) =
-            self.document.with_scene(|spatial| {
-                // One plate of several: its objects alone, at the origin.
-                let (scene, origin) = if plates.count() > 1 {
-                    crate::plate_layout::plate_scene(
-                        spatial,
-                        &volume,
-                        plates,
-                        current.plate,
-                        &|leaf| support_persist::model_of(&sessions, leaf),
-                    )
-                } else {
-                    (spatial.graph().clone(), [0.0; 2])
-                };
-                (
-                    scene,
-                    origin,
-                    support_persist::support_owners(spatial, &sessions),
-                    support_persist::review_sets(spatial, &sessions),
-                )
-            })
-        else {
+        // One plate of several: its objects alone, at the origin.
+        let Some((scene, origin)) = self.ctrl.scene_of_plate(current.plate) else {
+            return false;
+        };
+        let Some((supports, mut support_sets)) = self.document.with_scene(|spatial| {
+            (
+                support_persist::support_owners(spatial, &sessions),
+                support_persist::review_sets(spatial, &sessions),
+            )
+        }) else {
             return false;
         };
         support_sets.retain(|set| scene.node(set.leaf).is_some());
@@ -421,7 +440,11 @@ impl SliceRun {
         *self.pending_params.borrow_mut() = Some(current.clone());
         self.trigger.set(trigger);
         self.review
-            .slice_started(trigger == SliceTrigger::FixAll, trigger.for_islands());
+            // A slice of every plate asks nothing on the way (#549).
+            .slice_started(
+                trigger == SliceTrigger::FixAll,
+                trigger.for_islands() || trigger == SliceTrigger::EveryPlate,
+            );
         let patches = self.review.fills_for_slice();
         *self.pending_fills.borrow_mut() = patches.ids;
 
@@ -590,15 +613,20 @@ impl SliceRun {
                     // to the slice now held, which cured these fills.
                     self.review.fills_landed(fill_ids);
                     self.review.show(completed.review);
+                    self.tell_landed(true);
+                } else {
+                    self.tell_landed(false);
                 }
             }
             Ok(SliceRunOutcome::Cancelled) => {
+                self.tell_landed(false);
                 // A cancelled run carries no data; any prior result stays.
                 // A Fix All run whose slice this was is cancelled with it
                 // (#163).
                 self.review.slice_ended_without_result(true);
             }
             Err(err) => {
+                self.tell_landed(false);
                 self.review.slice_ended_without_result(false);
                 // The objects a failure names, as the object list names them
                 // now.

@@ -6,6 +6,7 @@
 //! Slicing one plate of several (#547), through the window's own Slice press:
 //! the active plate's models alone, moved to the printer's origin.
 
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -105,6 +106,11 @@ impl Window {
     /// Presses Slice and waits for the run's wake-up.
     fn press_slice(&self) {
         self.window.invoke_slice_requested();
+        self.finish();
+    }
+
+    /// Waits for the slice in flight and hands its wake-up to the window.
+    fn finish(&self) {
         assert!(self.window.get_slicing_in_progress(), "a slice runs");
         let start = Instant::now();
         while self
@@ -190,5 +196,26 @@ fn the_first_plate_slices_where_it_stands() {
             w.outline_box(15.0).is_none(),
             "the second plate's cube is not sliced"
         );
+    });
+}
+
+#[test]
+fn a_slice_of_every_plate_hears_when_each_lands() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        let landed = Rc::new(Cell::new(None));
+        for plate in [1, 0] {
+            w.document.set_active_plate(plate);
+            let heard = landed.clone();
+            w.slice.slice_then(move |ok| heard.set(Some(ok)));
+            assert_eq!(landed.get(), None, "plate {plate} slices first");
+            w.finish();
+            assert_eq!(landed.take(), Some(true), "plate {plate} landed");
+            assert_eq!(w.document.slice_params().map(|p| p.plate), Some(plate));
+        }
+        // The plate held already: told at once.
+        let heard = landed.clone();
+        w.slice.slice_then(move |ok| heard.set(Some(ok)));
+        assert_eq!(landed.take(), Some(true), "up to date");
     });
 }

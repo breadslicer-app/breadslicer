@@ -723,7 +723,12 @@ impl ViewportController {
             ui.set_slice_estimate_note(slint::SharedString::default());
             return;
         }
-        match crate::export_print_file::estimate_held_slice(document) {
+        // The plate the slice was cut for (#547).
+        let scene = document
+            .slice_params()
+            .and_then(|params| self.scene_of_plate(params.plate))
+            .map(|(scene, _)| scene);
+        match crate::export_print_file::estimate_held_slice(document, scene) {
             Ok(e) => {
                 ui.set_slice_estimate_valid(true);
                 ui.set_slice_estimate_time(
@@ -985,6 +990,81 @@ impl ViewportController {
 
     pub(crate) fn build_volume(&self) -> BuildVolume {
         self.session.build_volume()
+    }
+
+    /// The scene plate `plate` prints (#547): its objects alone, moved to the
+    /// printer's origin, and where its centre stands in the scene. The whole
+    /// scene, as it stands, with one plate.
+    pub(crate) fn scene_of_plate(&self, plate: u32) -> Option<(sc_scene::Scene, [f64; 2])> {
+        let document = self.session.document();
+        let plates = document.plates();
+        let volume = self.build_volume();
+        let sessions = document.support_sessions();
+        document.with_scene(|spatial| {
+            if plates.count() > 1 {
+                crate::plate_layout::plate_scene(spatial, &volume, plates, plate, &|leaf| {
+                    crate::support_persist::model_of(&sessions, leaf)
+                })
+            } else {
+                (spatial.graph().clone(), [0.0; 2])
+            }
+        })
+    }
+
+    /// Sends the selected models to plate `target` (#549), each where it
+    /// stood on its own plate, its supports with it: one step of history.
+    /// The plate they went to is the active one.
+    pub(crate) fn send_selection_to_plate(&self, target: u32) {
+        let document = self.session.document();
+        let plates = document.plates();
+        if target >= plates.count() {
+            return;
+        }
+        let volume = self.build_volume();
+        let models: Vec<sc_scene::NodeId> = document
+            .with_scene(|spatial| {
+                document
+                    .selection_node_ids()
+                    .into_iter()
+                    .filter(|&id| {
+                        spatial
+                            .leaf(id)
+                            .is_some_and(|q| !sc_geom::df_supports::is_any_support_mesh(q.mesh()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let moves: Vec<SceneEdit> = models
+            .into_iter()
+            .filter_map(|id| {
+                let from = self.plate_of_leaf(id)?;
+                (from != target).then_some(())?;
+                let by =
+                    crate::plates::offset(&volume, target) - crate::plates::offset(&volume, from);
+                crate::plate_layout::moved_by(document, id, by)
+            })
+            .collect();
+        if moves.is_empty() {
+            return;
+        }
+        let edit = SceneEdit::Compound(moves);
+        if document.apply_edit(edit.clone()).is_ok() {
+            document.push_edit(edit);
+            document.set_active_plate(target);
+        }
+        self.mark_dirty();
+    }
+
+    /// The plates models stand on, in their order (#549).
+    pub(crate) fn plates_in_use(&self) -> Vec<u32> {
+        let mut used: Vec<u32> = self
+            .models_on_plates()
+            .into_iter()
+            .map(|(_, plate)| plate)
+            .collect();
+        used.sort_unstable();
+        used.dedup();
+        used
     }
 
     /// Draws the previews a printer file of `format` carries, framed on the
