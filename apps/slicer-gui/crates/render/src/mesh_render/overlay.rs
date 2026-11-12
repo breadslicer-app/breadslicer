@@ -198,16 +198,39 @@ impl Renderer {
         );
     }
 
-    /// Shows `pieces` on the models' surfaces, tested against the scene's
-    /// depth (`None` clears them): the marks of where supports are
-    /// recommended (#524).
+    /// Shows `pieces` (`None` clears them): the marks of where supports are
+    /// recommended (#524) on the models' surfaces, tested against the
+    /// scene's depth, and the rings of the islands (#525) over everything
+    /// (#538).
     pub(crate) fn set_hint_marks(&mut self, pieces: Option<&Overlay>) {
+        let same = match (&self.hint_source, pieces) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        self.hint_source = pieces.cloned();
+        let (islands, hints): (Vec<_>, Vec<_>) = pieces
+            .into_iter()
+            .flat_map(|p| p.iter().cloned())
+            .partition(|p| p.tint == OverlayTint::Island);
+        let hints: Overlay = hints.into();
+        let islands: Overlay = islands.into();
         self.hints.install(
             &self.core.device,
             &self.core.queue,
             &self.pipelines.mesh.models_bind_group_layout,
-            pieces,
+            pieces.map(|_| &hints),
             "hint marks",
+        );
+        self.island_marks.install(
+            &self.core.device,
+            &self.core.queue,
+            &self.pipelines.mesh.models_bind_group_layout,
+            pieces.map(|_| &islands),
+            "island marks",
         );
     }
 }

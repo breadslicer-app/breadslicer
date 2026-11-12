@@ -6939,6 +6939,16 @@ msgctxt "Inspector"
 msgid "Support all islands"
 msgstr "Poner soportes en todas las islas"
 
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Go to the island"
+msgstr "Ir a la isla"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Go to the next island"
+msgstr "Ir a la siguiente isla"
+
 #: src/df_support_run.rs
 msgctxt "DfSupportDialog"
 msgid "These supports are being made again for the model as it is now; place it again in a moment."

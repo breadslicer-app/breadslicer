@@ -44,9 +44,21 @@ pub(crate) struct Hints {
     /// The islands the last analysis found (#525), with the models they
     /// were found on as they stood.
     pub(crate) islands: Option<(String, Arc<Vec<Hint>>)>,
+    /// The islands no tip covers, as last marked (#538).
+    pub(crate) left: Vec<[f64; 3]>,
+    /// The island the camera last went to (#538): its ring stands out.
+    pub(crate) visited: Option<[f64; 3]>,
     /// What the marks on show were drawn from: the places, the islands and
     /// the scene as it stood.
     pub(crate) shown: Option<(usize, usize, SceneRevision)>,
+}
+
+/// The island to go to after `visited` (#538): the next of `left` in turn,
+/// the first when `visited` is not one of them. `None` with none left.
+pub(crate) fn next_island(left: &[[f64; 3]], visited: Option<[f64; 3]>) -> Option<[f64; 3]> {
+    let at = visited.and_then(|v| left.iter().position(|p| *p == v));
+    let next = at.map_or(0, |i| (i + 1) % left.len().max(1));
+    left.get(next).copied()
 }
 
 /// The places a run picked: every tip of every set it made.
@@ -102,6 +114,9 @@ const RING_SIDES: usize = 20;
 /// (#525): its hole a little wider than the tip's ball, so it says where
 /// the tip goes.
 pub(crate) const ISLAND_RING_PER_TIP: f64 = 1.26;
+
+/// How much bigger the ring of the island the camera went to is (#538).
+pub(crate) const VISITED_RING_SCALE: f64 = 2.0;
 
 /// The rings that mark `hints`, of outer radius `radius`, lying on the
 /// surface at each, in `tint`.

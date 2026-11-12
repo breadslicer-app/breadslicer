@@ -81,6 +81,10 @@ use crate::under_plate::{hidden_below_mm, sees_through_the_plate, under_plate_fa
 use sc_scene::SceneError;
 use sc_sla_formats::{PrintPreviews, PrinterFileFormat};
 
+/// The pitch a jump to an island looks up at it from (#538): 35° below the
+/// horizon.
+pub(crate) const ISLAND_VIEW_PITCH: f32 = -0.61;
+
 /// How often the window is pinged while the overhang map waits for the
 /// surface around a model's vertices, read on a worker (#498).
 const MAP_WAIT_PING_MS: u64 = 100;
@@ -1511,6 +1515,18 @@ impl ViewportController {
             );
             self.mark_dirty();
         }
+    }
+
+    /// Centres the camera on an island at `point` (world mm) and looks at it
+    /// from below (#538), where a part starting with nothing under it shows:
+    /// a camera above comes down to [`ISLAND_VIEW_PITCH`]; one already lower
+    /// keeps its pitch. The yaw stays.
+    pub(crate) fn look_at_island(&self, point: glam::Vec3, radius: f32) {
+        if let Some(cam) = self.camera.camera_cell().borrow_mut().as_mut() {
+            cam.pitch = cam.pitch.min(ISLAND_VIEW_PITCH);
+        }
+        self.centre_camera_on(point, radius);
+        self.mark_dirty();
     }
 
     pub(crate) fn on_frame_view(&self) {

@@ -963,3 +963,65 @@ fn the_scene_picture_is_written_when_asked() {
     close.distance = 110.0;
     shot(&mut renderer, "close.png", &leaves[1][..1], &close);
 }
+
+/// An island's ring shows through the models (#538), where a recommended
+/// place's ring stays hidden behind them (#524): a mark under a sheet seen
+/// from above.
+#[test]
+fn an_island_ring_shows_through_the_model_and_a_hint_ring_does_not() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let target = Vec3::new(0.0, 0.0, 30.0);
+    let graph = scene_of(vec![square(60.0, 40.0)]);
+    let mut frame = |marks: Option<OverlayTint>| {
+        let overlay: Option<Overlay> = marks.map(|tint| {
+            let h = 8.0;
+            vec![Arc::new(OverlayMesh {
+                positions: vec![[-h, -h, 20.0], [h, -h, 20.0], [h, h, 20.0], [-h, h, 20.0]],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                tint,
+            })]
+            .into()
+        });
+        renderer.set_hint_marks(overlay.as_ref());
+        let mut camera = OrbitCamera::new(target, 50.0);
+        camera.target = target;
+        camera.distance = 60.0;
+        camera.pitch = 0.85f32.asin();
+        camera.yaw = 0.3;
+        renderer.upload_scene(&graph).expect("upload the scene");
+        renderer
+            .workspace_pixels_for_test(
+                SceneRender {
+                    graph: &graph,
+                    selection: &[],
+                    gizmo: None,
+                    clip_z: None,
+                },
+                BV,
+                &camera,
+                SIZE,
+                SIZE,
+            )
+            .expect("the frame is not refused")
+            .expect("a sized frame")
+            .rgba
+    };
+    let differs = |a: &[u8], b: &[u8]| {
+        a.chunks(4)
+            .zip(b.chunks(4))
+            .filter(|(p, q)| (0..3).any(|k| p[k].abs_diff(q[k]) > 2))
+            .count()
+    };
+    let bare = frame(None);
+    let hint = frame(Some(OverlayTint::Hint));
+    let island = frame(Some(OverlayTint::Island));
+    assert_eq!(differs(&bare, &hint), 0, "a hint ring stays behind the model");
+    assert!(
+        differs(&bare, &island) > 100,
+        "an island ring shows through: {} pixels",
+        differs(&bare, &island)
+    );
+}
