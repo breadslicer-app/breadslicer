@@ -111,6 +111,7 @@ fn support_triangles_match_dragonfruit() {
             tip_drawing: Default::default(),
             shaft_style: Default::default(),
             robust_raft_geometry: false,
+            draw_rafts: true,
         })
         .unwrap();
         let expected = &case["triangles"];

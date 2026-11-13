@@ -157,7 +157,7 @@ impl ArrangeRun {
             ui.set_arrange_last_run(ctr!("Inspector", "Select the models to copy."));
             return;
         };
-        let options = self.options.get().on(&self.document);
+        let options = self.options_now();
         let settings = options.settings();
         let limit = (options.max_copies > 0).then_some(options.max_copies as usize);
         *self.fill.pending.borrow_mut() = Some(Pending {
@@ -200,6 +200,17 @@ impl ArrangeRun {
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
             let _ = ui_weak.upgrade_in_event_loop(|ui| ui.invoke_arrange_finished());
         });
+    }
+
+    /// Whether a Fill bed's worker has ended, its result waiting for the
+    /// window: for tests.
+    #[cfg(test)]
+    pub(crate) fn fill_done_for_test(&self) -> bool {
+        self.fill
+            .slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
     }
 
     /// Takes the worker's result on the UI thread and adds the copies, when

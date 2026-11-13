@@ -59,6 +59,46 @@ pub use support_gen_df::supports::auto_support::zone_rules::{
 /// The name the generated support mesh carries.
 pub const DF_SUPPORT_MESH_NAME: &str = "Supports";
 
+/// The name one raft for all carries (#556): the raft under every set of a
+/// plate standing on one, a mesh of its own.
+pub const PLATE_RAFT_NAME: &str = "Raft";
+
+/// Whether `mesh` is one raft for all (#556).
+pub fn is_plate_raft(mesh: &IndexedMesh) -> bool {
+    mesh.meta()
+        .as_ref()
+        .and_then(|m| m.name.as_deref())
+        .is_some_and(|name| name == PLATE_RAFT_NAME)
+}
+
+/// One raft for all (#556): a raft of lines under the roots of every set of
+/// `sets` that stands on one, each moved by its motion (where its leaf moved
+/// it since its session was drawn), in world space. `None` when none does
+/// or nothing is drawn.
+pub fn plate_raft(
+    sets: &[(
+        &DfSupportSession,
+        sc_mesh_core::transform::AffineTransform3D,
+    )],
+) -> Option<IndexedMesh> {
+    let on: Vec<_> = sets
+        .iter()
+        .filter(|(session, _)| session.stands_on_one_raft())
+        .collect();
+    let (raft, robust) = on.first()?.0.raft_settings();
+    let mut circles: Vec<_> = on
+        .iter()
+        .flat_map(|(session, motion)| session.raft_roots(motion))
+        .collect();
+    // The same scene draws the same raft whatever order its sets come in.
+    circles.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    let sink = support_gen_df::features::slicing::support_world_triangles::plate_raft_parts(
+        &circles, &raft, robust,
+    )
+    .ok()?;
+    weld_parts(&sink.floats, &sink.parts, PLATE_RAFT_NAME)
+}
+
 /// The name support meshes carried before, still found in saved projects.
 const LEGACY_SUPPORT_MESH_NAME: &str = "Supports (DragonFruit)";
 
@@ -83,14 +123,14 @@ pub use sc_mesh_core::presupported::{
 /// Whether a mesh named `name` is supports of any kind: generated here, or
 /// imported with a pre-supported file (#258).
 pub fn is_any_support_mesh_name(name: &str) -> bool {
-    is_support_mesh_name(name) || is_imported_supports_name(name)
+    is_support_mesh_name(name) || is_imported_supports_name(name) || name == PLATE_RAFT_NAME
 }
 
 /// Whether `mesh` is supports of any kind: generated here, or imported with
 /// a pre-supported file (#258). Neither is a model: a run supports neither,
 /// and neither is hollowed, oriented or arranged on its own.
 pub fn is_any_support_mesh(mesh: &IndexedMesh) -> bool {
-    is_support_mesh(mesh) || is_imported_supports(mesh)
+    is_support_mesh(mesh) || is_imported_supports(mesh) || is_plate_raft(mesh)
 }
 
 /// What the run is asked for.

@@ -53,6 +53,7 @@ mod orient_run;
 mod overhang_tips;
 mod pending_load;
 mod plate_layout;
+mod plate_raft;
 mod preferences_bus;
 mod preferences_filters;
 mod preferences_window;

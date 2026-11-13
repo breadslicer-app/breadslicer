@@ -1023,6 +1023,7 @@ impl DfSupportSession {
             recipe.options.raft = o.raft;
             recipe.options.raft_thickness_mm = o.raft_thickness_mm;
             recipe.options.raft_wall = o.raft_wall;
+            recipe.options.one_raft = o.one_raft;
             Arc::new(recipe)
         });
         Some(next)
@@ -2512,6 +2513,47 @@ impl DfSupportSession {
         raft_and_feet_top_mm(&self.state.collections, &self.settings.rafts.global)
     }
 
+    /// Whether this set stands on one raft for all (#556): its drawing has no
+    /// raft of its own, [`crate::plate_raft`] draws it for every such set.
+    pub fn stands_on_one_raft(&self) -> bool {
+        self.settings.raft_apart
+    }
+
+    /// Where this set's roots stand, moved by `motion` (where its leaf moved
+    /// it since), and how wide: what one raft for all is drawn under.
+    pub fn raft_roots(
+        &self,
+        motion: &sc_mesh_core::transform::AffineTransform3D,
+    ) -> Vec<support_gen_df::supports::rafts::crenelated::raft_types::SupportBaseCircle> {
+        let (l, t) = (motion.linear(), motion.translation());
+        self.state
+            .collections
+            .roots
+            .values()
+            .map(|root| {
+                let p = root.transform.pos;
+                support_gen_df::supports::rafts::crenelated::raft_types::SupportBaseCircle {
+                    x: l[0][0] * p.x + l[0][1] * p.y + l[0][2] * p.z + t[0],
+                    y: l[1][0] * p.x + l[1][1] * p.y + l[1][2] * p.z + t[1],
+                    r: root.diameter * 0.5,
+                }
+            })
+            .collect()
+    }
+
+    /// The raft these supports are drawn on.
+    pub(crate) fn raft_settings(
+        &self,
+    ) -> (
+        support_gen_df::supports::rafts::crenelated::raft_types::RaftSettings,
+        bool,
+    ) {
+        (
+            self.settings.rafts.global,
+            self.settings.robust_raft_geometry,
+        )
+    }
+
     /// The tip diameter of support `id`, when it has one.
     fn tip_diameter(&self, id: &str) -> Option<f64> {
         let c = &self.state.collections;
@@ -3621,6 +3663,72 @@ mod session_tests {
                 "the raft reaches {raft_top}, past {told}"
             );
         }
+    }
+
+    /// #556: a set standing on one raft for all draws no raft of its own,
+    /// its roots keeping their feet on lines; the plate's raft is one mesh
+    /// under the roots of every such set, each where its leaf moved it.
+    #[test]
+    fn one_raft_for_all_is_drawn_once_under_every_set() {
+        use sc_mesh_core::transform::AffineTransform3D;
+        let mut request = crate::DfSupportRequest::default();
+        request.options.one_raft = true;
+        request.options.raft = crate::options::RaftMode::Solid;
+        let mut session = bare_slab(12.0, request);
+        session.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+        session.add_trunk_at([10.0, 5.0, 12.0]).expect("another");
+        assert!(session.stands_on_one_raft());
+        let options = session.options().expect("its options");
+        assert_eq!(
+            options.raft_drawn(),
+            crate::options::RaftMode::Lines,
+            "lines"
+        );
+        assert!(options.one_raft);
+        assert_eq!(
+            session.settings.rafts.global.bottom_mode,
+            RaftBottomMode::Line
+        );
+
+        // Its own drawing: the supports and their feet, no raft.
+        let own = session.mesh().unwrap().expect("drawn");
+        let mut lines = request_lines();
+        let mut with_raft = bare_slab(12.0, std::mem::take(&mut lines));
+        with_raft.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+        with_raft.add_trunk_at([10.0, 5.0, 12.0]).expect("another");
+        let drawn_with = with_raft.mesh().unwrap().expect("drawn");
+        assert!(
+            own.faces().len() < drawn_with.faces().len(),
+            "no raft of its own"
+        );
+
+        // The plate's raft, under this set and a copy of it moved 30 mm.
+        let moved = AffineTransform3D::from_translation([0.0, 30.0, 0.0]);
+        let raft =
+            crate::plate_raft(&[(&session, AffineTransform3D::identity()), (&session, moved)])
+                .expect("one raft");
+        assert!(crate::is_plate_raft(&raft));
+        assert!(crate::is_any_support_mesh(&raft));
+        let (lo, hi) =
+            raft.vertices()
+                .iter()
+                .fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| {
+                    let p = v.as_array();
+                    (
+                        std::array::from_fn(|k| lo[k].min(p[k])),
+                        std::array::from_fn(|k| hi[k].max(p[k])),
+                    )
+                });
+        assert!(lo[1] < 6.0 && hi[1] > 34.0, "under both: {lo:?} {hi:?}");
+        assert!(f64::from(hi[2]) <= session.raft_top_mm() + 1e-4, "{hi:?}");
+        // A set on a raft of its own adds nothing to it.
+        assert!(crate::plate_raft(&[(&with_raft, AffineTransform3D::identity())]).is_none());
+    }
+
+    fn request_lines() -> crate::DfSupportRequest {
+        let mut request = crate::DfSupportRequest::default();
+        request.options.raft = crate::options::RaftMode::Lines;
+        request
     }
 
     /// #518: on a line raft the roots stand on small feet, a little wider

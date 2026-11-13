@@ -792,6 +792,9 @@ export component MainWindow inherits Window {
     callback plate-remove-requested(bool);
     // The Arrange tool of the active plate, drawn on its rim (#545).
     callback plate-arrange-requested();
+    // Generate's supports run into a neighbour under one raft for all
+    // (#556): Arrange all, joined to Generate's step.
+    callback arrange-after-supports();
     // A plate's name being edited where it lies on the plate (#545): the keys
     // go to a hidden field, the name shows on the plate as it is typed.
     in-out property <string> plate-name-text;
@@ -2455,6 +2458,7 @@ export component MainWindow inherits Window {
                                     raft-index: root.support-raft-index;
                                     raft-thickness: root.support-raft-thickness;
                                     raft-wall: root.support-raft-wall;
+                                    one-raft: root.arrange-one-raft;
                                     zone-summary: root.support-zone-summary;
                                     grid-on: root.support-grid-on;
                                     grid-spacing: root.support-grid-spacing;

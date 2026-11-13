@@ -7750,5 +7750,15 @@ msgstr "Una balsa para todo"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
-msgid "Line rafts. The rafts take no room and join into one; the trunks of neighbours stand at least 2 mm apart."
-msgstr "Balsa de líneas. Las balsas no ocupan lugar y se juntan en una sola; los troncos vecinos quedan al menos a 2 mm."
+msgid "One raft of lines under every model of the plate: Arrange packs by what stands on it, the trunks of neighbours at least 2 mm apart."
+msgstr "Una sola balsa de líneas bajo todos los modelos de la cama: Acomodar los junta por lo que está arriba, con los troncos vecinos al menos a 2 mm."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "One raft of lines under every model of the plate, drawn again as they move."
+msgstr "Una sola balsa de líneas bajo todos los modelos de la cama, que se rehace cuando se mueven."
+
+#: src/df_support_run.rs
+msgctxt "Workspace"
+msgid "Supports ran into a neighbour: arranging the plate again."
+msgstr "Los soportes chocaban con un vecino: acomodando la cama de nuevo."

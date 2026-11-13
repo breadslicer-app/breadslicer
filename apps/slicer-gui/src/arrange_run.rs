@@ -121,9 +121,10 @@ impl ArrangeOptions {
         }
     }
 
-    /// These options with the rafts' top of `document` as it stands, when
-    /// they put everything under one raft (#556).
-    pub(crate) fn on(mut self, document: &SceneDocument) -> Self {
+    /// These options with one raft for all as the Supports tab has it
+    /// (#556), and the rafts' top of `document` as it stands.
+    pub(crate) fn on(mut self, document: &SceneDocument, one_raft: bool) -> Self {
+        self.one_raft = one_raft;
         self.raft_top_mm = if self.one_raft {
             let sessions = document.support_sessions();
             document
@@ -185,6 +186,9 @@ struct AcrossPending {
     again: bool,
     /// The card's settings it works with.
     options: ArrangeOptions,
+    /// It spaces out what Generate just placed (#556): its step joins
+    /// Generate's.
+    join: bool,
 }
 
 pub(crate) struct ArrangeRun {
@@ -298,6 +302,15 @@ impl ArrangeRun {
             let run = run.clone();
             ui.on_arrange_fill_requested(move || run.start_fill());
         }
+        {
+            // Generate placed supports that run into a neighbour under one
+            // raft for all (#556): every plate is arranged again with them,
+            // in Generate's step.
+            let run = run.clone();
+            ui.on_arrange_after_supports(move || {
+                run.arrange_across(ArrangeScope::Plates, false, true);
+            });
+        }
         run
     }
 
@@ -317,10 +330,7 @@ impl ArrangeRun {
         {
             return;
         }
-        let now = (
-            self.document.scene_revision(),
-            self.options.get().on(&self.document),
-        );
+        let now = (self.document.scene_revision(), self.options_now());
         if self.ahead.drawn.get() == Some(now) {
             return;
         }
@@ -354,10 +364,14 @@ impl ArrangeRun {
         });
     }
 
-    /// The card's options as a press now would use them: for tests.
-    #[cfg(test)]
+    /// The card's options as a press now uses them: with one raft for all
+    /// as the Supports tab has it (#556).
     pub(crate) fn options_now(&self) -> ArrangeOptions {
-        self.options.get().on(&self.document)
+        let one_raft = self
+            .ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_arrange_one_raft());
+        self.options.get().on(&self.document, one_raft)
     }
 
     /// Stops drawing ahead: a run of its own draws what it needs.
@@ -372,7 +386,6 @@ impl ArrangeRun {
         ui.set_arrange_turns(o.turns);
         ui.set_arrange_shadow_only(o.shadow_only);
         ui.set_arrange_max_copies(o.max_copies as f32);
-        ui.set_arrange_one_raft(o.one_raft);
     }
 
     fn on_option(&self, code: i32, value: f32) {
@@ -383,18 +396,19 @@ impl ArrangeRun {
             2 => o.turns = value != 0.0,
             3 => o.shadow_only = value != 0.0,
             4 => o.max_copies = value.round().clamp(0.0, 9999.0) as u32,
-            5 => o.one_raft = value != 0.0,
+            5 => {
+                // One raft for all is the supports' (#556): the box here
+                // stands for the one in the Supports tab.
+                if let Some(ui) = self.ui.upgrade() {
+                    ui.invoke_support_option_changed(14, value);
+                }
+                return;
+            }
             _ => return,
         }
         self.options.set(o);
         if let Some(ui) = self.ui.upgrade() {
             self.push_options(&ui);
-            // One raft for all is a raft of lines (#556): the Supports tab
-            // turns to it, and the sets already made are drawn again on it.
-            // Picking another raft there turns the box off.
-            if code == 5 && o.one_raft && ui.get_support_raft_index() != 1 {
-                ui.invoke_support_option_changed(9, 1.0);
-            }
         }
     }
 
@@ -419,7 +433,7 @@ impl ArrangeRun {
         if jobs.is_empty() {
             return;
         }
-        let settings = self.options.get().on(&self.document).settings();
+        let settings = self.options_now().settings();
         let mut leaves = Vec::new();
         let mut names = Vec::new();
         let mut work = Vec::new();
@@ -465,7 +479,7 @@ impl ArrangeRun {
         let volume = self.ctrl.build_volume();
         let count = across::by_hand(&self.document, &volume, scope);
         if count == 0 {
-            self.arrange_across(scope, false);
+            self.arrange_across(scope, false, false);
             return;
         }
         let run = self.clone();
@@ -481,8 +495,8 @@ impl ArrangeRun {
                 details: Default::default(),
             },
             move |choice| match choice {
-                HandPlacedChoice::Keep => run.arrange_across(scope, true),
-                HandPlacedChoice::ArrangeToo => run.arrange_across(scope, false),
+                HandPlacedChoice::Keep => run.arrange_across(scope, true, false),
+                HandPlacedChoice::ArrangeToo => run.arrange_across(scope, false, false),
                 HandPlacedChoice::Cancel => {}
             },
         );
@@ -490,7 +504,7 @@ impl ArrangeRun {
 
     /// Starts an Arrange all of `scope` on a worker (#554); with
     /// `keep_by_hand`, the models placed by hand stay where they are.
-    fn arrange_across(self: &Rc<Self>, scope: ArrangeScope, keep_by_hand: bool) {
+    fn arrange_across(self: &Rc<Self>, scope: ArrangeScope, keep_by_hand: bool, join: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -501,7 +515,7 @@ impl ArrangeRun {
         // stands (#560).
         let revision = self.document.scene_revision();
         let last = self.arranged.get();
-        let options = self.options.get().on(&self.document);
+        let options = self.options_now();
         if last == Some((revision, options, scope)) {
             ui.set_arrange_last_run(ctr!(
                 "Inspector",
@@ -535,6 +549,7 @@ impl ArrangeRun {
             started: Instant::now(),
             again,
             options,
+            join,
         });
         self.cancel.store(false, Ordering::Relaxed);
         self.stop_ahead();
@@ -555,7 +570,7 @@ impl ArrangeRun {
     /// Arrange all pressed, past the hand-placed question (#560).
     #[cfg(test)]
     pub(crate) fn arrange_all_for_test(self: &Rc<Self>) {
-        self.arrange_across(ArrangeScope::Plates, false);
+        self.arrange_across(ArrangeScope::Plates, false, false);
     }
 
     /// Whether an Arrange all's worker has ended, its result waiting for the
@@ -645,6 +660,9 @@ impl ArrangeRun {
             }
             Err(EditNotApplied::NoSceneLoaded) => return,
         };
+        if pending.join {
+            self.document.join_last_steps(2);
+        }
         self.arranged.set(Some((
             self.document.scene_revision(),
             pending.options,
@@ -998,7 +1016,10 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             let Some(query) = spatial.leaf(leaf) else {
                 continue;
             };
-            if !is_any_support_mesh(query.mesh()) {
+            // One raft for all (#556) is drawn again where its sets go.
+            if !is_any_support_mesh(query.mesh())
+                || sc_geom::df_supports::is_plate_raft(query.mesh())
+            {
                 continue;
             }
             let Some(support) = part(leaf) else {
@@ -1411,7 +1432,7 @@ mod real_scene {
                     ..ArrangeOptions::default()
                 };
                 _arrange.options.set(options);
-                let options = options.on(&document);
+                let options = options.on(&document, options.one_raft);
                 let settings = options.settings();
                 let busy = idle(wait);
                 let triangles: usize = document
@@ -1506,7 +1527,7 @@ mod again_tests {
 
     /// Presses Arrange all and lets its worker finish.
     fn press(run: &Rc<ArrangeRun>) {
-        run.arrange_across(ArrangeScope::Plates, false);
+        run.arrange_across(ArrangeScope::Plates, false, false);
         let start = Instant::now();
         while run.across.borrow().is_some()
             && run

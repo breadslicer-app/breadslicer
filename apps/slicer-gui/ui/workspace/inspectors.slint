@@ -1323,7 +1323,7 @@ export component TransformInspector inherits VerticalLayout {
             }
         }
         if root.arrange-one-raft: Note {
-            text: @tr("Inspector" => "Line rafts. The rafts take no room and join into one; the trunks of neighbours stand at least 2 mm apart.");
+            text: @tr("Inspector" => "One raft of lines under every model of the plate: Arrange packs by what stands on it, the trunks of neighbours at least 2 mm apart.");
         }
         NumberField {
             label: @tr("Inspector" => "Gap");
@@ -2003,6 +2003,8 @@ export component SupportsInspector inherits VerticalLayout {
     in property <int> raft-index;
     in property <float> raft-thickness;
     in property <bool> raft-wall;
+    // One raft for all (#556).
+    in property <bool> one-raft;
     // A zone preset's summary (#360), empty without one: the preset sizes
     // and spaces the supports itself, so the placement knobs give way to it.
     in property <string> zone-summary;
@@ -2773,6 +2775,16 @@ export component SupportsInspector inherits VerticalLayout {
                     root.option-changed(9, i);
                 }
             }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "One raft for all");
+            checked: root.one-raft;
+            toggled => {
+                root.option-changed(14, self.checked ? 1 : 0);
+            }
+        }
+        if root.one-raft: Note {
+            text: @tr("Inspector" => "One raft of lines under every model of the plate, drawn again as they move.");
         }
         NumberField {
             label: @tr("Inspector" => "Thickness");

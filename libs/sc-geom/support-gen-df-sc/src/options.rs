@@ -74,6 +74,10 @@ pub struct DfSupportOptions {
     pub raft_thickness_mm: f64,
     /// The crenelated wall around a solid raft.
     pub raft_wall: bool,
+    /// One raft for all (#556): a raft of lines under every set standing on
+    /// one, drawn once for the plate; a set's own drawing leaves it out.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub one_raft: bool,
     /// A zone preset (#360): when set, it sizes and spaces every support by
     /// the zone it lands in, and its bracing replaces the default; sizing,
     /// density, overhang angle, size scale, smallest island, coverage and
@@ -99,6 +103,7 @@ impl Default for DfSupportOptions {
             raft: RaftMode::Solid,
             raft_thickness_mm: 0.5,
             raft_wall: true,
+            one_raft: false,
             zones: None,
         }
     }
@@ -204,13 +209,15 @@ impl DfSupportOptions {
     /// thickness and its wall. Whether that changed it.
     pub(crate) fn apply_raft(&self, settings: &mut PipelineSettings) -> bool {
         let o = self.clamped();
-        let mode = match o.raft {
+        let mode = match o.raft_drawn() {
             RaftMode::Solid => RaftBottomMode::Solid,
             RaftMode::Lines => RaftBottomMode::Line,
             RaftMode::Off => RaftBottomMode::Off,
         };
         // Through the store, as DragonFruit's panel does, only when the raft
         // really changes: the store also resolves the rest of the raft.
+        let apart = settings.raft_apart != o.one_raft;
+        settings.raft_apart = o.one_raft;
         let g = settings.rafts.global;
         if g.bottom_mode != mode
             || g.thickness != o.raft_thickness_mm
@@ -226,7 +233,7 @@ impl DfSupportOptions {
             );
             return true;
         }
-        false
+        apart
     }
 }
 
@@ -282,8 +289,18 @@ impl DfSupportOptions {
     /// The height of the raft's top above the plate, in millimetres: its
     /// plate (or line beams) plus the crenelated wall, the material a model
     /// must stand above to clear it (#131). `None` with the raft off.
+    /// The raft these options draw: one raft for all is a raft of lines
+    /// (#556), whatever raft the preset keeps for when it goes off.
+    pub fn raft_drawn(&self) -> RaftMode {
+        if self.one_raft {
+            RaftMode::Lines
+        } else {
+            self.raft
+        }
+    }
+
     pub fn raft_top_mm(&self) -> Option<f64> {
-        if self.clamped().raft == RaftMode::Off {
+        if self.clamped().raft_drawn() == RaftMode::Off {
             return None;
         }
         let mut settings = PipelineSettings::defaults(0.05);
