@@ -36,7 +36,9 @@ pub(crate) fn short_name(id: &str) -> String {
 }
 
 /// The sizes the panel shows, as indices into the preset's sizes: the four
-/// hand sizes, then every other size a zone of the preset places, by tip.
+/// hand sizes in their order (XS S M L), then every other size a zone of
+/// the preset places, in the preset's order. Never by tip: a size whose tip
+/// is made bigger than the next one keeps its place, and so does its chip.
 pub(crate) fn shown_sizes(zones: &ZonePreset) -> Vec<usize> {
     let r = &zones.rules;
     let used: Vec<&str> = r
@@ -64,10 +66,11 @@ pub(crate) fn shown_sizes(zones: &ZonePreset) -> Vec<usize> {
         .filter(|(_, s)| HAND_SIZES.contains(&s.id.as_str()) || used.contains(&s.id.as_str()))
         .map(|(i, _)| i)
         .collect();
-    shown.sort_by(|&a, &b| {
-        r.sizes[a]
-            .tip_diameter_mm
-            .total_cmp(&r.sizes[b].tip_diameter_mm)
+    shown.sort_by_key(|&i| {
+        HAND_SIZES
+            .iter()
+            .position(|&id| id == r.sizes[i].id)
+            .unwrap_or(HAND_SIZES.len() + i)
     });
     shown
 }
@@ -285,7 +288,7 @@ mod tests {
     }
 
     /// Miniatures shows its four sizes; Statues also the thick overhang one
-    /// it places, last by its tip.
+    /// it places, after them.
     #[test]
     fn the_sizes_shown_are_the_hand_ones_and_those_a_zone_places() {
         let names = |z: &ZonePreset| -> Vec<String> {
@@ -330,6 +333,23 @@ mod tests {
             .map(|&i| short_name(&z.rules.sizes[i].id))
             .collect();
         assert_eq!(shared, ["XS", "S", "M", "L"]);
+    }
+
+    /// A tip may grow past the next size's: each size keeps its place, so
+    /// the chip picked stays the size being edited.
+    #[test]
+    fn a_tip_grown_past_the_next_size_keeps_every_size_in_its_place() {
+        let mut z = minis_30();
+        let small = index(&z, "small");
+        let before = shown_sizes(&z);
+        set_value(&mut z, small, 0, 0.45);
+        assert_eq!(shown_sizes(&z), before);
+        let extrasmall = index(&z, "extrasmall");
+        set_value(&mut z, extrasmall, 0, 0.5);
+        assert_eq!(shown_sizes(&z), before);
+        assert_eq!(z.rules.sizes[extrasmall].tip_diameter_mm, 0.5);
+        assert_eq!(z.rules.sizes[small].tip_diameter_mm, 0.45);
+        assert_eq!(z.rules.sizes[index(&z, "medium")].tip_diameter_mm, 0.30);
     }
 
     /// Values go through the engine's bounds, and the bracing is the
