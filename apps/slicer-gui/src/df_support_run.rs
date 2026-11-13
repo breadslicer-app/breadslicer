@@ -6943,6 +6943,19 @@ mod hand_edit_tests {
         out
     }
 
+    /// The first tip of the set shown in the scene of `document`, where the
+    /// overhang map and the view from under the plate put it.
+    fn shown_tip(document: &SceneDocument) -> [f32; 3] {
+        let sets = crate::overhang_tips::shown_sets(document);
+        let set = sets.first().expect("a set shown");
+        let [x, y, z] = set.session.pieces()[0].contacts[0].surface;
+        set.world
+            .apply_to_vertex(sc_mesh_core::primitives::Vertex::new([
+                x as f32, y as f32, z as f32,
+            ]))
+            .coords()
+    }
+
     fn is_moved(
         moved: &sc_mesh_core::IndexedMesh,
         mesh: &sc_mesh_core::IndexedMesh,
@@ -6974,6 +6987,21 @@ mod hand_edit_tests {
             let start = leaf_transform(&document, supports);
             let (at, there) = ([20.0, 20.0, 8.0], [27.0, 15.0, 8.0]);
             let first = in_force_session(&run).expect("the run's session");
+            let tip = {
+                let [x, y, z] = first.pieces()[0].contacts[0].surface;
+                [x as f32, y as f32, z as f32]
+            };
+            // The tips the overhang map and the view from under the plate
+            // show stand on the model wherever it went, never moved twice.
+            let tip_at = |when: &str, d: [f32; 2]| {
+                let shown = shown_tip(&document);
+                let want = [tip[0] + d[0], tip[1] + d[1], tip[2]];
+                assert!(
+                    (0..3).all(|k| (shown[k] - want[k]).abs() < 1e-3),
+                    "{when}: shown {shown:?}, the model's tip at {want:?}"
+                );
+            };
+            tip_at("at the start", [0.0, 0.0]);
 
             // Live, the support leaf rides along on its transform.
             move_live(&document, model, at, [23.0, 18.0, 8.0]);
@@ -6982,6 +7010,7 @@ mod hand_edit_tests {
                 leaf_transform(&document, supports),
                 translation([7.0, -5.0, 0.0])
             );
+            tip_at("live", [7.0, -5.0]);
             // A move put back puts them back.
             move_live(&document, model, there, at);
             assert_eq!(leaf_transform(&document, supports), start);
@@ -6998,6 +7027,7 @@ mod hand_edit_tests {
                 is_moved(&world_mesh(&document, supports), &generated, [7.0, -5.0]),
                 "the same supports, moved"
             );
+            tip_at("committed", [7.0, -5.0]);
             let moved_session = in_force_session(&run).expect("editable");
             assert!(
                 !Arc::ptr_eq(&moved_session, &first),
@@ -7048,11 +7078,13 @@ mod hand_edit_tests {
             // One Undo takes the model and its supports back; Redo again.
             assert!(document.undo().unwrap());
             assert_eq!(leaf_transform(&document, model), translation(at));
+            tip_at("undone", [0.0, 0.0]);
             let (_, back) = run.support_leaf().unwrap();
             assert!(Arc::ptr_eq(&back, &generated), "the supports as generated");
             assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &first)));
             assert!(document.redo().unwrap());
             assert_eq!(leaf_transform(&document, model), translation(there));
+            tip_at("redone", [7.0, -5.0]);
             let (_, again) = run.support_leaf().unwrap();
             assert!(Arc::ptr_eq(&again, &moved));
             assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &moved_session)));
@@ -7173,7 +7205,11 @@ mod hand_edit_tests {
             document.apply_edit(edit.clone()).expect("moves");
             document.push_edit(edit);
             // The move itself, then the sets carried: two, whatever the count.
-            assert_eq!(told.get(), 2, "told once for the move and once for the sets");
+            assert_eq!(
+                told.get(),
+                2,
+                "told once for the move and once for the sets"
+            );
             assert_eq!(run.sets_in_force().len(), 3, "all still editable");
             for &l in &leaves {
                 let (set, _) = set_of(&document, &run, l);

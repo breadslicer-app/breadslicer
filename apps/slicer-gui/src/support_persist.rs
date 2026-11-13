@@ -52,6 +52,11 @@ pub(crate) struct DrawnSet {
     /// The model's mesh and world transform then.
     model_mesh: Arc<IndexedMesh>,
     pub(crate) model_world: Transform3D,
+    /// Where the leaf stood in the world when the session was recorded: the
+    /// session's points are world points then. A set carried along on its
+    /// leaf's transform (#560) records its session moved with the leaf, so
+    /// the leaf's move since then is what still has to be applied.
+    pub(crate) leaf_world: Transform3D,
     /// Not in the scene yet: its first tip makes it (#444), and `leaf` is
     /// the model's until then.
     pub(crate) unborn: bool,
@@ -86,6 +91,7 @@ impl DrawnSet {
             mesh: model_mesh.clone(),
             model_mesh,
             model_world,
+            leaf_world: Transform3D::Identity,
             unborn: true,
         })
     }
@@ -118,6 +124,7 @@ pub(crate) fn record(
         .with_scene(|spatial| {
             let mesh = spatial.graph().leaf_mesh_arc(leaf)?.clone();
             let (model_mesh, model_world) = model_state(spatial, model)?;
+            let leaf_world = spatial.leaf(leaf)?.world_transform();
             Some(DrawnSet {
                 leaf,
                 model,
@@ -125,6 +132,7 @@ pub(crate) fn record(
                 mesh,
                 model_mesh,
                 model_world,
+                leaf_world,
                 unborn: false,
             })
         })
@@ -300,6 +308,25 @@ pub(crate) fn latest_drawing(
         .iter()
         .rev()
         .find(|d| d.leaf == leaf)
+        .cloned()
+}
+
+/// The drawing of the support leaf `leaf` that the scene of `spatial`
+/// shows: the latest one whose mesh the leaf holds. Several drawings share
+/// a mesh when a set is carried along on its leaf's transform (#560); each
+/// records where the leaf stood, so any of them places the set right. The
+/// latest drawing when none matches.
+pub(crate) fn shown_drawing(
+    sessions: &RefCell<SupportSessions>,
+    spatial: &SceneSpatial,
+    leaf: NodeId,
+) -> Option<DrawnSet> {
+    let shown = spatial.graph().leaf_mesh_arc(leaf)?;
+    let sessions = sessions.borrow();
+    let mine = || sessions.iter().rev().filter(|d| d.leaf == leaf);
+    mine()
+        .find(|d| Arc::ptr_eq(&d.mesh, shown))
+        .or_else(|| mine().next())
         .cloned()
 }
 
