@@ -3086,7 +3086,11 @@ mod window_wiring_tests {
                 window.get_support_shape_picture().size().width > 0,
                 "the support is drawn"
             );
-            assert_eq!(window.get_support_based_on().as_str(), "");
+            assert_eq!(
+                window.get_support_based_on().as_str(),
+                "Miniatures, as it ships"
+            );
+            assert!(!window.get_support_preset_resettable());
 
             // A thicker trunk: Miniatures keeps it as its own change, and
             // the field can go back to 1.1.
@@ -3101,8 +3105,12 @@ mod window_wiring_tests {
                 "Miniatures, with your changes"
             );
             // Another preset and back: the change is still there.
+            assert!(window.get_support_preset_resettable());
             window.invoke_support_preset_picked(1);
-            assert_eq!(window.get_support_based_on().as_str(), "");
+            assert_eq!(
+                window.get_support_based_on().as_str(),
+                "Figures, as it ships"
+            );
             window.invoke_support_preset_picked(0);
             assert_eq!(window.get_support_preset_card_index(), 0);
             assert_eq!(values(&window)[1], 1.3);
@@ -3136,7 +3144,10 @@ mod window_wiring_tests {
 
             window.invoke_support_preset_revert();
             assert_eq!(window.get_support_preset_card_index(), 0);
-            assert_eq!(window.get_support_based_on().as_str(), "");
+            assert_eq!(
+                window.get_support_based_on().as_str(),
+                "Miniatures, as it ships"
+            );
             assert_eq!(values(&window)[1], 1.1);
             assert_eq!(tips(&window), [0.18, 0.24, 0.3, 0.4]);
         });

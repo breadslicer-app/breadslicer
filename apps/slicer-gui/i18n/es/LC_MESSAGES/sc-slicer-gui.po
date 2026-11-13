@@ -7662,3 +7662,13 @@ msgstr "De fábrica, sin cambios"
 msgctxt "Inspector"
 msgid "Built-in, with your changes"
 msgstr "De fábrica, con tus cambios"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "{}, as it ships"
+msgstr "{}, de fábrica"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Your preset {}, made from {}"
+msgstr "Tu preset {}, hecho a partir de {}"

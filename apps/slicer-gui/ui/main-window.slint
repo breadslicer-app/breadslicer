@@ -280,6 +280,7 @@ export component MainWindow inherits Window {
     in property <[PresetCard]> support-preset-cards;
     in property <int> support-preset-card-index: -1;
     in property <string> support-based-on;
+    in property <bool> support-preset-resettable;
     callback support-preset-revert();
     in property <string> support-shape-scope;
     in property <image> support-shape-picture;
@@ -2388,6 +2389,7 @@ export component MainWindow inherits Window {
                                     preset-cards: root.support-preset-cards;
                                     preset-card-index: root.support-preset-card-index;
                                     based-on: root.support-based-on;
+                                    preset-resettable: root.support-preset-resettable;
                                     preset-revert => {
                                         root.support-preset-revert();
                                     }

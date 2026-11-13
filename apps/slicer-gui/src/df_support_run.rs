@@ -220,6 +220,13 @@ pub(crate) struct DfSupportRun {
     /// The built-in preset the options in use are, which keeps each change
     /// made to them (#564); `None` for options of the person's own preset.
     editing: Cell<Option<usize>>,
+    /// The preset last picked from the list: of presets with the same
+    /// numbers, the one the person clicked is the one marked (#564).
+    picked: Cell<Option<usize>>,
+    /// The empty set a model with none would start, kept while the scene
+    /// and the options stay as they were: Add previews on it before the
+    /// first click (#564: a model with no supports showed no preview).
+    unborn_hover: RefCell<Option<(SceneRevision, NodeId, DfSupportOptions, DrawnSet)>>,
     /// The sizes the hand tools place (XS to L): the person's own, apart
     /// from every preset of Generate.
     hand: RefCell<ZonePreset>,
@@ -1635,6 +1642,8 @@ impl DfSupportRun {
             shape_hot: Cell::new(crate::support_shape::Part::None),
             based_on: Cell::new(None),
             editing: Cell::new(None),
+            picked: Cell::new(None),
+            unborn_hover: RefCell::new(None),
             hand: RefCell::new(load_hand_sizes()),
             share: RefCell::new(Vec::new()),
             sessions,
@@ -2825,9 +2834,11 @@ impl DfSupportRun {
             .iter()
             .map(|p| slint::SharedString::from(p.name.as_str()))
             .collect();
-        let current = presets
-            .iter()
-            .position(|p| p.options == o)
+        let current = self
+            .picked
+            .get()
+            .filter(|&i| presets.get(i).is_some_and(|p| p.options == o))
+            .or_else(|| presets.iter().position(|p| p.options == o))
             .map_or(-1, |i| i as i32);
         ui.set_support_preset_names(slint::ModelRc::new(slint::VecModel::from(names)));
         ui.set_support_preset_index(current);
@@ -2904,24 +2915,37 @@ impl DfSupportRun {
             .collect();
         ui.set_support_preset_cards(slint::ModelRc::new(slint::VecModel::from(cards)));
         ui.set_support_preset_card_index(card.map_or(-1, |i| i as i32));
-        // Where the preset came from, with the way back to it: a built-in
-        // preset changed, or one of the person's own.
-        let based_on = match (current, self.based_on.get()) {
-            _ if changed => card
-                .and_then(|i| preset_cards().get(i).cloned())
-                .map(|(title, _)| ctr!("Inspector", "{}, with your changes", title))
+        // What the options in use are, on one line that is always there
+        // (the panel never moves when it changes), with the way back to
+        // the preset as it ships when they are not that.
+        let title_of = |i: usize| preset_cards().get(i).map(|(t, _)| t.clone());
+        let based_on = match (card, usize::try_from(current).ok(), self.based_on.get()) {
+            (Some(i), _, _) if changed => title_of(i)
+                .map(|t| ctr!("Inspector", "{}, with your changes", t))
                 .unwrap_or_default(),
-            (-1, Some(i)) => preset_cards()
-                .get(i)
-                .map(|(title, _)| ctr!("Inspector", "Made from {}, with changes", title))
+            (Some(i), _, _) => title_of(i)
+                .map(|t| ctr!("Inspector", "{}, as it ships", t))
                 .unwrap_or_default(),
-            (c, Some(i)) if c >= built_in as i32 => preset_cards()
-                .get(i)
-                .map(|(title, _)| ctr!("Inspector", "Made from {}", title))
+            (None, Some(c), Some(i)) => title_of(i)
+                .map(|t| {
+                    ctr!(
+                        "Inspector",
+                        "Your preset {}, made from {}",
+                        presets[c].name,
+                        t
+                    )
+                })
                 .unwrap_or_default(),
-            _ => slint::SharedString::default(),
+            (None, Some(c), None) => ctr!("Inspector", "Your preset: {}", presets[c].name),
+            (None, None, Some(i)) => title_of(i)
+                .map(|t| ctr!("Inspector", "Made from {}, with changes", t))
+                .unwrap_or_default(),
+            (None, None, None) => ctr!("Inspector", "Custom preset"),
         };
         ui.set_support_based_on(based_on);
+        ui.set_support_preset_resettable(
+            !(card.is_some() && !changed) && (card.is_some() || self.based_on.get().is_some()),
+        );
         let scope = match (card, usize::try_from(current).ok()) {
             (Some(i), _) => ctr!("Inspector", "Preset {}", preset_cards()[i].0),
             (None, Some(i)) => ctr!("Inspector", "Preset {}", presets[i].name),
@@ -4080,6 +4104,7 @@ impl DfSupportRun {
             let card = built_in.then_some(index.max(0) as usize);
             self.based_on.set(card);
             self.editing.set(card);
+            self.picked.set(Some(index.max(0) as usize));
             self.set_options(options);
         }
     }
@@ -4102,6 +4127,7 @@ impl DfSupportRun {
         }
         self.based_on.set(Some(i));
         self.editing.set(Some(i));
+        self.picked.set(Some(i));
         self.set_options(factory);
     }
 
@@ -4120,6 +4146,14 @@ impl DfSupportRun {
             let _ = std::fs::write(dir.join(format!("{stem}.toml")), text);
         }
         self.reload_presets();
+        // The preset just saved is the one marked.
+        self.picked.set(
+            self.presets
+                .borrow()
+                .iter()
+                .position(|p| !p.built_in && p.name == stem),
+        );
+        self.editing.set(None);
         if let Some(ui) = self.ui.upgrade() {
             self.push_options(&ui);
         }
@@ -4589,7 +4623,9 @@ impl DfSupportRun {
                 });
             }
             let (hand, how) = self.click_tool(&ui, tool, shift);
-            let drawn = self.set_at(point, hand)?;
+            let drawn = self
+                .set_at(point, hand)
+                .or_else(|| self.unborn_hover_set(self.bare_model_at(point, hand)?))?;
             if hand == HandTool::Add {
                 self.refresh_tip_label(&ui, Some(&drawn.session));
             }
@@ -5726,6 +5762,23 @@ impl DfSupportRun {
                 DrawnSet::unborn(spatial, model, session)
             })
             .flatten()
+    }
+
+    /// [`Self::unborn_set`] for the preview under the cursor, made once for
+    /// the scene and the options as they stand.
+    fn unborn_hover_set(&self, model: NodeId) -> Option<DrawnSet> {
+        let revision = self.document.scene_revision();
+        let options = self.born_options_now();
+        if let Some((r, m, o, drawn)) = self.unborn_hover.borrow().as_ref()
+            && *r == revision
+            && *m == model
+            && *o == options
+        {
+            return Some(drawn.clone());
+        }
+        let drawn = self.unborn_set(model)?;
+        *self.unborn_hover.borrow_mut() = Some((revision, model, options, drawn.clone()));
+        Some(drawn)
     }
 
     /// Why no support set in force takes a hand tool at `point`: the
@@ -7482,6 +7535,46 @@ mod hand_edit_tests {
         assert!(after_add.contains("edited by hand"), "{after_add}");
         assert!(after_remove.contains("edited by hand"), "{after_remove}");
         assert!(edits);
+    }
+
+    /// A model with no supports yet previews Add under the cursor before
+    /// its first click (#564: only the hint rings showed until a support
+    /// was placed).
+    #[test]
+    fn a_model_with_no_supports_previews_its_first_one() {
+        let shown = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            window.set_support_tool(1);
+            run.on_tool_hover(Some([20.2, 20.2, 7.5]));
+            let waited = Instant::now();
+            while run.last_preview.borrow().is_none() && waited.elapsed() < Duration::from_secs(10)
+            {
+                std::thread::sleep(Duration::from_millis(5));
+                run.take_hover_answer();
+            }
+            let shown = run
+                .last_preview
+                .borrow()
+                .as_ref()
+                .is_some_and(|a| a.preview.as_ref().is_some_and(|p| p.valid));
+            shown && !run.last_ghost.borrow().is_empty()
+        });
+        assert!(shown, "a green preview before the first support");
     }
 
     /// Fix All's supports (#156): several points, one undoable edit; one
@@ -10222,6 +10315,35 @@ mod hand_edit_tests {
             .chain(c.leaves.values().map(|l| &l.contact_cone))
             .map(|cone| cone.profile.contact_diameter_mm)
             .collect()
+    }
+
+    /// Of presets with the same numbers, the one clicked is the one marked
+    /// (#564: clicking any of them marked the first).
+    #[test]
+    fn of_presets_alike_the_one_clicked_is_marked() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run, _) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let built_in = run.presets.borrow().len();
+            let same = run.presets.borrow()[0].options.clone();
+            for name in ["Mine", "Mine (2)"] {
+                run.presets.borrow_mut().push(Preset {
+                    name: name.to_owned(),
+                    options: same.clone(),
+                    built_in: false,
+                    factory: None,
+                });
+            }
+            run.on_preset_picked(built_in as i32 + 1);
+            assert_eq!(window.get_support_own_preset_index(), 1);
+            assert_eq!(window.get_support_preset_index(), built_in as i32 + 1);
+            assert_eq!(window.get_support_preset_card_index(), -1);
+            run.on_preset_picked(built_in as i32);
+            assert_eq!(window.get_support_own_preset_index(), 0);
+            run.on_preset_picked(0);
+            assert_eq!(window.get_support_preset_card_index(), 0);
+            assert_eq!(window.get_support_own_preset_index(), -1);
+        });
     }
 
     /// The list of what a support settings file holds is a tree (#564): a

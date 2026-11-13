@@ -2069,6 +2069,7 @@ export component SupportsInspector inherits VerticalLayout {
     in property <[PresetCard]> preset-cards;
     in property <int> preset-card-index: -1;
     in property <string> based-on;
+    in property <bool> preset-resettable;
     callback preset-revert();
     in property <string> shape-scope;
     in property <image> shape-picture;
@@ -2287,21 +2288,26 @@ export component SupportsInspector inherits VerticalLayout {
                 root.preset-picked(i);
             }
         }
-        if root.preset-card-index < 0 && root.preset-index >= 0: Note {
-            text: @tr("Inspector" => "Your preset: {}", root.preset-names[root.preset-index]);
-        }
-        if root.based-on != "": HorizontalLayout {
+        // One line that is always there: what the options are, and the
+        // way back to the preset as it ships. Nothing under it moves when
+        // a number changes.
+        HorizontalLayout {
             spacing: 8px;
+            height: 28px;
 
-            Note {
+            Text {
                 text: root.based-on;
+                font-size: Theme.font-sm;
+                color: root.preset-resettable ? Theme.indicator : Theme.text-muted;
                 vertical-alignment: center;
+                overflow: elide;
                 horizontal-stretch: 1;
             }
             ScButton {
                 text: @tr("Inspector" => "Reset to default");
                 kind: ButtonKind.ghost;
-                enabled: !root.running;
+                enabled: !root.running && root.preset-resettable;
+                opacity: root.preset-resettable ? 1 : 0;
                 clicked => {
                     root.preset-revert();
                 }

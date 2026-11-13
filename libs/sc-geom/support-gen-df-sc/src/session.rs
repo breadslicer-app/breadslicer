@@ -4083,6 +4083,64 @@ mod session_tests {
         );
     }
 
+    /// A support from the model to the model below (a stick) is its two
+    /// tips and its whole trunk between them, as thick as its shape says
+    /// (#564: the tube ran back on itself, a thin neck between two wide
+    /// cones and a ball where the lower tip met the trunk). A span shorter
+    /// than both tips has them meet halfway.
+    #[test]
+    fn a_support_from_model_to_model_keeps_its_trunk_whole() {
+        for (gap, tip_length) in [(8.0f32, 2.3), (6.0, 2.3), (6.0, 4.0)] {
+            let mut session = bare_boxes(&[
+                ([0.0, 0.0, 25.0], [50.0, 10.0, 27.0]),
+                ([15.0, 0.0, 0.0], [35.0, 10.0, 25.0 - gap]),
+            ]);
+            let mut shape = crate::zone_presets::support_sizes().remove(2);
+            shape.trunk_diameter_mm = 2.9;
+            shape.tip_diameter_mm = 0.3;
+            shape.tip_length_mm = tip_length;
+            let how = AddOptions {
+                shape: Some(HandShape(shape)),
+                ..AddOptions::default()
+            };
+            session.add_at([25.0, 5.0, 25.0], &how).expect("placed");
+            let c = &session.state.collections;
+            assert_eq!(c.sticks.len(), 1, "gap {gap}: a stick");
+            let stick = c.sticks.values().next().unwrap();
+            let (low, high) = (stick.contact_cone_a.pos, stick.contact_cone_b.pos);
+            assert!(low.z < high.z);
+            let axis = high.sub(low);
+            let span = axis.length();
+            let axis = axis.multiply_scalar(1.0 / span);
+            // The tips as drawn: their own lengths, or their shares of a span
+            // shorter than both.
+            let (la, lb) = (
+                stick.contact_cone_a.profile.length_mm,
+                stick.contact_cone_b.profile.length_mm,
+            );
+            let fit = (span / (la + lb)).min(1.0);
+            let (la, lb) = (la * fit, lb * fit);
+            // No ring is wider than the cones reach where it stands (a
+            // doubling tube drew joints there), and between the tips every
+            // ring is the trunk's, none narrower.
+            let (r_tip, trunk) = (0.15, 1.45);
+            let mesh = session.mesh().unwrap().unwrap();
+            for v in mesh.vertices() {
+                let [x, y, z] = v.as_array().map(f64::from);
+                let d = Vec3::new(x, y, z).sub(low);
+                let t = d.dot(axis);
+                let r = d.sub(axis.multiply_scalar(t)).length();
+                let reach = (r_tip + (trunk - r_tip) * t / la)
+                    .min(r_tip + (trunk - r_tip) * (span - t) / lb)
+                    .min(trunk * 1.35);
+                assert!(r < reach + 0.15, "gap {gap}: {r} wide at {t} of {span}");
+                if t > la + 0.2 && t < span - lb - 0.2 {
+                    assert!(r > 1.4, "gap {gap}: {r} wide at {t} of {span}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn fan_refusals_and_rejections_read_as_notes() {
         assert_eq!(AddNote::of_fan(FanLeafRefusal::NoHost), AddNote::TooFar);

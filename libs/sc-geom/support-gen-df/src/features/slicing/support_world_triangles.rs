@@ -1213,8 +1213,62 @@ fn append_smooth_shaft(
         previous = Some(seg);
     }
 
+    // A shaft whose segment runs from its upper contact to its lower one (a
+    // stick's, whose ends are ordered by height after its segment is made):
+    // the tube runs the other way, so each contact joins the end of the tube
+    // at its own socket instead of the tube doubling back on itself (#564: a
+    // thin neck between two wide cones, and a ball where the lower tip met
+    // the shaft).
+    let mut ends = (cones.0.map(cone_ends), cones.1.map(cone_ends));
+    if let [(points, radii)] = chains.as_mut_slice()
+        && let (Some(first), Some(last)) = (points.first(), points.last())
+    {
+        let (lower, upper) = (ends.0.map(|e| e.socket), ends.1.map(|e| e.socket));
+        let gap = |end: Vec3, at: Option<Vec3>| at.map_or(0.0, |s| end.distance_to(s));
+        let kept = gap(first.pos, lower) + gap(last.pos, upper);
+        let turned = gap(last.pos, lower) + gap(first.pos, upper);
+        if turned + 1e-9 < kept {
+            points.reverse();
+            radii.reverse();
+            for r in radii.iter_mut() {
+                *r = (r.1, r.0);
+            }
+        }
+    }
+    // Two tips longer than the span between them: their sockets run past
+    // each other, and the tube between would double back. They meet where
+    // their lengths share the span, with no trunk between.
+    if let ([(points, radii)], (Some(low), Some(high)), (Some(cl), Some(ch))) =
+        (chains.as_mut_slice(), (&mut ends.0, &mut ends.1), cones)
+    {
+        let along = ch.pos.sub(cl.pos);
+        if high.socket.sub(low.socket).dot(along) < 0.0 {
+            let (la, lb) = (
+                cl.pos.distance_to(low.socket),
+                ch.pos.distance_to(high.socket),
+            );
+            let meet = cl
+                .pos
+                .add(along.multiply_scalar(la / js_max(1e-9, la + lb)));
+            for (end, contact) in [(&mut *low, cl.pos), (&mut *high, ch.pos)] {
+                end.socket = meet;
+                if end
+                    .neck
+                    .is_some_and(|n| contact.distance_to(n) >= contact.distance_to(meet))
+                {
+                    end.neck = None;
+                }
+            }
+            *points = vec![ChainPoint {
+                pos: meet,
+                bulge: false,
+            }];
+            radii.clear();
+        }
+    }
+
     // The upper contact: on from the last chain through its socket to the tip.
-    if let (Some(cone), Some((points, radii))) = (cones.1, chains.last_mut()) {
+    if let (Some(upper), Some((points, radii))) = (ends.1, chains.last_mut()) {
         let ContactEnds {
             socket,
             tip,
@@ -1222,7 +1276,7 @@ fn append_smooth_shaft(
             r_tip,
             neck,
             ball,
-        } = cone_ends(cone);
+        } = upper;
         let tip = ball.unwrap_or(tip);
         let shaft_r = radii.last().map_or(r_socket, |r| r.1);
         if points
@@ -1255,7 +1309,7 @@ fn append_smooth_shaft(
         }
     }
     // The lower contact: from its tip through its socket into the first chain.
-    if let (Some(cone), Some((points, radii))) = (cones.0, chains.first_mut()) {
+    if let (Some(lower), Some((points, radii))) = (ends.0, chains.first_mut()) {
         let ContactEnds {
             socket,
             tip,
@@ -1263,7 +1317,7 @@ fn append_smooth_shaft(
             r_tip,
             neck,
             ball,
-        } = cone_ends(cone);
+        } = lower;
         let tip = ball.unwrap_or(tip);
         let shaft_r = radii.first().map_or(r_socket, |r| r.0);
         if points
