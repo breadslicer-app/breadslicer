@@ -4554,6 +4554,69 @@ mod session_tests {
         assert_eq!(outcome.crowded, vec![copy]);
     }
 
+    /// A model turned about Z stands on the same raft whether the turn is
+    /// in its mesh or in its transform (#561).
+    #[test]
+    fn a_turned_model_stands_on_the_raft_it_would_baked() {
+        use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+        use sc_scene::LeafPayload;
+        let l_shape = [
+            ([0.0, 0.0, 6.0], [30.0, 8.0, 8.0]),
+            ([0.0, 8.0, 6.0], [8.0, 30.0, 8.0]),
+        ];
+        let base = boxes_scene(&l_shape);
+        let leaf = crate::scene_model_leaves(&base, None).unwrap()[0].0;
+        let mesh = base.leaf_mesh_arc(leaf).unwrap().clone();
+        let turn = AffineTransform3D::from_translation([60.0, 50.0, 0.0])
+            .compose(&AffineTransform3D::from_rotation_z(0.8));
+        let mut turned = sc_scene::Scene::new();
+        let a = turned
+            .add_leaf(
+                None,
+                Transform3D::Affine(turn),
+                LeafPayload::Mesh(mesh.clone()),
+            )
+            .unwrap();
+        turned.add_root(a).unwrap();
+        let baked_mesh = sc_scene::bake_mesh_to_world(&mesh, &Transform3D::Affine(turn)).unwrap();
+        let mut baked = sc_scene::Scene::new();
+        let b = baked
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(baked_mesh)),
+            )
+            .unwrap();
+        baked.add_root(b).unwrap();
+        let raft = |scene: &sc_scene::Scene| {
+            let out = crate::start_df_supports(scene, crate::DfSupportRequest::default())
+                .unwrap()
+                .join()
+                .unwrap();
+            let mesh = out.sets[0].mesh.clone().unwrap();
+            let low: Vec<[f32; 3]> = mesh
+                .vertices()
+                .iter()
+                .map(|v| *v.as_array())
+                .filter(|v| v[2] < 0.3)
+                .collect();
+            let lo = low
+                .iter()
+                .fold([f32::MAX; 2], |m, v| [m[0].min(v[0]), m[1].min(v[1])]);
+            let hi = low
+                .iter()
+                .fold([f32::MIN; 2], |m, v| [m[0].max(v[0]), m[1].max(v[1])]);
+            (lo, hi, out.sets[0].session.state().collections.roots.len())
+        };
+        let (a, b) = (raft(&turned), raft(&baked));
+        for k in 0..2 {
+            assert!(
+                (a.0[k] - b.0[k]).abs() < 0.5 && (a.1[k] - b.1[k]).abs() < 0.5,
+                "{a:?} {b:?}"
+            );
+        }
+    }
+
     /// A red support (no way to hold the point) is drawn of the size a
     /// click would place, the person's own shape (#564: it showed the
     /// run's size).

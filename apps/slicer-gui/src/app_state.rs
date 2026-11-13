@@ -4848,6 +4848,65 @@ mod window_wiring_tests {
             let parts =
                 || crate::support_persist::memory_report(&document.support_sessions().borrow());
             println!("opened: {}", parts());
+            // A model dragged across the plate, as the gizmo drags it: what
+            // each step costs the window (#561).
+            let drag = |label: &str| {
+                if std::env::var_os("BREADSLICER_ARRANGE_DRAG").is_none() {
+                    return;
+                }
+                let Some(model) = document.support_sessions().borrow().last().map(|d| d.model)
+                else {
+                    return;
+                };
+                let start = document
+                    .with_scene(|s| s.leaf(model).map(|q| q.local_transform()))
+                    .flatten()
+                    .unwrap();
+                let (mut apply, mut frame, mut worst) = (0.0f64, 0.0f64, 0.0f64);
+                let steps = 20;
+                let mut at = start;
+                for k in 1..=steps {
+                    let after = Transform3D::Affine(
+                        sc_mesh_core::transform::AffineTransform3D::from_translation([
+                            0.5 * f64::from(k),
+                            0.0,
+                            0.0,
+                        ])
+                        .compose(&match start {
+                            Transform3D::Affine(a) => a,
+                            Transform3D::Identity => {
+                                sc_mesh_core::transform::AffineTransform3D::identity()
+                            }
+                        }),
+                    );
+                    let t = Instant::now();
+                    let _ = document.apply_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+                        node_id: model,
+                        before: at,
+                        after,
+                    });
+                    let a = t.elapsed().as_secs_f64();
+                    at = after;
+                    let t = Instant::now();
+                    crate::test_support::slint_thread::render_frames();
+                    let f = t.elapsed().as_secs_f64();
+                    apply += a;
+                    frame += f;
+                    worst = worst.max(a + f);
+                }
+                let _ = document.apply_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+                    node_id: model,
+                    before: at,
+                    after: start,
+                });
+                println!(
+                    "drag {label}: apply {:.1} ms, frame {:.1} ms a step, worst {:.1} ms",
+                    apply * 1000.0 / f64::from(steps),
+                    frame * 1000.0 / f64::from(steps),
+                    worst * 1000.0
+                );
+            };
+            drag("opened");
             // Supports made again for every model, with Miniatures (#561).
             if std::env::var_os("BREADSLICER_ARRANGE_GENERATE").is_some() {
                 let run = app.main_windows.borrow()[&id]
@@ -4866,6 +4925,7 @@ mod window_wiring_tests {
                     memory_mb(),
                 );
                 println!("generated: {}", parts());
+                drag("generated");
             }
             for (run, gap) in gaps.iter().enumerate() {
                 let (busy, longest) = if run == 0 { (0.0, 0.0) } else { pump(wait) };
@@ -4900,6 +4960,7 @@ mod window_wiring_tests {
                     window.get_arrange_last_run()
                 );
                 println!("run {run}: {}", parts());
+                drag(&format!("after run {run}"));
             }
             let (busy, longest) = pump(wait);
             println!(

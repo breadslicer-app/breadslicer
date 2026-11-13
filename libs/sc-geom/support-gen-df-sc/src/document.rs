@@ -442,12 +442,7 @@ impl Drawings {
             if !Arc::ptr_eq(&d.geometry, &model.geometry)
                 || (d.model.position.z - model.transform.position.z).abs() > SAME_MM
                 || d.shape.1 != shape.1
-                || d.shape.0.len() != shape.0.len()
-                || d.shape
-                    .0
-                    .iter()
-                    .zip(&shape.0)
-                    .any(|(a, b)| (0..3).any(|k| (a[k] - b[k]).abs() > SAME_MM))
+                || !same_points(&d.shape.0, &shape.0)
             {
                 return None;
             }
@@ -487,6 +482,21 @@ impl Drawings {
             mesh: mesh.clone(),
         });
     }
+}
+
+/// Whether two sets of points are the same, each within [`SAME_MM`] of
+/// one of the other: a sorted order is no help, two points a hair apart
+/// sort either way.
+fn same_points(a: &[[f64; 3]], b: &[[f64; 3]]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut taken = vec![false; b.len()];
+    a.iter().all(|p| {
+        let near =
+            (0..b.len()).find(|&k| !taken[k] && (0..3).all(|c| (p[c] - b[k][c]).abs() <= SAME_MM));
+        near.map(|k| taken[k] = true).is_some()
+    })
 }
 
 /// Whether two transforms place alike, to [`SAME_MM`].
