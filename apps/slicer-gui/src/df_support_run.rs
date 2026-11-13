@@ -956,7 +956,7 @@ enum DragState {
 
 /// What a box's step picked, to be drawn red.
 enum Picks {
-    Set(DrawnSet, Vec<String>),
+    Set(Box<DrawnSet>, Vec<String>),
     Imported(Vec<ImportedBody>),
 }
 
@@ -5617,7 +5617,7 @@ impl DfSupportRun {
                     *owed = more;
                     let changed = ids != *picked;
                     *picked = ids;
-                    Some((Picks::Set(drawn.clone(), picked.clone()), changed, more))
+                    Some((Picks::Set(Box::new(drawn.clone()), picked.clone()), changed, more))
                 }
                 Some(DragState::RemoveImported {
                     bodies,
@@ -7196,7 +7196,7 @@ mod hand_edit_tests {
                     let before = leaf_transform(&document, l);
                     SceneEdit::SetLocalTransform {
                         node_id: l,
-                        before: before.clone(),
+                        before,
                         after: translation([0.0, 30.0, 0.0]).compose(&before),
                     }
                 })
