@@ -158,6 +158,16 @@ pub(crate) struct PlacedBvh {
 }
 
 impl PlacedBvh {
+    /// `model`'s shared BVH, placed where the model stands.
+    pub(crate) fn of(model: &ModelInput) -> Self {
+        let to_world = support_gen_df::pipeline::model_matrix(&model.transform);
+        PlacedBvh {
+            bvh: shared_bvh(model),
+            to_local: to_world.invert(),
+            to_world,
+        }
+    }
+
     /// [`MeshBvh::closest_point_to_point`] of a world point, its hit in
     /// world mm. The placing matrix is a turn and a move: distances hold.
     pub(crate) fn closest_point_to_point(
@@ -1114,7 +1124,7 @@ impl DfSupportSession {
     /// Every point where a support meets a model (world mm): the tips of
     /// trunks, branches, leaves and stumps, and both ends of the twigs and
     /// sticks that join model to model.
-    fn model_contacts(&self) -> Vec<Vec3> {
+    pub(crate) fn model_contacts(&self) -> Vec<Vec3> {
         let c = &self.state.collections;
         let trunks = c.trunks.values().filter_map(|t| t.contact_cone.as_ref());
         let branches = c.branches.values().filter_map(|b| b.contact_cone.as_ref());
@@ -1136,6 +1146,43 @@ impl DfSupportSession {
                     .flat_map(|t| [t.contact_disk_a.pos, t.contact_disk_b.pos]),
             )
             .collect()
+    }
+
+    /// What tells this one-model session's supports apart, in the model's
+    /// own frame (#561): where they touch the model and stand on the plate,
+    /// sorted, and how many of each kind there are. Two copies of a model
+    /// whose supports were carried from one to the other read alike.
+    pub(crate) fn shape_in_model(&self) -> Option<(Vec<[f64; 3]>, [usize; 9])> {
+        let model = self.models.first()?;
+        let to_model = support_gen_df::pipeline::model_matrix(&model.transform).invert();
+        let c = &self.state.collections;
+        let mut points: Vec<[f64; 3]> = self
+            .model_contacts()
+            .into_iter()
+            .chain(c.roots.values().map(|r| r.transform.pos))
+            .map(|p| {
+                let p = p.apply_matrix4(&to_model);
+                [p.x, p.y, p.z]
+            })
+            .collect();
+        points.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let counts = [
+            c.trunks.len(),
+            c.branches.len(),
+            c.leaves.len(),
+            c.twigs.len(),
+            c.sticks.len(),
+            c.braces.len(),
+            c.stumps.len(),
+            c.kickstands.len(),
+            c.roots.len(),
+        ];
+        Some((points, counts))
+    }
+
+    /// The model of this one-model session.
+    pub(crate) fn first_model(&self) -> Option<&ModelInput> {
+        self.models.first()
     }
 
     /// The session with model `index` replaced by `model`, its supports
@@ -4397,6 +4444,114 @@ mod session_tests {
             };
             assert!(bvh(&a).is_some() && bvh(&a) == bvh(&b));
         }
+    }
+
+    /// A run over copies of one mesh standing alike makes the supports of
+    /// the first and hands them to the others, turned and moved with each
+    /// (#561); a copy at another height is a run of its own. A copy whose
+    /// handed supports run into a neighbour is named for Arrange all.
+    #[test]
+    fn copies_standing_alike_take_the_first_ones_supports() {
+        use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+        use sc_scene::LeafPayload;
+        let mut scene = boxes_scene(&[([0.0, 0.0, 25.0], [30.0, 10.0, 27.0])]);
+        let first = crate::scene_model_leaves(&scene, None).unwrap()[0].0;
+        let mesh = scene.leaf_mesh_arc(first).unwrap().clone();
+        let add = |scene: &mut sc_scene::Scene, mesh: Arc<IndexedMesh>, t: AffineTransform3D| {
+            let leaf = scene
+                .add_leaf(None, Transform3D::Affine(t), LeafPayload::Mesh(mesh))
+                .unwrap();
+            scene.add_root(leaf).unwrap();
+            leaf
+        };
+        let turn = AffineTransform3D::from_translation([90.0, 60.0, 0.0])
+            .compose(&AffineTransform3D::from_rotation_z(1.1));
+        let turned = add(&mut scene, mesh.clone(), turn);
+        let higher = add(
+            &mut scene,
+            mesh.clone(),
+            AffineTransform3D::from_translation([0.0, 40.0, 5.0]),
+        );
+        let outcome = crate::start_df_supports(&scene, crate::DfSupportRequest::default())
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(outcome.sets.len(), 3);
+        assert_eq!(outcome.models, 3);
+        let set = |leaf| outcome.sets.iter().find(|s| s.model == leaf).unwrap();
+        let (a, b, c) = (set(first), set(turned), set(higher));
+        assert!(a.same_as.is_none() && c.same_as.is_none());
+        let same = b.same_as.expect("the turned copy takes the first's");
+        assert_eq!(outcome.sets[same.set].model, first);
+        // Its supports are the first's, turned and moved with it.
+        let place = |p: [f64; 3]| {
+            let v = Transform3D::Affine(turn)
+                .apply_to_vertex(sc_mesh_core::Vertex::new(p.map(|c| c as f32)));
+            v.as_array().map(f64::from)
+        };
+        let mut on_a: Vec<[f64; 3]> = a
+            .session
+            .tips()
+            .into_iter()
+            .map(|(_, p)| place(p))
+            .collect();
+        let mut on_b: Vec<[f64; 3]> = b.session.tips().into_iter().map(|(_, p)| p).collect();
+        assert!(!on_a.is_empty());
+        on_a.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        on_b.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        assert_eq!(on_a.len(), on_b.len());
+        for (x, y) in on_a.iter().zip(&on_b) {
+            assert!(dist(*x, *y) < 1e-3, "{x:?} against {y:?}");
+        }
+        let (ma, mb) = (a.mesh.as_ref().unwrap(), b.mesh.as_ref().unwrap());
+        assert_eq!(ma.faces(), mb.faces());
+        let motion = same.transform();
+        for (va, vb) in ma.vertices().iter().zip(mb.vertices()) {
+            let moved = motion.apply_to_vertex(*va).as_array().map(f64::from);
+            assert!(dist(moved, vb.as_array().map(f64::from)) < 1e-3);
+        }
+        // The supports counted for each copy.
+        let trunks = |o: &crate::DfSupportOutcome| {
+            o.placed
+                .iter()
+                .filter(|(k, _)| k == "trunk")
+                .map(|(_, n)| n)
+                .sum::<u64>()
+        };
+        let one = crate::start_df_supports(
+            &scene,
+            crate::DfSupportRequest {
+                models: Some(vec![first]),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .join()
+        .unwrap();
+        assert!(trunks(&outcome) >= 2 * trunks(&one));
+        assert!(outcome.crowded.is_empty(), "{:?}", outcome.crowded);
+
+        // A block stands where a copy's handed trunks come down.
+        let block_scene = boxes_scene(&[([10.0, 0.0, 0.0], [20.0, 10.0, 12.0])]);
+        let block_leaf = crate::scene_model_leaves(&block_scene, None).unwrap()[0].0;
+        let block = block_scene.leaf_mesh_arc(block_leaf).unwrap().clone();
+        let mut crowded = boxes_scene(&[([0.0, 0.0, 25.0], [30.0, 10.0, 27.0])]);
+        let slab = crowded.leaf_mesh_arc(first).unwrap().clone();
+        let copy = add(
+            &mut crowded,
+            slab,
+            AffineTransform3D::from_translation([0.0, 100.0, 0.0]),
+        );
+        add(
+            &mut crowded,
+            block,
+            AffineTransform3D::from_translation([0.0, 100.0, 0.0]),
+        );
+        let outcome = crate::start_df_supports(&crowded, crate::DfSupportRequest::default())
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(outcome.crowded, vec![copy]);
     }
 
     /// A red support (no way to hold the point) is drawn of the size a

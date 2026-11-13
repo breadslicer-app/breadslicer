@@ -37,7 +37,9 @@ mod session;
 mod shift;
 pub mod zone_presets;
 
-pub use document::{DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, RestoreError, RestoredSet};
+pub use document::{
+    DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, Drawings, RestoreError, RestoredSet,
+};
 pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{
@@ -145,6 +147,32 @@ pub struct DfSupportSet {
     /// For a model of [`DfSupportRequest::keep_edits`]: which hand edits of
     /// its old set were put back.
     pub kept: Option<KeptEdits>,
+    /// For a copy standing as another model of the run stands (#561): the
+    /// set it took its supports from, and how they were turned and moved
+    /// onto it. Its mesh is that set's, so a caller may show that set's
+    /// mesh under [`SameDrawing::transform`] instead of a copy of it.
+    pub same_as: Option<SameDrawing>,
+}
+
+/// Where a copy's supports come from (#561): set `set` of the outcome,
+/// turned by `angle` radians about Z through the origin, then moved by
+/// `delta` (mm along X and Y).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SameDrawing {
+    pub set: usize,
+    pub angle: f64,
+    pub delta: [f64; 2],
+}
+
+impl SameDrawing {
+    /// The motion as a scene transform: the turn, then the move.
+    pub fn transform(&self) -> sc_mesh_core::transform::Transform3D {
+        use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+        Transform3D::Affine(
+            AffineTransform3D::from_translation([self.delta[0], self.delta[1], 0.0])
+                .compose(&AffineTransform3D::from_rotation_z(self.angle)),
+        )
+    }
 }
 
 /// What a finished run hands back.
@@ -160,6 +188,9 @@ pub struct DfSupportOutcome {
     /// Placed supports by type (`trunk`, `branch`, ...), summed over models.
     pub placed: Vec<(String, u64)>,
     pub triangles: usize,
+    /// Models whose supports, made for another copy (#561), run into a
+    /// neighbouring model: Arrange all spaces them out.
+    pub crowded: Vec<NodeId>,
     /// Where the run spent its time.
     pub timings: PerfFrame,
 }
@@ -585,9 +616,200 @@ pub fn start_df_supports(
         move |worker: &JobWorker<DfSupportOutcome>| {
             let models = scene_model_leaves(&scene, request.models.as_deref())
                 .map_err(|e| JobError::Failed(e.to_string()))?;
-            run_df_supports(&models, &request, worker, format!("df{stamp}-{run}"))
+            run_with_copies(
+                &scene,
+                &models,
+                &request,
+                worker,
+                format!("df{stamp}-{run}"),
+            )
         },
     ))
+}
+
+/// For each model, the earlier model of `models` it is a copy of standing
+/// the same way (#561): the same mesh at the same height, tilted and scaled
+/// alike, only moved in X/Y and turned about Z. Such a copy's supports are
+/// that model's, turned and moved with it. A model whose hand edits are to
+/// be kept is no one's copy, and has none.
+fn copies_of(models: &[(NodeId, ModelInput)], request: &DfSupportRequest) -> Vec<Option<usize>> {
+    let keeps = |leaf: &NodeId| request.keep_edits.iter().any(|(m, _)| m == leaf);
+    let mut of = vec![None; models.len()];
+    for i in 0..models.len() {
+        let (leaf, model) = &models[i];
+        if keeps(leaf) {
+            continue;
+        }
+        of[i] = (0..i).find(|&k| {
+            let (other_leaf, other) = &models[k];
+            of[k].is_none()
+                && !keeps(other_leaf)
+                && Arc::ptr_eq(&model.geometry, &other.geometry)
+                && (model.transform.position.z - other.transform.position.z).abs() < 1e-6
+        });
+    }
+    of
+}
+
+/// The run of `request` over `models`, made once for each group of copies
+/// standing alike ([`copies_of`]) and handed to the rest of the group: the
+/// first one's supports turned and moved onto each, drawn as its mesh. The
+/// supports of a copy are not placed knowing its neighbours: the sets that
+/// run into another model are named in [`DfSupportOutcome::crowded`].
+fn run_with_copies(
+    scene: &Scene,
+    models: &[(NodeId, ModelInput)],
+    request: &DfSupportRequest,
+    worker: &JobWorker<DfSupportOutcome>,
+    id_prefix: String,
+) -> Result<DfSupportOutcome, JobError> {
+    let of = copies_of(models, request);
+    if of.iter().all(Option::is_none) {
+        return run_df_supports(models, request, worker, id_prefix, &[]);
+    }
+    let firsts: Vec<usize> = (0..models.len()).filter(|&i| of[i].is_none()).collect();
+    let copies: Vec<u64> = firsts
+        .iter()
+        .map(|&f| 1 + of.iter().filter(|o| **o == Some(f)).count() as u64)
+        .collect();
+    let leaves: Vec<(NodeId, ModelInput)> = firsts.iter().map(|&f| models[f].clone()).collect();
+    let mut outcome = run_df_supports(&leaves, request, worker, id_prefix, &copies)?;
+    let mut made: Vec<Option<DfSupportSet>> = outcome.sets.drain(..).map(Some).collect();
+    // The sets in model order: each first one's, then each copy's from it.
+    let mut sets: Vec<DfSupportSet> = Vec::with_capacity(models.len());
+    let mut at: Vec<usize> = vec![usize::MAX; models.len()];
+    for i in 0..models.len() {
+        if worker.is_cancelled() {
+            return Err(JobError::Cancelled);
+        }
+        let set = match of[i] {
+            None => {
+                let k = firsts.iter().position(|&f| f == i).expect("a first");
+                made[k].take()
+            }
+            Some(first) if at[first] != usize::MAX => {
+                let source = &sets[at[first]];
+                Some(carried_set(source, at[first], &models[first].1, &models[i]))
+            }
+            Some(_) => None,
+        };
+        if let Some(set) = set {
+            at[i] = sets.len();
+            sets.push(set);
+        }
+    }
+    outcome.models = models.len();
+    outcome.triangles = sets
+        .iter()
+        .filter_map(|s| s.mesh.as_ref())
+        .map(|m| m.faces().len())
+        .sum();
+    let everyone = scene_model_leaves(scene, None).unwrap_or_default();
+    outcome.crowded = crowded_sets(&sets, &everyone);
+    outcome.sets = sets;
+    Ok(outcome)
+}
+
+/// The set `source` (set `index` of the run, on `first`) turned and moved
+/// onto `copy`, which stands as `first` does but for a move in X/Y and a
+/// turn about Z (#561).
+fn carried_set(
+    source: &DfSupportSet,
+    index: usize,
+    first: &ModelInput,
+    (leaf, copy): &(NodeId, ModelInput),
+) -> DfSupportSet {
+    let angle = copy.transform.rotation.z - first.transform.rotation.z;
+    let (s, c) = angle.sin_cos();
+    let from = first.transform.position;
+    let delta = [
+        copy.transform.position.x - (c * from.x - s * from.y),
+        copy.transform.position.y - (s * from.x + c * from.y),
+    ];
+    let same = SameDrawing {
+        set: index,
+        angle,
+        delta,
+    };
+    let motion = same.transform();
+    let mesh = source.mesh.as_ref().map(|m| {
+        let vertices = m
+            .vertices()
+            .iter()
+            .map(|v| motion.apply_to_vertex(*v))
+            .collect();
+        IndexedMesh::new(m.meta().clone(), vertices, m.faces().to_vec())
+    });
+    DfSupportSet {
+        model: *leaf,
+        mesh,
+        session: source
+            .session
+            .turned_in_plane(0, copy.clone(), angle, delta),
+        kept: None,
+        same_as: Some(same),
+    }
+}
+
+/// How far into another model a support may reach before it runs into it
+/// (mm): the tips of a set sink into their own model, never another.
+const CROWDED_DEPTH_MM: f64 = 0.05;
+
+/// The models of `sets` whose supports run into a model of `everyone` other
+/// than their own: some point of their mesh lies inside it, deeper than
+/// [`CROWDED_DEPTH_MM`].
+fn crowded_sets(sets: &[DfSupportSet], everyone: &[(NodeId, ModelInput)]) -> Vec<NodeId> {
+    let bounds: Vec<([f64; 3], [f64; 3])> = everyone
+        .iter()
+        .map(|(_, m)| {
+            let (lo, hi) = document::model_world_bounds(m);
+            (lo.map(f64::from), hi.map(f64::from))
+        })
+        .collect();
+    let placed: Vec<OnceLock<session::PlacedBvh>> =
+        everyone.iter().map(|_| OnceLock::new()).collect();
+    sets.iter()
+        .filter(|set| {
+            let Some(mesh) = set.mesh.as_ref() else {
+                return false;
+            };
+            let (lo, hi) = mesh_bounds(mesh);
+            everyone.iter().enumerate().any(|(k, (leaf, model))| {
+                let (mlo, mhi) = bounds[k];
+                if *leaf == set.model || (0..3).any(|a| hi[a] < mlo[a] || lo[a] > mhi[a]) {
+                    return false;
+                }
+                let bvh = placed[k].get_or_init(|| session::PlacedBvh::of(model));
+                mesh.vertices().iter().any(|v| {
+                    let p = v.as_array().map(f64::from);
+                    if (0..3).any(|a| p[a] < mlo[a] || p[a] > mhi[a]) {
+                        return false;
+                    }
+                    let p = Vec3::new(p[0], p[1], p[2]);
+                    let Some(hit) = bvh.closest_point_to_point(p, 0.0, f64::INFINITY) else {
+                        return false;
+                    };
+                    let t = bvh.triangle(hit.face_index);
+                    let n = Vec3::sub_vectors(t.b, t.a).cross(Vec3::sub_vectors(t.c, t.a));
+                    hit.distance > CROWDED_DEPTH_MM && p.sub(hit.point).dot(n) < 0.0
+                })
+            })
+        })
+        .map(|set| set.model)
+        .collect()
+}
+
+/// The box of `mesh`'s vertices.
+fn mesh_bounds(mesh: &IndexedMesh) -> ([f64; 3], [f64; 3]) {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for v in mesh.vertices() {
+        for (a, x) in v.as_array().iter().enumerate() {
+            lo[a] = lo[a].min(f64::from(*x));
+            hi[a] = hi[a].max(f64::from(*x));
+        }
+    }
+    (lo, hi)
 }
 
 /// A session of `model` with no support on it yet, made as `request` says, for
@@ -715,9 +937,19 @@ pub fn start_df_prescan(scene: &Scene, request: DfSupportRequest) -> JobHandle<D
         let started = Instant::now();
         let settings = settings_for(&request);
         prescan_pool().install(|| {
-            let models = scene_models(&scene).map_err(|e| JobError::Failed(e.to_string()))?;
+            let leaves =
+                scene_model_leaves(&scene, None).map_err(|e| JobError::Failed(e.to_string()))?;
+            // A copy standing as an earlier model does takes that one's
+            // supports (#561): only the first of each is scanned.
+            let of = copies_of(&leaves, &request);
+            let models: Vec<&ModelInput> = leaves
+                .iter()
+                .zip(&of)
+                .filter(|(_, of)| of.is_none())
+                .map(|((_, model), _)| model)
+                .collect();
             let mut scans = ScanCache::default();
-            for model in &models {
+            for model in models.iter().copied() {
                 if worker.is_cancelled() {
                     return Err(JobError::Cancelled);
                 }
@@ -735,7 +967,7 @@ pub fn start_df_prescan(scene: &Scene, request: DfSupportRequest) -> JobHandle<D
             }
             Ok(DfPrescan {
                 scans: Arc::new(scans),
-                models: models.len(),
+                models: leaves.len(),
                 elapsed: started.elapsed(),
             })
         })
@@ -747,6 +979,7 @@ fn run_df_supports(
     request: &DfSupportRequest,
     worker: &JobWorker<DfSupportOutcome>,
     id_prefix: String,
+    copies: &[u64],
 ) -> Result<DfSupportOutcome, JobError> {
     let settings = settings_for(request);
     let models: Vec<ModelInput> = leaves.iter().map(|(_, m)| m.clone()).collect();
@@ -789,8 +1022,10 @@ fn run_df_supports(
     };
     let mut placed: Vec<(String, u64)> = Vec::new();
     let mut islands = 0;
-    for m in &out.models {
-        islands += m.islands.filtered.len();
+    for (i, m) in out.models.iter().enumerate() {
+        // A model stands for its copies too (#561).
+        let copies = copies.get(i).copied().unwrap_or(1);
+        islands += m.islands.filtered.len() * copies as usize;
         if let Some(plan) = &m.plan {
             for (&kind, &count) in &plan.result.placed {
                 if count <= 0 {
@@ -798,8 +1033,8 @@ fn run_df_supports(
                 }
                 let name = get_support_type_descriptor(kind).singular.to_owned();
                 match placed.iter_mut().find(|(k, _)| *k == name) {
-                    Some(entry) => entry.1 += count as u64,
-                    None => placed.push((name, count as u64)),
+                    Some(entry) => entry.1 += count as u64 * copies,
+                    None => placed.push((name, count as u64 * copies)),
                 }
             }
         }
@@ -861,6 +1096,7 @@ fn run_df_supports(
             mesh,
             session,
             kept,
+            same_as: None,
         });
     }
     // The sets are part of the run's time, as the pipeline's own drawing was.
@@ -883,5 +1119,6 @@ fn run_df_supports(
         models: n,
         islands,
         placed,
+        crowded: Vec::new(),
     })
 }

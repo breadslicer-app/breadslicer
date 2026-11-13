@@ -573,8 +573,10 @@ pub(crate) fn restore_supports(
     documents: Vec<SupportDocument>,
 ) -> RestoredSupports {
     let mut restored = RestoredSupports::default();
+    // Copies whose sets were shown as one set's mesh come back so (#561).
+    let mut drawings = sc_geom::df_supports::Drawings::default();
     for document in documents {
-        match rebuild(scene, &document) {
+        match rebuild(scene, &document, &mut drawings) {
             Ok(sets) => restored.sets.extend(sets),
             Err(why) => {
                 let _ = scene.remove_leaf(document.leaf);
@@ -585,7 +587,11 @@ pub(crate) fn restore_supports(
     restored
 }
 
-fn rebuild(scene: &mut Scene, document: &SupportDocument) -> Result<Vec<RestoredSet>, String> {
+fn rebuild(
+    scene: &mut Scene,
+    document: &SupportDocument,
+    drawings: &mut sc_geom::df_supports::Drawings,
+) -> Result<Vec<RestoredSet>, String> {
     if document.generator != DF_SUPPORT_GENERATOR {
         return Err(format!(
             "the supports were made by an unknown generator, \"{}\"",
@@ -595,12 +601,13 @@ fn rebuild(scene: &mut Scene, document: &SupportDocument) -> Result<Vec<Restored
     // The port is DragonFruit's code on saved input: a panic in it is
     // supports that could not be rebuilt, not a failed open.
     let sets = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        DfSupportSession::restore_sets_into(
+        DfSupportSession::restore_sets_sharing(
             scene,
             document.leaf,
             document.model,
             document.version,
             &document.document,
+            drawings,
         )
     }))
     .map_err(|_| "the support engine failed while rebuilding them".to_owned())?

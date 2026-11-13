@@ -623,12 +623,13 @@ fn add_copies(document: &SceneDocument, sources: &[Source], made: Made) -> Resul
         }
         if let Some((_, piece)) = &source.set {
             match set {
-                // Drawn where the copy stands, in world space, as every set
-                // in force is.
-                Some((session, mesh)) => {
+                // The model's own support mesh, carried to where the copy
+                // stands by its leaf (#561): one mesh for every copy. The
+                // session is the set taken along there.
+                Some((session, _)) => {
                     let leaf = add(
-                        LeafPayload::Mesh(mesh),
-                        AffineTransform3D::identity(),
+                        LeafPayload::Mesh(piece.mesh.clone()),
+                        moved(piece),
                         piece.meta.clone(),
                     );
                     drawn.push((leaf, model, session));

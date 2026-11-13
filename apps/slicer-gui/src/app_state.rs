@@ -4848,6 +4848,25 @@ mod window_wiring_tests {
             let parts =
                 || crate::support_persist::memory_report(&document.support_sessions().borrow());
             println!("opened: {}", parts());
+            // Supports made again for every model, with Miniatures (#561).
+            if std::env::var_os("BREADSLICER_ARRANGE_GENERATE").is_some() {
+                let run = app.main_windows.borrow()[&id]
+                    ._drivers
+                    ._df_support_run
+                    .clone();
+                let started = Instant::now();
+                run.generate_now(sc_geom::df_supports::DfSupportOptions {
+                    zones: Some(sc_geom::df_supports::zone_presets::minis_30()),
+                    ..Default::default()
+                });
+                println!(
+                    "generated: {:.2} s, {}, memory {:.0} MB",
+                    started.elapsed().as_secs_f64(),
+                    window.get_supports_last_run(),
+                    memory_mb(),
+                );
+                println!("generated: {}", parts());
+            }
             for (run, gap) in gaps.iter().enumerate() {
                 let (busy, longest) = if run == 0 { (0.0, 0.0) } else { pump(wait) };
                 window.invoke_arrange_option_changed(0, *gap);
