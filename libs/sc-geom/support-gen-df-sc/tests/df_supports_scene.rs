@@ -691,7 +691,11 @@ fn hover_cost_over_every_surface() {
         .remove(0)
         .session;
     for attach in [false, true] {
-        let how = support_gen_df_sc::AddOptions { attach, size: None };
+        let how = support_gen_df_sc::AddOptions {
+            attach,
+            size: None,
+            shape: None,
+        };
         let mut by_kind: [Vec<f64>; 3] = Default::default();
         let mut outcomes = [0usize; 3];
         for (p, nz) in &points {

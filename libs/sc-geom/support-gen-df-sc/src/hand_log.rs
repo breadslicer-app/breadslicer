@@ -44,6 +44,10 @@ pub(crate) struct HandPlaced {
     /// The size asked for (#360); `None` takes the preset's hand size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) size: Option<String>,
+    /// The numbers it was drawn with, when they are the person's own (the
+    /// hand sizes) and not a size of the run's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) shape: Option<support_gen_df::supports::auto_support::zone_rules::SupportSize>,
     /// For a support of the run the person moved: where its tip was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) moved_from: Option<[f64; 3]>,

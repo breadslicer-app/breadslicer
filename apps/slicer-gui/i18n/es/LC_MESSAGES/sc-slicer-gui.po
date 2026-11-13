@@ -7168,3 +7168,507 @@ msgstr[1] "Se sacaron {n} camas vacías."
 msgctxt "Workspace"
 msgid "Imported onto {}."
 msgstr "Importado en {}."
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "drag to turn"
+msgstr "arrastrá para girar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Your preset: {}"
+msgstr "Tu preset: {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Reset to default"
+msgstr "Restablecer de fábrica"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "THE SUPPORT"
+msgstr "EL SOPORTE"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "for the next Generate"
+msgstr "para el próximo Generar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "THIS TIP · {}"
+msgstr "ESTA PUNTA · {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Tip diameter"
+msgstr "Diámetro de la punta"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "THE WHOLE SUPPORT · {}"
+msgstr "TODO EL SOPORTE · {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Trunk diameter"
+msgstr "Diámetro del tronco"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Tip length"
+msgstr "Largo de la punta"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Foot diameter"
+msgstr "Diámetro del pie"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "ADVANCED"
+msgstr "AVANZADO"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "TIP"
+msgstr "PUNTA"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Extra into the model"
+msgstr "Entra de más en el modelo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Break point"
+msgstr "Punto de quiebre"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "FOOT"
+msgstr "PIE"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Foot thickness"
+msgstr "Grosor del pie"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Join cone"
+msgstr "Cono de unión"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Tip on the model, length"
+msgstr "Punta sobre el modelo, largo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "BRACES"
+msgstr "REFUERZOS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Brace diameter"
+msgstr "Diámetro del refuerzo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Braces start at"
+msgstr "Refuerzos desde"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "WHERE EACH SIZE GOES"
+msgstr "DÓNDE VA CADA TAMAÑO"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Overhangs from"
+msgstr "Voladizos desde"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Each zone places the size picked, this many mm apart."
+msgstr "Cada zona pone el tamaño elegido, a esta distancia en mm."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Made from {}, with changes"
+msgstr "Hecho a partir de {}, con cambios"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Preset {}"
+msgstr "Preset {}"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Custom preset"
+msgstr "Preset personalizado"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Miniatures"
+msgstr "Miniaturas"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Figures"
+msgstr "Figuras"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Statues"
+msgstr "Estatuas"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Overhangs"
+msgstr "Voladizos"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "faces past the angle"
+msgstr "caras más allá del ángulo"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Stabilization"
+msgstr "Estabilización"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "flat faces from {} mm²"
+msgstr "caras planas desde {} mm²"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "first layer from {} mm²"
+msgstr "primera capa desde {} mm²"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "every island"
+msgstr "todas las islas"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Islands"
+msgstr "Islas"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Island bodies"
+msgstr "Cuerpo de las islas"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "from {} mm³"
+msgstr "desde {} mm³"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "Reset to default"
+msgstr "Volver al valor original"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Made from {}"
+msgstr "Hecho a partir de {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Auto supports"
+msgstr "Soportes automáticos"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Manual supports"
+msgstr "Soportes manuales"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "TOOLS"
+msgstr "HERRAMIENTAS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Add"
+msgstr "Agregar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Move tip"
+msgstr "Mover punta"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Brace"
+msgstr "Refuerzo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Remove"
+msgstr "Quitar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pick a tool, or press its key. The size below is the one Add places; keys 1–4 pick it."
+msgstr "Elegí una herramienta o apretá su tecla. El tamaño de abajo es el que pone Agregar; las teclas 1–4 lo eligen."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Click the model where the support should touch it. Shift+click hangs it from the nearest support, or places nothing. Keys 1–4 pick the size."
+msgstr "Hacé clic en el modelo donde el soporte tiene que tocarlo. Shift+clic lo cuelga del soporte más cercano, o no pone nada. Las teclas 1–4 eligen el tamaño."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Drag a support by its tip over the model; it is routed again where you let go."
+msgstr "Arrastrá un soporte por su punta sobre el modelo; se vuelve a trazar donde lo soltás."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Click a support where the brace starts, then the support it goes to."
+msgstr "Hacé clic en un soporte donde empieza el refuerzo y después en el soporte al que va."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "for the next one placed"
+msgstr "para el próximo que pongas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "The sizes are not the ones that ship."
+msgstr "Los tamaños no son los de fábrica."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Hand supports"
+msgstr "Soportes a mano"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "SHARE"
+msgstr "COMPARTIR"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "One file with your presets and your hand sizes, whichever you tick, to hand to someone else or to keep."
+msgstr "Un archivo con tus presets y tus tamaños a mano, los que tildes, para pasarle a alguien o guardar."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Export…"
+msgstr "Exportar…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Import…"
+msgstr "Importar…"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "Export support settings"
+msgstr "Exportar ajustes de soportes"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "Import support settings"
+msgstr "Importar ajustes de soportes"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "Tick what goes into the file."
+msgstr "Tildá lo que va al archivo."
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "Tick what to take from the file. A preset with a name you have comes in under a new one."
+msgstr "Tildá lo que querés traer del archivo. Un preset con un nombre que ya tenés entra con un nombre nuevo."
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "Import"
+msgstr "Importar"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Current settings"
+msgstr "Ajustes actuales"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "That file could not be read."
+msgstr "No se pudo leer ese archivo."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "That file was made by a newer Breadslicer."
+msgstr "Ese archivo lo hizo un Breadslicer más nuevo."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "That file holds no support settings."
+msgstr "Ese archivo no trae ajustes de soportes."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "That is not a Breadslicer support settings file."
+msgstr "Ese no es un archivo de ajustes de soportes de Breadslicer."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "auto preset"
+msgstr "preset automático"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Hand sizes (XS S M L)"
+msgstr "Tamaños a mano (XS S M L)"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "manual supports"
+msgstr "soportes manuales"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Support settings exported."
+msgstr "Ajustes de soportes exportados."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "The file could not be written."
+msgstr "No se pudo escribir el archivo."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Hand sizes imported."
+msgstr "Tamaños a mano importados."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Imported {n} preset."
+msgid_plural "Imported {n} presets."
+msgstr[0] "Se importó {n} preset."
+msgstr[1] "Se importaron {n} presets."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Imported {n} preset and the hand sizes."
+msgid_plural "Imported {n} presets and the hand sizes."
+msgstr[0] "Se importaron {n} preset y los tamaños a mano."
+msgstr[1] "Se importaron {n} presets y los tamaños a mano."
+
+#: src/df_support_run.rs
+msgctxt "FileDialog"
+msgid "Import support settings"
+msgstr "Importar ajustes de soportes"
+
+#: src/df_support_run.rs
+msgctxt "FileDialog"
+msgid "Export support settings"
+msgstr "Exportar ajustes de soportes"
+
+#: src/df_support_run.rs
+msgctxt "FileDialog"
+msgid "Breadslicer support settings"
+msgstr "Ajustes de soportes de Breadslicer"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "One .breadsupports file with what you tick"
+msgstr "Un archivo .breadsupports con lo que tildes"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "Tick what to take from the file"
+msgstr "Tildá lo que querés traer del archivo"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "AUTOMATIC PRESETS"
+msgstr "PRESETS AUTOMÁTICOS"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "MANUAL SUPPORTS"
+msgstr "SOPORTES MANUALES"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "A preset named as one of yours comes in under a new name; none of yours is replaced."
+msgstr "Un preset con el mismo nombre que uno tuyo entra con otro nombre; ninguno tuyo se reemplaza."
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "{} of {} ticked"
+msgstr "{} de {} tildados"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Preset of Generate"
+msgstr "Preset de Generar"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Hand sizes"
+msgstr "Tamaños a mano"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "You have no presets of your own yet: change one and save it in PRESETS to share it."
+msgstr "Todavía no tenés presets propios: cambiá uno y guardalo en PRESETS para compartirlo."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "The file brings no presets."
+msgstr "El archivo no trae presets."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Automatic presets"
+msgstr "Presets automáticos"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "The file brings no hand sizes."
+msgstr "El archivo no trae tamaños a mano."
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "tip {}  ·  trunk {}  ·  foot {} mm"
+msgstr "punta {}  ·  tronco {}  ·  pie {} mm"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "A preset named as one of yours comes in under a new name; none of yours is replaced. A hand size ticked replaces yours."
+msgstr "Un preset con el mismo nombre que uno tuyo entra con otro nombre; ninguno tuyo se reemplaza. Un tamaño a mano tildado reemplaza el tuyo."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "{}, with your changes"
+msgstr "{}, con tus cambios"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Built-in, as it ships"
+msgstr "De fábrica, sin cambios"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Built-in, with your changes"
+msgstr "De fábrica, con tus cambios"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "{}, as it ships"
+msgstr "{}, de fábrica"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Your preset {}, made from {}"
+msgstr "Tu preset {}, hecho a partir de {}"

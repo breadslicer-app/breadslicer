@@ -210,6 +210,28 @@ pub(crate) struct DfSupportRun {
     options: RefCell<DfSupportOptions>,
     /// Built-in presets first, then the person's own.
     presets: RefCell<Vec<Preset>>,
+    /// The shape panel (#564): where its support is seen from, the size it
+    /// shows (an index into the preset's sizes), the part pointed at, and
+    /// the built-in preset the options in force were made from.
+    shape_view: Cell<crate::support_shape::View>,
+    shape_size: Cell<Option<usize>>,
+    shape_hot: Cell<crate::support_shape::Part>,
+    based_on: Cell<Option<usize>>,
+    /// The built-in preset the options in use are, which keeps each change
+    /// made to them (#564); `None` for options of the person's own preset.
+    editing: Cell<Option<usize>>,
+    /// The preset last picked from the list: of presets with the same
+    /// numbers, the one the person clicked is the one marked (#564).
+    picked: Cell<Option<usize>>,
+    /// The empty set a model with none would start, kept while the scene
+    /// and the options stay as they were: Add previews on it before the
+    /// first click (#564: a model with no supports showed no preview).
+    unborn_hover: RefCell<Option<(SceneRevision, NodeId, DfSupportOptions, DrawnSet)>>,
+    /// The sizes the hand tools place (XS to L): the person's own, apart
+    /// from every preset of Generate.
+    hand: RefCell<ZonePreset>,
+    /// What the export or import being asked lists, each with its tick.
+    share: RefCell<Vec<(crate::support_share::Entry, bool)>>,
     /// The last run's supports and every hand edit since, each with the scene
     /// revision it was drawn into. A click edits the entry matching the
     /// current scene, so Undo and Redo keep the editor in step; a scene that
@@ -1259,25 +1281,81 @@ struct Preset {
     name: String,
     options: DfSupportOptions,
     built_in: bool,
+    /// For a built-in preset: its values as they ship. `options` holds the
+    /// person's changes to it, kept apart for each of the three (#564).
+    factory: Option<DfSupportOptions>,
 }
 
 /// The presets that ship: the three zone presets (#360, #479). The
 /// classic sizing tiers left the list (#490); a project saved with one
 /// still reopens with it, and a person's own presets still show.
 fn built_in_presets() -> Vec<Preset> {
-    let zones = |name: slint::SharedString, zones: ZonePreset| Preset {
-        name: name.to_string(),
-        options: DfSupportOptions {
+    let zones = |name: slint::SharedString, zones: ZonePreset| {
+        let options = DfSupportOptions {
             zones: Some(zones),
             ..Default::default()
-        },
-        built_in: true,
+        };
+        Preset {
+            name: name.to_string(),
+            factory: Some(options.clone()),
+            options,
+            built_in: true,
+        }
     };
     vec![
         zones(ctr!("Inspector", "Miniatures 20~65 mm"), minis_30()),
         zones(ctr!("Inspector", "Figures 65~150 mm"), figures_70()),
         zones(ctr!("Inspector", "Statues 150 mm+"), figures_150()),
     ]
+}
+
+/// The built-in presets as the shape panel's cards (#564), in the list's
+/// order: their names, and the size of models each is for.
+fn preset_cards() -> Vec<(slint::SharedString, &'static str)> {
+    vec![
+        (ctr!("Inspector", "Miniatures"), "20–65 mm"),
+        (ctr!("Inspector", "Figures"), "65–150 mm"),
+        (ctr!("Inspector", "Statues"), "150 mm+"),
+    ]
+}
+
+/// A zone's name and what it covers, as a row of the shape panel lists it.
+fn zone_texts(
+    zones: &ZonePreset,
+    zone: crate::support_shape_edit::Zone,
+) -> (slint::SharedString, slint::SharedString) {
+    use crate::support_shape_edit::Zone;
+    let r = &zones.rules;
+    match zone {
+        Zone::Overhang => (
+            ctr!("Inspector", "Overhangs"),
+            ctr!("Inspector", "faces past the angle"),
+        ),
+        Zone::Stabilization => (
+            ctr!("Inspector", "Stabilization"),
+            ctr!(
+                "Inspector",
+                "flat faces from {} mm²",
+                mm_text(r.stabilization.min_area_mm2)
+            ),
+        ),
+        Zone::Island(i) => {
+            let area = r.first_layer.get(i).map_or(0.0, |b| b.min_area_mm2);
+            let detail = if area > 0.0 {
+                ctr!("Inspector", "first layer from {} mm²", mm_text(area))
+            } else {
+                ctr!("Inspector", "every island")
+            };
+            (ctr!("Inspector", "Islands"), detail)
+        }
+        Zone::IslandBody(i) => {
+            let volume = r.reinforcement.get(i).map_or(0.0, |b| b.min_volume_mm3);
+            (
+                ctr!("Inspector", "Island bodies"),
+                ctr!("Inspector", "from {} mm³", mm_text(volume)),
+            )
+        }
+    }
 }
 
 /// The Supports tab's summary of the zone preset of `options` (#360),
@@ -1401,11 +1479,64 @@ fn load_saved_options() -> DfSupportOptions {
         .unwrap_or_else(starting_options)
 }
 
+/// The hand sizes as they are saved: a table of sizes.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct SavedHandSizes {
+    #[serde(default)]
+    sizes: Vec<sc_geom::df_supports::SupportSize>,
+}
+
+/// The sizes the hand tools place: the ones left the time before, else the
+/// ones that ship.
+fn load_hand_sizes() -> ZonePreset {
+    let saved = support_data_dir()
+        .and_then(|d| std::fs::read_to_string(d.join("hand-sizes.toml")).ok())
+        .and_then(|text| toml::from_str::<SavedHandSizes>(&text).ok())
+        .unwrap_or_default();
+    crate::support_shape_edit::hand_from_saved(saved.sizes)
+}
+
+fn save_hand_sizes(hand: &ZonePreset) {
+    let saved = SavedHandSizes {
+        sizes: hand.rules.sizes.clone(),
+    };
+    if let Some(dir) = support_data_dir()
+        && std::fs::create_dir_all(&dir).is_ok()
+        && let Ok(text) = toml::to_string_pretty(&saved)
+    {
+        let _ = std::fs::write(dir.join("hand-sizes.toml"), text);
+    }
+}
+
 /// Miniatures 20~65 mm (#490): what the Supports tab starts with.
 fn starting_options() -> DfSupportOptions {
     DfSupportOptions {
         zones: Some(minis_30()),
         ..Default::default()
+    }
+}
+
+/// Where built-in preset `index`'s changes are kept (#564).
+fn card_file(index: usize) -> Option<std::path::PathBuf> {
+    Some(
+        support_data_dir()?
+            .join("built-in")
+            .join(format!("{index}.toml")),
+    )
+}
+
+/// Keeps built-in preset `index` as `options`; as it ships, nothing is kept.
+fn save_card(index: usize, options: &DfSupportOptions, factory: &DfSupportOptions) {
+    let Some(path) = card_file(index) else {
+        return;
+    };
+    if options == factory {
+        let _ = std::fs::remove_file(path);
+    } else if let Some(dir) = path.parent()
+        && std::fs::create_dir_all(dir).is_ok()
+        && let Ok(text) = toml::to_string_pretty(options)
+    {
+        let _ = std::fs::write(path, text);
     }
 }
 
@@ -1427,6 +1558,7 @@ fn load_user_presets() -> Vec<Preset> {
                 name,
                 options,
                 built_in: false,
+                factory: None,
             })
         })
         .collect();
@@ -1505,6 +1637,15 @@ impl DfSupportRun {
             _scene_events: scene_events,
             options: RefCell::new(load_saved_options()),
             presets: RefCell::new(Vec::new()),
+            shape_view: Cell::new(crate::support_shape::View::default()),
+            shape_size: Cell::new(None),
+            shape_hot: Cell::new(crate::support_shape::Part::None),
+            based_on: Cell::new(None),
+            editing: Cell::new(None),
+            picked: Cell::new(None),
+            unborn_hover: RefCell::new(None),
+            hand: RefCell::new(load_hand_sizes()),
+            share: RefCell::new(Vec::new()),
             sessions,
             ctrl,
             hover_worker: HoverWorker::spawn(),
@@ -1568,6 +1709,7 @@ impl DfSupportRun {
             run.ctrl.set_support_drag_handler(Rc::downgrade(&handler));
         }
         run.reload_presets();
+        run.find_card();
         run.push_options(ui);
         {
             let run = run.clone();
@@ -1576,6 +1718,103 @@ impl DfSupportRun {
         {
             let run = run.clone();
             ui.on_support_preset_picked(move |i| run.on_preset_picked(i));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_preset_revert(move || run.on_preset_revert());
+        }
+        {
+            let run = run.clone();
+            ui.on_support_shape_dragged(move |dx, dy| {
+                run.shape_view.set(run.shape_view.get().dragged(dx, dy));
+                run.redraw_shape();
+            });
+        }
+        {
+            let run = run.clone();
+            ui.on_support_shape_pointed(move |part| {
+                run.shape_hot
+                    .set(crate::support_shape::Part::from_code(part));
+                run.redraw_shape();
+            });
+        }
+        {
+            let run = run.clone();
+            ui.on_support_shape_size_picked(move |i| run.on_shape_size_picked(i));
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_page_changed(move || {
+                if let Some(run) = weak.upgrade()
+                    && let Some(ui) = run.ui.upgrade()
+                {
+                    run.push_options(&ui);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_share_export(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.on_share_export();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_share_import(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.on_share_import();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_share_toggled(move |i, on| {
+                if let Some(run) = weak.upgrade() {
+                    run.on_share_toggled(i, on);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_share_accepted(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.on_share_accepted();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_share_cancelled(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.close_share();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_hand_reset(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.set_hand(crate::support_shape_edit::hand_factory());
+                }
+            });
+        }
+        {
+            let run = run.clone();
+            ui.on_support_shape_value(move |code, v| run.on_shape_value(code, v));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_zone_size(move |row, k| run.on_zone_size(row, k));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_zone_spacing(move |row, v| run.on_zone_spacing(row, v));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_zone_angle_edited(move |v| run.on_zone_angle(v));
         }
         {
             let run = run.clone();
@@ -2595,9 +2834,11 @@ impl DfSupportRun {
             .iter()
             .map(|p| slint::SharedString::from(p.name.as_str()))
             .collect();
-        let current = presets
-            .iter()
-            .position(|p| p.options == o)
+        let current = self
+            .picked
+            .get()
+            .filter(|&i| presets.get(i).is_some_and(|p| p.options == o))
+            .or_else(|| presets.iter().position(|p| p.options == o))
             .map_or(-1, |i| i as i32);
         ui.set_support_preset_names(slint::ModelRc::new(slint::VecModel::from(names)));
         ui.set_support_preset_index(current);
@@ -2630,6 +2871,813 @@ impl DfSupportRun {
             &o,
             self.raft_layer_height_mm.get(),
         )));
+        let built_in = presets.iter().take_while(|p| p.built_in).count();
+        let card = self
+            .editing
+            .get()
+            .filter(|&i| presets.get(i).is_some_and(|p| p.options == o))
+            .or_else(|| usize::try_from(current).ok().filter(|&i| i < built_in));
+        let current = card.map_or(current, |i| i as i32);
+        let changed = card.is_some_and(|i| presets[i].factory.as_ref() != Some(&o));
+        if card.is_some() {
+            self.based_on.set(card);
+        } else if self.based_on.get().is_none()
+            && let Some(zones) = o.zones.as_ref()
+        {
+            // Not known (the app opened with a preset changed before):
+            // the built-in one it shares the most with.
+            let bases: Vec<(usize, &ZonePreset)> = presets[..built_in]
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| p.factory.as_ref()?.zones.as_ref().map(|z| (i, z)))
+                .collect();
+            let refs: Vec<&ZonePreset> = bases.iter().map(|(_, z)| *z).collect();
+            self.based_on
+                .set(crate::support_shape_edit::closest_base(&refs, zones).map(|k| bases[k].0));
+        }
+        let own: Vec<slint::SharedString> = presets[built_in..]
+            .iter()
+            .map(|p| p.name.as_str().into())
+            .collect();
+        ui.set_support_own_presets(slint::ModelRc::new(slint::VecModel::from(own)));
+        ui.set_support_own_preset_index(
+            usize::try_from(current)
+                .ok()
+                .and_then(|i| i.checked_sub(built_in))
+                .map_or(-1, |i| i as i32),
+        );
+        let cards: Vec<crate::PresetCard> = preset_cards()
+            .into_iter()
+            .map(|(title, range)| crate::PresetCard {
+                title,
+                range: range.into(),
+            })
+            .collect();
+        ui.set_support_preset_cards(slint::ModelRc::new(slint::VecModel::from(cards)));
+        ui.set_support_preset_card_index(card.map_or(-1, |i| i as i32));
+        // What the options in use are, on one line that is always there
+        // (the panel never moves when it changes), with the way back to
+        // the preset as it ships when they are not that.
+        let title_of = |i: usize| preset_cards().get(i).map(|(t, _)| t.clone());
+        let based_on = match (card, usize::try_from(current).ok(), self.based_on.get()) {
+            (Some(i), _, _) if changed => title_of(i)
+                .map(|t| ctr!("Inspector", "{}, with your changes", t))
+                .unwrap_or_default(),
+            (Some(i), _, _) => title_of(i)
+                .map(|t| ctr!("Inspector", "{}, as it ships", t))
+                .unwrap_or_default(),
+            (None, Some(c), Some(i)) => title_of(i)
+                .map(|t| {
+                    ctr!(
+                        "Inspector",
+                        "Your preset {}, made from {}",
+                        presets[c].name,
+                        t
+                    )
+                })
+                .unwrap_or_default(),
+            (None, Some(c), None) => ctr!("Inspector", "Your preset: {}", presets[c].name),
+            (None, None, Some(i)) => title_of(i)
+                .map(|t| ctr!("Inspector", "Made from {}, with changes", t))
+                .unwrap_or_default(),
+            (None, None, None) => ctr!("Inspector", "Custom preset"),
+        };
+        ui.set_support_based_on(based_on);
+        ui.set_support_preset_resettable(
+            !(card.is_some() && !changed) && (card.is_some() || self.based_on.get().is_some()),
+        );
+        let scope = match (card, usize::try_from(current).ok()) {
+            (Some(i), _) => ctr!("Inspector", "Preset {}", preset_cards()[i].0),
+            (None, Some(i)) => ctr!("Inspector", "Preset {}", presets[i].name),
+            (None, None) => ctr!("Inspector", "Custom preset"),
+        };
+        ui.set_support_shape_scope(scope);
+        drop(presets);
+        self.push_shape(ui, &o);
+    }
+
+    /// The size the shape panel shows, an index into the preset's sizes:
+    /// the one picked while the preset has it, else the small one.
+    fn shape_size_of(&self, zones: &ZonePreset) -> Option<usize> {
+        let shown = crate::support_shape_edit::shown_sizes(zones);
+        self.shape_size
+            .get()
+            .filter(|i| shown.contains(i))
+            .or_else(|| {
+                shown
+                    .iter()
+                    .copied()
+                    .find(|&i| zones.rules.sizes[i].id == "small")
+            })
+            .or_else(|| shown.first().copied())
+    }
+
+    /// Export asked (#564): lists the person's presets, the settings in use
+    /// when they are no preset, and the hand sizes, all ticked.
+    fn on_share_export(&self) {
+        use crate::support_share::{Entry, SharedPreset};
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let options = self.options.borrow().clone();
+        let presets = self.presets.borrow();
+        let titles = preset_cards();
+        let mut entries: Vec<(Entry, bool)> = presets
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let name = match (p.built_in, titles.get(i)) {
+                    (true, Some((title, _))) => title.to_string(),
+                    _ => p.name.clone(),
+                };
+                let preset = SharedPreset {
+                    name,
+                    options: p.options.clone(),
+                };
+                (Entry::Preset(Box::new(preset)), true)
+            })
+            .collect();
+        if !presets.iter().any(|p| p.options == options) {
+            let preset = SharedPreset {
+                name: ctr!("Inspector", "Current settings").to_string(),
+                options,
+            };
+            entries.insert(0, (Entry::Preset(Box::new(preset)), true));
+        }
+        entries.extend(
+            self.hand
+                .borrow()
+                .rules
+                .sizes
+                .iter()
+                .map(|size| (Entry::HandSize(size.clone()), true)),
+        );
+        drop(presets);
+        *self.share.borrow_mut() = entries;
+        self.push_share(&ui, 1);
+    }
+
+    /// Import asked: the file is picked, and what it holds is listed to
+    /// tick.
+    fn on_share_import(self: &Rc<Self>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let dialog = crate::error_dialog::file_dialog_over(ui.window())
+            .set_title(ctr!("FileDialog", "Import support settings").to_string())
+            .add_filter(
+                ctr!("FileDialog", "Breadslicer support settings").to_string(),
+                &[crate::support_share::EXTENSION],
+            );
+        let weak = Rc::downgrade(self);
+        if let Err(err) = slint::spawn_local(async move {
+            let Some(picked) = dialog.pick_file().await else {
+                return;
+            };
+            let Some(run) = weak.upgrade() else {
+                return;
+            };
+            match std::fs::read_to_string(picked.path()) {
+                Ok(text) => run.offer_import(&text),
+                Err(_) => run.show_status(ctr!("Inspector", "That file could not be read.")),
+            }
+        }) {
+            eprintln!("Failed to spawn the support settings dialog task: {err}");
+        }
+    }
+
+    /// Lists what the support settings file of text `text` holds, to tick,
+    /// or says why it holds nothing to take.
+    fn offer_import(&self, text: &str) {
+        use crate::support_share::ReadError;
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        match crate::support_share::read(text) {
+            Ok(entries) => {
+                *self.share.borrow_mut() = entries.into_iter().map(|e| (e, true)).collect();
+                self.push_share(&ui, 2);
+            }
+            Err(ReadError::Newer) => self.show_status(ctr!(
+                "Inspector",
+                "That file was made by a newer Breadslicer."
+            )),
+            Err(ReadError::Empty) => {
+                self.show_status(ctr!("Inspector", "That file holds no support settings."));
+            }
+            Err(ReadError::NotOne) => self.show_status(ctr!(
+                "Inspector",
+                "That is not a Breadslicer support settings file."
+            )),
+        }
+    }
+
+    /// The rows of the list being asked: per group (0 the presets of
+    /// Generate, 1 the hand sizes), its head, then its entries, by index
+    /// into the list.
+    fn share_rows(&self) -> Vec<(usize, Option<usize>)> {
+        use crate::support_share::Entry;
+        let share = self.share.borrow();
+        let group = |e: &Entry| usize::from(matches!(e, Entry::HandSize(_)));
+        let mut rows = Vec::new();
+        for g in 0..2 {
+            rows.push((g, None));
+            rows.extend(
+                share
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (e, _))| group(e) == g)
+                    .map(|(i, _)| (g, Some(i))),
+            );
+        }
+        rows
+    }
+
+    /// Shows the list of the export (1) or import (2) being asked, as a
+    /// tree: each group's head ticks all of it, each entry itself.
+    fn push_share(&self, ui: &MainWindow, mode: i32) {
+        use crate::support_share::Entry;
+        // The presets first, the hand sizes after them from XS to L.
+        let order = crate::support_shape_edit::hand_factory();
+        let hand_rank = |id: &str| {
+            order
+                .rules
+                .sizes
+                .iter()
+                .position(|s| s.id == id)
+                .unwrap_or(usize::MAX)
+        };
+        self.share
+            .borrow_mut()
+            .sort_by_key(|(entry, _)| match entry {
+                Entry::Preset(_) => (0, 0),
+                Entry::HandSize(s) => (1, hand_rank(&s.id)),
+            });
+        let rows = self.share_rows();
+        let share = self.share.borrow();
+        let presets = self.presets.borrow();
+        let bases: Vec<(String, &ZonePreset)> = presets
+            .iter()
+            .filter(|p| p.built_in)
+            .zip(preset_cards())
+            .filter_map(|(p, (title, _))| {
+                Some((title.to_string(), p.factory.as_ref()?.zones.as_ref()?))
+            })
+            .collect();
+        let refs: Vec<&ZonePreset> = bases.iter().map(|(_, z)| *z).collect();
+        let in_group = |g: usize| {
+            rows.iter()
+                .filter(|(rg, e)| *rg == g && e.is_some())
+                .count()
+        };
+        let ticked = |g: usize| {
+            rows.iter()
+                .filter(|(rg, e)| *rg == g && e.is_some_and(|i| share[i].1))
+                .count()
+        };
+        let none: slint::ModelRc<f32> = slint::ModelRc::default();
+        let items: Vec<crate::ShareItem> = rows
+            .iter()
+            .enumerate()
+            .map(|(k, &(g, entry))| {
+                let last = rows.get(k + 1).is_none_or(|(next, e)| *next != g || e.is_none());
+                let Some(i) = entry else {
+                    let (n, on) = (in_group(g), ticked(g));
+                    let name = if g == 0 {
+                        ctr!("Inspector", "Automatic presets")
+                    } else {
+                        ctr!("Inspector", "Manual supports")
+                    };
+                    let detail = match (n, g, mode) {
+                        (0, 0, 1) => ctr!(
+                            "Inspector",
+                            "You have no presets of your own yet: change one and save it in PRESETS to share it."
+                        ),
+                        (0, 0, _) => ctr!("Inspector", "The file brings no presets."),
+                        (0, _, _) => ctr!("Inspector", "The file brings no hand sizes."),
+                        _ => ctr!("Inspector", "{} of {} ticked", on, n),
+                    };
+                    return crate::ShareItem {
+                        header: true,
+                        group: g as i32,
+                        name,
+                        detail,
+                        numbers: none.clone(),
+                        state: if n > 0 && on == n { 2 } else if on > 0 { 1 } else { 0 },
+                        last: n == 0,
+                        enabled: n > 0,
+                    };
+                };
+                let (entry, on) = &share[i];
+                let (name, detail, numbers) = match entry {
+                    Entry::Preset(p) if mode == 1
+                        && presets.iter().zip(preset_cards()).any(|(b, (t, _))| {
+                            b.built_in && t.as_str() == p.name
+                        }) =>
+                    {
+                        let factory = presets
+                            .iter()
+                            .zip(preset_cards())
+                            .find(|(b, (t, _))| b.built_in && t.as_str() == p.name)
+                            .and_then(|(b, _)| b.factory.as_ref());
+                        (
+                            p.name.as_str().into(),
+                            if factory == Some(&p.options) {
+                                ctr!("Inspector", "Built-in, as it ships")
+                            } else {
+                                ctr!("Inspector", "Built-in, with your changes")
+                            },
+                            none.clone(),
+                        )
+                    }
+                    Entry::Preset(p) => (
+                        p.name.as_str().into(),
+                        p.options
+                            .zones
+                            .as_ref()
+                            .and_then(|z| crate::support_shape_edit::closest_base(&refs, z))
+                            .map_or_else(
+                                || ctr!("Inspector", "Preset of Generate"),
+                                |k| ctr!("Inspector", "Made from {}", bases[k].0),
+                            ),
+                        none.clone(),
+                    ),
+                    Entry::HandSize(size) => (
+                        crate::support_shape_edit::short_name(&size.id).into(),
+                        Default::default(),
+                        slint::ModelRc::new(slint::VecModel::from(vec![
+                            size.tip_diameter_mm as f32,
+                            size.trunk_diameter_mm as f32,
+                            size.base_diameter_mm as f32,
+                        ])),
+                    ),
+                };
+                crate::ShareItem {
+                    header: false,
+                    group: g as i32,
+                    name,
+                    detail,
+                    numbers,
+                    state: if *on { 2 } else { 0 },
+                    last,
+                    enabled: true,
+                }
+            })
+            .collect();
+        ui.set_support_share_picked(share.iter().filter(|(_, on)| *on).count() as i32);
+        ui.set_support_share_total(share.len() as i32);
+        ui.set_support_share_items(slint::ModelRc::new(slint::VecModel::from(items)));
+        ui.set_support_share_mode(mode);
+    }
+
+    /// Row `row` of the list ticked or not: a group's head ticks all of
+    /// the group, an entry itself.
+    fn on_share_toggled(&self, row: i32, on: bool) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let rows = self.share_rows();
+        let Some(&(group, entry)) = usize::try_from(row).ok().and_then(|r| rows.get(r)) else {
+            return;
+        };
+        {
+            let mut share = self.share.borrow_mut();
+            match entry {
+                Some(i) => share[i].1 = on,
+                None => {
+                    for &(_, e) in rows.iter().filter(|(g, _)| *g == group) {
+                        if let Some(i) = e {
+                            share[i].1 = on;
+                        }
+                    }
+                }
+            }
+        }
+        self.push_share(&ui, ui.get_support_share_mode());
+    }
+
+    /// Puts the list away, nothing taken.
+    fn close_share(&self) {
+        self.share.borrow_mut().clear();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_share_mode(0);
+        }
+    }
+
+    /// The list was answered: the ticked entries go to a file (export) or
+    /// come in (import).
+    fn on_share_accepted(self: &Rc<Self>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let mode = ui.get_support_share_mode();
+        let picked: Vec<crate::support_share::Entry> = self
+            .share
+            .borrow()
+            .iter()
+            .filter(|(_, on)| *on)
+            .map(|(entry, _)| entry.clone())
+            .collect();
+        self.close_share();
+        if picked.is_empty() {
+            return;
+        }
+        if mode == 2 {
+            self.take_shared(picked);
+            return;
+        }
+        let Some(text) = crate::support_share::write(&picked) else {
+            return;
+        };
+        let dialog = crate::error_dialog::file_dialog_over(ui.window())
+            .set_title(ctr!("FileDialog", "Export support settings").to_string())
+            .set_file_name(format!("supports.{}", crate::support_share::EXTENSION))
+            .add_filter(
+                ctr!("FileDialog", "Breadslicer support settings").to_string(),
+                &[crate::support_share::EXTENSION],
+            );
+        let weak = Rc::downgrade(self);
+        if let Err(err) = slint::spawn_local(async move {
+            let Some(file) = dialog.save_file().await else {
+                return;
+            };
+            let written = std::fs::write(file.path(), text).is_ok();
+            if let Some(run) = weak.upgrade() {
+                run.show_status(if written {
+                    ctr!("Inspector", "Support settings exported.")
+                } else {
+                    ctr!("Inspector", "The file could not be written.")
+                });
+            }
+        }) {
+            eprintln!("Failed to spawn the support settings dialog task: {err}");
+        }
+    }
+
+    /// Takes `picked` from a file: each preset is saved as one of the
+    /// person's own, under a name none of theirs has, and the hand sizes
+    /// replace theirs.
+    fn take_shared(self: &Rc<Self>, picked: Vec<crate::support_share::Entry>) {
+        use crate::support_share::Entry;
+        let mut taken: Vec<String> = self
+            .presets
+            .borrow()
+            .iter()
+            .map(|p| p.name.clone())
+            .chain(preset_cards().into_iter().map(|(t, _)| t.to_string()))
+            .collect();
+        let dir = support_data_dir().map(|d| d.join("presets"));
+        let mut presets = 0;
+        let mut sizes = Vec::new();
+        for entry in picked {
+            match entry {
+                Entry::Preset(p) => {
+                    let Some(stem) = preset_file_stem(&p.name) else {
+                        continue;
+                    };
+                    let name = crate::support_share::free_name(&stem, &taken);
+                    if let Some(dir) = dir.as_ref()
+                        && std::fs::create_dir_all(dir).is_ok()
+                        && let Ok(text) = toml::to_string_pretty(&p.options)
+                    {
+                        let _ = std::fs::write(dir.join(format!("{name}.toml")), text);
+                    }
+                    taken.push(name);
+                    presets += 1;
+                }
+                Entry::HandSize(size) => sizes.push(size),
+            }
+        }
+        // The sizes taken replace those of the same name; the others stay.
+        let hand = !sizes.is_empty();
+        if hand {
+            let mut merged = self.hand.borrow().rules.sizes.clone();
+            for size in sizes {
+                match merged.iter_mut().find(|s| s.id == size.id) {
+                    Some(slot) => *slot = size,
+                    None => merged.push(size),
+                }
+            }
+            self.set_hand(crate::support_shape_edit::hand_from_saved(merged));
+        }
+        self.reload_presets();
+        if let Some(ui) = self.ui.upgrade() {
+            self.push_options(&ui);
+        }
+        self.show_status(match (presets, hand) {
+            (0, _) => ctr!("Inspector", "Hand sizes imported."),
+            (n, false) => ctr!(
+                "Inspector",
+                "Imported {n} preset.",
+                "Imported {n} presets.",
+                n
+            ),
+            (n, true) => ctr!(
+                "Inspector",
+                "Imported {n} preset and the hand sizes.",
+                "Imported {n} presets and the hand sizes.",
+                n
+            ),
+        });
+    }
+
+    /// Whether the shape panel shows the hand sizes (the Manual page) and
+    /// not the preset of Generate.
+    fn on_hand_page(ui: &MainWindow) -> bool {
+        ui.get_support_page() == 1
+    }
+
+    /// The hand size the Add tool places, an index into the hand sizes:
+    /// the one keys 1 to 4 picked, the small one with none picked.
+    fn hand_size_index(&self, ui: &MainWindow) -> Option<usize> {
+        let hand = self.hand.borrow();
+        let id = hand_tip_size(ui.get_support_tip_size()).unwrap_or_else(|| "small".to_owned());
+        hand.rules.sizes.iter().position(|s| s.id == id)
+    }
+
+    /// The hand size the Add tool places, with the person's numbers.
+    fn hand_shape(&self, ui: &MainWindow) -> Option<sc_geom::df_supports::SupportSize> {
+        hand_tip_size(ui.get_support_tip_size())?;
+        let i = self.hand_size_index(ui)?;
+        Some(self.hand.borrow().rules.sizes[i].clone())
+    }
+
+    /// Replaces the hand sizes, saves them and shows them.
+    fn set_hand(self: &Rc<Self>, hand: ZonePreset) {
+        save_hand_sizes(&hand);
+        *self.hand.borrow_mut() = hand;
+        if let Some(ui) = self.ui.upgrade() {
+            self.push_options(&ui);
+            self.refresh_tip_label(&ui, None);
+        }
+        if let Some((point, shift)) = self.hover_at.get() {
+            self.on_tool_hover_with(Some(point), shift);
+        }
+    }
+
+    /// Pushes the shape panel (#564): the sizes, the numbers of the one
+    /// shown, where each size goes, and the drawing. On the Manual page the
+    /// sizes are the hand tools'.
+    fn push_shape(&self, ui: &MainWindow, o: &DfSupportOptions) {
+        use crate::support_shape_edit as edit;
+        let manual = Self::on_hand_page(ui);
+        let hand = self.hand.borrow().clone();
+        ui.set_support_hand_changed(hand != edit::hand_factory());
+        let (zones, size) = if manual {
+            (&hand, self.hand_size_index(ui))
+        } else {
+            let Some(zones) = o.zones.as_ref() else {
+                return;
+            };
+            (zones, self.shape_size_of(zones))
+        };
+        if manual {
+            ui.set_support_shape_scope(ctr!("Inspector", "Hand supports"));
+        }
+        let shown = edit::shown_sizes(zones);
+        let Some(size) = size else {
+            return;
+        };
+        let names: Vec<String> = shown
+            .iter()
+            .map(|&i| edit::short_name(&zones.rules.sizes[i].id))
+            .collect();
+        let chips: Vec<crate::ShapeSize> = shown
+            .iter()
+            .zip(&names)
+            .map(|(&i, name)| crate::ShapeSize {
+                name: name.into(),
+                tip: zones.rules.sizes[i].tip_diameter_mm as f32,
+            })
+            .collect();
+        ui.set_support_shape_sizes(slint::ModelRc::new(slint::VecModel::from(chips)));
+        ui.set_support_shape_size(
+            shown
+                .iter()
+                .position(|&i| i == size)
+                .map_or(-1, |i| i as i32),
+        );
+        ui.set_support_shape_size_name(edit::short_name(&zones.rules.sizes[size].id).into());
+        // What each field goes back to: the built-in preset it was made
+        // from, for the same size.
+        let base = if manual {
+            Some(edit::hand_factory())
+        } else {
+            self.base_zones()
+        };
+        let defaults: Vec<f32> = match base.as_ref() {
+            Some(base) => edit::defaults(base, zones, size)
+                .iter()
+                .map(|d| d.map_or(-1.0, |v| v as f32))
+                .collect(),
+            None => vec![-1.0; edit::FIELDS],
+        };
+        ui.set_support_shape_defaults(slint::ModelRc::new(slint::VecModel::from(defaults)));
+        ui.set_support_zone_angle_default(
+            base.as_ref()
+                .map_or(-1.0, |b| b.rules.overhang.angle_deg as f32),
+        );
+        let values: Vec<f32> = edit::values(zones, size)
+            .iter()
+            .map(|&v| v as f32)
+            .collect();
+        ui.set_support_shape_values(slint::ModelRc::new(slint::VecModel::from(values)));
+        if manual {
+            self.draw_shape(ui, &zones.rules.sizes[size]);
+            return;
+        }
+        let size_names: Vec<slint::SharedString> = names.iter().map(|n| n.into()).collect();
+        ui.set_support_zone_size_names(slint::ModelRc::new(slint::VecModel::from(size_names)));
+        let rows: Vec<crate::ZoneRow> = edit::zones_of(zones)
+            .into_iter()
+            .filter_map(|zone| {
+                let (id, spacing) = edit::zone_size_and_spacing(zones, zone)?;
+                let (name, detail) = zone_texts(zones, zone);
+                let place = |id: &str| {
+                    shown
+                        .iter()
+                        .position(|&i| zones.rules.sizes[i].id == id)
+                        .map_or(-1, |i| i as i32)
+                };
+                let built_in = base
+                    .as_ref()
+                    .and_then(|b| edit::zone_size_and_spacing(b, zone));
+                Some(crate::ZoneRow {
+                    name,
+                    detail,
+                    size: place(id),
+                    spacing: spacing as f32,
+                    default_size: built_in.map_or(-1, |(id, _)| place(id)),
+                    default_spacing: built_in.map_or(-1.0, |(_, mm)| mm as f32),
+                })
+            })
+            .collect();
+        ui.set_support_zone_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+        ui.set_support_zone_angle(zones.rules.overhang.angle_deg as f32);
+        self.draw_shape(ui, &zones.rules.sizes[size]);
+    }
+
+    /// The zones of the built-in preset the options were made from: what
+    /// each field of the shape panel goes back to.
+    fn base_zones(&self) -> Option<ZonePreset> {
+        let presets = self.presets.borrow();
+        presets
+            .get(self.based_on.get()?)
+            .filter(|p| p.built_in)
+            .and_then(|p| p.factory.as_ref()?.zones.clone())
+    }
+
+    /// Draws the shape panel's support again: after a turn or a part
+    /// pointed at, nothing else changed.
+    fn redraw_shape(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if Self::on_hand_page(&ui) {
+            if let Some(size) = self.hand_size_index(&ui) {
+                let shape = self.hand.borrow().rules.sizes[size].clone();
+                self.draw_shape(&ui, &shape);
+            }
+            return;
+        }
+        let o = self.options.borrow();
+        let Some(zones) = o.zones.as_ref() else {
+            return;
+        };
+        if let Some(size) = self.shape_size_of(zones) {
+            self.draw_shape(&ui, &zones.rules.sizes[size]);
+        }
+    }
+
+    fn draw_shape(&self, ui: &MainWindow, size: &sc_geom::df_supports::SupportSize) {
+        use crate::support_shape::{SHAPE_HEIGHT, SHAPE_WIDTH, draw};
+        let hot = self.shape_hot.get();
+        let drawing = draw(
+            size,
+            self.shape_view.get(),
+            SHAPE_WIDTH,
+            SHAPE_HEIGHT,
+            ui.window().scale_factor(),
+            hot,
+        );
+        let callouts: Vec<crate::ShapeCallout> = drawing
+            .callouts
+            .into_iter()
+            .map(|c| crate::ShapeCallout {
+                x: c.x,
+                y: c.y,
+                right: c.right,
+                part: c.part as i32,
+                prefix: c.prefix.into(),
+                value: c.value as f32,
+            })
+            .collect();
+        ui.set_support_shape_picture(slint::Image::from_rgba8(drawing.pixels));
+        ui.set_support_shape_callouts(slint::ModelRc::new(slint::VecModel::from(callouts)));
+        ui.set_support_shape_hot(hot as i32);
+    }
+
+    /// A size chip picked: the panel shows that size.
+    fn on_shape_size_picked(&self, chip: i32) {
+        if let Some(ui) = self.ui.upgrade()
+            && Self::on_hand_page(&ui)
+        {
+            // The chips are the Add tool's tip sizes, as keys 1 to 4 are.
+            if (0..4).contains(&chip) {
+                ui.set_support_tip_size(chip + 1);
+                let o = self.options.borrow().clone();
+                self.push_shape(&ui, &o);
+                self.refresh_tip_label(&ui, None);
+            }
+            return;
+        }
+        let picked = {
+            let o = self.options.borrow();
+            o.zones.as_ref().and_then(|z| {
+                crate::support_shape_edit::shown_sizes(z)
+                    .get(usize::try_from(chip).ok()?)
+                    .copied()
+            })
+        };
+        if picked.is_some() {
+            self.shape_size.set(picked);
+            if let Some(ui) = self.ui.upgrade() {
+                let o = self.options.borrow().clone();
+                self.push_shape(&ui, &o);
+            }
+        }
+    }
+
+    /// A number of the shape panel changed: the preset takes it, as any
+    /// other option, and the drawing follows.
+    fn on_shape_value(self: &Rc<Self>, code: i32, value: f32) {
+        if let Some(ui) = self.ui.upgrade()
+            && Self::on_hand_page(&ui)
+        {
+            let (Some(size), Ok(code)) = (self.hand_size_index(&ui), usize::try_from(code)) else {
+                return;
+            };
+            if code < 9 {
+                let mut hand = self.hand.borrow().clone();
+                crate::support_shape_edit::set_value(&mut hand, size, code, f64::from(value));
+                self.set_hand(hand);
+            }
+            return;
+        }
+        let mut o = self.options.borrow().clone();
+        let Some(size) = o.zones.as_ref().and_then(|z| self.shape_size_of(z)) else {
+            return;
+        };
+        let (Some(zones), Ok(code)) = (o.zones.as_mut(), usize::try_from(code)) else {
+            return;
+        };
+        crate::support_shape_edit::set_value(zones, size, code, f64::from(value));
+        self.set_options(o);
+    }
+
+    /// The zone of row `row` of the shape panel.
+    fn zone_at(&self, row: i32) -> Option<crate::support_shape_edit::Zone> {
+        let o = self.options.borrow();
+        crate::support_shape_edit::zones_of(o.zones.as_ref()?)
+            .get(usize::try_from(row).ok()?)
+            .copied()
+    }
+
+    fn on_zone_size(&self, row: i32, chip: i32) {
+        let Some(zone) = self.zone_at(row) else {
+            return;
+        };
+        let mut o = self.options.borrow().clone();
+        let Some(zones) = o.zones.as_mut() else {
+            return;
+        };
+        let Some(id) = crate::support_shape_edit::shown_sizes(zones)
+            .get(usize::try_from(chip).unwrap_or(usize::MAX))
+            .map(|&i| zones.rules.sizes[i].id.clone())
+        else {
+            return;
+        };
+        crate::support_shape_edit::set_zone_size(zones, zone, &id);
+        self.set_options(o);
+    }
+
+    fn on_zone_spacing(&self, row: i32, mm: f32) {
+        let Some(zone) = self.zone_at(row) else {
+            return;
+        };
+        let mut o = self.options.borrow().clone();
+        if let Some(zones) = o.zones.as_mut() {
+            crate::support_shape_edit::set_zone_spacing(zones, zone, f64::from(mm));
+            self.set_options(o);
+        }
+    }
+
+    fn on_zone_angle(&self, degrees: f32) {
+        let mut o = self.options.borrow().clone();
+        if let Some(zones) = o.zones.as_mut() {
+            zones.rules.overhang.angle_deg = f64::from(degrees).clamp(15.0, 70.0);
+            self.set_options(o);
+        }
     }
 
     /// Replaces the options, saves them and shows them.
@@ -2640,6 +3688,16 @@ impl DfSupportRun {
             && let Ok(text) = toml::to_string_pretty(&options)
         {
             let _ = std::fs::write(dir.join("options.toml"), text);
+        }
+        // The built-in preset in use keeps the change as its own (#564).
+        if let Some(i) = self.editing.get() {
+            let mut presets = self.presets.borrow_mut();
+            if let Some(p) = presets.get_mut(i).filter(|p| p.built_in) {
+                if let Some(factory) = p.factory.as_ref() {
+                    save_card(i, &options, factory);
+                }
+                p.options = options.clone();
+            }
         }
         *self.options.borrow_mut() = options;
         if let Some(ui) = self.ui.upgrade() {
@@ -2988,8 +4046,47 @@ impl DfSupportRun {
 
     fn reload_presets(&self) {
         let mut presets = built_in_presets();
+        // Each built-in preset with the changes the person made to it.
+        for (i, preset) in presets.iter_mut().enumerate() {
+            if let Some(options) = card_file(i)
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|text| toml::from_str::<DfSupportOptions>(&text).ok())
+                .map(|o| o.clamped())
+                .filter(|o| o.zones.is_some())
+            {
+                preset.options = options;
+            }
+        }
         presets.extend(load_user_presets());
         *self.presets.borrow_mut() = presets;
+    }
+
+    /// The built-in preset the options in use are: the one they are, or,
+    /// for options changed before the presets kept their changes, the one
+    /// they share the most with, which takes them as its changes. Options
+    /// that are one of the person's own presets are none.
+    fn find_card(&self) {
+        let o = self.options.borrow().clone();
+        let mut presets = self.presets.borrow_mut();
+        let built_in = presets.iter().take_while(|p| p.built_in).count();
+        if let Some(i) = presets.iter().position(|p| p.options == o) {
+            self.editing.set((i < built_in).then_some(i));
+            return;
+        }
+        let Some(zones) = o.zones.as_ref() else {
+            return;
+        };
+        let bases: Vec<&ZonePreset> = presets[..built_in]
+            .iter()
+            .filter_map(|p| p.factory.as_ref()?.zones.as_ref())
+            .collect();
+        if let Some(i) = crate::support_shape_edit::closest_base(&bases, zones) {
+            presets[i].options = o.clone();
+            if let Some(factory) = presets[i].factory.clone() {
+                save_card(i, &o, &factory);
+            }
+            self.editing.set(Some(i));
+        }
     }
 
     fn on_preset_picked(&self, index: i32) {
@@ -2999,8 +4096,39 @@ impl DfSupportRun {
             .get(index.max(0) as usize)
             .map(|p| p.options.clone());
         if let Some(options) = picked {
+            let built_in = self
+                .presets
+                .borrow()
+                .get(index.max(0) as usize)
+                .is_some_and(|p| p.built_in);
+            let card = built_in.then_some(index.max(0) as usize);
+            self.based_on.set(card);
+            self.editing.set(card);
+            self.picked.set(Some(index.max(0) as usize));
             self.set_options(options);
         }
+    }
+
+    /// Reset to default: the built-in preset in use goes back to its values
+    /// as they ship; options of no built-in preset take the one they were
+    /// made from.
+    fn on_preset_revert(&self) {
+        let card = self.editing.get().or(self.based_on.get());
+        let Some(i) = card else {
+            return;
+        };
+        let factory = self.presets.borrow().get(i).and_then(|p| p.factory.clone());
+        let Some(factory) = factory else {
+            return;
+        };
+        save_card(i, &factory, &factory);
+        if let Some(p) = self.presets.borrow_mut().get_mut(i) {
+            p.options = factory.clone();
+        }
+        self.based_on.set(Some(i));
+        self.editing.set(Some(i));
+        self.picked.set(Some(i));
+        self.set_options(factory);
     }
 
     /// Saves the current options as a preset of the person.
@@ -3018,6 +4146,14 @@ impl DfSupportRun {
             let _ = std::fs::write(dir.join(format!("{stem}.toml")), text);
         }
         self.reload_presets();
+        // The preset just saved is the one marked.
+        self.picked.set(
+            self.presets
+                .borrow()
+                .iter()
+                .position(|p| !p.built_in && p.name == stem),
+        );
+        self.editing.set(None);
         if let Some(ui) = self.ui.upgrade() {
             self.push_options(&ui);
         }
@@ -3487,7 +4623,9 @@ impl DfSupportRun {
                 });
             }
             let (hand, how) = self.click_tool(&ui, tool, shift);
-            let drawn = self.set_at(point, hand)?;
+            let drawn = self
+                .set_at(point, hand)
+                .or_else(|| self.unborn_hover_set(self.bare_model_at(point, hand)?))?;
             if hand == HandTool::Add {
                 self.refresh_tip_label(&ui, Some(&drawn.session));
             }
@@ -3514,6 +4652,7 @@ impl DfSupportRun {
             let how = AddOptions {
                 attach: shift,
                 size: hand_tip_size(ui.get_support_tip_size()),
+                shape: self.hand_shape(ui).map(sc_geom::df_supports::HandShape),
             };
             (HandTool::Add, how)
         } else {
@@ -3537,6 +4676,10 @@ impl DfSupportRun {
     fn on_tip_size_changed(self: &Rc<Self>) {
         if let Some(ui) = self.ui.upgrade() {
             self.refresh_tip_label(&ui, None);
+            if Self::on_hand_page(&ui) {
+                let o = self.options.borrow().clone();
+                self.push_shape(&ui, &o);
+            }
         }
         if let Some((point, shift)) = self.hover_at.get() {
             self.on_tool_hover_with(Some(point), shift);
@@ -3551,11 +4694,8 @@ impl DfSupportRun {
             .then(|| self.sets_in_force().into_iter().next())
             .flatten();
         let session = session.or(first.as_ref().map(|d| d.session.as_ref()));
-        let label = match hand_tip_size(ui.get_support_tip_size()) {
-            Some(id) => match tip_mm(session, &id) {
-                Some(mm) => ctr!("Inspector", "{} mm tip", mm_text(mm)),
-                None => Default::default(),
-            },
+        let label = match self.hand_shape(ui) {
+            Some(shape) => ctr!("Inspector", "{} mm tip", mm_text(shape.tip_diameter_mm)),
             None => match session
                 .and_then(|s| s.preset_hand_size().map(|id| (s, id)))
                 .and_then(|(s, id)| tip_mm(Some(s), id))
@@ -4624,6 +5764,23 @@ impl DfSupportRun {
             .flatten()
     }
 
+    /// [`Self::unborn_set`] for the preview under the cursor, made once for
+    /// the scene and the options as they stand.
+    fn unborn_hover_set(&self, model: NodeId) -> Option<DrawnSet> {
+        let revision = self.document.scene_revision();
+        let options = self.born_options_now();
+        if let Some((r, m, o, drawn)) = self.unborn_hover.borrow().as_ref()
+            && *r == revision
+            && *m == model
+            && *o == options
+        {
+            return Some(drawn.clone());
+        }
+        let drawn = self.unborn_set(model)?;
+        *self.unborn_hover.borrow_mut() = Some((revision, model, options, drawn.clone()));
+        Some(drawn)
+    }
+
     /// Why no support set in force takes a hand tool at `point`: the
     /// supports there are not the ones selected (Remove), the model's
     /// supports are out of date, the model has none, or the supports there
@@ -5617,7 +6774,11 @@ impl DfSupportRun {
                     *owed = more;
                     let changed = ids != *picked;
                     *picked = ids;
-                    Some((Picks::Set(Box::new(drawn.clone()), picked.clone()), changed, more))
+                    Some((
+                        Picks::Set(Box::new(drawn.clone()), picked.clone()),
+                        changed,
+                        more,
+                    ))
                 }
                 Some(DragState::RemoveImported {
                     bodies,
@@ -6374,6 +7535,46 @@ mod hand_edit_tests {
         assert!(after_add.contains("edited by hand"), "{after_add}");
         assert!(after_remove.contains("edited by hand"), "{after_remove}");
         assert!(edits);
+    }
+
+    /// A model with no supports yet previews Add under the cursor before
+    /// its first click (#564: only the hint rings showed until a support
+    /// was placed).
+    #[test]
+    fn a_model_with_no_supports_previews_its_first_one() {
+        let shown = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            window.set_support_tool(1);
+            run.on_tool_hover(Some([20.2, 20.2, 7.5]));
+            let waited = Instant::now();
+            while run.last_preview.borrow().is_none() && waited.elapsed() < Duration::from_secs(10)
+            {
+                std::thread::sleep(Duration::from_millis(5));
+                run.take_hover_answer();
+            }
+            let shown = run
+                .last_preview
+                .borrow()
+                .as_ref()
+                .is_some_and(|a| a.preview.as_ref().is_some_and(|p| p.valid));
+            shown && !run.last_ghost.borrow().is_empty()
+        });
+        assert!(shown, "a green preview before the first support");
     }
 
     /// Fix All's supports (#156): several points, one undoable edit; one
@@ -9116,6 +10317,130 @@ mod hand_edit_tests {
             .collect()
     }
 
+    /// Of presets with the same numbers, the one clicked is the one marked
+    /// (#564: clicking any of them marked the first).
+    #[test]
+    fn of_presets_alike_the_one_clicked_is_marked() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run, _) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let built_in = run.presets.borrow().len();
+            let same = run.presets.borrow()[0].options.clone();
+            for name in ["Mine", "Mine (2)"] {
+                run.presets.borrow_mut().push(Preset {
+                    name: name.to_owned(),
+                    options: same.clone(),
+                    built_in: false,
+                    factory: None,
+                });
+            }
+            run.on_preset_picked(built_in as i32 + 1);
+            assert_eq!(window.get_support_own_preset_index(), 1);
+            assert_eq!(window.get_support_preset_index(), built_in as i32 + 1);
+            assert_eq!(window.get_support_preset_card_index(), -1);
+            run.on_preset_picked(built_in as i32);
+            assert_eq!(window.get_support_own_preset_index(), 0);
+            run.on_preset_picked(0);
+            assert_eq!(window.get_support_preset_card_index(), 0);
+            assert_eq!(window.get_support_own_preset_index(), -1);
+        });
+    }
+
+    /// The list of what a support settings file holds is a tree (#564): a
+    /// group's head ticks all of it and shows a dash when some are ticked;
+    /// each entry ticks alone; what is taken is what was ticked.
+    #[test]
+    fn the_share_list_is_a_tree_whose_heads_tick_their_group() {
+        use crate::support_share::{Entry, SharedPreset, write};
+        use slint::Model;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run, _) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let options = |zones| DfSupportOptions {
+                zones: Some(zones),
+                ..Default::default()
+            };
+            let mut thick = minis_30();
+            thick.rules.sizes[1].trunk_diameter_mm = 2.0;
+            let mut entries = vec![
+                Entry::Preset(Box::new(SharedPreset {
+                    name: "Thick minis".to_owned(),
+                    options: options(thick),
+                })),
+                Entry::Preset(Box::new(SharedPreset {
+                    name: "Big statues".to_owned(),
+                    options: options(figures_150()),
+                })),
+            ];
+            let mut hand = crate::support_shape_edit::hand_factory().rules.sizes;
+            hand[1].trunk_diameter_mm = 1.7;
+            entries.extend(hand.into_iter().map(Entry::HandSize));
+            run.offer_import(&write(&entries).expect("a file"));
+            let rows = |w: &MainWindow| -> Vec<(bool, String, i32)> {
+                w.get_support_share_items()
+                    .iter()
+                    .map(|r| (r.header, r.name.to_string(), r.state))
+                    .collect()
+            };
+            assert_eq!(window.get_support_share_mode(), 2);
+            let names: Vec<String> = rows(&window).into_iter().map(|r| r.1).collect();
+            assert_eq!(
+                names,
+                [
+                    "Automatic presets",
+                    "Thick minis",
+                    "Big statues",
+                    "Manual supports",
+                    "XS",
+                    "S",
+                    "M",
+                    "L"
+                ]
+            );
+            assert!(rows(&window).iter().all(|r| r.2 == 2), "all ticked");
+            assert_eq!(
+                window
+                    .get_support_share_items()
+                    .row_data(1)
+                    .map(|r| r.detail.to_string()),
+                Some("Made from Miniatures".to_owned())
+            );
+            // The head of the hand sizes: none, then S alone: a dash.
+            run.on_share_toggled(3, false);
+            assert!(rows(&window)[3..].iter().all(|r| r.2 == 0));
+            run.on_share_toggled(5, true);
+            assert_eq!(rows(&window)[3].2, 1, "some of the group");
+            run.on_share_toggled(2, false);
+            assert_eq!(rows(&window)[0].2, 1);
+            assert_eq!(window.get_support_share_picked(), 2);
+            if let Some(dir) = std::env::var_os("BREADSLICER_UI_SHOTS").map(PathBuf::from) {
+                window.show().expect("the window shows");
+                window
+                    .window()
+                    .set_size(slint::LogicalSize::new(1280.0, 860.0));
+                crate::test_support::slint_thread::render_frames();
+                let picture = window.window().take_snapshot().expect("a snapshot");
+                image::RgbaImage::from_raw(
+                    picture.width(),
+                    picture.height(),
+                    picture.as_bytes().to_vec(),
+                )
+                .expect("RGBA")
+                .save(dir.join("share-tree.png"))
+                .expect("written");
+            }
+            // Import: "Thick minis" and the small size come in.
+            run.on_share_accepted();
+            assert_eq!(window.get_support_share_mode(), 0);
+            let hand = run.hand.borrow().clone();
+            assert_eq!(hand.rules.sizes[1].trunk_diameter_mm, 1.7);
+            assert_eq!(
+                hand.rules.sizes[0],
+                crate::support_shape_edit::hand_factory().rules.sizes[0]
+            );
+        });
+    }
+
     /// The Add tool's tip size and Shift reach the engine (#3): a large tip
     /// is drawn large, a Shift+click hangs its support from another, and each
     /// click is one undo.
@@ -9136,6 +10461,24 @@ mod hand_edit_tests {
             let large = in_force_session(&run).unwrap();
             assert!(tips(&large).contains(&0.40), "{:?}", tips(&large));
             assert!(window.get_support_tip_label().contains("0.4"));
+
+            // The person's own large size (#564): the next one placed has
+            // its numbers, whatever the preset of the run says.
+            let mut hand = run.hand.borrow().clone();
+            let large_size = hand
+                .rules
+                .sizes
+                .iter()
+                .position(|s| s.id == "large")
+                .expect("the large hand size");
+            crate::support_shape_edit::set_value(&mut hand, large_size, 0, 0.55);
+            run.set_hand(hand);
+            run.on_tool_click([19.6, 20.5, 7.5]);
+            let own = in_force_session(&run).unwrap();
+            assert!(tips(&own).contains(&0.55), "{:?}", tips(&own));
+            assert!(window.get_support_tip_label().contains("0.55"));
+            assert!(document.undo().expect("undo"));
+            run.set_hand(crate::support_shape_edit::hand_factory());
 
             // Shift+click: hung from a support, no root of its own.
             window.set_support_tip_size(0);

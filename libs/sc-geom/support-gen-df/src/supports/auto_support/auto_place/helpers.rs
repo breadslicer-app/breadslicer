@@ -177,6 +177,22 @@ impl<'a> PlanCtx<'a> {
                 .is_some_and(|mesh| contact_cone_crosses_model(cone, mesh))
     }
 
+    /// The zone size a support placed by hand was asked for (a contact
+    /// picked exactly, with a size set): the person's own numbers, which a
+    /// bridge keeps instead of a run's thinnest size (#564).
+    pub fn hand_zone_size(
+        &self,
+    ) -> Option<&crate::supports::auto_support::zone_rules::SupportSize> {
+        self.exact_contact.get()?;
+        let i = self.active_zone.get()?;
+        self.base_live
+            .auto_support
+            .zone_rules
+            .as_ref()?
+            .sizes
+            .get(i)
+    }
+
     /// Places what follows with zone size `size` (`None`: the run's own).
     pub fn set_zone(&self, size: Option<usize>) {
         self.active_zone.set(size);

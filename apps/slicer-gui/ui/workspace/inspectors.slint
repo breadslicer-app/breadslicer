@@ -11,6 +11,7 @@ import { ScrollView } from "std-widgets.slint";
 import { ScCheckBox as CheckBox, ScComboBox as ComboBox, ScLineEdit as LineEdit, ScProgress as ProgressIndicator, ScSlider as Slider } from "../kit/controls.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
+import { HandToolButton, OwnPresets, PageTabs, PresetCard, PresetCards, ScopeBox, ShapeCallout, ShapeField, ShapeSize, ShapeViewer, SizeChips, ZoneRow, ZoneRowView } from "support-shape.slint";
 import { ButtonKind, Card, DisclosureChevron, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile, WarningNote } from "../kit/controls.slint";
 
 // One finding of the slice review (#90), as Rust lays it out.
@@ -2061,8 +2062,65 @@ export component SupportsInspector inherits VerticalLayout {
     callback analyze-islands();
     callback support-islands();
     callback go-to-island();
+    // The shape of a support (#564), with a zone preset: the built-in
+    // presets as cards and the one in force (-1 the person's own), what a
+    // custom one was made from, the drawing and its numbers, the sizes, the
+    // numbers of the size shown, and where each size goes.
+    in property <[PresetCard]> preset-cards;
+    in property <int> preset-card-index: -1;
+    in property <string> based-on;
+    in property <bool> preset-resettable;
+    callback preset-revert();
+    in property <string> shape-scope;
+    in property <image> shape-picture;
+    in property <[ShapeCallout]> shape-callouts;
+    in property <int> shape-hot;
+    callback shape-dragged(float, float);
+    callback shape-pointed(int);
+    in property <[ShapeSize]> shape-sizes;
+    in property <int> shape-size;
+    in property <string> shape-size-name;
+    in property <[float]> shape-defaults;
+    in property <float> zone-angle-default: -1;
+    callback shape-size-picked(int);
+    // The numbers, in this order: tip diameter, trunk diameter, tip length,
+    // foot diameter, extra insertion, break point, foot thickness, join
+    // cone, the tip of a support standing on the model, brace diameter,
+    // bracing start.
+    in property <[float]> shape-values;
+    callback shape-value(int, float);
+    in property <[ZoneRow]> zone-rows;
+    in property <[string]> zone-size-names;
+    in property <float> zone-angle;
+    callback zone-size(int, int);
+    callback zone-spacing(int, float);
+    callback zone-angle-edited(float);
+    // The page shown: 0 what Generate places, 1 what the hand tools place.
+    in property <int> page;
+    callback page-picked(int);
+    // The hand tool armed (0 none, 1 Add, 2 Remove, 3 Move tip, 4 Brace).
+    in property <int> tool;
+    callback tool-picked(int);
+    // The hand sizes are off the ones that ship.
+    in property <bool> hand-changed;
+    callback hand-reset();
+    // The person's own presets, and which of them is in use (-1 none).
+    in property <[string]> own-presets;
+    in property <int> own-preset-index: -1;
+    callback own-preset-picked(int);
+    // One file with presets and hand sizes, to hand to someone else.
+    callback share-export();
+    callback share-import();
 
     spacing: 12px;
+
+    PageTabs {
+        pages: [@tr("Inspector" => "Auto supports"), @tr("Inspector" => "Manual supports")];
+        current: root.page;
+        picked(i) => {
+            root.page-picked(i);
+        }
+    }
 
     if root.imported-bodies > 0: Card {
         title: @tr("Inspector" => "IMPORTED SUPPORTS");
@@ -2134,92 +2192,68 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    Card {
-        title: @tr("Inspector" => "AUTO SUPPORTS");
-        note: root.running ? @tr("Inspector" => "Working") : "";
+    if root.page == 1: Card {
+        title: @tr("Inspector" => "TOOLS");
+        note: root.tool == 1 ? root.tip-label : "";
         note-color: Theme.indicator;
 
-        LabeledRow {
-            label: @tr("Inspector" => "Preset");
-            preset-combo := ComboBox {
-                width: 170px;
-                model: root.preset-names;
-                current-index: root.preset-index;
-                selected => {
-                    root.preset-picked(preset-combo.current-index);
-                }
-            }
-        }
-        ScButton {
-            text: @tr("Inspector" => "Generate supports");
-            icon: Icons.auto;
-            kind: ButtonKind.primary;
-            button-height: 38px;
-            enabled: root.has-scene && !root.running;
-            clicked => {
-                root.generate-requested();
-            }
-        }
-        // Under the raft warning's lift button while the warning shows.
-        if root.raft-clash-message == "": CheckBox {
-            text: root.lift-on-plate-label;
-            checked: root.lift-on-plate;
-            toggled => {
-                root.lift-on-plate-toggled(self.checked);
-            }
-        }
-        if root.running: VerticalLayout {
+        HorizontalLayout {
             spacing: 6px;
 
-            Text {
-                text: root.phase == "" ? @tr("Inspector" => "Starting…") : root.phase;
-                font-size: Theme.font-sm;
-                color: Theme.text-soft;
-            }
-            ProgressIndicator {
-                progress: root.progress;
-            }
-            if root.cancelable: ScButton {
-                text: @tr("Inspector" => "Cancel");
+            HandToolButton {
+                icon: Icons.add-support;
+                label: @tr("Inspector" => "Add");
+                shortcut: "A";
+                active: root.tool == 1;
+                enabled: root.has-scene && !root.running;
                 clicked => {
-                    root.cancel-requested();
+                    root.tool-picked(root.tool == 1 ? 0 : 1);
+                }
+            }
+            HandToolButton {
+                icon: Icons.move-tip;
+                label: @tr("Inspector" => "Move tip");
+                shortcut: "M";
+                active: root.tool == 3;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 3 ? 0 : 3);
+                }
+            }
+            HandToolButton {
+                icon: Icons.brace-supports;
+                label: @tr("Inspector" => "Brace");
+                shortcut: "C";
+                active: root.tool == 4;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 4 ? 0 : 4);
+                }
+            }
+            HandToolButton {
+                icon: Icons.remove-support;
+                label: @tr("Inspector" => "Remove");
+                shortcut: "X";
+                active: root.tool == 2;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 2 ? 0 : 2);
                 }
             }
         }
-        if !root.running && root.last-run != "": Note {
-            text: root.last-run;
+        if root.tool == 0: Note {
+            text: @tr("Inspector" => "Pick a tool, or press its key. The size below is the one Add places; keys 1–4 pick it.");
         }
-    }
-
-    if root.add-tool-on: Card {
-        title: @tr("Inspector" => "ADD SUPPORT");
-        note: root.tip-label;
-        note-color: Theme.indicator;
-
-        LabeledRow {
-            label: @tr("Inspector" => "Tip");
-            Segmented {
-                width: 190px;
-                options: [@tr("Inspector" => "Preset"), "XS", "S", "M", "L"];
-                current: root.tip-size;
-                picked(i) => {
-                    root.tip-size-picked(i);
-                }
-            }
+        if root.tool == 1: Note {
+            text: @tr("Inspector" => "Click the model where the support should touch it. Shift+click hangs it from the nearest support, or places nothing. Keys 1–4 pick the size.");
         }
-        Note {
-            text: @tr("Inspector" => "Keys 1–4 pick the tip: extra small, small, medium, large. Shift+click hangs the support from the nearest one, or places nothing.");
+        if root.tool == 3: Note {
+            text: @tr("Inspector" => "Drag a support by its tip over the model; it is routed again where you let go.");
         }
-        if root.add-note != "": Note {
-            text: root.add-note;
-            color: root.add-note-warns ? Theme.danger : Theme.text-soft;
+        if root.tool == 4: Note {
+            text: @tr("Inspector" => "Click a support where the brace starts, then the support it goes to.");
         }
-    }
-
-    if root.remove-tool-on: Card {
-        title: @tr("Inspector" => "REMOVE SUPPORTS");
-
-        LabeledRow {
+        if root.tool == 2: LabeledRow {
             label: @tr("Inspector" => "Drag");
             Segmented {
                 width: 190px;
@@ -2230,18 +2264,300 @@ export component SupportsInspector inherits VerticalLayout {
                 }
             }
         }
-        Note {
+        if root.tool == 2: Note {
             text: root.remove-mode == 1
                 ? @tr("Inspector" => "Paint over the supports to remove, anywhere along them; [ ] or the mouse wheel size the brush ({} px). B switches to a box.", Math.round(root.brush-radius))
                 : @tr("Inspector" => "Drag a box: every support it touches goes, from the selected supports only. B switches to a brush.");
         }
-        if root.add-note != "": Note {
+        if root.tool != 0 && root.add-note != "": Note {
             text: root.add-note;
             color: root.add-note-warns ? Theme.danger : Theme.text-soft;
         }
     }
 
-    Card {
+    if root.page == 0: Card {
+        title: @tr("Inspector" => "AUTO SUPPORTS");
+        note: root.running ? @tr("Inspector" => "Working") : "";
+        note-color: Theme.indicator;
+
+        PresetCards {
+            cards: root.preset-cards;
+            current: root.preset-card-index;
+            enabled: !root.running;
+            picked(i) => {
+                root.preset-picked(i);
+            }
+        }
+        // One line that is always there: what the options are, and the
+        // way back to the preset as it ships. Nothing under it moves when
+        // a number changes.
+        HorizontalLayout {
+            spacing: 8px;
+            height: 28px;
+
+            Text {
+                text: root.based-on;
+                font-size: Theme.font-sm;
+                color: root.preset-resettable ? Theme.indicator : Theme.text-muted;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            ScButton {
+                text: @tr("Inspector" => "Reset to default");
+                kind: ButtonKind.ghost;
+                enabled: !root.running && root.preset-resettable;
+                opacity: root.preset-resettable ? 1 : 0;
+                clicked => {
+                    root.preset-revert();
+                }
+            }
+        }
+    }
+
+    if root.page == 1 || root.zone-summary != "": Card {
+        title: @tr("Inspector" => "THE SUPPORT");
+        note: root.shape-size-name;
+
+        ScopeBox {
+            title: root.shape-scope;
+            note: root.page == 1 ? @tr("Inspector" => "for the next one placed") : @tr("Inspector" => "for the next Generate");
+        }
+        ShapeViewer {
+            picture: root.shape-picture;
+            callouts: root.shape-callouts;
+            hot: root.shape-hot;
+            dragged(dx, dy) => {
+                root.shape-dragged(dx, dy);
+            }
+            part-clicked(part) => {
+                root.shape-pointed(part);
+            }
+        }
+        SizeChips {
+            sizes: root.shape-sizes;
+            current: root.shape-size;
+            picked(i) => {
+                root.shape-size-picked(i);
+            }
+        }
+        Text {
+            text: @tr("Inspector" => "THIS TIP · {}", root.shape-size-name);
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.8px;
+            color: Theme.text-faint;
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Tip diameter");
+            value: root.shape-values[0];
+            default-value: root.shape-defaults.length > 0 ? root.shape-defaults[0] : -1;
+            part: 1;
+            hot: root.shape-hot;
+            edited(v) => { root.shape-value(0, v); }
+            pointed(p) => { root.shape-pointed(p); }
+        }
+        Text {
+            text: @tr("Inspector" => "THE WHOLE SUPPORT · {}", root.shape-size-name);
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.8px;
+            color: Theme.text-faint;
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Trunk diameter");
+            value: root.shape-values[1];
+            default-value: root.shape-defaults.length > 1 ? root.shape-defaults[1] : -1;
+            part: 2;
+            hot: root.shape-hot;
+            edited(v) => { root.shape-value(1, v); }
+            pointed(p) => { root.shape-pointed(p); }
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Tip length");
+            value: root.shape-values[2];
+            default-value: root.shape-defaults.length > 2 ? root.shape-defaults[2] : -1;
+            part: 1;
+            hot: root.shape-hot;
+            edited(v) => { root.shape-value(2, v); }
+            pointed(p) => { root.shape-pointed(p); }
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Foot diameter");
+            value: root.shape-values[3];
+            default-value: root.shape-defaults.length > 3 ? root.shape-defaults[3] : -1;
+            part: 3;
+            hot: root.shape-hot;
+            edited(v) => { root.shape-value(3, v); }
+            pointed(p) => { root.shape-pointed(p); }
+        }
+    }
+
+    if root.page == 1 || root.zone-summary != "": Card {
+        title: @tr("Inspector" => "ADVANCED");
+        collapsible: true;
+        expanded: false;
+
+        Text {
+            text: @tr("Inspector" => "TIP");
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.8px;
+            color: Theme.text-faint;
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Extra into the model");
+            value: root.shape-values[4];
+            default-value: root.shape-defaults.length > 4 ? root.shape-defaults[4] : -1;
+            part: 1;
+            hot: root.shape-hot;
+            edited(v) => { root.shape-value(4, v); }
+            pointed(p) => { root.shape-pointed(p); }
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Break point");
+            value: root.shape-values[5];
+            default-value: root.shape-defaults.length > 5 ? root.shape-defaults[5] : -1;
+            part: 1;
+            hot: root.shape-hot;
+            edited(v) => { root.shape-value(5, v); }
+            pointed(p) => { root.shape-pointed(p); }
+        }
+        Text {
+            text: @tr("Inspector" => "FOOT");
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.8px;
+            color: Theme.text-faint;
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Foot thickness");
+            value: root.shape-values[6];
+            default-value: root.shape-defaults.length > 6 ? root.shape-defaults[6] : -1;
+            part: 3;
+            hot: root.shape-hot;
+            edited(v) => { root.shape-value(6, v); }
+            pointed(p) => { root.shape-pointed(p); }
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Join cone");
+            value: root.shape-values[7];
+            default-value: root.shape-defaults.length > 7 ? root.shape-defaults[7] : -1;
+            part: 3;
+            hot: root.shape-hot;
+            edited(v) => { root.shape-value(7, v); }
+            pointed(p) => { root.shape-pointed(p); }
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Tip on the model, length");
+            value: root.shape-values[8];
+            default-value: root.shape-defaults.length > 8 ? root.shape-defaults[8] : -1;
+            part: 3;
+            hot: root.shape-hot;
+            edited(v) => { root.shape-value(8, v); }
+            pointed(p) => { root.shape-pointed(p); }
+        }
+        if root.page == 0: Text {
+            text: @tr("Inspector" => "BRACES");
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.8px;
+            color: Theme.text-faint;
+        }
+        if root.page == 0: CheckBox {
+            text: @tr("Inspector" => "Cross-bracing");
+            checked: root.bracing;
+            toggled => {
+                root.option-changed(7, self.checked ? 1 : 0);
+            }
+        }
+        if root.page == 0: ShapeField {
+            label: @tr("Inspector" => "Brace diameter");
+            value: root.shape-values[9];
+            default-value: root.shape-defaults.length > 9 ? root.shape-defaults[9] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(9, v); }
+        }
+        if root.page == 0: ShapeField {
+            label: @tr("Inspector" => "Braces start at");
+            value: root.shape-values[10];
+            default-value: root.shape-defaults.length > 10 ? root.shape-defaults[10] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(10, v); }
+        }
+    }
+
+    if root.page == 1 && root.hand-changed: HorizontalLayout {
+        spacing: 8px;
+
+        Note {
+            text: @tr("Inspector" => "The sizes are not the ones that ship.");
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        ScButton {
+            text: @tr("Inspector" => "Reset to default");
+            kind: ButtonKind.ghost;
+            clicked => {
+                root.hand-reset();
+            }
+        }
+    }
+
+    if root.page == 0 && root.zone-summary != "": Card {
+        title: @tr("Inspector" => "WHERE EACH SIZE GOES");
+        collapsible: true;
+        expanded: false;
+
+        ShapeField {
+            label: @tr("Inspector" => "Overhangs from");
+            unit: "°";
+            value: root.zone-angle;
+            default-value: root.zone-angle-default;
+            part: 0;
+            hot: 0;
+            edited(v) => { root.zone-angle-edited(v); }
+        }
+        for row[i] in root.zone-rows: ZoneRowView {
+            zone: row;
+            size-names: root.zone-size-names;
+            size-picked(k) => {
+                root.zone-size(i, k);
+            }
+            spacing-edited(v) => {
+                root.zone-spacing(i, v);
+            }
+        }
+        Note {
+            text: @tr("Inspector" => "Each zone places the size picked, this many mm apart.");
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Pillars on a grid");
+            checked: root.grid-on;
+            toggled => {
+                root.option-changed(12, self.checked ? root.grid-spacing : 0);
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Grid spacing");
+            unit: "mm";
+            decimals: 1;
+            enabled: root.grid-on;
+            value: root.grid-spacing;
+            committed(v) => {
+                root.option-changed(13, v);
+            }
+        }
+        if root.grid-hint != "": Note {
+            text: root.grid-hint;
+        }
+    }
+
+    if root.page == 0: Card {
         title: @tr("Inspector" => "ISLANDS");
         note: root.islands-left > 0 ? @tr("Inspector" => "{n} left" | "{n} left" % root.islands-left) : "";
         note-color: Theme.warning;
@@ -2311,36 +2627,10 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    Card {
+    if root.page == 0 && root.zone-summary == "": Card {
         title: @tr("Inspector" => "PLACEMENT");
         collapsible: true;
 
-        // Each row of a zone preset sits in the card's own layout: a note
-        // that wraps, inside a layout of its own in a conditional, was
-        // measured one line high, and the card cut its last rows (#492).
-        if root.zone-summary != "": Note {
-            text: root.zone-summary;
-        }
-        if root.zone-summary != "": CheckBox {
-            text: @tr("Inspector" => "Pillars on a grid");
-            checked: root.grid-on;
-            toggled => {
-                root.option-changed(12, self.checked ? root.grid-spacing : 0);
-            }
-        }
-        if root.zone-summary != "": NumberField {
-            label: @tr("Inspector" => "Grid spacing");
-            unit: "mm";
-            decimals: 1;
-            enabled: root.grid-on;
-            value: root.grid-spacing;
-            committed(v) => {
-                root.option-changed(13, v);
-            }
-        }
-        if root.zone-summary != "" && root.grid-hint != "": Note {
-            text: root.grid-hint;
-        }
         if root.zone-summary == "": VerticalLayout {
             spacing: 10px;
 
@@ -2426,9 +2716,10 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    Card {
+    if root.page == 0: Card {
         title: @tr("Inspector" => "RAFT");
         collapsible: true;
+        expanded: false;
 
         LabeledRow {
             label: @tr("Inspector" => "Bottom");
@@ -2463,6 +2754,7 @@ export component SupportsInspector inherits VerticalLayout {
     Card {
         title: @tr("Inspector" => "FROM BELOW");
         collapsible: true;
+        expanded: false;
 
         Note {
             text: @tr("Inspector" => "When the camera goes under the plate.");
@@ -2483,11 +2775,19 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    Card {
+    if root.page == 0: Card {
         title: @tr("Inspector" => "PRESETS");
         collapsible: true;
         expanded: false;
 
+        if root.own-presets.length > 0: OwnPresets {
+            names: root.own-presets;
+            current: root.own-preset-index;
+            enabled: !root.running;
+            picked(i) => {
+                root.own-preset-picked(i);
+            }
+        }
         preset-name := LineEdit {
             placeholder-text: @tr("Inspector" => "Name for a new preset");
         }
@@ -2512,6 +2812,104 @@ export component SupportsInspector inherits VerticalLayout {
         }
         Note {
             text: @tr("Inspector" => "Built-in presets cannot be deleted. Presets are saved as TOML files in the app data folder.");
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "SHARE");
+        collapsible: true;
+        expanded: false;
+
+        Note {
+            text: @tr("Inspector" => "One file with your presets and your hand sizes, whichever you tick, to hand to someone else or to keep.");
+        }
+        HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Export…");
+                horizontal-stretch: 1;
+                clicked => {
+                    root.share-export();
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Import…");
+                horizontal-stretch: 1;
+                clicked => {
+                    root.share-import();
+                }
+            }
+        }
+    }
+}
+
+// Generate, pinned under the Supports tab (#564): its button, the lift
+// box, the run's progress and Cancel, and how the last run went.
+export component SupportsFooter inherits Rectangle {
+    in property <bool> has-scene;
+    in property <bool> running;
+    in property <string> phase;
+    in property <float> progress;
+    in property <bool> cancelable;
+    in property <string> last-run;
+    // The lift box shows here unless the raft warning shows it.
+    in property <bool> show-lift: true;
+    in property <bool> lift-on-plate;
+    in property <string> lift-on-plate-label;
+    callback lift-on-plate-toggled(bool);
+    callback generate-requested();
+    callback cancel-requested();
+
+    background: Theme.chrome;
+
+    Rectangle {
+        y: 0;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        ScButton {
+            text: @tr("Inspector" => "Generate supports");
+            icon: Icons.auto;
+            kind: ButtonKind.primary;
+            button-height: 38px;
+            enabled: root.has-scene && !root.running;
+            clicked => {
+                root.generate-requested();
+            }
+        }
+        if root.show-lift: CheckBox {
+            text: root.lift-on-plate-label;
+            checked: root.lift-on-plate;
+            toggled => {
+                root.lift-on-plate-toggled(self.checked);
+            }
+        }
+        if root.running: VerticalLayout {
+            spacing: 6px;
+
+            Text {
+                text: root.phase == "" ? @tr("Inspector" => "Starting…") : root.phase;
+                font-size: Theme.font-sm;
+                color: Theme.text-soft;
+            }
+            ProgressIndicator {
+                progress: root.progress;
+            }
+            if root.cancelable: ScButton {
+                text: @tr("Inspector" => "Cancel");
+                clicked => {
+                    root.cancel-requested();
+                }
+            }
+        }
+        if !root.running && root.last-run != "": Note {
+            text: root.last-run;
         }
     }
 }

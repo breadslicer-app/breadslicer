@@ -42,6 +42,7 @@ pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{
     AddNote, AddOptions, BraceEnd, COVERED_AGREEMENT, COVERED_SURFACE_MM, DfSupportSession,
+    HandShape,
     EditError, EditPreview, REVIEW_NUDGE_MM, SupportContact, SupportJoint, SupportPiece,
     SupportPieceKind,
 };
@@ -50,6 +51,9 @@ pub use support_gen_df::native::overhang::{
 };
 pub use support_gen_df::pipeline::ScanCache;
 pub use support_gen_df::supports::auto_bracing::auto_brace::HandBraceRefusal;
+pub use support_gen_df::supports::auto_support::zone_rules::{
+    AreaBand, BaseTip, OverhangRule, StabilizationRule, SupportSize, ZoneRules,
+};
 
 /// The name the generated support mesh carries.
 pub const DF_SUPPORT_MESH_NAME: &str = "Supports";

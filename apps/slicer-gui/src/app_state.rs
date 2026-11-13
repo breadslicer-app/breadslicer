@@ -2995,9 +2995,10 @@ mod window_wiring_tests {
     }
 
     /// A zone preset's grid (#464) shows on at its preset's spacing, turns
-    /// off and back on at the spacing shown, takes another one, and picking
-    /// the preset again brings its own back. The tab starts on the first
-    /// preset, "Miniatures 20~65 mm" (#490).
+    /// off and back on at the spacing shown, takes another one; the preset
+    /// keeps the change as its own (#564), another preset has its own grid,
+    /// and Reset to default brings the spacing that ships back. The tab
+    /// starts on the first preset, "Miniatures 20~65 mm" (#490).
     #[test]
     fn a_zone_presets_grid_turns_off_and_takes_a_spacing_in_the_tab() {
         let steps = on_fresh_slint_thread(|| {
@@ -3027,9 +3028,11 @@ mod window_wiring_tests {
             steps.push(read(&window));
             window.invoke_support_option_changed(13, 0.2);
             steps.push(read(&window));
+            window.invoke_support_preset_picked(2);
+            steps.push(read(&window));
             window.invoke_support_preset_picked(0);
             steps.push(read(&window));
-            window.invoke_support_preset_picked(2);
+            window.invoke_support_preset_revert();
             steps.push(read(&window));
             steps
         });
@@ -3037,15 +3040,172 @@ mod window_wiring_tests {
         let expected = [
             (0, true, 7.0, hint(7)),
             (0, true, 7.0, hint(7)),
-            (-1, false, 7.0, hint(7)),
-            (-1, false, 7.0, hint(7)),
+            (0, false, 7.0, hint(7)),
+            (0, false, 7.0, hint(7)),
             (0, true, 7.0, hint(7)),
-            (-1, true, 5.0, hint(7)),
-            (-1, true, 1.0, hint(7)),
-            (0, true, 7.0, hint(7)),
+            (0, true, 5.0, hint(7)),
+            (0, true, 1.0, hint(7)),
             (2, true, 4.0, hint(4)),
+            (0, true, 1.0, hint(7)),
+            (0, true, 7.0, hint(7)),
         ];
         assert_eq!(steps, expected);
+    }
+
+    /// The shape panel (#564): a preset shows its support drawn, its sizes
+    /// and their numbers; a number changed makes the preset the person's
+    /// own, made from the built-in one, each size with its own numbers and
+    /// a way back to the built-in one's; the zones take a size; and going
+    /// back brings the built-in preset back.
+    #[test]
+    fn the_shape_panel_edits_the_preset_and_goes_back_to_it() {
+        on_fresh_slint_thread(|| {
+            use slint::Model;
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            let values =
+                |w: &MainWindow| -> Vec<f32> { w.get_support_shape_values().iter().collect() };
+            let tips = |w: &MainWindow| -> Vec<f32> {
+                w.get_support_shape_sizes().iter().map(|s| s.tip).collect()
+            };
+            window.invoke_support_preset_picked(0);
+            assert_eq!(window.get_support_preset_card_index(), 0);
+            assert_eq!(
+                window.get_support_shape_scope().as_str(),
+                "Preset Miniatures"
+            );
+            assert_eq!(window.get_support_shape_size_name().as_str(), "S");
+            let defaults =
+                |w: &MainWindow| -> Vec<f32> { w.get_support_shape_defaults().iter().collect() };
+            assert_eq!(defaults(&window), values(&window));
+            assert_eq!(values(&window)[0], 0.24);
+            assert_eq!(window.get_support_zone_rows().row_count(), 8);
+            assert_eq!(window.get_support_shape_callouts().row_count(), 4);
+            assert!(
+                window.get_support_shape_picture().size().width > 0,
+                "the support is drawn"
+            );
+            assert_eq!(
+                window.get_support_based_on().as_str(),
+                "Miniatures, as it ships"
+            );
+            assert!(!window.get_support_preset_resettable());
+
+            // A thicker trunk: Miniatures keeps it as its own change, and
+            // the field can go back to 1.1.
+            window.invoke_support_shape_value(1, 1.3);
+            assert_eq!(window.get_support_preset_card_index(), 0);
+            assert_eq!(
+                window.get_support_shape_scope().as_str(),
+                "Preset Miniatures"
+            );
+            assert_eq!(
+                window.get_support_based_on().as_str(),
+                "Miniatures, with your changes"
+            );
+            // Another preset and back: the change is still there.
+            assert!(window.get_support_preset_resettable());
+            window.invoke_support_preset_picked(1);
+            assert_eq!(
+                window.get_support_based_on().as_str(),
+                "Figures, as it ships"
+            );
+            window.invoke_support_preset_picked(0);
+            assert_eq!(window.get_support_preset_card_index(), 0);
+            assert_eq!(values(&window)[1], 1.3);
+            assert_eq!(defaults(&window)[1], 1.1);
+            window.invoke_support_shape_size_picked(0);
+            assert_eq!(window.get_support_shape_size_name().as_str(), "XS");
+            assert_eq!(values(&window)[1], 1.1, "XS keeps its own trunk");
+            // A tip is the size's own.
+            window.invoke_support_shape_value(0, 0.2);
+            assert_eq!(tips(&window), [0.2, 0.24, 0.3, 0.4]);
+            // The overhangs place medium tips now.
+            let first_row = window.get_support_zone_rows().row_data(0);
+            let built_in_size = first_row.map_or(-1, |r| r.default_size);
+            assert!(built_in_size >= 0);
+            window.invoke_support_zone_size(0, 2);
+            assert_eq!(
+                window
+                    .get_support_zone_rows()
+                    .row_data(0)
+                    .map(|r| (r.size, r.default_size)),
+                Some((2, built_in_size))
+            );
+            window.invoke_support_zone_spacing(0, 2.5);
+            assert_eq!(
+                window
+                    .get_support_zone_rows()
+                    .row_data(0)
+                    .map(|r| r.spacing),
+                Some(2.5)
+            );
+
+            window.invoke_support_preset_revert();
+            assert_eq!(window.get_support_preset_card_index(), 0);
+            assert_eq!(
+                window.get_support_based_on().as_str(),
+                "Miniatures, as it ships"
+            );
+            assert_eq!(values(&window)[1], 1.1);
+            assert_eq!(tips(&window), [0.18, 0.24, 0.3, 0.4]);
+        });
+    }
+
+    /// The Manual page (#564): the panel shows the sizes the hand tools
+    /// place, the person's own; changing one leaves every preset of
+    /// Generate as it was, and they go back to the ones that ship.
+    #[test]
+    fn the_manual_page_edits_the_hand_sizes_and_no_preset() {
+        on_fresh_slint_thread(|| {
+            use slint::Model;
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            let values =
+                |w: &MainWindow| -> Vec<f32> { w.get_support_shape_values().iter().collect() };
+            let page = |w: &MainWindow, page: i32| {
+                w.set_support_page(page);
+                w.invoke_support_page_changed();
+            };
+            window.invoke_support_preset_picked(0);
+            let auto = values(&window);
+
+            page(&window, 1);
+            assert_eq!(window.get_support_shape_scope().as_str(), "Hand supports");
+            assert_eq!(window.get_support_shape_size_name().as_str(), "S");
+            assert_eq!(window.get_support_shape_sizes().row_count(), 4);
+            assert!(!window.get_support_hand_changed());
+            // The large chip: the size Add places, as key 4 picks it.
+            window.invoke_support_shape_size_picked(3);
+            assert_eq!(window.get_support_tip_size(), 4);
+            assert_eq!(window.get_support_shape_size_name().as_str(), "L");
+            assert_eq!(values(&window)[0], 0.4);
+            window.invoke_support_shape_value(1, 2.0);
+            assert_eq!(values(&window)[1], 2.0);
+            assert_eq!(window.get_support_shape_defaults().iter().nth(1), Some(1.1));
+            assert!(window.get_support_hand_changed());
+            window.invoke_support_shape_size_picked(1);
+            assert_eq!(values(&window)[1], 1.1, "the small one keeps its trunk");
+
+            // Generate's preset is as it was.
+            page(&window, 0);
+            assert_eq!(window.get_support_preset_card_index(), 0);
+            assert_eq!(
+                window.get_support_shape_scope().as_str(),
+                "Preset Miniatures"
+            );
+            assert_eq!(values(&window), auto);
+            window.invoke_support_shape_size_picked(3);
+            assert_eq!(values(&window)[1], 1.1, "the preset's large size too");
+
+            page(&window, 1);
+            window.invoke_support_hand_reset();
+            assert!(!window.get_support_hand_changed());
+            window.invoke_support_shape_size_picked(3);
+            assert_eq!(values(&window)[1], 1.1);
+        });
     }
 
     #[test]
@@ -4565,6 +4725,61 @@ mod window_wiring_tests {
     /// Arrange all in the whole window (every driver installed), on a real
     /// project: how long each press takes, as the card tells it, and how
     /// long the window is held (#560).
+    #[test]
+    fn the_supports_tab_is_pictured_when_asked() {
+        // With `BREADSLICER_UI_SHOTS` naming a folder, the Supports tab of a
+        // whole window (#564), its drivers in, as a person sees it.
+        let Some(dir) = std::env::var_os("BREADSLICER_UI_SHOTS").map(PathBuf::from) else {
+            return;
+        };
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        for language in ["en", "es"] {
+            let dir = dir.clone();
+            on_fresh_slint_thread(move || {
+                let app = test_app(PreferencesSnapshot::for_tests());
+                let id = add_window(&app);
+                let window = window_of(&app, id);
+                slint::select_bundled_translation(language).expect("bundled language");
+                window.show().expect("the window shows");
+                window
+                    .window()
+                    .set_size(slint::LogicalSize::new(1600.0, 1000.0));
+                window.set_has_scene(true);
+                window.set_workspace_section(WorkspaceSection::Supports);
+                window.invoke_support_preset_picked(0);
+                let shot = |name: &str| {
+                    crate::test_support::slint_thread::render_frames();
+                    let picture = window.window().take_snapshot().expect("a snapshot");
+                    image::RgbaImage::from_raw(
+                        picture.width(),
+                        picture.height(),
+                        picture.as_bytes().to_vec(),
+                    )
+                    .expect("RGBA")
+                    .save(dir.join(format!("{language}-shape-{name}.png")))
+                    .expect("written");
+                };
+                shot("preset");
+                window.invoke_support_shape_pointed(3);
+                window.invoke_support_shape_value(1, 1.4);
+                shot("custom-foot");
+                window.invoke_support_preset_picked(2);
+                window.invoke_support_shape_size_picked(4);
+                shot("statues-xl");
+                window.invoke_support_preset_picked(0);
+                window.set_support_page(1);
+                window.set_support_tip_size(2);
+                window.invoke_support_page_changed();
+                window.set_support_tool(1);
+                window.invoke_support_shape_value(1, 1.6);
+                shot("manual");
+                window.invoke_support_share_export();
+                shot("share");
+                window.invoke_support_share_cancelled();
+            });
+        }
+    }
+
     #[test]
     #[ignore = "a measurement on a real project"]
     fn arrange_all_in_the_whole_window() {

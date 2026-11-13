@@ -493,16 +493,18 @@ pub fn place_one_candidate(
                 Err(_) => None,
             };
             // SoulCrafted (#360): a zone preset bridges a cavity with its
-            // thinnest size, whatever the zone: a cavity is tight.
-            let band = live
-                .auto_support
-                .zone_rules
-                .as_ref()
-                .and_then(|r| {
-                    r.sizes
-                        .iter()
-                        .min_by(|a, b| a.trunk_diameter_mm.total_cmp(&b.trunk_diameter_mm))
-                        .map(|s| s.band())
+            // thinnest size, whatever the zone: a cavity is tight. A support
+            // placed by hand keeps the size asked for (#564).
+            let band = ctx
+                .hand_zone_size()
+                .map(|s| s.band())
+                .or_else(|| {
+                    live.auto_support.zone_rules.as_ref().and_then(|r| {
+                        r.sizes
+                            .iter()
+                            .min_by(|a, b| a.trunk_diameter_mm.total_cmp(&b.trunk_diameter_mm))
+                            .map(|s| s.band())
+                    })
                 })
                 .unwrap_or_else(|| ctx.bands.active(live));
             let bridge = {

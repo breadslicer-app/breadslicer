@@ -11,8 +11,9 @@ import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
 import { CaptionButton, CaptionKind, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
-import { CutCard, ExportInspector, HollowInspector, OrientCard, OrientOption, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
+import { CutCard, ExportInspector, HollowInspector, OrientCard, OrientOption, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { LayerView } from "./workspace/layer-view.slint";
+import { PresetCard, ShapeCallout, ShapeSize, ShareItem, SharePicker, ZoneRow } from "./workspace/support-shape.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 import { ExtendDialog } from "extend-dialog.slint";
@@ -275,6 +276,32 @@ export component MainWindow inherits Window {
     in property <bool> support-raft-wall: true;
     // The zone preset's summary (#360), empty without one.
     in property <string> support-zone-summary;
+    // The shape of a support (#564).
+    in property <[PresetCard]> support-preset-cards;
+    in property <int> support-preset-card-index: -1;
+    in property <string> support-based-on;
+    in property <bool> support-preset-resettable;
+    callback support-preset-revert();
+    in property <string> support-shape-scope;
+    in property <image> support-shape-picture;
+    in property <[ShapeCallout]> support-shape-callouts;
+    in-out property <int> support-shape-hot;
+    callback support-shape-dragged(float, float);
+    callback support-shape-pointed(int);
+    in property <[ShapeSize]> support-shape-sizes;
+    in property <int> support-shape-size;
+    in property <string> support-shape-size-name;
+    in property <[float]> support-shape-defaults;
+    in property <float> support-zone-angle-default: -1;
+    callback support-shape-size-picked(int);
+    in property <[float]> support-shape-values;
+    callback support-shape-value(int, float);
+    in property <[ZoneRow]> support-zone-rows;
+    in property <[string]> support-zone-size-names;
+    in property <float> support-zone-angle;
+    callback support-zone-size(int, int);
+    callback support-zone-spacing(int, float);
+    callback support-zone-angle-edited(float);
     // A zone preset's pillar grid (#464): on or off, its spacing, and the
     // spacing its preset recommends in words, empty when none does.
     in property <bool> support-grid-on;
@@ -314,6 +341,43 @@ export component MainWindow inherits Window {
     // is clicked, 2 remove the support clicked, 3 move a tip, 4 brace two
     // supports (#3).
     in-out property <int> support-tool: 0;
+    // The page of the Supports tab: 0 what Generate places, 1 what the hand
+    // tools place, with the sizes they place.
+    in-out property <int> support-page: 0;
+    callback support-page-changed();
+    changed support-page => {
+        root.support-page-changed();
+    }
+    in property <bool> support-hand-changed;
+    callback support-hand-reset();
+    in property <[string]> support-own-presets;
+    in property <int> support-own-preset-index: -1;
+    // Support settings as a file: 0 nothing asked, 1 picking what to
+    // export, 2 picking what to import.
+    in property <int> support-share-mode;
+    in property <[ShareItem]> support-share-items;
+    in property <int> support-share-picked;
+    in property <int> support-share-total;
+    callback support-share-export();
+    callback support-share-import();
+    callback support-share-toggled(int, bool);
+    callback support-share-accepted();
+    callback support-share-cancelled();
+    // Shows the hand tools' page; Add places a hand size there, the small
+    // one until another is picked.
+    function show-hand-page() {
+        root.support-page = 1;
+        if root.support-tip-size == 0 {
+            root.support-tip-size = 2;
+        }
+    }
+    // Arms hand tool `tool` (or puts it away when armed), on its page.
+    function arm-support-tool(tool: int) {
+        root.support-tool = root.support-tool == tool ? 0 : tool;
+        if root.support-tool != 0 {
+            root.show-hand-page();
+        }
+    }
     // A click of the tool at a world point; with Shift, Add hangs the
     // support from the nearest one or places nothing.
     callback support-tool-clicked(float, float, float, bool);
@@ -1532,54 +1596,6 @@ export component MainWindow inherits Window {
                                 root.df-support-requested();
                             }
                         }
-                        if root.workspace-section == WorkspaceSection.Supports: Rectangle {
-                            height: 9px;
-                            Rectangle {
-                                width: 28px;
-                                height: 1px;
-                                background: Theme.border;
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                            icon: Icons.add-support;
-                            label: @tr("Inspector" => "Add support (click the model)");
-                            shortcut: "A";
-                            active: root.support-tool == 1;
-                            enabled: root.has-scene && !root.support-gen-in-progress;
-                            clicked => {
-                                root.support-tool = root.support-tool == 1 ? 0 : 1;
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                            icon: Icons.move-tip;
-                            label: @tr("Inspector" => "Move tip (drag it)");
-                            shortcut: "M";
-                            active: root.support-tool == 3;
-                            enabled: root.has-scene && !root.support-gen-in-progress;
-                            clicked => {
-                                root.support-tool = root.support-tool == 3 ? 0 : 3;
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                            icon: Icons.brace-supports;
-                            label: @tr("Inspector" => "Brace two supports (click one, then the other)");
-                            shortcut: "C";
-                            active: root.support-tool == 4;
-                            enabled: root.has-scene && !root.support-gen-in-progress;
-                            clicked => {
-                                root.support-tool = root.support-tool == 4 ? 0 : 4;
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                            icon: Icons.remove-support;
-                            label: @tr("Inspector" => "Remove support (click it)");
-                            shortcut: "X";
-                            active: root.support-tool == 2;
-                            enabled: root.has-scene && !root.support-gen-in-progress;
-                            clicked => {
-                                root.support-tool = root.support-tool == 2 ? 0 : 2;
-                            }
-                        }
                         if root.workspace-section == WorkspaceSection.Slice: ToolButton {
                             icon: Icons.slice;
                             label: @tr("SlicePanel" => "Slice");
@@ -1682,19 +1698,19 @@ export component MainWindow inherits Window {
                             if root.workspace-section == WorkspaceSection.Supports && root.has-scene
                                 && !root.support-gen-in-progress {
                                 if key == "a" || key == "A" {
-                                    root.support-tool = root.support-tool == 1 ? 0 : 1;
+                                    root.arm-support-tool(1);
                                     return true;
                                 }
                                 if key == "x" || key == "X" {
-                                    root.support-tool = root.support-tool == 2 ? 0 : 2;
+                                    root.arm-support-tool(2);
                                     return true;
                                 }
                                 if key == "m" || key == "M" {
-                                    root.support-tool = root.support-tool == 3 ? 0 : 3;
+                                    root.arm-support-tool(3);
                                     return true;
                                 }
                                 if key == "c" || key == "C" {
-                                    root.support-tool = root.support-tool == 4 ? 0 : 4;
+                                    root.arm-support-tool(4);
                                     return true;
                                 }
                                 // Remove: B a box or a brush; [ and ] the brush.
@@ -2088,402 +2104,494 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    if root.workspace-section != WorkspaceSection.Slice: ScrollView {
+                    if root.workspace-section != WorkspaceSection.Slice: VerticalLayout {
                         x: 1px;
                         width: parent.width - 1px;
 
-                        VerticalLayout {
-                            padding: 12px;
-                            spacing: 12px;
-                            alignment: start;
+                        ScrollView {
+                            vertical-stretch: 1;
 
-                            if root.workspace-section == WorkspaceSection.Transform && root.cut-open: CutCard {
-                                enabled: root.has-scene && root.selection-valid && !root.loading
-                                    && !root.slicing-in-progress && !root.repairing-in-progress && !root.arranging;
-                                working: root.cut-working;
-                                plane-height: root.cut-height;
-                                height-min: root.cut-height-min;
-                                height-max: root.cut-height-max;
-                                tilt-x: root.cut-tilt-x;
-                                tilt-y: root.cut-tilt-y;
-                                bounded: root.cut-bounded;
-                                rect-width: root.cut-width;
-                                rect-depth: root.cut-depth;
-                                offset-u: root.cut-offset-u;
-                                offset-v: root.cut-offset-v;
-                                status: root.cut-status;
-                                warning: root.cut-warning;
-                                can-cut: root.cut-can-cut;
-                                option-changed(code, value) => {
-                                    root.cut-option-changed(code, value);
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 12px;
+                                alignment: start;
+
+                                if root.workspace-section == WorkspaceSection.Transform && root.cut-open: CutCard {
+                                    enabled: root.has-scene && root.selection-valid && !root.loading
+                                        && !root.slicing-in-progress && !root.repairing-in-progress && !root.arranging;
+                                    working: root.cut-working;
+                                    plane-height: root.cut-height;
+                                    height-min: root.cut-height-min;
+                                    height-max: root.cut-height-max;
+                                    tilt-x: root.cut-tilt-x;
+                                    tilt-y: root.cut-tilt-y;
+                                    bounded: root.cut-bounded;
+                                    rect-width: root.cut-width;
+                                    rect-depth: root.cut-depth;
+                                    offset-u: root.cut-offset-u;
+                                    offset-v: root.cut-offset-v;
+                                    status: root.cut-status;
+                                    warning: root.cut-warning;
+                                    can-cut: root.cut-can-cut;
+                                    option-changed(code, value) => {
+                                        root.cut-option-changed(code, value);
+                                    }
+                                    apply => {
+                                        root.cut-apply();
+                                    }
+                                    close => {
+                                        root.cut-close-requested();
+                                    }
                                 }
-                                apply => {
-                                    root.cut-apply();
+                                if root.workspace-section == WorkspaceSection.Transform && root.orient-open: OrientCard {
+                                    enabled: root.has-scene && root.selection-valid && !root.loading
+                                        && !root.slicing-in-progress && !root.repairing-in-progress && !root.arranging;
+                                    running: root.orient-running;
+                                    phase: root.orient-phase;
+                                    progress: root.orient-progress;
+                                    preset: root.orient-preset;
+                                    max-tilt: root.orient-max-tilt;
+                                    align: root.orient-align;
+                                    weight-supports: root.orient-weight-supports;
+                                    weight-force: root.orient-weight-force;
+                                    weight-height: root.orient-weight-height;
+                                    options: root.orient-options;
+                                    selected: root.orient-selected;
+                                    current: root.orient-current;
+                                    status: root.orient-status;
+                                    warning: root.orient-warning;
+                                    offer-arrange: root.orient-offer-arrange;
+                                    brush-on: root.orient-brush-on;
+                                    brush-size: root.orient-brush-size;
+                                    brush-erase: root.orient-brush-erase;
+                                    brush-visible-only: root.orient-brush-visible-only;
+                                    painted: root.orient-painted;
+                                    brush-toggled => {
+                                        root.orient-brush-toggled();
+                                    }
+                                    brush-size-changed(mm) => {
+                                        root.orient-brush-size-changed(mm);
+                                    }
+                                    brush-erase-toggled => {
+                                        root.orient-brush-erase-toggled();
+                                    }
+                                    brush-visible-changed(on) => {
+                                        root.orient-brush-visible-changed(on);
+                                    }
+                                    brush-op(code) => {
+                                        root.orient-brush-op(code);
+                                    }
+                                    search(mode) => {
+                                        root.orient-search(mode);
+                                    }
+                                    cancel => {
+                                        root.orient-cancel();
+                                    }
+                                    option-changed(code, value) => {
+                                        root.orient-option-changed(code, value);
+                                    }
+                                    option-hovered(i, on) => {
+                                        root.orient-option-hovered(i, on);
+                                    }
+                                    option-picked(i) => {
+                                        root.orient-option-picked(i);
+                                    }
+                                    apply => {
+                                        root.orient-apply();
+                                    }
+                                    close => {
+                                        root.orient-close-requested();
+                                        mv.focus-viewport();
+                                    }
+                                    arrange => {
+                                        root.arrange-requested(false);
+                                    }
                                 }
-                                close => {
-                                    root.cut-close-requested();
+                                if root.workspace-section == WorkspaceSection.Transform: TransformInspector {
+                                    objects: root.object-list;
+                                    selected-index: root.selected-object-index;
+                                    selected-rows: root.selected-object-rows;
+                                    selected-count: root.selected-object-count;
+                                    needs-repair: root.mesh-needs-repair;
+                                    check-note: root.mesh-check-note;
+                                    check-text: root.mesh-check-text;
+                                    repairing: root.repairing-in-progress;
+                                    repair-phase: root.repair-phase;
+                                    repair-progress: root.repair-progress;
+                                    repair-marks-available: root.repair-marks-available;
+                                    repair-marks-shown: root.repair-marks-shown;
+                                    overhang-map-on <=> root.overhang-map-on;
+                                    overhang-map-limit: root.overhang-map-limit;
+                                    overhang-map-toggled(on) => {
+                                        root.overhang-map-toggled(on);
+                                    }
+                                    repair-cancel => {
+                                        root.repair-cancel();
+                                    }
+                                    repair-marks-toggled(on) => {
+                                        root.repair-marks-toggled(on);
+                                    }
+                                    repair-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
+                                        && !root.repairing-in-progress;
+                                    object-picked(i) => {
+                                        root.selected-object-index = i;
+                                        root.object-list-selection-changed(i);
+                                        mv.focus-viewport();
+                                    }
+                                    object-toggled(i) => {
+                                        root.object-list-toggle(i);
+                                        mv.focus-viewport();
+                                    }
+                                    repair-requested => {
+                                        root.repair-requested();
+                                    }
+                                    selection-valid: root.selection-valid;
+                                    size-x: root.selection-size-x;
+                                    size-y: root.selection-size-y;
+                                    size-z: root.selection-size-z;
+                                    model-x: root.selection-model-x;
+                                    model-y: root.selection-model-y;
+                                    model-z: root.selection-model-z;
+                                    tilted: root.selection-tilted;
+                                    pos-x: root.selection-pos-x;
+                                    pos-y: root.selection-pos-y;
+                                    pos-z: root.selection-pos-z;
+                                    rot-x: root.selection-rot-x;
+                                    rot-y: root.selection-rot-y;
+                                    rot-z: root.selection-rot-z;
+                                    scale: root.selection-scale;
+                                    numeric-edit(code, value) => {
+                                        root.numeric-edit(code, value);
+                                    }
+                                    arrange-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
+                                        && !root.repairing-in-progress && !root.arranging;
+                                    arranging: root.arranging;
+                                    arrange-last-run: root.arrange-last-run;
+                                    arrange-gap: root.arrange-gap;
+                                    arrange-margin: root.arrange-margin;
+                                    arrange-turns: root.arrange-turns;
+                                    arrange-shadow-only: root.arrange-shadow-only;
+                                    plate-count: root.plate-count;
+                                    active-plate: root.active-plate;
+                                    active-plate-used: root.active-plate-used;
+                                    plate-names: root.plate-names;
+                                    can-send: root.has-scene && root.selection-valid;
+                                    plate-send(i) => {
+                                        root.plate-send-requested(i);
+                                    }
+                                    plate-add => {
+                                        root.plate-add-requested();
+                                    }
+                                    plate-remove => {
+                                        root.plate-remove-requested(false);
+                                    }
+                                    arrange-filling: root.arrange-filling;
+                                    arrange-fill-progress: root.arrange-fill-progress;
+                                    arrange-max-copies: root.arrange-max-copies;
+                                    arrange-requested(selection) => {
+                                        root.arrange-requested(selection);
+                                    }
+                                    arrange-fill-requested => {
+                                        root.arrange-fill-requested();
+                                    }
+                                    arrange-cancel => {
+                                        root.arrange-cancel();
+                                    }
+                                    arrange-option-changed(code, value) => {
+                                        root.arrange-option-changed(code, value);
+                                    }
+                                    orient-requested => {
+                                        if !root.orient-open {
+                                            root.orient-toggle-requested();
+                                        }
+                                    }
                                 }
-                            }
-                            if root.workspace-section == WorkspaceSection.Transform && root.orient-open: OrientCard {
-                                enabled: root.has-scene && root.selection-valid && !root.loading
-                                    && !root.slicing-in-progress && !root.repairing-in-progress && !root.arranging;
-                                running: root.orient-running;
-                                phase: root.orient-phase;
-                                progress: root.orient-progress;
-                                preset: root.orient-preset;
-                                max-tilt: root.orient-max-tilt;
-                                align: root.orient-align;
-                                weight-supports: root.orient-weight-supports;
-                                weight-force: root.orient-weight-force;
-                                weight-height: root.orient-weight-height;
-                                options: root.orient-options;
-                                selected: root.orient-selected;
-                                current: root.orient-current;
-                                status: root.orient-status;
-                                warning: root.orient-warning;
-                                offer-arrange: root.orient-offer-arrange;
-                                brush-on: root.orient-brush-on;
-                                brush-size: root.orient-brush-size;
-                                brush-erase: root.orient-brush-erase;
-                                brush-visible-only: root.orient-brush-visible-only;
-                                painted: root.orient-painted;
-                                brush-toggled => {
-                                    root.orient-brush-toggled();
+                                if root.workspace-section == WorkspaceSection.Hollow: HollowInspector {
+                                    selection-valid: root.selection-valid && !root.loading;
+                                    running: root.hollow-running;
+                                    phase: root.hollow-phase;
+                                    progress: root.hollow-progress;
+                                    last-run: root.hollow-last-run;
+                                    model-state: root.hollow-model-state;
+                                    drain-count: root.hollow-drain-count;
+                                    drain-tool-on: root.hollow-drain-tool;
+                                    solid-count: root.hollow-solid-count;
+                                    lasso-tool-on: root.hollow-lasso-tool;
+                                    lasso-tool-toggled => {
+                                        root.hollow-lasso-tool = !root.hollow-lasso-tool;
+                                    }
+                                    remove-last-solid-requested => {
+                                        root.hollow-remove-last-solid();
+                                    }
+                                    clear-solids-requested => {
+                                        root.hollow-clear-solids();
+                                    }
+                                    show-cavity: root.hollow-show-cavity;
+                                    show-cavity-toggled(on) => {
+                                        root.hollow-show-cavity = on;
+                                    }
+                                    wall: root.hollow-wall;
+                                    recommended-wall: root.hollow-recommended-wall;
+                                    voxel: root.hollow-voxel;
+                                    fill-index: root.hollow-fill-index;
+                                    cell: root.hollow-cell;
+                                    beam: root.hollow-beam;
+                                    drain-radius: root.hollow-drain-radius;
+                                    drain-depth-set: root.hollow-drain-depth-set;
+                                    drain-depth: root.hollow-drain-depth;
+                                    drain-cone: root.hollow-drain-cone;
+                                    drain-inner-radius: root.hollow-drain-inner-radius;
+                                    drain-plug: root.hollow-drain-plug;
+                                    plug-clearance: root.hollow-plug-clearance;
+                                    apply-requested => {
+                                        root.hollow-drain-tool = false;
+                                        root.hollow-lasso-tool = false;
+                                        root.hollow-apply();
+                                    }
+                                    cancel-requested => {
+                                        root.hollow-cancel();
+                                    }
+                                    restore-requested => {
+                                        root.hollow-drain-tool = false;
+                                        root.hollow-lasso-tool = false;
+                                        root.hollow-restore();
+                                    }
+                                    clear-drains-requested => {
+                                        root.hollow-clear-drains();
+                                    }
+                                    drain-tool-toggled => {
+                                        root.hollow-drain-tool = !root.hollow-drain-tool;
+                                    }
+                                    option-changed(code, value) => {
+                                        root.hollow-option-changed(code, value);
+                                    }
                                 }
-                                brush-size-changed(mm) => {
-                                    root.orient-brush-size-changed(mm);
+                                if root.workspace-section == WorkspaceSection.Supports: SupportsInspector {
+                                    overhang-map-on <=> root.overhang-map-on;
+                                    overhang-map-limit: root.overhang-map-limit;
+                                    overhang-map-toggled(on) => {
+                                        root.overhang-map-toggled(on);
+                                    }
+                                    has-scene: root.has-scene && !root.loading;
+                                    running: root.support-gen-in-progress;
+                                    phase: root.support-gen-phase;
+                                    progress: root.support-gen-progress;
+                                    cancelable: root.support-gen-cancelable;
+                                    last-run: root.supports-last-run;
+                                    generate-requested => {
+                                        root.df-support-requested();
+                                    }
+                                    cancel-requested => {
+                                        root.support-gen-cancel-requested();
+                                    }
+                                    preset-names: root.support-preset-names;
+                                    preset-index: root.support-preset-index;
+                                    preset-cards: root.support-preset-cards;
+                                    preset-card-index: root.support-preset-card-index;
+                                    based-on: root.support-based-on;
+                                    preset-resettable: root.support-preset-resettable;
+                                    preset-revert => {
+                                        root.support-preset-revert();
+                                    }
+                                    shape-scope: root.support-shape-scope;
+                                    shape-picture: root.support-shape-picture;
+                                    shape-callouts: root.support-shape-callouts;
+                                    shape-hot: root.support-shape-hot;
+                                    shape-dragged(dx, dy) => {
+                                        root.support-shape-dragged(dx, dy);
+                                    }
+                                    shape-pointed(part) => {
+                                        root.support-shape-pointed(part);
+                                    }
+                                    shape-sizes: root.support-shape-sizes;
+                                    shape-size: root.support-shape-size;
+                                    shape-size-name: root.support-shape-size-name;
+                                    shape-defaults: root.support-shape-defaults;
+                                    zone-angle-default: root.support-zone-angle-default;
+                                    shape-size-picked(i) => {
+                                        root.support-shape-size-picked(i);
+                                    }
+                                    shape-values: root.support-shape-values;
+                                    shape-value(code, v) => {
+                                        root.support-shape-value(code, v);
+                                    }
+                                    zone-rows: root.support-zone-rows;
+                                    zone-size-names: root.support-zone-size-names;
+                                    zone-angle: root.support-zone-angle;
+                                    zone-size(row, k) => {
+                                        root.support-zone-size(row, k);
+                                    }
+                                    zone-spacing(row, v) => {
+                                        root.support-zone-spacing(row, v);
+                                    }
+                                    zone-angle-edited(v) => {
+                                        root.support-zone-angle-edited(v);
+                                    }
+                                    sizing-index: root.support-sizing-index;
+                                    density: root.support-density;
+                                    angle: root.support-angle;
+                                    size-scale: root.support-size-scale;
+                                    min-island: root.support-min-island;
+                                    coverage: root.support-coverage;
+                                    stabilization: root.support-stabilization;
+                                    bracing: root.support-bracing;
+                                    smooth: root.support-smooth;
+                                    raft-index: root.support-raft-index;
+                                    raft-thickness: root.support-raft-thickness;
+                                    raft-wall: root.support-raft-wall;
+                                    zone-summary: root.support-zone-summary;
+                                    grid-on: root.support-grid-on;
+                                    grid-spacing: root.support-grid-spacing;
+                                    grid-hint: root.support-grid-hint;
+                                    raft-clash-message: root.support-raft-clash-message;
+                                    raft-lift-label: root.support-raft-lift-label;
+                                    lift-on-plate: root.support-lift-on-plate;
+                                    lift-on-plate-label: root.support-lift-on-plate-label;
+                                    lift-on-plate-toggled(on) => {
+                                        root.support-lift-on-plate-toggled(on);
+                                    }
+                                    hide-rafts-under-plate: root.support-hide-rafts-under-plate;
+                                    hide-rafts-under-plate-toggled(on) => {
+                                        root.support-hide-rafts-under-plate-toggled(on);
+                                    }
+                                    lines-under-plate: root.support-lines-under-plate;
+                                    lines-under-plate-toggled(on) => {
+                                        root.support-lines-under-plate-toggled(on);
+                                    }
+                                    imported-bodies: root.imported-support-bodies;
+                                    islands-left: root.support-islands-left;
+                                    islands-busy: root.slicing-in-progress || root.review-fixing;
+                                    analyze-islands => {
+                                        root.support-islands-analyze-requested();
+                                    }
+                                    go-to-island => {
+                                        root.support-islands-go-requested();
+                                    }
+                                    support-islands => {
+                                        root.support-islands-add-requested();
+                                    }
+                                    remove-imported => {
+                                        root.imported-supports-remove-requested();
+                                    }
+                                    replace-imported => {
+                                        root.imported-supports-replace-requested();
+                                    }
+                                    raft-lift => {
+                                        root.support-raft-lift-requested();
+                                    }
+                                    raft-off => {
+                                        root.support-raft-off-requested();
+                                    }
+                                    raft-ignore => {
+                                        root.support-raft-ignore-requested();
+                                    }
+                                    add-tool-on: root.support-tool == 1;
+                                    remove-tool-on: root.support-tool == 2;
+                                    page: root.support-page;
+                                    page-picked(i) => {
+                                        if i == 1 {
+                                            root.show-hand-page();
+                                        } else {
+                                            root.support-page = 0;
+                                        }
+                                    }
+                                    tool: root.support-tool;
+                                    tool-picked(tool) => {
+                                        root.arm-support-tool(tool == 0 ? root.support-tool : tool);
+                                    }
+                                    own-presets: root.support-own-presets;
+                                    own-preset-index: root.support-own-preset-index;
+                                    own-preset-picked(i) => {
+                                        root.support-preset-picked(i + root.support-preset-cards.length);
+                                    }
+                                    share-export => {
+                                        root.support-share-export();
+                                    }
+                                    share-import => {
+                                        root.support-share-import();
+                                    }
+                                    hand-changed: root.support-hand-changed;
+                                    hand-reset => {
+                                        root.support-hand-reset();
+                                    }
+                                    remove-mode: root.support-remove-mode;
+                                    brush-radius: root.support-brush-radius;
+                                    remove-mode-picked(i) => {
+                                        root.support-remove-mode = i;
+                                    }
+                                    tip-size: root.support-tip-size;
+                                    tip-label: root.support-tip-label;
+                                    add-note: root.support-add-note;
+                                    add-note-warns: root.support-add-note-warns;
+                                    tip-size-picked(i) => {
+                                        root.support-tip-size = i;
+                                    }
+                                    selection-valid: root.selection-valid;
+                                    lift: root.selection-pos-z;
+                                    option-changed(code, value) => {
+                                        root.support-option-changed(code, value);
+                                    }
+                                    preset-picked(i) => {
+                                        root.support-preset-picked(i);
+                                    }
+                                    preset-save(name) => {
+                                        root.support-preset-save(name);
+                                    }
+                                    preset-delete => {
+                                        root.support-preset-delete();
+                                    }
+                                    lift-edit(v) => {
+                                        root.numeric-edit(2, v);
+                                    }
+                                    drop-to-plate => {
+                                        root.numeric-edit(10, 0);
+                                    }
                                 }
-                                brush-erase-toggled => {
-                                    root.orient-brush-erase-toggled();
-                                }
-                                brush-visible-changed(on) => {
-                                    root.orient-brush-visible-changed(on);
-                                }
-                                brush-op(code) => {
-                                    root.orient-brush-op(code);
-                                }
-                                search(mode) => {
-                                    root.orient-search(mode);
-                                }
-                                cancel => {
-                                    root.orient-cancel();
-                                }
-                                option-changed(code, value) => {
-                                    root.orient-option-changed(code, value);
-                                }
-                                option-hovered(i, on) => {
-                                    root.orient-option-hovered(i, on);
-                                }
-                                option-picked(i) => {
-                                    root.orient-option-picked(i);
-                                }
-                                apply => {
-                                    root.orient-apply();
-                                }
-                                close => {
-                                    root.orient-close-requested();
-                                    mv.focus-viewport();
-                                }
-                                arrange => {
-                                    root.arrange-requested(false);
-                                }
-                            }
-                            if root.workspace-section == WorkspaceSection.Transform: TransformInspector {
-                                objects: root.object-list;
-                                selected-index: root.selected-object-index;
-                                selected-rows: root.selected-object-rows;
-                                selected-count: root.selected-object-count;
-                                needs-repair: root.mesh-needs-repair;
-                                check-note: root.mesh-check-note;
-                                check-text: root.mesh-check-text;
-                                repairing: root.repairing-in-progress;
-                                repair-phase: root.repair-phase;
-                                repair-progress: root.repair-progress;
-                                repair-marks-available: root.repair-marks-available;
-                                repair-marks-shown: root.repair-marks-shown;
-                                overhang-map-on <=> root.overhang-map-on;
-                                overhang-map-limit: root.overhang-map-limit;
-                                overhang-map-toggled(on) => {
-                                    root.overhang-map-toggled(on);
-                                }
-                                repair-cancel => {
-                                    root.repair-cancel();
-                                }
-                                repair-marks-toggled(on) => {
-                                    root.repair-marks-toggled(on);
-                                }
-                                repair-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
-                                    && !root.repairing-in-progress;
-                                object-picked(i) => {
-                                    root.selected-object-index = i;
-                                    root.object-list-selection-changed(i);
-                                    mv.focus-viewport();
-                                }
-                                object-toggled(i) => {
-                                    root.object-list-toggle(i);
-                                    mv.focus-viewport();
-                                }
-                                repair-requested => {
-                                    root.repair-requested();
-                                }
-                                selection-valid: root.selection-valid;
-                                size-x: root.selection-size-x;
-                                size-y: root.selection-size-y;
-                                size-z: root.selection-size-z;
-                                model-x: root.selection-model-x;
-                                model-y: root.selection-model-y;
-                                model-z: root.selection-model-z;
-                                tilted: root.selection-tilted;
-                                pos-x: root.selection-pos-x;
-                                pos-y: root.selection-pos-y;
-                                pos-z: root.selection-pos-z;
-                                rot-x: root.selection-rot-x;
-                                rot-y: root.selection-rot-y;
-                                rot-z: root.selection-rot-z;
-                                scale: root.selection-scale;
-                                numeric-edit(code, value) => {
-                                    root.numeric-edit(code, value);
-                                }
-                                arrange-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
-                                    && !root.repairing-in-progress && !root.arranging;
-                                arranging: root.arranging;
-                                arrange-last-run: root.arrange-last-run;
-                                arrange-gap: root.arrange-gap;
-                                arrange-margin: root.arrange-margin;
-                                arrange-turns: root.arrange-turns;
-                                arrange-shadow-only: root.arrange-shadow-only;
-                                plate-count: root.plate-count;
-                                active-plate: root.active-plate;
-                                active-plate-used: root.active-plate-used;
-                                plate-names: root.plate-names;
-                                can-send: root.has-scene && root.selection-valid;
-                                plate-send(i) => {
-                                    root.plate-send-requested(i);
-                                }
-                                plate-add => {
-                                    root.plate-add-requested();
-                                }
-                                plate-remove => {
-                                    root.plate-remove-requested(false);
-                                }
-                                arrange-filling: root.arrange-filling;
-                                arrange-fill-progress: root.arrange-fill-progress;
-                                arrange-max-copies: root.arrange-max-copies;
-                                arrange-requested(selection) => {
-                                    root.arrange-requested(selection);
-                                }
-                                arrange-fill-requested => {
-                                    root.arrange-fill-requested();
-                                }
-                                arrange-cancel => {
-                                    root.arrange-cancel();
-                                }
-                                arrange-option-changed(code, value) => {
-                                    root.arrange-option-changed(code, value);
-                                }
-                                orient-requested => {
-                                    if !root.orient-open {
-                                        root.orient-toggle-requested();
+                                if root.workspace-section == WorkspaceSection.Export: ExportInspector {
+                                    format-options: root.slice-print-format-options;
+                                    format-current-index <=> root.slice-print-format-current-index;
+                                    format-note: root.slice-print-format-note;
+                                    export-enabled: root.slice-export-enabled;
+                                    plate-count: root.plate-count;
+                                    plate-name: root.plate-count > 1 ? root.plate-names[root.active-plate] : "";
+                                    busy: root.slicing-in-progress || root.saving-in-progress || root.loading;
+                                    has-scene: root.has-scene;
+                                    format-picked(i) => {
+                                        root.slice-print-format-picked(i);
+                                    }
+                                    export-printer-file => {
+                                        root.slice-export-requested();
+                                    }
+                                    export-every-plate => {
+                                        root.slice-export-every-plate-requested();
+                                    }
+                                    save-project => {
+                                        root.save-requested();
+                                    }
+                                    export-mesh => {
+                                        root.export-as-requested();
                                     }
                                 }
                             }
-                            if root.workspace-section == WorkspaceSection.Hollow: HollowInspector {
-                                selection-valid: root.selection-valid && !root.loading;
-                                running: root.hollow-running;
-                                phase: root.hollow-phase;
-                                progress: root.hollow-progress;
-                                last-run: root.hollow-last-run;
-                                model-state: root.hollow-model-state;
-                                drain-count: root.hollow-drain-count;
-                                drain-tool-on: root.hollow-drain-tool;
-                                solid-count: root.hollow-solid-count;
-                                lasso-tool-on: root.hollow-lasso-tool;
-                                lasso-tool-toggled => {
-                                    root.hollow-lasso-tool = !root.hollow-lasso-tool;
-                                }
-                                remove-last-solid-requested => {
-                                    root.hollow-remove-last-solid();
-                                }
-                                clear-solids-requested => {
-                                    root.hollow-clear-solids();
-                                }
-                                show-cavity: root.hollow-show-cavity;
-                                show-cavity-toggled(on) => {
-                                    root.hollow-show-cavity = on;
-                                }
-                                wall: root.hollow-wall;
-                                recommended-wall: root.hollow-recommended-wall;
-                                voxel: root.hollow-voxel;
-                                fill-index: root.hollow-fill-index;
-                                cell: root.hollow-cell;
-                                beam: root.hollow-beam;
-                                drain-radius: root.hollow-drain-radius;
-                                drain-depth-set: root.hollow-drain-depth-set;
-                                drain-depth: root.hollow-drain-depth;
-                                drain-cone: root.hollow-drain-cone;
-                                drain-inner-radius: root.hollow-drain-inner-radius;
-                                drain-plug: root.hollow-drain-plug;
-                                plug-clearance: root.hollow-plug-clearance;
-                                apply-requested => {
-                                    root.hollow-drain-tool = false;
-                                    root.hollow-lasso-tool = false;
-                                    root.hollow-apply();
-                                }
-                                cancel-requested => {
-                                    root.hollow-cancel();
-                                }
-                                restore-requested => {
-                                    root.hollow-drain-tool = false;
-                                    root.hollow-lasso-tool = false;
-                                    root.hollow-restore();
-                                }
-                                clear-drains-requested => {
-                                    root.hollow-clear-drains();
-                                }
-                                drain-tool-toggled => {
-                                    root.hollow-drain-tool = !root.hollow-drain-tool;
-                                }
-                                option-changed(code, value) => {
-                                    root.hollow-option-changed(code, value);
-                                }
+                    }
+                        if root.workspace-section == WorkspaceSection.Supports && root.support-page == 0: SupportsFooter {
+                            has-scene: root.has-scene && !root.loading;
+                            running: root.support-gen-in-progress;
+                            phase: root.support-gen-phase;
+                            progress: root.support-gen-progress;
+                            cancelable: root.support-gen-cancelable;
+                            last-run: root.supports-last-run;
+                            show-lift: root.support-raft-clash-message == "";
+                            lift-on-plate: root.support-lift-on-plate;
+                            lift-on-plate-label: root.support-lift-on-plate-label;
+                            lift-on-plate-toggled(on) => {
+                                root.support-lift-on-plate-toggled(on);
                             }
-                            if root.workspace-section == WorkspaceSection.Supports: SupportsInspector {
-                                overhang-map-on <=> root.overhang-map-on;
-                                overhang-map-limit: root.overhang-map-limit;
-                                overhang-map-toggled(on) => {
-                                    root.overhang-map-toggled(on);
-                                }
-                                has-scene: root.has-scene && !root.loading;
-                                running: root.support-gen-in-progress;
-                                phase: root.support-gen-phase;
-                                progress: root.support-gen-progress;
-                                cancelable: root.support-gen-cancelable;
-                                last-run: root.supports-last-run;
-                                generate-requested => {
-                                    root.df-support-requested();
-                                }
-                                cancel-requested => {
-                                    root.support-gen-cancel-requested();
-                                }
-                                preset-names: root.support-preset-names;
-                                preset-index: root.support-preset-index;
-                                sizing-index: root.support-sizing-index;
-                                density: root.support-density;
-                                angle: root.support-angle;
-                                size-scale: root.support-size-scale;
-                                min-island: root.support-min-island;
-                                coverage: root.support-coverage;
-                                stabilization: root.support-stabilization;
-                                bracing: root.support-bracing;
-                                smooth: root.support-smooth;
-                                raft-index: root.support-raft-index;
-                                raft-thickness: root.support-raft-thickness;
-                                raft-wall: root.support-raft-wall;
-                                zone-summary: root.support-zone-summary;
-                                grid-on: root.support-grid-on;
-                                grid-spacing: root.support-grid-spacing;
-                                grid-hint: root.support-grid-hint;
-                                raft-clash-message: root.support-raft-clash-message;
-                                raft-lift-label: root.support-raft-lift-label;
-                                lift-on-plate: root.support-lift-on-plate;
-                                lift-on-plate-label: root.support-lift-on-plate-label;
-                                lift-on-plate-toggled(on) => {
-                                    root.support-lift-on-plate-toggled(on);
-                                }
-                                hide-rafts-under-plate: root.support-hide-rafts-under-plate;
-                                hide-rafts-under-plate-toggled(on) => {
-                                    root.support-hide-rafts-under-plate-toggled(on);
-                                }
-                                lines-under-plate: root.support-lines-under-plate;
-                                lines-under-plate-toggled(on) => {
-                                    root.support-lines-under-plate-toggled(on);
-                                }
-                                imported-bodies: root.imported-support-bodies;
-                                islands-left: root.support-islands-left;
-                                islands-busy: root.slicing-in-progress || root.review-fixing;
-                                analyze-islands => {
-                                    root.support-islands-analyze-requested();
-                                }
-                                go-to-island => {
-                                    root.support-islands-go-requested();
-                                }
-                                support-islands => {
-                                    root.support-islands-add-requested();
-                                }
-                                remove-imported => {
-                                    root.imported-supports-remove-requested();
-                                }
-                                replace-imported => {
-                                    root.imported-supports-replace-requested();
-                                }
-                                raft-lift => {
-                                    root.support-raft-lift-requested();
-                                }
-                                raft-off => {
-                                    root.support-raft-off-requested();
-                                }
-                                raft-ignore => {
-                                    root.support-raft-ignore-requested();
-                                }
-                                add-tool-on: root.support-tool == 1;
-                                remove-tool-on: root.support-tool == 2;
-                                remove-mode: root.support-remove-mode;
-                                brush-radius: root.support-brush-radius;
-                                remove-mode-picked(i) => {
-                                    root.support-remove-mode = i;
-                                }
-                                tip-size: root.support-tip-size;
-                                tip-label: root.support-tip-label;
-                                add-note: root.support-add-note;
-                                add-note-warns: root.support-add-note-warns;
-                                tip-size-picked(i) => {
-                                    root.support-tip-size = i;
-                                }
-                                selection-valid: root.selection-valid;
-                                lift: root.selection-pos-z;
-                                option-changed(code, value) => {
-                                    root.support-option-changed(code, value);
-                                }
-                                preset-picked(i) => {
-                                    root.support-preset-picked(i);
-                                }
-                                preset-save(name) => {
-                                    root.support-preset-save(name);
-                                }
-                                preset-delete => {
-                                    root.support-preset-delete();
-                                }
-                                lift-edit(v) => {
-                                    root.numeric-edit(2, v);
-                                }
-                                drop-to-plate => {
-                                    root.numeric-edit(10, 0);
-                                }
+                            generate-requested => {
+                                root.df-support-requested();
                             }
-                            if root.workspace-section == WorkspaceSection.Export: ExportInspector {
-                                format-options: root.slice-print-format-options;
-                                format-current-index <=> root.slice-print-format-current-index;
-                                format-note: root.slice-print-format-note;
-                                export-enabled: root.slice-export-enabled;
-                                plate-count: root.plate-count;
-                                plate-name: root.plate-count > 1 ? root.plate-names[root.active-plate] : "";
-                                busy: root.slicing-in-progress || root.saving-in-progress || root.loading;
-                                has-scene: root.has-scene;
-                                format-picked(i) => {
-                                    root.slice-print-format-picked(i);
-                                }
-                                export-printer-file => {
-                                    root.slice-export-requested();
-                                }
-                                export-every-plate => {
-                                    root.slice-export-every-plate-requested();
-                                }
-                                save-project => {
-                                    root.save-requested();
-                                }
-                                export-mesh => {
-                                    root.export-as-requested();
-                                }
+                            cancel-requested => {
+                                root.support-gen-cancel-requested();
                             }
                         }
                     }
@@ -3157,6 +3265,24 @@ export component MainWindow inherits Window {
 
     ToolTip {
         window-width: root.width;
+    }
+
+    if root.support-share-mode != 0: SharePicker {
+        width: 100%;
+        height: 100%;
+        mode: root.support-share-mode;
+        items: root.support-share-items;
+        picked-count: root.support-share-picked;
+        total: root.support-share-total;
+        toggled(i, on) => {
+            root.support-share-toggled(i, on);
+        }
+        accepted => {
+            root.support-share-accepted();
+        }
+        cancelled => {
+            root.support-share-cancelled();
+        }
     }
 
     // App messages (#133): last, so they sit over everything else.

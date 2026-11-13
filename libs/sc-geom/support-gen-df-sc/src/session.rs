@@ -27,7 +27,7 @@ use support_gen_df::supports::auto_support::auto_place::fan::{
     FanArgs, FanHostOrder, FanLeafRefusal, FanLeafResult, add_fanned, fan_leaf_to_host,
 };
 use support_gen_df::supports::auto_support::auto_place::helpers::{
-    FanShaftPoint, PlanCtx, PlanMesh, collect_fan_shaft_points, host_segment_span,
+    FanShaftPoint, PlanCtx, PlanMesh, apply_zone_size, collect_fan_shaft_points, host_segment_span,
     member_max_angle_from_vertical_deg,
 };
 use support_gen_df::supports::auto_support::auto_place::place::{
@@ -35,7 +35,7 @@ use support_gen_df::supports::auto_support::auto_place::place::{
 };
 use support_gen_df::supports::auto_support::parameter_sizing::SizingBands;
 use support_gen_df::supports::auto_support::types::{CandidatePoint, CandidateSource};
-use support_gen_df::supports::auto_support::zone_rules::ZoneRules;
+use support_gen_df::supports::auto_support::zone_rules::{SupportSize, ZoneRules};
 use support_gen_df::supports::placement_logic::cone_axis_policy::is_side_wall_contact;
 use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
@@ -300,6 +300,35 @@ impl std::fmt::Display for EditError {
     }
 }
 
+/// The numbers a support placed by hand is drawn with, when they are the
+/// person's own (the hand sizes of the Supports tab) rather than a size of
+/// the run's preset.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandShape(pub SupportSize);
+
+impl Eq for HandShape {}
+
+impl std::hash::Hash for HandShape {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let s = &self.0;
+        s.id.hash(state);
+        for v in [
+            s.tip_diameter_mm,
+            s.tip_length_mm,
+            s.penetration_mm,
+            s.break_point_mm,
+            s.trunk_diameter_mm,
+            s.base_diameter_mm,
+            s.base_thickness_mm,
+            s.join_cone_mm,
+            s.base_tip.map_or(-1.0, |t| t.length_mm),
+            s.base_tip.map_or(-1.0, |t| t.diameter_mm),
+        ] {
+            v.to_bits().hash(state);
+        }
+    }
+}
+
 /// How a support is added by hand.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct AddOptions {
@@ -311,6 +340,9 @@ pub struct AddOptions {
     /// else one of [`crate::zone_presets::support_sizes`]. `None` takes the
     /// size the run's preset gives a support placed by hand.
     pub size: Option<String>,
+    /// The numbers it is drawn with, whatever the run's sizes are; goes
+    /// before `size`.
+    pub shape: Option<HandShape>,
 }
 
 /// Why a support added by hand does not hang from another, or cannot be
@@ -422,6 +454,25 @@ fn hand_settings(settings: &mut PipelineSettings, how: &AddOptions) -> Option<us
     // No cap on the members a support carries (0 is none).
     auto.max_attachments_per_trunk = 0.0;
     supports.grid.min_branch_angle_deg = supports.grid.min_branch_angle_deg.min(90.0 - max_angle);
+    if let Some(HandShape(shape)) = &how.shape {
+        // The person's own numbers: a size of the rules that has them, else
+        // one more size, under an id none of the run's has.
+        let rules = auto.zone_rules.get_or_insert_with(ZoneRules::default);
+        let same = |s: &SupportSize| {
+            let mut s = s.clone();
+            s.id.clone_from(&shape.id);
+            s == *shape
+        };
+        if let Some(i) = rules.sizes.iter().position(same) {
+            return Some(i);
+        }
+        let mut size = shape.clone();
+        while rules.size_index(&size.id).is_some() {
+            size.id.push_str("-hand");
+        }
+        rules.sizes.push(size);
+        return Some(rules.sizes.len() - 1);
+    }
     let id = how.size.as_deref()?;
     if let Some(i) = auto.zone_rules.as_ref().and_then(|r| r.size_index(id)) {
         return Some(i);
@@ -1435,6 +1486,7 @@ impl DfSupportSession {
                 normal: [normal.x, normal.y, normal.z],
                 attach: how.attach,
                 size: how.size.clone(),
+                shape: how.shape.clone().map(|s| s.0),
                 moved_from: None,
             });
         }
@@ -1656,7 +1708,7 @@ impl DfSupportSession {
             }
             Err((EditError::NoRoute(_) | EditError::CannotAttach(_), note)) => {
                 let preview = EditPreview {
-                    mesh: self.refused_at(point, note)?,
+                    mesh: self.refused_at(point, note, how)?,
                     valid: false,
                     attached: false,
                     note,
@@ -1672,14 +1724,20 @@ impl DfSupportSession {
     /// What a preview shows red where nothing can hold `point`, refused as
     /// `note` says (#491). A surface no tip may touch (it looks up, or it is
     /// a wall) shows no support: none was tried. Otherwise the support
-    /// straight down to what lies under the point ([`Self::straight_drop`]).
-    fn refused_at(&self, point: [f64; 3], note: Option<AddNote>) -> Result<IndexedMesh, EditError> {
+    /// straight down to what lies under the point ([`Self::straight_drop`]),
+    /// of the size `how` asks for.
+    fn refused_at(
+        &self,
+        point: [f64; 3],
+        note: Option<AddNote>,
+        how: &AddOptions,
+    ) -> Result<IndexedMesh, EditError> {
         match note {
             Some(AddNote::FacesUp | AddNote::SteepSurface) => {
                 self.contact(point).ok_or(EditError::NothingThere)?;
                 Ok(IndexedMesh::new(None, Vec::new(), Vec::new()))
             }
-            _ => self.straight_drop(point),
+            _ => self.straight_drop(point, how),
         }
     }
 
@@ -1688,8 +1746,23 @@ impl DfSupportSession {
     /// support from one surface to the other, as the placement tries there;
     /// else a trunk to the plate. A red preview drawn as a trunk to the
     /// plate through the model below read as a support sent to the plate.
-    fn straight_drop(&self, point: [f64; 3]) -> Result<IndexedMesh, EditError> {
+    fn straight_drop(&self, point: [f64; 3], how: &AddOptions) -> Result<IndexedMesh, EditError> {
         let (i, tip, face) = self.contact(point).ok_or(EditError::NothingThere)?;
+        // Of the size asked for (#564: a red one showed the run's size, not
+        // the one a click would place).
+        let mut settings = (*self.settings).clone();
+        if let Some(zone) = hand_settings(&mut settings, how)
+            && let Some(rules) = settings.supports.auto_support.zone_rules.clone()
+        {
+            apply_zone_size(&mut settings.supports, &rules, zone);
+        }
+        let supports = &settings.supports;
+        let sized = settings
+            .supports
+            .auto_support
+            .zone_rules
+            .is_some()
+            .then_some((supports.shaft.diameter_mm, supports.tip.contact_diameter_mm));
         let normal = match self.tip_contact(point) {
             Some((_, _, Ok(n))) => n,
             _ => face,
@@ -1717,7 +1790,7 @@ impl DfSupportSession {
                 .cross(Vec3::sub_vectors(tri.c, tri.a))
                 .normalize();
             let span = tip.distance_to(hit.point);
-            let cutoff = self.settings.supports.mesh_to_mesh.stick_vs_twig_cutoff_mm;
+            let cutoff = supports.mesh_to_mesh.stick_vs_twig_cutoff_mm;
             let read_setting = |path: SupportPlacementSettingPath| match path {
                 SupportPlacementSettingPath::MeshToMeshStickVsTwigCutoffMm => Some(cutoff),
             };
@@ -1732,12 +1805,12 @@ impl DfSupportSession {
                     a_normal: normal,
                     b_pos: hit.point,
                     b_normal: up,
-                    shaft_diameter_mm: None,
-                    tip_contact_diameter_mm: None,
+                    shaft_diameter_mm: sized.map(|s| s.0),
+                    tip_contact_diameter_mm: sized.map(|s| s.1),
                     mesh: None,
                     manual: Some(true),
                 },
-                &self.settings.supports,
+                supports,
                 &mut new_id,
             );
             if let Some(bridge) = bridge {
@@ -1765,7 +1838,7 @@ impl DfSupportSession {
                 is_small_island: None,
                 ignore_grid: Some(true),
             },
-            &self.settings.supports,
+            supports,
             &mut new_id,
         )
         .ok_or(EditError::NothingThere)?;
@@ -2125,6 +2198,7 @@ impl DfSupportSession {
                 normal: [n.x, n.y, n.z],
                 attach: false,
                 size: self.size_of(&id),
+                shape: None,
                 moved_from: None,
                 id,
             });
@@ -2188,6 +2262,7 @@ impl DfSupportSession {
             let how = AddOptions {
                 attach: placed.attach,
                 size: placed.size.clone(),
+                shape: placed.shape.clone().map(HandShape),
             };
             // A move takes the new run's support where the old one stood;
             // with none there, the support is added where it was moved to.
@@ -2315,6 +2390,44 @@ impl DfSupportSession {
             })
     }
 
+    /// The numbers support `id` was drawn with: the person's own for one
+    /// placed by hand with them, else those of the size its tip has.
+    pub fn shape_of(&self, id: &str) -> Option<SupportSize> {
+        if let Some(shape) = self
+            .hand_log
+            .placed
+            .iter()
+            .find(|p| p.id == id)
+            .and_then(|p| p.shape.clone())
+        {
+            return Some(shape);
+        }
+        let size = self.size_of(id)?;
+        self.settings
+            .supports
+            .auto_support
+            .zone_rules
+            .as_ref()
+            .and_then(|r| r.sizes.iter().find(|s| s.id == size).cloned())
+            .or_else(|| {
+                crate::zone_presets::support_sizes()
+                    .into_iter()
+                    .find(|s| s.id == size)
+            })
+    }
+
+    /// Draws support `tip` again with the numbers of `shape`, its tip where
+    /// it is. A support others hang from stays as it is, as with a move. On
+    /// a refusal the session is as it was.
+    pub fn reshape(&mut self, tip: &str, shape: &SupportSize) -> Result<(), EditError> {
+        let (at, _) = self.support_tip(tip).ok_or(EditError::NothingThere)?;
+        let how = AddOptions {
+            shape: Some(HandShape(shape.clone())),
+            ..AddOptions::default()
+        };
+        self.move_tip(tip, at, &how)
+    }
+
     /// The entities removing the supports `ids` takes, by the removal's
     /// cascade.
     fn removal_of(&self, ids: &[String]) -> Result<HashSet<String>, EditError> {
@@ -2384,10 +2497,7 @@ impl DfSupportSession {
                 Some(AddNote::CarriesOthers),
             ));
         }
-        let how = AddOptions {
-            attach: how.attach,
-            size: how.size.clone().or_else(|| self.size_of(tip)),
-        };
+        let how = self.moved_how(tip, how);
         // The log (#408): a support of the run keeps where the run had it,
         // one placed by hand where it first came from.
         let moved_from = match self.hand_log.placed.iter().position(|p| p.id == tip) {
@@ -2423,6 +2533,19 @@ impl DfSupportSession {
     /// placed there (green, with what it leaves in `taken`), or red where
     /// nothing can hold that point or others hang from the support. With
     /// the session the move leaves when it goes through.
+    /// How support `tip` is made again where it moves: as `how` says, else
+    /// with its own size and shape.
+    fn moved_how(&self, tip: &str, how: &AddOptions) -> AddOptions {
+        AddOptions {
+            attach: how.attach,
+            size: how.size.clone().or_else(|| self.size_of(tip)),
+            shape: how.shape.clone().or_else(|| {
+                let placed = self.hand_log.placed.iter().find(|p| p.id == tip)?;
+                placed.shape.clone().map(HandShape)
+            }),
+        }
+    }
+
     pub fn preview_move_tip(
         &self,
         tip: &str,
@@ -2456,7 +2579,7 @@ impl DfSupportSession {
             }
             Err((EditError::NoRoute(_) | EditError::CannotAttach(_), note)) => {
                 let preview = EditPreview {
-                    mesh: self.refused_at(to, note)?,
+                    mesh: self.refused_at(to, note, &self.moved_how(tip, how))?,
                     valid: false,
                     attached: false,
                     note,
@@ -3209,7 +3332,7 @@ mod session_tests {
         let session = slab_with_a_trunk();
         let attach = AddOptions {
             attach: true,
-            size: None,
+            ..AddOptions::default()
         };
         // Too far to the side for a plain click: a trunk of its own, and why.
         let tip = [17.0, 5.0, 12.0];
@@ -3548,8 +3671,8 @@ mod session_tests {
         let sized = |size: &str| {
             let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
             let how = AddOptions {
-                attach: false,
                 size: Some(size.to_owned()),
+                ..AddOptions::default()
             };
             session.add_at([5.0, 5.0, 12.0], &how).expect("a trunk");
             tip_of(&session)
@@ -3795,12 +3918,44 @@ mod session_tests {
         assert_eq!(kept.state, session.state);
     }
 
+    /// A support placed by hand with the person's own numbers is drawn with
+    /// them, whatever the sizes of the run are; a move keeps them, and a
+    /// reshape draws it again where it stands.
+    #[test]
+    fn a_support_takes_the_shape_handed_to_it_and_keeps_it() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        let mut shape = crate::zone_presets::support_sizes().remove(1);
+        assert_eq!(shape.id, "small");
+        shape.tip_diameter_mm = 0.33;
+        shape.trunk_diameter_mm = 1.7;
+        let how = AddOptions {
+            shape: Some(HandShape(shape.clone())),
+            ..AddOptions::default()
+        };
+        session.add_at([5.0, 5.0, 12.0], &how).unwrap();
+        let tip = session.tip_near([5.0, 5.0, 12.0], 1.0).unwrap();
+        assert_eq!(session.tip_diameter(&tip), Some(0.33));
+        assert_eq!(session.shape_of(&tip), Some(shape.clone()));
+        session
+            .move_tip(&tip, [30.0, 5.0, 12.0], &AddOptions::default())
+            .unwrap();
+        let (id, _) = session.tips().remove(0);
+        assert_eq!(session.shape_of(&id), Some(shape.clone()));
+        shape.tip_diameter_mm = 0.5;
+        session.reshape(&id, &shape).unwrap();
+        let tips = session.tips();
+        assert_eq!(tips.len(), 1);
+        assert!(dist(tips[0].1, [30.0, 5.0, 12.0]) < 0.5);
+        assert_eq!(session.tip_diameter(&tips[0].0), Some(0.5));
+        assert_eq!(session.shape_of(&tips[0].0), Some(shape));
+    }
+
     #[test]
     fn a_moved_tip_keeps_its_size_and_one_others_hang_from_stays() {
         let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
         let large = AddOptions {
-            attach: false,
             size: Some("large".to_owned()),
+            ..AddOptions::default()
         };
         session.add_at([5.0, 5.0, 12.0], &large).unwrap();
         let tip = session.tip_near([5.0, 5.0, 12.0], 1.0).unwrap();
@@ -3884,7 +4039,15 @@ mod session_tests {
     /// One model of boxes, each `(min, max)` in world mm, run with no
     /// options and its supports then cleared.
     fn bare_boxes(boxes: &[([f32; 3], [f32; 3])]) -> DfSupportSession {
-        let mut session = crate::start_df_supports(&boxes_scene(boxes), Default::default())
+        bare_boxes_with(boxes, Default::default())
+    }
+
+    /// [`bare_boxes`], run as `request` says.
+    fn bare_boxes_with(
+        boxes: &[([f32; 3], [f32; 3])],
+        request: crate::DfSupportRequest,
+    ) -> DfSupportSession {
+        let mut session = crate::start_df_supports(&boxes_scene(boxes), request)
             .unwrap()
             .join()
             .unwrap()
@@ -3950,9 +4113,110 @@ mod session_tests {
         // would stand.
         let open = bare_boxes(&[([0.0, 0.0, 25.0], [50.0, 10.0, 27.0])]);
         assert!(
-            open.straight_drop([25.0, 5.0, 25.0])
+            open.straight_drop([25.0, 5.0, 25.0], &AddOptions::default())
                 .is_ok_and(|mesh| { mesh.vertices().iter().any(|v| v.as_array()[2] < 1.0) })
         );
+    }
+
+    /// A support from the model to the model below (a stick) is its two
+    /// tips and its whole trunk between them, as thick as its shape says
+    /// (#564: the tube ran back on itself, a thin neck between two wide
+    /// cones and a ball where the lower tip met the trunk). A span shorter
+    /// than both tips has them meet halfway.
+    #[test]
+    fn a_support_from_model_to_model_keeps_its_trunk_whole() {
+        // With no preset, and under a zone preset whose sizes the shape is
+        // not one of (the Manual page's, under Miniatures).
+        let minis = crate::DfSupportRequest {
+            options: crate::DfSupportOptions {
+                zones: Some(crate::zone_presets::minis_30()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        for (gap, tip_length, request) in [
+            (8.0f32, 2.3, crate::DfSupportRequest::default()),
+            (6.0, 2.3, crate::DfSupportRequest::default()),
+            (6.0, 4.0, crate::DfSupportRequest::default()),
+            (8.0, 2.3, minis.clone()),
+            (6.0, 2.3, minis.clone()),
+        ] {
+            let mut session = bare_boxes_with(
+                &[
+                    ([0.0, 0.0, 25.0], [50.0, 10.0, 27.0]),
+                    ([15.0, 0.0, 0.0], [35.0, 10.0, 25.0 - gap]),
+                ],
+                request,
+            );
+            let mut shape = crate::zone_presets::support_sizes().remove(2);
+            shape.trunk_diameter_mm = 2.9;
+            shape.tip_diameter_mm = 0.3;
+            shape.tip_length_mm = tip_length;
+            let how = AddOptions {
+                shape: Some(HandShape(shape)),
+                ..AddOptions::default()
+            };
+            session.add_at([25.0, 5.0, 25.0], &how).expect("placed");
+            let c = &session.state.collections;
+            assert_eq!(c.sticks.len(), 1, "gap {gap}: a stick");
+            let stick = c.sticks.values().next().unwrap();
+            let (low, high) = (stick.contact_cone_a.pos, stick.contact_cone_b.pos);
+            assert!(low.z < high.z);
+            let axis = high.sub(low);
+            let span = axis.length();
+            let axis = axis.multiply_scalar(1.0 / span);
+            // The tips as drawn: their own lengths, or their shares of a span
+            // shorter than both.
+            let (la, lb) = (
+                stick.contact_cone_a.profile.length_mm,
+                stick.contact_cone_b.profile.length_mm,
+            );
+            let fit = (span / (la + lb)).min(1.0);
+            let (la, lb) = (la * fit, lb * fit);
+            // No ring is wider than the cones reach where it stands (a
+            // doubling tube drew joints there), and between the tips every
+            // ring is the trunk's, none narrower.
+            let (r_tip, trunk) = (0.15, 1.45);
+            let mesh = session.mesh().unwrap().unwrap();
+            for v in mesh.vertices() {
+                let [x, y, z] = v.as_array().map(f64::from);
+                let d = Vec3::new(x, y, z).sub(low);
+                let t = d.dot(axis);
+                let r = d.sub(axis.multiply_scalar(t)).length();
+                let reach = (r_tip + (trunk - r_tip) * t / la)
+                    .min(r_tip + (trunk - r_tip) * (span - t) / lb)
+                    .min(trunk * 1.35);
+                assert!(r < reach + 0.15, "gap {gap}: {r} wide at {t} of {span}");
+                if t > la + 0.2 && t < span - lb - 0.2 {
+                    assert!(r > 1.4, "gap {gap}: {r} wide at {t} of {span}");
+                }
+            }
+        }
+    }
+
+    /// A red support (no way to hold the point) is drawn of the size a
+    /// click would place, the person's own shape (#564: it showed the
+    /// run's size).
+    #[test]
+    fn a_red_support_is_drawn_of_the_shape_asked_for() {
+        let open = bare_boxes(&[([0.0, 0.0, 25.0], [50.0, 10.0, 27.0])]);
+        let widest = |how: &AddOptions| {
+            let mesh = open.straight_drop([25.0, 5.0, 25.0], how).unwrap();
+            mesh.vertices()
+                .iter()
+                .map(|v| v.as_array().map(f64::from))
+                .filter(|[_, _, z]| (8.0..20.0).contains(z))
+                .map(|[x, y, _]| ((x - 25.0).powi(2) + (y - 5.0).powi(2)).sqrt())
+                .fold(0.0, f64::max)
+        };
+        let mut shape = crate::zone_presets::support_sizes().remove(1);
+        shape.trunk_diameter_mm = 3.0;
+        let thick = widest(&AddOptions {
+            shape: Some(HandShape(shape)),
+            ..AddOptions::default()
+        });
+        assert!((thick - 1.5).abs() < 0.05, "trunk radius {thick}");
+        assert!(widest(&AddOptions::default()) < 1.0);
     }
 
     #[test]
@@ -4015,8 +4279,8 @@ mod session_tests {
             .add_at(
                 added,
                 &AddOptions {
-                    attach: false,
                     size: Some("large".to_owned()),
+                    ..AddOptions::default()
                 },
             )
             .expect("it is added");
