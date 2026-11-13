@@ -7577,3 +7577,73 @@ msgstr "Exportar ajustes de soportes"
 msgctxt "FileDialog"
 msgid "Breadslicer support settings"
 msgstr "Ajustes de soportes de Breadslicer"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "One .breadsupports file with what you tick"
+msgstr "Un archivo .breadsupports con lo que tildes"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "Tick what to take from the file"
+msgstr "Tildá lo que querés traer del archivo"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "AUTOMATIC PRESETS"
+msgstr "PRESETS AUTOMÁTICOS"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "MANUAL SUPPORTS"
+msgstr "SOPORTES MANUALES"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "A preset named as one of yours comes in under a new name; none of yours is replaced."
+msgstr "Un preset con el mismo nombre que uno tuyo entra con otro nombre; ninguno tuyo se reemplaza."
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "{} of {} ticked"
+msgstr "{} de {} tildados"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Preset of Generate"
+msgstr "Preset de Generar"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Hand sizes"
+msgstr "Tamaños a mano"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "You have no presets of your own yet: change one and save it in PRESETS to share it."
+msgstr "Todavía no tenés presets propios: cambiá uno y guardalo en PRESETS para compartirlo."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "The file brings no presets."
+msgstr "El archivo no trae presets."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Automatic presets"
+msgstr "Presets automáticos"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "The file brings no hand sizes."
+msgstr "El archivo no trae tamaños a mano."
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "tip {}  ·  trunk {}  ·  foot {} mm"
+msgstr "punta {}  ·  tronco {}  ·  pie {} mm"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "A preset named as one of yours comes in under a new name; none of yours is replaced. A hand size ticked replaces yours."
+msgstr "Un preset con el mismo nombre que uno tuyo entra con otro nombre; ninguno tuyo se reemplaza. Un tamaño a mano tildado reemplaza el tuyo."

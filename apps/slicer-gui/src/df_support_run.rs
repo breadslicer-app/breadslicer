@@ -2932,10 +2932,14 @@ impl DfSupportRun {
             };
             entries.insert(0, (Entry::Preset(preset), true));
         }
-        entries.push((
-            Entry::HandSizes(self.hand.borrow().rules.sizes.clone()),
-            true,
-        ));
+        entries.extend(
+            self.hand
+                .borrow()
+                .rules
+                .sizes
+                .iter()
+                .map(|size| (Entry::HandSize(size.clone()), true)),
+        );
         drop(presets);
         *self.share.borrow_mut() = entries;
         self.push_share(&ui, 1);
@@ -2996,42 +3000,166 @@ impl DfSupportRun {
         }
     }
 
-    /// Shows the list of the export (1) or import (2) being asked.
-    fn push_share(&self, ui: &MainWindow, mode: i32) {
+    /// The rows of the list being asked: per group (0 the presets of
+    /// Generate, 1 the hand sizes), its head, then its entries, by index
+    /// into the list.
+    fn share_rows(&self) -> Vec<(usize, Option<usize>)> {
         use crate::support_share::Entry;
         let share = self.share.borrow();
-        let items: Vec<crate::ShareItem> = share
+        let group = |e: &Entry| usize::from(matches!(e, Entry::HandSize(_)));
+        let mut rows = Vec::new();
+        for g in 0..2 {
+            rows.push((g, None));
+            rows.extend(
+                share
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (e, _))| group(e) == g)
+                    .map(|(i, _)| (g, Some(i))),
+            );
+        }
+        rows
+    }
+
+    /// Shows the list of the export (1) or import (2) being asked, as a
+    /// tree: each group's head ticks all of it, each entry itself.
+    fn push_share(&self, ui: &MainWindow, mode: i32) {
+        use crate::support_share::Entry;
+        // The presets first, the hand sizes after them from XS to L.
+        let order = crate::support_shape_edit::hand_factory();
+        let hand_rank = |id: &str| {
+            order
+                .rules
+                .sizes
+                .iter()
+                .position(|s| s.id == id)
+                .unwrap_or(usize::MAX)
+        };
+        self.share
+            .borrow_mut()
+            .sort_by_key(|(entry, _)| match entry {
+                Entry::Preset(_) => (0, 0),
+                Entry::HandSize(s) => (1, hand_rank(&s.id)),
+            });
+        let rows = self.share_rows();
+        let share = self.share.borrow();
+        let presets = self.presets.borrow();
+        let bases: Vec<(String, &ZonePreset)> = presets
             .iter()
-            .map(|(entry, checked)| match entry {
-                Entry::Preset(p) => crate::ShareItem {
-                    name: p.name.as_str().into(),
-                    detail: ctr!("Inspector", "auto preset"),
-                    checked: *checked,
-                },
-                Entry::HandSizes(_) => crate::ShareItem {
-                    name: ctr!("Inspector", "Hand sizes (XS S M L)"),
-                    detail: ctr!("Inspector", "manual supports"),
-                    checked: *checked,
-                },
+            .filter(|p| p.built_in)
+            .zip(preset_cards())
+            .filter_map(|(p, (title, _))| Some((title.to_string(), p.options.zones.as_ref()?)))
+            .collect();
+        let refs: Vec<&ZonePreset> = bases.iter().map(|(_, z)| *z).collect();
+        let in_group = |g: usize| {
+            rows.iter()
+                .filter(|(rg, e)| *rg == g && e.is_some())
+                .count()
+        };
+        let ticked = |g: usize| {
+            rows.iter()
+                .filter(|(rg, e)| *rg == g && e.is_some_and(|i| share[i].1))
+                .count()
+        };
+        let none: slint::ModelRc<f32> = slint::ModelRc::default();
+        let items: Vec<crate::ShareItem> = rows
+            .iter()
+            .enumerate()
+            .map(|(k, &(g, entry))| {
+                let last = rows.get(k + 1).is_none_or(|(next, e)| *next != g || e.is_none());
+                let Some(i) = entry else {
+                    let (n, on) = (in_group(g), ticked(g));
+                    let name = if g == 0 {
+                        ctr!("Inspector", "Automatic presets")
+                    } else {
+                        ctr!("Inspector", "Manual supports")
+                    };
+                    let detail = match (n, g, mode) {
+                        (0, 0, 1) => ctr!(
+                            "Inspector",
+                            "You have no presets of your own yet: change one and save it in PRESETS to share it."
+                        ),
+                        (0, 0, _) => ctr!("Inspector", "The file brings no presets."),
+                        (0, _, _) => ctr!("Inspector", "The file brings no hand sizes."),
+                        _ => ctr!("Inspector", "{} of {} ticked", on, n),
+                    };
+                    return crate::ShareItem {
+                        header: true,
+                        group: g as i32,
+                        name,
+                        detail,
+                        numbers: none.clone(),
+                        state: if n > 0 && on == n { 2 } else if on > 0 { 1 } else { 0 },
+                        last: n == 0,
+                        enabled: n > 0,
+                    };
+                };
+                let (entry, on) = &share[i];
+                let (name, detail, numbers) = match entry {
+                    Entry::Preset(p) => (
+                        p.name.as_str().into(),
+                        p.options
+                            .zones
+                            .as_ref()
+                            .and_then(|z| crate::support_shape_edit::closest_base(&refs, z))
+                            .map_or_else(
+                                || ctr!("Inspector", "Preset of Generate"),
+                                |k| ctr!("Inspector", "Made from {}", bases[k].0),
+                            ),
+                        none.clone(),
+                    ),
+                    Entry::HandSize(size) => (
+                        crate::support_shape_edit::short_name(&size.id).into(),
+                        Default::default(),
+                        slint::ModelRc::new(slint::VecModel::from(vec![
+                            size.tip_diameter_mm as f32,
+                            size.trunk_diameter_mm as f32,
+                            size.base_diameter_mm as f32,
+                        ])),
+                    ),
+                };
+                crate::ShareItem {
+                    header: false,
+                    group: g as i32,
+                    name,
+                    detail,
+                    numbers,
+                    state: if *on { 2 } else { 0 },
+                    last,
+                    enabled: true,
+                }
             })
             .collect();
         ui.set_support_share_picked(share.iter().filter(|(_, on)| *on).count() as i32);
+        ui.set_support_share_total(share.len() as i32);
         ui.set_support_share_items(slint::ModelRc::new(slint::VecModel::from(items)));
         ui.set_support_share_mode(mode);
     }
 
+    /// Row `row` of the list ticked or not: a group's head ticks all of
+    /// the group, an entry itself.
     fn on_share_toggled(&self, row: i32, on: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        if let Some(entry) = usize::try_from(row)
-            .ok()
-            .and_then(|i| self.share.borrow_mut().get_mut(i).map(|e| e.1 = on))
+        let rows = self.share_rows();
+        let Some(&(group, entry)) = usize::try_from(row).ok().and_then(|r| rows.get(r)) else {
+            return;
+        };
         {
-            let _: () = entry;
+            let mut share = self.share.borrow_mut();
+            match entry {
+                Some(i) => share[i].1 = on,
+                None => {
+                    for &(_, e) in rows.iter().filter(|(g, _)| *g == group) {
+                        if let Some(i) = e {
+                            share[i].1 = on;
+                        }
+                    }
+                }
+            }
         }
-        let picked = self.share.borrow().iter().filter(|(_, on)| *on).count();
-        ui.set_support_share_picked(picked as i32);
+        self.push_share(&ui, ui.get_support_share_mode());
     }
 
     /// Puts the list away, nothing taken.
@@ -3105,7 +3233,7 @@ impl DfSupportRun {
             .collect();
         let dir = support_data_dir().map(|d| d.join("presets"));
         let mut presets = 0;
-        let mut hand = false;
+        let mut sizes = Vec::new();
         for entry in picked {
             match entry {
                 Entry::Preset(p) => {
@@ -3122,11 +3250,20 @@ impl DfSupportRun {
                     taken.push(name);
                     presets += 1;
                 }
-                Entry::HandSizes(sizes) => {
-                    self.set_hand(crate::support_shape_edit::hand_from_saved(sizes));
-                    hand = true;
+                Entry::HandSize(size) => sizes.push(size),
+            }
+        }
+        // The sizes taken replace those of the same name; the others stay.
+        let hand = !sizes.is_empty();
+        if hand {
+            let mut merged = self.hand.borrow().rules.sizes.clone();
+            for size in sizes {
+                match merged.iter_mut().find(|s| s.id == size.id) {
+                    Some(slot) => *slot = size,
+                    None => merged.push(size),
                 }
             }
+            self.set_hand(crate::support_shape_edit::hand_from_saved(merged));
         }
         self.reload_presets();
         if let Some(ui) = self.ui.upgrade() {
@@ -9942,6 +10079,103 @@ mod hand_edit_tests {
             .chain(c.leaves.values().map(|l| &l.contact_cone))
             .map(|cone| cone.profile.contact_diameter_mm)
             .collect()
+    }
+
+    /// The list of what a support settings file holds is a tree (#564): a
+    /// group's head ticks all of it and shows a dash when some are ticked;
+    /// each entry ticks alone; what is taken is what was ticked.
+    #[test]
+    fn the_share_list_is_a_tree_whose_heads_tick_their_group() {
+        use crate::support_share::{Entry, SharedPreset, write};
+        use slint::Model;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run, _) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let options = |zones| DfSupportOptions {
+                zones: Some(zones),
+                ..Default::default()
+            };
+            let mut thick = minis_30();
+            thick.rules.sizes[1].trunk_diameter_mm = 2.0;
+            let mut entries = vec![
+                Entry::Preset(SharedPreset {
+                    name: "Thick minis".to_owned(),
+                    options: options(thick),
+                }),
+                Entry::Preset(SharedPreset {
+                    name: "Big statues".to_owned(),
+                    options: options(figures_150()),
+                }),
+            ];
+            let mut hand = crate::support_shape_edit::hand_factory().rules.sizes;
+            hand[1].trunk_diameter_mm = 1.7;
+            entries.extend(hand.into_iter().map(Entry::HandSize));
+            run.offer_import(&write(&entries).expect("a file"));
+            let rows = |w: &MainWindow| -> Vec<(bool, String, i32)> {
+                w.get_support_share_items()
+                    .iter()
+                    .map(|r| (r.header, r.name.to_string(), r.state))
+                    .collect()
+            };
+            assert_eq!(window.get_support_share_mode(), 2);
+            let names: Vec<String> = rows(&window).into_iter().map(|r| r.1).collect();
+            assert_eq!(
+                names,
+                [
+                    "Automatic presets",
+                    "Thick minis",
+                    "Big statues",
+                    "Manual supports",
+                    "XS",
+                    "S",
+                    "M",
+                    "L"
+                ]
+            );
+            assert!(rows(&window).iter().all(|r| r.2 == 2), "all ticked");
+            assert_eq!(
+                window
+                    .get_support_share_items()
+                    .row_data(1)
+                    .map(|r| r.detail.to_string()),
+                Some("Made from Miniatures".to_owned())
+            );
+            // The head of the hand sizes: none, then S alone: a dash.
+            run.on_share_toggled(3, false);
+            assert!(rows(&window)[3..].iter().all(|r| r.2 == 0));
+            run.on_share_toggled(5, true);
+            assert_eq!(rows(&window)[3].2, 1, "some of the group");
+            run.on_share_toggled(2, false);
+            assert_eq!(rows(&window)[0].2, 1);
+            assert_eq!(window.get_support_share_picked(), 2);
+            if let Some(dir) =
+                std::env::var_os("BREADSLICER_UI_SHOTS").map(PathBuf::from)
+            {
+                window.show().expect("the window shows");
+                window
+                    .window()
+                    .set_size(slint::LogicalSize::new(1280.0, 860.0));
+                crate::test_support::slint_thread::render_frames();
+                let picture = window.window().take_snapshot().expect("a snapshot");
+                image::RgbaImage::from_raw(
+                    picture.width(),
+                    picture.height(),
+                    picture.as_bytes().to_vec(),
+                )
+                .expect("RGBA")
+                .save(dir.join("share-tree.png"))
+                .expect("written");
+            }
+            // Import: "Thick minis" and the small size come in.
+            run.on_share_accepted();
+            assert_eq!(window.get_support_share_mode(), 0);
+            let hand = run.hand.borrow().clone();
+            assert_eq!(hand.rules.sizes[1].trunk_diameter_mm, 1.7);
+            assert_eq!(
+                hand.rules.sizes[0],
+                crate::support_shape_edit::hand_factory().rules.sizes[0]
+            );
+        });
     }
 
     /// The Add tool's tip size and Shift reach the engine (#3): a large tip

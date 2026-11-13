@@ -26,8 +26,8 @@ pub(crate) struct SharedPreset {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Entry {
     Preset(SharedPreset),
-    /// The sizes the hand tools place.
-    HandSizes(Vec<SupportSize>),
+    /// 1 of the sizes the hand tools place (XS, S, M or L).
+    HandSize(SupportSize),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -51,8 +51,8 @@ pub(crate) enum ReadError {
     Empty,
 }
 
-/// The text of a file holding `entries`: its presets in their order, and
-/// the last hand sizes among them.
+/// The text of a file holding `entries`: its presets and its hand sizes,
+/// each in their order.
 pub(crate) fn write(entries: &[Entry]) -> Option<String> {
     let mut file = File {
         format: FORMAT.to_owned(),
@@ -63,14 +63,17 @@ pub(crate) fn write(entries: &[Entry]) -> Option<String> {
     for entry in entries {
         match entry {
             Entry::Preset(p) => file.presets.push(p.clone()),
-            Entry::HandSizes(sizes) => file.hand_sizes = Some(sizes.clone()),
+            Entry::HandSize(size) => file
+                .hand_sizes
+                .get_or_insert_with(Vec::new)
+                .push(size.clone()),
         }
     }
     toml::to_string_pretty(&file).ok()
 }
 
-/// What the file of text `text` holds: the hand sizes first, then its
-/// presets, their numbers inside the engine's bounds.
+/// What the file of text `text` holds: its presets, then its hand sizes
+/// one by one, their numbers inside the engine's bounds.
 pub(crate) fn read(text: &str) -> Result<Vec<Entry>, ReadError> {
     let file: File = toml::from_str(text).map_err(|_| ReadError::NotOne)?;
     if file.format != FORMAT {
@@ -79,12 +82,7 @@ pub(crate) fn read(text: &str) -> Result<Vec<Entry>, ReadError> {
     if file.version > VERSION {
         return Err(ReadError::Newer);
     }
-    let mut entries = Vec::new();
-    if let Some(sizes) = file.hand_sizes.filter(|s| !s.is_empty()) {
-        entries.push(Entry::HandSizes(
-            sizes.into_iter().map(|s| s.clamped()).collect(),
-        ));
-    }
+    let mut entries: Vec<Entry> = Vec::new();
     entries.extend(
         file.presets
             .into_iter()
@@ -95,6 +93,13 @@ pub(crate) fn read(text: &str) -> Result<Vec<Entry>, ReadError> {
                     options: p.options.clamped(),
                 })
             }),
+    );
+    entries.extend(
+        file.hand_sizes
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| !s.id.trim().is_empty())
+            .map(|s| Entry::HandSize(s.clamped())),
     );
     if entries.is_empty() {
         return Err(ReadError::Empty);
@@ -140,16 +145,17 @@ mod tests {
         thick.rules.sizes[1].trunk_diameter_mm = 2.5;
         let mut sizes: Vec<SupportSize> = support_sizes().into_iter().take(4).collect();
         sizes[0].tip_diameter_mm = 0.21;
-        let entries = vec![
-            Entry::HandSizes(sizes),
+        let mut entries = vec![
             preset("Thick minis", thick),
             preset("Statues of mine", figures_150()),
         ];
+        entries.extend(sizes.into_iter().map(Entry::HandSize));
         let text = write(&entries).expect("a file");
         assert_eq!(read(&text), Ok(entries.clone()));
-        // Only what was picked is in the file.
-        let one = write(&entries[2..]).expect("a file");
-        assert_eq!(read(&one), Ok(entries[2..].to_vec()));
+        // Only what was picked is in the file: a preset and 2 of the sizes.
+        let picked = vec![entries[1].clone(), entries[2].clone(), entries[4].clone()];
+        let some = write(&picked).expect("a file");
+        assert_eq!(read(&some), Ok(picked));
     }
 
     #[test]

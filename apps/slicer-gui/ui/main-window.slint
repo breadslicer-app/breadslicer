@@ -356,6 +356,7 @@ export component MainWindow inherits Window {
     in property <int> support-share-mode;
     in property <[ShareItem]> support-share-items;
     in property <int> support-share-picked;
+    in property <int> support-share-total;
     callback support-share-export();
     callback support-share-import();
     callback support-share-toggled(int, bool);
@@ -3270,6 +3271,7 @@ export component MainWindow inherits Window {
         mode: root.support-share-mode;
         items: root.support-share-items;
         picked-count: root.support-share-picked;
+        total: root.support-share-total;
         toggled(i, on) => {
             root.support-share-toggled(i, on);
         }
