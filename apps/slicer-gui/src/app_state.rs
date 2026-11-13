@@ -60,7 +60,12 @@ use crate::wiring::SaveOutcome;
 /// What to do only after the user's unsaved work has been handled.
 enum SceneChange {
     Open(PathBuf),
-    Clear,
+    /// The scene goes and the window stays; with `start_dialog`, File >
+    /// Close, the start dialog comes back, and without, File > Clear Scene,
+    /// the window is left empty.
+    Clear {
+        start_dialog: bool,
+    },
     CloseWindow,
 }
 
@@ -899,6 +904,14 @@ impl AppState {
                 }
             });
         }
+        {
+            let app_weak = Rc::downgrade(self);
+            ui.on_clear_current_scene(move || {
+                if let Some(app) = app_weak.upgrade() {
+                    app.request_scene_clear(id);
+                }
+            });
+        }
         // On OS-level close: drop our strong handle so the window's
         // `ViewportController`, `Renderer`, scene, and the preference
         // subscription can be released. Without this, hidden windows accumulate
@@ -1276,7 +1289,7 @@ impl AppState {
     fn finish_scene_change(self: &Rc<Self>, window_id: u64, change: SceneChange) {
         match change {
             SceneChange::Open(path) => self.discard_then_open(window_id, path),
-            SceneChange::Clear => {
+            SceneChange::Clear { start_dialog } => {
                 let ctrl = self
                     .main_windows
                     .borrow()
@@ -1284,7 +1297,9 @@ impl AppState {
                     .map(|w| w.controller.clone());
                 if let Some(ctrl) = ctrl {
                     ctrl.on_close_scene();
-                    self.offer_start_dialog_again(window_id);
+                    if start_dialog {
+                        self.offer_start_dialog_again(window_id);
+                    }
                 }
             }
             SceneChange::CloseWindow => {
@@ -1521,6 +1536,28 @@ impl AppState {
     /// Both File > Close and the OS close button must keep dirty work until a
     /// confirmed discard or a successful, current save/export.
     fn request_scene_close(self: &Rc<Self>, window_id: u64, close_window: bool) {
+        self.request_scene_change(
+            window_id,
+            if close_window {
+                SceneChange::CloseWindow
+            } else {
+                SceneChange::Clear { start_dialog: true }
+            },
+        );
+    }
+
+    /// File > Clear Scene: as File > Close, the unsaved work asked about
+    /// first, but the window is left empty, with no start dialog.
+    pub(crate) fn request_scene_clear(self: &Rc<Self>, window_id: u64) {
+        self.request_scene_change(
+            window_id,
+            SceneChange::Clear {
+                start_dialog: false,
+            },
+        );
+    }
+
+    fn request_scene_change(self: &Rc<Self>, window_id: u64, change: SceneChange) {
         let ctrl = self
             .main_windows
             .borrow()
@@ -1530,11 +1567,6 @@ impl AppState {
             return;
         };
         ctrl.on_modal_transform_finish(false);
-        let change = if close_window {
-            SceneChange::CloseWindow
-        } else {
-            SceneChange::Clear
-        };
         if !ctrl.document().is_dirty() {
             self.finish_scene_change(window_id, change);
             return;
@@ -3094,6 +3126,34 @@ mod window_wiring_tests {
         assert_eq!(copied, (false, true));
     }
 
+    /// Once the scene stands still, its footprints are drawn in the
+    /// background and kept for the next Arrange (#560).
+    #[test]
+    fn a_still_scene_has_its_footprints_drawn_ahead() {
+        let kept = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            load_selected_cube(&app, id);
+            let mesh = controller_of(&app, id)
+                .document()
+                .with_scene(|scene| {
+                    let leaf = scene.leaf_id_at_index(0)?;
+                    scene.graph().leaf_mesh_arc(leaf).cloned()
+                })
+                .flatten()
+                .expect("the cube's mesh");
+            let started = std::time::Instant::now();
+            while sc_arrange::kept_parts_of(&mesh) == 0
+                && started.elapsed() < std::time::Duration::from_secs(10)
+            {
+                settle();
+                thread::sleep(std::time::Duration::from_millis(50));
+            }
+            sc_arrange::kept_parts_of(&mesh)
+        });
+        assert_eq!(kept, 1);
+    }
+
     #[test]
     fn the_menu_copy_copies_the_selection_of_its_own_window() {
         let copied = on_fresh_slint_thread(|| {
@@ -3643,6 +3703,38 @@ mod window_wiring_tests {
         assert!(emptied, "the last object deleted brings it back");
         assert!(!undone, "the undo hides it");
         assert!(objects_back, "the undo brings the object back");
+    }
+
+    /// File > Clear Scene leaves the window empty, with no start dialog;
+    /// File > Close brings the start dialog back.
+    #[test]
+    fn clear_scene_empties_the_window_and_close_offers_the_start_dialog() {
+        let (cleared, start_after_clear, closed, start_after_close) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window_with_start_again(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            load_selected_cube(&app, id);
+            settle();
+            app.request_scene_clear(id);
+            settle();
+            let cleared = !controller.document().is_loaded();
+            let start_after_clear = window.get_start_open();
+            load_selected_cube(&app, id);
+            settle();
+            app.request_scene_close(id, false);
+            settle();
+            (
+                cleared,
+                start_after_clear,
+                !controller.document().is_loaded(),
+                window.get_start_open(),
+            )
+        });
+        assert!(cleared, "Clear Scene takes the scene away");
+        assert!(!start_after_clear, "and leaves the window empty");
+        assert!(closed, "Close takes the scene away");
+        assert!(start_after_close, "and offers the start dialog");
     }
 
     #[test]
@@ -4467,6 +4559,121 @@ mod window_wiring_tests {
             shown.gesture("r", (60.0, 40.0));
             let turned = shown.rotations();
             assert!(turned[0].iter().all(|v| v.abs() > 0.01), "{turned:?}");
+        });
+    }
+
+    /// Arrange all in the whole window (every driver installed), on a real
+    /// project: how long each press takes, as the card tells it, and how
+    /// long the window is held (#560).
+    #[test]
+    #[ignore = "a measurement on a real project"]
+    fn arrange_all_in_the_whole_window() {
+        use std::time::{Duration, Instant};
+        let Some(path) = std::env::var_os("BREADSLICER_ARRANGE_BREAD") else {
+            return;
+        };
+        let gaps: Vec<f32> = std::env::var("BREADSLICER_ARRANGE_GAPS")
+            .ok()
+            .map(|v| v.split(',').filter_map(|g| g.parse().ok()).collect())
+            .unwrap_or_else(|| vec![1.0, 3.0, 1.0]);
+        let wait: f64 = std::env::var("BREADSLICER_ARRANGE_WAIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3.0);
+        let memory_mb = || {
+            std::process::Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!("(Get-Process -Id {}).WorkingSet64", std::process::id()),
+                ])
+                .output()
+                .ok()
+                .and_then(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                })
+                .map_or(0.0, |b| b / 1e6)
+        };
+        let path = PathBuf::from(path);
+        on_fresh_slint_thread(move || {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            controller.set_build_volume(BuildVolume::new(223.642, 126.976, 230.0));
+            let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("it opens");
+            let sc_project_formats::LoadedContent::Project(mut project) = loaded.content else {
+                panic!("a .bread is a project")
+            };
+            let restored =
+                crate::support_persist::restore_supports(&mut project.scene, project.supports);
+            let document = controller.document();
+            document.install_graph(project.scene, path.clone());
+            crate::support_persist::install_sets(&document, restored.sets);
+            controller.set_section(WorkspaceSection::Transform);
+            let arrange = app.main_windows.borrow()[&id]._drivers._arrange_run.clone();
+            // The window's own work, frames drawn, as the event loop runs it:
+            // the time it was busy and its longest pass.
+            let pump = |secs: f64| {
+                let (start, mut busy, mut longest) = (Instant::now(), 0.0f64, 0.0f64);
+                while start.elapsed().as_secs_f64() < secs {
+                    let t = Instant::now();
+                    crate::test_support::slint_thread::render_frames();
+                    let pass = t.elapsed().as_secs_f64();
+                    busy += pass;
+                    longest = longest.max(pass);
+                    thread::sleep(Duration::from_millis(16));
+                }
+                (busy, longest)
+            };
+            println!("opened: memory {:.0} MB", memory_mb());
+            for (run, gap) in gaps.iter().enumerate() {
+                let (busy, longest) = if run == 0 { (0.0, 0.0) } else { pump(wait) };
+                window.invoke_arrange_option_changed(0, *gap);
+                println!(
+                    "before run {run} (gap {gap}): window busy {busy:.2} s, longest pass {longest:.2} s, {} drawings, footprints {:.0} MB, memory {:.0} MB",
+                    document.support_sessions().borrow().len(),
+                    sc_arrange::kept_bytes() as f64 / 1e6,
+                    memory_mb()
+                );
+                let started = Instant::now();
+                arrange.arrange_all_for_test();
+                let mut longest = 0.0f64;
+                while !arrange.across_done_for_test() {
+                    let t = Instant::now();
+                    crate::test_support::slint_thread::render_frames();
+                    longest = longest.max(t.elapsed().as_secs_f64());
+                    thread::sleep(Duration::from_millis(16));
+                }
+                let worker = started.elapsed();
+                let t = Instant::now();
+                window.invoke_arrange_finished();
+                let finishing = t.elapsed();
+                let t = Instant::now();
+                crate::test_support::slint_thread::render_frames();
+                let frame = t.elapsed();
+                println!(
+                    "run {run}: worker {:.2} s (longest pass meanwhile {longest:.2} s), finish {:.2} s, next frame {:.2} s, card: {}",
+                    worker.as_secs_f64(),
+                    finishing.as_secs_f64(),
+                    frame.as_secs_f64(),
+                    window.get_arrange_last_run()
+                );
+            }
+            let (busy, longest) = pump(wait);
+            println!(
+                "after: window busy {busy:.2} s, longest pass {longest:.2} s, memory {:.0} MB, undo {}",
+                memory_mb(),
+                document.undo_len()
+            );
+            for line in crate::breadcrumbs::recent() {
+                if line.contains("arrange") || line.contains("held") {
+                    println!("  {line}");
+                }
+            }
         });
     }
 }

@@ -340,8 +340,23 @@ impl DfSupportSession {
             Some(node) => (node.meta.clone(), node.local_transform),
             None => return Err(RestoreError::Leaf("it is not in the scene".to_owned())),
         };
+        // A set is drawn where its session stands, in world space. A leaf
+        // saved carrying its set on its own transform (the set moved with its
+        // model, #560) keeps it: the set is drawn in the leaf's frame.
+        let to_leaf = transform
+            .inverse()
+            .map_err(|e| RestoreError::Leaf(e.to_string()))?;
         let mut sets = Vec::with_capacity(drawn.len());
         for (k, (model, session, mesh)) in drawn.into_iter().enumerate() {
+            let mesh = if transform == sc_mesh_core::transform::Transform3D::Identity {
+                mesh
+            } else {
+                let mut local = (*mesh).clone();
+                for v in &mut local.vertices {
+                    *v = to_leaf.apply_to_vertex(*v);
+                }
+                Arc::new(local)
+            };
             let at = if k == 0 {
                 swap_leaf_mesh(scene, leaf, mesh)?;
                 leaf

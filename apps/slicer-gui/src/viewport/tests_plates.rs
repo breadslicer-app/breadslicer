@@ -783,3 +783,36 @@ fn a_paste_with_no_room_goes_on_a_new_plate() {
     assert!(document.undo().expect("undoes"));
     assert_eq!(document.plates().count(), 1, "the plate goes with the copy");
 }
+
+/// Arrange all pressed again with nothing done since joins the last step
+/// (#560): whatever it finds, one Undo goes back to before the first, and
+/// what it leaves is never worse spread than the plates were.
+#[test]
+fn arrange_all_pressed_again_is_one_step() {
+    let v = volume();
+    let places: Vec<Vec3> = (0..8)
+        .map(|k| Vec3::new(k as f32 * 9.0 - 35.0, (k % 3) as f32 * 9.0 - 9.0, 0.0))
+        .collect();
+    let (ctrl, leaves) = window_of(&places, 3.0);
+    let document = ctrl.document();
+    let start: Vec<Vec3> = leaves.iter().map(|&l| centre_of(&ctrl, l)).collect();
+    let steps = document.undo_len();
+    crate::arrange_run::arrange_across_now(
+        document.as_ref(),
+        &v,
+        Default::default(),
+        crate::arrange_run::ArrangeScope::Plates,
+        false,
+    )
+    .expect("arranged");
+    assert_eq!(document.undo_len(), steps + 1);
+    for _ in 0..3 {
+        let _ = crate::arrange_run::arrange_again_now(document.as_ref(), &v, Default::default());
+        assert_eq!(document.undo_len(), steps + 1, "still one step");
+    }
+    assert!(document.undo().expect("undoes"));
+    assert_eq!(document.plates().count(), 1);
+    for (k, &l) in leaves.iter().enumerate() {
+        assert!(near(centre_of(&ctrl, l), start[k]), "back where it started");
+    }
+}

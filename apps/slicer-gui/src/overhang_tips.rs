@@ -23,7 +23,7 @@ use sc_scene::NodeId;
 
 use crate::mesh_render::SupportTip;
 use crate::scene_document::SceneDocument;
-use crate::support_persist::{latest_drawing, support_leaves};
+use crate::support_persist::{shown_drawing, support_leaves};
 
 /// One support set as the scene shows it: its leaf, the session that drew
 /// it, and where the leaf stands.
@@ -83,11 +83,15 @@ pub(crate) fn shown_sets(document: &SceneDocument) -> Vec<ShownSet> {
         .with_scene(|spatial| {
             support_leaves(spatial)
                 .filter_map(|(leaf, _)| {
-                    let session = latest_drawing(&sessions, leaf)?.session;
-                    let world = spatial.leaf(leaf)?.world_transform();
+                    let drawn = shown_drawing(&sessions, spatial, leaf)?;
+                    // The session stands in the world where the leaf stood
+                    // when it was recorded: only the leaf's move since then
+                    // (a live move, or Undo past a carry) is still to apply.
+                    let now = spatial.leaf(leaf)?.world_transform();
+                    let world = now.compose(&drawn.leaf_world.inverse().ok()?);
                     Some(ShownSet {
                         leaf,
-                        session,
+                        session: drawn.session,
                         world,
                     })
                 })

@@ -31,12 +31,14 @@
 //! did: a model and its supports turn together as one rigid piece, so
 //! nothing has to be generated again.
 
+mod cache;
 mod fill;
 mod footprint;
 mod grid;
 mod plate;
 mod search;
 
+pub use cache::{kept_bytes, kept_parts, kept_parts_of};
 pub use fill::{FillCopy, Filled, fill};
 
 use std::f64::consts::TAU;
@@ -48,7 +50,7 @@ use rayon::prelude::*;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::AffineTransform3D;
 
-use crate::footprint::{Footprint, Geometry, Placed};
+use crate::footprint::{Base, Footprint, Geometry};
 use crate::plate::Occupancy;
 use crate::search::Problem;
 
@@ -218,16 +220,39 @@ impl Frame {
     /// so its first angle can be stamped where it stands. `None` for no
     /// triangles.
     fn footprint(&self, body: &Body, snap: bool, angles: &[f64]) -> Option<Footprint> {
-        let parts: Vec<Placed<'_>> = body
+        // Each part's bands, drawn in the body's own frame and kept between
+        // runs (#560), then joined and turned the way the body stands.
+        let own = OwnFrame::of(&body.parts.first()?.world);
+        let bases: Vec<Arc<Base>> = body
             .parts
             .iter()
-            .map(|p| Placed {
-                mesh: &p.mesh,
-                world: &p.world,
-            })
+            .filter_map(|p| cache::part_base(&p.mesh, &own.pose(&p.world), &self.geo))
             .collect();
-        let snap = snap.then_some((self.origin, self.geo.cell));
-        Some(footprint::base(&parts, &self.geo, snap)?.turned(angles, &self.geo))
+        let parts: Vec<&Base> = bases.iter().map(Arc::as_ref).collect();
+        let fine = self.geo.fine;
+        let joined = Base::joined(&parts, fine)?;
+        // It turns about the middle of what it covers, on the fine grid.
+        let middle = joined.middle(fine)?;
+        let about = [
+            (middle[0] / fine).round() * fine,
+            (middle[1] / fine).round() * fine,
+        ];
+        let joined = joined.about(about);
+        let (s, c) = own.turn.sin_cos();
+        let world = [
+            own.at[0] + c * about[0] - s * about[1],
+            own.at[1] + s * about[0] + c * about[1],
+        ];
+        let (reference, offset) = if snap {
+            let cell = self.geo.cell;
+            let at: [f64; 2] = std::array::from_fn(|k| {
+                self.origin[k] + ((world[k] - self.origin[k]) / cell).round() * cell
+            });
+            (at, [world[0] - at[0], world[1] - at[1]])
+        } else {
+            (world, [0.0, 0.0])
+        };
+        Some(joined.turned_about(angles, &self.geo, own.turn, offset, reference))
     }
 
     /// An empty plate as high as `bands`, with the first shape of each of
@@ -266,6 +291,75 @@ impl Frame {
             on_plate: true,
         }
     }
+}
+
+/// A body's own frame (#560): where its first part stands in the plate
+/// plane, and how far it is turned about the vertical axis. A part's pose
+/// in it stays the same when the body moves or turns about that axis.
+#[derive(Clone, Copy, Debug)]
+struct OwnFrame {
+    turn: f64,
+    at: [f64; 2],
+}
+
+impl OwnFrame {
+    fn of(first: &AffineTransform3D) -> OwnFrame {
+        let (l, t) = (first.linear(), first.translation());
+        // Where the part's own X axis points from above; its Y axis when X
+        // stands upright.
+        let turn = if l[0][0].hypot(l[1][0]) > 1e-9 {
+            l[1][0].atan2(l[0][0])
+        } else {
+            l[1][1].atan2(l[0][1])
+        };
+        OwnFrame {
+            turn,
+            at: [t[0], t[1]],
+        }
+    }
+
+    /// `world`, a part's pose in the world, as a pose in this frame.
+    fn pose(&self, world: &AffineTransform3D) -> AffineTransform3D {
+        let (s, c) = (-self.turn).sin_cos();
+        let (l, t) = (world.linear(), world.translation());
+        let linear: [[f64; 3]; 3] = std::array::from_fn(|r| {
+            std::array::from_fn(|k| match r {
+                0 => c * l[0][k] - s * l[1][k],
+                1 => s * l[0][k] + c * l[1][k],
+                _ => l[2][k],
+            })
+        });
+        let d = [t[0] - self.at[0], t[1] - self.at[1]];
+        AffineTransform3D::from_linear_and_translation(
+            linear,
+            [c * d[0] - s * d[1], s * d[0] + c * d[1], t[2]],
+        )
+    }
+}
+
+/// Draws ahead the bands an arrangement of `bodies` on plates like `plate`
+/// with `settings` would draw first, and keeps them (#560): an Arrange,
+/// Fill bed or import afterwards finds them ready. Checks `cancel` between
+/// parts. Returns how many parts it drew.
+pub fn warm(bodies: &[Body], plate: &Plate, settings: &Settings, cancel: &AtomicBool) -> usize {
+    let frame = Frame::new(plate, settings);
+    let parts: Vec<(Arc<IndexedMesh>, AffineTransform3D)> = bodies
+        .iter()
+        .flat_map(|body| {
+            let own = body.parts.first().map(|p| OwnFrame::of(&p.world));
+            body.parts
+                .iter()
+                .filter_map(move |p| Some((p.mesh.clone(), own?.pose(&p.world))))
+        })
+        .collect();
+    let wanted = cache::wanted(parts, &frame.geo);
+    wanted
+        .par_iter()
+        .filter(|(mesh, pose)| {
+            !cancel.load(std::sync::atomic::Ordering::Relaxed)
+                && cache::part_base(mesh, pose, &frame.geo).is_some()
+        })
+        .count()
 }
 
 /// How many height bands `footprints` reach.
@@ -381,7 +475,79 @@ pub struct Across {
     /// How many of the plates given hold a body once arranged: the last one
     /// with anything on it, and every plate before it.
     pub plates_used: usize,
+    /// How spread out the plates are once arranged: the area (mm²) of the
+    /// box around what each plate holds, summed over the plates (#560).
+    /// [`spread_now`] measures the plates as they stand the same way.
+    pub spread: f64,
     pub timings: Timings,
+}
+
+/// The boxes around what each plate holds, in plate cells: the measure of
+/// [`Across::spread`].
+#[derive(Default)]
+struct Spread(std::collections::HashMap<usize, [i32; 4]>);
+
+impl Spread {
+    /// `shape` with its frame's corner at plate cell `at`, on plate `plate`.
+    fn add(&mut self, plate: usize, shape: &footprint::Shape, at: [i32; 2]) {
+        let b = [
+            at[0] + shape.lo[0],
+            at[1] + shape.lo[1],
+            at[0] + shape.hi[0],
+            at[1] + shape.hi[1],
+        ];
+        self.0
+            .entry(plate)
+            .and_modify(|m| {
+                *m = [
+                    m[0].min(b[0]),
+                    m[1].min(b[1]),
+                    m[2].max(b[2]),
+                    m[3].max(b[3]),
+                ]
+            })
+            .or_insert(b);
+    }
+
+    fn mm2(&self, cell: f64) -> f64 {
+        self.0
+            .values()
+            .map(|b| f64::from(b[2] - b[0]) * f64::from(b[3] - b[1]) * cell * cell)
+            .sum()
+    }
+}
+
+/// How spread out `bodies` stand now, each on the plate of `plates` that
+/// `stands_on` names (#560): the measure [`Across::spread`] gives an
+/// arrangement, so the two can be weighed. Bodies on no plate are left out.
+pub fn spread_now(
+    bodies: &[Body],
+    stands_on: &[Option<usize>],
+    plates: &[Plate],
+    settings: &Settings,
+) -> f64 {
+    let shapes: Vec<Option<(usize, Footprint, [i32; 2])>> = bodies
+        .par_iter()
+        .enumerate()
+        .map(|(i, body)| {
+            let p = (*stands_on.get(i)?)?;
+            let frame = Frame::new(plates.get(p)?, settings);
+            // Drawn as an arrangement draws a body it moves, to be weighed
+            // against one cell for cell.
+            let fp = frame.footprint(body, false, &[0.0])?;
+            let cell = frame.geo.cell;
+            let at = [
+                ((fp.reference[0] - frame.origin[0]) / cell).round() as i32 - fp.radius,
+                ((fp.reference[1] - frame.origin[1]) / cell).round() as i32 - fp.radius,
+            ];
+            Some((p, fp, at))
+        })
+        .collect();
+    let mut spread = Spread::default();
+    for (p, fp, at) in shapes.iter().flatten() {
+        spread.add(*p, &fp.shapes[0], *at);
+    }
+    spread.mm2(settings.cell.max(0.05))
 }
 
 impl Across {
@@ -414,6 +580,7 @@ pub fn arrange_across(
         return Ok(Across {
             placements: vec![None; bodies.len()],
             plates_used: 0,
+            spread: 0.0,
             timings: Timings::default(),
         });
     };
@@ -481,6 +648,7 @@ pub fn arrange_across(
         .filter_map(|i| stands_on[i])
         .max();
     let mut used = last_standing.map_or(0, |p| p + 1);
+    let mut spread = Spread::default();
     for (p, plate) in plates.iter().enumerate() {
         if left.is_empty() {
             break;
@@ -494,6 +662,14 @@ pub fn arrange_across(
             .filter_map(|i| standing[i].as_ref())
             .collect();
         let occupancy = frame.plate_with(bands, fixed.iter().copied());
+        for fp in &fixed {
+            let cell = frame.geo.cell;
+            let at = [
+                ((fp.reference[0] - frame.origin[0]) / cell).round() as i32 - fp.radius,
+                ((fp.reference[1] - frame.origin[1]) / cell).round() as i32 - fp.radius,
+            ];
+            spread.add(p, &fp.shapes[0], at);
+        }
         let moving: Vec<Footprint> = left.iter().filter_map(|&i| footprints[i].clone()).collect();
         let problem = Problem {
             footprints: &moving,
@@ -510,6 +686,7 @@ pub fn arrange_across(
         for (k, &body) in left.iter().enumerate() {
             match layout.placed[k] {
                 Some((angle, at)) => {
+                    spread.add(p, &moving[k].shapes[angle], at);
                     placements[body] =
                         Some((p, frame.placement(&moving[k], angle, at, layout.shift)));
                 }
@@ -541,6 +718,7 @@ pub fn arrange_across(
     Ok(Across {
         placements,
         plates_used: used,
+        spread: spread.mm2(base.geo.cell),
         timings: Timings {
             footprints: footprinted - started,
             search: done - footprinted,

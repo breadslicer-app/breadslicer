@@ -956,7 +956,7 @@ enum DragState {
 
 /// What a box's step picked, to be drawn red.
 enum Picks {
-    Set(DrawnSet, Vec<String>),
+    Set(Box<DrawnSet>, Vec<String>),
     Imported(Vec<ImportedBody>),
 }
 
@@ -5617,7 +5617,7 @@ impl DfSupportRun {
                     *owed = more;
                     let changed = ids != *picked;
                     *picked = ids;
-                    Some((Picks::Set(drawn.clone(), picked.clone()), changed, more))
+                    Some((Picks::Set(Box::new(drawn.clone()), picked.clone()), changed, more))
                 }
                 Some(DragState::RemoveImported {
                     bodies,
@@ -6914,6 +6914,48 @@ mod hand_edit_tests {
     }
 
     /// Whether `moved` is `mesh` moved by `d` in X/Y, vertex for vertex.
+    /// The mesh of the leaf `leaf` where it stands in the world: a set
+    /// carried along on its leaf's transform (#560) shows there.
+    fn world_mesh(document: &SceneDocument, leaf: NodeId) -> sc_mesh_core::IndexedMesh {
+        document
+            .with_scene(|spatial| {
+                let query = spatial.leaf(leaf)?;
+                let world = query.world_transform();
+                let mut mesh = (*spatial.graph().leaf_mesh_arc(leaf)?.clone()).clone();
+                for v in &mut mesh.vertices {
+                    *v = world.apply_to_vertex(*v);
+                }
+                Some(mesh)
+            })
+            .flatten()
+            .expect("the leaf's mesh")
+    }
+
+    /// `mesh` moved by `t`.
+    fn world_mesh_of(
+        mesh: &sc_mesh_core::IndexedMesh,
+        t: Transform3D,
+    ) -> sc_mesh_core::IndexedMesh {
+        let mut out = mesh.clone();
+        for v in &mut out.vertices {
+            *v = t.apply_to_vertex(*v);
+        }
+        out
+    }
+
+    /// The first tip of the set shown in the scene of `document`, where the
+    /// overhang map and the view from under the plate put it.
+    fn shown_tip(document: &SceneDocument) -> [f32; 3] {
+        let sets = crate::overhang_tips::shown_sets(document);
+        let set = sets.first().expect("a set shown");
+        let [x, y, z] = set.session.pieces()[0].contacts[0].surface;
+        set.world
+            .apply_to_vertex(sc_mesh_core::primitives::Vertex::new([
+                x as f32, y as f32, z as f32,
+            ]))
+            .coords()
+    }
+
     fn is_moved(
         moved: &sc_mesh_core::IndexedMesh,
         mesh: &sc_mesh_core::IndexedMesh,
@@ -6945,6 +6987,21 @@ mod hand_edit_tests {
             let start = leaf_transform(&document, supports);
             let (at, there) = ([20.0, 20.0, 8.0], [27.0, 15.0, 8.0]);
             let first = in_force_session(&run).expect("the run's session");
+            let tip = {
+                let [x, y, z] = first.pieces()[0].contacts[0].surface;
+                [x as f32, y as f32, z as f32]
+            };
+            // The tips the overhang map and the view from under the plate
+            // show stand on the model wherever it went, never moved twice.
+            let tip_at = |when: &str, d: [f32; 2]| {
+                let shown = shown_tip(&document);
+                let want = [tip[0] + d[0], tip[1] + d[1], tip[2]];
+                assert!(
+                    (0..3).all(|k| (shown[k] - want[k]).abs() < 1e-3),
+                    "{when}: shown {shown:?}, the model's tip at {want:?}"
+                );
+            };
+            tip_at("at the start", [0.0, 0.0]);
 
             // Live, the support leaf rides along on its transform.
             move_live(&document, model, at, [23.0, 18.0, 8.0]);
@@ -6953,19 +7010,24 @@ mod hand_edit_tests {
                 leaf_transform(&document, supports),
                 translation([7.0, -5.0, 0.0])
             );
+            tip_at("live", [7.0, -5.0]);
             // A move put back puts them back.
             move_live(&document, model, there, at);
             assert_eq!(leaf_transform(&document, supports), start);
             move_live(&document, model, at, there);
 
-            // Committed: drawn where the model is, the leaf where it was.
+            // Committed: the same mesh, carried on the leaf's transform
+            // (#560).
             commit_move(&document, model, at, there);
             let (_, moved) = run.support_leaf().expect("the supports stay");
-            assert_eq!(leaf_transform(&document, supports), start);
+            let carried = translation([7.0, -5.0, 0.0]).compose(&start);
+            assert_eq!(leaf_transform(&document, supports), carried);
+            assert!(Arc::ptr_eq(&moved, &generated), "nothing drawn again");
             assert!(
-                is_moved(&moved, &generated, [7.0, -5.0]),
+                is_moved(&world_mesh(&document, supports), &generated, [7.0, -5.0]),
                 "the same supports, moved"
             );
+            tip_at("committed", [7.0, -5.0]);
             let moved_session = in_force_session(&run).expect("editable");
             assert!(
                 !Arc::ptr_eq(&moved_session, &first),
@@ -6982,16 +7044,47 @@ mod hand_edit_tests {
                 "{}",
                 window.get_supports_last_run()
             );
+            // Drawn anew, the set stands in world space again (#560): every
+            // support it had, where the carried mesh showed it, and one more.
+            assert_eq!(leaf_transform(&document, supports), Transform3D::Identity);
+            let (_, edited) = run.support_leaf().expect("the supports stay");
+            assert!(edited.faces().len() > generated.faces().len());
+            let bounds = |m: &sc_mesh_core::IndexedMesh| {
+                m.vertices()
+                    .iter()
+                    .fold(([f32::MAX; 2], [f32::MIN; 2]), |(lo, hi), v| {
+                        let p = v.as_array();
+                        (
+                            [lo[0].min(p[0]), lo[1].min(p[1])],
+                            [hi[0].max(p[0]), hi[1].max(p[1])],
+                        )
+                    })
+            };
+            let (was, now) = (
+                bounds(&world_mesh(&document, supports)),
+                bounds(&world_mesh_of(&generated, carried)),
+            );
+            assert!(
+                (0..2).all(|k| was.0[k] <= now.0[k] + 1e-3 && was.1[k] >= now.1[k] - 1e-3),
+                "the set drawn anew covers where it was carried: {was:?} {now:?}"
+            );
             assert!(document.undo().unwrap(), "the hand edit undoes");
+            assert_eq!(
+                leaf_transform(&document, supports),
+                carried,
+                "carried again"
+            );
 
             // One Undo takes the model and its supports back; Redo again.
             assert!(document.undo().unwrap());
             assert_eq!(leaf_transform(&document, model), translation(at));
+            tip_at("undone", [0.0, 0.0]);
             let (_, back) = run.support_leaf().unwrap();
             assert!(Arc::ptr_eq(&back, &generated), "the supports as generated");
             assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &first)));
             assert!(document.redo().unwrap());
             assert_eq!(leaf_transform(&document, model), translation(there));
+            tip_at("redone", [7.0, -5.0]);
             let (_, again) = run.support_leaf().unwrap();
             assert!(Arc::ptr_eq(&again, &moved));
             assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &moved_session)));
@@ -7000,11 +7093,132 @@ mod hand_edit_tests {
             // the move is committed.
             let up = [27.0, 15.0, 10.0];
             move_live(&document, model, there, up);
-            assert_eq!(leaf_transform(&document, supports), start);
+            assert_eq!(leaf_transform(&document, supports), carried);
             commit_move(&document, model, there, up);
             assert!(run.support_leaf().is_none(), "taken away");
             let (_, wanted) = document.supports_wanted().expect("new ones wanted");
             assert_eq!(wanted.ids(), vec![model]);
+        });
+    }
+
+    /// #560: a set carried along keeps its mesh, so the drawings of a set
+    /// moved again and again are kept only as far back as Undo reaches.
+    #[test]
+    fn a_set_moved_many_times_keeps_only_the_drawings_undo_reaches() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let model = leaves[0];
+            let (supports, _) = run.support_leaf().expect("the supports were pasted");
+            let mut at = [20.0, 20.0, 8.0];
+            for _ in 0..crate::scene_document::UNDO_STACK_CAP + 20 {
+                let there = [at[0] + 0.01, at[1], at[2]];
+                commit_move(&document, model, at, there);
+                at = there;
+            }
+            let kept = run
+                .sessions
+                .borrow()
+                .iter()
+                .filter(|d| d.leaf == supports)
+                .count();
+            assert!(kept <= crate::scene_document::UNDO_STACK_CAP + 1, "{kept}");
+            assert!(in_force_session(&run).is_some(), "still editable");
+        });
+    }
+
+    /// #560: Arrange all pressed again with nothing done since keeps one
+    /// step, and the sets' drawings of the places in the middle go.
+    #[test]
+    fn arranging_again_keeps_no_drawings_of_the_places_in_the_middle() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let volume = crate::build_volume::BuildVolume::new(120.0, 80.0, 100.0);
+            crate::arrange_run::arrange_across_now(
+                &document,
+                &volume,
+                Default::default(),
+                crate::arrange_run::ArrangeScope::Plates,
+                false,
+            )
+            .expect("arranged");
+            let steps = document.undo_len();
+            let drawings = run.sessions.borrow().len();
+            for _ in 0..3 {
+                let _ =
+                    crate::arrange_run::arrange_again_now(&document, &volume, Default::default());
+                assert_eq!(document.undo_len(), steps, "one step");
+                assert!(
+                    run.sessions.borrow().len() <= drawings,
+                    "no drawings pile up"
+                );
+            }
+            assert_eq!(run.sets_in_force().len(), 2, "both still editable");
+            // One Undo: both models and their sets as generated.
+            assert!(document.undo().unwrap());
+            for &l in &leaves {
+                let (set, _) = set_of(&document, &run, l);
+                let at_rest = match leaf_transform(&document, set) {
+                    Transform3D::Identity => true,
+                    Transform3D::Affine(a) => a == AffineTransform3D::identity(),
+                };
+                assert!(at_rest, "the set where it was generated");
+            }
+            assert_eq!(run.sets_in_force().len(), 2, "editable after Undo");
+        });
+    }
+
+    /// #560: models moved together take their sets along in one edit, so
+    /// the scene tells its listeners once, not once per set. A hundred
+    /// models arranged held the window for twenty seconds.
+    #[test]
+    fn sets_moved_together_are_told_once() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(
+                &window,
+                &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0], [80.0, 20.0, 8.0]],
+            );
+            let told = Rc::new(Cell::new(0));
+            let _counting = document.subscribe({
+                let told = told.clone();
+                move |event| {
+                    if event == SceneEvent::Mutated {
+                        told.set(told.get() + 1);
+                    }
+                }
+            });
+            let moves: Vec<SceneEdit> = leaves
+                .iter()
+                .map(|&l| {
+                    let before = leaf_transform(&document, l);
+                    SceneEdit::SetLocalTransform {
+                        node_id: l,
+                        before,
+                        after: translation([0.0, 30.0, 0.0]).compose(&before),
+                    }
+                })
+                .collect();
+            let edit = SceneEdit::Compound(moves);
+            document.apply_edit(edit.clone()).expect("moves");
+            document.push_edit(edit);
+            // The move itself, then the sets carried: two, whatever the count.
+            assert_eq!(
+                told.get(),
+                2,
+                "told once for the move and once for the sets"
+            );
+            assert_eq!(run.sets_in_force().len(), 3, "all still editable");
+            for &l in &leaves {
+                let (set, _) = set_of(&document, &run, l);
+                assert_ne!(
+                    leaf_transform(&document, set),
+                    Transform3D::Identity,
+                    "the set went along"
+                );
+            }
         });
     }
 
@@ -7062,12 +7276,13 @@ mod hand_edit_tests {
             let (s, c) = 0.5f32.sin_cos();
             assert!(near(goes([21.0, 20.0, 3.0]), [20.0 + c, 20.0 + s, 3.0]));
 
-            // Committed: drawn where the model is, the leaf where it was, and
-            // nothing waits for new supports.
+            // Committed: the same mesh, carried on the leaf's transform as
+            // live (#560), and nothing waits for new supports.
             document.push_edit(edit());
-            assert_eq!(leaf_transform(&document, supports), start);
+            assert_eq!(leaf_transform(&document, supports), live);
+            assert_ne!(live, start);
             let (_, turned_mesh) = run.support_leaf().expect("the supports stay");
-            assert!(!Arc::ptr_eq(&turned_mesh, &generated), "redrawn");
+            assert!(Arc::ptr_eq(&turned_mesh, &generated), "nothing drawn again");
             assert_eq!(turned_mesh.faces().len(), generated.faces().len());
             assert!(
                 document.supports_wanted().is_none(),
@@ -7344,10 +7559,17 @@ mod hand_edit_tests {
                 leaf_transform(&document, first_leaf)
             );
             commit_move(&document, leaves[1], at, there);
-            assert_eq!(leaf_transform(&document, second_leaf), start);
+            assert_eq!(
+                leaf_transform(&document, second_leaf),
+                translation([0.0, 20.0, 0.0]).compose(&start)
+            );
             let (_, moved) = set_of(&document, &run, leaves[1]);
             assert!(
-                is_moved(&moved, &second_mesh, [0.0, 20.0]),
+                is_moved(
+                    &world_mesh(&document, second_leaf),
+                    &second_mesh,
+                    [0.0, 20.0]
+                ),
                 "the same set, moved"
             );
             let (_, first_after) = set_of(&document, &run, leaves[0]);
@@ -7428,15 +7650,22 @@ mod hand_edit_tests {
             document.apply_edit(edit.clone()).unwrap();
             document.push_edit(edit);
 
-            // Both sets redrawn where their models now are, the leaves where
-            // they were, nothing to make again.
+            // Both sets carried where their models now are on their leaves'
+            // transforms (#560), nothing to make again.
             let (_, first_moved) = set_of(&document, &run, leaves[0]);
             assert!(
-                is_moved(&first_moved, &first_mesh, [10.0, 20.0]),
+                is_moved(
+                    &world_mesh(&document, first_leaf),
+                    &first_mesh,
+                    [10.0, 20.0]
+                ),
                 "the first set, moved"
             );
             let (_, second_turned) = set_of(&document, &run, leaves[1]);
-            assert!(!Arc::ptr_eq(&second_turned, &second_mesh), "redrawn");
+            assert!(
+                Arc::ptr_eq(&second_turned, &second_mesh),
+                "nothing drawn again"
+            );
             assert_eq!(second_turned.faces().len(), second_mesh.faces().len());
             // A quarter turn about the model's corner, (50, 20).
             let turned_to = |p: &[f32; 3]| [50.0 - (p[1] - 20.0), 20.0 + (p[0] - 50.0), p[2]];
@@ -7451,7 +7680,7 @@ mod hand_edit_tests {
                     })
             };
             let (lo, hi) = bounds(
-                second_turned
+                world_mesh(&document, second_leaf)
                     .vertices()
                     .iter()
                     .map(|v| *v.as_array())
@@ -7464,13 +7693,12 @@ mod hand_edit_tests {
                     .map(|v| turned_to(v.as_array()))
                     .collect(),
             );
-            // The rings of a cylinder start at a fixed world angle (#153).
             for k in 0..3 {
-                assert!((lo[k] - want_lo[k]).abs() < 0.2, "{lo:?} {want_lo:?}");
-                assert!((hi[k] - want_hi[k]).abs() < 0.2, "{hi:?} {want_hi:?}");
+                assert!((lo[k] - want_lo[k]).abs() < 1e-3, "{lo:?} {want_lo:?}");
+                assert!((hi[k] - want_hi[k]).abs() < 1e-3, "{hi:?} {want_hi:?}");
             }
-            assert_eq!(leaf_transform(&document, first_leaf), first_start);
-            assert_eq!(leaf_transform(&document, second_leaf), second_start);
+            assert_ne!(leaf_transform(&document, first_leaf), first_start);
+            assert_ne!(leaf_transform(&document, second_leaf), second_start);
             assert!(
                 document.supports_wanted().is_none(),
                 "nothing to make again"
@@ -7555,8 +7783,8 @@ mod hand_edit_tests {
             for (i, &l) in leaves.iter().enumerate() {
                 assert_ne!(leaf_transform(&document, l), before[i], "moved");
                 assert!(
-                    !Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]),
-                    "its set redrawn where it went"
+                    Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]),
+                    "its set carried where it went, not drawn again"
                 );
                 assert!((at(l)[2] - 8.0).abs() < 1e-9, "still 8 mm up");
             }
@@ -7942,10 +8170,15 @@ mod hand_edit_tests {
             ctrl.on_modal_transform_finish(true);
             for (i, &l) in leaves.iter().enumerate() {
                 let (set, mesh) = set_of(&document, &run, l);
-                assert_eq!(at(set), set_before[i], "the set's leaf back in place");
+                let s = at(set);
                 assert!(
-                    !Arc::ptr_eq(&mesh, &sets[i].1),
-                    "its set redrawn where it went"
+                    (s[0] - set_before[i][0] - d[0][0]).abs() < 1e-9
+                        && (s[1] - set_before[i][1] - d[0][1]).abs() < 1e-9,
+                    "the set's leaf carried along"
+                );
+                assert!(
+                    Arc::ptr_eq(&mesh, &sets[i].1),
+                    "its set carried where it went, not drawn again"
                 );
             }
             assert_eq!(run.sets_in_force().len(), 2, "both editable");
@@ -8009,8 +8242,8 @@ mod hand_edit_tests {
             for (i, &l) in leaves.iter().enumerate() {
                 assert_ne!(leaf_transform(&document, l), before[i], "turned");
                 assert!(
-                    !Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]),
-                    "its set redrawn where it turned to"
+                    Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]),
+                    "its set carried where it turned to, not drawn again"
                 );
             }
             assert_eq!(run.sets_in_force().len(), 2, "both editable");

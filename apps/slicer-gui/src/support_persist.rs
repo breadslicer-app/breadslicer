@@ -52,6 +52,11 @@ pub(crate) struct DrawnSet {
     /// The model's mesh and world transform then.
     model_mesh: Arc<IndexedMesh>,
     pub(crate) model_world: Transform3D,
+    /// Where the leaf stood in the world when the session was recorded: the
+    /// session's points are world points then. A set carried along on its
+    /// leaf's transform (#560) records its session moved with the leaf, so
+    /// the leaf's move since then is what still has to be applied.
+    pub(crate) leaf_world: Transform3D,
     /// Not in the scene yet: its first tip makes it (#444), and `leaf` is
     /// the model's until then.
     pub(crate) unborn: bool,
@@ -86,6 +91,7 @@ impl DrawnSet {
             mesh: model_mesh.clone(),
             model_mesh,
             model_world,
+            leaf_world: Transform3D::Identity,
             unborn: true,
         })
     }
@@ -118,6 +124,7 @@ pub(crate) fn record(
         .with_scene(|spatial| {
             let mesh = spatial.graph().leaf_mesh_arc(leaf)?.clone();
             let (model_mesh, model_world) = model_state(spatial, model)?;
+            let leaf_world = spatial.leaf(leaf)?.world_transform();
             Some(DrawnSet {
                 leaf,
                 model,
@@ -125,6 +132,7 @@ pub(crate) fn record(
                 mesh,
                 model_mesh,
                 model_world,
+                leaf_world,
                 unborn: false,
             })
         })
@@ -133,6 +141,87 @@ pub(crate) fn record(
     // Only this list holds such a mesh: no edit can bring it back.
     sessions.retain(|d| Arc::strong_count(&d.mesh) > 1);
     sessions.extend(drawn);
+    // A set carried along on its leaf's transform keeps its mesh (#560), so
+    // the scene holds the mesh of every drawing it had on the way: past the
+    // steps Undo keeps, none of them can come back.
+    let mut seen: std::collections::HashMap<NodeId, usize> = std::collections::HashMap::new();
+    let mut keep = vec![true; sessions.len()];
+    for (k, d) in sessions.iter().enumerate().rev() {
+        let n = seen.entry(d.leaf).or_insert(0);
+        *n += 1;
+        keep[k] = *n <= crate::scene_document::UNDO_STACK_CAP + 1;
+    }
+    let mut k = 0;
+    sessions.retain(|_| {
+        k += 1;
+        keep[k - 1]
+    });
+}
+
+/// Lets go of the drawings no step of history can bring back (#560): one
+/// whose model no step puts where it stood when it was drawn, and that is
+/// not the one in force. Arrange all pressed again joins its steps, and the
+/// drawings of the places in the middle go.
+pub(crate) fn forget_unreachable(doc: &SceneDocument, sessions: &RefCell<SupportSessions>) {
+    let poses = doc.history_transforms();
+    let near = |a: &Transform3D, b: &Transform3D| {
+        let (a, b) = (affine_of(a), affine_of(b));
+        a.linear()
+            .iter()
+            .flatten()
+            .zip(b.linear().iter().flatten())
+            .chain(a.translation().iter().zip(b.translation()))
+            .all(|(x, y)| (x - y).abs() <= 1e-9)
+    };
+    doc.with_scene(|spatial| {
+        let mut sessions = sessions.borrow_mut();
+        // A drawing the one in force repeats, the same mesh with its model
+        // where it stands, is that one: only the newest is kept.
+        let shown: Vec<usize> = (0..sessions.len())
+            .filter(|&k| sessions[k].shown_in(spatial))
+            .collect();
+        let repeats = |k: usize, d: &DrawnSet| {
+            shown.iter().any(|&s| {
+                s != k
+                    && sessions[s].leaf == d.leaf
+                    && Arc::ptr_eq(&sessions[s].mesh, &d.mesh)
+                    && near(&sessions[s].model_world, &d.model_world)
+            })
+        };
+        let keep: Vec<bool> = sessions
+            .iter()
+            .enumerate()
+            .map(|(k, d)| {
+                if d.unborn || shown.contains(&k) {
+                    return true;
+                }
+                if repeats(k, d) {
+                    return false;
+                }
+                // A model the scene no longer holds may come back as it was.
+                let Some(query) = spatial.leaf(d.model) else {
+                    return true;
+                };
+                let parent = query.parent_world();
+                near(&query.world_transform(), &d.model_world)
+                    || poses.get(&d.model).is_some_and(|ts| {
+                        ts.iter().any(|t| near(&parent.compose(t), &d.model_world))
+                    })
+            })
+            .collect();
+        let mut k = 0;
+        sessions.retain(|_| {
+            k += 1;
+            keep[k - 1]
+        });
+    });
+}
+
+fn affine_of(t: &Transform3D) -> sc_mesh_core::transform::AffineTransform3D {
+    match t {
+        Transform3D::Identity => sc_mesh_core::transform::AffineTransform3D::identity(),
+        Transform3D::Affine(a) => *a,
+    }
 }
 
 /// The drawing in force for the support leaf `leaf`: the one whose mesh the
@@ -219,6 +308,25 @@ pub(crate) fn latest_drawing(
         .iter()
         .rev()
         .find(|d| d.leaf == leaf)
+        .cloned()
+}
+
+/// The drawing of the support leaf `leaf` that the scene of `spatial`
+/// shows: the latest one whose mesh the leaf holds. Several drawings share
+/// a mesh when a set is carried along on its leaf's transform (#560); each
+/// records where the leaf stood, so any of them places the set right. The
+/// latest drawing when none matches.
+pub(crate) fn shown_drawing(
+    sessions: &RefCell<SupportSessions>,
+    spatial: &SceneSpatial,
+    leaf: NodeId,
+) -> Option<DrawnSet> {
+    let shown = spatial.graph().leaf_mesh_arc(leaf)?;
+    let sessions = sessions.borrow();
+    let mine = || sessions.iter().rev().filter(|d| d.leaf == leaf);
+    mine()
+        .find(|d| Arc::ptr_eq(&d.mesh, shown))
+        .or_else(|| mine().next())
         .cloned()
 }
 

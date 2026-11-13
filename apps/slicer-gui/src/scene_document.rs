@@ -435,6 +435,45 @@ pub(crate) fn leaf_mesh_swap(
     after: Arc<sc_mesh_core::IndexedMesh>,
 ) -> Option<SceneEdit> {
     let node = scene.node(leaf)?;
+    // A set of supports is drawn where its session stands, in world space:
+    // a leaf that carried its old mesh along on its transform (#560) goes
+    // back to none. Imported supports keep theirs: they are a mesh of their
+    // own, moved like a model.
+    let drawn_set = sc_geom::df_supports::is_any_support_mesh(&after)
+        && !sc_geom::df_supports::is_imported_supports(&after);
+    if drawn_set && node.local_transform != Transform3D::Identity {
+        let swap = leaf_mesh_swap_as_is(scene, leaf, after)?;
+        return Some(SceneEdit::Compound(vec![
+            swap,
+            SceneEdit::SetLocalTransform {
+                node_id: leaf,
+                before: node.local_transform,
+                after: Transform3D::Identity,
+            },
+        ]));
+    }
+    leaf_mesh_swap_as_is(scene, leaf, after)
+}
+
+/// The edits `edit` makes, a compound's in order, each a copy.
+fn flatten_edit(edit: &SceneEdit, out: &mut Vec<SceneEdit>) {
+    match edit {
+        SceneEdit::Compound(parts) => {
+            for part in parts {
+                flatten_edit(part, out);
+            }
+        }
+        other => out.push(other.clone()),
+    }
+}
+
+/// [`leaf_mesh_swap`], the leaf's transform left as it is.
+fn leaf_mesh_swap_as_is(
+    scene: &Scene,
+    leaf: NodeId,
+    after: Arc<sc_mesh_core::IndexedMesh>,
+) -> Option<SceneEdit> {
+    let node = scene.node(leaf)?;
     match &node.kind {
         NodeKind::Leaf(LeafPayload::Mesh(before)) => Some(SceneEdit::ReplaceLeafMesh {
             node_id: leaf,
@@ -2545,6 +2584,98 @@ impl SceneDocument {
         });
         drop(undo);
         self.notify(SceneEvent::UndoStackChanged);
+    }
+
+    /// Joins the two newest steps, both only moves, into one that takes
+    /// each leaf from where the first found it to where the second left it
+    /// (#560): Arrange all pressed again with nothing done in between. The
+    /// places in the middle are no step of history any more. Steps that do
+    /// more than move are joined as they are.
+    pub(crate) fn squash_last_two_steps(&self) {
+        let before = self.undo_len();
+        self.join_last_steps(2);
+        if self.undo_len() + 1 != before {
+            return;
+        }
+        let mut undo = self.undo_stack.borrow_mut();
+        let Some(last) = undo.back_mut() else {
+            return;
+        };
+        let mut flat = Vec::new();
+        flatten_edit(&last.edit, &mut flat);
+        if !flat
+            .iter()
+            .all(|e| matches!(e, SceneEdit::SetLocalTransform { .. }))
+        {
+            return;
+        }
+        let mut moves: Vec<SceneEdit> = Vec::new();
+        let mut at: HashMap<NodeId, usize> = HashMap::new();
+        for e in flat {
+            let SceneEdit::SetLocalTransform {
+                node_id,
+                before,
+                after,
+            } = e
+            else {
+                continue;
+            };
+            match at.get(&node_id) {
+                Some(&i) => {
+                    if let SceneEdit::SetLocalTransform { after: last, .. } = &mut moves[i] {
+                        *last = after;
+                    }
+                }
+                None => {
+                    at.insert(node_id, moves.len());
+                    moves.push(SceneEdit::SetLocalTransform {
+                        node_id,
+                        before,
+                        after,
+                    });
+                }
+            }
+        }
+        moves.retain(
+            |e| !matches!(e, SceneEdit::SetLocalTransform { before, after, .. } if before == after),
+        );
+        last.edit = SceneEdit::Compound(moves);
+    }
+
+    /// Every local transform a leaf takes in a step of history, Undo's or
+    /// Redo's: where a step could put it back (#560).
+    pub(crate) fn history_transforms(&self) -> HashMap<NodeId, Vec<Transform3D>> {
+        let mut out: HashMap<NodeId, Vec<Transform3D>> = HashMap::new();
+        let mut flat = Vec::new();
+        for entry in self
+            .undo_stack
+            .borrow()
+            .iter()
+            .chain(self.redo_stack.borrow().iter())
+        {
+            flatten_edit(&entry.edit, &mut flat);
+        }
+        for e in flat {
+            match e {
+                SceneEdit::SetLocalTransform {
+                    node_id,
+                    before,
+                    after,
+                } => out.entry(node_id).or_default().extend([before, after]),
+                SceneEdit::AddLeaf {
+                    node_id,
+                    local_transform,
+                    ..
+                }
+                | SceneEdit::RemoveLeaf {
+                    node_id,
+                    local_transform,
+                    ..
+                } => out.entry(node_id).or_default().push(local_transform),
+                _ => {}
+            }
+        }
+        out
     }
 
     /// Registers a listener. Returns a handle whose `Drop` removes the

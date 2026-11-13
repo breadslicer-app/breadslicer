@@ -1776,6 +1776,10 @@ impl ViewportController {
         self.session.loader().invalidate_and_clear();
         self.queued_imports.borrow_mut().clear();
         self.session.document().clear_scene();
+        // The scene's editable supports and hollows go with it: nothing of
+        // the closed scene stays in memory.
+        install_sets(self.session.document(), Vec::new());
+        install_hollows(self.session.document(), Vec::new());
     }
 
     /// Queues `path` for the window or starts its load, in place of the

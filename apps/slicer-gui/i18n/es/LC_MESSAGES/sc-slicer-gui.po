@@ -712,6 +712,11 @@ msgstr "Cerrar"
 
 #: ui/main-window.slint
 msgctxt "MenuBar"
+msgid "Clear Scene"
+msgstr "Vaciar escena"
+
+#: ui/main-window.slint
+msgctxt "MenuBar"
 msgid "Save"
 msgstr "Guardar"
 
@@ -3199,6 +3204,11 @@ msgstr "La escena cambió mientras se acomodaba; no se movió nada."
 msgctxt "Inspector"
 msgid "Everything is already in place."
 msgstr "Todo ya está en su lugar."
+
+#: src/arrange_run.rs
+msgctxt "Inspector"
+msgid "Already arranged: nothing changed since the last Arrange."
+msgstr "Ya está acomodado: no cambió nada desde el último Acomodar."
 
 #: src/arrange_run.rs
 #, rust-format

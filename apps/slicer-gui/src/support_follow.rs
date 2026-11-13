@@ -13,9 +13,15 @@
 //! the plate plane is live, the model's support leaf rides along on its own
 //! transform. When it is committed, the set's session is taken along with the
 //! model ([`DfSupportSession::moved_in_plane`],
-//! [`DfSupportSession::turned_in_plane`]) and redrawn, the redrawn mesh takes
-//! the old one's place in the same undo entry as the move, and the support
-//! leaf is back where it was. A turn about the vertical axis leaves the model
+//! [`DfSupportSession::turned_in_plane`]), and the support leaf keeps its
+//! mesh and takes the move on its own transform, as one rigid piece with the
+//! model, in the same undo entry as the move (#560). Nothing is drawn again:
+//! an Arrange of a hundred models would otherwise draw millions of triangles
+//! and leave the old ones to Undo. A set drawn anew later (a hand edit,
+//! Generate) is drawn where its session stands, in world space, and its leaf
+//! goes back to no transform
+//! ([`crate::scene_document::leaf_mesh_swap`]). A turn about the vertical
+//! axis leaves the model
 //! standing on the plate as it did, so its supports still hold it. Nothing
 //! is placed again, so the supports stay the ones the person made, editable
 //! by hand and saved as data. The other models' sets are left alone. One
@@ -42,7 +48,7 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
 
 use crate::imported_supports::imported_of;
-use crate::scene_document::{SceneDocument, SceneEdit, SceneRevision, leaf_mesh_swap};
+use crate::scene_document::{SceneDocument, SceneEdit, SceneRevision};
 use crate::support_persist::{in_force, in_force_at, sets_of_model};
 
 /// Where a model and its supports stood when it started to move: the scene
@@ -337,11 +343,27 @@ pub(crate) struct Committed {
 /// to regenerate. Any other edit comes back as it was.
 pub(crate) fn commit(doc: &SceneDocument, edit: SceneEdit) -> Committed {
     settle(doc);
-    let (mut parts, mut moved) = (Vec::new(), Vec::new());
+    let (mut carries, mut moved) = (Vec::new(), Vec::new());
     for (node_id, before, after) in transform_edits(&edit) {
-        if let Some((swap, set)) = follow_commit(doc, node_id, before, after) {
-            parts.push(swap);
+        if let Some((carry, set)) = follow_commit(doc, node_id, before, after) {
+            carries.push(carry);
             moved.push(set);
+        }
+    }
+    // Every set carried in one edit: the scene tells its listeners once,
+    // not once per set (#560: an arrangement of a hundred models with their
+    // supports held the window for twenty seconds).
+    let mut parts = Vec::new();
+    if !carries.is_empty() {
+        crate::breadcrumbs::note(&format!(
+            "supports: {} set(s) moved with their models",
+            carries.len()
+        ));
+        let carry = SceneEdit::Compound(carries);
+        if doc.apply_edit_unfollowed(carry.clone()).is_ok() {
+            parts.push(carry);
+        } else {
+            moved.clear();
         }
     }
     let (mut regenerate, hand_edits_lost) = match take_commit(doc, &edit) {
@@ -453,9 +475,11 @@ fn imported_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(Vec<SceneEd
         return None;
     }
     let mut parts = Vec::new();
-    for part in follow {
-        doc.apply_edit_unfollowed(part.clone()).ok()?;
-        parts.push(part);
+    if !follow.is_empty() {
+        // In one edit, told once (#560).
+        let follow = SceneEdit::Compound(follow);
+        doc.apply_edit_unfollowed(follow.clone()).ok()?;
+        parts.push(follow);
     }
     if !removed.is_empty() {
         let mut graph = doc.with_scene(|spatial| spatial.graph().clone())?;
@@ -547,9 +571,8 @@ fn take_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, Vec<
 }
 
 /// For a committed move of the leaf `node_id` in the plate plane: the edit
-/// that swaps its set's mesh for the one drawn where the model now is,
-/// applied, and the set. `None` for any other move, and for a model with no
-/// set in force.
+/// that carries its set's leaf along, still to apply, and the set taken
+/// along. `None` for any other move, and for a model with no set in force.
 fn follow_commit(
     doc: &SceneDocument,
     node_id: NodeId,
@@ -587,21 +610,19 @@ fn follow_commit(
             session.turned_in_plane(0, now, angle, d)
         }
     };
-    // The port is DragonFruit's code: a panic in it leaves the supports
-    // where they were, as before, not a failed move.
-    let mesh = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| moved.mesh()))
-        .ok()?
-        .ok()??;
-    crate::breadcrumbs::note(&format!(
-        "supports: moved with their model, {motion:?} ({} triangles)",
-        mesh.faces().len()
-    ));
-    let swap = doc
-        .with_scene(|spatial| leaf_mesh_swap(spatial.graph(), supports, Arc::new(mesh)))
+    // The supports take the model's move as one rigid piece: the same mesh,
+    // the leaf's transform moved along (#560). The leaf is a root, so its
+    // transform is where it stands in the world.
+    let local = doc
+        .with_scene(|spatial| spatial.leaf(supports).map(|q| q.local_transform()))
         .flatten()?;
-    doc.apply_edit_unfollowed(swap.clone()).ok()?;
+    let carry = SceneEdit::SetLocalTransform {
+        node_id: supports,
+        before: local,
+        after: Transform3D::Affine(motion.affine().compose(&affine(&local))),
+    };
     Some((
-        swap,
+        carry,
         MovedSet {
             leaf: supports,
             model: node_id,
