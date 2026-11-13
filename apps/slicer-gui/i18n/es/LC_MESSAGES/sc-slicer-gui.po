@@ -7168,3 +7168,203 @@ msgstr[1] "Se sacaron {n} camas vacías."
 msgctxt "Workspace"
 msgid "Imported onto {}."
 msgstr "Importado en {}."
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "drag to turn"
+msgstr "arrastrá para girar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Your preset: {}"
+msgstr "Tu preset: {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Undo changes"
+msgstr "Volver al original"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "THE SUPPORT"
+msgstr "EL SOPORTE"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "for the next Generate"
+msgstr "para el próximo Generar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "THIS TIP · {}"
+msgstr "ESTA PUNTA · {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Tip diameter"
+msgstr "Diámetro de la punta"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "THE WHOLE SUPPORT · {}"
+msgstr "TODO EL SOPORTE · {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Trunk diameter"
+msgstr "Diámetro del tronco"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Tip length"
+msgstr "Largo de la punta"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Foot diameter"
+msgstr "Diámetro del pie"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "ADVANCED"
+msgstr "AVANZADO"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "TIP"
+msgstr "PUNTA"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Extra into the model"
+msgstr "Entra de más en el modelo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Break point"
+msgstr "Punto de quiebre"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "FOOT"
+msgstr "PIE"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Foot thickness"
+msgstr "Grosor del pie"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Join cone"
+msgstr "Cono de unión"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Tip on the model, length"
+msgstr "Punta sobre el modelo, largo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "BRACES"
+msgstr "REFUERZOS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Brace diameter"
+msgstr "Diámetro del refuerzo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Braces start at"
+msgstr "Refuerzos desde"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "WHERE EACH SIZE GOES"
+msgstr "DÓNDE VA CADA TAMAÑO"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Overhangs from"
+msgstr "Voladizos desde"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Each zone places the size picked, this many mm apart."
+msgstr "Cada zona pone el tamaño elegido, a esta distancia en mm."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Made from {}, with changes"
+msgstr "Hecho a partir de {}, con cambios"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Preset {}"
+msgstr "Preset {}"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Custom preset"
+msgstr "Preset personalizado"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Miniatures"
+msgstr "Miniaturas"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Figures"
+msgstr "Figuras"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Statues"
+msgstr "Estatuas"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Overhangs"
+msgstr "Voladizos"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "faces past the angle"
+msgstr "caras más allá del ángulo"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Stabilization"
+msgstr "Estabilización"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "flat faces from {} mm²"
+msgstr "caras planas desde {} mm²"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "first layer from {} mm²"
+msgstr "primera capa desde {} mm²"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "every island"
+msgstr "todas las islas"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Islands"
+msgstr "Islas"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Island bodies"
+msgstr "Cuerpo de las islas"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "from {} mm³"
+msgstr "desde {} mm³"

@@ -210,6 +210,13 @@ pub(crate) struct DfSupportRun {
     options: RefCell<DfSupportOptions>,
     /// Built-in presets first, then the person's own.
     presets: RefCell<Vec<Preset>>,
+    /// The shape panel (#564): where its support is seen from, the size it
+    /// shows (an index into the preset's sizes), the part pointed at, and
+    /// the built-in preset the options in force were made from.
+    shape_view: Cell<crate::support_shape::View>,
+    shape_size: Cell<Option<usize>>,
+    shape_hot: Cell<crate::support_shape::Part>,
+    based_on: Cell<Option<usize>>,
     /// The last run's supports and every hand edit since, each with the scene
     /// revision it was drawn into. A click edits the entry matching the
     /// current scene, so Undo and Redo keep the editor in step; a scene that
@@ -1280,6 +1287,55 @@ fn built_in_presets() -> Vec<Preset> {
     ]
 }
 
+/// The built-in presets as the shape panel's cards (#564), in the list's
+/// order: their names, and the size of models each is for.
+fn preset_cards() -> Vec<(slint::SharedString, &'static str)> {
+    vec![
+        (ctr!("Inspector", "Miniatures"), "20–65 mm"),
+        (ctr!("Inspector", "Figures"), "65–150 mm"),
+        (ctr!("Inspector", "Statues"), "150 mm+"),
+    ]
+}
+
+/// A zone's name and what it covers, as a row of the shape panel lists it.
+fn zone_texts(
+    zones: &ZonePreset,
+    zone: crate::support_shape_edit::Zone,
+) -> (slint::SharedString, slint::SharedString) {
+    use crate::support_shape_edit::Zone;
+    let r = &zones.rules;
+    match zone {
+        Zone::Overhang => (
+            ctr!("Inspector", "Overhangs"),
+            ctr!("Inspector", "faces past the angle"),
+        ),
+        Zone::Stabilization => (
+            ctr!("Inspector", "Stabilization"),
+            ctr!(
+                "Inspector",
+                "flat faces from {} mm²",
+                mm_text(r.stabilization.min_area_mm2)
+            ),
+        ),
+        Zone::Island(i) => {
+            let area = r.first_layer.get(i).map_or(0.0, |b| b.min_area_mm2);
+            let detail = if area > 0.0 {
+                ctr!("Inspector", "first layer from {} mm²", mm_text(area))
+            } else {
+                ctr!("Inspector", "every island")
+            };
+            (ctr!("Inspector", "Islands"), detail)
+        }
+        Zone::IslandBody(i) => {
+            let volume = r.reinforcement.get(i).map_or(0.0, |b| b.min_volume_mm3);
+            (
+                ctr!("Inspector", "Island bodies"),
+                ctr!("Inspector", "from {} mm³", mm_text(volume)),
+            )
+        }
+    }
+}
+
 /// The Supports tab's summary of the zone preset of `options` (#360),
 /// empty without one.
 fn zone_summary(options: &DfSupportOptions) -> slint::SharedString {
@@ -1505,6 +1561,10 @@ impl DfSupportRun {
             _scene_events: scene_events,
             options: RefCell::new(load_saved_options()),
             presets: RefCell::new(Vec::new()),
+            shape_view: Cell::new(crate::support_shape::View::default()),
+            shape_size: Cell::new(None),
+            shape_hot: Cell::new(crate::support_shape::Part::None),
+            based_on: Cell::new(None),
             sessions,
             ctrl,
             hover_worker: HoverWorker::spawn(),
@@ -1576,6 +1636,49 @@ impl DfSupportRun {
         {
             let run = run.clone();
             ui.on_support_preset_picked(move |i| run.on_preset_picked(i));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_preset_revert(move || {
+                if let Some(i) = run.based_on.get() {
+                    run.on_preset_picked(i as i32);
+                }
+            });
+        }
+        {
+            let run = run.clone();
+            ui.on_support_shape_dragged(move |dx, dy| {
+                run.shape_view.set(run.shape_view.get().dragged(dx, dy));
+                run.redraw_shape();
+            });
+        }
+        {
+            let run = run.clone();
+            ui.on_support_shape_pointed(move |part| {
+                run.shape_hot
+                    .set(crate::support_shape::Part::from_code(part));
+                run.redraw_shape();
+            });
+        }
+        {
+            let run = run.clone();
+            ui.on_support_shape_size_picked(move |i| run.on_shape_size_picked(i));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_shape_value(move |code, v| run.on_shape_value(code, v));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_zone_size(move |row, k| run.on_zone_size(row, k));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_zone_spacing(move |row, v| run.on_zone_spacing(row, v));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_zone_angle_edited(move |v| run.on_zone_angle(v));
         }
         {
             let run = run.clone();
@@ -2630,6 +2733,237 @@ impl DfSupportRun {
             &o,
             self.raft_layer_height_mm.get(),
         )));
+        let built_in = presets.iter().take_while(|p| p.built_in).count();
+        let card = usize::try_from(current).ok().filter(|&i| i < built_in);
+        if card.is_some() {
+            self.based_on.set(card);
+        }
+        let cards: Vec<crate::PresetCard> = preset_cards()
+            .into_iter()
+            .map(|(title, range)| crate::PresetCard {
+                title,
+                range: range.into(),
+            })
+            .collect();
+        ui.set_support_preset_cards(slint::ModelRc::new(slint::VecModel::from(cards)));
+        ui.set_support_preset_card_index(card.map_or(-1, |i| i as i32));
+        let based_on = match (current, self.based_on.get()) {
+            (-1, Some(i)) => preset_cards()
+                .get(i)
+                .map(|(title, _)| ctr!("Inspector", "Made from {}, with changes", title))
+                .unwrap_or_default(),
+            _ => slint::SharedString::default(),
+        };
+        ui.set_support_based_on(based_on);
+        let scope = match (card, usize::try_from(current).ok()) {
+            (Some(i), _) => ctr!("Inspector", "Preset {}", preset_cards()[i].0),
+            (None, Some(i)) => ctr!("Inspector", "Preset {}", presets[i].name),
+            (None, None) => ctr!("Inspector", "Custom preset"),
+        };
+        ui.set_support_shape_scope(scope);
+        drop(presets);
+        self.push_shape(ui, &o);
+    }
+
+    /// The size the shape panel shows, an index into the preset's sizes:
+    /// the one picked while the preset has it, else the small one.
+    fn shape_size_of(&self, zones: &ZonePreset) -> Option<usize> {
+        let shown = crate::support_shape_edit::shown_sizes(zones);
+        self.shape_size
+            .get()
+            .filter(|i| shown.contains(i))
+            .or_else(|| {
+                shown
+                    .iter()
+                    .copied()
+                    .find(|&i| zones.rules.sizes[i].id == "small")
+            })
+            .or_else(|| shown.first().copied())
+    }
+
+    /// Pushes the shape panel (#564): the sizes, the numbers of the one
+    /// shown, where each size goes, and the drawing.
+    fn push_shape(&self, ui: &MainWindow, o: &DfSupportOptions) {
+        use crate::support_shape_edit as edit;
+        let Some(zones) = o.zones.as_ref() else {
+            return;
+        };
+        let shown = edit::shown_sizes(zones);
+        let Some(size) = self.shape_size_of(zones) else {
+            return;
+        };
+        let names: Vec<String> = shown
+            .iter()
+            .map(|&i| edit::short_name(&zones.rules.sizes[i].id))
+            .collect();
+        let chips: Vec<crate::ShapeSize> = shown
+            .iter()
+            .zip(&names)
+            .map(|(&i, name)| crate::ShapeSize {
+                name: name.into(),
+                tip: zones.rules.sizes[i].tip_diameter_mm as f32,
+            })
+            .collect();
+        ui.set_support_shape_sizes(slint::ModelRc::new(slint::VecModel::from(chips)));
+        ui.set_support_shape_size(
+            shown
+                .iter()
+                .position(|&i| i == size)
+                .map_or(-1, |i| i as i32),
+        );
+        ui.set_support_shape_size_name(edit::short_name(&zones.rules.sizes[size].id).into());
+        let shared: Vec<String> = edit::structure_shared_by(zones, size)
+            .iter()
+            .map(|&i| edit::short_name(&zones.rules.sizes[i].id))
+            .collect();
+        ui.set_support_shape_shared(shared.join(" ").into());
+        let values: Vec<f32> = edit::values(zones, size)
+            .iter()
+            .map(|&v| v as f32)
+            .collect();
+        ui.set_support_shape_values(slint::ModelRc::new(slint::VecModel::from(values)));
+        let size_names: Vec<slint::SharedString> = names.iter().map(|n| n.into()).collect();
+        ui.set_support_zone_size_names(slint::ModelRc::new(slint::VecModel::from(size_names)));
+        let rows: Vec<crate::ZoneRow> = edit::zones_of(zones)
+            .into_iter()
+            .filter_map(|zone| {
+                let (id, spacing) = edit::zone_size_and_spacing(zones, zone)?;
+                let (name, detail) = zone_texts(zones, zone);
+                Some(crate::ZoneRow {
+                    name,
+                    detail,
+                    size: shown
+                        .iter()
+                        .position(|&i| zones.rules.sizes[i].id == id)
+                        .map_or(-1, |i| i as i32),
+                    spacing: spacing as f32,
+                })
+            })
+            .collect();
+        ui.set_support_zone_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+        ui.set_support_zone_angle(zones.rules.overhang.angle_deg as f32);
+        self.draw_shape(ui, &zones.rules.sizes[size]);
+    }
+
+    /// Draws the shape panel's support again: after a turn or a part
+    /// pointed at, nothing else changed.
+    fn redraw_shape(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let o = self.options.borrow();
+        let Some(zones) = o.zones.as_ref() else {
+            return;
+        };
+        if let Some(size) = self.shape_size_of(zones) {
+            self.draw_shape(&ui, &zones.rules.sizes[size]);
+        }
+    }
+
+    fn draw_shape(&self, ui: &MainWindow, size: &sc_geom::df_supports::SupportSize) {
+        use crate::support_shape::{SHAPE_HEIGHT, SHAPE_WIDTH, draw};
+        let hot = self.shape_hot.get();
+        let drawing = draw(
+            size,
+            self.shape_view.get(),
+            SHAPE_WIDTH,
+            SHAPE_HEIGHT,
+            ui.window().scale_factor(),
+            hot,
+        );
+        let callouts: Vec<crate::ShapeCallout> = drawing
+            .callouts
+            .into_iter()
+            .map(|c| crate::ShapeCallout {
+                x: c.x,
+                y: c.y,
+                right: c.right,
+                part: c.part as i32,
+                prefix: c.prefix.into(),
+                value: c.value as f32,
+            })
+            .collect();
+        ui.set_support_shape_picture(slint::Image::from_rgba8(drawing.pixels));
+        ui.set_support_shape_callouts(slint::ModelRc::new(slint::VecModel::from(callouts)));
+        ui.set_support_shape_hot(hot as i32);
+    }
+
+    /// A size chip picked: the panel shows that size.
+    fn on_shape_size_picked(&self, chip: i32) {
+        let picked = {
+            let o = self.options.borrow();
+            o.zones.as_ref().and_then(|z| {
+                crate::support_shape_edit::shown_sizes(z)
+                    .get(usize::try_from(chip).ok()?)
+                    .copied()
+            })
+        };
+        if picked.is_some() {
+            self.shape_size.set(picked);
+            if let Some(ui) = self.ui.upgrade() {
+                let o = self.options.borrow().clone();
+                self.push_shape(&ui, &o);
+            }
+        }
+    }
+
+    /// A number of the shape panel changed: the preset takes it, as any
+    /// other option, and the drawing follows.
+    fn on_shape_value(&self, code: i32, value: f32) {
+        let mut o = self.options.borrow().clone();
+        let Some(size) = o.zones.as_ref().and_then(|z| self.shape_size_of(z)) else {
+            return;
+        };
+        let (Some(zones), Ok(code)) = (o.zones.as_mut(), usize::try_from(code)) else {
+            return;
+        };
+        crate::support_shape_edit::set_value(zones, size, code, f64::from(value));
+        self.set_options(o);
+    }
+
+    /// The zone of row `row` of the shape panel.
+    fn zone_at(&self, row: i32) -> Option<crate::support_shape_edit::Zone> {
+        let o = self.options.borrow();
+        crate::support_shape_edit::zones_of(o.zones.as_ref()?)
+            .get(usize::try_from(row).ok()?)
+            .copied()
+    }
+
+    fn on_zone_size(&self, row: i32, chip: i32) {
+        let Some(zone) = self.zone_at(row) else {
+            return;
+        };
+        let mut o = self.options.borrow().clone();
+        let Some(zones) = o.zones.as_mut() else {
+            return;
+        };
+        let Some(id) = crate::support_shape_edit::shown_sizes(zones)
+            .get(usize::try_from(chip).unwrap_or(usize::MAX))
+            .map(|&i| zones.rules.sizes[i].id.clone())
+        else {
+            return;
+        };
+        crate::support_shape_edit::set_zone_size(zones, zone, &id);
+        self.set_options(o);
+    }
+
+    fn on_zone_spacing(&self, row: i32, mm: f32) {
+        let Some(zone) = self.zone_at(row) else {
+            return;
+        };
+        let mut o = self.options.borrow().clone();
+        if let Some(zones) = o.zones.as_mut() {
+            crate::support_shape_edit::set_zone_spacing(zones, zone, f64::from(mm));
+            self.set_options(o);
+        }
+    }
+
+    fn on_zone_angle(&self, degrees: f32) {
+        let mut o = self.options.borrow().clone();
+        if let Some(zones) = o.zones.as_mut() {
+            zones.rules.overhang.angle_deg = f64::from(degrees).clamp(15.0, 70.0);
+            self.set_options(o);
+        }
     }
 
     /// Replaces the options, saves them and shows them.
@@ -2999,6 +3333,12 @@ impl DfSupportRun {
             .get(index.max(0) as usize)
             .map(|p| p.options.clone());
         if let Some(options) = picked {
+            let built_in = self
+                .presets
+                .borrow()
+                .get(index.max(0) as usize)
+                .is_some_and(|p| p.built_in);
+            self.based_on.set(built_in.then_some(index.max(0) as usize));
             self.set_options(options);
         }
     }
@@ -5617,7 +5957,11 @@ impl DfSupportRun {
                     *owed = more;
                     let changed = ids != *picked;
                     *picked = ids;
-                    Some((Picks::Set(Box::new(drawn.clone()), picked.clone()), changed, more))
+                    Some((
+                        Picks::Set(Box::new(drawn.clone()), picked.clone()),
+                        changed,
+                        more,
+                    ))
                 }
                 Some(DragState::RemoveImported {
                     bodies,

@@ -3048,6 +3048,79 @@ mod window_wiring_tests {
         assert_eq!(steps, expected);
     }
 
+    /// The shape panel (#564): a preset shows its support drawn, its sizes
+    /// and their numbers; a number changed makes the preset the person's
+    /// own, made from the built-in one, with the structure shared by the
+    /// sizes and the tip each size's; the zones take a size; and going back
+    /// brings the built-in preset back.
+    #[test]
+    fn the_shape_panel_edits_the_preset_and_goes_back_to_it() {
+        on_fresh_slint_thread(|| {
+            use slint::Model;
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            let values =
+                |w: &MainWindow| -> Vec<f32> { w.get_support_shape_values().iter().collect() };
+            let tips = |w: &MainWindow| -> Vec<f32> {
+                w.get_support_shape_sizes().iter().map(|s| s.tip).collect()
+            };
+            window.invoke_support_preset_picked(0);
+            assert_eq!(window.get_support_preset_card_index(), 0);
+            assert_eq!(
+                window.get_support_shape_scope().as_str(),
+                "Preset Miniatures"
+            );
+            assert_eq!(window.get_support_shape_size_name().as_str(), "S");
+            assert_eq!(window.get_support_shape_shared().as_str(), "XS S M L");
+            assert_eq!(values(&window)[0], 0.24);
+            assert_eq!(window.get_support_zone_rows().row_count(), 8);
+            assert_eq!(window.get_support_shape_callouts().row_count(), 4);
+            assert!(
+                window.get_support_shape_picture().size().width > 0,
+                "the support is drawn"
+            );
+            assert_eq!(window.get_support_based_on().as_str(), "");
+
+            // A thicker trunk: the preset is the person's own now, made from
+            // Miniatures, and every size takes the trunk.
+            window.invoke_support_shape_value(1, 1.3);
+            assert_eq!(window.get_support_preset_card_index(), -1);
+            assert_eq!(window.get_support_shape_scope().as_str(), "Custom preset");
+            assert_eq!(
+                window.get_support_based_on().as_str(),
+                "Made from Miniatures, with changes"
+            );
+            assert_eq!(values(&window)[1], 1.3);
+            window.invoke_support_shape_size_picked(0);
+            assert_eq!(window.get_support_shape_size_name().as_str(), "XS");
+            assert_eq!(values(&window)[1], 1.3, "the trunk is shared");
+            // A tip is the size's own.
+            window.invoke_support_shape_value(0, 0.2);
+            assert_eq!(tips(&window), [0.2, 0.24, 0.3, 0.4]);
+            // The overhangs place medium tips now.
+            window.invoke_support_zone_size(0, 2);
+            assert_eq!(
+                window.get_support_zone_rows().row_data(0).map(|r| r.size),
+                Some(2)
+            );
+            window.invoke_support_zone_spacing(0, 2.5);
+            assert_eq!(
+                window
+                    .get_support_zone_rows()
+                    .row_data(0)
+                    .map(|r| r.spacing),
+                Some(2.5)
+            );
+
+            window.invoke_support_preset_revert();
+            assert_eq!(window.get_support_preset_card_index(), 0);
+            assert_eq!(window.get_support_based_on().as_str(), "");
+            assert_eq!(values(&window)[1], 1.1);
+            assert_eq!(tips(&window), [0.18, 0.24, 0.3, 0.4]);
+        });
+    }
+
     #[test]
     fn support_options_reach_the_tab_clamped_and_presets_apply() {
         let (density, clamped, preset_index, names) = on_fresh_slint_thread(|| {
@@ -4565,6 +4638,51 @@ mod window_wiring_tests {
     /// Arrange all in the whole window (every driver installed), on a real
     /// project: how long each press takes, as the card tells it, and how
     /// long the window is held (#560).
+    #[test]
+    fn the_supports_tab_is_pictured_when_asked() {
+        // With `BREADSLICER_UI_SHOTS` naming a folder, the Supports tab of a
+        // whole window (#564), its drivers in, as a person sees it.
+        let Some(dir) = std::env::var_os("BREADSLICER_UI_SHOTS").map(PathBuf::from) else {
+            return;
+        };
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        for language in ["en", "es"] {
+            let dir = dir.clone();
+            on_fresh_slint_thread(move || {
+                let app = test_app(PreferencesSnapshot::for_tests());
+                let id = add_window(&app);
+                let window = window_of(&app, id);
+                slint::select_bundled_translation(language).expect("bundled language");
+                window.show().expect("the window shows");
+                window
+                    .window()
+                    .set_size(slint::LogicalSize::new(1600.0, 1000.0));
+                window.set_has_scene(true);
+                window.set_workspace_section(WorkspaceSection::Supports);
+                window.invoke_support_preset_picked(0);
+                let shot = |name: &str| {
+                    crate::test_support::slint_thread::render_frames();
+                    let picture = window.window().take_snapshot().expect("a snapshot");
+                    image::RgbaImage::from_raw(
+                        picture.width(),
+                        picture.height(),
+                        picture.as_bytes().to_vec(),
+                    )
+                    .expect("RGBA")
+                    .save(dir.join(format!("{language}-shape-{name}.png")))
+                    .expect("written");
+                };
+                shot("preset");
+                window.invoke_support_shape_pointed(3);
+                window.invoke_support_shape_value(1, 1.4);
+                shot("custom-foot");
+                window.invoke_support_preset_picked(2);
+                window.invoke_support_shape_size_picked(4);
+                shot("statues-xl");
+            });
+        }
+    }
+
     #[test]
     #[ignore = "a measurement on a real project"]
     fn arrange_all_in_the_whole_window() {

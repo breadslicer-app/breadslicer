@@ -50,6 +50,9 @@ pub use support_gen_df::native::overhang::{
 };
 pub use support_gen_df::pipeline::ScanCache;
 pub use support_gen_df::supports::auto_bracing::auto_brace::HandBraceRefusal;
+pub use support_gen_df::supports::auto_support::zone_rules::{
+    AreaBand, BaseTip, OverhangRule, StabilizationRule, SupportSize, ZoneRules,
+};
 
 /// The name the generated support mesh carries.
 pub const DF_SUPPORT_MESH_NAME: &str = "Supports";

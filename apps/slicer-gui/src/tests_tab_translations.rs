@@ -503,45 +503,41 @@ fn span(window: &MainWindow, label: &str) -> Option<(f32, f32)> {
         })
 }
 
-/// The PLACEMENT card holds every row it draws with a zone preset, whose
-/// summary wraps on several lines: its height once left the last rows under
-/// the RAFT card (#492), the Cross-bracing box cut and the Shape row hidden.
+/// With a zone preset the tab shows the support's shape (#564): its card
+/// holds its last field above the folded ADVANCED card, and the old
+/// PLACEMENT card is gone. (Cards once cut their last rows when a note
+/// wrapped, #492.)
 #[test]
-fn the_placement_card_holds_its_last_rows_under_a_zone_preset() {
-    let (bracing, shape, raft) = in_language(
+fn the_shape_card_holds_its_last_field_under_a_zone_preset() {
+    let (foot, advanced, placement) = in_language(
         "en",
         WorkspaceSection::Supports,
         |window| {
             window.set_support_zone_summary(
-                "This preset sets the size and spacing of every support by zone: island                  first layers, their reinforcement, overhangs past 38° and stabilization.
-                 Tips: 0.18, 0.24, 0.3, 0.4 mm.
-Bracing: 0.7 mm, from 5 mm up."
+                "This preset sets the size and spacing of every support by zone: island                  first layers, their reinforcement, overhangs past 38° and stabilization."
                     .into(),
             );
-            window.set_support_grid_on(true);
-            window.set_support_grid_hint("Recommended for this preset: 7 mm.".into());
+            window.set_support_shape_values(slint::ModelRc::new(slint::VecModel::from(vec![
+                0.24f32, 1.1, 2.3, 5.0, 0.0, 0.0, 0.25, 0.4, 2.0, 0.7, 5.0,
+            ])));
         },
         |window| {
             (
-                span(window, "Cross-bracing"),
-                span(window, "Shape"),
-                span(window, "RAFT"),
+                span(window, "Foot diameter"),
+                span(window, "ADVANCED"),
+                span(window, "PLACEMENT"),
             )
         },
     );
-    let (bracing, shape, raft) = (
-        bracing.expect("the Cross-bracing box"),
-        shape.expect("the Shape row"),
-        raft.expect("the RAFT card"),
+    let (foot, advanced) = (
+        foot.expect("the Foot diameter field"),
+        advanced.expect("the ADVANCED card"),
     );
-    assert!(
-        bracing.1 < shape.0,
-        "Cross-bracing {bracing:?} over Shape {shape:?}"
-    );
+    assert!(placement.is_none(), "no PLACEMENT card with a zone preset");
     // The card's bottom padding and the gap between cards lie between them.
     assert!(
-        shape.1 + 12.0 < raft.0,
-        "Shape {shape:?} under the RAFT title {raft:?}"
+        foot.1 + 12.0 < advanced.0,
+        "Foot diameter {foot:?} over the ADVANCED title {advanced:?}"
     );
 }
 
@@ -638,8 +634,6 @@ fn the_transform_supports_and_slice_tabs_show_in_spanish() {
                 "UBICACIÓN",
                 "BALSA",
                 "DESDE ABAJO",
-                "Ocultar la balsa",
-                "Soportes como líneas punteadas",
             ][..],
             &[
                 "AUTO SUPPORTS",
