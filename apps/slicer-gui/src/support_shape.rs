@@ -110,9 +110,12 @@ struct Tri {
     part: Part,
 }
 
+/// One corner of a triangle: where it is, its normal, and its part.
+type Corner = ([f32; 3], [f32; 3], Part);
+
 /// The support of `size` as triangles, in mm with z up from the plate, and
 /// the height of its tip's contact.
-fn geometry(size: &SupportSize) -> (Vec<([f32; 3], [f32; 3], Part)>, f32, f32) {
+fn geometry(size: &SupportSize) -> (Vec<Corner>, f32, f32) {
     let foot_r = (size.base_diameter_mm / 2.0) as f32;
     let foot_h = size.base_thickness_mm as f32;
     let trunk_r = (size.trunk_diameter_mm / 2.0) as f32;
@@ -253,7 +256,9 @@ pub(crate) fn draw(
         0.42 + 0.62 * (e[0] * light[0] + e[1] * light[1] + e[2] * light[2]).max(0.0)
     };
     let tris: Vec<Tri> = corners
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| Tri {
             v: [screen(c[0].0), screen(c[1].0), screen(c[2].0)],
             light: [shade(c[0].1), shade(c[1].1), shade(c[2].1)],

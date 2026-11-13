@@ -1762,7 +1762,7 @@ impl DfSupportSession {
             .auto_support
             .zone_rules
             .is_some()
-            .then(|| (supports.shaft.diameter_mm, supports.tip.contact_diameter_mm));
+            .then_some((supports.shaft.diameter_mm, supports.tip.contact_diameter_mm));
         let normal = match self.tip_contact(point) {
             Some((_, _, Ok(n))) => n,
             _ => face,

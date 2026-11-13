@@ -25,7 +25,7 @@ pub(crate) struct SharedPreset {
 /// One thing a file holds, and a person picks or leaves.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Entry {
-    Preset(SharedPreset),
+    Preset(Box<SharedPreset>),
     /// 1 of the sizes the hand tools place (XS, S, M or L).
     HandSize(SupportSize),
 }
@@ -62,7 +62,7 @@ pub(crate) fn write(entries: &[Entry]) -> Option<String> {
     };
     for entry in entries {
         match entry {
-            Entry::Preset(p) => file.presets.push(p.clone()),
+            Entry::Preset(p) => file.presets.push((**p).clone()),
             Entry::HandSize(size) => file
                 .hand_sizes
                 .get_or_insert_with(Vec::new)
@@ -88,10 +88,10 @@ pub(crate) fn read(text: &str) -> Result<Vec<Entry>, ReadError> {
             .into_iter()
             .filter(|p| !p.name.trim().is_empty())
             .map(|p| {
-                Entry::Preset(SharedPreset {
+                Entry::Preset(Box::new(SharedPreset {
                     name: p.name.trim().to_owned(),
                     options: p.options.clamped(),
-                })
+                }))
             }),
     );
     entries.extend(
@@ -127,14 +127,14 @@ mod tests {
     use sc_geom::df_supports::zone_presets::{figures_150, minis_30, support_sizes};
 
     fn preset(name: &str, zones: sc_geom::df_supports::zone_presets::ZonePreset) -> Entry {
-        Entry::Preset(SharedPreset {
+        Entry::Preset(Box::new(SharedPreset {
             name: name.to_owned(),
             options: DfSupportOptions {
                 zones: Some(zones),
                 ..Default::default()
             }
             .clamped(),
-        })
+        }))
     }
 
     /// What goes into a file comes back from it: the presets with every

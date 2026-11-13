@@ -2994,7 +2994,7 @@ impl DfSupportRun {
                     name,
                     options: p.options.clone(),
                 };
-                (Entry::Preset(preset), true)
+                (Entry::Preset(Box::new(preset)), true)
             })
             .collect();
         if !presets.iter().any(|p| p.options == options) {
@@ -3002,7 +3002,7 @@ impl DfSupportRun {
                 name: ctr!("Inspector", "Current settings").to_string(),
                 options,
             };
-            entries.insert(0, (Entry::Preset(preset), true));
+            entries.insert(0, (Entry::Preset(Box::new(preset)), true));
         }
         entries.extend(
             self.hand
@@ -10363,14 +10363,14 @@ mod hand_edit_tests {
             let mut thick = minis_30();
             thick.rules.sizes[1].trunk_diameter_mm = 2.0;
             let mut entries = vec![
-                Entry::Preset(SharedPreset {
+                Entry::Preset(Box::new(SharedPreset {
                     name: "Thick minis".to_owned(),
                     options: options(thick),
-                }),
-                Entry::Preset(SharedPreset {
+                })),
+                Entry::Preset(Box::new(SharedPreset {
                     name: "Big statues".to_owned(),
                     options: options(figures_150()),
-                }),
+                })),
             ];
             let mut hand = crate::support_shape_edit::hand_factory().rules.sizes;
             hand[1].trunk_diameter_mm = 1.7;
