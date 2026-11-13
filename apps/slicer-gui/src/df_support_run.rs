@@ -7138,6 +7138,54 @@ mod hand_edit_tests {
         });
     }
 
+    /// #560: models moved together take their sets along in one edit, so
+    /// the scene tells its listeners once, not once per set. A hundred
+    /// models arranged held the window for twenty seconds.
+    #[test]
+    fn sets_moved_together_are_told_once() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(
+                &window,
+                &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0], [80.0, 20.0, 8.0]],
+            );
+            let told = Rc::new(Cell::new(0));
+            let _counting = document.subscribe({
+                let told = told.clone();
+                move |event| {
+                    if event == SceneEvent::Mutated {
+                        told.set(told.get() + 1);
+                    }
+                }
+            });
+            let moves: Vec<SceneEdit> = leaves
+                .iter()
+                .map(|&l| {
+                    let before = leaf_transform(&document, l);
+                    SceneEdit::SetLocalTransform {
+                        node_id: l,
+                        before: before.clone(),
+                        after: translation([0.0, 30.0, 0.0]).compose(&before),
+                    }
+                })
+                .collect();
+            let edit = SceneEdit::Compound(moves);
+            document.apply_edit(edit.clone()).expect("moves");
+            document.push_edit(edit);
+            // The move itself, then the sets carried: two, whatever the count.
+            assert_eq!(told.get(), 2, "told once for the move and once for the sets");
+            assert_eq!(run.sets_in_force().len(), 3, "all still editable");
+            for &l in &leaves {
+                let (set, _) = set_of(&document, &run, l);
+                assert_ne!(
+                    leaf_transform(&document, set),
+                    Transform3D::Identity,
+                    "the set went along"
+                );
+            }
+        });
+    }
+
     /// Ends the run in flight as its poll would.
     fn finish_running(run: &DfSupportRun) {
         let handle = run.handle.borrow_mut().take().expect("a run in flight");

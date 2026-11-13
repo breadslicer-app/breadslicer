@@ -712,6 +712,11 @@ msgstr "Cerrar"
 
 #: ui/main-window.slint
 msgctxt "MenuBar"
+msgid "Clear Scene"
+msgstr "Vaciar escena"
+
+#: ui/main-window.slint
+msgctxt "MenuBar"
 msgid "Save"
 msgstr "Guardar"
 

@@ -584,6 +584,8 @@ export component MainWindow inherits Window {
     // File > Import model (#384): models join the scene.
     callback import-model-requested();
     callback close-current-scene();
+    // File > Clear Scene: the scene goes, the window stays, empty.
+    callback clear-current-scene();
     callback save-requested();
     callback save-as-requested();
     // Projects are .bread for now (#439): no menu reaches this one.
@@ -926,6 +928,14 @@ export component MainWindow inherits Window {
                 enabled: root.loading || root.has-scene;
                 activated => {
                     root.close-current-scene();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Clear Scene");
+                enabled: root.loading || root.has-scene;
+                activated => {
+                    root.clear-current-scene();
                 }
             }
 
@@ -2609,6 +2619,14 @@ export component MainWindow inherits Window {
                     enabled: root.loading || root.has-scene;
                     activated => {
                         root.close-current-scene();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Clear Scene");
+                    enabled: root.loading || root.has-scene;
+                    activated => {
+                        root.clear-current-scene();
                     }
                 }
 

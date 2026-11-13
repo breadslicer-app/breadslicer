@@ -128,7 +128,9 @@ pub(crate) enum ArrangeScope {
 type ArrangeSlot = Arc<Mutex<Option<Result<Option<Vec<Outcome>>, String>>>>;
 
 /// An Arrange all's outcome (#554).
-type AcrossSlot = Arc<Mutex<Option<Result<Option<Across>, String>>>>;
+/// With it, when the worker ended: how long the window took to take it is
+/// noted (#560).
+type AcrossSlot = Arc<Mutex<Option<(Result<Option<Across>, String>, Instant)>>>;
 
 /// An Arrange all in flight (#554).
 struct AcrossPending {
@@ -171,7 +173,13 @@ struct Ahead {
     seen: Cell<Option<SceneRevision>>,
     running: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
+    /// When the timer last ticked: a tick much later means the window was
+    /// held, and the diagnostic log says for how long (#560).
+    ticked: Cell<Option<Instant>>,
 }
+
+/// A window held longer than this between ticks is noted in the log.
+const HELD_NOTED: Duration = Duration::from_millis(1500);
 
 /// How often the scene is looked at for footprints to draw ahead.
 const AHEAD_TICK: Duration = Duration::from_millis(400);
@@ -207,6 +215,16 @@ impl ArrangeRun {
                 .timer
                 .start(slint::TimerMode::Repeated, AHEAD_TICK, move || {
                     if let Some(run) = weak.upgrade() {
+                        let now = Instant::now();
+                        if let Some(last) = run.ahead.ticked.replace(Some(now))
+                            && now - last > AHEAD_TICK + HELD_NOTED
+                        {
+                            crate::breadcrumbs::note(&format!(
+                                "window: held {:.1} s (arranging {})",
+                                (now - last - AHEAD_TICK).as_secs_f64(),
+                                run.ui.upgrade().is_some_and(|ui| ui.get_arranging()),
+                            ));
+                        }
                         run.draw_ahead();
                     }
                 });
@@ -467,9 +485,25 @@ impl ArrangeRun {
                 sc_arrange::arrange_across(&bodies, &stands_on, &plates, &settings, &cancel).ok()
             }))
             .map_err(|payload| panic_message(&payload));
-            *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((result, Instant::now()));
             let _ = ui_weak.upgrade_in_event_loop(|ui| ui.invoke_arrange_finished());
         });
+    }
+
+    /// Arrange all pressed, past the hand-placed question (#560).
+    #[cfg(test)]
+    pub(crate) fn arrange_all_for_test(self: &Rc<Self>) {
+        self.arrange_across(ArrangeScope::Plates, false);
+    }
+
+    /// Whether an Arrange all's worker has ended, its result waiting for the
+    /// window.
+    #[cfg(test)]
+    pub(crate) fn across_done_for_test(&self) -> bool {
+        self.across_slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
     }
 
     /// Applies an Arrange all's result (#554), when the scene is still the
@@ -480,7 +514,9 @@ impl ArrangeRun {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        let across = match taken {
+        let taken_at = Instant::now();
+        let ended = taken.as_ref().map(|(_, ended)| *ended);
+        let across = match taken.map(|(result, _)| result) {
             Some(Ok(Some(across))) => across,
             // Cancelled.
             None | Some(Ok(None)) => return,
@@ -494,9 +530,18 @@ impl ArrangeRun {
                 return;
             }
         };
+        let worker = ended.map_or(Duration::ZERO, |e| {
+            e.saturating_duration_since(pending.started)
+        });
+        let waited = ended.map_or(Duration::ZERO, |e| taken_at.saturating_duration_since(e));
         crate::breadcrumbs::note(&format!(
-            "arrange: footprints {:?}, search {:?}, {} plate(s)",
-            across.timings.footprints, across.timings.search, across.plates_used
+            "arrange: worker {:.2} s (footprints {:.2} s, search {:.2} s), the window took it {:.2} s later, {} plate(s), again {}",
+            worker.as_secs_f64(),
+            across.timings.footprints.as_secs_f64(),
+            across.timings.search.as_secs_f64(),
+            waited.as_secs_f64(),
+            across.plates_used,
+            pending.again,
         ));
         if self.document.scene_revision() != pending.revision {
             ui.set_arrange_last_run(ctr!(
@@ -505,7 +550,15 @@ impl ArrangeRun {
             ));
             return;
         }
-        let applied = match across::apply(&self.document, &pending.job, &across, pending.again) {
+        let applying = Instant::now();
+        let outcome = across::apply(&self.document, &pending.job, &across, pending.again);
+        crate::breadcrumbs::note(&format!(
+            "arrange: applied in {:.2} s, {} drawing(s) of supports kept, footprints kept {:.0} MB",
+            applying.elapsed().as_secs_f64(),
+            self.document.support_sessions().borrow().len(),
+            sc_arrange::kept_bytes() as f64 / 1e6,
+        ));
+        let applied = match outcome {
             Ok(Some(applied)) => applied,
             Ok(None) => {
                 self.arranged.set(Some((
@@ -1198,9 +1251,70 @@ mod real_scene {
                 ctrl.dialogs(),
                 ctrl.clone(),
             );
+            // The real renderer, when there is a GPU: what the window uploads
+            // and works out after each arrangement.
+            let mut renderer =
+                crate::test_support::gpu_devices::shared_test_device().map(|(device, queue)| {
+                    let r = crate::mesh_render::Renderer::new(
+                        device.clone(),
+                        crate::mesh_render::DeviceToken::next(),
+                        queue.clone(),
+                        crate::mesh_render::DeviceLoss::default(),
+                    )
+                    .expect("a renderer");
+                    (r, device, queue)
+                });
+            let mut draw = |label: &str| {
+                let Some((r, device, queue)) = renderer.as_mut() else {
+                    return;
+                };
+                let t = Instant::now();
+                document
+                    .with_scene(|s| r.upload_scene(s.graph()))
+                    .expect("scene")
+                    .expect("upload");
+                queue.submit(std::iter::empty());
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("poll");
+                let uploaded = t.elapsed();
+                let t = Instant::now();
+                document.with_scene(|spatial| {
+                    r.refresh_world_boxes_for_test(spatial.graph(), volume, true, false);
+                });
+                println!(
+                    "  {label}: upload {:.2} s, world boxes {:.2} s, memory {:.0} MB",
+                    uploaded.as_secs_f64(),
+                    t.elapsed().as_secs_f64(),
+                    memory_mb()
+                );
+            };
+            draw("opened");
+            let distinct = document
+                .with_scene(|spatial| {
+                    let mut seen = std::collections::HashSet::new();
+                    let mut verts = 0usize;
+                    for leaf in (0..).map_while(|i| spatial.leaf_id_at_index(i)) {
+                        let Some(q) = spatial.leaf(leaf) else {
+                            continue;
+                        };
+                        if is_any_support_mesh(q.mesh()) {
+                            continue;
+                        }
+                        let mesh = spatial.graph().leaf_mesh_arc(leaf).expect("mesh");
+                        if seen.insert(Arc::as_ptr(mesh) as usize) {
+                            verts += mesh.vertices().len();
+                        }
+                    }
+                    (seen.len(), verts)
+                })
+                .unwrap_or_default();
+            println!(
+                "model meshes: {} distinct, {} vertices in all",
+                distinct.0, distinct.1
+            );
             let _arrange =
                 ArrangeRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
-            let settings = ArrangeOptions::default().settings();
             // The window's own work for `secs`: how long its timers kept it.
             let idle = |secs: f64| {
                 let (start, mut busy) = (Instant::now(), 0.0);
@@ -1212,8 +1326,24 @@ mod real_scene {
                 }
                 busy
             };
+            // The gap of each run, as the card would set it, and how long the
+            // window stands still before each.
+            let gaps: Vec<f32> = std::env::var("BREADSLICER_ARRANGE_GAPS")
+                .ok()
+                .map(|v| v.split(',').filter_map(|g| g.parse().ok()).collect())
+                .unwrap_or_default();
+            let wait: f64 = std::env::var("BREADSLICER_ARRANGE_WAIT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3.0);
             for run in 0..runs {
-                let busy = idle(3.0);
+                let options = ArrangeOptions {
+                    gap_mm: gaps.get(run).copied().unwrap_or(1.0),
+                    ..ArrangeOptions::default()
+                };
+                _arrange.options.set(options);
+                let settings = options.settings();
+                let busy = idle(wait);
                 let triangles: usize = document
                     .with_scene(|spatial| {
                         (0..)
@@ -1225,9 +1355,12 @@ mod real_scene {
                     })
                     .unwrap_or(0);
                 println!(
-                    "before run {run}: window busy {busy:.2} s of 3 s, {} drawings kept, supports in the scene {:.1} M triangles, memory {:.0} MB",
+                    "before run {run} (gap {}): window busy {busy:.2} s of {wait} s, {} drawings kept, supports {:.1} M triangles, footprints kept {} ({:.0} MB), memory {:.0} MB",
+                    options.gap_mm,
                     document.support_sessions().borrow().len(),
                     triangles as f64 / 1e6,
+                    sc_arrange::kept_parts(),
+                    sc_arrange::kept_bytes() as f64 / 1e6,
                     memory_mb(),
                 );
                 let t = Instant::now();
@@ -1248,6 +1381,7 @@ mod real_scene {
                 let again = run > 0;
                 let applied = across::apply(&document, &job, &across, again).expect("applies");
                 let applying = t.elapsed();
+                draw("after");
                 println!(
                     "  spread {:.0} mm², undo steps {}",
                     across.spread,

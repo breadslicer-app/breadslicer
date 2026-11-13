@@ -38,7 +38,7 @@ mod grid;
 mod plate;
 mod search;
 
-pub use cache::{kept_parts, kept_parts_of};
+pub use cache::{kept_bytes, kept_parts, kept_parts_of};
 pub use fill::{FillCopy, Filled, fill};
 
 use std::f64::consts::TAU;

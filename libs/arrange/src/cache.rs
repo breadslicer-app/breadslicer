@@ -177,3 +177,8 @@ pub fn kept_parts_of(mesh: &Arc<IndexedMesh>) -> usize {
         .filter(|k| k.mesh == at)
         .count()
 }
+
+/// Roughly how many bytes the kept parts take.
+pub fn kept_bytes() -> usize {
+    KEPT.lock().unwrap_or_else(|e| e.into_inner()).bytes
+}

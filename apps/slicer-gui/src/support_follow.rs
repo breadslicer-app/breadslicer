@@ -343,11 +343,27 @@ pub(crate) struct Committed {
 /// to regenerate. Any other edit comes back as it was.
 pub(crate) fn commit(doc: &SceneDocument, edit: SceneEdit) -> Committed {
     settle(doc);
-    let (mut parts, mut moved) = (Vec::new(), Vec::new());
+    let (mut carries, mut moved) = (Vec::new(), Vec::new());
     for (node_id, before, after) in transform_edits(&edit) {
-        if let Some((swap, set)) = follow_commit(doc, node_id, before, after) {
-            parts.push(swap);
+        if let Some((carry, set)) = follow_commit(doc, node_id, before, after) {
+            carries.push(carry);
             moved.push(set);
+        }
+    }
+    // Every set carried in one edit: the scene tells its listeners once,
+    // not once per set (#560: an arrangement of a hundred models with their
+    // supports held the window for twenty seconds).
+    let mut parts = Vec::new();
+    if !carries.is_empty() {
+        crate::breadcrumbs::note(&format!(
+            "supports: {} set(s) moved with their models",
+            carries.len()
+        ));
+        let carry = SceneEdit::Compound(carries);
+        if doc.apply_edit_unfollowed(carry.clone()).is_ok() {
+            parts.push(carry);
+        } else {
+            moved.clear();
         }
     }
     let (mut regenerate, hand_edits_lost) = match take_commit(doc, &edit) {
@@ -459,9 +475,11 @@ fn imported_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(Vec<SceneEd
         return None;
     }
     let mut parts = Vec::new();
-    for part in follow {
-        doc.apply_edit_unfollowed(part.clone()).ok()?;
-        parts.push(part);
+    if !follow.is_empty() {
+        // In one edit, told once (#560).
+        let follow = SceneEdit::Compound(follow);
+        doc.apply_edit_unfollowed(follow.clone()).ok()?;
+        parts.push(follow);
     }
     if !removed.is_empty() {
         let mut graph = doc.with_scene(|spatial| spatial.graph().clone())?;
@@ -553,9 +571,8 @@ fn take_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, Vec<
 }
 
 /// For a committed move of the leaf `node_id` in the plate plane: the edit
-/// that swaps its set's mesh for the one drawn where the model now is,
-/// applied, and the set. `None` for any other move, and for a model with no
-/// set in force.
+/// that carries its set's leaf along, still to apply, and the set taken
+/// along. `None` for any other move, and for a model with no set in force.
 fn follow_commit(
     doc: &SceneDocument,
     node_id: NodeId,
@@ -604,8 +621,6 @@ fn follow_commit(
         before: local,
         after: Transform3D::Affine(motion.affine().compose(&affine(&local))),
     };
-    crate::breadcrumbs::note(&format!("supports: moved with their model, {motion:?}"));
-    doc.apply_edit_unfollowed(carry.clone()).ok()?;
     Some((
         carry,
         MovedSet {
