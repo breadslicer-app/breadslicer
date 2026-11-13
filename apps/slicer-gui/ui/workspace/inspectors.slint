@@ -2079,7 +2079,8 @@ export component SupportsInspector inherits VerticalLayout {
     in property <[ShapeSize]> shape-sizes;
     in property <int> shape-size;
     in property <string> shape-size-name;
-    in property <string> shape-shared;
+    in property <[float]> shape-defaults;
+    in property <float> zone-angle-default: -1;
     callback shape-size-picked(int);
     // The numbers, in this order: tip diameter, trunk diameter, tip length,
     // foot diameter, extra insertion, break point, foot thickness, join
@@ -2237,13 +2238,14 @@ export component SupportsInspector inherits VerticalLayout {
         ShapeField {
             label: @tr("Inspector" => "Tip diameter");
             value: root.shape-values[0];
+            default-value: root.shape-defaults.length > 0 ? root.shape-defaults[0] : -1;
             part: 1;
             hot: root.shape-hot;
             edited(v) => { root.shape-value(0, v); }
             pointed(p) => { root.shape-pointed(p); }
         }
         Text {
-            text: @tr("Inspector" => "THE WHOLE SUPPORT · {}", root.shape-shared);
+            text: @tr("Inspector" => "THE WHOLE SUPPORT · {}", root.shape-size-name);
             font-size: 10px;
             font-weight: 600;
             letter-spacing: 0.8px;
@@ -2252,6 +2254,7 @@ export component SupportsInspector inherits VerticalLayout {
         ShapeField {
             label: @tr("Inspector" => "Trunk diameter");
             value: root.shape-values[1];
+            default-value: root.shape-defaults.length > 1 ? root.shape-defaults[1] : -1;
             part: 2;
             hot: root.shape-hot;
             edited(v) => { root.shape-value(1, v); }
@@ -2260,6 +2263,7 @@ export component SupportsInspector inherits VerticalLayout {
         ShapeField {
             label: @tr("Inspector" => "Tip length");
             value: root.shape-values[2];
+            default-value: root.shape-defaults.length > 2 ? root.shape-defaults[2] : -1;
             part: 1;
             hot: root.shape-hot;
             edited(v) => { root.shape-value(2, v); }
@@ -2268,6 +2272,7 @@ export component SupportsInspector inherits VerticalLayout {
         ShapeField {
             label: @tr("Inspector" => "Foot diameter");
             value: root.shape-values[3];
+            default-value: root.shape-defaults.length > 3 ? root.shape-defaults[3] : -1;
             part: 3;
             hot: root.shape-hot;
             edited(v) => { root.shape-value(3, v); }
@@ -2290,6 +2295,7 @@ export component SupportsInspector inherits VerticalLayout {
         ShapeField {
             label: @tr("Inspector" => "Extra into the model");
             value: root.shape-values[4];
+            default-value: root.shape-defaults.length > 4 ? root.shape-defaults[4] : -1;
             part: 1;
             hot: root.shape-hot;
             edited(v) => { root.shape-value(4, v); }
@@ -2298,6 +2304,7 @@ export component SupportsInspector inherits VerticalLayout {
         ShapeField {
             label: @tr("Inspector" => "Break point");
             value: root.shape-values[5];
+            default-value: root.shape-defaults.length > 5 ? root.shape-defaults[5] : -1;
             part: 1;
             hot: root.shape-hot;
             edited(v) => { root.shape-value(5, v); }
@@ -2313,6 +2320,7 @@ export component SupportsInspector inherits VerticalLayout {
         ShapeField {
             label: @tr("Inspector" => "Foot thickness");
             value: root.shape-values[6];
+            default-value: root.shape-defaults.length > 6 ? root.shape-defaults[6] : -1;
             part: 3;
             hot: root.shape-hot;
             edited(v) => { root.shape-value(6, v); }
@@ -2321,6 +2329,7 @@ export component SupportsInspector inherits VerticalLayout {
         ShapeField {
             label: @tr("Inspector" => "Join cone");
             value: root.shape-values[7];
+            default-value: root.shape-defaults.length > 7 ? root.shape-defaults[7] : -1;
             part: 3;
             hot: root.shape-hot;
             edited(v) => { root.shape-value(7, v); }
@@ -2329,6 +2338,7 @@ export component SupportsInspector inherits VerticalLayout {
         ShapeField {
             label: @tr("Inspector" => "Tip on the model, length");
             value: root.shape-values[8];
+            default-value: root.shape-defaults.length > 8 ? root.shape-defaults[8] : -1;
             part: 3;
             hot: root.shape-hot;
             edited(v) => { root.shape-value(8, v); }
@@ -2351,6 +2361,7 @@ export component SupportsInspector inherits VerticalLayout {
         ShapeField {
             label: @tr("Inspector" => "Brace diameter");
             value: root.shape-values[9];
+            default-value: root.shape-defaults.length > 9 ? root.shape-defaults[9] : -1;
             part: 0;
             hot: root.shape-hot;
             enabled: root.bracing;
@@ -2359,6 +2370,7 @@ export component SupportsInspector inherits VerticalLayout {
         ShapeField {
             label: @tr("Inspector" => "Braces start at");
             value: root.shape-values[10];
+            default-value: root.shape-defaults.length > 10 ? root.shape-defaults[10] : -1;
             part: 0;
             hot: root.shape-hot;
             enabled: root.bracing;
@@ -2375,6 +2387,7 @@ export component SupportsInspector inherits VerticalLayout {
             label: @tr("Inspector" => "Overhangs from");
             unit: "°";
             value: root.zone-angle;
+            default-value: root.zone-angle-default;
             part: 0;
             hot: 0;
             edited(v) => { root.zone-angle-edited(v); }

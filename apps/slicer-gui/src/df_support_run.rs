@@ -2812,11 +2812,21 @@ impl DfSupportRun {
                 .map_or(-1, |i| i as i32),
         );
         ui.set_support_shape_size_name(edit::short_name(&zones.rules.sizes[size].id).into());
-        let shared: Vec<String> = edit::structure_shared_by(zones, size)
-            .iter()
-            .map(|&i| edit::short_name(&zones.rules.sizes[i].id))
-            .collect();
-        ui.set_support_shape_shared(shared.join(" ").into());
+        // What each field goes back to: the built-in preset it was made
+        // from, for the same size.
+        let base = self.base_zones();
+        let defaults: Vec<f32> = match base.as_ref() {
+            Some(base) => edit::defaults(base, zones, size)
+                .iter()
+                .map(|d| d.map_or(-1.0, |v| v as f32))
+                .collect(),
+            None => vec![-1.0; edit::FIELDS],
+        };
+        ui.set_support_shape_defaults(slint::ModelRc::new(slint::VecModel::from(defaults)));
+        ui.set_support_zone_angle_default(
+            base.as_ref()
+                .map_or(-1.0, |b| b.rules.overhang.angle_deg as f32),
+        );
         let values: Vec<f32> = edit::values(zones, size)
             .iter()
             .map(|&v| v as f32)
@@ -2829,20 +2839,38 @@ impl DfSupportRun {
             .filter_map(|zone| {
                 let (id, spacing) = edit::zone_size_and_spacing(zones, zone)?;
                 let (name, detail) = zone_texts(zones, zone);
+                let place = |id: &str| {
+                    shown
+                        .iter()
+                        .position(|&i| zones.rules.sizes[i].id == id)
+                        .map_or(-1, |i| i as i32)
+                };
+                let built_in = base
+                    .as_ref()
+                    .and_then(|b| edit::zone_size_and_spacing(b, zone));
                 Some(crate::ZoneRow {
                     name,
                     detail,
-                    size: shown
-                        .iter()
-                        .position(|&i| zones.rules.sizes[i].id == id)
-                        .map_or(-1, |i| i as i32),
+                    size: place(id),
                     spacing: spacing as f32,
+                    default_size: built_in.map_or(-1, |(id, _)| place(id)),
+                    default_spacing: built_in.map_or(-1.0, |(_, mm)| mm as f32),
                 })
             })
             .collect();
         ui.set_support_zone_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
         ui.set_support_zone_angle(zones.rules.overhang.angle_deg as f32);
         self.draw_shape(ui, &zones.rules.sizes[size]);
+    }
+
+    /// The zones of the built-in preset the options were made from: what
+    /// each field of the shape panel goes back to.
+    fn base_zones(&self) -> Option<ZonePreset> {
+        let presets = self.presets.borrow();
+        presets
+            .get(self.based_on.get()?)
+            .filter(|p| p.built_in)
+            .and_then(|p| p.options.zones.clone())
     }
 
     /// Draws the shape panel's support again: after a turn or a part

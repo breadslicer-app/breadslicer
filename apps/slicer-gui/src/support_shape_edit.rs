@@ -137,46 +137,39 @@ fn write(size: &mut SupportSize, code: usize, v: f64) {
     }
 }
 
-/// The sizes field `code` changes when edited on the size at `index`: the
-/// size alone for its tip, every size with the same value for the rest.
-pub(crate) fn sharing(zones: &ZonePreset, index: usize, code: usize) -> Vec<usize> {
-    let sizes = &zones.rules.sizes;
-    let Some(size) = sizes.get(index) else {
-        return Vec::new();
-    };
-    if code == 0 {
-        return vec![index];
+/// What a field goes back to: the number the built-in preset `base` has
+/// for the same size (by id), or for the whole preset (the bracing's two).
+/// `None` where `base` has no such size.
+pub(crate) fn defaults(
+    base: &ZonePreset,
+    zones: &ZonePreset,
+    index: usize,
+) -> [Option<f64>; FIELDS] {
+    let mut out = [None; FIELDS];
+    let own = zones
+        .rules
+        .sizes
+        .get(index)
+        .and_then(|s| base.rules.sizes.iter().position(|b| b.id == s.id));
+    for (code, slot) in out.iter_mut().enumerate() {
+        *slot = match (code, own) {
+            (9 | 10, _) => Some(values(base, 0)[code]),
+            (_, Some(j)) => Some(values(base, j)[code]),
+            (_, None) => None,
+        };
     }
-    let mine = read(zones, size, code);
-    (0..sizes.len())
-        .filter(|&i| (read(zones, &sizes[i], code) - mine).abs() < 1e-9)
-        .collect()
+    out
 }
 
-/// The sizes that share every structural number with the size at `index`
-/// (trunk, tip length and foot): whom "the whole support" speaks for.
-pub(crate) fn structure_shared_by(zones: &ZonePreset, index: usize) -> Vec<usize> {
-    let shown = shown_sizes(zones);
-    let a = values(zones, index);
-    shown
-        .into_iter()
-        .filter(|&i| {
-            let b = values(zones, i);
-            [1, 2, 3].iter().all(|&k| (a[k] - b[k]).abs() < 1e-9)
-        })
-        .collect()
-}
-
-/// Sets field `code` to `v` on the size at `index` and the sizes that share
-/// it; the bracing's two for the whole preset. Values go through the
-/// engine's bounds.
+/// Sets field `code` to `v` on the size at `index` alone (each size keeps
+/// its own numbers); the bracing's two for the whole preset. Values go
+/// through the engine's bounds.
 pub(crate) fn set_value(zones: &mut ZonePreset, index: usize, code: usize, v: f64) {
     match code {
         9 => zones.bracing.diameter_mm = v.clamp(0.1, 10.0),
         10 => zones.bracing.start_mm = v.clamp(0.0, 100.0),
         _ => {
-            for i in sharing(zones, index, code) {
-                let size = &mut zones.rules.sizes[i];
+            if let Some(size) = zones.rules.sizes.get_mut(index) {
                 write(size, code, v);
                 *size = size.clamped();
             }
@@ -301,38 +294,44 @@ mod tests {
         assert_eq!(names(&figures_150()), ["XS", "S", "M", "L", "XL"]);
     }
 
-    /// A tip changes its own size alone; a trunk changes every size of the
-    /// same trunk and leaves the thick one, which had its own.
+    /// Every number changes its own size alone: a tip, a trunk, a foot.
     #[test]
-    fn a_tip_is_one_size_s_and_the_structure_is_shared() {
+    fn each_size_keeps_its_own_numbers() {
         let mut z = figures_150();
         let small = index(&z, "small");
-        let thick = index(&z, "factory-medium");
         let before = z.clone();
-        set_value(&mut z, small, 0, 0.27);
-        assert_eq!(z.rules.sizes[small].tip_diameter_mm, 0.27);
-        let tips_changed = (0..z.rules.sizes.len())
-            .filter(|&i| z.rules.sizes[i].tip_diameter_mm != before.rules.sizes[i].tip_diameter_mm)
-            .count();
-        assert_eq!(tips_changed, 1);
+        for (code, v) in [(0, 0.27), (1, 1.25), (2, 3.0), (3, 6.0), (6, 0.4)] {
+            set_value(&mut z, small, code, v);
+        }
         assert_eq!(
             z.rules.sizes[small].base_tip.map(|t| t.diameter_mm),
             Some(0.27)
         );
-
-        set_value(&mut z, small, 1, 1.25);
-        for id in ["extrasmall", "small", "medium", "large"] {
-            assert_eq!(z.rules.sizes[index(&z, id)].trunk_diameter_mm, 1.25, "{id}");
-        }
-        assert_eq!(
-            z.rules.sizes[thick].trunk_diameter_mm, 1.3,
-            "the thick size keeps its trunk"
-        );
-        let shared: Vec<String> = structure_shared_by(&z, small)
-            .iter()
-            .map(|&i| short_name(&z.rules.sizes[i].id))
+        let changed: Vec<usize> = (0..z.rules.sizes.len())
+            .filter(|&i| z.rules.sizes[i] != before.rules.sizes[i])
             .collect();
-        assert_eq!(shared, ["XS", "S", "M", "L"]);
+        assert_eq!(changed, [small]);
+        let medium = index(&z, "medium");
+        assert_eq!(values(&z, medium), values(&before, medium));
+    }
+
+    /// A field goes back to the built-in preset's number for its size; a
+    /// size the built-in preset lacks has nothing to go back to.
+    #[test]
+    fn a_field_goes_back_to_the_built_in_number_of_its_size() {
+        let base = minis_30();
+        let mut z = base.clone();
+        let medium = index(&z, "medium");
+        set_value(&mut z, medium, 0, 0.5);
+        set_value(&mut z, medium, 1, 2.0);
+        let d = defaults(&base, &z, medium);
+        assert_eq!(d[0], Some(0.30));
+        assert_eq!(d[1], Some(base.rules.sizes[medium].trunk_diameter_mm));
+        assert_eq!(d[9], Some(base.bracing.diameter_mm));
+        z.rules.sizes[medium].id = "mine".to_owned();
+        let d = defaults(&base, &z, medium);
+        assert_eq!(d[0], None);
+        assert_eq!(d[9], Some(base.bracing.diameter_mm));
     }
 
     /// A tip may grow past the next size's: each size keeps its place, so

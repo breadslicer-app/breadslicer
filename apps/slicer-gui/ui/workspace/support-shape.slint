@@ -10,7 +10,8 @@
 
 import { ScComboBox as ComboBox } from "../kit/controls.slint";
 import { Theme } from "../kit/theme.slint";
-import { Card, DisclosureChevron, Note, ScButton, ButtonKind } from "../kit/controls.slint";
+import { Card, DisclosureChevron, Icon, Note, ScButton, ButtonKind } from "../kit/controls.slint";
+import { Icons } from "../kit/icons.slint";
 
 // A number of the drawing: where its label goes in logical pixels, whether
 // it ends there instead of starting, the part it measures and its text.
@@ -30,12 +31,42 @@ export struct ShapeSize {
 }
 
 // One row of where each size goes: the zone, what it covers, the size it
-// places (an index into the sizes) and how far apart.
+// places (an index into the sizes) and how far apart, and what the
+// built-in preset has for both (-1 where it has nothing).
 export struct ZoneRow {
     name: string,
     detail: string,
     size: int,
     spacing: float,
+    default-size: int,
+    default-spacing: float,
+}
+
+// The round arrow beside a field: shown while the field is off the
+// built-in preset's number, a click puts that number back. Its room is kept
+// when hidden, so the fields stay in line.
+export component ResetMark inherits Rectangle {
+    in property <bool> shown;
+    callback clicked();
+
+    width: 16px;
+
+    touch := TouchArea {
+        enabled: root.shown;
+        mouse-cursor: self.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+    if root.shown: Icon {
+        commands: Icons.rotate;
+        size: 12px;
+        x: 2px;
+        y: (parent.height - 12px) / 2;
+        color: touch.has-hover ? Theme.text : Theme.text-muted;
+        accessible-role: button;
+        accessible-label: @tr("Inspector" => "Reset to default");
+    }
 }
 
 // A built-in preset as a card: its name and the models it is for.
@@ -129,8 +160,12 @@ export component ShapeField inherits HorizontalLayout {
     in property <int> part;
     in property <int> hot;
     in property <bool> enabled: true;
+    // The built-in preset's number, or below 0 where there is none.
+    in property <float> default-value: -1;
     callback edited(float);
     callback pointed(int);
+
+    property <bool> off-default: root.enabled && root.default-value >= 0 && Math.abs(root.default-value - root.value) > 0.0005;
 
     // Dragging the number left or right turns it down or up, as in
     // Blender; a click without a drag types into it. Shift goes ten times
@@ -287,6 +322,13 @@ export component ShapeField inherits HorizontalLayout {
                     }
                 }
             }
+        }
+    }
+    ResetMark {
+        shown: root.off-default;
+        clicked => {
+            input.text = round(root.default-value * 100) / 100;
+            root.edited(root.default-value);
         }
     }
 }
@@ -494,12 +536,19 @@ export component ZoneRowView inherits HorizontalLayout {
             }
         }
     }
+    ResetMark {
+        shown: root.zone.default-size >= 0 && root.zone.default-size != root.zone.size;
+        clicked => {
+            root.size-picked(root.zone.default-size);
+        }
+    }
     VerticalLayout {
         alignment: center;
 
         ShapeField {
             label: "";
             value: root.zone.spacing;
+            default-value: root.zone.default-spacing;
             part: 0;
             hot: 0;
             edited(v) => {

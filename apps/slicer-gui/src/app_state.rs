@@ -3050,9 +3050,9 @@ mod window_wiring_tests {
 
     /// The shape panel (#564): a preset shows its support drawn, its sizes
     /// and their numbers; a number changed makes the preset the person's
-    /// own, made from the built-in one, with the structure shared by the
-    /// sizes and the tip each size's; the zones take a size; and going back
-    /// brings the built-in preset back.
+    /// own, made from the built-in one, each size with its own numbers and
+    /// a way back to the built-in one's; the zones take a size; and going
+    /// back brings the built-in preset back.
     #[test]
     fn the_shape_panel_edits_the_preset_and_goes_back_to_it() {
         on_fresh_slint_thread(|| {
@@ -3072,7 +3072,9 @@ mod window_wiring_tests {
                 "Preset Miniatures"
             );
             assert_eq!(window.get_support_shape_size_name().as_str(), "S");
-            assert_eq!(window.get_support_shape_shared().as_str(), "XS S M L");
+            let defaults =
+                |w: &MainWindow| -> Vec<f32> { w.get_support_shape_defaults().iter().collect() };
+            assert_eq!(defaults(&window), values(&window));
             assert_eq!(values(&window)[0], 0.24);
             assert_eq!(window.get_support_zone_rows().row_count(), 8);
             assert_eq!(window.get_support_shape_callouts().row_count(), 4);
@@ -3083,7 +3085,7 @@ mod window_wiring_tests {
             assert_eq!(window.get_support_based_on().as_str(), "");
 
             // A thicker trunk: the preset is the person's own now, made from
-            // Miniatures, and every size takes the trunk.
+            // Miniatures, and the field can go back to 1.1.
             window.invoke_support_shape_value(1, 1.3);
             assert_eq!(window.get_support_preset_card_index(), -1);
             assert_eq!(window.get_support_shape_scope().as_str(), "Custom preset");
@@ -3092,17 +3094,24 @@ mod window_wiring_tests {
                 "Made from Miniatures, with changes"
             );
             assert_eq!(values(&window)[1], 1.3);
+            assert_eq!(defaults(&window)[1], 1.1);
             window.invoke_support_shape_size_picked(0);
             assert_eq!(window.get_support_shape_size_name().as_str(), "XS");
-            assert_eq!(values(&window)[1], 1.3, "the trunk is shared");
+            assert_eq!(values(&window)[1], 1.1, "XS keeps its own trunk");
             // A tip is the size's own.
             window.invoke_support_shape_value(0, 0.2);
             assert_eq!(tips(&window), [0.2, 0.24, 0.3, 0.4]);
             // The overhangs place medium tips now.
+            let first_row = window.get_support_zone_rows().row_data(0);
+            let built_in_size = first_row.map_or(-1, |r| r.default_size);
+            assert!(built_in_size >= 0);
             window.invoke_support_zone_size(0, 2);
             assert_eq!(
-                window.get_support_zone_rows().row_data(0).map(|r| r.size),
-                Some(2)
+                window
+                    .get_support_zone_rows()
+                    .row_data(0)
+                    .map(|r| (r.size, r.default_size)),
+                Some((2, built_in_size))
             );
             window.invoke_support_zone_spacing(0, 2.5);
             assert_eq!(

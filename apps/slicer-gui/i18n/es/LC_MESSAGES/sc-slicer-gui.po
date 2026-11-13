@@ -7368,3 +7368,8 @@ msgstr "Cuerpo de las islas"
 msgctxt "Inspector"
 msgid "from {} mm³"
 msgstr "desde {} mm³"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "Reset to default"
+msgstr "Volver al valor original"

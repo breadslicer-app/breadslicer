@@ -290,7 +290,8 @@ export component MainWindow inherits Window {
     in property <[ShapeSize]> support-shape-sizes;
     in property <int> support-shape-size;
     in property <string> support-shape-size-name;
-    in property <string> support-shape-shared;
+    in property <[float]> support-shape-defaults;
+    in property <float> support-zone-angle-default: -1;
     callback support-shape-size-picked(int);
     in property <[float]> support-shape-values;
     callback support-shape-value(int, float);
@@ -2414,7 +2415,8 @@ export component MainWindow inherits Window {
                                     shape-sizes: root.support-shape-sizes;
                                     shape-size: root.support-shape-size;
                                     shape-size-name: root.support-shape-size-name;
-                                    shape-shared: root.support-shape-shared;
+                                    shape-defaults: root.support-shape-defaults;
+                                    zone-angle-default: root.support-zone-angle-default;
                                     shape-size-picked(i) => {
                                         root.support-shape-size-picked(i);
                                     }
