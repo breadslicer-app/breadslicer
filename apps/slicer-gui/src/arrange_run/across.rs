@@ -162,11 +162,15 @@ pub(crate) struct Applied {
 }
 
 /// Applies `across`, worked out for `job`, as one step of history: the
-/// moves, and the plates added or taken off.
+/// moves, and the plates added or taken off. With `again`, an Arrange all
+/// pressed again with nothing done to the scene since the last (#560), with
+/// other settings, the step joins the last one: one Undo goes back to
+/// before the first, and what stood in the middle is let go.
 pub(crate) fn apply(
     document: &SceneDocument,
     job: &Job,
     across: &Across,
+    again: bool,
 ) -> Result<Option<Applied>, EditNotApplied> {
     let placements: Vec<Option<sc_arrange::Placement>> = across
         .placements
@@ -211,6 +215,10 @@ pub(crate) fn apply(
     } else {
         let active = document.plates().active().min(plates - 1);
         document.push_plates_edit(edit, before, after, active);
+    }
+    if again {
+        document.squash_last_two_steps();
+        crate::support_persist::forget_unreachable(document, &document.support_sessions());
     }
     // Where the app put them, not by hand.
     let placed: Vec<NodeId> = job

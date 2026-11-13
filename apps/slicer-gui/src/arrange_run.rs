@@ -135,6 +135,10 @@ struct AcrossPending {
     revision: SceneRevision,
     job: across::Job,
     started: Instant,
+    /// Pressed again with nothing done to the scene since the last (#560).
+    again: bool,
+    /// The card's settings it works with.
+    options: ArrangeOptions,
 }
 
 pub(crate) struct ArrangeRun {
@@ -150,6 +154,9 @@ pub(crate) struct ArrangeRun {
     cancel: Arc<AtomicBool>,
     fill: fill::Fill,
     ahead: Ahead,
+    /// The scene the last Arrange all left, with the settings and the
+    /// plates it worked with (#560).
+    arranged: Cell<Option<(SceneRevision, ArrangeOptions, ArrangeScope)>>,
 }
 
 /// The footprints drawn ahead (#560): once the scene has stood still a
@@ -191,6 +198,7 @@ impl ArrangeRun {
             cancel: Arc::new(AtomicBool::new(false)),
             fill: fill::Fill::default(),
             ahead: Ahead::default(),
+            arranged: Cell::new(None),
         });
         run.push_options(ui);
         {
@@ -410,6 +418,17 @@ impl ArrangeRun {
         if ui.get_arranging() {
             return;
         }
+        // Nothing changed since the last: as a slice still up to date, it
+        // stands (#560).
+        let revision = self.document.scene_revision();
+        let last = self.arranged.get();
+        if last == Some((revision, self.options.get(), scope)) {
+            ui.set_arrange_last_run(ctr!(
+                "Inspector",
+                "Already arranged: nothing changed since the last Arrange."
+            ));
+            return;
+        }
         let Some(job) = across::job(
             &self.document,
             &self.ctrl.build_volume(),
@@ -420,6 +439,7 @@ impl ArrangeRun {
             return;
         };
         let settings = self.options.get().settings();
+        let again = last.is_some_and(|(r, _, _)| r == revision);
         let (bodies, stands_on, plates) = (
             job.bodies.clone(),
             job.stands_on.clone(),
@@ -433,6 +453,8 @@ impl ArrangeRun {
             revision: self.document.scene_revision(),
             job,
             started: Instant::now(),
+            again,
+            options: self.options.get(),
         });
         self.cancel.store(false, Ordering::Relaxed);
         self.stop_ahead();
@@ -483,9 +505,14 @@ impl ArrangeRun {
             ));
             return;
         }
-        let applied = match across::apply(&self.document, &pending.job, &across) {
+        let applied = match across::apply(&self.document, &pending.job, &across, pending.again) {
             Ok(Some(applied)) => applied,
             Ok(None) => {
+                self.arranged.set(Some((
+                    self.document.scene_revision(),
+                    pending.options,
+                    pending.job.scope,
+                )));
                 ui.set_arrange_last_run(ctr!("Inspector", "Everything is already in place."));
                 return;
             }
@@ -503,6 +530,11 @@ impl ArrangeRun {
             }
             Err(EditNotApplied::NoSceneLoaded) => return,
         };
+        self.arranged.set(Some((
+            self.document.scene_revision(),
+            pending.options,
+            pending.job.scope,
+        )));
         let seconds = pending.started.elapsed().as_secs_f64();
         ui.set_arrange_last_run(across_text(&applied, seconds).into());
         if !applied.left_off.is_empty() {
@@ -993,7 +1025,27 @@ pub(crate) fn arrange_across_now(
         &AtomicBool::new(false),
     )
     .ok()?;
-    across::apply(document, &job, &across).ok().flatten()
+    across::apply(document, &job, &across, false).ok().flatten()
+}
+
+/// [`arrange_across_now`] pressed again with other settings and nothing
+/// done to the scene since (#560): its step joins the last.
+#[cfg(test)]
+pub(crate) fn arrange_again_now(
+    document: &SceneDocument,
+    volume: &crate::build_volume::BuildVolume,
+    options: ArrangeOptions,
+) -> Option<across::Applied> {
+    let job = across::job(document, volume, ArrangeScope::Plates, false)?;
+    let across = sc_arrange::arrange_across(
+        &job.bodies,
+        &job.stands_on,
+        &job.plates,
+        &options.settings(),
+        &AtomicBool::new(false),
+    )
+    .ok()?;
+    across::apply(document, &job, &across, true).ok().flatten()
 }
 
 /// How many models placed by hand an Arrange of `scope` asks about: for
@@ -1191,8 +1243,16 @@ mod real_scene {
                 )
                 .expect("arranged");
                 let t = Instant::now();
-                let applied = across::apply(&document, &job, &across).expect("applies");
+                // Again, as Arrange all pressed again with other settings:
+                // joined to the last step.
+                let again = run > 0;
+                let applied = across::apply(&document, &job, &across, again).expect("applies");
                 let applying = t.elapsed();
+                println!(
+                    "  spread {:.0} mm², undo steps {}",
+                    across.spread,
+                    document.undo_len()
+                );
                 println!(
                     "run {run}: gather {:.2} s, footprints {:.2} s, search {:.2} s, apply {:.2} s; {} bodies, {} plate(s), {:?}",
                     gathered.as_secs_f64(),
@@ -1204,6 +1264,87 @@ mod real_scene {
                     applied.map(|a| a.moved),
                 );
             }
+        });
+    }
+}
+
+#[cfg(test)]
+mod again_tests {
+    use std::time::Duration;
+
+    use sc_mesh_core::transform::AffineTransform3D;
+    use sc_scene::{LeafPayload, Scene};
+
+    use super::*;
+
+    /// Arrange all on boxes scattered over `ctrl`'s plate, its driver.
+    fn scattered(window: &MainWindow) -> (Rc<ViewportController>, Rc<ArrangeRun>) {
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        ctrl.set_build_volume(crate::build_volume::BuildVolume::new(100.0, 60.0, 80.0));
+        let mut g = Scene::new();
+        let mesh = Arc::new(sc_mesh_fixtures::unit_cube_mesh());
+        for k in 0..5 {
+            let at = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+                [[6.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 6.0]],
+                [k as f64 * 17.0 - 40.0, (k % 2) as f64 * 40.0 - 20.0, 3.0],
+            ));
+            let leaf = g
+                .add_leaf(None, at, LeafPayload::Mesh(mesh.clone()))
+                .unwrap();
+            g.add_root(leaf).unwrap();
+        }
+        ctrl.install_graph_for_test(g);
+        let run = ArrangeRun::install(window, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+        (ctrl, run)
+    }
+
+    /// Presses Arrange all and lets its worker finish.
+    fn press(run: &Rc<ArrangeRun>) {
+        run.arrange_across(ArrangeScope::Plates, false);
+        let start = Instant::now();
+        while run.across.borrow().is_some()
+            && run
+                .across_slot
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_none()
+            && start.elapsed() < Duration::from_secs(20)
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        run.finish();
+    }
+
+    /// #560: Arrange all pressed again with nothing changed answers at once
+    /// and adds no step; with other settings it arranges again, in the same
+    /// step, and one Undo goes back to before the first.
+    #[test]
+    fn arrange_all_again_answers_at_once_or_joins_its_step() {
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("a main window");
+            let (ctrl, run) = scattered(&window);
+            let document = ctrl.document();
+            let steps = document.undo_len();
+            press(&run);
+            assert_eq!(document.undo_len(), steps + 1, "arranged");
+            let after = document.scene_revision();
+
+            press(&run);
+            assert!(!window.get_arranging(), "nothing ran");
+            assert!(
+                window.get_arrange_last_run().contains("Already arranged"),
+                "{}",
+                window.get_arrange_last_run()
+            );
+            assert_eq!(document.scene_revision(), after, "nothing moved");
+            assert_eq!(document.undo_len(), steps + 1);
+
+            // Another gap: arranged again, in the same step.
+            run.on_option(0, 3.0);
+            press(&run);
+            assert_eq!(document.undo_len(), steps + 1, "one step");
+            assert!(document.undo().unwrap());
+            assert_eq!(document.undo_len(), steps, "back to before the first");
         });
     }
 }

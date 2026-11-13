@@ -150,6 +150,72 @@ pub(crate) fn record(
     });
 }
 
+/// Lets go of the drawings no step of history can bring back (#560): one
+/// whose model no step puts where it stood when it was drawn, and that is
+/// not the one in force. Arrange all pressed again joins its steps, and the
+/// drawings of the places in the middle go.
+pub(crate) fn forget_unreachable(doc: &SceneDocument, sessions: &RefCell<SupportSessions>) {
+    let poses = doc.history_transforms();
+    let near = |a: &Transform3D, b: &Transform3D| {
+        let (a, b) = (affine_of(a), affine_of(b));
+        a.linear()
+            .iter()
+            .flatten()
+            .zip(b.linear().iter().flatten())
+            .chain(a.translation().iter().zip(b.translation()))
+            .all(|(x, y)| (x - y).abs() <= 1e-9)
+    };
+    doc.with_scene(|spatial| {
+        let mut sessions = sessions.borrow_mut();
+        // A drawing the one in force repeats, the same mesh with its model
+        // where it stands, is that one: only the newest is kept.
+        let shown: Vec<usize> = (0..sessions.len())
+            .filter(|&k| sessions[k].shown_in(spatial))
+            .collect();
+        let repeats = |k: usize, d: &DrawnSet| {
+            shown.iter().any(|&s| {
+                s != k
+                    && sessions[s].leaf == d.leaf
+                    && Arc::ptr_eq(&sessions[s].mesh, &d.mesh)
+                    && near(&sessions[s].model_world, &d.model_world)
+            })
+        };
+        let keep: Vec<bool> = sessions
+            .iter()
+            .enumerate()
+            .map(|(k, d)| {
+                if d.unborn || shown.contains(&k) {
+                    return true;
+                }
+                if repeats(k, d) {
+                    return false;
+                }
+                // A model the scene no longer holds may come back as it was.
+                let Some(query) = spatial.leaf(d.model) else {
+                    return true;
+                };
+                let parent = query.parent_world();
+                near(&query.world_transform(), &d.model_world)
+                    || poses.get(&d.model).is_some_and(|ts| {
+                        ts.iter().any(|t| near(&parent.compose(t), &d.model_world))
+                    })
+            })
+            .collect();
+        let mut k = 0;
+        sessions.retain(|_| {
+            k += 1;
+            keep[k - 1]
+        });
+    });
+}
+
+fn affine_of(t: &Transform3D) -> sc_mesh_core::transform::AffineTransform3D {
+    match t {
+        Transform3D::Identity => sc_mesh_core::transform::AffineTransform3D::identity(),
+        Transform3D::Affine(a) => *a,
+    }
+}
+
 /// The drawing in force for the support leaf `leaf`: the one whose mesh the
 /// leaf shows, while its model stands as it did. `None` when the leaf shows
 /// supports no session drew, or its model moved on (a rotation, a scale, a

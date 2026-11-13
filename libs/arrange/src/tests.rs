@@ -787,3 +787,56 @@ fn kept_footprints_on_a_real_model() {
         again.plates_used,
     );
 }
+
+/// The spread an arrangement reports is the spread of its bodies once they
+/// stand where it put them (#560), so the two can be weighed; scattered
+/// bodies are more spread out than arranged.
+#[test]
+fn an_arrangement_s_spread_is_what_its_bodies_measure_as_they_stand() {
+    let mesh = cube();
+    let plate = plate(120.0, 80.0);
+    let bodies: Vec<Body> = [[8.0, 8.0], [100.0, 60.0], [10.0, 62.0], [95.0, 9.0]]
+        .iter()
+        .map(|&[x, y]| body(vec![boxed(&mesh, [9.0, 6.0, 4.0], [x, y, 0.0])]))
+        .collect();
+    let s = Settings::default();
+    let on = vec![Some(0); bodies.len()];
+    let scattered = crate::spread_now(&bodies, &on, &[plate], &s);
+    let across = crate::arrange_across(
+        &bodies,
+        &[None; 4],
+        &[plate],
+        &s,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let moved: Vec<Body> = bodies
+        .iter()
+        .zip(&across.placements)
+        .map(|(b, p)| {
+            let motion = p.map_or(AffineTransform3D::identity(), |(_, p)| p.motion());
+            Body {
+                parts: b
+                    .parts
+                    .iter()
+                    .map(|part| Part {
+                        mesh: part.mesh.clone(),
+                        world: motion.compose(&part.world),
+                    })
+                    .collect(),
+                fixed: false,
+            }
+        })
+        .collect();
+    let arranged = crate::spread_now(&moved, &on, &[plate], &s);
+    assert!(
+        across.spread < scattered / 2.0,
+        "{} {scattered}",
+        across.spread
+    );
+    assert!(
+        (arranged - across.spread).abs() <= across.spread * 0.05,
+        "{arranged} {}",
+        across.spread
+    );
+}

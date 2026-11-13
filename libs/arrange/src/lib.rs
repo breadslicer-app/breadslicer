@@ -475,7 +475,79 @@ pub struct Across {
     /// How many of the plates given hold a body once arranged: the last one
     /// with anything on it, and every plate before it.
     pub plates_used: usize,
+    /// How spread out the plates are once arranged: the area (mm²) of the
+    /// box around what each plate holds, summed over the plates (#560).
+    /// [`spread_now`] measures the plates as they stand the same way.
+    pub spread: f64,
     pub timings: Timings,
+}
+
+/// The boxes around what each plate holds, in plate cells: the measure of
+/// [`Across::spread`].
+#[derive(Default)]
+struct Spread(std::collections::HashMap<usize, [i32; 4]>);
+
+impl Spread {
+    /// `shape` with its frame's corner at plate cell `at`, on plate `plate`.
+    fn add(&mut self, plate: usize, shape: &footprint::Shape, at: [i32; 2]) {
+        let b = [
+            at[0] + shape.lo[0],
+            at[1] + shape.lo[1],
+            at[0] + shape.hi[0],
+            at[1] + shape.hi[1],
+        ];
+        self.0
+            .entry(plate)
+            .and_modify(|m| {
+                *m = [
+                    m[0].min(b[0]),
+                    m[1].min(b[1]),
+                    m[2].max(b[2]),
+                    m[3].max(b[3]),
+                ]
+            })
+            .or_insert(b);
+    }
+
+    fn mm2(&self, cell: f64) -> f64 {
+        self.0
+            .values()
+            .map(|b| f64::from(b[2] - b[0]) * f64::from(b[3] - b[1]) * cell * cell)
+            .sum()
+    }
+}
+
+/// How spread out `bodies` stand now, each on the plate of `plates` that
+/// `stands_on` names (#560): the measure [`Across::spread`] gives an
+/// arrangement, so the two can be weighed. Bodies on no plate are left out.
+pub fn spread_now(
+    bodies: &[Body],
+    stands_on: &[Option<usize>],
+    plates: &[Plate],
+    settings: &Settings,
+) -> f64 {
+    let shapes: Vec<Option<(usize, Footprint, [i32; 2])>> = bodies
+        .par_iter()
+        .enumerate()
+        .map(|(i, body)| {
+            let p = (*stands_on.get(i)?)?;
+            let frame = Frame::new(plates.get(p)?, settings);
+            // Drawn as an arrangement draws a body it moves, to be weighed
+            // against one cell for cell.
+            let fp = frame.footprint(body, false, &[0.0])?;
+            let cell = frame.geo.cell;
+            let at = [
+                ((fp.reference[0] - frame.origin[0]) / cell).round() as i32 - fp.radius,
+                ((fp.reference[1] - frame.origin[1]) / cell).round() as i32 - fp.radius,
+            ];
+            Some((p, fp, at))
+        })
+        .collect();
+    let mut spread = Spread::default();
+    for (p, fp, at) in shapes.iter().flatten() {
+        spread.add(*p, &fp.shapes[0], *at);
+    }
+    spread.mm2(settings.cell.max(0.05))
 }
 
 impl Across {
@@ -508,6 +580,7 @@ pub fn arrange_across(
         return Ok(Across {
             placements: vec![None; bodies.len()],
             plates_used: 0,
+            spread: 0.0,
             timings: Timings::default(),
         });
     };
@@ -575,6 +648,7 @@ pub fn arrange_across(
         .filter_map(|i| stands_on[i])
         .max();
     let mut used = last_standing.map_or(0, |p| p + 1);
+    let mut spread = Spread::default();
     for (p, plate) in plates.iter().enumerate() {
         if left.is_empty() {
             break;
@@ -588,6 +662,14 @@ pub fn arrange_across(
             .filter_map(|i| standing[i].as_ref())
             .collect();
         let occupancy = frame.plate_with(bands, fixed.iter().copied());
+        for fp in &fixed {
+            let cell = frame.geo.cell;
+            let at = [
+                ((fp.reference[0] - frame.origin[0]) / cell).round() as i32 - fp.radius,
+                ((fp.reference[1] - frame.origin[1]) / cell).round() as i32 - fp.radius,
+            ];
+            spread.add(p, &fp.shapes[0], at);
+        }
         let moving: Vec<Footprint> = left.iter().filter_map(|&i| footprints[i].clone()).collect();
         let problem = Problem {
             footprints: &moving,
@@ -604,6 +686,7 @@ pub fn arrange_across(
         for (k, &body) in left.iter().enumerate() {
             match layout.placed[k] {
                 Some((angle, at)) => {
+                    spread.add(p, &moving[k].shapes[angle], at);
                     placements[body] =
                         Some((p, frame.placement(&moving[k], angle, at, layout.shift)));
                 }
@@ -635,6 +718,7 @@ pub fn arrange_across(
     Ok(Across {
         placements,
         plates_used: used,
+        spread: spread.mm2(base.geo.cell),
         timings: Timings {
             footprints: footprinted - started,
             search: done - footprinted,

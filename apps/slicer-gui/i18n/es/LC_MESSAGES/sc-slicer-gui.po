@@ -3201,6 +3201,11 @@ msgid "Everything is already in place."
 msgstr "Todo ya está en su lugar."
 
 #: src/arrange_run.rs
+msgctxt "Inspector"
+msgid "Already arranged: nothing changed since the last Arrange."
+msgstr "Ya está acomodado: no cambió nada desde el último Acomodar."
+
+#: src/arrange_run.rs
 #, rust-format
 msgctxt "Inspector"
 msgid "Arranged {n} object in {} s."

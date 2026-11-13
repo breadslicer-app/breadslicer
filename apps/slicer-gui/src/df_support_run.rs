@@ -7095,6 +7095,49 @@ mod hand_edit_tests {
         });
     }
 
+    /// #560: Arrange all pressed again with nothing done since keeps one
+    /// step, and the sets' drawings of the places in the middle go.
+    #[test]
+    fn arranging_again_keeps_no_drawings_of_the_places_in_the_middle() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let volume = crate::build_volume::BuildVolume::new(120.0, 80.0, 100.0);
+            crate::arrange_run::arrange_across_now(
+                &document,
+                &volume,
+                Default::default(),
+                crate::arrange_run::ArrangeScope::Plates,
+                false,
+            )
+            .expect("arranged");
+            let steps = document.undo_len();
+            let drawings = run.sessions.borrow().len();
+            for _ in 0..3 {
+                let _ =
+                    crate::arrange_run::arrange_again_now(&document, &volume, Default::default());
+                assert_eq!(document.undo_len(), steps, "one step");
+                assert!(
+                    run.sessions.borrow().len() <= drawings,
+                    "no drawings pile up"
+                );
+            }
+            assert_eq!(run.sets_in_force().len(), 2, "both still editable");
+            // One Undo: both models and their sets as generated.
+            assert!(document.undo().unwrap());
+            for &l in &leaves {
+                let (set, _) = set_of(&document, &run, l);
+                let at_rest = match leaf_transform(&document, set) {
+                    Transform3D::Identity => true,
+                    Transform3D::Affine(a) => a == AffineTransform3D::identity(),
+                };
+                assert!(at_rest, "the set where it was generated");
+            }
+            assert_eq!(run.sets_in_force().len(), 2, "editable after Undo");
+        });
+    }
+
     /// Ends the run in flight as its poll would.
     fn finish_running(run: &DfSupportRun) {
         let handle = run.handle.borrow_mut().take().expect("a run in flight");
