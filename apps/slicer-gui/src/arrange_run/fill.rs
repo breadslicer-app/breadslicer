@@ -177,6 +177,7 @@ impl ArrangeRun {
             },
         );
         ui.set_arrange_fill_progress(progress_text(&progress).into());
+        self.stop_ahead();
         ui.set_arranging(true);
         ui.set_arrange_filling(true);
         crate::breadcrumbs::note(&format!(

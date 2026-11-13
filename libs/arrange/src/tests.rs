@@ -566,3 +566,224 @@ fn a_body_too_big_for_any_plate_waits_beside_the_last_plate_used() {
     assert_eq!(across.plates_used, 1);
     assert_eq!(across.placements[1].map(|(p, _)| p), Some(0));
 }
+
+/// A box `size` mm turned `turn` radians about the vertical, its middle at
+/// `at` (on the plate).
+fn turned_box(mesh: &Arc<IndexedMesh>, size: [f64; 3], turn: f64, at: [f64; 2]) -> Part {
+    let (s, c) = turn.sin_cos();
+    Part {
+        mesh: mesh.clone(),
+        world: AffineTransform3D::from_linear_and_translation(
+            [
+                [c * size[0], -s * size[1], 0.0],
+                [s * size[0], c * size[1], 0.0],
+                [0.0, 0.0, size[2]],
+            ],
+            [at[0], at[1], size[2] * 0.5],
+        ),
+    }
+}
+
+/// A body moved and turned about the vertical keeps the bands drawn for it
+/// (#560); scaled, it is drawn again.
+#[test]
+fn a_body_moved_and_turned_keeps_its_bands() {
+    let mesh = cube();
+    let plate = plate(80.0, 80.0);
+    let cancel = AtomicBool::new(false);
+    let run = |part: Part| {
+        arrange(&[body(vec![part])], &plate, &Settings::default(), &cancel).expect("arranged");
+    };
+    run(turned_box(&mesh, [10.0, 6.0, 4.0], 0.0, [20.0, 20.0]));
+    assert_eq!(crate::cache::kept_parts_of(&mesh), 1);
+    run(turned_box(&mesh, [10.0, 6.0, 4.0], 0.7, [53.3, 31.9]));
+    assert_eq!(crate::cache::kept_parts_of(&mesh), 1, "the same bands");
+    run(turned_box(&mesh, [10.0, 6.0, 5.0], 0.7, [53.3, 31.9]));
+    assert_eq!(crate::cache::kept_parts_of(&mesh), 2, "taller: drawn again");
+}
+
+/// A body that stands turned is placed as it stands: kept bands are turned
+/// the way the body is (#560). Bars of 20 × 4 standing upright, four wide
+/// by twenty deep, fit five in a row of 27 mm; lying, they would fit four.
+#[test]
+fn a_body_standing_turned_is_placed_as_it_stands() {
+    let mesh = cube();
+    let plate = plate(37.0, 32.0);
+    let s = Settings {
+        turns: 1,
+        ..Settings::default()
+    };
+    let bodies: Vec<Body> = (0..6)
+        .map(|k| {
+            body(vec![turned_box(
+                &mesh,
+                [20.0, 4.0, 3.0],
+                std::f64::consts::FRAC_PI_2,
+                [100.0 + 7.0 * k as f64, 100.0],
+            )])
+        })
+        .collect();
+    let outcome = arrange(&bodies, &plate, &s, &AtomicBool::new(false)).expect("arranged");
+    let on = outcome
+        .placements
+        .iter()
+        .filter(|p| p.is_some_and(|p| p.on_plate))
+        .count();
+    assert_eq!(on, 5);
+    let placed: Vec<Option<Placement>> = outcome
+        .placements
+        .iter()
+        .map(|p| p.filter(|p| p.on_plate))
+        .collect();
+    let (kept, at): (Vec<Body>, Vec<Option<Placement>>) = bodies
+        .iter()
+        .cloned()
+        .zip(placed)
+        .filter(|(_, p)| p.is_some())
+        .unzip();
+    assert_kept_apart(&kept, &at, &plate, &s);
+}
+
+/// Drawn ahead, the bands are there when the arrangement comes, once for
+/// copies of a body (#560).
+#[test]
+fn bands_drawn_ahead_are_not_drawn_again() {
+    let mesh = cube();
+    let plate = plate(80.0, 80.0);
+    let cancel = AtomicBool::new(false);
+    let bodies: Vec<Body> = (0..4)
+        .map(|k| {
+            body(vec![turned_box(
+                &mesh,
+                [7.0, 5.0, 3.0],
+                0.3 * k as f64,
+                [10.0 + 15.0 * k as f64, 10.0],
+            )])
+        })
+        .collect();
+    assert_eq!(
+        crate::warm(&bodies, &plate, &Settings::default(), &cancel),
+        1
+    );
+    assert_eq!(
+        crate::warm(&bodies, &plate, &Settings::default(), &cancel),
+        0
+    );
+    arrange(&bodies, &plate, &Settings::default(), &cancel).expect("arranged");
+    assert_eq!(crate::cache::kept_parts_of(&mesh), 1);
+}
+
+/// Copies of a source whose snapped reference lies off its middle keep the
+/// gap at every turn (#560): turned, that offset turns with them. Cubes of
+/// 4 mm keep 1 mm when their middles are 5 mm apart along an axis, or the
+/// cubes' circles 1 mm apart.
+#[test]
+fn copies_turned_keep_the_gap() {
+    let bodies: Vec<Body> = [[10.0, 10.0], [25.0, 20.0], [40.0, 30.0]]
+        .iter()
+        .map(|&[x, y]| {
+            body(vec![boxed(
+                &cube(),
+                [4.0, 4.0, 4.0],
+                [x - 2.0, y - 2.0, 0.0],
+            )])
+        })
+        .collect();
+    let plate = plate(50.0, 40.0);
+    let filled = fill_now(&bodies, &[0], &plate, &Settings::default(), None);
+    assert!(filled.copies.len() > 10, "{}", filled.copies.len());
+    let (all, placements) = filled_plate(&bodies, &filled);
+    let middles: Vec<[f64; 2]> = all
+        .iter()
+        .zip(&placements)
+        .map(|(b, p)| {
+            let c = corners(b, *p);
+            let n = c.len() as f64;
+            [
+                c.iter().map(|q| q[0]).sum::<f64>() / n,
+                c.iter().map(|q| q[1]).sum::<f64>() / n,
+            ]
+        })
+        .collect();
+    for (i, a) in middles.iter().enumerate() {
+        for b in &middles[i + 1..] {
+            let (dx, dy) = ((a[0] - b[0]).abs(), (a[1] - b[1]).abs());
+            assert!(
+                dx.max(dy) >= 5.0 - 1e-6
+                    || dx.hypot(dy) >= 4.0 * std::f64::consts::SQRT_2 + 1.0 - 1e-6,
+                "{a:?} {b:?}"
+            );
+        }
+    }
+}
+
+/// How long Arrange all takes on copies of a real model the first time and
+/// again after they moved (#560). `ARRANGE_BENCH_STL` names the model,
+/// `ARRANGE_BENCH_COPIES` how many (12), each with a mesh of its own.
+#[test]
+#[ignore = "a measurement on a real model"]
+fn kept_footprints_on_a_real_model() {
+    let Some(path) = std::env::var_os("ARRANGE_BENCH_STL") else {
+        return;
+    };
+    let copies: usize = std::env::var("ARRANGE_BENCH_COPIES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(12);
+    let loaded = sc_mesh_formats::load_mesh_from_path(std::path::Path::new(&path), None, None)
+        .expect("loads");
+    let graph = loaded.graph;
+    let mesh = graph
+        .roots()
+        .iter()
+        .find_map(|&r| graph.leaf_mesh_arc(r))
+        .expect("a mesh")
+        .clone();
+    let bodies: Vec<Body> = (0..copies)
+        .map(|k| {
+            let own = Arc::new((*mesh).clone());
+            let (s, c) = (0.4 * k as f64).sin_cos();
+            body(vec![Part {
+                mesh: own,
+                world: AffineTransform3D::from_linear_and_translation(
+                    [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]],
+                    [400.0 + 60.0 * k as f64, 0.0, 0.0],
+                ),
+            }])
+        })
+        .collect();
+    let plates = plates_in_a_row(6, 223.642, 126.976);
+    let stands_on = vec![None; bodies.len()];
+    let cancel = AtomicBool::new(false);
+    let s = Settings::default();
+    let first = crate::arrange_across(&bodies, &stands_on, &plates, &s, &cancel).unwrap();
+    // The bodies where the first run put them, then arranged again.
+    let moved: Vec<Body> = bodies
+        .iter()
+        .zip(&first.placements)
+        .map(|(b, p)| {
+            let motion = p.map_or(AffineTransform3D::identity(), |(_, p)| p.motion());
+            Body {
+                parts: b
+                    .parts
+                    .iter()
+                    .map(|part| Part {
+                        mesh: part.mesh.clone(),
+                        world: motion.compose(&part.world),
+                    })
+                    .collect(),
+                fixed: false,
+            }
+        })
+        .collect();
+    let again = crate::arrange_across(&moved, &stands_on, &plates, &s, &cancel).unwrap();
+    println!(
+        "{copies} copies: first {:.2} s footprints + {:.2} s search on {} plate(s); again {:.2} s + {:.2} s on {}",
+        first.timings.footprints.as_secs_f64(),
+        first.timings.search.as_secs_f64(),
+        first.plates_used,
+        again.timings.footprints.as_secs_f64(),
+        again.timings.search.as_secs_f64(),
+        again.plates_used,
+    );
+}

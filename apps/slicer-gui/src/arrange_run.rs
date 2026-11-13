@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use sc_arrange::{Across, Body, Outcome, Part, Placement, Plate, Settings};
 use sc_geom::df_supports::is_any_support_mesh;
@@ -149,7 +149,25 @@ pub(crate) struct ArrangeRun {
     across: RefCell<Option<AcrossPending>>,
     cancel: Arc<AtomicBool>,
     fill: fill::Fill,
+    ahead: Ahead,
 }
+
+/// The footprints drawn ahead (#560): once the scene has stood still a
+/// moment, every part's bands are drawn in the background and kept, so an
+/// Arrange, Fill bed or import finds them ready.
+#[derive(Default)]
+struct Ahead {
+    timer: slint::Timer,
+    /// The scene and the card's options last drawn for.
+    drawn: Cell<Option<(SceneRevision, ArrangeOptions)>>,
+    /// The scene the last look found: drawing waits for it to stand still.
+    seen: Cell<Option<SceneRevision>>,
+    running: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+}
+
+/// How often the scene is looked at for footprints to draw ahead.
+const AHEAD_TICK: Duration = Duration::from_millis(400);
 
 impl ArrangeRun {
     /// Wires the Arrange card's callbacks and returns the driver, which the
@@ -172,8 +190,19 @@ impl ArrangeRun {
             across: RefCell::new(None),
             cancel: Arc::new(AtomicBool::new(false)),
             fill: fill::Fill::default(),
+            ahead: Ahead::default(),
         });
         run.push_options(ui);
+        {
+            let weak = Rc::downgrade(&run);
+            run.ahead
+                .timer
+                .start(slint::TimerMode::Repeated, AHEAD_TICK, move || {
+                    if let Some(run) = weak.upgrade() {
+                        run.draw_ahead();
+                    }
+                });
+        }
         {
             let run = run.clone();
             ui.on_arrange_requested(move |selection| run.start(selection, ArrangeScope::Plates));
@@ -200,6 +229,61 @@ impl ArrangeRun {
             ui.on_arrange_fill_requested(move || run.start_fill());
         }
         run
+    }
+
+    /// Draws the scene's footprints in the background once it stands still,
+    /// when nothing else is busy (#560).
+    fn draw_ahead(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if self.ahead.running.load(Ordering::Relaxed)
+            || !self.document.is_loaded()
+            || ui.get_loading()
+            || ui.get_slicing_in_progress()
+            || ui.get_repairing_in_progress()
+            || ui.get_arranging()
+            || self.ctrl.is_mid_gesture()
+        {
+            return;
+        }
+        let now = (self.document.scene_revision(), self.options.get());
+        if self.ahead.drawn.get() == Some(now) {
+            return;
+        }
+        // The scene stood still since the last look.
+        if self.ahead.seen.replace(Some(now.0)) != Some(now.0) {
+            return;
+        }
+        self.ahead.drawn.set(Some(now));
+        let Some(gathered) = gather_all(&self.document, false) else {
+            return;
+        };
+        let plate = plate_of(&self.ctrl.build_volume());
+        let settings = now.1.settings();
+        let (running, cancel) = (self.ahead.running.clone(), self.ahead.cancel.clone());
+        cancel.store(false, Ordering::Relaxed);
+        running.store(true, Ordering::Relaxed);
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            let drawn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sc_arrange::warm(&gathered.bodies, &plate, &settings, &cancel)
+            }));
+            if let Ok(drawn) = drawn
+                && drawn > 0
+            {
+                crate::breadcrumbs::note(&format!(
+                    "arrange: {drawn} part(s) drawn ahead in {:.2} s",
+                    started.elapsed().as_secs_f64()
+                ));
+            }
+            running.store(false, Ordering::Relaxed);
+        });
+    }
+
+    /// Stops drawing ahead: a run of its own draws what it needs.
+    fn stop_ahead(&self) {
+        self.ahead.cancel.store(true, Ordering::Relaxed);
     }
 
     fn push_options(&self, ui: &MainWindow) {
@@ -264,6 +348,7 @@ impl ArrangeRun {
             started: Instant::now(),
         });
         self.cancel.store(false, Ordering::Relaxed);
+        self.stop_ahead();
         ui.set_arranging(true);
         crate::breadcrumbs::note(&format!(
             "arrange: {} plate(s), {} object(s), selection {selection}",
@@ -350,6 +435,7 @@ impl ArrangeRun {
             started: Instant::now(),
         });
         self.cancel.store(false, Ordering::Relaxed);
+        self.stop_ahead();
         ui.set_arranging(true);
         let slot = self.across_slot.clone();
         let cancel = self.cancel.clone();

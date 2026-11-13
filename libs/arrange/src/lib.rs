@@ -31,12 +31,14 @@
 //! did: a model and its supports turn together as one rigid piece, so
 //! nothing has to be generated again.
 
+mod cache;
 mod fill;
 mod footprint;
 mod grid;
 mod plate;
 mod search;
 
+pub use cache::{kept_parts, kept_parts_of};
 pub use fill::{FillCopy, Filled, fill};
 
 use std::f64::consts::TAU;
@@ -48,7 +50,7 @@ use rayon::prelude::*;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::AffineTransform3D;
 
-use crate::footprint::{Footprint, Geometry, Placed};
+use crate::footprint::{Base, Footprint, Geometry};
 use crate::plate::Occupancy;
 use crate::search::Problem;
 
@@ -218,16 +220,39 @@ impl Frame {
     /// so its first angle can be stamped where it stands. `None` for no
     /// triangles.
     fn footprint(&self, body: &Body, snap: bool, angles: &[f64]) -> Option<Footprint> {
-        let parts: Vec<Placed<'_>> = body
+        // Each part's bands, drawn in the body's own frame and kept between
+        // runs (#560), then joined and turned the way the body stands.
+        let own = OwnFrame::of(&body.parts.first()?.world);
+        let bases: Vec<Arc<Base>> = body
             .parts
             .iter()
-            .map(|p| Placed {
-                mesh: &p.mesh,
-                world: &p.world,
-            })
+            .filter_map(|p| cache::part_base(&p.mesh, &own.pose(&p.world), &self.geo))
             .collect();
-        let snap = snap.then_some((self.origin, self.geo.cell));
-        Some(footprint::base(&parts, &self.geo, snap)?.turned(angles, &self.geo))
+        let parts: Vec<&Base> = bases.iter().map(Arc::as_ref).collect();
+        let fine = self.geo.fine;
+        let joined = Base::joined(&parts, fine)?;
+        // It turns about the middle of what it covers, on the fine grid.
+        let middle = joined.middle(fine)?;
+        let about = [
+            (middle[0] / fine).round() * fine,
+            (middle[1] / fine).round() * fine,
+        ];
+        let joined = joined.about(about);
+        let (s, c) = own.turn.sin_cos();
+        let world = [
+            own.at[0] + c * about[0] - s * about[1],
+            own.at[1] + s * about[0] + c * about[1],
+        ];
+        let (reference, offset) = if snap {
+            let cell = self.geo.cell;
+            let at: [f64; 2] = std::array::from_fn(|k| {
+                self.origin[k] + ((world[k] - self.origin[k]) / cell).round() * cell
+            });
+            (at, [world[0] - at[0], world[1] - at[1]])
+        } else {
+            (world, [0.0, 0.0])
+        };
+        Some(joined.turned_about(angles, &self.geo, own.turn, offset, reference))
     }
 
     /// An empty plate as high as `bands`, with the first shape of each of
@@ -266,6 +291,75 @@ impl Frame {
             on_plate: true,
         }
     }
+}
+
+/// A body's own frame (#560): where its first part stands in the plate
+/// plane, and how far it is turned about the vertical axis. A part's pose
+/// in it stays the same when the body moves or turns about that axis.
+#[derive(Clone, Copy, Debug)]
+struct OwnFrame {
+    turn: f64,
+    at: [f64; 2],
+}
+
+impl OwnFrame {
+    fn of(first: &AffineTransform3D) -> OwnFrame {
+        let (l, t) = (first.linear(), first.translation());
+        // Where the part's own X axis points from above; its Y axis when X
+        // stands upright.
+        let turn = if l[0][0].hypot(l[1][0]) > 1e-9 {
+            l[1][0].atan2(l[0][0])
+        } else {
+            l[1][1].atan2(l[0][1])
+        };
+        OwnFrame {
+            turn,
+            at: [t[0], t[1]],
+        }
+    }
+
+    /// `world`, a part's pose in the world, as a pose in this frame.
+    fn pose(&self, world: &AffineTransform3D) -> AffineTransform3D {
+        let (s, c) = (-self.turn).sin_cos();
+        let (l, t) = (world.linear(), world.translation());
+        let linear: [[f64; 3]; 3] = std::array::from_fn(|r| {
+            std::array::from_fn(|k| match r {
+                0 => c * l[0][k] - s * l[1][k],
+                1 => s * l[0][k] + c * l[1][k],
+                _ => l[2][k],
+            })
+        });
+        let d = [t[0] - self.at[0], t[1] - self.at[1]];
+        AffineTransform3D::from_linear_and_translation(
+            linear,
+            [c * d[0] - s * d[1], s * d[0] + c * d[1], t[2]],
+        )
+    }
+}
+
+/// Draws ahead the bands an arrangement of `bodies` on plates like `plate`
+/// with `settings` would draw first, and keeps them (#560): an Arrange,
+/// Fill bed or import afterwards finds them ready. Checks `cancel` between
+/// parts. Returns how many parts it drew.
+pub fn warm(bodies: &[Body], plate: &Plate, settings: &Settings, cancel: &AtomicBool) -> usize {
+    let frame = Frame::new(plate, settings);
+    let parts: Vec<(Arc<IndexedMesh>, AffineTransform3D)> = bodies
+        .iter()
+        .flat_map(|body| {
+            let own = body.parts.first().map(|p| OwnFrame::of(&p.world));
+            body.parts
+                .iter()
+                .filter_map(move |p| Some((p.mesh.clone(), own?.pose(&p.world))))
+        })
+        .collect();
+    let wanted = cache::wanted(parts, &frame.geo);
+    wanted
+        .par_iter()
+        .filter(|(mesh, pose)| {
+            !cancel.load(std::sync::atomic::Ordering::Relaxed)
+                && cache::part_base(mesh, pose, &frame.geo).is_some()
+        })
+        .count()
 }
 
 /// How many height bands `footprints` reach.

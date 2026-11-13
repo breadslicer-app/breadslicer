@@ -187,6 +187,7 @@ fn clip_to_slab(tri: &[[f64; 3]; 3], z_lo: f64, z_hi: f64) -> Vec<[f64; 2]> {
 /// The cross-sections of the meshes `parts`, band by band, turning about
 /// the middle of their shadow; with `snap`, a grid's corner and cell, about
 /// the grid corner nearest it. `None` for no triangles.
+#[cfg(test)]
 pub(crate) fn base(
     parts: &[Placed<'_>],
     geo: &Geometry,
@@ -223,6 +224,71 @@ pub(crate) fn base(
         None => 1,
         Some(h) => (((hi[2] - geo.floor) / h).ceil() as usize).max(1),
     };
+    let bands = drawn(parts, geo, reference, origin, [width, height], band_count);
+    Some(Base {
+        reference,
+        origin,
+        bands,
+    })
+}
+
+/// The cross-sections of the mesh `part`, band by band, on the fine grid
+/// laid from the world's origin (#560): the reference is the origin, and
+/// the grid's corner a whole number of fine cells from it, so the bases
+/// of several parts drawn this way join cell for cell. Its last band
+/// reaches half the gap above its top, so a taller part joined to it
+/// finds it in every band it reaches. `None` for no triangles.
+pub(crate) fn part_base(part: &Placed<'_>, geo: &Geometry) -> Option<Base> {
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for v in part.mesh.vertices() {
+        let p = apply(part.world, v.coords());
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    if !(lo[0].is_finite() && hi[0].is_finite()) {
+        return None;
+    }
+    let fine = geo.fine;
+    let origin = [
+        (lo[0] / fine).floor() * fine - fine,
+        (lo[1] / fine).floor() * fine - fine,
+    ];
+    let width = ((hi[0] - origin[0]) / fine).ceil() as usize + 2;
+    let height = ((hi[1] - origin[1]) / fine).ceil() as usize + 2;
+    let band_count = match geo.band {
+        None => 1,
+        Some(h) => (((hi[2] - geo.floor + geo.gap * 0.5) / h).floor() as usize + 1).max(1),
+    };
+    let reference = [0.0, 0.0];
+    let bands = drawn(
+        std::slice::from_ref(part),
+        geo,
+        reference,
+        origin,
+        [width, height],
+        band_count,
+    );
+    Some(Base {
+        reference,
+        origin,
+        bands,
+    })
+}
+
+/// The bands `parts` take on the fine grid whose corner is `origin` from
+/// `reference`, `size` cells across, `band_count` bands high.
+fn drawn(
+    parts: &[Placed<'_>],
+    geo: &Geometry,
+    reference: [f64; 2],
+    origin: [f64; 2],
+    size: [usize; 2],
+    band_count: usize,
+) -> Vec<BaseBand> {
+    let fine = geo.fine;
+    let [width, height] = size;
     let reach_z = geo.gap * 0.5;
     let to_cells = |p: [f64; 3]| {
         [
@@ -302,19 +368,14 @@ pub(crate) fn base(
             a
         })
         .unwrap_or_else(empty);
-    let bands: Vec<BaseBand> = grids
+    grids
         .into_par_iter()
         .enumerate()
         .filter_map(|(band, mut grid)| {
             grid.fill_holes();
             base_band(band, &grid, origin, fine)
         })
-        .collect();
-    Some(Base {
-        reference,
-        origin,
-        bands,
-    })
+        .collect()
 }
 
 /// A band's grid as merged runs, with its area and centroid; `None` when
@@ -381,7 +442,22 @@ fn base_band(band: usize, grid: &BitGrid, origin: [f64; 2], fine: f64) -> Option
 impl Base {
     /// The footprint at each of `angles` (radians, counter-clockwise from
     /// the body as it stands).
+    #[cfg(test)]
     pub(crate) fn turned(&self, angles: &[f64], geo: &Geometry) -> Footprint {
+        self.turned_about(angles, geo, 0.0, [0.0, 0.0], self.reference)
+    }
+
+    /// The footprint at each of `angles` of a body that stands as this base
+    /// turned by `turn` about its reference, which lands `offset` (mm) from
+    /// `reference`, the footprint's own reference (#560).
+    pub(crate) fn turned_about(
+        &self,
+        angles: &[f64],
+        geo: &Geometry,
+        turn: f64,
+        offset: [f64; 2],
+        reference: [f64; 2],
+    ) -> Footprint {
         let reach = geo.reach();
         let margin = reach.ceil() as i32 + 1;
         let corners = self.bands.iter().flat_map(|b| {
@@ -393,28 +469,149 @@ impl Base {
                 let p = self.at(x, y, geo.fine);
                 (p[0] * p[0] + p[1] * p[1]).sqrt()
             })
-            .fold(0.0, f64::max);
+            .fold(0.0, f64::max)
+            + (offset[0] * offset[0] + offset[1] * offset[1]).sqrt();
         let radius = (far / geo.cell).ceil() as i32 + margin + 2;
+        // Turned by `angle` about the footprint's reference, the base's
+        // reference, `offset` from it, turns about it too.
         let shapes: Vec<Shape> = angles
             .par_iter()
-            .map(|&angle| self.shape(angle, radius, margin, geo))
+            .map(|&angle| {
+                let (s, c) = angle.sin_cos();
+                let offset = [c * offset[0] - s * offset[1], s * offset[0] + c * offset[1]];
+                self.shape(angle + turn, offset, radius, margin, geo)
+            })
             .collect();
+        let (s, c) = turn.sin_cos();
         let peel: Vec<Peel> = self
             .bands
             .iter()
-            .map(|b| Peel {
-                band: b.band,
-                area: b.area,
-                centroid: b.centroid,
+            .map(|b| {
+                let [x, y] = b.centroid;
+                Peel {
+                    band: b.band,
+                    area: b.area,
+                    centroid: [c * x - s * y + offset[0], s * x + c * y + offset[1]],
+                }
             })
             .collect();
         Footprint {
-            reference: self.reference,
+            reference,
             radius,
             angles: angles.into(),
             shapes: shapes.into(),
             peel: peel.into(),
         }
+    }
+
+    /// The bases of the parts of a body, each drawn by [`part_base`] in the
+    /// same frame, as one (#560). `None` for none with triangles.
+    pub(crate) fn joined(parts: &[&Base], fine: f64) -> Option<Base> {
+        let first = parts.first()?;
+        let origin = parts
+            .iter()
+            .filter(|b| !b.bands.is_empty())
+            .map(|b| b.origin)
+            .fold([f64::INFINITY; 2], |m, o| [m[0].min(o[0]), m[1].min(o[1])]);
+        if !origin[0].is_finite() {
+            return Some(Base {
+                reference: first.reference,
+                origin: first.origin,
+                bands: Vec::new(),
+            });
+        }
+        let mut bands: Vec<BaseBand> = Vec::new();
+        for part in parts {
+            // Whole fine cells apart: both corners lie on the same grid.
+            let shift = [
+                ((part.origin[0] - origin[0]) / fine).round() as u32,
+                ((part.origin[1] - origin[1]) / fine).round() as u32,
+            ];
+            for b in &part.bands {
+                let moved: Vec<[u32; 4]> = b
+                    .rects
+                    .iter()
+                    .map(|r| {
+                        [
+                            r[0] + shift[0],
+                            r[1] + shift[1],
+                            r[2] + shift[0],
+                            r[3] + shift[1],
+                        ]
+                    })
+                    .collect();
+                let bounds = [
+                    b.bounds[0] + shift[0],
+                    b.bounds[1] + shift[1],
+                    b.bounds[2] + shift[0],
+                    b.bounds[3] + shift[1],
+                ];
+                match bands.iter_mut().find(|j| j.band == b.band) {
+                    Some(j) => {
+                        let area = j.area + b.area;
+                        j.centroid = [
+                            (j.centroid[0] * j.area + b.centroid[0] * b.area) / area,
+                            (j.centroid[1] * j.area + b.centroid[1] * b.area) / area,
+                        ];
+                        j.area = area;
+                        j.rects.extend(moved);
+                        j.bounds = [
+                            j.bounds[0].min(bounds[0]),
+                            j.bounds[1].min(bounds[1]),
+                            j.bounds[2].max(bounds[2]),
+                            j.bounds[3].max(bounds[3]),
+                        ];
+                    }
+                    None => bands.push(BaseBand {
+                        band: b.band,
+                        rects: moved,
+                        bounds,
+                        area: b.area,
+                        centroid: b.centroid,
+                    }),
+                }
+            }
+        }
+        bands.sort_by_key(|b| b.band);
+        Some(Base {
+            reference: first.reference,
+            origin,
+            bands,
+        })
+    }
+
+    /// The middle of what the base covers, from its reference (mm).
+    pub(crate) fn middle(&self, fine: f64) -> Option<[f64; 2]> {
+        let (mut lo, mut hi) = ([u32::MAX; 2], [0u32; 2]);
+        for b in &self.bands {
+            lo = [lo[0].min(b.bounds[0]), lo[1].min(b.bounds[1])];
+            hi = [hi[0].max(b.bounds[2]), hi[1].max(b.bounds[3])];
+        }
+        (lo[0] <= hi[0]).then(|| {
+            let a = self.at(lo[0], lo[1], fine);
+            let b = self.at(hi[0], hi[1], fine);
+            [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5]
+        })
+    }
+
+    /// The same base about the point `to` (mm, from its reference).
+    pub(crate) fn about(mut self, to: [f64; 2]) -> Base {
+        self.origin = [self.origin[0] - to[0], self.origin[1] - to[1]];
+        for b in &mut self.bands {
+            b.centroid = [b.centroid[0] - to[0], b.centroid[1] - to[1]];
+        }
+        self.reference = [self.reference[0] + to[0], self.reference[1] + to[1]];
+        self
+    }
+
+    /// Roughly how many bytes the base takes.
+    pub(crate) fn bytes(&self) -> usize {
+        size_of::<Base>()
+            + self
+                .bands
+                .iter()
+                .map(|b| size_of::<BaseBand>() + b.rects.len() * 16)
+                .sum::<usize>()
     }
 
     /// The fine cell corner `x`, `y` from the reference (mm).
@@ -425,14 +622,21 @@ impl Base {
         ]
     }
 
-    fn shape(&self, angle: f64, radius: i32, margin: i32, geo: &Geometry) -> Shape {
+    fn shape(
+        &self,
+        angle: f64,
+        offset: [f64; 2],
+        radius: i32,
+        margin: i32,
+        geo: &Geometry,
+    ) -> Shape {
         let (s, c) = angle.sin_cos();
         let cell = geo.cell;
         // A point from the reference (mm) to the body's frame (cells).
         let to_frame = |p: [f64; 2]| {
             [
-                (c * p[0] - s * p[1]) / cell + f64::from(radius),
-                (s * p[0] + c * p[1]) / cell + f64::from(radius),
+                (c * p[0] - s * p[1] + offset[0]) / cell + f64::from(radius),
+                (s * p[0] + c * p[1] + offset[1]) / cell + f64::from(radius),
             ]
         };
         let mut bands: Vec<BandMask> = self

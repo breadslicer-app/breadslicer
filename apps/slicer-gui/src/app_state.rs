@@ -3094,6 +3094,34 @@ mod window_wiring_tests {
         assert_eq!(copied, (false, true));
     }
 
+    /// Once the scene stands still, its footprints are drawn in the
+    /// background and kept for the next Arrange (#560).
+    #[test]
+    fn a_still_scene_has_its_footprints_drawn_ahead() {
+        let kept = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            load_selected_cube(&app, id);
+            let mesh = controller_of(&app, id)
+                .document()
+                .with_scene(|scene| {
+                    let leaf = scene.leaf_id_at_index(0)?;
+                    scene.graph().leaf_mesh_arc(leaf).cloned()
+                })
+                .flatten()
+                .expect("the cube's mesh");
+            let started = std::time::Instant::now();
+            while sc_arrange::kept_parts_of(&mesh) == 0
+                && started.elapsed() < std::time::Duration::from_secs(10)
+            {
+                settle();
+                thread::sleep(std::time::Duration::from_millis(50));
+            }
+            sc_arrange::kept_parts_of(&mesh)
+        });
+        assert_eq!(kept, 1);
+    }
+
     #[test]
     fn the_menu_copy_copies_the_selection_of_its_own_window() {
         let copied = on_fresh_slint_thread(|| {
