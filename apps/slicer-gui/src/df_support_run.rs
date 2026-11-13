@@ -214,6 +214,13 @@ pub(crate) struct DfSupportRun {
     /// shows (an index into the preset's sizes), the part pointed at, and
     /// the built-in preset the options in force were made from.
     shape_view: Cell<crate::support_shape::View>,
+    /// The support shows as a plan (2D), not in 3D (#567); kept between
+    /// sessions.
+    shape_flat: Cell<bool>,
+    /// The texts of the three drawings (the support, its tip's lens, its
+    /// foot's): kept, and changed row by row, so a number being dragged on a
+    /// drawing stays the same element while its value changes.
+    shape_texts: [Rc<slint::VecModel<crate::ShapeCallout>>; 3],
     shape_size: Cell<Option<usize>>,
     shape_hot: Cell<crate::support_shape::Part>,
     based_on: Cell<Option<usize>>,
@@ -1508,6 +1515,21 @@ fn save_hand_sizes(hand: &ZonePreset) {
     }
 }
 
+/// Whether the shape panel shows the support as a plan, as it was left.
+fn load_shape_flat() -> bool {
+    support_data_dir()
+        .and_then(|d| std::fs::read_to_string(d.join("shape-view")).ok())
+        .is_some_and(|text| text.trim() == "plan")
+}
+
+fn save_shape_flat(flat: bool) {
+    if let Some(dir) = support_data_dir()
+        && std::fs::create_dir_all(&dir).is_ok()
+    {
+        let _ = std::fs::write(dir.join("shape-view"), if flat { "plan" } else { "3d" });
+    }
+}
+
 /// Miniatures 20~65 mm (#490): what the Supports tab starts with.
 fn starting_options() -> DfSupportOptions {
     DfSupportOptions {
@@ -1638,6 +1660,8 @@ impl DfSupportRun {
             options: RefCell::new(load_saved_options()),
             presets: RefCell::new(Vec::new()),
             shape_view: Cell::new(crate::support_shape::View::default()),
+            shape_flat: Cell::new(load_shape_flat()),
+            shape_texts: std::array::from_fn(|_| Rc::new(slint::VecModel::default())),
             shape_size: Cell::new(None),
             shape_hot: Cell::new(crate::support_shape::Part::None),
             based_on: Cell::new(None),
@@ -1722,6 +1746,21 @@ impl DfSupportRun {
         {
             let run = run.clone();
             ui.on_support_preset_revert(move || run.on_preset_revert());
+        }
+        ui.set_support_shape_flat(run.shape_flat.get());
+        ui.set_support_shape_callouts(slint::ModelRc::from(run.shape_texts[0].clone()));
+        ui.set_support_shape_tip_callouts(slint::ModelRc::from(run.shape_texts[1].clone()));
+        ui.set_support_shape_foot_callouts(slint::ModelRc::from(run.shape_texts[2].clone()));
+        {
+            let run = run.clone();
+            ui.on_support_shape_flat_picked(move |flat| {
+                run.shape_flat.set(flat);
+                save_shape_flat(flat);
+                if let Some(ui) = run.ui.upgrade() {
+                    ui.set_support_shape_flat(flat);
+                }
+                run.redraw_shape();
+            });
         }
         {
             let run = run.clone();
@@ -3448,6 +3487,8 @@ impl DfSupportRun {
             .map(|(&i, name)| crate::ShapeSize {
                 name: name.into(),
                 tip: zones.rules.sizes[i].tip_diameter_mm as f32,
+                trunk: zones.rules.sizes[i].trunk_diameter_mm as f32,
+                length: zones.rules.sizes[i].tip_length_mm as f32,
             })
             .collect();
         ui.set_support_shape_sizes(slint::ModelRc::new(slint::VecModel::from(chips)));
@@ -3549,31 +3590,70 @@ impl DfSupportRun {
         }
     }
 
+    /// Draws the shape panel's three drawings of `size`: the support (in
+    /// 3D or as a plan) and the lenses on its tip and its foot.
     fn draw_shape(&self, ui: &MainWindow, size: &sc_geom::df_supports::SupportSize) {
-        use crate::support_shape::{SHAPE_HEIGHT, SHAPE_WIDTH, draw};
+        use crate::support_shape::{
+            Drawing, LENS_HEIGHT, LENS_WIDTH, SHAPE_HEIGHT, SHAPE_WIDTH, draw, draw_foot_lens,
+            draw_plan, draw_tip_lens,
+        };
         let hot = self.shape_hot.get();
-        let drawing = draw(
-            size,
-            self.shape_view.get(),
-            SHAPE_WIDTH,
-            SHAPE_HEIGHT,
-            ui.window().scale_factor(),
-            hot,
-        );
-        let callouts: Vec<crate::ShapeCallout> = drawing
-            .callouts
-            .into_iter()
-            .map(|c| crate::ShapeCallout {
-                x: c.x,
-                y: c.y,
-                right: c.right,
-                part: c.part as i32,
-                prefix: c.prefix.into(),
-                value: c.value as f32,
-            })
-            .collect();
-        ui.set_support_shape_picture(slint::Image::from_rgba8(drawing.pixels));
-        ui.set_support_shape_callouts(slint::ModelRc::new(slint::VecModel::from(callouts)));
+        let scale = ui.window().scale_factor();
+        // The size as it ships, to show where this one is not it.
+        let base = if Self::on_hand_page(ui) {
+            Some(crate::support_shape_edit::hand_factory())
+        } else {
+            self.base_zones()
+        };
+        let factory = base
+            .as_ref()
+            .and_then(|b| b.rules.sizes.iter().find(|s| s.id == size.id));
+        let main = if self.shape_flat.get() {
+            draw_plan(size, factory, SHAPE_WIDTH, SHAPE_HEIGHT, scale, hot)
+        } else {
+            draw(
+                size,
+                factory,
+                self.shape_view.get(),
+                SHAPE_WIDTH,
+                SHAPE_HEIGHT,
+                scale,
+                hot,
+            )
+        };
+        let tip = draw_tip_lens(size, LENS_WIDTH, LENS_HEIGHT, scale, hot);
+        let foot = draw_foot_lens(size, LENS_WIDTH, LENS_HEIGHT, scale, hot);
+        let show = |drawing: Drawing, texts: &slint::VecModel<crate::ShapeCallout>| {
+            use slint::Model;
+            let rows: Vec<crate::ShapeCallout> = drawing
+                .callouts
+                .into_iter()
+                .map(|c| crate::ShapeCallout {
+                    x: c.x,
+                    y: c.y,
+                    anchor: c.anchor as i32,
+                    part: c.part as i32,
+                    chip: c.chip,
+                    word: c.word as i32,
+                    prefix: c.prefix.into(),
+                    value: c.value as f32,
+                    field: c.field,
+                })
+                .collect();
+            if texts.row_count() == rows.len() {
+                for (i, row) in rows.into_iter().enumerate() {
+                    if texts.row_data(i).as_ref() != Some(&row) {
+                        texts.set_row_data(i, row);
+                    }
+                }
+            } else {
+                texts.set_vec(rows);
+            }
+            slint::Image::from_rgba8(drawing.pixels)
+        };
+        ui.set_support_shape_picture(show(main, &self.shape_texts[0]));
+        ui.set_support_shape_tip_picture(show(tip, &self.shape_texts[1]));
+        ui.set_support_shape_foot_picture(show(foot, &self.shape_texts[2]));
         ui.set_support_shape_hot(hot as i32);
     }
 
@@ -6221,8 +6301,7 @@ impl DfSupportRun {
             return;
         }
         let fragment = SceneFragment::from_leaf_snapshots(
-            sets.iter()
-                .map(|(_, mesh, at, _)| (mesh.clone(), *at)),
+            sets.iter().map(|(_, mesh, at, _)| (mesh.clone(), *at)),
         );
         // Generating again replaces the supports already there (#152), in the
         // same undoable step as the paste: the sets of the models the run

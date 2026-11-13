@@ -503,8 +503,8 @@ fn span(window: &MainWindow, label: &str) -> Option<(f32, f32)> {
         })
 }
 
-/// With a zone preset the tab shows the support's shape (#564): its card
-/// holds its last field above the folded ADVANCED card, and the old
+/// With a zone preset the tab shows the support's shape (#564, #567): its
+/// card holds its last field, the foot's, above the next card, and the old
 /// PLACEMENT card is gone. (Cards once cut their last rows when a note
 /// wrapped, #492.)
 #[test]
@@ -524,20 +524,20 @@ fn the_shape_card_holds_its_last_field_under_a_zone_preset() {
         |window| {
             (
                 span(window, "Foot diameter"),
-                span(window, "ADVANCED"),
+                span(window, "WHERE EACH SIZE GOES"),
                 span(window, "PLACEMENT"),
             )
         },
     );
     let (foot, advanced) = (
         foot.expect("the Foot diameter field"),
-        advanced.expect("the ADVANCED card"),
+        advanced.expect("the WHERE EACH SIZE GOES card"),
     );
     assert!(placement.is_none(), "no PLACEMENT card with a zone preset");
     // The card's bottom padding and the gap between cards lie between them.
     assert!(
         foot.1 + 12.0 < advanced.0,
-        "Foot diameter {foot:?} over the ADVANCED title {advanced:?}"
+        "Foot diameter {foot:?} over the next card's title {advanced:?}"
     );
 }
 

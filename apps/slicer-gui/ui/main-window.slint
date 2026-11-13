@@ -285,6 +285,12 @@ export component MainWindow inherits Window {
     in property <string> support-shape-scope;
     in property <image> support-shape-picture;
     in property <[ShapeCallout]> support-shape-callouts;
+    in property <image> support-shape-tip-picture;
+    in property <[ShapeCallout]> support-shape-tip-callouts;
+    in property <image> support-shape-foot-picture;
+    in property <[ShapeCallout]> support-shape-foot-callouts;
+    in property <bool> support-shape-flat;
+    callback support-shape-flat-picked(bool);
     in-out property <int> support-shape-hot;
     callback support-shape-dragged(float, float);
     callback support-shape-pointed(int);
@@ -2396,6 +2402,14 @@ export component MainWindow inherits Window {
                                     shape-scope: root.support-shape-scope;
                                     shape-picture: root.support-shape-picture;
                                     shape-callouts: root.support-shape-callouts;
+                                    shape-tip-picture: root.support-shape-tip-picture;
+                                    shape-tip-callouts: root.support-shape-tip-callouts;
+                                    shape-foot-picture: root.support-shape-foot-picture;
+                                    shape-foot-callouts: root.support-shape-foot-callouts;
+                                    shape-flat: root.support-shape-flat;
+                                    shape-flat-picked(flat) => {
+                                        root.support-shape-flat-picked(flat);
+                                    }
                                     shape-hot: root.support-shape-hot;
                                     shape-dragged(dx, dy) => {
                                         root.support-shape-dragged(dx, dy);

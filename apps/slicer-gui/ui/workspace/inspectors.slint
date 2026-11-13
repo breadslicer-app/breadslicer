@@ -11,7 +11,7 @@ import { ScrollView } from "std-widgets.slint";
 import { ScCheckBox as CheckBox, ScComboBox as ComboBox, ScLineEdit as LineEdit, ScProgress as ProgressIndicator, ScSlider as Slider } from "../kit/controls.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
-import { HandToolButton, OwnPresets, PageTabs, PresetCard, PresetCards, ScopeBox, ShapeCallout, ShapeField, ShapeSize, ShapeViewer, SizeChips, ZoneRow, ZoneRowView } from "support-shape.slint";
+import { HandToolButton, OwnPresets, PageTabs, PartHead, PresetCard, PresetCards, ScopeBox, ShapeCallout, ShapeField, ShapeSize, ShapeViewer, SizeChips, ZoneRow, ZoneRowView } from "support-shape.slint";
 import { ButtonKind, Card, DisclosureChevron, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile, WarningNote } from "../kit/controls.slint";
 
 // One finding of the slice review (#90), as Rust lays it out.
@@ -2073,6 +2073,14 @@ export component SupportsInspector inherits VerticalLayout {
     callback preset-revert();
     in property <string> shape-scope;
     in property <image> shape-picture;
+    in property <image> shape-tip-picture;
+    in property <[ShapeCallout]> shape-tip-callouts;
+    in property <image> shape-foot-picture;
+    in property <[ShapeCallout]> shape-foot-callouts;
+    // The plan (2D) is shown, not the 3D view.
+    in property <bool> shape-flat;
+    callback shape-flat-picked(bool);
+    property <bool> braces-open;
     in property <[ShapeCallout]> shape-callouts;
     in property <int> shape-hot;
     callback shape-dragged(float, float);
@@ -2327,11 +2335,50 @@ export component SupportsInspector inherits VerticalLayout {
             picture: root.shape-picture;
             callouts: root.shape-callouts;
             hot: root.shape-hot;
+            turnable: !root.shape-flat;
+            switchable: true;
+            flat: root.shape-flat;
             dragged(dx, dy) => {
                 root.shape-dragged(dx, dy);
             }
             part-clicked(part) => {
                 root.shape-pointed(part);
+            }
+            value-dragged(field, v) => {
+                root.shape-value(field, v);
+            }
+            flat-picked(flat) => {
+                root.shape-flat-picked(flat);
+            }
+        }
+        // What is too small to see in the whole support: the tip and the
+        // foot, close up.
+        HorizontalLayout {
+            spacing: 6px;
+
+            ShapeViewer {
+                height: 112px;
+                picture: root.shape-tip-picture;
+                callouts: root.shape-tip-callouts;
+                hot: root.shape-hot;
+                part-clicked(part) => {
+                    root.shape-pointed(part);
+                }
+                value-dragged(field, v) => {
+                    root.shape-value(field, v);
+                }
+            }
+            ShapeViewer {
+                height: 112px;
+                picture: root.shape-foot-picture;
+                callouts: root.shape-foot-callouts;
+                hot: root.shape-hot;
+                part-clicked(part) => {
+                    root.shape-pointed(part);
+                }
+                value-dragged(field, v) => {
+                    root.shape-value(field, v);
+                }
             }
         }
         SizeChips {
@@ -2341,15 +2388,13 @@ export component SupportsInspector inherits VerticalLayout {
                 root.shape-size-picked(i);
             }
         }
-        Text {
-            text: @tr("Inspector" => "THIS TIP · {}", root.shape-size-name);
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: 0.8px;
-            color: Theme.text-faint;
+        tip-head := PartHead {
+            title: @tr("Inspector" => "TIP");
+            more: 2;
         }
         ShapeField {
-            label: @tr("Inspector" => "Tip diameter");
+            label: @tr("Inspector" => "Diameter");
+            full-label: @tr("Inspector" => "Tip diameter");
             value: root.shape-values[0];
             default-value: root.shape-defaults.length > 0 ? root.shape-defaults[0] : -1;
             part: 1;
@@ -2357,24 +2402,9 @@ export component SupportsInspector inherits VerticalLayout {
             edited(v) => { root.shape-value(0, v); }
             pointed(p) => { root.shape-pointed(p); }
         }
-        Text {
-            text: @tr("Inspector" => "THE WHOLE SUPPORT · {}", root.shape-size-name);
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: 0.8px;
-            color: Theme.text-faint;
-        }
         ShapeField {
-            label: @tr("Inspector" => "Trunk diameter");
-            value: root.shape-values[1];
-            default-value: root.shape-defaults.length > 1 ? root.shape-defaults[1] : -1;
-            part: 2;
-            hot: root.shape-hot;
-            edited(v) => { root.shape-value(1, v); }
-            pointed(p) => { root.shape-pointed(p); }
-        }
-        ShapeField {
-            label: @tr("Inspector" => "Tip length");
+            label: @tr("Inspector" => "Length");
+            full-label: @tr("Inspector" => "Tip length");
             value: root.shape-values[2];
             default-value: root.shape-defaults.length > 2 ? root.shape-defaults[2] : -1;
             part: 1;
@@ -2382,31 +2412,9 @@ export component SupportsInspector inherits VerticalLayout {
             edited(v) => { root.shape-value(2, v); }
             pointed(p) => { root.shape-pointed(p); }
         }
-        ShapeField {
-            label: @tr("Inspector" => "Foot diameter");
-            value: root.shape-values[3];
-            default-value: root.shape-defaults.length > 3 ? root.shape-defaults[3] : -1;
-            part: 3;
-            hot: root.shape-hot;
-            edited(v) => { root.shape-value(3, v); }
-            pointed(p) => { root.shape-pointed(p); }
-        }
-    }
-
-    if root.page == 1 || root.zone-summary != "": Card {
-        title: @tr("Inspector" => "ADVANCED");
-        collapsible: true;
-        expanded: false;
-
-        Text {
-            text: @tr("Inspector" => "TIP");
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: 0.8px;
-            color: Theme.text-faint;
-        }
-        ShapeField {
+        if tip-head.open: ShapeField {
             label: @tr("Inspector" => "Extra into the model");
+            full-label: @tr("Inspector" => "Extra into the model");
             value: root.shape-values[4];
             default-value: root.shape-defaults.length > 4 ? root.shape-defaults[4] : -1;
             part: 1;
@@ -2414,8 +2422,9 @@ export component SupportsInspector inherits VerticalLayout {
             edited(v) => { root.shape-value(4, v); }
             pointed(p) => { root.shape-pointed(p); }
         }
-        ShapeField {
+        if tip-head.open: ShapeField {
             label: @tr("Inspector" => "Break point");
+            full-label: @tr("Inspector" => "Break point");
             value: root.shape-values[5];
             default-value: root.shape-defaults.length > 5 ? root.shape-defaults[5] : -1;
             part: 1;
@@ -2423,15 +2432,36 @@ export component SupportsInspector inherits VerticalLayout {
             edited(v) => { root.shape-value(5, v); }
             pointed(p) => { root.shape-pointed(p); }
         }
-        Text {
-            text: @tr("Inspector" => "FOOT");
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: 0.8px;
-            color: Theme.text-faint;
+        PartHead {
+            title: @tr("Inspector" => "TRUNK");
         }
         ShapeField {
-            label: @tr("Inspector" => "Foot thickness");
+            label: @tr("Inspector" => "Diameter");
+            full-label: @tr("Inspector" => "Trunk diameter");
+            value: root.shape-values[1];
+            default-value: root.shape-defaults.length > 1 ? root.shape-defaults[1] : -1;
+            part: 2;
+            hot: root.shape-hot;
+            edited(v) => { root.shape-value(1, v); }
+            pointed(p) => { root.shape-pointed(p); }
+        }
+        foot-head := PartHead {
+            title: @tr("Inspector" => "FOOT");
+            more: 3;
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Diameter");
+            full-label: @tr("Inspector" => "Foot diameter");
+            value: root.shape-values[3];
+            default-value: root.shape-defaults.length > 3 ? root.shape-defaults[3] : -1;
+            part: 3;
+            hot: root.shape-hot;
+            edited(v) => { root.shape-value(3, v); }
+            pointed(p) => { root.shape-pointed(p); }
+        }
+        if foot-head.open: ShapeField {
+            label: @tr("Inspector" => "Thickness");
+            full-label: @tr("Inspector" => "Foot thickness");
             value: root.shape-values[6];
             default-value: root.shape-defaults.length > 6 ? root.shape-defaults[6] : -1;
             part: 3;
@@ -2439,8 +2469,9 @@ export component SupportsInspector inherits VerticalLayout {
             edited(v) => { root.shape-value(6, v); }
             pointed(p) => { root.shape-pointed(p); }
         }
-        ShapeField {
+        if foot-head.open: ShapeField {
             label: @tr("Inspector" => "Join cone");
+            full-label: @tr("Inspector" => "Join cone");
             value: root.shape-values[7];
             default-value: root.shape-defaults.length > 7 ? root.shape-defaults[7] : -1;
             part: 3;
@@ -2448,8 +2479,9 @@ export component SupportsInspector inherits VerticalLayout {
             edited(v) => { root.shape-value(7, v); }
             pointed(p) => { root.shape-pointed(p); }
         }
-        ShapeField {
+        if foot-head.open: ShapeField {
             label: @tr("Inspector" => "Tip on the model, length");
+            full-label: @tr("Inspector" => "Tip on the model, length");
             value: root.shape-values[8];
             default-value: root.shape-defaults.length > 8 ? root.shape-defaults[8] : -1;
             part: 3;
@@ -2457,21 +2489,19 @@ export component SupportsInspector inherits VerticalLayout {
             edited(v) => { root.shape-value(8, v); }
             pointed(p) => { root.shape-pointed(p); }
         }
-        if root.page == 0: Text {
-            text: @tr("Inspector" => "BRACES");
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: 0.8px;
-            color: Theme.text-faint;
+        if root.page == 0: PartHead {
+            title: @tr("Inspector" => "BRACES");
+            more: 3;
+            open <=> root.braces-open;
         }
-        if root.page == 0: CheckBox {
+        if root.page == 0 && root.braces-open: CheckBox {
             text: @tr("Inspector" => "Cross-bracing");
             checked: root.bracing;
             toggled => {
                 root.option-changed(7, self.checked ? 1 : 0);
             }
         }
-        if root.page == 0: ShapeField {
+        if root.page == 0 && root.braces-open: ShapeField {
             label: @tr("Inspector" => "Brace diameter");
             value: root.shape-values[9];
             default-value: root.shape-defaults.length > 9 ? root.shape-defaults[9] : -1;
@@ -2480,7 +2510,7 @@ export component SupportsInspector inherits VerticalLayout {
             enabled: root.bracing;
             edited(v) => { root.shape-value(9, v); }
         }
-        if root.page == 0: ShapeField {
+        if root.page == 0 && root.braces-open: ShapeField {
             label: @tr("Inspector" => "Braces start at");
             value: root.shape-values[10];
             default-value: root.shape-defaults.length > 10 ? root.shape-defaults[10] : -1;

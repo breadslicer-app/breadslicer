@@ -7682,3 +7682,63 @@ msgstr "Soportes que chocan con un vecino"
 msgctxt "DfSupportDialog"
 msgid "{} copies took the supports of a copy standing like them, and they run into a model beside them. Press Arrange all to space the models out."
 msgstr "{} copias recibieron los soportes de una copia apoyada igual, y chocan con un modelo de al lado. Apretá Acomodar todo para separar los modelos."
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "model"
+msgstr "modelo"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "plate"
+msgstr "plataforma"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "FOOT · half section"
+msgstr "PIE · medio corte"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "sinks"
+msgstr "entra"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "break"
+msgstr "quiebre"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "cone"
+msgstr "cono"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "thickness"
+msgstr "grosor"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "ships with {}"
+msgstr "de fábrica {}"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "1 mm grid"
+msgstr "cuadrícula 1 mm"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "Diameter"
+msgstr "Diámetro"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "Length"
+msgstr "Largo"
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "TRUNK"
+msgstr "TRONCO"

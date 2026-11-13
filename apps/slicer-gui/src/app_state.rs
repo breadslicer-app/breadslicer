@@ -3081,11 +3081,45 @@ mod window_wiring_tests {
             assert_eq!(defaults(&window), values(&window));
             assert_eq!(values(&window)[0], 0.24);
             assert_eq!(window.get_support_zone_rows().row_count(), 8);
-            assert_eq!(window.get_support_shape_callouts().row_count(), 4);
+            // The support drawn in 3D with its four numbers, and a lens on
+            // its tip and one on its foot (#567).
+            let numbers = |w: &MainWindow| -> Vec<i32> {
+                w.get_support_shape_callouts()
+                    .iter()
+                    .filter(|c| c.chip)
+                    .map(|c| c.field)
+                    .collect()
+            };
+            assert_eq!(numbers(&window), [0, 2, 1, 3]);
             assert!(
                 window.get_support_shape_picture().size().width > 0,
                 "the support is drawn"
             );
+            assert!(window.get_support_shape_tip_picture().size().width > 0);
+            assert!(window.get_support_shape_foot_picture().size().width > 0);
+            assert!(
+                window
+                    .get_support_shape_foot_callouts()
+                    .iter()
+                    .any(|c| c.chip && c.field == 6),
+                "the foot's lens numbers its thickness"
+            );
+            // As a plan: the same numbers, on the plate; and back.
+            assert!(!window.get_support_shape_flat());
+            let words = |w: &MainWindow| -> Vec<i32> {
+                w.get_support_shape_callouts()
+                    .iter()
+                    .filter(|c| !c.chip && c.word != 0)
+                    .map(|c| c.word)
+                    .collect()
+            };
+            assert!(!words(&window).contains(&2));
+            window.invoke_support_shape_flat_picked(true);
+            assert!(window.get_support_shape_flat());
+            assert_eq!(numbers(&window), [0, 2, 1, 3]);
+            assert!(words(&window).contains(&2), "the plan names the plate");
+            window.invoke_support_shape_flat_picked(false);
+            assert!(!words(&window).contains(&2));
             assert_eq!(
                 window.get_support_based_on().as_str(),
                 "Miniatures, as it ships"
@@ -4773,6 +4807,14 @@ mod window_wiring_tests {
                 window.set_support_tool(1);
                 window.invoke_support_shape_value(1, 1.6);
                 shot("manual");
+                // The same support as a plan, with a break point (#567).
+                window.invoke_support_shape_pointed(2);
+                window.invoke_support_shape_value(5, 0.3);
+                window.invoke_support_shape_flat_picked(true);
+                shot("plan");
+                window.invoke_support_shape_flat_picked(false);
+                window.invoke_support_shape_value(5, 0.0);
+                window.invoke_support_shape_pointed(0);
                 window.invoke_support_share_export();
                 shot("share");
                 window.invoke_support_share_cancelled();
