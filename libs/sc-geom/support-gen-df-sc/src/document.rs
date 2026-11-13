@@ -22,6 +22,7 @@ use sc_scene::{LeafPayload, NodeId, NodeKind, Scene};
 use serde::{Deserialize, Serialize};
 use support_gen_df::pipeline::ModelInput;
 use support_gen_df::supports::types::SupportState;
+use support_gen_df::three::Vec3;
 
 use crate::hand_log::HandLog;
 use crate::{DfSupportSession, SettingsRecipe, scene_model_leaves, scene_models};
@@ -89,26 +90,27 @@ pub(crate) struct ModelPrint {
 impl ModelPrint {
     pub(crate) fn of(model: &ModelInput) -> Self {
         let position = model.geometry.position.as_deref().unwrap_or_default();
-        let mut min = [f32::INFINITY; 3];
-        let mut max = [f32::NEG_INFINITY; 3];
+        // Its world bounds: the geometry re-centred on its box and placed by
+        // the model's transform, as the pipeline places it. A model shared
+        // by copies carries its turn there (#561), and one moved in the
+        // session (#119) its move.
+        let c = support_gen_df::pipeline::bounding_box_center(&model.geometry);
+        let m = support_gen_df::pipeline::model_matrix(&model.transform);
+        let mut min = [f64::INFINITY; 3];
+        let mut max = [f64::NEG_INFINITY; 3];
         for v in position.as_chunks::<3>().0 {
-            for k in 0..3 {
-                min[k] = min[k].min(v[k]);
-                max[k] = max[k].max(v[k]);
+            let w = Vec3::new(
+                f64::from(v[0]) - c.x,
+                f64::from(v[1]) - c.y,
+                f64::from(v[2]) - c.z,
+            )
+            .apply_matrix4(&m);
+            for (k, x) in [w.x, w.y, w.z].into_iter().enumerate() {
+                min[k] = min[k].min(x);
+                max[k] = max[k].max(x);
             }
         }
-        // The pipeline puts the geometry's box centre at the transform's
-        // position: a model moved in the session (#119) carries the move
-        // there, and its world bounds with it. For a model as a run makes
-        // it the two are the same.
-        let at = model.transform.position;
-        for (k, at) in [at.x, at.y, at.z].into_iter().enumerate() {
-            let shift = at - (f64::from(min[k]) + f64::from(max[k])) * 0.5;
-            if shift != 0.0 && shift.is_finite() {
-                min[k] = (f64::from(min[k]) + shift) as f32;
-                max[k] = (f64::from(max[k]) + shift) as f32;
-            }
-        }
+        let (min, max) = (min.map(|v| v as f32), max.map(|v| v as f32));
         ModelPrint {
             id: model.id.clone(),
             vertices: position.len() / 3,

@@ -42,8 +42,7 @@ pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{
     AddNote, AddOptions, BraceEnd, COVERED_AGREEMENT, COVERED_SURFACE_MM, DfSupportSession,
-    HandShape,
-    EditError, EditPreview, REVIEW_NUDGE_MM, SupportContact, SupportJoint, SupportPiece,
+    EditError, EditPreview, HandShape, REVIEW_NUDGE_MM, SupportContact, SupportJoint, SupportPiece,
     SupportPieceKind,
 };
 pub use support_gen_df::native::overhang::{
@@ -212,14 +211,142 @@ pub fn scene_model_leaves(
         if !is_model_mesh(mesh) || only.is_some_and(|only| !only.contains(&id)) {
             return Ok::<(), SceneError>(());
         }
-        let baked = bake_mesh_to_world(mesh, world)?;
-        models.push((
-            id,
-            model_from_world_mesh(format!("node-{}", id.get()), &baked),
-        ));
+        let name = format!("node-{}", id.get());
+        // The leaf's own mesh, shared with every copy standing the same way
+        // (#561); a mesh met only through a reference is baked.
+        let shared = scene
+            .leaf_mesh_arc(id)
+            .filter(|arc| std::ptr::eq(arc.as_ref(), mesh))
+            .and_then(|arc| model_from_scene_mesh(name.clone(), arc, world));
+        let model = match shared {
+            Some(model) => model,
+            None => model_from_world_mesh(name, &bake_mesh_to_world(mesh, world)?),
+        };
+        models.push((id, model));
         Ok(())
     })?;
     Ok(models)
+}
+
+/// A model geometry kept for every copy of a mesh that stands the same way
+/// (#561), by the mesh and the linear part it is drawn with.
+struct SharedGeometry {
+    mesh: std::sync::Weak<IndexedMesh>,
+    linear: [[i64; 3]; 3],
+    geometry: std::sync::Weak<BufferGeometry>,
+}
+
+/// The geometries copies share, while one of them holds each.
+static SHARED_GEOMETRIES: std::sync::Mutex<Vec<SharedGeometry>> = std::sync::Mutex::new(Vec::new());
+
+/// How finely two copies' linear parts must agree to share a geometry: a
+/// billionth, far under any rounding a turn leaves.
+const LINEAR_QUANTUM: f64 = 1e9;
+
+/// The model of a scene mesh standing where `world` puts it, its geometry
+/// shared with every copy of `mesh` that differs from it only by a move and
+/// a turn about Z (#561): the geometry is the mesh under the rest of the
+/// transform, and the turn and the move are the model's transform, as the
+/// pipeline places a model. `None` for a transform that flattens the mesh.
+pub fn model_from_scene_mesh(
+    id: String,
+    mesh: &Arc<IndexedMesh>,
+    world: &sc_mesh_core::transform::Transform3D,
+) -> Option<ModelInput> {
+    use sc_mesh_core::transform::Transform3D;
+    let (linear, translation) = match world {
+        Transform3D::Identity => (
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0; 3],
+        ),
+        Transform3D::Affine(a) => {
+            if !a.is_invertible() {
+                return None;
+            }
+            (*a.linear(), *a.translation())
+        }
+    };
+    // The turn about Z: where the mesh's X axis points in the plane, or its
+    // Y axis a quarter turn back when X stands upright.
+    let turn = if linear[0][0].hypot(linear[1][0]) > 1e-9 {
+        linear[1][0].atan2(linear[0][0])
+    } else {
+        linear[1][1].atan2(linear[0][1]) - std::f64::consts::FRAC_PI_2
+    };
+    let (sin, cos) = turn.sin_cos();
+    // What is left once the turn is taken out: Rz(-turn) · linear.
+    let mut rest = [[0.0f64; 3]; 3];
+    for c in 0..3 {
+        rest[0][c] = cos * linear[0][c] + sin * linear[1][c];
+        rest[1][c] = -sin * linear[0][c] + cos * linear[1][c];
+        rest[2][c] = linear[2][c];
+    }
+    let key = rest.map(|row| row.map(|v| (v * LINEAR_QUANTUM).round() as i64));
+    let geometry = {
+        let mut shared = SHARED_GEOMETRIES.lock().ok()?;
+        shared.retain(|s| s.mesh.strong_count() > 0 && s.geometry.strong_count() > 0);
+        let found = shared.iter().find_map(|s| {
+            let same = s.linear == key && s.mesh.upgrade().is_some_and(|m| Arc::ptr_eq(&m, mesh));
+            same.then(|| s.geometry.upgrade()).flatten()
+        });
+        match found {
+            Some(geometry) => geometry,
+            None => {
+                let geometry = Arc::new(geometry_under(mesh, &rest));
+                shared.push(SharedGeometry {
+                    mesh: Arc::downgrade(mesh),
+                    linear: key,
+                    geometry: Arc::downgrade(&geometry),
+                });
+                geometry
+            }
+        }
+    };
+    let c = support_gen_df::pipeline::bounding_box_center(&geometry);
+    let position = Vec3::new(
+        cos * c.x - sin * c.y + translation[0],
+        sin * c.x + cos * c.y + translation[1],
+        c.z + translation[2],
+    );
+    Some(ModelInput {
+        id,
+        geometry,
+        transform: ModelTransform {
+            position,
+            rotation: Vec3::new(0.0, 0.0, turn),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+        },
+        visible: true,
+    })
+}
+
+/// `mesh` under the linear part `linear` (row-major), as a model geometry:
+/// a mirroring part turns the faces' winding, as baking does.
+fn geometry_under(mesh: &IndexedMesh, linear: &[[f64; 3]; 3]) -> BufferGeometry {
+    let position: Vec<f32> = mesh
+        .vertices()
+        .iter()
+        .flat_map(|v| {
+            let [x, y, z] = v.as_array().map(f64::from);
+            linear.map(|row| (row[0] * x + row[1] * y + row[2] * z) as f32)
+        })
+        .collect();
+    let det = linear[0][0] * (linear[1][1] * linear[2][2] - linear[1][2] * linear[2][1])
+        - linear[0][1] * (linear[1][0] * linear[2][2] - linear[1][2] * linear[2][0])
+        + linear[0][2] * (linear[1][0] * linear[2][1] - linear[1][1] * linear[2][0]);
+    let index: Vec<u32> = mesh
+        .faces()
+        .iter()
+        .flat_map(|f| {
+            let [a, b, c] = f.vertices.map(u32::from);
+            if det < 0.0 { [a, c, b] } else { [a, b, c] }
+        })
+        .collect();
+    BufferGeometry {
+        position: Some(position),
+        index: Some(index),
+        ..Default::default()
+    }
 }
 
 /// Where the leaf `leaf` stands among the models of `scene`, in the order
@@ -688,19 +815,11 @@ fn run_df_supports(
         out.support.clone(),
         id_prefix.clone(),
     );
-    // The plans' BVHs and distance fields (filled where they routed), so the
-    // first hover preview is quick without building them again.
-    session.adopt_bvhs(out.bvhs);
+    // The model's BVH, so the first hover preview is quick: built in the
+    // model's frame, once for every copy of it (#561). The plans' own BVHs
+    // and distance fields were in world space, one per copy, and go with
+    // the run.
     session.warm();
-    if let Ok(mut fields) = out.distance_fields.lock() {
-        session.adopt_sdfs(
-            fields
-                .drain(..)
-                .enumerate()
-                .filter_map(|(i, f)| f.map(|f| (i, f)))
-                .collect(),
-        );
-    }
     // Each model's supports and raft are drawn on their own.
     let mut sets = Vec::with_capacity(n);
     for (i, ((model, _), session)) in leaves.iter().zip(session.split_by_model()).enumerate() {

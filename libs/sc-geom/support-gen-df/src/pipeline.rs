@@ -255,7 +255,7 @@ pub struct PipelineOutput {
 }
 
 /// `Box3.getCenter` of the geometry's bounding box.
-fn bounding_box_center(geometry: &BufferGeometry) -> Vec3 {
+pub fn bounding_box_center(geometry: &BufferGeometry) -> Vec3 {
     let mut min = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
     let mut max = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
     for v in geometry
@@ -272,12 +272,25 @@ fn bounding_box_center(geometry: &BufferGeometry) -> Vec3 {
     min.add(max).multiply_scalar(0.5)
 }
 
-fn model_matrix(t: &ModelTransform) -> Matrix4 {
+/// The matrix a model's transform places its re-centred geometry with.
+pub fn model_matrix(t: &ModelTransform) -> Matrix4 {
     Matrix4::compose(
         t.position,
         quaternion_from_global_euler(t.rotation),
         t.scale,
     )
+}
+
+/// The model's geometry re-centred on its box, non-indexed: [`world_soup`]
+/// before its transform, the frame a BVH shared by copies of the model is
+/// built in (#561).
+pub fn local_soup(model: &ModelInput) -> Vec<f32> {
+    let mut g = BufferGeometry::clone(&model.geometry);
+    g.normal = None;
+    g.uv = None;
+    let c = bounding_box_center(&g);
+    g.translate(-c.x, -c.y, -c.z);
+    g.to_non_indexed().position.unwrap_or_default()
 }
 
 /// `prepareWorldGeom`: re-centred, transformed, non-indexed, as stored floats.

@@ -35,7 +35,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use sc_arrange::{Body, Filled, Placement, Plate, Settings};
-use sc_geom::df_supports::{DfSupportSession, is_imported_supports, model_from_world_mesh};
+use sc_geom::df_supports::{
+    DfSupportSession, is_imported_supports, model_from_scene_mesh, model_from_world_mesh,
+};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::node::{LeafAttachment, LeafPayload, SceneMetadata};
@@ -500,10 +502,16 @@ fn copied_set(source: &Source, placement: &Placement) -> Option<CopiedSet> {
     // The port is DragonFruit's code: a panic in it leaves the copy with
     // its supports as they are drawn, not a failed fill.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // The session gets the turned model as a run makes it.
+        // The session gets the turned model as a run makes it: the mesh the
+        // copies share, turned in its transform (#561).
         let world = Transform3D::Affine(placement.motion().compose(&source.model.world));
-        let baked = sc_scene::bake_mesh_to_world(&source.model.mesh, &world).ok()?;
-        let now = model_from_world_mesh(String::new(), &baked);
+        let now = match model_from_scene_mesh(String::new(), &source.model.mesh, &world) {
+            Some(now) => now,
+            None => {
+                let baked = sc_scene::bake_mesh_to_world(&source.model.mesh, &world).ok()?;
+                model_from_world_mesh(String::new(), &baked)
+            }
+        };
         let moved = session.turned_in_plane(0, now, placement.angle, placement.translation);
         let mesh = moved.mesh().ok()??;
         Some((Arc::new(moved), Arc::new(mesh)))

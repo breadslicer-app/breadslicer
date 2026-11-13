@@ -18,7 +18,7 @@ use std::sync::{Arc, OnceLock};
 use sc_mesh_core::IndexedMesh;
 use serde_json::Value;
 use support_gen_df::features::slicing::support_world_triangles::raft_and_feet_top_mm;
-use support_gen_df::pipeline::{ModelInput, PipelineSettings, support_soup, world_soup};
+use support_gen_df::pipeline::{ModelInput, PipelineSettings, support_soup};
 use support_gen_df::supports::auto_bracing::auto_brace::{
     HandBrace, HandBraceRefusal, brace_new_shaft, hand_brace,
 };
@@ -146,6 +146,108 @@ pub(crate) fn tip_contact_diameter(settings: &PipelineSettings) -> f64 {
         .with_zone_sizes(supports.auto_support.zone_rules.as_ref())
         .active(supports)
         .tip_contact_diameter_mm
+}
+
+/// A model's BVH, built in the model's frame and shared by its copies
+/// (#561), with the matrix placing this one: queries in world mm.
+#[derive(Clone)]
+pub(crate) struct PlacedBvh {
+    pub(crate) bvh: Arc<MeshBvh>,
+    pub(crate) to_world: Matrix4,
+    to_local: Matrix4,
+}
+
+impl PlacedBvh {
+    /// [`MeshBvh::closest_point_to_point`] of a world point, its hit in
+    /// world mm. The placing matrix is a turn and a move: distances hold.
+    pub(crate) fn closest_point_to_point(
+        &self,
+        point: Vec3,
+        min_threshold: f64,
+        max_threshold: f64,
+    ) -> Option<support_gen_df::three_mesh_bvh::ClosestPointTarget> {
+        let mut hit = self.bvh.closest_point_to_point(
+            point.apply_matrix4(&self.to_local),
+            min_threshold,
+            max_threshold,
+        )?;
+        hit.point = hit.point.apply_matrix4(&self.to_world);
+        Some(hit)
+    }
+
+    /// Face `face`, in world mm.
+    pub(crate) fn triangle(&self, face: usize) -> support_gen_df::three::Triangle {
+        let t = self.bvh.triangle(face);
+        support_gen_df::three::Triangle::new(
+            t.a.apply_matrix4(&self.to_world),
+            t.b.apply_matrix4(&self.to_world),
+            t.c.apply_matrix4(&self.to_world),
+        )
+    }
+
+    /// [`MeshBvh::faces_within`] of a world point.
+    pub(crate) fn faces_within(&self, point: Vec3, radius: f64, visit: impl FnMut(usize, f64)) {
+        self.bvh
+            .faces_within(point.apply_matrix4(&self.to_local), radius, visit);
+    }
+
+    /// [`MeshBvh::raycast_first`] of a world ray, its hit in world mm.
+    pub(crate) fn raycast_first(
+        &self,
+        ray: &Ray,
+        side: Side,
+        near: f64,
+        far: f64,
+    ) -> Option<support_gen_df::three_mesh_bvh::Intersection> {
+        let mut hit =
+            self.bvh
+                .raycast_first(&ray.apply_matrix4(&self.to_local), side, near, far)?;
+        hit.point = hit.point.apply_matrix4(&self.to_world);
+        hit.face.normal = hit.face.normal.transform_direction(&self.to_world);
+        Some(hit)
+    }
+}
+
+/// The BVHs copies share, while one of them holds each (#561): by the
+/// model geometry they were built from.
+static SHARED_BVHS: std::sync::Mutex<
+    Vec<(
+        std::sync::Weak<support_gen_df::three::buffer_geometry::BufferGeometry>,
+        std::sync::Weak<MeshBvh>,
+    )>,
+> = std::sync::Mutex::new(Vec::new());
+
+/// The BVH of `model`'s geometry in its own frame (re-centred on its box,
+/// as the pipeline re-centres it): the one copies of the model built, or a
+/// new one.
+fn shared_bvh(model: &ModelInput) -> Arc<MeshBvh> {
+    let held = |list: &Vec<(
+        std::sync::Weak<support_gen_df::three::buffer_geometry::BufferGeometry>,
+        std::sync::Weak<MeshBvh>,
+    )>| {
+        list.iter().find_map(|(g, b)| {
+            g.upgrade()
+                .is_some_and(|g| Arc::ptr_eq(&g, &model.geometry))
+                .then(|| b.upgrade())
+                .flatten()
+        })
+    };
+    if let Some(bvh) = SHARED_BVHS.lock().ok().and_then(|list| held(&list)) {
+        return bvh;
+    }
+    // Built with no lock held: another thread's query does not wait on it.
+    let soup = support_gen_df::pipeline::local_soup(model);
+    let triples: Vec<[f32; 3]> = soup.as_chunks::<3>().0.to_vec();
+    let bvh = Arc::new(MeshBvh::new(triples, None));
+    let Ok(mut list) = SHARED_BVHS.lock() else {
+        return bvh;
+    };
+    if let Some(built) = held(&list) {
+        return built;
+    }
+    list.retain(|(g, b)| g.strong_count() > 0 && b.strong_count() > 0);
+    list.push((Arc::downgrade(&model.geometry), Arc::downgrade(&bvh)));
+    bvh
 }
 
 /// The supports of a run, kept for editing.
@@ -1161,18 +1263,6 @@ impl DfSupportSession {
         }
     }
 
-    /// Hands the run's distance fields to the session, already filled by
-    /// the run's routing, so hand edits start warm.
-    pub(crate) fn adopt_sdfs(&self, fields: Vec<(usize, SdfCache)>) {
-        for (i, field) in fields {
-            if let Some(slot) = self.sdfs.get(i)
-                && let Ok(mut slot) = slot.0.lock()
-            {
-                *slot = Some(field);
-            }
-        }
-    }
-
     /// What the session holds on the heap that may be shared with other
     /// sessions, as (part, address, bytes): each model's geometry and each
     /// BVH built. Parts at the same address are one in memory (#561).
@@ -1201,28 +1291,18 @@ impl DfSupportSession {
         parts
     }
 
-    /// Hands the run's BVHs to the session, one per model in model order:
-    /// the plans built them on the same world soup the session would.
-    pub(crate) fn adopt_bvhs(&self, bvhs: Vec<Arc<MeshBvh>>) {
-        for (slot, bvh) in self.bvhs.iter().zip(bvhs) {
-            // One already built stays: it is the same tree.
-            let _ = slot.set(bvh);
+    /// Model `i`'s BVH, in world mm: built in the model's own frame, once
+    /// for every copy that shares its geometry (#561), and placed where this
+    /// session's model stands.
+    fn bvh(&self, i: usize) -> PlacedBvh {
+        let model = &self.models[i];
+        let bvh = self.bvhs[i].get_or_init(|| shared_bvh(model)).clone();
+        let to_world = support_gen_df::pipeline::model_matrix(&model.transform);
+        PlacedBvh {
+            to_local: to_world.invert(),
+            to_world,
+            bvh,
         }
-    }
-
-    fn bvh(&self, i: usize) -> Arc<MeshBvh> {
-        self.bvhs[i]
-            .get_or_init(|| {
-                let soup = world_soup(&self.models[i]);
-                let triples: Vec<[f32; 3]> = soup
-                    .as_chunks::<3>()
-                    .0
-                    .iter()
-                    .map(|c| [c[0], c[1], c[2]])
-                    .collect();
-                Arc::new(MeshBvh::new(triples, None))
-            })
-            .clone()
     }
 
     /// The model surface point nearest `point` within reach: the model, the
@@ -1369,7 +1449,7 @@ impl DfSupportSession {
         let before = all_ids(&self.state.collections);
         let pooled = self.sdfs[i].0.lock().ok().and_then(|mut slot| slot.take());
         let sdf = RefCell::new(pooled.unwrap_or_else(|| {
-            SdfCache::new(bvh.clone(), Matrix4::IDENTITY, Some(settings.sdf_cell_mm))
+            SdfCache::new(bvh.bvh.clone(), bvh.to_world, Some(settings.sdf_cell_mm))
         }));
         let bands = SizingBands::factory()
             .with_zone_sizes(settings.supports.auto_support.zone_rules.as_ref());
@@ -1380,8 +1460,8 @@ impl DfSupportSession {
                 &settings.supports,
                 &bands,
                 Some(PlanMesh {
-                    bvh: &bvh,
-                    matrix: Matrix4::IDENTITY,
+                    bvh: &bvh.bvh,
+                    matrix: bvh.to_world,
                     side: Side::Front,
                     normals: None,
                     sdf: &sdf,
@@ -1481,8 +1561,8 @@ impl DfSupportSession {
             let meshes: BraceMeshes<'_> = [(
                 self.models[i].id.clone(),
                 BraceMesh {
-                    bvh: &bvh,
-                    matrix: Matrix4::IDENTITY,
+                    bvh: &bvh.bvh,
+                    matrix: bvh.to_world,
                 },
             )]
             .into();
@@ -2782,8 +2862,8 @@ impl DfSupportSession {
         let meshes: BraceMeshes<'_> = [(
             self.models[i].id.clone(),
             BraceMesh {
-                bvh: &bvh,
-                matrix: Matrix4::IDENTITY,
+                bvh: &bvh.bvh,
+                matrix: bvh.to_world,
             },
         )]
         .into();
@@ -4219,6 +4299,103 @@ mod session_tests {
                     assert!(r > 1.4, "gap {gap}: {r} wide at {t} of {span}");
                 }
             }
+        }
+    }
+
+    /// Two copies of one mesh, the second moved and turned about Z, share
+    /// one model geometry and one BVH (#561), and a support placed on the
+    /// turned one is the same as on the other, turned with it: a trunk to
+    /// the plate and a stick to the model below.
+    #[test]
+    fn copies_of_a_model_share_its_geometry_and_place_alike() {
+        use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+        use sc_scene::LeafPayload;
+        let mut scene = boxes_scene(&[
+            ([0.0, 0.0, 25.0], [30.0, 10.0, 27.0]),
+            ([18.0, 0.0, 0.0], [30.0, 10.0, 19.0]),
+        ]);
+        let first = crate::scene_model_leaves(&scene, None).unwrap()[0].0;
+        let mesh = scene.leaf_mesh_arc(first).unwrap().clone();
+        let turn = AffineTransform3D::from_translation([70.0, 50.0, 0.0])
+            .compose(&AffineTransform3D::from_rotation_z(0.9));
+        let copy = scene
+            .add_leaf(
+                None,
+                Transform3D::Affine(turn),
+                LeafPayload::Mesh(mesh.clone()),
+            )
+            .unwrap();
+        scene.add_root(copy).unwrap();
+        let place = |p: [f64; 3]| {
+            let v = Transform3D::Affine(turn)
+                .apply_to_vertex(sc_mesh_core::Vertex::new(p.map(|c| c as f32)));
+            v.as_array().map(f64::from)
+        };
+
+        // The model the copy is: its geometry is the first's, and where the
+        // pipeline puts it is where the scene shows it.
+        let models = crate::scene_model_leaves(&scene, None).unwrap();
+        assert!(Arc::ptr_eq(&models[0].1.geometry, &models[1].1.geometry));
+        let soup = support_gen_df::pipeline::world_soup(&models[1].1);
+        let baked = sc_scene::bake_mesh_to_world(&mesh, &Transform3D::Affine(turn)).unwrap();
+        for corner in soup.as_chunks::<3>().0 {
+            let near = baked.vertices().iter().any(|v| {
+                let b = v.as_array();
+                (0..3).all(|k| (b[k] - corner[k]).abs() < 1e-3)
+            });
+            assert!(near, "{corner:?} is no corner of the copy");
+        }
+
+        let request = crate::DfSupportRequest::default();
+        for (point, stick) in [([5.0, 5.0, 25.0], false), ([24.0, 5.0, 25.0], true)] {
+            let mut a = crate::empty_df_session(&scene, first, &request)
+                .unwrap()
+                .unwrap();
+            let mut b = crate::empty_df_session(&scene, copy, &request)
+                .unwrap()
+                .unwrap();
+            a.add_at(point, &AddOptions::default())
+                .expect("placed on the first");
+            b.add_at(place(point), &AddOptions::default())
+                .expect("placed on the copy");
+            let (ca, cb) = (&a.state.collections, &b.state.collections);
+            assert_eq!(ca.sticks.len() == 1, stick, "at {point:?}");
+            assert_eq!(ca.trunks.len() == 1, !stick, "at {point:?}");
+            assert_eq!(
+                (
+                    ca.trunks.len(),
+                    ca.sticks.len(),
+                    ca.twigs.len(),
+                    ca.branches.len()
+                ),
+                (
+                    cb.trunks.len(),
+                    cb.sticks.len(),
+                    cb.twigs.len(),
+                    cb.branches.len()
+                ),
+                "at {point:?}"
+            );
+            let mut on_a: Vec<[f64; 3]> = a.tips().into_iter().map(|(_, p)| place(p)).collect();
+            let mut on_b: Vec<[f64; 3]> = b.tips().into_iter().map(|(_, p)| p).collect();
+            on_a.sort_by(|x, y| x.partial_cmp(y).unwrap());
+            on_b.sort_by(|x, y| x.partial_cmp(y).unwrap());
+            assert_eq!(on_a.len(), on_b.len());
+            for (x, y) in on_a.iter().zip(&on_b) {
+                assert!(dist(*x, *y) < 1e-3, "{x:?} against {y:?}");
+            }
+            let size = |s: &DfSupportSession| s.mesh().unwrap().map(|m| m.faces().len());
+            assert_eq!(size(&a), size(&b), "at {point:?}");
+            // One BVH for both.
+            a.warm();
+            b.warm();
+            let bvh = |s: &DfSupportSession| {
+                s.memory_parts()
+                    .into_iter()
+                    .find(|(part, _, _)| *part == "bvh")
+                    .map(|(_, at, _)| at)
+            };
+            assert!(bvh(&a).is_some() && bvh(&a) == bvh(&b));
         }
     }
 
