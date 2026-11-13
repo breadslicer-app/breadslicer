@@ -8,7 +8,8 @@
 // preset places, the fields of each part, and where each size goes.
 // Rust draws the support (`support_shape.rs`) and lays out its numbers.
 
-import { ScComboBox as ComboBox } from "../kit/controls.slint";
+import { ScrollView } from "std-widgets.slint";
+import { ScCheckBox as CheckBox, ScComboBox as ComboBox } from "../kit/controls.slint";
 import { Theme } from "../kit/theme.slint";
 import { Card, DisclosureChevron, Icon, Note, ScButton, ButtonKind } from "../kit/controls.slint";
 import { Icons } from "../kit/icons.slint";
@@ -67,6 +68,13 @@ export component ResetMark inherits Rectangle {
         accessible-role: button;
         accessible-label: @tr("Inspector" => "Reset to default");
     }
+}
+
+// One thing to put in a support settings file, or to take from one.
+export struct ShareItem {
+    name: string,
+    detail: string,
+    checked: bool,
 }
 
 // A built-in preset as a card: its name and the models it is for.
@@ -553,6 +561,258 @@ export component ZoneRowView inherits HorizontalLayout {
             hot: 0;
             edited(v) => {
                 root.spacing-edited(v);
+            }
+        }
+    }
+}
+
+// The two pages of the Supports tab: what Generate places, and what the
+// hand tools place.
+export component PageTabs inherits Rectangle {
+    in property <[string]> pages;
+    in property <int> current;
+    callback picked(int);
+
+    height: 34px;
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border;
+    }
+    HorizontalLayout {
+        for page[i] in root.pages: Rectangle {
+            horizontal-stretch: 1;
+            accessible-role: AccessibleRole.tab;
+            accessible-label: page;
+            accessible-checked: i == root.current;
+            accessible-action-default => {
+                root.picked(i);
+            }
+
+            Text {
+                text: page;
+                font-size: Theme.font;
+                font-weight: i == root.current ? 600 : 400;
+                color: i == root.current ? Theme.text : tab.has-hover ? Theme.text-soft : Theme.text-muted;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                y: parent.height - 2px;
+                height: 2px;
+                background: i == root.current ? Theme.indicator : transparent;
+            }
+            tab := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.picked(i);
+                }
+            }
+        }
+    }
+}
+
+// A hand tool of the Supports tab, as a button of the tools row: its icon,
+// its name and its key.
+export component HandToolButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> shortcut;
+    in property <bool> active;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    horizontal-stretch: 1;
+    height: 52px;
+    background: root.active ? Theme.action : touch.has-hover ? Theme.hover : Theme.card;
+    border-width: 1px;
+    border-color: root.active ? Theme.action : Theme.border;
+    border-radius: Theme.radius;
+    opacity: root.enabled ? 1 : 0.5;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-checked: root.active;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    Icon {
+        commands: root.icon;
+        size: 18px;
+        x: (parent.width - 18px) / 2;
+        y: 7px;
+        color: root.active ? Theme.on-action : Theme.text-soft;
+    }
+    Text {
+        x: 2px;
+        y: 29px;
+        width: parent.width - 4px;
+        text: root.label;
+        font-size: 10.5px;
+        color: root.active ? Theme.on-action : Theme.text-soft;
+        horizontal-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: parent.width - 13px;
+        y: 3px;
+        text: root.shortcut;
+        font-family: Theme.mono;
+        font-size: 9px;
+        color: root.active ? Theme.on-action : Theme.text-faint;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// The person's own presets as a list: a click picks one.
+export component OwnPresets inherits VerticalLayout {
+    in property <[string]> names;
+    in property <int> current: -1;
+    in property <bool> enabled: true;
+    callback picked(int);
+
+    spacing: 4px;
+
+    for name[i] in root.names: Rectangle {
+        height: 28px;
+        background: i == root.current ? Theme.hover : row.has-hover ? Theme.hover : Theme.card;
+        border-width: i == root.current ? 2px : 1px;
+        border-color: i == root.current ? Theme.indicator : Theme.border;
+        border-radius: Theme.radius;
+        opacity: root.enabled ? 1 : 0.5;
+        accessible-role: button;
+        accessible-label: name;
+        accessible-checked: i == root.current;
+        accessible-action-default => {
+            root.picked(i);
+        }
+
+        Text {
+            x: 9px;
+            width: parent.width - 18px;
+            text: name;
+            font-size: Theme.font-sm;
+            color: Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        row := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => {
+                root.picked(i);
+            }
+        }
+    }
+}
+
+// What goes into a support settings file, or comes out of one, as a list
+// to tick: over the whole window, until it is answered.
+export component SharePicker inherits Rectangle {
+    // 1 picks what to export, 2 what to import.
+    in property <int> mode;
+    in property <[ShareItem]> items;
+    in property <int> picked-count;
+    callback toggled(int, bool);
+    callback accepted();
+    callback cancelled();
+
+    background: #000000a0;
+
+    // Swallows what is under it.
+    TouchArea { }
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.cancelled();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    Rectangle {
+        width: 420px;
+        height: Math.min(root.height - 48px, 132px + list.preferred-height + 8px);
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        background: Theme.card;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        border-radius: Theme.radius;
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 10px;
+
+            Text {
+                text: root.mode == 1 ? @tr("Inspector" => "Export support settings") : @tr("Inspector" => "Import support settings");
+                font-size: Theme.font-lg;
+                font-weight: 600;
+                color: Theme.text;
+            }
+            Text {
+                text: root.mode == 1
+                    ? @tr("Inspector" => "Tick what goes into the file.")
+                    : @tr("Inspector" => "Tick what to take from the file. A preset with a name you have comes in under a new one.");
+                font-size: Theme.font-sm;
+                color: Theme.text-soft;
+                wrap: word-wrap;
+            }
+            ScrollView {
+                vertical-stretch: 1;
+
+                list := VerticalLayout {
+                    spacing: 6px;
+                    alignment: start;
+
+                    for item[i] in root.items: HorizontalLayout {
+                        spacing: 8px;
+
+                        CheckBox {
+                            text: item.name;
+                            checked: item.checked;
+                            horizontal-stretch: 1;
+                            toggled => {
+                                root.toggled(i, self.checked);
+                            }
+                        }
+                        Text {
+                            text: item.detail;
+                            font-family: Theme.mono;
+                            font-size: 10px;
+                            color: Theme.text-faint;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+
+                ScButton {
+                    text: @tr("Inspector" => "Cancel");
+                    kind: ButtonKind.ghost;
+                    clicked => {
+                        root.cancelled();
+                    }
+                }
+                ScButton {
+                    text: root.mode == 1 ? @tr("Inspector" => "Export…") : @tr("Inspector" => "Import");
+                    kind: ButtonKind.primary;
+                    enabled: root.picked-count > 0;
+                    clicked => {
+                        root.accepted();
+                    }
+                }
             }
         }
     }

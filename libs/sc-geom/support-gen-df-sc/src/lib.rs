@@ -42,6 +42,7 @@ pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{
     AddNote, AddOptions, BraceEnd, COVERED_AGREEMENT, COVERED_SURFACE_MM, DfSupportSession,
+    HandShape,
     EditError, EditPreview, REVIEW_NUDGE_MM, SupportContact, SupportJoint, SupportPiece,
     SupportPieceKind,
 };

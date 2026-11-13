@@ -11,7 +11,7 @@ import { ScrollView } from "std-widgets.slint";
 import { ScCheckBox as CheckBox, ScComboBox as ComboBox, ScLineEdit as LineEdit, ScProgress as ProgressIndicator, ScSlider as Slider } from "../kit/controls.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
-import { PresetCard, PresetCards, ScopeBox, ShapeCallout, ShapeField, ShapeSize, ShapeViewer, SizeChips, ZoneRow, ZoneRowView } from "support-shape.slint";
+import { HandToolButton, OwnPresets, PageTabs, PresetCard, PresetCards, ScopeBox, ShapeCallout, ShapeField, ShapeSize, ShapeViewer, SizeChips, ZoneRow, ZoneRowView } from "support-shape.slint";
 import { ButtonKind, Card, DisclosureChevron, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile, WarningNote } from "../kit/controls.slint";
 
 // One finding of the slice review (#90), as Rust lays it out.
@@ -2094,8 +2094,32 @@ export component SupportsInspector inherits VerticalLayout {
     callback zone-size(int, int);
     callback zone-spacing(int, float);
     callback zone-angle-edited(float);
+    // The page shown: 0 what Generate places, 1 what the hand tools place.
+    in property <int> page;
+    callback page-picked(int);
+    // The hand tool armed (0 none, 1 Add, 2 Remove, 3 Move tip, 4 Brace).
+    in property <int> tool;
+    callback tool-picked(int);
+    // The hand sizes are off the ones that ship.
+    in property <bool> hand-changed;
+    callback hand-reset();
+    // The person's own presets, and which of them is in use (-1 none).
+    in property <[string]> own-presets;
+    in property <int> own-preset-index: -1;
+    callback own-preset-picked(int);
+    // One file with presets and hand sizes, to hand to someone else.
+    callback share-export();
+    callback share-import();
 
     spacing: 12px;
+
+    PageTabs {
+        pages: [@tr("Inspector" => "Auto supports"), @tr("Inspector" => "Manual supports")];
+        current: root.page;
+        picked(i) => {
+            root.page-picked(i);
+        }
+    }
 
     if root.imported-bodies > 0: Card {
         title: @tr("Inspector" => "IMPORTED SUPPORTS");
@@ -2167,7 +2191,90 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    Card {
+    if root.page == 1: Card {
+        title: @tr("Inspector" => "TOOLS");
+        note: root.tool == 1 ? root.tip-label : "";
+        note-color: Theme.indicator;
+
+        HorizontalLayout {
+            spacing: 6px;
+
+            HandToolButton {
+                icon: Icons.add-support;
+                label: @tr("Inspector" => "Add");
+                shortcut: "A";
+                active: root.tool == 1;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 1 ? 0 : 1);
+                }
+            }
+            HandToolButton {
+                icon: Icons.move-tip;
+                label: @tr("Inspector" => "Move tip");
+                shortcut: "M";
+                active: root.tool == 3;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 3 ? 0 : 3);
+                }
+            }
+            HandToolButton {
+                icon: Icons.brace-supports;
+                label: @tr("Inspector" => "Brace");
+                shortcut: "C";
+                active: root.tool == 4;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 4 ? 0 : 4);
+                }
+            }
+            HandToolButton {
+                icon: Icons.remove-support;
+                label: @tr("Inspector" => "Remove");
+                shortcut: "X";
+                active: root.tool == 2;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 2 ? 0 : 2);
+                }
+            }
+        }
+        if root.tool == 0: Note {
+            text: @tr("Inspector" => "Pick a tool, or press its key. The size below is the one Add places; keys 1–4 pick it.");
+        }
+        if root.tool == 1: Note {
+            text: @tr("Inspector" => "Click the model where the support should touch it. Shift+click hangs it from the nearest support, or places nothing. Keys 1–4 pick the size.");
+        }
+        if root.tool == 3: Note {
+            text: @tr("Inspector" => "Drag a support by its tip over the model; it is routed again where you let go.");
+        }
+        if root.tool == 4: Note {
+            text: @tr("Inspector" => "Click a support where the brace starts, then the support it goes to.");
+        }
+        if root.tool == 2: LabeledRow {
+            label: @tr("Inspector" => "Drag");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Box"), @tr("Inspector" => "Brush")];
+                current: root.remove-mode;
+                picked(i) => {
+                    root.remove-mode-picked(i);
+                }
+            }
+        }
+        if root.tool == 2: Note {
+            text: root.remove-mode == 1
+                ? @tr("Inspector" => "Paint over the supports to remove, anywhere along them; [ ] or the mouse wheel size the brush ({} px). B switches to a box.", Math.round(root.brush-radius))
+                : @tr("Inspector" => "Drag a box: every support it touches goes, from the selected supports only. B switches to a brush.");
+        }
+        if root.tool != 0 && root.add-note != "": Note {
+            text: root.add-note;
+            color: root.add-note-warns ? Theme.danger : Theme.text-soft;
+        }
+    }
+
+    if root.page == 0: Card {
         title: @tr("Inspector" => "AUTO SUPPORTS");
         note: root.running ? @tr("Inspector" => "Working") : "";
         note-color: Theme.indicator;
@@ -2202,13 +2309,13 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    if root.zone-summary != "": Card {
+    if root.page == 1 || root.zone-summary != "": Card {
         title: @tr("Inspector" => "THE SUPPORT");
         note: root.shape-size-name;
 
         ScopeBox {
             title: root.shape-scope;
-            note: @tr("Inspector" => "for the next Generate");
+            note: root.page == 1 ? @tr("Inspector" => "for the next one placed") : @tr("Inspector" => "for the next Generate");
         }
         ShapeViewer {
             picture: root.shape-picture;
@@ -2280,7 +2387,7 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    if root.zone-summary != "": Card {
+    if root.page == 1 || root.zone-summary != "": Card {
         title: @tr("Inspector" => "ADVANCED");
         collapsible: true;
         expanded: false;
@@ -2344,21 +2451,21 @@ export component SupportsInspector inherits VerticalLayout {
             edited(v) => { root.shape-value(8, v); }
             pointed(p) => { root.shape-pointed(p); }
         }
-        Text {
+        if root.page == 0: Text {
             text: @tr("Inspector" => "BRACES");
             font-size: 10px;
             font-weight: 600;
             letter-spacing: 0.8px;
             color: Theme.text-faint;
         }
-        CheckBox {
+        if root.page == 0: CheckBox {
             text: @tr("Inspector" => "Cross-bracing");
             checked: root.bracing;
             toggled => {
                 root.option-changed(7, self.checked ? 1 : 0);
             }
         }
-        ShapeField {
+        if root.page == 0: ShapeField {
             label: @tr("Inspector" => "Brace diameter");
             value: root.shape-values[9];
             default-value: root.shape-defaults.length > 9 ? root.shape-defaults[9] : -1;
@@ -2367,7 +2474,7 @@ export component SupportsInspector inherits VerticalLayout {
             enabled: root.bracing;
             edited(v) => { root.shape-value(9, v); }
         }
-        ShapeField {
+        if root.page == 0: ShapeField {
             label: @tr("Inspector" => "Braces start at");
             value: root.shape-values[10];
             default-value: root.shape-defaults.length > 10 ? root.shape-defaults[10] : -1;
@@ -2378,7 +2485,24 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    if root.zone-summary != "": Card {
+    if root.page == 1 && root.hand-changed: HorizontalLayout {
+        spacing: 8px;
+
+        Note {
+            text: @tr("Inspector" => "The sizes are not the ones that ship.");
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        ScButton {
+            text: @tr("Inspector" => "Reset to default");
+            kind: ButtonKind.ghost;
+            clicked => {
+                root.hand-reset();
+            }
+        }
+    }
+
+    if root.page == 0 && root.zone-summary != "": Card {
         title: @tr("Inspector" => "WHERE EACH SIZE GOES");
         collapsible: true;
         expanded: false;
@@ -2427,57 +2551,7 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    if root.add-tool-on: Card {
-        title: @tr("Inspector" => "ADD SUPPORT");
-        note: root.tip-label;
-        note-color: Theme.indicator;
-
-        LabeledRow {
-            label: @tr("Inspector" => "Tip");
-            Segmented {
-                width: 190px;
-                options: [@tr("Inspector" => "Preset"), "XS", "S", "M", "L"];
-                current: root.tip-size;
-                picked(i) => {
-                    root.tip-size-picked(i);
-                }
-            }
-        }
-        Note {
-            text: @tr("Inspector" => "Keys 1–4 pick the tip: extra small, small, medium, large. Shift+click hangs the support from the nearest one, or places nothing.");
-        }
-        if root.add-note != "": Note {
-            text: root.add-note;
-            color: root.add-note-warns ? Theme.danger : Theme.text-soft;
-        }
-    }
-
-    if root.remove-tool-on: Card {
-        title: @tr("Inspector" => "REMOVE SUPPORTS");
-
-        LabeledRow {
-            label: @tr("Inspector" => "Drag");
-            Segmented {
-                width: 190px;
-                options: [@tr("Inspector" => "Box"), @tr("Inspector" => "Brush")];
-                current: root.remove-mode;
-                picked(i) => {
-                    root.remove-mode-picked(i);
-                }
-            }
-        }
-        Note {
-            text: root.remove-mode == 1
-                ? @tr("Inspector" => "Paint over the supports to remove, anywhere along them; [ ] or the mouse wheel size the brush ({} px). B switches to a box.", Math.round(root.brush-radius))
-                : @tr("Inspector" => "Drag a box: every support it touches goes, from the selected supports only. B switches to a brush.");
-        }
-        if root.add-note != "": Note {
-            text: root.add-note;
-            color: root.add-note-warns ? Theme.danger : Theme.text-soft;
-        }
-    }
-
-    Card {
+    if root.page == 0: Card {
         title: @tr("Inspector" => "ISLANDS");
         note: root.islands-left > 0 ? @tr("Inspector" => "{n} left" | "{n} left" % root.islands-left) : "";
         note-color: Theme.warning;
@@ -2547,7 +2621,7 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    if root.zone-summary == "": Card {
+    if root.page == 0 && root.zone-summary == "": Card {
         title: @tr("Inspector" => "PLACEMENT");
         collapsible: true;
 
@@ -2636,7 +2710,7 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    Card {
+    if root.page == 0: Card {
         title: @tr("Inspector" => "RAFT");
         collapsible: true;
         expanded: false;
@@ -2695,11 +2769,19 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    Card {
+    if root.page == 0: Card {
         title: @tr("Inspector" => "PRESETS");
         collapsible: true;
         expanded: false;
 
+        if root.own-presets.length > 0: OwnPresets {
+            names: root.own-presets;
+            current: root.own-preset-index;
+            enabled: !root.running;
+            picked(i) => {
+                root.own-preset-picked(i);
+            }
+        }
         preset-name := LineEdit {
             placeholder-text: @tr("Inspector" => "Name for a new preset");
         }
@@ -2724,6 +2806,34 @@ export component SupportsInspector inherits VerticalLayout {
         }
         Note {
             text: @tr("Inspector" => "Built-in presets cannot be deleted. Presets are saved as TOML files in the app data folder.");
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "SHARE");
+        collapsible: true;
+        expanded: false;
+
+        Note {
+            text: @tr("Inspector" => "One file with your presets and your hand sizes, whichever you tick, to hand to someone else or to keep.");
+        }
+        HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Export…");
+                horizontal-stretch: 1;
+                clicked => {
+                    root.share-export();
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Import…");
+                horizontal-stretch: 1;
+                clicked => {
+                    root.share-import();
+                }
+            }
         }
     }
 }

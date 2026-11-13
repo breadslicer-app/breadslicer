@@ -3130,6 +3130,61 @@ mod window_wiring_tests {
         });
     }
 
+    /// The Manual page (#564): the panel shows the sizes the hand tools
+    /// place, the person's own; changing one leaves every preset of
+    /// Generate as it was, and they go back to the ones that ship.
+    #[test]
+    fn the_manual_page_edits_the_hand_sizes_and_no_preset() {
+        on_fresh_slint_thread(|| {
+            use slint::Model;
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            let values =
+                |w: &MainWindow| -> Vec<f32> { w.get_support_shape_values().iter().collect() };
+            let page = |w: &MainWindow, page: i32| {
+                w.set_support_page(page);
+                w.invoke_support_page_changed();
+            };
+            window.invoke_support_preset_picked(0);
+            let auto = values(&window);
+
+            page(&window, 1);
+            assert_eq!(window.get_support_shape_scope().as_str(), "Hand supports");
+            assert_eq!(window.get_support_shape_size_name().as_str(), "S");
+            assert_eq!(window.get_support_shape_sizes().row_count(), 4);
+            assert!(!window.get_support_hand_changed());
+            // The large chip: the size Add places, as key 4 picks it.
+            window.invoke_support_shape_size_picked(3);
+            assert_eq!(window.get_support_tip_size(), 4);
+            assert_eq!(window.get_support_shape_size_name().as_str(), "L");
+            assert_eq!(values(&window)[0], 0.4);
+            window.invoke_support_shape_value(1, 2.0);
+            assert_eq!(values(&window)[1], 2.0);
+            assert_eq!(window.get_support_shape_defaults().iter().nth(1), Some(1.1));
+            assert!(window.get_support_hand_changed());
+            window.invoke_support_shape_size_picked(1);
+            assert_eq!(values(&window)[1], 1.1, "the small one keeps its trunk");
+
+            // Generate's preset is as it was.
+            page(&window, 0);
+            assert_eq!(window.get_support_preset_card_index(), 0);
+            assert_eq!(
+                window.get_support_shape_scope().as_str(),
+                "Preset Miniatures"
+            );
+            assert_eq!(values(&window), auto);
+            window.invoke_support_shape_size_picked(3);
+            assert_eq!(values(&window)[1], 1.1, "the preset's large size too");
+
+            page(&window, 1);
+            window.invoke_support_hand_reset();
+            assert!(!window.get_support_hand_changed());
+            window.invoke_support_shape_size_picked(3);
+            assert_eq!(values(&window)[1], 1.1);
+        });
+    }
+
     #[test]
     fn support_options_reach_the_tab_clamped_and_presets_apply() {
         let (density, clamped, preset_index, names) = on_fresh_slint_thread(|| {
@@ -4688,6 +4743,16 @@ mod window_wiring_tests {
                 window.invoke_support_preset_picked(2);
                 window.invoke_support_shape_size_picked(4);
                 shot("statues-xl");
+                window.invoke_support_preset_picked(0);
+                window.set_support_page(1);
+                window.set_support_tip_size(2);
+                window.invoke_support_page_changed();
+                window.set_support_tool(1);
+                window.invoke_support_shape_value(1, 1.6);
+                shot("manual");
+                window.invoke_support_share_export();
+                shot("share");
+                window.invoke_support_share_cancelled();
             });
         }
     }

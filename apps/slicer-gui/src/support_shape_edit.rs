@@ -35,6 +35,30 @@ pub(crate) fn short_name(id: &str) -> String {
     }
 }
 
+/// The hand sizes that ship: what the hand tools place until the person
+/// changes them. Held as a preset of sizes alone, so the panel edits them
+/// as it does a zone preset's.
+pub(crate) fn hand_factory() -> ZonePreset {
+    let mut hand = ZonePreset::default();
+    hand.rules.sizes = sc_geom::df_supports::zone_presets::support_sizes()
+        .into_iter()
+        .filter(|s| HAND_SIZES.contains(&s.id.as_str()))
+        .collect();
+    hand
+}
+
+/// The hand sizes read from what was saved: the saved numbers of each size
+/// that ships, the shipped ones for a size missing there.
+pub(crate) fn hand_from_saved(saved: Vec<SupportSize>) -> ZonePreset {
+    let mut hand = hand_factory();
+    for size in &mut hand.rules.sizes {
+        if let Some(s) = saved.iter().find(|s| s.id == size.id) {
+            *size = s.clone().clamped();
+        }
+    }
+    hand
+}
+
 /// The sizes the panel shows, as indices into the preset's sizes: the four
 /// hand sizes in their order (XS S M L), then every other size a zone of
 /// the preset places, in the preset's order. Never by tip: a size whose tip
@@ -399,6 +423,24 @@ mod tests {
             }
             assert_eq!(closest_base(&refs, &z), Some(i));
         }
+    }
+
+    /// The hand sizes are the four that ship, and what was saved of them
+    /// comes back, a size not saved as it ships.
+    #[test]
+    fn the_hand_sizes_ship_as_four_and_take_what_was_saved() {
+        let factory = hand_factory();
+        let ids: Vec<&str> = factory.rules.sizes.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, HAND_SIZES);
+        assert_eq!(shown_sizes(&factory), [0, 1, 2, 3]);
+        let mut small = factory.rules.sizes[1].clone();
+        small.trunk_diameter_mm = 2.0;
+        let mut stray = small.clone();
+        stray.id = "other".to_owned();
+        let hand = hand_from_saved(vec![stray, small.clone()]);
+        assert_eq!(hand.rules.sizes[1], small);
+        assert_eq!(hand.rules.sizes[0], factory.rules.sizes[0]);
+        assert_eq!(hand.rules.sizes.len(), 4);
     }
 
     /// Values go through the engine's bounds, and the bracing is the

@@ -13,7 +13,7 @@ import { Icons } from "./kit/icons.slint";
 import { CaptionButton, CaptionKind, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
 import { CutCard, ExportInspector, HollowInspector, OrientCard, OrientOption, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { LayerView } from "./workspace/layer-view.slint";
-import { PresetCard, ShapeCallout, ShapeSize, ZoneRow } from "./workspace/support-shape.slint";
+import { PresetCard, ShapeCallout, ShapeSize, ShareItem, SharePicker, ZoneRow } from "./workspace/support-shape.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 import { ExtendDialog } from "extend-dialog.slint";
@@ -340,6 +340,42 @@ export component MainWindow inherits Window {
     // is clicked, 2 remove the support clicked, 3 move a tip, 4 brace two
     // supports (#3).
     in-out property <int> support-tool: 0;
+    // The page of the Supports tab: 0 what Generate places, 1 what the hand
+    // tools place, with the sizes they place.
+    in-out property <int> support-page: 0;
+    callback support-page-changed();
+    changed support-page => {
+        root.support-page-changed();
+    }
+    in property <bool> support-hand-changed;
+    callback support-hand-reset();
+    in property <[string]> support-own-presets;
+    in property <int> support-own-preset-index: -1;
+    // Support settings as a file: 0 nothing asked, 1 picking what to
+    // export, 2 picking what to import.
+    in property <int> support-share-mode;
+    in property <[ShareItem]> support-share-items;
+    in property <int> support-share-picked;
+    callback support-share-export();
+    callback support-share-import();
+    callback support-share-toggled(int, bool);
+    callback support-share-accepted();
+    callback support-share-cancelled();
+    // Shows the hand tools' page; Add places a hand size there, the small
+    // one until another is picked.
+    function show-hand-page() {
+        root.support-page = 1;
+        if root.support-tip-size == 0 {
+            root.support-tip-size = 2;
+        }
+    }
+    // Arms hand tool `tool` (or puts it away when armed), on its page.
+    function arm-support-tool(tool: int) {
+        root.support-tool = root.support-tool == tool ? 0 : tool;
+        if root.support-tool != 0 {
+            root.show-hand-page();
+        }
+    }
     // A click of the tool at a world point; with Shift, Add hangs the
     // support from the nearest one or places nothing.
     callback support-tool-clicked(float, float, float, bool);
@@ -1558,54 +1594,6 @@ export component MainWindow inherits Window {
                                 root.df-support-requested();
                             }
                         }
-                        if root.workspace-section == WorkspaceSection.Supports: Rectangle {
-                            height: 9px;
-                            Rectangle {
-                                width: 28px;
-                                height: 1px;
-                                background: Theme.border;
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                            icon: Icons.add-support;
-                            label: @tr("Inspector" => "Add support (click the model)");
-                            shortcut: "A";
-                            active: root.support-tool == 1;
-                            enabled: root.has-scene && !root.support-gen-in-progress;
-                            clicked => {
-                                root.support-tool = root.support-tool == 1 ? 0 : 1;
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                            icon: Icons.move-tip;
-                            label: @tr("Inspector" => "Move tip (drag it)");
-                            shortcut: "M";
-                            active: root.support-tool == 3;
-                            enabled: root.has-scene && !root.support-gen-in-progress;
-                            clicked => {
-                                root.support-tool = root.support-tool == 3 ? 0 : 3;
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                            icon: Icons.brace-supports;
-                            label: @tr("Inspector" => "Brace two supports (click one, then the other)");
-                            shortcut: "C";
-                            active: root.support-tool == 4;
-                            enabled: root.has-scene && !root.support-gen-in-progress;
-                            clicked => {
-                                root.support-tool = root.support-tool == 4 ? 0 : 4;
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Supports: ToolButton {
-                            icon: Icons.remove-support;
-                            label: @tr("Inspector" => "Remove support (click it)");
-                            shortcut: "X";
-                            active: root.support-tool == 2;
-                            enabled: root.has-scene && !root.support-gen-in-progress;
-                            clicked => {
-                                root.support-tool = root.support-tool == 2 ? 0 : 2;
-                            }
-                        }
                         if root.workspace-section == WorkspaceSection.Slice: ToolButton {
                             icon: Icons.slice;
                             label: @tr("SlicePanel" => "Slice");
@@ -1708,19 +1696,19 @@ export component MainWindow inherits Window {
                             if root.workspace-section == WorkspaceSection.Supports && root.has-scene
                                 && !root.support-gen-in-progress {
                                 if key == "a" || key == "A" {
-                                    root.support-tool = root.support-tool == 1 ? 0 : 1;
+                                    root.arm-support-tool(1);
                                     return true;
                                 }
                                 if key == "x" || key == "X" {
-                                    root.support-tool = root.support-tool == 2 ? 0 : 2;
+                                    root.arm-support-tool(2);
                                     return true;
                                 }
                                 if key == "m" || key == "M" {
-                                    root.support-tool = root.support-tool == 3 ? 0 : 3;
+                                    root.arm-support-tool(3);
                                     return true;
                                 }
                                 if key == "c" || key == "C" {
-                                    root.support-tool = root.support-tool == 4 ? 0 : 4;
+                                    root.arm-support-tool(4);
                                     return true;
                                 }
                                 // Remove: B a box or a brush; [ and ] the brush.
@@ -2496,6 +2484,33 @@ export component MainWindow inherits Window {
                                     }
                                     add-tool-on: root.support-tool == 1;
                                     remove-tool-on: root.support-tool == 2;
+                                    page: root.support-page;
+                                    page-picked(i) => {
+                                        if i == 1 {
+                                            root.show-hand-page();
+                                        } else {
+                                            root.support-page = 0;
+                                        }
+                                    }
+                                    tool: root.support-tool;
+                                    tool-picked(tool) => {
+                                        root.arm-support-tool(tool == 0 ? root.support-tool : tool);
+                                    }
+                                    own-presets: root.support-own-presets;
+                                    own-preset-index: root.support-own-preset-index;
+                                    own-preset-picked(i) => {
+                                        root.support-preset-picked(i + root.support-preset-cards.length);
+                                    }
+                                    share-export => {
+                                        root.support-share-export();
+                                    }
+                                    share-import => {
+                                        root.support-share-import();
+                                    }
+                                    hand-changed: root.support-hand-changed;
+                                    hand-reset => {
+                                        root.support-hand-reset();
+                                    }
                                     remove-mode: root.support-remove-mode;
                                     brush-radius: root.support-brush-radius;
                                     remove-mode-picked(i) => {
@@ -2556,7 +2571,7 @@ export component MainWindow inherits Window {
                                 }
                             }
                     }
-                        if root.workspace-section == WorkspaceSection.Supports: SupportsFooter {
+                        if root.workspace-section == WorkspaceSection.Supports && root.support-page == 0: SupportsFooter {
                             has-scene: root.has-scene && !root.loading;
                             running: root.support-gen-in-progress;
                             phase: root.support-gen-phase;
@@ -3247,6 +3262,23 @@ export component MainWindow inherits Window {
 
     ToolTip {
         window-width: root.width;
+    }
+
+    if root.support-share-mode != 0: SharePicker {
+        width: 100%;
+        height: 100%;
+        mode: root.support-share-mode;
+        items: root.support-share-items;
+        picked-count: root.support-share-picked;
+        toggled(i, on) => {
+            root.support-share-toggled(i, on);
+        }
+        accepted => {
+            root.support-share-accepted();
+        }
+        cancelled => {
+            root.support-share-cancelled();
+        }
     }
 
     // App messages (#133): last, so they sit over everything else.

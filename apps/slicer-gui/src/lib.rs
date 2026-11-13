@@ -94,6 +94,7 @@ mod startup_token;
 mod support_follow;
 mod support_shape;
 mod support_shape_edit;
+mod support_share;
 mod support_gen_run;
 mod support_hints;
 mod support_lines;
