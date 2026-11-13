@@ -132,6 +132,14 @@ export component ShapeField inherits HorizontalLayout {
     callback edited(float);
     callback pointed(int);
 
+    // Dragging the number left or right turns it down or up, as in
+    // Blender; a click without a drag types into it. Shift goes ten times
+    // finer, Ctrl snaps to tenths.
+    property <length> scrub-x;
+    property <float> scrub-value;
+    property <float> scrub-start;
+    property <bool> scrubbing;
+
     function shown() -> string {
         return round(root.value * 100) / 100;
     }
@@ -240,6 +248,44 @@ export component ShapeField inherits HorizontalLayout {
                 font-size: Theme.font-xs;
                 color: Theme.text-muted;
                 vertical-alignment: center;
+            }
+        }
+        TouchArea {
+            enabled: root.enabled && !input.has-focus;
+            mouse-cursor: self.enabled ? ew-resize : default;
+            pointer-event(event) => {
+                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    root.scrub-x = self.mouse-x;
+                    root.scrub-value = root.value;
+                    root.scrub-start = root.value;
+                    root.scrubbing = false;
+                } else if event.kind == PointerEventKind.move && self.pressed {
+                    let dx = (self.mouse-x - root.scrub-x) / 1px;
+                    if !root.scrubbing && Math.abs(dx) < 3 {
+                        return;
+                    }
+                    if !root.scrubbing {
+                        root.scrubbing = true;
+                        root.pointed(root.part);
+                    }
+                    // Per pixel: a fraction of the number at the press, so a 5 mm foot
+                    // moves as readily as a 0.24 mm tip.
+                    let rate = Math.max(0.0025, Math.abs(root.scrub-start) * 0.005) * (event.modifiers.shift ? 0.1 : 1);
+                    root.scrub-value = Math.max(0, root.scrub-value + dx * rate);
+                    root.scrub-x = self.mouse-x;
+                    let steps = event.modifiers.control ? 10 : 100;
+                    let v = round(root.scrub-value * steps) / steps;
+                    if v != round(root.value * steps) / steps {
+                        root.edited(v);
+                    }
+                } else if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                    if root.scrubbing {
+                        root.scrubbing = false;
+                        root.pointed(0);
+                    } else {
+                        input.focus();
+                    }
+                }
             }
         }
     }
