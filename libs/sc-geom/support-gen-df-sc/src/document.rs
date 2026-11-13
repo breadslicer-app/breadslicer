@@ -22,6 +22,7 @@ use sc_scene::{LeafPayload, NodeId, NodeKind, Scene};
 use serde::{Deserialize, Serialize};
 use support_gen_df::pipeline::ModelInput;
 use support_gen_df::supports::types::SupportState;
+use support_gen_df::three::Vec3;
 
 use crate::hand_log::HandLog;
 use crate::{DfSupportSession, SettingsRecipe, scene_model_leaves, scene_models};
@@ -89,26 +90,7 @@ pub(crate) struct ModelPrint {
 impl ModelPrint {
     pub(crate) fn of(model: &ModelInput) -> Self {
         let position = model.geometry.position.as_deref().unwrap_or_default();
-        let mut min = [f32::INFINITY; 3];
-        let mut max = [f32::NEG_INFINITY; 3];
-        for v in position.as_chunks::<3>().0 {
-            for k in 0..3 {
-                min[k] = min[k].min(v[k]);
-                max[k] = max[k].max(v[k]);
-            }
-        }
-        // The pipeline puts the geometry's box centre at the transform's
-        // position: a model moved in the session (#119) carries the move
-        // there, and its world bounds with it. For a model as a run makes
-        // it the two are the same.
-        let at = model.transform.position;
-        for (k, at) in [at.x, at.y, at.z].into_iter().enumerate() {
-            let shift = at - (f64::from(min[k]) + f64::from(max[k])) * 0.5;
-            if shift != 0.0 && shift.is_finite() {
-                min[k] = (f64::from(min[k]) + shift) as f32;
-                max[k] = (f64::from(max[k]) + shift) as f32;
-            }
-        }
+        let (min, max) = model_world_bounds(model);
         ModelPrint {
             id: model.id.clone(),
             vertices: position.len() / 3,
@@ -117,7 +99,38 @@ impl ModelPrint {
             max,
         }
     }
+}
 
+/// A model's world bounds: its geometry re-centred on its box and placed by
+/// its transform, as the pipeline places it.
+pub(crate) fn model_world_bounds(model: &ModelInput) -> ([f32; 3], [f32; 3]) {
+    let position = model.geometry.position.as_deref().unwrap_or_default();
+    {
+        // Its world bounds: the geometry re-centred on its box and placed by
+        // the model's transform, as the pipeline places it. A model shared
+        // by copies carries its turn there (#561), and one moved in the
+        // session (#119) its move.
+        let c = support_gen_df::pipeline::bounding_box_center(&model.geometry);
+        let m = support_gen_df::pipeline::model_matrix(&model.transform);
+        let mut min = [f64::INFINITY; 3];
+        let mut max = [f64::NEG_INFINITY; 3];
+        for v in position.as_chunks::<3>().0 {
+            let w = Vec3::new(
+                f64::from(v[0]) - c.x,
+                f64::from(v[1]) - c.y,
+                f64::from(v[2]) - c.z,
+            )
+            .apply_matrix4(&m);
+            for (k, x) in [w.x, w.y, w.z].into_iter().enumerate() {
+                min[k] = min[k].min(x);
+                max[k] = max[k].max(x);
+            }
+        }
+        (min.map(|v| v as f32), max.map(|v| v as f32))
+    }
+}
+
+impl ModelPrint {
     /// The same model, whatever its id.
     fn matches(&self, other: &ModelPrint) -> bool {
         let near =
@@ -319,44 +332,65 @@ impl DfSupportSession {
         version: u32,
         bytes: &[u8],
     ) -> Result<Vec<RestoredSet>, RestoreError> {
+        Self::restore_sets_sharing(scene, leaf, model, version, bytes, &mut Drawings::default())
+    }
+
+    /// [`Self::restore_sets_into`], over the documents of one file in turn
+    /// with the same `drawings` (#561): a set that is another one's carried
+    /// onto a copy of its model, its leaf placed by that move, shows that
+    /// set's mesh instead of a drawing of its own, as it did when saved.
+    pub fn restore_sets_sharing(
+        scene: &mut Scene,
+        leaf: NodeId,
+        model: Option<NodeId>,
+        version: u32,
+        bytes: &[u8],
+        drawings: &mut Drawings,
+    ) -> Result<Vec<RestoredSet>, RestoreError> {
         let only = model.map(|model| [model]);
         let (session, models) =
             Self::from_document_on_leaves(scene, only.as_ref().map(|m| &m[..]), version, bytes)?;
-        let mut drawn = Vec::new();
-        for (session, model) in session.split_by_model().into_iter().zip(models) {
-            if session.is_empty() {
-                continue;
-            }
-            let mesh = session
-                .mesh()
-                .map_err(|e| RestoreError::Mesh(e.to_string()))?
-                .ok_or_else(|| RestoreError::Mesh("no supports left".to_owned()))?;
-            drawn.push((model, session, Arc::new(mesh)));
-        }
-        if drawn.is_empty() {
-            return Err(RestoreError::Mesh("no supports left".to_owned()));
-        }
         let (meta, transform) = match scene.node(leaf) {
             Some(node) => (node.meta.clone(), node.local_transform),
             None => return Err(RestoreError::Leaf("it is not in the scene".to_owned())),
         };
         // A set is drawn where its session stands, in world space. A leaf
         // saved carrying its set on its own transform (the set moved with its
-        // model, #560) keeps it: the set is drawn in the leaf's frame.
+        // model, #560, or shown as another copy's, #561) keeps it: the set is
+        // drawn in the leaf's frame.
         let to_leaf = transform
             .inverse()
             .map_err(|e| RestoreError::Leaf(e.to_string()))?;
-        let mut sets = Vec::with_capacity(drawn.len());
-        for (k, (model, session, mesh)) in drawn.into_iter().enumerate() {
+        let mut drawn = Vec::new();
+        for (session, model) in session.split_by_model().into_iter().zip(models) {
+            if session.is_empty() {
+                continue;
+            }
+            if let Some(mesh) = drawings.shown_for(&session, &transform) {
+                drawn.push((model, session, mesh));
+                continue;
+            }
+            let mesh = session
+                .mesh()
+                .map_err(|e| RestoreError::Mesh(e.to_string()))?
+                .ok_or_else(|| RestoreError::Mesh("no supports left".to_owned()))?;
             let mesh = if transform == sc_mesh_core::transform::Transform3D::Identity {
-                mesh
+                Arc::new(mesh)
             } else {
-                let mut local = (*mesh).clone();
+                let mut local = mesh;
                 for v in &mut local.vertices {
                     *v = to_leaf.apply_to_vertex(*v);
                 }
                 Arc::new(local)
             };
+            drawings.keep(&session, &transform, &mesh);
+            drawn.push((model, session, mesh));
+        }
+        if drawn.is_empty() {
+            return Err(RestoreError::Mesh("no supports left".to_owned()));
+        }
+        let mut sets = Vec::with_capacity(drawn.len());
+        for (k, (model, session, mesh)) in drawn.into_iter().enumerate() {
             let at = if k == 0 {
                 swap_leaf_mesh(scene, leaf, mesh)?;
                 leaf
@@ -371,6 +405,117 @@ impl DfSupportSession {
         }
         Ok(sets)
     }
+}
+
+/// The sets drawn so far while a file is read (#561), each with what tells
+/// its supports apart in its model's frame, the transform of the leaf it is
+/// drawn in, and the mesh drawn there.
+#[derive(Default)]
+pub struct Drawings(Vec<Drawing>);
+
+struct Drawing {
+    geometry: Arc<support_gen_df::three::buffer_geometry::BufferGeometry>,
+    model: support_gen_df::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform,
+    shape: (Vec<[f64; 3]>, [usize; 9]),
+    leaf: sc_mesh_core::transform::Transform3D,
+    mesh: Arc<IndexedMesh>,
+}
+
+/// How near two saved numbers have to be to be one: positions and
+/// transforms go through the file.
+const SAME_MM: f64 = 1e-4;
+
+impl Drawings {
+    /// The mesh of a set drawn before that `session` is, carried onto its
+    /// copy of the model, when the leaf it goes in (placed by `leaf`) shows
+    /// it there: the same supports in the model's frame, and the leaf moved
+    /// as the model is.
+    fn shown_for(
+        &self,
+        session: &DfSupportSession,
+        leaf: &sc_mesh_core::transform::Transform3D,
+    ) -> Option<Arc<IndexedMesh>> {
+        use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+        let model = session.first_model()?;
+        let shape = session.shape_in_model()?;
+        self.0.iter().find_map(|d| {
+            if !Arc::ptr_eq(&d.geometry, &model.geometry)
+                || (d.model.position.z - model.transform.position.z).abs() > SAME_MM
+                || d.shape.1 != shape.1
+                || !same_points(&d.shape.0, &shape.0)
+            {
+                return None;
+            }
+            // The move from the drawn copy to this one.
+            let angle = model.transform.rotation.z - d.model.rotation.z;
+            let (sin, cos) = angle.sin_cos();
+            let from = d.model.position;
+            let delta = [
+                model.transform.position.x - (cos * from.x - sin * from.y),
+                model.transform.position.y - (sin * from.x + cos * from.y),
+                0.0,
+            ];
+            let moved = Transform3D::Affine(
+                AffineTransform3D::from_translation(delta)
+                    .compose(&AffineTransform3D::from_rotation_z(angle)),
+            )
+            .compose(&d.leaf);
+            same_transform(&moved, leaf).then(|| d.mesh.clone())
+        })
+    }
+
+    /// Keeps `mesh`, drawn for `session` in a leaf placed by `leaf`.
+    fn keep(
+        &mut self,
+        session: &DfSupportSession,
+        leaf: &sc_mesh_core::transform::Transform3D,
+        mesh: &Arc<IndexedMesh>,
+    ) {
+        let (Some(model), Some(shape)) = (session.first_model(), session.shape_in_model()) else {
+            return;
+        };
+        self.0.push(Drawing {
+            geometry: model.geometry.clone(),
+            model: model.transform,
+            shape,
+            leaf: *leaf,
+            mesh: mesh.clone(),
+        });
+    }
+}
+
+/// Whether two sets of points are the same, each within [`SAME_MM`] of
+/// one of the other: a sorted order is no help, two points a hair apart
+/// sort either way.
+fn same_points(a: &[[f64; 3]], b: &[[f64; 3]]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut taken = vec![false; b.len()];
+    a.iter().all(|p| {
+        let near =
+            (0..b.len()).find(|&k| !taken[k] && (0..3).all(|c| (p[c] - b[k][c]).abs() <= SAME_MM));
+        near.map(|k| taken[k] = true).is_some()
+    })
+}
+
+/// Whether two transforms place alike, to [`SAME_MM`].
+fn same_transform(
+    a: &sc_mesh_core::transform::Transform3D,
+    b: &sc_mesh_core::transform::Transform3D,
+) -> bool {
+    use sc_mesh_core::transform::Transform3D;
+    let parts = |t: &Transform3D| match t {
+        Transform3D::Identity => (
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0; 3],
+        ),
+        Transform3D::Affine(a) => (*a.linear(), *a.translation()),
+    };
+    let ((la, ta), (lb, tb)) = (parts(a), parts(b));
+    (0..3).all(|i| {
+        (ta[i] - tb[i]).abs() <= SAME_MM && (0..3).all(|j| (la[i][j] - lb[i][j]).abs() <= SAME_MM)
+    })
 }
 
 /// A new root leaf showing `mesh` through a mesh resource of its own.

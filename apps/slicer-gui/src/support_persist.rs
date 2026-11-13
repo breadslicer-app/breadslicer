@@ -65,6 +65,52 @@ pub(crate) struct DrawnSet {
 /// Every drawing of the scene's support sets, oldest first.
 pub(crate) type SupportSessions = Vec<DrawnSet>;
 
+/// What the drawings hold in memory, by part (#561): each part's bytes
+/// counted once per drawing and once per address (what is really held).
+#[cfg(test)]
+pub(crate) fn memory_report(sessions: &SupportSessions) -> String {
+    use std::collections::{BTreeMap, HashMap};
+    let mut all: BTreeMap<&'static str, (usize, usize)> = BTreeMap::new();
+    let mut seen: HashMap<(&'static str, usize), usize> = HashMap::new();
+    let mut note = |part: &'static str, at: usize, bytes: usize| {
+        let entry = all.entry(part).or_default();
+        entry.0 += bytes;
+        if seen.insert((part, at), bytes).is_none() {
+            entry.1 += bytes;
+        }
+    };
+    let mesh_bytes = |m: &IndexedMesh| m.vertices().len() * 12 + m.faces().len() * 12;
+    let mut sdfs = 0;
+    for drawn in sessions {
+        for (part, at, bytes) in drawn.session.memory_parts() {
+            if part == "sdf" {
+                sdfs += bytes;
+            } else {
+                note(part, at, bytes);
+            }
+        }
+        note(
+            "support mesh",
+            Arc::as_ptr(&drawn.mesh) as usize,
+            mesh_bytes(&drawn.mesh),
+        );
+        note(
+            "scene model mesh",
+            Arc::as_ptr(&drawn.model_mesh) as usize,
+            mesh_bytes(&drawn.model_mesh),
+        );
+    }
+    let mut out = format!("{} drawings, {sdfs} distance fields;", sessions.len());
+    for (part, (each, held)) in all {
+        out.push_str(&format!(
+            " {part} {:.0} MB ({:.0} MB held)",
+            each as f64 / 1e6,
+            held as f64 / 1e6
+        ));
+    }
+    out
+}
+
 /// The model `model` as the drawing of a set records it: its mesh and
 /// world transform.
 pub(crate) fn model_state(
@@ -527,8 +573,10 @@ pub(crate) fn restore_supports(
     documents: Vec<SupportDocument>,
 ) -> RestoredSupports {
     let mut restored = RestoredSupports::default();
+    // Copies whose sets were shown as one set's mesh come back so (#561).
+    let mut drawings = sc_geom::df_supports::Drawings::default();
     for document in documents {
-        match rebuild(scene, &document) {
+        match rebuild(scene, &document, &mut drawings) {
             Ok(sets) => restored.sets.extend(sets),
             Err(why) => {
                 let _ = scene.remove_leaf(document.leaf);
@@ -539,7 +587,11 @@ pub(crate) fn restore_supports(
     restored
 }
 
-fn rebuild(scene: &mut Scene, document: &SupportDocument) -> Result<Vec<RestoredSet>, String> {
+fn rebuild(
+    scene: &mut Scene,
+    document: &SupportDocument,
+    drawings: &mut sc_geom::df_supports::Drawings,
+) -> Result<Vec<RestoredSet>, String> {
     if document.generator != DF_SUPPORT_GENERATOR {
         return Err(format!(
             "the supports were made by an unknown generator, \"{}\"",
@@ -549,12 +601,13 @@ fn rebuild(scene: &mut Scene, document: &SupportDocument) -> Result<Vec<Restored
     // The port is DragonFruit's code on saved input: a panic in it is
     // supports that could not be rebuilt, not a failed open.
     let sets = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        DfSupportSession::restore_sets_into(
+        DfSupportSession::restore_sets_sharing(
             scene,
             document.leaf,
             document.model,
             document.version,
             &document.document,
+            drawings,
         )
     }))
     .map_err(|_| "the support engine failed while rebuilding them".to_owned())?

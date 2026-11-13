@@ -7672,3 +7672,13 @@ msgstr "{}, de fábrica"
 msgctxt "Inspector"
 msgid "Your preset {}, made from {}"
 msgstr "Tu preset {}, hecho a partir de {}"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Supports run into a neighbour"
+msgstr "Soportes que chocan con un vecino"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "{} copies took the supports of a copy standing like them, and they run into a model beside them. Press Arrange all to space the models out."
+msgstr "{} copias recibieron los soportes de una copia apoyada igual, y chocan con un modelo de al lado. Apretá Acomodar todo para separar los modelos."

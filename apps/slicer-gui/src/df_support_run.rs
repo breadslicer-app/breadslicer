@@ -5649,12 +5649,9 @@ impl DfSupportRun {
             born.iter()
                 .map(|(_, _, mesh)| (mesh.clone(), Transform3D::Identity)),
         );
-        let pasted = self.document.paste_fragment_replacing_all_after(
-            prior,
-            &fragment,
-            [0.0, 0.0, 0.0],
-            &[],
-        );
+        let pasted = self
+            .document
+            .paste_fragment_replacing_all_after(prior, &fragment, None, &[]);
         let leaves = match pasted {
             Ok(leaves) if leaves.len() == born.len() => leaves,
             _ => {
@@ -6183,12 +6180,37 @@ impl DfSupportRun {
             .iter()
             .filter_map(|set| set.kept.clone())
             .collect();
-        // One set per model it placed supports on (#197).
-        let sets: Vec<(NodeId, Arc<sc_mesh_core::IndexedMesh>, DfSupportSession)> = outcome
-            .sets
-            .into_iter()
-            .filter_map(|set| Some((set.model, Arc::new(set.mesh?), set.session)))
-            .collect();
+        let crowded = outcome.crowded.len();
+        // One set per model it placed supports on (#197). A copy that took
+        // another's supports (#561) shows that one's mesh, turned and moved
+        // onto it by its leaf: one mesh for every copy.
+        let mut drawn: Vec<Option<Arc<sc_mesh_core::IndexedMesh>>> = Vec::new();
+        let mut sets: Vec<(
+            NodeId,
+            Arc<sc_mesh_core::IndexedMesh>,
+            Transform3D,
+            DfSupportSession,
+        )> = Vec::new();
+        for set in outcome.sets {
+            let shared = set.same_as.and_then(|same| {
+                let mesh = drawn.get(same.set)?.clone()?;
+                Some((mesh, same.transform()))
+            });
+            let shown = match (shared, set.mesh) {
+                (Some(shared), Some(_)) => Some(shared),
+                (None, Some(mesh)) => Some((Arc::new(mesh), Transform3D::Identity)),
+                (_, None) => None,
+            };
+            drawn.push(
+                shown
+                    .as_ref()
+                    .filter(|(_, t)| matches!(t, Transform3D::Identity))
+                    .map(|(mesh, _)| mesh.clone()),
+            );
+            if let Some((mesh, at)) = shown {
+                sets.push((set.model, mesh, at, set.session));
+            }
+        }
         if sets.is_empty() {
             self.dialogs
                 .show_notice(MessageKey::SupportsNotNeeded, move || InfoTexts {
@@ -6200,7 +6222,7 @@ impl DfSupportRun {
         }
         let fragment = SceneFragment::from_leaf_snapshots(
             sets.iter()
-                .map(|(_, mesh, _)| (mesh.clone(), Transform3D::Identity)),
+                .map(|(_, mesh, at, _)| (mesh.clone(), *at)),
         );
         // Generating again replaces the supports already there (#152), in the
         // same undoable step as the paste: the sets of the models the run
@@ -6235,7 +6257,7 @@ impl DfSupportRun {
         // that the previous set was replaced, as nothing seems to happen.
         let replaced_note = (!replaced.is_empty()).then(|| {
             let fresh: Vec<&sc_mesh_core::IndexedMesh> =
-                sets.iter().map(|(_, mesh, _)| mesh.as_ref()).collect();
+                sets.iter().map(|(_, mesh, _, _)| mesh.as_ref()).collect();
             // Lifted models (#389) get supports for their new place.
             if lift.is_none() && self.same_supports(&replaced, &fresh) {
                 ReplacedNote::Same
@@ -6251,16 +6273,13 @@ impl DfSupportRun {
         if !unchanged {
             // The lift of the models resting on the plate (#389) and their
             // supports: one undo step.
-            let pasted = self.document.paste_fragment_replacing_all_after(
-                lift,
-                &fragment,
-                [0.0, 0.0, 0.0],
-                &replaced,
-            );
+            let pasted = self
+                .document
+                .paste_fragment_replacing_all_after(lift, &fragment, None, &replaced);
             if let Ok(leaves) = &pasted
                 && leaves.len() == sets.len()
             {
-                for (leaf, (model, _, session)) in leaves.iter().zip(sets) {
+                for (leaf, (model, _, _, session)) in leaves.iter().zip(sets) {
                     record(
                         &self.document,
                         &self.sessions,
@@ -6301,6 +6320,20 @@ impl DfSupportRun {
             )),
             None => {}
         }
+        // Copies given the supports of one standing like them were placed
+        // without looking at their neighbours (#561): where they run into
+        // one, Arrange all spaces the models out.
+        if crowded > 0 {
+            self.dialogs.show_info(move || InfoTexts {
+                heading: ctr!("DfSupportDialog", "Supports run into a neighbour"),
+                message: ctr!(
+                    "DfSupportDialog",
+                    "{} copies took the supports of a copy standing like them, and they run into a model beside them. Press Arrange all to space the models out.",
+                    crowded
+                ),
+                details: Default::default(),
+            });
+        }
         if !kept.is_empty() {
             self.show_kept_edits(kept, details);
             return;
@@ -6312,6 +6345,21 @@ impl DfSupportRun {
                 details: details.as_str().into(),
             });
     }
+}
+
+/// Whether two transforms place alike, to a billionth (#561): a copy's
+/// supports shown under its turn and move.
+fn same_place(a: &Transform3D, b: &Transform3D) -> bool {
+    let parts = |t: &Transform3D| match t {
+        Transform3D::Identity => (
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0; 3],
+        ),
+        Transform3D::Affine(a) => (*a.linear(), *a.translation()),
+    };
+    let ((la, ta), (lb, tb)) = (parts(a), parts(b));
+    (0..3)
+        .all(|i| (ta[i] - tb[i]).abs() < 1e-9 && (0..3).all(|j| (la[i][j] - lb[i][j]).abs() < 1e-9))
 }
 
 impl DfSupportRun {
@@ -6351,7 +6399,12 @@ impl DfSupportRun {
     fn already_shown(
         &self,
         replaced: &[NodeId],
-        sets: &[(NodeId, Arc<sc_mesh_core::IndexedMesh>, DfSupportSession)],
+        sets: &[(
+            NodeId,
+            Arc<sc_mesh_core::IndexedMesh>,
+            Transform3D,
+            DfSupportSession,
+        )],
     ) -> bool {
         if replaced.len() != sets.len() {
             return false;
@@ -6365,15 +6418,20 @@ impl DfSupportRun {
                     else {
                         return false;
                     };
-                    if !untransformed(&leaf.world_transform()) || drawn.session.hand_edited() {
+                    if drawn.session.hand_edited() {
                         return false;
                     }
-                    let Some(at) = unmatched.iter().position(|(model, mesh, _)| {
-                        *model == drawn.model && mesh.as_ref() == leaf.mesh()
+                    // Where the set is shown: in place, or a copy's turn and
+                    // move (#561).
+                    let shown = leaf.world_transform();
+                    let Some(at) = unmatched.iter().position(|(model, mesh, place, _)| {
+                        *model == drawn.model
+                            && mesh.as_ref() == leaf.mesh()
+                            && same_place(&shown, place)
                     }) else {
                         return false;
                     };
-                    let (_, _, session) = unmatched.swap_remove(at);
+                    let (_, _, _, session) = unmatched.swap_remove(at);
                     drawn.session.same_supports_as(session)
                 })
             })
@@ -7364,7 +7422,12 @@ fn summary_message(outcome: &DfSupportOutcome) -> String {
         "Models: {}, islands: {}, support roots: {}, triangles: {}.",
         outcome.models,
         outcome.islands,
-        outcome.support.collections.roots.len(),
+        // Every set's, a copy's (#561) too.
+        outcome
+            .sets
+            .iter()
+            .map(|set| set.session.state().collections.roots.len())
+            .sum::<usize>(),
         outcome.triangles
     )
     .to_string()
@@ -7535,6 +7598,125 @@ mod hand_edit_tests {
         assert!(after_add.contains("edited by hand"), "{after_add}");
         assert!(after_remove.contains("edited by hand"), "{after_remove}");
         assert!(edits);
+    }
+
+    /// Copies of one mesh standing alike get their supports from one run
+    /// on the first, and every copy shows that one support mesh, turned and
+    /// moved by its leaf (#561). A support added by hand to a copy gives it
+    /// a mesh of its own and leaves the first as it was.
+    #[test]
+    fn copies_standing_alike_show_one_support_mesh() {
+        let (shared, first_kept, own) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let cube = Arc::new(sc_mesh_fixtures::unit_cube_mesh());
+            let turn = AffineTransform3D::from_translation([50.0, 30.0, 8.0])
+                .compose(&AffineTransform3D::from_rotation_z(0.6));
+            for at in [AffineTransform3D::from_translation([20.0, 20.0, 8.0]), turn] {
+                let leaf = graph
+                    .add_leaf(
+                        None,
+                        Transform3D::Affine(at),
+                        LeafPayload::Mesh(cube.clone()),
+                    )
+                    .unwrap();
+                graph.add_root(leaf).unwrap();
+            }
+            document.install_graph(graph.clone(), PathBuf::from("cubes.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            let meshes = |document: &SceneDocument| {
+                document
+                    .with_scene(|spatial| {
+                        support_leaves(spatial)
+                            .map(|(id, _)| {
+                                let mesh = spatial.graph().leaf_mesh_arc(id).unwrap().clone();
+                                let at = spatial.leaf(id).unwrap().world_transform();
+                                (mesh, at)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap()
+            };
+            let before = meshes(&document);
+            assert_eq!(before.len(), 2);
+            let shared = Arc::ptr_eq(&before[0].0, &before[1].0)
+                && before.iter().filter(|(_, at)| untransformed(at)).count() == 1;
+            // Each set stands under its own model.
+            let under = |list: &[(Arc<sc_mesh_core::IndexedMesh>, Transform3D)]| {
+                list.iter().all(|(mesh, at)| {
+                    let world = sc_scene::bake_mesh_to_world(mesh, at).unwrap();
+                    let (lo, hi) = world.vertices().iter().fold(
+                        ([f32::MAX; 2], [f32::MIN; 2]),
+                        |(lo, hi), v| {
+                            let p = v.as_array();
+                            (
+                                [lo[0].min(p[0]), lo[1].min(p[1])],
+                                [hi[0].max(p[0]), hi[1].max(p[1])],
+                            )
+                        },
+                    );
+                    let inside = |c: [f32; 2]| (0..2).all(|k| lo[k] < c[k] && c[k] < hi[k]);
+                    let mine = if untransformed(at) {
+                        [20.0, 20.0]
+                    } else {
+                        [50.0, 30.0]
+                    };
+                    inside(mine) && hi[0] - lo[0] < 20.0
+                })
+            };
+            assert!(under(&before), "each set under its model");
+            // Saved and opened again, they show one mesh still.
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("copies.bread");
+            crate::scene_save::save_project_to(&document, &target, &PrintDefaults::default())
+                .expect("the project saves");
+            let loaded = sc_project_formats::load_scene(&target, None, |_| {}).unwrap();
+            let sc_project_formats::LoadedContent::Project(project) = loaded.content else {
+                panic!("a .bread opens as a project");
+            };
+            let mut scene = project.scene;
+            let restored = crate::support_persist::restore_supports(&mut scene, project.supports);
+            assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+            document.install_project_graph(scene, target.clone(), project.payload);
+            crate::support_persist::install_sets(&document, restored.sets);
+            let before = meshes(&document);
+            assert!(under(&before), "each set under its model, reopened");
+            let shared = shared
+                && before.len() == 2
+                && Arc::ptr_eq(&before[0].0, &before[1].0)
+                && run.sets_in_force().len() == 2;
+            // A tip by hand on the turned copy, under it.
+            window.set_support_tool(1);
+            let under = Transform3D::Affine(turn)
+                .apply_to_vertex(sc_mesh_core::Vertex::new([0.2, 0.2, -0.5]))
+                .as_array()
+                .to_owned();
+            run.on_tool_click(under);
+            let after = meshes(&document);
+            let first = before
+                .iter()
+                .find(|(_, at)| untransformed(at))
+                .map(|(m, _)| m.clone())
+                .unwrap();
+            let first_kept = after.iter().any(|(m, _)| Arc::ptr_eq(m, &first));
+            let own = after
+                .iter()
+                .filter(|(m, _)| !Arc::ptr_eq(m, &first))
+                .count()
+                == 1;
+            (shared, first_kept, own)
+        });
+        assert!(shared, "one support mesh, the copy's under its turn");
+        assert!(first_kept && own, "the edited copy has a mesh of its own");
     }
 
     /// A model with no supports yet previews Add under the cursor before
@@ -9021,9 +9203,10 @@ mod hand_edit_tests {
     }
 
     /// #356: Fill bed copies a supported model with its set: each copy gets
-    /// a set of its own, drawn where it stands and in force (editable and
-    /// saved as data), the original's stays as it was, nothing is generated
-    /// again, and one Undo takes every copy away.
+    /// a set of its own, where it stands and in force (editable and saved as
+    /// data), the original's stays as it was, nothing is generated again,
+    /// and one Undo takes every copy away. Every copy shows the original's
+    /// support mesh, carried there by its leaf (#561).
     #[test]
     fn filling_the_plate_gives_each_copy_its_own_set() {
         use crate::arrange_run::{ArrangeOptions, fill_now};
@@ -9062,7 +9245,12 @@ mod hand_edit_tests {
                 let (leaf, mesh) = set_of(&document, &run, drawn.model);
                 assert_eq!(leaf, drawn.leaf);
                 assert!(sc_geom::df_supports::is_support_mesh(&mesh));
-                assert!(!Arc::ptr_eq(&mesh, &set_mesh), "drawn for the copy");
+                assert!(Arc::ptr_eq(&mesh, &set_mesh), "one support mesh for all");
+                let carried = document
+                    .with_scene(|s| s.leaf(drawn.leaf).map(|q| q.world_transform()))
+                    .flatten()
+                    .unwrap();
+                let mesh = sc_scene::bake_mesh_to_world(&mesh, &carried).unwrap();
                 let (copy_mesh, copy_at) = document
                     .with_scene(|s| {
                         let q = s.leaf(drawn.model)?;

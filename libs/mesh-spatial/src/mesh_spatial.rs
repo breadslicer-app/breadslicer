@@ -13,6 +13,7 @@
 //! pairing is what makes mismatched (mesh, cache) queries
 //! structurally impossible.
 
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use sc_mesh_core::{Aabb, IndexedMesh, Vertex};
@@ -32,21 +33,28 @@ pub(crate) struct MeshSpatial {
     /// linear transform (translation excluded), keyed by bit-equal
     /// match on the linear part, the latest first. The clamp helper in
     /// the GUI hits it every tick of a translate-mode drag, where the
-    /// linear part stays constant. It keeps [`LINEAR_AABB_SLOTS`]
+    /// linear part stays constant. It keeps up to [`LINEAR_AABB_SLOTS`]
     /// transforms: a mesh several objects share at different sizes or
     /// turns used to evict one for the other at every query, each a
-    /// walk of every vertex (#476).
-    linear_aabb: Mutex<Vec<LinearAabbEntry>>,
+    /// walk of every vertex (#476, #561: 106 copies each turned its own
+    /// way by Arrange all, asked on every scene change).
+    linear_aabb: Mutex<HashMap<[u64; 9], Aabb>>,
 }
 
 /// How many linear transforms [`MeshSpatial::linear_aabb`] remembers per
-/// mesh: more than the copies of one mesh a plate holds turned or sized
-/// differently, as a rule.
-pub(crate) const LINEAR_AABB_SLOTS: usize = 16;
+/// mesh before it starts over: far more than the copies of one mesh a
+/// scene holds, each turned or sized its own way.
+pub(crate) const LINEAR_AABB_SLOTS: usize = 4096;
 
-struct LinearAabbEntry {
-    linear: [[f64; 3]; 3],
-    aabb: Aabb,
+/// A linear part as a key, bit for bit.
+fn linear_key(linear: &[[f64; 3]; 3]) -> [u64; 9] {
+    let mut key = [0u64; 9];
+    for (i, row) in linear.iter().enumerate() {
+        for (j, v) in row.iter().enumerate() {
+            key[i * 3 + j] = v.to_bits();
+        }
+    }
+    key
 }
 
 impl MeshSpatial {
@@ -96,17 +104,18 @@ impl MeshSpatial {
     /// AABB of `mesh.vertices` after applying `linear` (no
     /// translation). Tight: walks vertices directly rather than
     /// passing the local AABB through Arvo, so it does not inherit
-    /// Arvo's slack on rotated non-box meshes. Cached among the last
-    /// [`LINEAR_AABB_SLOTS`] linear parts asked, the oldest leaving for
-    /// a new one. `None` for empty meshes.
+    /// Arvo's slack on rotated non-box meshes. Cached for up to
+    /// [`LINEAR_AABB_SLOTS`] linear parts, then started over. `None` for
+    /// empty meshes.
     pub(crate) fn linear_aabb(&self, mesh: &IndexedMesh, linear: &[[f64; 3]; 3]) -> Option<Aabb> {
+        let key = linear_key(linear);
+        if let Some(aabb) = self
+            .linear_aabb
+            .lock()
+            .expect("linear_aabb poisoned")
+            .get(&key)
         {
-            let mut guard = self.linear_aabb.lock().expect("linear_aabb poisoned");
-            if let Some(at) = guard.iter().position(|entry| &entry.linear == linear) {
-                let aabb = guard[at].aabb;
-                guard[..=at].rotate_right(1);
-                return Some(aabb);
-            }
+            return Some(*aabb);
         }
         let mut iter = mesh.vertices.iter();
         let first = apply_linear(linear, *iter.next()?);
@@ -115,16 +124,10 @@ impl MeshSpatial {
             aabb.extend(apply_linear(linear, *v));
         }
         let mut guard = self.linear_aabb.lock().expect("linear_aabb poisoned");
-        if !guard.iter().any(|entry| &entry.linear == linear) {
-            guard.insert(
-                0,
-                LinearAabbEntry {
-                    linear: *linear,
-                    aabb,
-                },
-            );
-            guard.truncate(LINEAR_AABB_SLOTS);
+        if guard.len() >= LINEAR_AABB_SLOTS {
+            guard.clear();
         }
+        guard.insert(key, aabb);
         Some(aabb)
     }
 

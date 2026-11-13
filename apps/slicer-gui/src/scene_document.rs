@@ -2111,7 +2111,8 @@ impl SceneDocument {
         placement_translation: [f64; 3],
         extra: Vec<(LeafPayload, Transform3D, Option<sc_scene::SceneMetadata>)>,
     ) -> Result<Option<(NodeId, Vec<NodeId>)>, SceneError> {
-        let Some((paste, roots)) = self.paste_fragment_compound(fragment, placement_translation)
+        let Some((paste, roots)) =
+            self.paste_fragment_compound(fragment, Some(placement_translation))
         else {
             return Ok(None);
         };
@@ -2175,7 +2176,12 @@ impl SceneDocument {
         placement_translation: [f64; 3],
         replaced: &[NodeId],
     ) -> Result<Vec<NodeId>, SceneError> {
-        self.paste_fragment_replacing_all_after(None, fragment, placement_translation, replaced)
+        self.paste_fragment_replacing_all_after(
+            None,
+            fragment,
+            Some(placement_translation),
+            replaced,
+        )
     }
 
     /// [`Self::paste_fragment_replacing_all`] after the edit `prior`, when
@@ -2186,7 +2192,7 @@ impl SceneDocument {
         &self,
         prior: Option<SceneEdit>,
         fragment: &SceneFragment,
-        placement_translation: [f64; 3],
+        placement_translation: Option<[f64; 3]>,
         replaced: &[NodeId],
     ) -> Result<Vec<NodeId>, SceneError> {
         let Some((compound, new_roots)) =
@@ -2221,8 +2227,7 @@ impl SceneDocument {
         if self.scene_revision() != revision {
             return Ok(Vec::new());
         }
-        let Some((compound, new_roots)) =
-            self.replacing_paste(None, fragment, [0.0; 3], replaced)?
+        let Some((compound, new_roots)) = self.replacing_paste(None, fragment, None, replaced)?
         else {
             return Ok(Vec::new());
         };
@@ -2240,7 +2245,7 @@ impl SceneDocument {
         &self,
         prior: Option<SceneEdit>,
         fragment: &SceneFragment,
-        placement_translation: [f64; 3],
+        placement_translation: Option<[f64; 3]>,
         replaced: &[NodeId],
     ) -> Result<Option<(SceneEdit, Vec<NodeId>)>, SceneError> {
         let Some((paste, new_roots)) =
@@ -2279,10 +2284,13 @@ impl SceneDocument {
         Ok(Some((compound, new_roots)))
     }
 
+    /// `placement_translation` puts each pasted leaf there; `None` keeps the
+    /// fragment's own transforms: support sets drawn where they stand, and a
+    /// copy's set shown as another's under its turn and move (#561).
     fn paste_fragment_compound(
         &self,
         fragment: &SceneFragment,
-        placement_translation: [f64; 3],
+        placement_translation: Option<[f64; 3]>,
     ) -> Option<(SceneEdit, Vec<NodeId>)> {
         let mut slot = self.spatial.borrow_mut();
         let spatial = slot.as_mut()?;
@@ -2342,8 +2350,10 @@ impl SceneDocument {
             let target_rid = rid_map[&frag_rid];
             let target_node_id = spatial.allocate_unbound_node_id();
             new_roots.push(target_node_id);
-            let final_xform =
-                substitute_translation(frag_node.local_transform, placement_translation);
+            let final_xform = match placement_translation {
+                Some(at) => substitute_translation(frag_node.local_transform, at),
+                None => frag_node.local_transform,
+            };
             edits.push(SceneEdit::AddLeaf {
                 node_id: target_node_id,
                 attachment: LeafAttachment::Root { position },

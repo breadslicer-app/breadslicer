@@ -37,13 +37,14 @@ mod session;
 mod shift;
 pub mod zone_presets;
 
-pub use document::{DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, RestoreError, RestoredSet};
+pub use document::{
+    DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, Drawings, RestoreError, RestoredSet,
+};
 pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{
     AddNote, AddOptions, BraceEnd, COVERED_AGREEMENT, COVERED_SURFACE_MM, DfSupportSession,
-    HandShape,
-    EditError, EditPreview, REVIEW_NUDGE_MM, SupportContact, SupportJoint, SupportPiece,
+    EditError, EditPreview, HandShape, REVIEW_NUDGE_MM, SupportContact, SupportJoint, SupportPiece,
     SupportPieceKind,
 };
 pub use support_gen_df::native::overhang::{
@@ -146,6 +147,32 @@ pub struct DfSupportSet {
     /// For a model of [`DfSupportRequest::keep_edits`]: which hand edits of
     /// its old set were put back.
     pub kept: Option<KeptEdits>,
+    /// For a copy standing as another model of the run stands (#561): the
+    /// set it took its supports from, and how they were turned and moved
+    /// onto it. Its mesh is that set's, so a caller may show that set's
+    /// mesh under [`SameDrawing::transform`] instead of a copy of it.
+    pub same_as: Option<SameDrawing>,
+}
+
+/// Where a copy's supports come from (#561): set `set` of the outcome,
+/// turned by `angle` radians about Z through the origin, then moved by
+/// `delta` (mm along X and Y).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SameDrawing {
+    pub set: usize,
+    pub angle: f64,
+    pub delta: [f64; 2],
+}
+
+impl SameDrawing {
+    /// The motion as a scene transform: the turn, then the move.
+    pub fn transform(&self) -> sc_mesh_core::transform::Transform3D {
+        use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+        Transform3D::Affine(
+            AffineTransform3D::from_translation([self.delta[0], self.delta[1], 0.0])
+                .compose(&AffineTransform3D::from_rotation_z(self.angle)),
+        )
+    }
 }
 
 /// What a finished run hands back.
@@ -161,6 +188,9 @@ pub struct DfSupportOutcome {
     /// Placed supports by type (`trunk`, `branch`, ...), summed over models.
     pub placed: Vec<(String, u64)>,
     pub triangles: usize,
+    /// Models whose supports, made for another copy (#561), run into a
+    /// neighbouring model: Arrange all spaces them out.
+    pub crowded: Vec<NodeId>,
     /// Where the run spent its time.
     pub timings: PerfFrame,
 }
@@ -212,14 +242,142 @@ pub fn scene_model_leaves(
         if !is_model_mesh(mesh) || only.is_some_and(|only| !only.contains(&id)) {
             return Ok::<(), SceneError>(());
         }
-        let baked = bake_mesh_to_world(mesh, world)?;
-        models.push((
-            id,
-            model_from_world_mesh(format!("node-{}", id.get()), &baked),
-        ));
+        let name = format!("node-{}", id.get());
+        // The leaf's own mesh, shared with every copy standing the same way
+        // (#561); a mesh met only through a reference is baked.
+        let shared = scene
+            .leaf_mesh_arc(id)
+            .filter(|arc| std::ptr::eq(arc.as_ref(), mesh))
+            .and_then(|arc| model_from_scene_mesh(name.clone(), arc, world));
+        let model = match shared {
+            Some(model) => model,
+            None => model_from_world_mesh(name, &bake_mesh_to_world(mesh, world)?),
+        };
+        models.push((id, model));
         Ok(())
     })?;
     Ok(models)
+}
+
+/// A model geometry kept for every copy of a mesh that stands the same way
+/// (#561), by the mesh and the linear part it is drawn with.
+struct SharedGeometry {
+    mesh: std::sync::Weak<IndexedMesh>,
+    linear: [[i64; 3]; 3],
+    geometry: std::sync::Weak<BufferGeometry>,
+}
+
+/// The geometries copies share, while one of them holds each.
+static SHARED_GEOMETRIES: std::sync::Mutex<Vec<SharedGeometry>> = std::sync::Mutex::new(Vec::new());
+
+/// How finely two copies' linear parts must agree to share a geometry: a
+/// billionth, far under any rounding a turn leaves.
+const LINEAR_QUANTUM: f64 = 1e9;
+
+/// The model of a scene mesh standing where `world` puts it, its geometry
+/// shared with every copy of `mesh` that differs from it only by a move and
+/// a turn about Z (#561): the geometry is the mesh under the rest of the
+/// transform, and the turn and the move are the model's transform, as the
+/// pipeline places a model. `None` for a transform that flattens the mesh.
+pub fn model_from_scene_mesh(
+    id: String,
+    mesh: &Arc<IndexedMesh>,
+    world: &sc_mesh_core::transform::Transform3D,
+) -> Option<ModelInput> {
+    use sc_mesh_core::transform::Transform3D;
+    let (linear, translation) = match world {
+        Transform3D::Identity => (
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0; 3],
+        ),
+        Transform3D::Affine(a) => {
+            if !a.is_invertible() {
+                return None;
+            }
+            (*a.linear(), *a.translation())
+        }
+    };
+    // The turn about Z: where the mesh's X axis points in the plane, or its
+    // Y axis a quarter turn back when X stands upright.
+    let turn = if linear[0][0].hypot(linear[1][0]) > 1e-9 {
+        linear[1][0].atan2(linear[0][0])
+    } else {
+        linear[1][1].atan2(linear[0][1]) - std::f64::consts::FRAC_PI_2
+    };
+    let (sin, cos) = turn.sin_cos();
+    // What is left once the turn is taken out: Rz(-turn) · linear.
+    let mut rest = [[0.0f64; 3]; 3];
+    for c in 0..3 {
+        rest[0][c] = cos * linear[0][c] + sin * linear[1][c];
+        rest[1][c] = -sin * linear[0][c] + cos * linear[1][c];
+        rest[2][c] = linear[2][c];
+    }
+    let key = rest.map(|row| row.map(|v| (v * LINEAR_QUANTUM).round() as i64));
+    let geometry = {
+        let mut shared = SHARED_GEOMETRIES.lock().ok()?;
+        shared.retain(|s| s.mesh.strong_count() > 0 && s.geometry.strong_count() > 0);
+        let found = shared.iter().find_map(|s| {
+            let same = s.linear == key && s.mesh.upgrade().is_some_and(|m| Arc::ptr_eq(&m, mesh));
+            same.then(|| s.geometry.upgrade()).flatten()
+        });
+        match found {
+            Some(geometry) => geometry,
+            None => {
+                let geometry = Arc::new(geometry_under(mesh, &rest));
+                shared.push(SharedGeometry {
+                    mesh: Arc::downgrade(mesh),
+                    linear: key,
+                    geometry: Arc::downgrade(&geometry),
+                });
+                geometry
+            }
+        }
+    };
+    let c = support_gen_df::pipeline::bounding_box_center(&geometry);
+    let position = Vec3::new(
+        cos * c.x - sin * c.y + translation[0],
+        sin * c.x + cos * c.y + translation[1],
+        c.z + translation[2],
+    );
+    Some(ModelInput {
+        id,
+        geometry,
+        transform: ModelTransform {
+            position,
+            rotation: Vec3::new(0.0, 0.0, turn),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+        },
+        visible: true,
+    })
+}
+
+/// `mesh` under the linear part `linear` (row-major), as a model geometry:
+/// a mirroring part turns the faces' winding, as baking does.
+fn geometry_under(mesh: &IndexedMesh, linear: &[[f64; 3]; 3]) -> BufferGeometry {
+    let position: Vec<f32> = mesh
+        .vertices()
+        .iter()
+        .flat_map(|v| {
+            let [x, y, z] = v.as_array().map(f64::from);
+            linear.map(|row| (row[0] * x + row[1] * y + row[2] * z) as f32)
+        })
+        .collect();
+    let det = linear[0][0] * (linear[1][1] * linear[2][2] - linear[1][2] * linear[2][1])
+        - linear[0][1] * (linear[1][0] * linear[2][2] - linear[1][2] * linear[2][0])
+        + linear[0][2] * (linear[1][0] * linear[2][1] - linear[1][1] * linear[2][0]);
+    let index: Vec<u32> = mesh
+        .faces()
+        .iter()
+        .flat_map(|f| {
+            let [a, b, c] = f.vertices.map(u32::from);
+            if det < 0.0 { [a, c, b] } else { [a, b, c] }
+        })
+        .collect();
+    BufferGeometry {
+        position: Some(position),
+        index: Some(index),
+        ..Default::default()
+    }
 }
 
 /// Where the leaf `leaf` stands among the models of `scene`, in the order
@@ -458,9 +616,200 @@ pub fn start_df_supports(
         move |worker: &JobWorker<DfSupportOutcome>| {
             let models = scene_model_leaves(&scene, request.models.as_deref())
                 .map_err(|e| JobError::Failed(e.to_string()))?;
-            run_df_supports(&models, &request, worker, format!("df{stamp}-{run}"))
+            run_with_copies(
+                &scene,
+                &models,
+                &request,
+                worker,
+                format!("df{stamp}-{run}"),
+            )
         },
     ))
+}
+
+/// For each model, the earlier model of `models` it is a copy of standing
+/// the same way (#561): the same mesh at the same height, tilted and scaled
+/// alike, only moved in X/Y and turned about Z. Such a copy's supports are
+/// that model's, turned and moved with it. A model whose hand edits are to
+/// be kept is no one's copy, and has none.
+fn copies_of(models: &[(NodeId, ModelInput)], request: &DfSupportRequest) -> Vec<Option<usize>> {
+    let keeps = |leaf: &NodeId| request.keep_edits.iter().any(|(m, _)| m == leaf);
+    let mut of = vec![None; models.len()];
+    for i in 0..models.len() {
+        let (leaf, model) = &models[i];
+        if keeps(leaf) {
+            continue;
+        }
+        of[i] = (0..i).find(|&k| {
+            let (other_leaf, other) = &models[k];
+            of[k].is_none()
+                && !keeps(other_leaf)
+                && Arc::ptr_eq(&model.geometry, &other.geometry)
+                && (model.transform.position.z - other.transform.position.z).abs() < 1e-6
+        });
+    }
+    of
+}
+
+/// The run of `request` over `models`, made once for each group of copies
+/// standing alike ([`copies_of`]) and handed to the rest of the group: the
+/// first one's supports turned and moved onto each, drawn as its mesh. The
+/// supports of a copy are not placed knowing its neighbours: the sets that
+/// run into another model are named in [`DfSupportOutcome::crowded`].
+fn run_with_copies(
+    scene: &Scene,
+    models: &[(NodeId, ModelInput)],
+    request: &DfSupportRequest,
+    worker: &JobWorker<DfSupportOutcome>,
+    id_prefix: String,
+) -> Result<DfSupportOutcome, JobError> {
+    let of = copies_of(models, request);
+    if of.iter().all(Option::is_none) {
+        return run_df_supports(models, request, worker, id_prefix, &[]);
+    }
+    let firsts: Vec<usize> = (0..models.len()).filter(|&i| of[i].is_none()).collect();
+    let copies: Vec<u64> = firsts
+        .iter()
+        .map(|&f| 1 + of.iter().filter(|o| **o == Some(f)).count() as u64)
+        .collect();
+    let leaves: Vec<(NodeId, ModelInput)> = firsts.iter().map(|&f| models[f].clone()).collect();
+    let mut outcome = run_df_supports(&leaves, request, worker, id_prefix, &copies)?;
+    let mut made: Vec<Option<DfSupportSet>> = outcome.sets.drain(..).map(Some).collect();
+    // The sets in model order: each first one's, then each copy's from it.
+    let mut sets: Vec<DfSupportSet> = Vec::with_capacity(models.len());
+    let mut at: Vec<usize> = vec![usize::MAX; models.len()];
+    for i in 0..models.len() {
+        if worker.is_cancelled() {
+            return Err(JobError::Cancelled);
+        }
+        let set = match of[i] {
+            None => {
+                let k = firsts.iter().position(|&f| f == i).expect("a first");
+                made[k].take()
+            }
+            Some(first) if at[first] != usize::MAX => {
+                let source = &sets[at[first]];
+                Some(carried_set(source, at[first], &models[first].1, &models[i]))
+            }
+            Some(_) => None,
+        };
+        if let Some(set) = set {
+            at[i] = sets.len();
+            sets.push(set);
+        }
+    }
+    outcome.models = models.len();
+    outcome.triangles = sets
+        .iter()
+        .filter_map(|s| s.mesh.as_ref())
+        .map(|m| m.faces().len())
+        .sum();
+    let everyone = scene_model_leaves(scene, None).unwrap_or_default();
+    outcome.crowded = crowded_sets(&sets, &everyone);
+    outcome.sets = sets;
+    Ok(outcome)
+}
+
+/// The set `source` (set `index` of the run, on `first`) turned and moved
+/// onto `copy`, which stands as `first` does but for a move in X/Y and a
+/// turn about Z (#561).
+fn carried_set(
+    source: &DfSupportSet,
+    index: usize,
+    first: &ModelInput,
+    (leaf, copy): &(NodeId, ModelInput),
+) -> DfSupportSet {
+    let angle = copy.transform.rotation.z - first.transform.rotation.z;
+    let (s, c) = angle.sin_cos();
+    let from = first.transform.position;
+    let delta = [
+        copy.transform.position.x - (c * from.x - s * from.y),
+        copy.transform.position.y - (s * from.x + c * from.y),
+    ];
+    let same = SameDrawing {
+        set: index,
+        angle,
+        delta,
+    };
+    let motion = same.transform();
+    let mesh = source.mesh.as_ref().map(|m| {
+        let vertices = m
+            .vertices()
+            .iter()
+            .map(|v| motion.apply_to_vertex(*v))
+            .collect();
+        IndexedMesh::new(m.meta().clone(), vertices, m.faces().to_vec())
+    });
+    DfSupportSet {
+        model: *leaf,
+        mesh,
+        session: source
+            .session
+            .turned_in_plane(0, copy.clone(), angle, delta),
+        kept: None,
+        same_as: Some(same),
+    }
+}
+
+/// How far into another model a support may reach before it runs into it
+/// (mm): the tips of a set sink into their own model, never another.
+const CROWDED_DEPTH_MM: f64 = 0.05;
+
+/// The models of `sets` whose supports run into a model of `everyone` other
+/// than their own: some point of their mesh lies inside it, deeper than
+/// [`CROWDED_DEPTH_MM`].
+fn crowded_sets(sets: &[DfSupportSet], everyone: &[(NodeId, ModelInput)]) -> Vec<NodeId> {
+    let bounds: Vec<([f64; 3], [f64; 3])> = everyone
+        .iter()
+        .map(|(_, m)| {
+            let (lo, hi) = document::model_world_bounds(m);
+            (lo.map(f64::from), hi.map(f64::from))
+        })
+        .collect();
+    let placed: Vec<OnceLock<session::PlacedBvh>> =
+        everyone.iter().map(|_| OnceLock::new()).collect();
+    sets.iter()
+        .filter(|set| {
+            let Some(mesh) = set.mesh.as_ref() else {
+                return false;
+            };
+            let (lo, hi) = mesh_bounds(mesh);
+            everyone.iter().enumerate().any(|(k, (leaf, model))| {
+                let (mlo, mhi) = bounds[k];
+                if *leaf == set.model || (0..3).any(|a| hi[a] < mlo[a] || lo[a] > mhi[a]) {
+                    return false;
+                }
+                let bvh = placed[k].get_or_init(|| session::PlacedBvh::of(model));
+                mesh.vertices().iter().any(|v| {
+                    let p = v.as_array().map(f64::from);
+                    if (0..3).any(|a| p[a] < mlo[a] || p[a] > mhi[a]) {
+                        return false;
+                    }
+                    let p = Vec3::new(p[0], p[1], p[2]);
+                    let Some(hit) = bvh.closest_point_to_point(p, 0.0, f64::INFINITY) else {
+                        return false;
+                    };
+                    let t = bvh.triangle(hit.face_index);
+                    let n = Vec3::sub_vectors(t.b, t.a).cross(Vec3::sub_vectors(t.c, t.a));
+                    hit.distance > CROWDED_DEPTH_MM && p.sub(hit.point).dot(n) < 0.0
+                })
+            })
+        })
+        .map(|set| set.model)
+        .collect()
+}
+
+/// The box of `mesh`'s vertices.
+fn mesh_bounds(mesh: &IndexedMesh) -> ([f64; 3], [f64; 3]) {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for v in mesh.vertices() {
+        for (a, x) in v.as_array().iter().enumerate() {
+            lo[a] = lo[a].min(f64::from(*x));
+            hi[a] = hi[a].max(f64::from(*x));
+        }
+    }
+    (lo, hi)
 }
 
 /// A session of `model` with no support on it yet, made as `request` says, for
@@ -588,9 +937,19 @@ pub fn start_df_prescan(scene: &Scene, request: DfSupportRequest) -> JobHandle<D
         let started = Instant::now();
         let settings = settings_for(&request);
         prescan_pool().install(|| {
-            let models = scene_models(&scene).map_err(|e| JobError::Failed(e.to_string()))?;
+            let leaves =
+                scene_model_leaves(&scene, None).map_err(|e| JobError::Failed(e.to_string()))?;
+            // A copy standing as an earlier model does takes that one's
+            // supports (#561): only the first of each is scanned.
+            let of = copies_of(&leaves, &request);
+            let models: Vec<&ModelInput> = leaves
+                .iter()
+                .zip(&of)
+                .filter(|(_, of)| of.is_none())
+                .map(|((_, model), _)| model)
+                .collect();
             let mut scans = ScanCache::default();
-            for model in &models {
+            for model in models.iter().copied() {
                 if worker.is_cancelled() {
                     return Err(JobError::Cancelled);
                 }
@@ -608,7 +967,7 @@ pub fn start_df_prescan(scene: &Scene, request: DfSupportRequest) -> JobHandle<D
             }
             Ok(DfPrescan {
                 scans: Arc::new(scans),
-                models: models.len(),
+                models: leaves.len(),
                 elapsed: started.elapsed(),
             })
         })
@@ -620,6 +979,7 @@ fn run_df_supports(
     request: &DfSupportRequest,
     worker: &JobWorker<DfSupportOutcome>,
     id_prefix: String,
+    copies: &[u64],
 ) -> Result<DfSupportOutcome, JobError> {
     let settings = settings_for(request);
     let models: Vec<ModelInput> = leaves.iter().map(|(_, m)| m.clone()).collect();
@@ -662,8 +1022,10 @@ fn run_df_supports(
     };
     let mut placed: Vec<(String, u64)> = Vec::new();
     let mut islands = 0;
-    for m in &out.models {
-        islands += m.islands.filtered.len();
+    for (i, m) in out.models.iter().enumerate() {
+        // A model stands for its copies too (#561).
+        let copies = copies.get(i).copied().unwrap_or(1);
+        islands += m.islands.filtered.len() * copies as usize;
         if let Some(plan) = &m.plan {
             for (&kind, &count) in &plan.result.placed {
                 if count <= 0 {
@@ -671,8 +1033,8 @@ fn run_df_supports(
                 }
                 let name = get_support_type_descriptor(kind).singular.to_owned();
                 match placed.iter_mut().find(|(k, _)| *k == name) {
-                    Some(entry) => entry.1 += count as u64,
-                    None => placed.push((name, count as u64)),
+                    Some(entry) => entry.1 += count as u64 * copies,
+                    None => placed.push((name, count as u64 * copies)),
                 }
             }
         }
@@ -688,19 +1050,11 @@ fn run_df_supports(
         out.support.clone(),
         id_prefix.clone(),
     );
-    // The plans' BVHs and distance fields (filled where they routed), so the
-    // first hover preview is quick without building them again.
-    session.adopt_bvhs(out.bvhs);
+    // The model's BVH, so the first hover preview is quick: built in the
+    // model's frame, once for every copy of it (#561). The plans' own BVHs
+    // and distance fields were in world space, one per copy, and go with
+    // the run.
     session.warm();
-    if let Ok(mut fields) = out.distance_fields.lock() {
-        session.adopt_sdfs(
-            fields
-                .drain(..)
-                .enumerate()
-                .filter_map(|(i, f)| f.map(|f| (i, f)))
-                .collect(),
-        );
-    }
     // Each model's supports and raft are drawn on their own.
     let mut sets = Vec::with_capacity(n);
     for (i, ((model, _), session)) in leaves.iter().zip(session.split_by_model()).enumerate() {
@@ -742,6 +1096,7 @@ fn run_df_supports(
             mesh,
             session,
             kept,
+            same_as: None,
         });
     }
     // The sets are part of the run's time, as the pipeline's own drawing was.
@@ -764,5 +1119,6 @@ fn run_df_supports(
         models: n,
         islands,
         placed,
+        crowded: Vec::new(),
     })
 }
