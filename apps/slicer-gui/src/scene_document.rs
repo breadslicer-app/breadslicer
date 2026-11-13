@@ -435,6 +435,33 @@ pub(crate) fn leaf_mesh_swap(
     after: Arc<sc_mesh_core::IndexedMesh>,
 ) -> Option<SceneEdit> {
     let node = scene.node(leaf)?;
+    // A set of supports is drawn where its session stands, in world space:
+    // a leaf that carried its old mesh along on its transform (#560) goes
+    // back to none. Imported supports keep theirs: they are a mesh of their
+    // own, moved like a model.
+    let drawn_set = sc_geom::df_supports::is_any_support_mesh(&after)
+        && !sc_geom::df_supports::is_imported_supports(&after);
+    if drawn_set && node.local_transform != Transform3D::Identity {
+        let swap = leaf_mesh_swap_as_is(scene, leaf, after)?;
+        return Some(SceneEdit::Compound(vec![
+            swap,
+            SceneEdit::SetLocalTransform {
+                node_id: leaf,
+                before: node.local_transform,
+                after: Transform3D::Identity,
+            },
+        ]));
+    }
+    leaf_mesh_swap_as_is(scene, leaf, after)
+}
+
+/// [`leaf_mesh_swap`], the leaf's transform left as it is.
+fn leaf_mesh_swap_as_is(
+    scene: &Scene,
+    leaf: NodeId,
+    after: Arc<sc_mesh_core::IndexedMesh>,
+) -> Option<SceneEdit> {
+    let node = scene.node(leaf)?;
     match &node.kind {
         NodeKind::Leaf(LeafPayload::Mesh(before)) => Some(SceneEdit::ReplaceLeafMesh {
             node_id: leaf,

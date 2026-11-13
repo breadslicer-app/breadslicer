@@ -1080,3 +1080,130 @@ fn motion_edits(
         })
         .unwrap_or_default()
 }
+
+/// Arrange all, again and again, on a real project (#560): how long each
+/// step takes, the ones on the window's thread apart.
+/// `BREADSLICER_ARRANGE_BREAD` names the project, `BREADSLICER_ARRANGE_RUNS`
+/// how many runs (4).
+#[cfg(test)]
+mod real_scene {
+    use std::time::Instant;
+
+    use super::*;
+
+    /// The process's working set, in MB.
+    fn memory_mb() -> f64 {
+        let out = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!("(Get-Process -Id {}).WorkingSet64", std::process::id()),
+            ])
+            .output()
+            .ok();
+        out.and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse::<f64>()
+                .ok()
+        })
+        .map_or(0.0, |b| b / 1e6)
+    }
+
+    #[test]
+    #[ignore = "a measurement on a real project"]
+    fn arrange_all_again_and_again() {
+        let Some(path) = std::env::var_os("BREADSLICER_ARRANGE_BREAD") else {
+            return;
+        };
+        let runs: usize = std::env::var("BREADSLICER_ARRANGE_RUNS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+        let path = std::path::PathBuf::from(path);
+        crate::test_support::slint_thread::on_fresh_slint_thread(move || {
+            let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("it opens");
+            let sc_project_formats::LoadedContent::Project(mut project) = loaded.content else {
+                panic!("a .bread is a project")
+            };
+            let restored =
+                crate::support_persist::restore_supports(&mut project.scene, project.supports);
+            println!("sets restored: {}", restored.sets.len());
+            let window = MainWindow::new().expect("a main window");
+            let bus = crate::preferences_bus::PreferencesBus::new(
+                crate::preferences_bus::PreferencesSnapshot::for_tests(),
+            );
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let volume = crate::build_volume::BuildVolume::new(223.642, 126.976, 230.0);
+            ctrl.set_build_volume(volume);
+            let document = ctrl.document();
+            document.install_graph(project.scene, path.clone());
+            crate::support_persist::install_sets(&document, restored.sets);
+            let _supports = crate::df_support_run::DfSupportRun::install(
+                &window,
+                bus,
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
+            let _arrange =
+                ArrangeRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let settings = ArrangeOptions::default().settings();
+            // The window's own work for `secs`: how long its timers kept it.
+            let idle = |secs: f64| {
+                let (start, mut busy) = (Instant::now(), 0.0);
+                while start.elapsed().as_secs_f64() < secs {
+                    let t = Instant::now();
+                    slint::platform::update_timers_and_animations();
+                    busy += t.elapsed().as_secs_f64();
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                busy
+            };
+            for run in 0..runs {
+                let busy = idle(3.0);
+                let triangles: usize = document
+                    .with_scene(|spatial| {
+                        (0..)
+                            .map_while(|i| spatial.leaf_id_at_index(i))
+                            .filter_map(|leaf| spatial.leaf(leaf))
+                            .filter(|q| is_any_support_mesh(q.mesh()))
+                            .map(|q| q.mesh().faces().len())
+                            .sum()
+                    })
+                    .unwrap_or(0);
+                println!(
+                    "before run {run}: window busy {busy:.2} s of 3 s, {} drawings kept, supports in the scene {:.1} M triangles, memory {:.0} MB",
+                    document.support_sessions().borrow().len(),
+                    triangles as f64 / 1e6,
+                    memory_mb(),
+                );
+                let t = Instant::now();
+                let job =
+                    across::job(&document, &volume, ArrangeScope::Plates, false).expect("a job");
+                let gathered = t.elapsed();
+                let across = sc_arrange::arrange_across(
+                    &job.bodies,
+                    &job.stands_on,
+                    &job.plates,
+                    &settings,
+                    &AtomicBool::new(false),
+                )
+                .expect("arranged");
+                let t = Instant::now();
+                let applied = across::apply(&document, &job, &across).expect("applies");
+                let applying = t.elapsed();
+                println!(
+                    "run {run}: gather {:.2} s, footprints {:.2} s, search {:.2} s, apply {:.2} s; {} bodies, {} plate(s), {:?}",
+                    gathered.as_secs_f64(),
+                    across.timings.footprints.as_secs_f64(),
+                    across.timings.search.as_secs_f64(),
+                    applying.as_secs_f64(),
+                    job.bodies.len(),
+                    across.plates_used,
+                    applied.map(|a| a.moved),
+                );
+            }
+        });
+    }
+}

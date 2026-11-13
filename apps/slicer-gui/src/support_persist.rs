@@ -133,6 +133,21 @@ pub(crate) fn record(
     // Only this list holds such a mesh: no edit can bring it back.
     sessions.retain(|d| Arc::strong_count(&d.mesh) > 1);
     sessions.extend(drawn);
+    // A set carried along on its leaf's transform keeps its mesh (#560), so
+    // the scene holds the mesh of every drawing it had on the way: past the
+    // steps Undo keeps, none of them can come back.
+    let mut seen: std::collections::HashMap<NodeId, usize> = std::collections::HashMap::new();
+    let mut keep = vec![true; sessions.len()];
+    for (k, d) in sessions.iter().enumerate().rev() {
+        let n = seen.entry(d.leaf).or_insert(0);
+        *n += 1;
+        keep[k] = *n <= crate::scene_document::UNDO_STACK_CAP + 1;
+    }
+    let mut k = 0;
+    sessions.retain(|_| {
+        k += 1;
+        keep[k - 1]
+    });
 }
 
 /// The drawing in force for the support leaf `leaf`: the one whose mesh the
