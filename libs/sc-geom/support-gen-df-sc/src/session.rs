@@ -4012,7 +4012,15 @@ mod session_tests {
     /// One model of boxes, each `(min, max)` in world mm, run with no
     /// options and its supports then cleared.
     fn bare_boxes(boxes: &[([f32; 3], [f32; 3])]) -> DfSupportSession {
-        let mut session = crate::start_df_supports(&boxes_scene(boxes), Default::default())
+        bare_boxes_with(boxes, Default::default())
+    }
+
+    /// [`bare_boxes`], run as `request` says.
+    fn bare_boxes_with(
+        boxes: &[([f32; 3], [f32; 3])],
+        request: crate::DfSupportRequest,
+    ) -> DfSupportSession {
+        let mut session = crate::start_df_supports(&boxes_scene(boxes), request)
             .unwrap()
             .join()
             .unwrap()
@@ -4090,11 +4098,29 @@ mod session_tests {
     /// than both tips has them meet halfway.
     #[test]
     fn a_support_from_model_to_model_keeps_its_trunk_whole() {
-        for (gap, tip_length) in [(8.0f32, 2.3), (6.0, 2.3), (6.0, 4.0)] {
-            let mut session = bare_boxes(&[
-                ([0.0, 0.0, 25.0], [50.0, 10.0, 27.0]),
-                ([15.0, 0.0, 0.0], [35.0, 10.0, 25.0 - gap]),
-            ]);
+        // With no preset, and under a zone preset whose sizes the shape is
+        // not one of (the Manual page's, under Miniatures).
+        let minis = crate::DfSupportRequest {
+            options: crate::DfSupportOptions {
+                zones: Some(crate::zone_presets::minis_30()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        for (gap, tip_length, request) in [
+            (8.0f32, 2.3, crate::DfSupportRequest::default()),
+            (6.0, 2.3, crate::DfSupportRequest::default()),
+            (6.0, 4.0, crate::DfSupportRequest::default()),
+            (8.0, 2.3, minis.clone()),
+            (6.0, 2.3, minis.clone()),
+        ] {
+            let mut session = bare_boxes_with(
+                &[
+                    ([0.0, 0.0, 25.0], [50.0, 10.0, 27.0]),
+                    ([15.0, 0.0, 0.0], [35.0, 10.0, 25.0 - gap]),
+                ],
+                request,
+            );
             let mut shape = crate::zone_presets::support_sizes().remove(2);
             shape.trunk_diameter_mm = 2.9;
             shape.tip_diameter_mm = 0.3;
