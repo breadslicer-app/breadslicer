@@ -2995,9 +2995,10 @@ mod window_wiring_tests {
     }
 
     /// A zone preset's grid (#464) shows on at its preset's spacing, turns
-    /// off and back on at the spacing shown, takes another one, and picking
-    /// the preset again brings its own back. The tab starts on the first
-    /// preset, "Miniatures 20~65 mm" (#490).
+    /// off and back on at the spacing shown, takes another one; the preset
+    /// keeps the change as its own (#564), another preset has its own grid,
+    /// and Reset to default brings the spacing that ships back. The tab
+    /// starts on the first preset, "Miniatures 20~65 mm" (#490).
     #[test]
     fn a_zone_presets_grid_turns_off_and_takes_a_spacing_in_the_tab() {
         let steps = on_fresh_slint_thread(|| {
@@ -3027,9 +3028,11 @@ mod window_wiring_tests {
             steps.push(read(&window));
             window.invoke_support_option_changed(13, 0.2);
             steps.push(read(&window));
+            window.invoke_support_preset_picked(2);
+            steps.push(read(&window));
             window.invoke_support_preset_picked(0);
             steps.push(read(&window));
-            window.invoke_support_preset_picked(2);
+            window.invoke_support_preset_revert();
             steps.push(read(&window));
             steps
         });
@@ -3037,13 +3040,14 @@ mod window_wiring_tests {
         let expected = [
             (0, true, 7.0, hint(7)),
             (0, true, 7.0, hint(7)),
-            (-1, false, 7.0, hint(7)),
-            (-1, false, 7.0, hint(7)),
+            (0, false, 7.0, hint(7)),
+            (0, false, 7.0, hint(7)),
             (0, true, 7.0, hint(7)),
-            (-1, true, 5.0, hint(7)),
-            (-1, true, 1.0, hint(7)),
-            (0, true, 7.0, hint(7)),
+            (0, true, 5.0, hint(7)),
+            (0, true, 1.0, hint(7)),
             (2, true, 4.0, hint(4)),
+            (0, true, 1.0, hint(7)),
+            (0, true, 7.0, hint(7)),
         ];
         assert_eq!(steps, expected);
     }
@@ -3084,15 +3088,23 @@ mod window_wiring_tests {
             );
             assert_eq!(window.get_support_based_on().as_str(), "");
 
-            // A thicker trunk: the preset is the person's own now, made from
-            // Miniatures, and the field can go back to 1.1.
+            // A thicker trunk: Miniatures keeps it as its own change, and
+            // the field can go back to 1.1.
             window.invoke_support_shape_value(1, 1.3);
-            assert_eq!(window.get_support_preset_card_index(), -1);
-            assert_eq!(window.get_support_shape_scope().as_str(), "Custom preset");
+            assert_eq!(window.get_support_preset_card_index(), 0);
+            assert_eq!(
+                window.get_support_shape_scope().as_str(),
+                "Preset Miniatures"
+            );
             assert_eq!(
                 window.get_support_based_on().as_str(),
-                "Made from Miniatures, with changes"
+                "Miniatures, with your changes"
             );
+            // Another preset and back: the change is still there.
+            window.invoke_support_preset_picked(1);
+            assert_eq!(window.get_support_based_on().as_str(), "");
+            window.invoke_support_preset_picked(0);
+            assert_eq!(window.get_support_preset_card_index(), 0);
             assert_eq!(values(&window)[1], 1.3);
             assert_eq!(defaults(&window)[1], 1.1);
             window.invoke_support_shape_size_picked(0);

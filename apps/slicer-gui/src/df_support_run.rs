@@ -217,6 +217,9 @@ pub(crate) struct DfSupportRun {
     shape_size: Cell<Option<usize>>,
     shape_hot: Cell<crate::support_shape::Part>,
     based_on: Cell<Option<usize>>,
+    /// The built-in preset the options in use are, which keeps each change
+    /// made to them (#564); `None` for options of the person's own preset.
+    editing: Cell<Option<usize>>,
     /// The sizes the hand tools place (XS to L): the person's own, apart
     /// from every preset of Generate.
     hand: RefCell<ZonePreset>,
@@ -1271,19 +1274,26 @@ struct Preset {
     name: String,
     options: DfSupportOptions,
     built_in: bool,
+    /// For a built-in preset: its values as they ship. `options` holds the
+    /// person's changes to it, kept apart for each of the three (#564).
+    factory: Option<DfSupportOptions>,
 }
 
 /// The presets that ship: the three zone presets (#360, #479). The
 /// classic sizing tiers left the list (#490); a project saved with one
 /// still reopens with it, and a person's own presets still show.
 fn built_in_presets() -> Vec<Preset> {
-    let zones = |name: slint::SharedString, zones: ZonePreset| Preset {
-        name: name.to_string(),
-        options: DfSupportOptions {
+    let zones = |name: slint::SharedString, zones: ZonePreset| {
+        let options = DfSupportOptions {
             zones: Some(zones),
             ..Default::default()
-        },
-        built_in: true,
+        };
+        Preset {
+            name: name.to_string(),
+            factory: Some(options.clone()),
+            options,
+            built_in: true,
+        }
     };
     vec![
         zones(ctr!("Inspector", "Miniatures 20~65 mm"), minis_30()),
@@ -1499,6 +1509,30 @@ fn starting_options() -> DfSupportOptions {
     }
 }
 
+/// Where built-in preset `index`'s changes are kept (#564).
+fn card_file(index: usize) -> Option<std::path::PathBuf> {
+    Some(
+        support_data_dir()?
+            .join("built-in")
+            .join(format!("{index}.toml")),
+    )
+}
+
+/// Keeps built-in preset `index` as `options`; as it ships, nothing is kept.
+fn save_card(index: usize, options: &DfSupportOptions, factory: &DfSupportOptions) {
+    let Some(path) = card_file(index) else {
+        return;
+    };
+    if options == factory {
+        let _ = std::fs::remove_file(path);
+    } else if let Some(dir) = path.parent()
+        && std::fs::create_dir_all(dir).is_ok()
+        && let Ok(text) = toml::to_string_pretty(options)
+    {
+        let _ = std::fs::write(path, text);
+    }
+}
+
 fn load_user_presets() -> Vec<Preset> {
     let Some(dir) = support_data_dir().map(|d| d.join("presets")) else {
         return Vec::new();
@@ -1517,6 +1551,7 @@ fn load_user_presets() -> Vec<Preset> {
                 name,
                 options,
                 built_in: false,
+                factory: None,
             })
         })
         .collect();
@@ -1599,6 +1634,7 @@ impl DfSupportRun {
             shape_size: Cell::new(None),
             shape_hot: Cell::new(crate::support_shape::Part::None),
             based_on: Cell::new(None),
+            editing: Cell::new(None),
             hand: RefCell::new(load_hand_sizes()),
             share: RefCell::new(Vec::new()),
             sessions,
@@ -1664,6 +1700,7 @@ impl DfSupportRun {
             run.ctrl.set_support_drag_handler(Rc::downgrade(&handler));
         }
         run.reload_presets();
+        run.find_card();
         run.push_options(ui);
         {
             let run = run.clone();
@@ -1675,11 +1712,7 @@ impl DfSupportRun {
         }
         {
             let run = run.clone();
-            ui.on_support_preset_revert(move || {
-                if let Some(i) = run.based_on.get() {
-                    run.on_preset_picked(i as i32);
-                }
-            });
+            ui.on_support_preset_revert(move || run.on_preset_revert());
         }
         {
             let run = run.clone();
@@ -2828,7 +2861,13 @@ impl DfSupportRun {
             self.raft_layer_height_mm.get(),
         )));
         let built_in = presets.iter().take_while(|p| p.built_in).count();
-        let card = usize::try_from(current).ok().filter(|&i| i < built_in);
+        let card = self
+            .editing
+            .get()
+            .filter(|&i| presets.get(i).is_some_and(|p| p.options == o))
+            .or_else(|| usize::try_from(current).ok().filter(|&i| i < built_in));
+        let current = card.map_or(current, |i| i as i32);
+        let changed = card.is_some_and(|i| presets[i].factory.as_ref() != Some(&o));
         if card.is_some() {
             self.based_on.set(card);
         } else if self.based_on.get().is_none()
@@ -2839,7 +2878,7 @@ impl DfSupportRun {
             let bases: Vec<(usize, &ZonePreset)> = presets[..built_in]
                 .iter()
                 .enumerate()
-                .filter_map(|(i, p)| p.options.zones.as_ref().map(|z| (i, z)))
+                .filter_map(|(i, p)| p.factory.as_ref()?.zones.as_ref().map(|z| (i, z)))
                 .collect();
             let refs: Vec<&ZonePreset> = bases.iter().map(|(_, z)| *z).collect();
             self.based_on
@@ -2868,6 +2907,10 @@ impl DfSupportRun {
         // Where the preset came from, with the way back to it: a built-in
         // preset changed, or one of the person's own.
         let based_on = match (current, self.based_on.get()) {
+            _ if changed => card
+                .and_then(|i| preset_cards().get(i).cloned())
+                .map(|(title, _)| ctr!("Inspector", "{}, with your changes", title))
+                .unwrap_or_default(),
             (-1, Some(i)) => preset_cards()
                 .get(i)
                 .map(|(title, _)| ctr!("Inspector", "Made from {}, with changes", title))
@@ -2914,12 +2957,17 @@ impl DfSupportRun {
         };
         let options = self.options.borrow().clone();
         let presets = self.presets.borrow();
+        let titles = preset_cards();
         let mut entries: Vec<(Entry, bool)> = presets
             .iter()
-            .filter(|p| !p.built_in)
-            .map(|p| {
+            .enumerate()
+            .map(|(i, p)| {
+                let name = match (p.built_in, titles.get(i)) {
+                    (true, Some((title, _))) => title.to_string(),
+                    _ => p.name.clone(),
+                };
                 let preset = SharedPreset {
-                    name: p.name.clone(),
+                    name,
                     options: p.options.clone(),
                 };
                 (Entry::Preset(preset), true)
@@ -3048,7 +3096,9 @@ impl DfSupportRun {
             .iter()
             .filter(|p| p.built_in)
             .zip(preset_cards())
-            .filter_map(|(p, (title, _))| Some((title.to_string(), p.options.zones.as_ref()?)))
+            .filter_map(|(p, (title, _))| {
+                Some((title.to_string(), p.factory.as_ref()?.zones.as_ref()?))
+            })
             .collect();
         let refs: Vec<&ZonePreset> = bases.iter().map(|(_, z)| *z).collect();
         let in_group = |g: usize| {
@@ -3096,6 +3146,26 @@ impl DfSupportRun {
                 };
                 let (entry, on) = &share[i];
                 let (name, detail, numbers) = match entry {
+                    Entry::Preset(p) if mode == 1
+                        && presets.iter().zip(preset_cards()).any(|(b, (t, _))| {
+                            b.built_in && t.as_str() == p.name
+                        }) =>
+                    {
+                        let factory = presets
+                            .iter()
+                            .zip(preset_cards())
+                            .find(|(b, (t, _))| b.built_in && t.as_str() == p.name)
+                            .and_then(|(b, _)| b.factory.as_ref());
+                        (
+                            p.name.as_str().into(),
+                            if factory == Some(&p.options) {
+                                ctr!("Inspector", "Built-in, as it ships")
+                            } else {
+                                ctr!("Inspector", "Built-in, with your changes")
+                            },
+                            none.clone(),
+                        )
+                    }
                     Entry::Preset(p) => (
                         p.name.as_str().into(),
                         p.options
@@ -3230,6 +3300,7 @@ impl DfSupportRun {
             .borrow()
             .iter()
             .map(|p| p.name.clone())
+            .chain(preset_cards().into_iter().map(|(t, _)| t.to_string()))
             .collect();
         let dir = support_data_dir().map(|d| d.join("presets"));
         let mut presets = 0;
@@ -3429,7 +3500,7 @@ impl DfSupportRun {
         presets
             .get(self.based_on.get()?)
             .filter(|p| p.built_in)
-            .and_then(|p| p.options.zones.clone())
+            .and_then(|p| p.factory.as_ref()?.zones.clone())
     }
 
     /// Draws the shape panel's support again: after a turn or a part
@@ -3593,6 +3664,16 @@ impl DfSupportRun {
             && let Ok(text) = toml::to_string_pretty(&options)
         {
             let _ = std::fs::write(dir.join("options.toml"), text);
+        }
+        // The built-in preset in use keeps the change as its own (#564).
+        if let Some(i) = self.editing.get() {
+            let mut presets = self.presets.borrow_mut();
+            if let Some(p) = presets.get_mut(i).filter(|p| p.built_in) {
+                if let Some(factory) = p.factory.as_ref() {
+                    save_card(i, &options, factory);
+                }
+                p.options = options.clone();
+            }
         }
         *self.options.borrow_mut() = options;
         if let Some(ui) = self.ui.upgrade() {
@@ -3941,8 +4022,47 @@ impl DfSupportRun {
 
     fn reload_presets(&self) {
         let mut presets = built_in_presets();
+        // Each built-in preset with the changes the person made to it.
+        for (i, preset) in presets.iter_mut().enumerate() {
+            if let Some(options) = card_file(i)
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|text| toml::from_str::<DfSupportOptions>(&text).ok())
+                .map(|o| o.clamped())
+                .filter(|o| o.zones.is_some())
+            {
+                preset.options = options;
+            }
+        }
         presets.extend(load_user_presets());
         *self.presets.borrow_mut() = presets;
+    }
+
+    /// The built-in preset the options in use are: the one they are, or,
+    /// for options changed before the presets kept their changes, the one
+    /// they share the most with, which takes them as its changes. Options
+    /// that are one of the person's own presets are none.
+    fn find_card(&self) {
+        let o = self.options.borrow().clone();
+        let mut presets = self.presets.borrow_mut();
+        let built_in = presets.iter().take_while(|p| p.built_in).count();
+        if let Some(i) = presets.iter().position(|p| p.options == o) {
+            self.editing.set((i < built_in).then_some(i));
+            return;
+        }
+        let Some(zones) = o.zones.as_ref() else {
+            return;
+        };
+        let bases: Vec<&ZonePreset> = presets[..built_in]
+            .iter()
+            .filter_map(|p| p.factory.as_ref()?.zones.as_ref())
+            .collect();
+        if let Some(i) = crate::support_shape_edit::closest_base(&bases, zones) {
+            presets[i].options = o.clone();
+            if let Some(factory) = presets[i].factory.clone() {
+                save_card(i, &o, &factory);
+            }
+            self.editing.set(Some(i));
+        }
     }
 
     fn on_preset_picked(&self, index: i32) {
@@ -3957,9 +4077,32 @@ impl DfSupportRun {
                 .borrow()
                 .get(index.max(0) as usize)
                 .is_some_and(|p| p.built_in);
-            self.based_on.set(built_in.then_some(index.max(0) as usize));
+            let card = built_in.then_some(index.max(0) as usize);
+            self.based_on.set(card);
+            self.editing.set(card);
             self.set_options(options);
         }
+    }
+
+    /// Reset to default: the built-in preset in use goes back to its values
+    /// as they ship; options of no built-in preset take the one they were
+    /// made from.
+    fn on_preset_revert(&self) {
+        let card = self.editing.get().or(self.based_on.get());
+        let Some(i) = card else {
+            return;
+        };
+        let factory = self.presets.borrow().get(i).and_then(|p| p.factory.clone());
+        let Some(factory) = factory else {
+            return;
+        };
+        save_card(i, &factory, &factory);
+        if let Some(p) = self.presets.borrow_mut().get_mut(i) {
+            p.options = factory.clone();
+        }
+        self.based_on.set(Some(i));
+        self.editing.set(Some(i));
+        self.set_options(factory);
     }
 
     /// Saves the current options as a preset of the person.
@@ -10148,9 +10291,7 @@ mod hand_edit_tests {
             run.on_share_toggled(2, false);
             assert_eq!(rows(&window)[0].2, 1);
             assert_eq!(window.get_support_share_picked(), 2);
-            if let Some(dir) =
-                std::env::var_os("BREADSLICER_UI_SHOTS").map(PathBuf::from)
-            {
+            if let Some(dir) = std::env::var_os("BREADSLICER_UI_SHOTS").map(PathBuf::from) {
                 window.show().expect("the window shows");
                 window
                     .window()

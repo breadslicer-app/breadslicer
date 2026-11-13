@@ -7647,3 +7647,18 @@ msgstr "punta {}  ·  tronco {}  ·  pie {} mm"
 msgctxt "Inspector"
 msgid "A preset named as one of yours comes in under a new name; none of yours is replaced. A hand size ticked replaces yours."
 msgstr "Un preset con el mismo nombre que uno tuyo entra con otro nombre; ninguno tuyo se reemplaza. Un tamaño a mano tildado reemplaza el tuyo."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "{}, with your changes"
+msgstr "{}, con tus cambios"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Built-in, as it ships"
+msgstr "De fábrica, sin cambios"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Built-in, with your changes"
+msgstr "De fábrica, con tus cambios"
