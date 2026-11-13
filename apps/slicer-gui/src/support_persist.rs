@@ -65,6 +65,52 @@ pub(crate) struct DrawnSet {
 /// Every drawing of the scene's support sets, oldest first.
 pub(crate) type SupportSessions = Vec<DrawnSet>;
 
+/// What the drawings hold in memory, by part (#561): each part's bytes
+/// counted once per drawing and once per address (what is really held).
+#[cfg(test)]
+pub(crate) fn memory_report(sessions: &SupportSessions) -> String {
+    use std::collections::{BTreeMap, HashMap};
+    let mut all: BTreeMap<&'static str, (usize, usize)> = BTreeMap::new();
+    let mut seen: HashMap<(&'static str, usize), usize> = HashMap::new();
+    let mut note = |part: &'static str, at: usize, bytes: usize| {
+        let entry = all.entry(part).or_default();
+        entry.0 += bytes;
+        if seen.insert((part, at), bytes).is_none() {
+            entry.1 += bytes;
+        }
+    };
+    let mesh_bytes = |m: &IndexedMesh| m.vertices().len() * 12 + m.faces().len() * 12;
+    let mut sdfs = 0;
+    for drawn in sessions {
+        for (part, at, bytes) in drawn.session.memory_parts() {
+            if part == "sdf" {
+                sdfs += bytes;
+            } else {
+                note(part, at, bytes);
+            }
+        }
+        note(
+            "support mesh",
+            Arc::as_ptr(&drawn.mesh) as usize,
+            mesh_bytes(&drawn.mesh),
+        );
+        note(
+            "scene model mesh",
+            Arc::as_ptr(&drawn.model_mesh) as usize,
+            mesh_bytes(&drawn.model_mesh),
+        );
+    }
+    let mut out = format!("{} drawings, {sdfs} distance fields;", sessions.len());
+    for (part, (each, held)) in all {
+        out.push_str(&format!(
+            " {part} {:.0} MB ({:.0} MB held)",
+            each as f64 / 1e6,
+            held as f64 / 1e6
+        ));
+    }
+    out
+}
+
 /// The model `model` as the drawing of a set records it: its mesh and
 /// world transform.
 pub(crate) fn model_state(

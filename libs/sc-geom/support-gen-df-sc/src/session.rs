@@ -1173,6 +1173,34 @@ impl DfSupportSession {
         }
     }
 
+    /// What the session holds on the heap that may be shared with other
+    /// sessions, as (part, address, bytes): each model's geometry and each
+    /// BVH built. Parts at the same address are one in memory (#561).
+    pub fn memory_parts(&self) -> Vec<(&'static str, usize, usize)> {
+        let mut parts = Vec::new();
+        for m in self.models.iter() {
+            let g = &m.geometry;
+            let bytes = g.position.as_ref().map_or(0, |p| p.capacity() * 4)
+                + g.index.as_ref().map_or(0, |i| i.capacity() * 4)
+                + g.normal.as_ref().map_or(0, |n| n.capacity() * 4);
+            parts.push(("model", Arc::as_ptr(g) as usize, bytes));
+        }
+        for slot in self.bvhs.iter() {
+            if let Some(bvh) = slot.get() {
+                parts.push(("bvh", Arc::as_ptr(bvh) as usize, bvh.heap_bytes()));
+            }
+        }
+        parts.push((
+            "sdf",
+            Arc::as_ptr(&self.sdfs) as *const u8 as usize,
+            self.sdfs
+                .iter()
+                .filter(|s| s.0.lock().is_ok_and(|s| s.is_some()))
+                .count(),
+        ));
+        parts
+    }
+
     /// Hands the run's BVHs to the session, one per model in model order:
     /// the plans built them on the same world soup the session would.
     pub(crate) fn adopt_bvhs(&self, bvhs: Vec<Arc<MeshBvh>>) {

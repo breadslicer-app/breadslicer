@@ -4845,6 +4845,9 @@ mod window_wiring_tests {
                 (busy, longest)
             };
             println!("opened: memory {:.0} MB", memory_mb());
+            let parts =
+                || crate::support_persist::memory_report(&document.support_sessions().borrow());
+            println!("opened: {}", parts());
             for (run, gap) in gaps.iter().enumerate() {
                 let (busy, longest) = if run == 0 { (0.0, 0.0) } else { pump(wait) };
                 window.invoke_arrange_option_changed(0, *gap);
@@ -4877,6 +4880,7 @@ mod window_wiring_tests {
                     frame.as_secs_f64(),
                     window.get_arrange_last_run()
                 );
+                println!("run {run}: {}", parts());
             }
             let (busy, longest) = pump(wait);
             println!(
