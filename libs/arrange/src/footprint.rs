@@ -34,6 +34,8 @@ pub(crate) struct Geometry {
     pub(crate) band: Option<f64>,
     /// The plate's height.
     pub(crate) floor: f64,
+    /// The height above the plate under which nothing is drawn (#556).
+    pub(crate) free: f64,
 }
 
 impl Geometry {
@@ -321,12 +323,23 @@ fn drawn(
                     vertices[usize::from(face.vertices[k])].coords(),
                 ))
             });
-            let Some(h) = geo.band else {
-                grids[0].fill_convex(&tri.map(|p| [p[0], p[1]]));
-                continue;
-            };
             let z_lo = tri[0][2].min(tri[1][2]).min(tri[2][2]) - geo.floor;
             let z_hi = tri[0][2].max(tri[1][2]).max(tri[2][2]) - geo.floor;
+            // Under the one raft for all (#556) nothing takes room.
+            let free = geo.free;
+            if free > 0.0 && z_hi <= free {
+                continue;
+            }
+            let Some(h) = geo.band else {
+                if free > 0.0 && z_lo < free {
+                    let floor = geo.floor;
+                    let shifted = tri.map(|p| [p[0], p[1], p[2] - floor]);
+                    grids[0].fill_convex(&clip_to_slab(&shifted, free, f64::INFINITY));
+                } else {
+                    grids[0].fill_convex(&tri.map(|p| [p[0], p[1]]));
+                }
+                continue;
+            };
             // Band b reaches from b·h − gap/2 to (b + 1)·h + gap/2; the
             // first takes in everything below, the last everything above.
             let first = (((z_lo - reach_z) / h).ceil() as i64 - 1).clamp(0, band_count as i64 - 1);
@@ -338,6 +351,11 @@ fn drawn(
                     f64::NEG_INFINITY
                 } else {
                     b as f64 * h - reach_z
+                };
+                let slab_lo = if free > 0.0 {
+                    slab_lo.max(free)
+                } else {
+                    slab_lo
                 };
                 let slab_hi = if b + 1 == band_count {
                     f64::INFINITY
@@ -716,6 +734,7 @@ mod tests {
             fine: 0.125,
             band,
             floor: 0.0,
+            free: 0.0,
         }
     }
 

@@ -66,7 +66,22 @@ pub(crate) struct ArrangeOptions {
     pub(crate) shadow_only: bool,
     /// Fill bed adds at most this many copies; 0 adds as many as fit.
     pub(crate) max_copies: u32,
+    /// One raft for all (#556): the rafts take no room, so they lie on each
+    /// other and print as one; what stands on them keeps the gap, and at
+    /// least [`ONE_RAFT_GAP_MM`].
+    pub(crate) one_raft: bool,
+    /// The top of the scene's rafts when the press was made (mm): under it
+    /// nothing takes room with `one_raft`.
+    pub(crate) raft_top_mm: f32,
 }
+
+/// Under one raft for all, trunks of neighbours stand at least this far
+/// apart (#556).
+pub(crate) const ONE_RAFT_GAP_MM: f32 = 2.0;
+
+/// Above the rafts' top, what is still raft (its rounding, the feet's first
+/// rise) takes no room either.
+const ONE_RAFT_SLACK_MM: f32 = 0.05;
 
 impl Default for ArrangeOptions {
     fn default() -> Self {
@@ -76,19 +91,48 @@ impl Default for ArrangeOptions {
             turns: true,
             shadow_only: false,
             max_copies: 0,
+            one_raft: false,
+            raft_top_mm: 0.0,
         }
     }
 }
 
 impl ArrangeOptions {
     pub(crate) fn settings(self) -> Settings {
+        let (gap, free_below) = if self.one_raft {
+            (
+                self.gap_mm.max(ONE_RAFT_GAP_MM),
+                if self.raft_top_mm > 0.0 {
+                    self.raft_top_mm + ONE_RAFT_SLACK_MM
+                } else {
+                    0.0
+                },
+            )
+        } else {
+            (self.gap_mm, 0.0)
+        };
         Settings {
-            gap: f64::from(self.gap_mm),
+            gap: f64::from(gap),
             margin: f64::from(self.margin_mm),
             shadow_only: self.shadow_only,
             turns: if self.turns { 8 } else { 1 },
+            free_below: f64::from(free_below),
             ..Settings::default()
         }
+    }
+
+    /// These options with the rafts' top of `document` as it stands, when
+    /// they put everything under one raft (#556).
+    pub(crate) fn on(mut self, document: &SceneDocument) -> Self {
+        self.raft_top_mm = if self.one_raft {
+            let sessions = document.support_sessions();
+            document
+                .with_scene(|spatial| crate::support_persist::raft_top_mm(spatial, &sessions))
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        self
     }
 }
 
@@ -273,7 +317,10 @@ impl ArrangeRun {
         {
             return;
         }
-        let now = (self.document.scene_revision(), self.options.get());
+        let now = (
+            self.document.scene_revision(),
+            self.options.get().on(&self.document),
+        );
         if self.ahead.drawn.get() == Some(now) {
             return;
         }
@@ -307,6 +354,12 @@ impl ArrangeRun {
         });
     }
 
+    /// The card's options as a press now would use them: for tests.
+    #[cfg(test)]
+    pub(crate) fn options_now(&self) -> ArrangeOptions {
+        self.options.get().on(&self.document)
+    }
+
     /// Stops drawing ahead: a run of its own draws what it needs.
     fn stop_ahead(&self) {
         self.ahead.cancel.store(true, Ordering::Relaxed);
@@ -319,6 +372,7 @@ impl ArrangeRun {
         ui.set_arrange_turns(o.turns);
         ui.set_arrange_shadow_only(o.shadow_only);
         ui.set_arrange_max_copies(o.max_copies as f32);
+        ui.set_arrange_one_raft(o.one_raft);
     }
 
     fn on_option(&self, code: i32, value: f32) {
@@ -329,11 +383,18 @@ impl ArrangeRun {
             2 => o.turns = value != 0.0,
             3 => o.shadow_only = value != 0.0,
             4 => o.max_copies = value.round().clamp(0.0, 9999.0) as u32,
+            5 => o.one_raft = value != 0.0,
             _ => return,
         }
         self.options.set(o);
         if let Some(ui) = self.ui.upgrade() {
             self.push_options(&ui);
+            // One raft for all is a raft of lines (#556): the Supports tab
+            // turns to it, and the sets already made are drawn again on it.
+            // Picking another raft there turns the box off.
+            if code == 5 && o.one_raft && ui.get_support_raft_index() != 1 {
+                ui.invoke_support_option_changed(9, 1.0);
+            }
         }
     }
 
@@ -358,7 +419,7 @@ impl ArrangeRun {
         if jobs.is_empty() {
             return;
         }
-        let settings = self.options.get().settings();
+        let settings = self.options.get().on(&self.document).settings();
         let mut leaves = Vec::new();
         let mut names = Vec::new();
         let mut work = Vec::new();
@@ -440,7 +501,8 @@ impl ArrangeRun {
         // stands (#560).
         let revision = self.document.scene_revision();
         let last = self.arranged.get();
-        if last == Some((revision, self.options.get(), scope)) {
+        let options = self.options.get().on(&self.document);
+        if last == Some((revision, options, scope)) {
             ui.set_arrange_last_run(ctr!(
                 "Inspector",
                 "Already arranged: nothing changed since the last Arrange."
@@ -456,7 +518,7 @@ impl ArrangeRun {
             ui.set_arrange_last_run(ctr!("Inspector", "Everything is already in place."));
             return;
         };
-        let settings = self.options.get().settings();
+        let settings = options.settings();
         let again = last.is_some_and(|(r, _, _)| r == revision);
         let (bodies, stands_on, plates) = (
             job.bodies.clone(),
@@ -472,7 +534,7 @@ impl ArrangeRun {
             job,
             started: Instant::now(),
             again,
-            options: self.options.get(),
+            options,
         });
         self.cancel.store(false, Ordering::Relaxed);
         self.stop_ahead();
@@ -1336,12 +1398,20 @@ mod real_scene {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3.0);
+            // One raft for all per run (#556): `1,0` arranges under one
+            // raft first, then each on its own.
+            let one_raft: Vec<bool> = std::env::var("BREADSLICER_ARRANGE_ONE_RAFT")
+                .ok()
+                .map(|v| v.split(',').map(|k| k.trim() == "1").collect())
+                .unwrap_or_default();
             for run in 0..runs {
                 let options = ArrangeOptions {
                     gap_mm: gaps.get(run).copied().unwrap_or(1.0),
+                    one_raft: one_raft.get(run).copied().unwrap_or(false),
                     ..ArrangeOptions::default()
                 };
                 _arrange.options.set(options);
+                let options = options.on(&document);
                 let settings = options.settings();
                 let busy = idle(wait);
                 let triangles: usize = document
@@ -1355,8 +1425,10 @@ mod real_scene {
                     })
                     .unwrap_or(0);
                 println!(
-                    "before run {run} (gap {}): window busy {busy:.2} s of {wait} s, {} drawings kept, supports {:.1} M triangles, footprints kept {} ({:.0} MB), memory {:.0} MB",
+                    "before run {run} (gap {}, one raft {} at {:.2} mm): window busy {busy:.2} s of {wait} s, {} drawings kept, supports {:.1} M triangles, footprints kept {} ({:.0} MB), memory {:.0} MB",
                     options.gap_mm,
+                    options.one_raft,
+                    options.raft_top_mm,
                     document.support_sessions().borrow().len(),
                     triangles as f64 / 1e6,
                     sc_arrange::kept_parts(),

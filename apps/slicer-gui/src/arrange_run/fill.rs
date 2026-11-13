@@ -157,7 +157,7 @@ impl ArrangeRun {
             ui.set_arrange_last_run(ctr!("Inspector", "Select the models to copy."));
             return;
         };
-        let options = self.options.get();
+        let options = self.options.get().on(&self.document);
         let settings = options.settings();
         let limit = (options.max_copies > 0).then_some(options.max_copies as usize);
         *self.fill.pending.borrow_mut() = Some(Pending {

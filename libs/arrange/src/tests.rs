@@ -840,3 +840,42 @@ fn an_arrangement_s_spread_is_what_its_bodies_measure_as_they_stand() {
         across.spread
     );
 }
+
+/// One raft for all (#556): what stands under `free_below` takes no room,
+/// so bodies on wide rafts pack by what stands on them, their rafts lying
+/// on each other, and what stands above keeps the gap.
+#[test]
+fn under_one_raft_for_all_the_rafts_take_no_room() {
+    let mesh = cube();
+    let on_raft = |i: u32| {
+        let at = f64::from(i) * 12.0;
+        body(vec![
+            boxed(&mesh, [10.0, 10.0, 0.8], [at, 0.0, 0.0]),
+            boxed(&mesh, [4.0, 4.0, 10.0], [at + 3.0, 3.0, 0.8]),
+        ])
+    };
+    let bodies: Vec<Body> = (0..6).map(on_raft).collect();
+    let plate = plate(40.0, 30.0);
+    let apart = Settings {
+        gap: 2.0,
+        ..quarter_turns()
+    };
+    let raft_by_raft = arrange(&bodies, &plate, &apart, &AtomicBool::new(false)).unwrap();
+    assert!(
+        !raft_by_raft.left_off().is_empty(),
+        "{:?}",
+        raft_by_raft.placements
+    );
+
+    let one_raft = Settings {
+        free_below: 0.85,
+        ..apart
+    };
+    let out = arrange(&bodies, &plate, &one_raft, &AtomicBool::new(false)).unwrap();
+    assert!(out.left_off().is_empty(), "{:?}", out.placements);
+    let pillars: Vec<Body> = bodies
+        .iter()
+        .map(|b| body(vec![b.parts[1].clone()]))
+        .collect();
+    assert_kept_apart(&pillars, &out.placements, &plate, &one_raft);
+}

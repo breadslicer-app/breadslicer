@@ -35,7 +35,7 @@ struct Key {
     /// move to 1e-7 mm.
     pose: [i64; 12],
     /// The sizes the bands are drawn at.
-    geometry: [u64; 4],
+    geometry: [u64; 5],
 }
 
 impl Key {
@@ -56,6 +56,7 @@ impl Key {
                 geo.band.unwrap_or(-1.0).to_bits(),
                 geo.gap.to_bits(),
                 geo.floor.to_bits(),
+                geo.free.to_bits(),
             ],
         }
     }

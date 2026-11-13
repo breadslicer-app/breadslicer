@@ -1165,6 +1165,7 @@ export component TransformInspector inherits VerticalLayout {
     in property <float> arrange-margin;
     in property <bool> arrange-turns;
     in property <bool> arrange-shadow-only;
+    in property <bool> arrange-one-raft;
     // Fill bed (#356): a fill in flight, its count so far, and at most how
     // many copies it adds (0: as many as fit).
     in property <bool> arrange-filling;
@@ -1312,6 +1313,17 @@ export component TransformInspector inherits VerticalLayout {
             text: root.arrange-shadow-only
                 ? @tr("Inspector" => "Packs the objects with their supports by their whole shadow: nothing reaches over another object.")
                 : @tr("Inspector" => "Packs the objects with their supports by their real shape: a part may reach over a shorter object, never closer than the gap.");
+        }
+        CheckBox {
+            text: @tr("Inspector" => "One raft for all");
+            checked: root.arrange-one-raft;
+            enabled: !root.arranging;
+            toggled => {
+                root.arrange-option-changed(5, self.checked ? 1 : 0);
+            }
+        }
+        if root.arrange-one-raft: Note {
+            text: @tr("Inspector" => "Line rafts. The rafts take no room and join into one; the trunks of neighbours stand at least 2 mm apart.");
         }
         NumberField {
             label: @tr("Inspector" => "Gap");

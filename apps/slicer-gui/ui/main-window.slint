@@ -768,6 +768,7 @@ export component MainWindow inherits Window {
     in property <float> arrange-margin: 5;
     in property <bool> arrange-turns: true;
     in property <bool> arrange-shadow-only: false;
+    in property <bool> arrange-one-raft: false;
     // Fill bed (#356): a fill in flight (`arranging` is set too), its count
     // so far, and at most how many copies it adds (0: as many as fit).
     in property <bool> arrange-filling: false;
@@ -2277,6 +2278,7 @@ export component MainWindow inherits Window {
                                     arrange-margin: root.arrange-margin;
                                     arrange-turns: root.arrange-turns;
                                     arrange-shadow-only: root.arrange-shadow-only;
+                                    arrange-one-raft: root.arrange-one-raft;
                                     plate-count: root.plate-count;
                                     active-plate: root.active-plate;
                                     active-plate-used: root.active-plate-used;

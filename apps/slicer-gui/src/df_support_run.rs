@@ -3779,9 +3779,15 @@ impl DfSupportRun {
                 p.options = options.clone();
             }
         }
+        let lines = matches!(options.raft, RaftMode::Lines);
         *self.options.borrow_mut() = options;
         if let Some(ui) = self.ui.upgrade() {
             self.push_options(&ui);
+            // One raft for all stands on a raft of lines (#556): another
+            // raft turns it off.
+            if !lines && ui.get_arrange_one_raft() {
+                ui.invoke_arrange_option_changed(5, 0.0);
+            }
         }
         self.refresh_raft_warning();
     }
