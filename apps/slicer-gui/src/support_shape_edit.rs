@@ -161,6 +161,40 @@ pub(crate) fn defaults(
     out
 }
 
+/// Which of `bases` the preset `zones` was most likely made from: the one
+/// it shares the most numbers with (fields of the sizes with the same id,
+/// and the zones' sizes and spacings). Asked when that was not kept, as
+/// after the app opens again with a preset changed the time before.
+pub(crate) fn closest_base(bases: &[&ZonePreset], zones: &ZonePreset) -> Option<usize> {
+    let same = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    let score = |base: &ZonePreset| -> usize {
+        let mut n = 0;
+        for (i, size) in zones.rules.sizes.iter().enumerate() {
+            if let Some(j) = base.rules.sizes.iter().position(|b| b.id == size.id) {
+                let (a, b) = (values(zones, i), values(base, j));
+                n += 1 + (0..FIELDS).filter(|&k| same(a[k], b[k])).count();
+            }
+        }
+        for zone in zones_of(zones) {
+            if let (Some((a, x)), Some((b, y))) = (
+                zone_size_and_spacing(zones, zone),
+                zone_size_and_spacing(base, zone),
+            ) {
+                n += usize::from(a == b) + usize::from(same(x, y));
+            }
+        }
+        n + usize::from(same(
+            zones.rules.overhang.angle_deg,
+            base.rules.overhang.angle_deg,
+        ))
+    };
+    bases
+        .iter()
+        .enumerate()
+        .max_by_key(|&(i, b)| (score(b), std::cmp::Reverse(i)))
+        .map(|(i, _)| i)
+}
+
 /// Sets field `code` to `v` on the size at `index` alone (each size keeps
 /// its own numbers); the bracing's two for the whole preset. Values go
 /// through the engine's bounds.
@@ -349,6 +383,22 @@ mod tests {
         assert_eq!(z.rules.sizes[extrasmall].tip_diameter_mm, 0.5);
         assert_eq!(z.rules.sizes[small].tip_diameter_mm, 0.45);
         assert_eq!(z.rules.sizes[index(&z, "medium")].tip_diameter_mm, 0.30);
+    }
+
+    /// A preset changed by hand is told apart as made from the built-in
+    /// one it shares the most with.
+    #[test]
+    fn a_changed_preset_is_matched_to_the_built_in_one_it_came_from() {
+        let bases = [minis_30(), figures_150()];
+        let refs: Vec<&ZonePreset> = bases.iter().collect();
+        for (i, base) in bases.iter().enumerate() {
+            let mut z = base.clone();
+            let small = index(&z, "small");
+            for (code, v) in [(0, 1.12), (1, 2.86), (2, 5.49), (3, 2.52)] {
+                set_value(&mut z, small, code, v);
+            }
+            assert_eq!(closest_base(&refs, &z), Some(i));
+        }
     }
 
     /// Values go through the engine's bounds, and the bracing is the

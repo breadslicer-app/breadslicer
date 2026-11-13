@@ -2737,6 +2737,19 @@ impl DfSupportRun {
         let card = usize::try_from(current).ok().filter(|&i| i < built_in);
         if card.is_some() {
             self.based_on.set(card);
+        } else if self.based_on.get().is_none()
+            && let Some(zones) = o.zones.as_ref()
+        {
+            // Not known (the app opened with a preset changed before):
+            // the built-in one it shares the most with.
+            let bases: Vec<(usize, &ZonePreset)> = presets[..built_in]
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| p.options.zones.as_ref().map(|z| (i, z)))
+                .collect();
+            let refs: Vec<&ZonePreset> = bases.iter().map(|(_, z)| *z).collect();
+            self.based_on
+                .set(crate::support_shape_edit::closest_base(&refs, zones).map(|k| bases[k].0));
         }
         let cards: Vec<crate::PresetCard> = preset_cards()
             .into_iter()
@@ -2747,10 +2760,16 @@ impl DfSupportRun {
             .collect();
         ui.set_support_preset_cards(slint::ModelRc::new(slint::VecModel::from(cards)));
         ui.set_support_preset_card_index(card.map_or(-1, |i| i as i32));
+        // Where the preset came from, with the way back to it: a built-in
+        // preset changed, or one of the person's own.
         let based_on = match (current, self.based_on.get()) {
             (-1, Some(i)) => preset_cards()
                 .get(i)
                 .map(|(title, _)| ctr!("Inspector", "Made from {}, with changes", title))
+                .unwrap_or_default(),
+            (c, Some(i)) if c >= built_in as i32 => preset_cards()
+                .get(i)
+                .map(|(title, _)| ctr!("Inspector", "Made from {}", title))
                 .unwrap_or_default(),
             _ => slint::SharedString::default(),
         };

@@ -7181,8 +7181,8 @@ msgstr "Tu preset: {}"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
-msgid "Undo changes"
-msgstr "Volver al original"
+msgid "Reset to default"
+msgstr "Restablecer de fábrica"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
@@ -7373,3 +7373,8 @@ msgstr "desde {} mm³"
 msgctxt "Inspector"
 msgid "Reset to default"
 msgstr "Volver al valor original"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Made from {}"
+msgstr "Hecho a partir de {}"
