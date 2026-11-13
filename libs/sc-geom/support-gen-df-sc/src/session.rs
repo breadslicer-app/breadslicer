@@ -27,7 +27,7 @@ use support_gen_df::supports::auto_support::auto_place::fan::{
     FanArgs, FanHostOrder, FanLeafRefusal, FanLeafResult, add_fanned, fan_leaf_to_host,
 };
 use support_gen_df::supports::auto_support::auto_place::helpers::{
-    FanShaftPoint, PlanCtx, PlanMesh, collect_fan_shaft_points, host_segment_span,
+    FanShaftPoint, PlanCtx, PlanMesh, apply_zone_size, collect_fan_shaft_points, host_segment_span,
     member_max_angle_from_vertical_deg,
 };
 use support_gen_df::supports::auto_support::auto_place::place::{
@@ -1708,7 +1708,7 @@ impl DfSupportSession {
             }
             Err((EditError::NoRoute(_) | EditError::CannotAttach(_), note)) => {
                 let preview = EditPreview {
-                    mesh: self.refused_at(point, note)?,
+                    mesh: self.refused_at(point, note, how)?,
                     valid: false,
                     attached: false,
                     note,
@@ -1724,14 +1724,20 @@ impl DfSupportSession {
     /// What a preview shows red where nothing can hold `point`, refused as
     /// `note` says (#491). A surface no tip may touch (it looks up, or it is
     /// a wall) shows no support: none was tried. Otherwise the support
-    /// straight down to what lies under the point ([`Self::straight_drop`]).
-    fn refused_at(&self, point: [f64; 3], note: Option<AddNote>) -> Result<IndexedMesh, EditError> {
+    /// straight down to what lies under the point ([`Self::straight_drop`]),
+    /// of the size `how` asks for.
+    fn refused_at(
+        &self,
+        point: [f64; 3],
+        note: Option<AddNote>,
+        how: &AddOptions,
+    ) -> Result<IndexedMesh, EditError> {
         match note {
             Some(AddNote::FacesUp | AddNote::SteepSurface) => {
                 self.contact(point).ok_or(EditError::NothingThere)?;
                 Ok(IndexedMesh::new(None, Vec::new(), Vec::new()))
             }
-            _ => self.straight_drop(point),
+            _ => self.straight_drop(point, how),
         }
     }
 
@@ -1740,8 +1746,23 @@ impl DfSupportSession {
     /// support from one surface to the other, as the placement tries there;
     /// else a trunk to the plate. A red preview drawn as a trunk to the
     /// plate through the model below read as a support sent to the plate.
-    fn straight_drop(&self, point: [f64; 3]) -> Result<IndexedMesh, EditError> {
+    fn straight_drop(&self, point: [f64; 3], how: &AddOptions) -> Result<IndexedMesh, EditError> {
         let (i, tip, face) = self.contact(point).ok_or(EditError::NothingThere)?;
+        // Of the size asked for (#564: a red one showed the run's size, not
+        // the one a click would place).
+        let mut settings = (*self.settings).clone();
+        if let Some(zone) = hand_settings(&mut settings, how)
+            && let Some(rules) = settings.supports.auto_support.zone_rules.clone()
+        {
+            apply_zone_size(&mut settings.supports, &rules, zone);
+        }
+        let supports = &settings.supports;
+        let sized = settings
+            .supports
+            .auto_support
+            .zone_rules
+            .is_some()
+            .then(|| (supports.shaft.diameter_mm, supports.tip.contact_diameter_mm));
         let normal = match self.tip_contact(point) {
             Some((_, _, Ok(n))) => n,
             _ => face,
@@ -1769,7 +1790,7 @@ impl DfSupportSession {
                 .cross(Vec3::sub_vectors(tri.c, tri.a))
                 .normalize();
             let span = tip.distance_to(hit.point);
-            let cutoff = self.settings.supports.mesh_to_mesh.stick_vs_twig_cutoff_mm;
+            let cutoff = supports.mesh_to_mesh.stick_vs_twig_cutoff_mm;
             let read_setting = |path: SupportPlacementSettingPath| match path {
                 SupportPlacementSettingPath::MeshToMeshStickVsTwigCutoffMm => Some(cutoff),
             };
@@ -1784,12 +1805,12 @@ impl DfSupportSession {
                     a_normal: normal,
                     b_pos: hit.point,
                     b_normal: up,
-                    shaft_diameter_mm: None,
-                    tip_contact_diameter_mm: None,
+                    shaft_diameter_mm: sized.map(|s| s.0),
+                    tip_contact_diameter_mm: sized.map(|s| s.1),
                     mesh: None,
                     manual: Some(true),
                 },
-                &self.settings.supports,
+                supports,
                 &mut new_id,
             );
             if let Some(bridge) = bridge {
@@ -1817,7 +1838,7 @@ impl DfSupportSession {
                 is_small_island: None,
                 ignore_grid: Some(true),
             },
-            &self.settings.supports,
+            supports,
             &mut new_id,
         )
         .ok_or(EditError::NothingThere)?;
@@ -2476,14 +2497,7 @@ impl DfSupportSession {
                 Some(AddNote::CarriesOthers),
             ));
         }
-        let how = AddOptions {
-            attach: how.attach,
-            size: how.size.clone().or_else(|| self.size_of(tip)),
-            shape: how.shape.clone().or_else(|| {
-                let placed = self.hand_log.placed.iter().find(|p| p.id == tip)?;
-                placed.shape.clone().map(HandShape)
-            }),
-        };
+        let how = self.moved_how(tip, how);
         // The log (#408): a support of the run keeps where the run had it,
         // one placed by hand where it first came from.
         let moved_from = match self.hand_log.placed.iter().position(|p| p.id == tip) {
@@ -2519,6 +2533,19 @@ impl DfSupportSession {
     /// placed there (green, with what it leaves in `taken`), or red where
     /// nothing can hold that point or others hang from the support. With
     /// the session the move leaves when it goes through.
+    /// How support `tip` is made again where it moves: as `how` says, else
+    /// with its own size and shape.
+    fn moved_how(&self, tip: &str, how: &AddOptions) -> AddOptions {
+        AddOptions {
+            attach: how.attach,
+            size: how.size.clone().or_else(|| self.size_of(tip)),
+            shape: how.shape.clone().or_else(|| {
+                let placed = self.hand_log.placed.iter().find(|p| p.id == tip)?;
+                placed.shape.clone().map(HandShape)
+            }),
+        }
+    }
+
     pub fn preview_move_tip(
         &self,
         tip: &str,
@@ -2552,7 +2579,7 @@ impl DfSupportSession {
             }
             Err((EditError::NoRoute(_) | EditError::CannotAttach(_), note)) => {
                 let preview = EditPreview {
-                    mesh: self.refused_at(to, note)?,
+                    mesh: self.refused_at(to, note, &self.moved_how(tip, how))?,
                     valid: false,
                     attached: false,
                     note,
@@ -4086,7 +4113,7 @@ mod session_tests {
         // would stand.
         let open = bare_boxes(&[([0.0, 0.0, 25.0], [50.0, 10.0, 27.0])]);
         assert!(
-            open.straight_drop([25.0, 5.0, 25.0])
+            open.straight_drop([25.0, 5.0, 25.0], &AddOptions::default())
                 .is_ok_and(|mesh| { mesh.vertices().iter().any(|v| v.as_array()[2] < 1.0) })
         );
     }
@@ -4165,6 +4192,31 @@ mod session_tests {
                 }
             }
         }
+    }
+
+    /// A red support (no way to hold the point) is drawn of the size a
+    /// click would place, the person's own shape (#564: it showed the
+    /// run's size).
+    #[test]
+    fn a_red_support_is_drawn_of_the_shape_asked_for() {
+        let open = bare_boxes(&[([0.0, 0.0, 25.0], [50.0, 10.0, 27.0])]);
+        let widest = |how: &AddOptions| {
+            let mesh = open.straight_drop([25.0, 5.0, 25.0], how).unwrap();
+            mesh.vertices()
+                .iter()
+                .map(|v| v.as_array().map(f64::from))
+                .filter(|[_, _, z]| (8.0..20.0).contains(z))
+                .map(|[x, y, _]| ((x - 25.0).powi(2) + (y - 5.0).powi(2)).sqrt())
+                .fold(0.0, f64::max)
+        };
+        let mut shape = crate::zone_presets::support_sizes().remove(1);
+        shape.trunk_diameter_mm = 3.0;
+        let thick = widest(&AddOptions {
+            shape: Some(HandShape(shape)),
+            ..AddOptions::default()
+        });
+        assert!((thick - 1.5).abs() < 0.05, "trunk radius {thick}");
+        assert!(widest(&AddOptions::default()) < 1.0);
     }
 
     #[test]
