@@ -325,11 +325,15 @@ impl Pass<'_, '_> {
     }
 
     /// Places `body` at its best angle and spot; `None` when it fits nowhere.
-    fn place(&mut self, body: usize) -> Option<(usize, [i32; 2])> {
+    fn place(&mut self, body: usize, turns: Turns) -> Option<(usize, [i32; 2])> {
         let fp = &self.problem.footprints[body];
+        let angles = turns.of(fp.shapes.len());
         // (extent, area, nearness), angle, spot.
         let mut best: Option<(Score, usize, [i32; 2])> = None;
         for (angle, shape) in fp.shapes.iter().enumerate() {
+            if !angles.contains(&angle) {
+                continue;
+            }
             let Some(at) = self.spot(shape) else {
                 continue;
             };
@@ -432,6 +436,17 @@ enum Turns {
     Half(usize),
 }
 
+impl Turns {
+    /// The angles these turns allow out of a footprint's `n`.
+    fn of(self, n: usize) -> Vec<usize> {
+        match self {
+            Turns::All => (0..n).collect(),
+            Turns::One(a) => vec![a % n],
+            Turns::Half(a) => vec![a % n, (a + n / 2) % n],
+        }
+    }
+}
+
 /// A copy a fill placed: which body it copies, its angle, and where its
 /// frame's corner sits (plate cells).
 pub(crate) type Copied = (usize, usize, [i32; 2]);
@@ -492,14 +507,7 @@ pub(crate) fn fill(
             let angles: Vec<Vec<usize>> = problem
                 .footprints
                 .iter()
-                .map(|fp| {
-                    let n = fp.shapes.len();
-                    match t {
-                        Turns::All => (0..n).collect(),
-                        Turns::One(a) => vec![a % n],
-                        Turns::Half(a) => vec![a % n, (a + n / 2) % n],
-                    }
-                })
+                .map(|fp| t.of(fp.shapes.len()))
                 .collect();
             let mut cursors: Vec<Vec<usize>> = problem
                 .footprints
@@ -540,6 +548,166 @@ pub(crate) fn fill(
         .map(|(_, (copies, _))| copies)
 }
 
+/// The angle of `fp` at which its body stands turned as `like` does at its
+/// angle `a`, if one does to within a hundredth of a degree: copies made
+/// at other turns take another index for the same turn.
+pub(crate) fn turned_alike(like: &Footprint, a: usize, fp: &Footprint) -> Option<usize> {
+    let goal = like.turn + like.angles[a % like.angles.len()];
+    (0..fp.angles.len()).find(|&k| {
+        let d = (fp.turn + fp.angles[k] - goal).rem_euclid(std::f64::consts::TAU);
+        d.min(std::f64::consts::TAU - d) < 1e-4f64.to_radians() * 100.0
+    })
+}
+
+/// Steps tried between copies across a row and from row to row (mm).
+const LATTICE_STEP_MM: f64 = 1.0;
+
+/// How many lattices, the densest first, are tried on the plate.
+const LATTICES_TRIED: usize = 12;
+
+/// Where a lattice is tried on the plate: every this far (mm).
+const LATTICE_OFFSET_MM: f64 = 2.0;
+
+/// The densest lattices copies of `shape` can stand on, all turned alike,
+/// densest first: pairs of steps `u` and `v` (cells) such that copies at
+/// every `i·u + j·v` keep clear of each other at every height. `u` is the
+/// shortest step across a row at each slant, `v` the shortest from row to
+/// row that clears the row at each shift. Empty when the shape is.
+fn dense_lattices(shape: &Shape, cell: f64) -> Vec<([i32; 2], [i32; 2])> {
+    let size = [shape.hi[0] - shape.lo[0], shape.hi[1] - shape.lo[1]];
+    let Some(bands) = shape.bands.iter().map(|m| m.band + 1).max() else {
+        return Vec::new();
+    };
+    if size[0] <= 0 || size[1] <= 0 {
+        return Vec::new();
+    }
+    let step = ((LATTICE_STEP_MM / cell).round() as i32).max(1);
+    // A scratch plate five copies wide and high, a copy in its middle.
+    let (w, h) = (size[0] * 5, size[1] * 5);
+    let middle = [2 * size[0] - shape.lo[0], 2 * size[1] - shape.lo[1]];
+    let at = |d: [i32; 2], k: i32| [middle[0] + d[0] * k, middle[1] + d[1] * k];
+    let alone = {
+        let mut plate = Occupancy::new(w as usize, h as usize, bands);
+        plate.stamp(shape, middle);
+        plate
+    };
+    // The shortest step across a row at each slant.
+    let mut rows: Vec<[i32; 2]> = Vec::new();
+    let mut slant = -size[1] / 2;
+    while slant <= size[1] / 2 {
+        if let Some(x) = (1..=size[0] + 1).find(|&x| alone.fits(shape, at([x, slant], 1))) {
+            rows.push([x, slant]);
+        }
+        slant += step;
+    }
+    let mut found: Vec<(i64, [i32; 2], [i32; 2])> = Vec::new();
+    for u in rows {
+        let mut row = alone.clone();
+        for k in [-2, -1, 1, 2] {
+            row.stamp(shape, at(u, k));
+        }
+        // A step to the next row and that step plus `u` make the same
+        // lattice: shifts over one step across the row are all there are.
+        let mut shift = -u[0] / 2;
+        while shift <= u[0] / 2 {
+            // The shortest step to the next row at this shift that clears
+            // the row; the whole patch is checked after.
+            let next = (1..=size[1] + 1).find(|&y| row.fits(shape, at([shift, y], 1)));
+            let v = [shift, next.unwrap_or(0)];
+            shift += step;
+            if next.is_none() {
+                continue;
+            }
+            let area =
+                (i64::from(u[0]) * i64::from(v[1]) - i64::from(u[1]) * i64::from(v[0])).abs();
+            found.push((area, u, v));
+        }
+    }
+    found.sort_by_key(|&(area, u, v)| (area, u, v));
+    found
+        .into_iter()
+        .filter(|&(_, u, v)| patch_clears(shape, [w, h], bands, u, v))
+        .take(LATTICES_TRIED)
+        .map(|(_, u, v)| (u, v))
+        .collect()
+}
+
+/// Whether copies of `shape` at `i·u + j·v`, for i and j from −2 to 2,
+/// all keep clear of each other; `size` is five copies wide and high.
+fn patch_clears(shape: &Shape, size: [i32; 2], bands: usize, u: [i32; 2], v: [i32; 2]) -> bool {
+    let (w, h) = (size[0] * 3, size[1] * 3);
+    let mut plate = Occupancy::new(w as usize, h as usize, bands);
+    let base = [w / 2 - shape.lo[0], h / 2 - shape.lo[1]];
+    for j in -2..=2 {
+        for i in -2..=2 {
+            let at = [base[0] + i * u[0] + j * v[0], base[1] + i * u[1] + j * v[1]];
+            if !plate.fits(shape, at) {
+                return false;
+            }
+            plate.stamp(shape, at);
+        }
+    }
+    true
+}
+
+/// The spots of the lattice `(u, v)` where `shape` fits on `plate`, from
+/// the offset that holds most (tried every [`LATTICE_OFFSET_MM`]), front
+/// row first.
+fn lattice_spots(
+    plate: &Occupancy,
+    shape: &Shape,
+    u: [i32; 2],
+    v: [i32; 2],
+    cell: f64,
+) -> Vec<[i32; 2]> {
+    let step = ((LATTICE_OFFSET_MM / cell).round() as i32).max(1);
+    let (width, height) = (plate.width as i32, plate.height as i32);
+    let size = [shape.hi[0] - shape.lo[0], shape.hi[1] - shape.lo[1]];
+    let det = i64::from(u[0]) * i64::from(v[1]) - i64::from(u[1]) * i64::from(v[0]);
+    if size[0] > width || size[1] > height || det == 0 {
+        return Vec::new();
+    }
+    // The lattice points over the plate, a step past it on every side: the
+    // plate's corners in lattice coordinates bound them.
+    let (mut lo, mut hi) = ([i32::MAX; 2], [i32::MIN; 2]);
+    for [x, y] in [[0, 0], [width, 0], [0, height], [width, height]] {
+        let (x, y) = (f64::from(x), f64::from(y));
+        let det = det as f64;
+        let i = (x * f64::from(v[1]) - y * f64::from(v[0])) / det;
+        let j = (y * f64::from(u[0]) - x * f64::from(u[1])) / det;
+        for (k, c) in [i, j].into_iter().enumerate() {
+            lo[k] = lo[k].min(c.floor() as i32 - 2);
+            hi[k] = hi[k].max(c.ceil() as i32 + 2);
+        }
+    }
+    let mut best: Vec<[i32; 2]> = Vec::new();
+    let mut a = 0;
+    while a < u[0].abs().max(1) {
+        let mut b = 0;
+        while b < v[1].abs().max(1) {
+            let mut spots: Vec<[i32; 2]> = Vec::new();
+            for j in lo[1]..=hi[1] {
+                for i in lo[0]..=hi[0] {
+                    let at = [
+                        a - shape.lo[0] + i * u[0] + j * v[0],
+                        b - shape.lo[1] + i * u[1] + j * v[1],
+                    ];
+                    if plate.fits(shape, at) {
+                        spots.push(at);
+                    }
+                }
+            }
+            if spots.len() > best.len() {
+                best = spots;
+            }
+            b += step;
+        }
+        a += step;
+    }
+    best.sort_by_key(|at| (at[1] + shape.lo[1], at[0] + shape.lo[0]));
+    best
+}
+
 /// Runs the passes and keeps the best layout. `None` when cancelled.
 pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layout> {
     let spots = Spots::of(problem);
@@ -549,12 +717,62 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
         .iter()
         .map(|fp| fp.shapes.first().map_or(0, Shape::area))
         .collect();
-    let layouts: Vec<Option<(Pull, Layout)>> = (0..problem.passes.max(2))
+    // Shaken passes, each body at its best angle; then, as a fill does,
+    // passes with every body at one same angle, or at one and half a turn
+    // from it: copies of a body side by side in rows, which bodies left to
+    // their own angles pack with holes between them.
+    let turns = problem
+        .footprints
+        .iter()
+        .map(|fp| fp.shapes.len())
+        .min()
+        .unwrap_or(1);
+    let shaken = problem.passes.max(2);
+    let mut kinds: Vec<(Pull, Turns)> = Vec::new();
+    if turns > 1 {
+        for pull in [Pull::Corner, Pull::Centre] {
+            for a in 0..turns {
+                kinds.push((pull, Turns::One(a)));
+            }
+            if turns > 2 && turns % 2 == 0 {
+                for a in 0..turns / 2 {
+                    kinds.push((pull, Turns::Half(a)));
+                }
+            }
+        }
+    }
+    // And passes on the densest lattice of the largest body at each angle,
+    // every body on its spots while one holds it: copies as close as they
+    // keep clear on every side, where one after the other in the first
+    // free spot leaves holes between them.
+    let largest = (0..sizes.len()).max_by_key(|&i| (sizes[i], std::cmp::Reverse(i)));
+    let lattices: Vec<(usize, Vec<[i32; 2]>)> = match largest {
+        Some(big) => (0..problem.footprints[big].shapes.len())
+            .into_par_iter()
+            .filter_map(|a| {
+                let shape = &problem.footprints[big].shapes[a];
+                if shape.hi[0] - shape.lo[0] > problem.plate.width as i32
+                    || shape.hi[1] - shape.lo[1] > problem.plate.height as i32
+                {
+                    return None;
+                }
+                // The lattice that holds most on this plate.
+                let spots = dense_lattices(shape, problem.cell)
+                    .into_iter()
+                    .map(|(u, v)| lattice_spots(&problem.plate, shape, u, v, problem.cell))
+                    .max_by_key(Vec::len)?;
+                (!spots.is_empty()).then_some((a, spots))
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let set = shaken + kinds.len() as u32;
+    let layouts: Vec<Option<(Pull, Layout)>> = (0..set + lattices.len() as u32)
         .into_par_iter()
         .map(|pass| {
-            // The first pass of each pull always runs to the end; the others
-            // only start in time.
-            if pass > 1 && Instant::now() >= problem.deadline {
+            // The first pass of each pull, and every pass at set angles,
+            // always runs to the end; the shaken ones only start in time.
+            if (2..shaken).contains(&pass) && Instant::now() >= problem.deadline {
                 return None;
             }
             let mut rng = Rng::new(u64::from(pass) + 1);
@@ -562,7 +780,7 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
                 .iter()
                 .enumerate()
                 .map(|(i, &size)| {
-                    let shake = if pass < 2 {
+                    let shake = if pass < 2 || pass >= shaken {
                         1.0
                     } else {
                         1.0 + SHAKE * (2.0 * rng.next() - 1.0)
@@ -571,19 +789,69 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
                 })
                 .collect();
             order.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-            // Passes take turns pulling to the middle and to the corner.
-            let pull = if pass % 2 == 0 {
-                Pull::Centre
-            } else {
-                Pull::Corner
+            // Shaken passes take turns pulling to the middle and to the
+            // corner.
+            let on_lattice = pass.checked_sub(set).map(|k| &lattices[k as usize]);
+            let (pull, turns) = match (on_lattice, pass.checked_sub(shaken)) {
+                (Some(&(a, _)), _) => (Pull::Grid, Turns::One(a)),
+                (None, Some(k)) => kinds[k as usize],
+                (None, None) if pass % 2 == 0 => (Pull::Centre, Turns::All),
+                (None, None) => (Pull::Corner, Turns::All),
             };
-            let mut run = spots.pass(problem, pull);
+            // Off the lattice, a lattice pass places as a corner one does.
+            let mut run = spots.pass(
+                problem,
+                if pull == Pull::Grid {
+                    Pull::Corner
+                } else {
+                    pull
+                },
+            );
             let mut placed = vec![None; sizes.len()];
+            let mut cursor = 0;
             for (_, body) in order {
                 if cancel.load(Ordering::Relaxed) {
                     return None;
                 }
-                placed[body] = run.place(body);
+                // On the lattice while a spot holds the body, then wherever
+                // it fits at that angle.
+                if let Some((a, lattice)) = on_lattice
+                    && let Some(angle) = largest.and_then(|big| {
+                        turned_alike(&problem.footprints[big], *a, &problem.footprints[body])
+                    })
+                {
+                    let shape = &problem.footprints[body].shapes[angle];
+                    if let Some(k) = lattice[cursor..]
+                        .iter()
+                        .position(|&at| run.plate.fits(shape, at))
+                    {
+                        cursor += k;
+                        let at = lattice[cursor];
+                        cursor += 1;
+                        run.stamp(body, angle, at);
+                        placed[body] = Some((angle, at));
+                        continue;
+                    }
+                    cursor = lattice.len();
+                }
+                // At set angles, the angles the largest body turns to: every
+                // body then stands turned alike, whatever its turn now.
+                let turns = match (turns, largest) {
+                    (Turns::All, _) | (_, None) => Turns::All,
+                    (Turns::One(a), Some(big)) => {
+                        match turned_alike(&problem.footprints[big], a, &problem.footprints[body]) {
+                            Some(k) => Turns::One(k),
+                            None => Turns::All,
+                        }
+                    }
+                    (Turns::Half(a), Some(big)) => {
+                        match turned_alike(&problem.footprints[big], a, &problem.footprints[body]) {
+                            Some(k) => Turns::Half(k),
+                            None => Turns::All,
+                        }
+                    }
+                };
+                placed[body] = run.place(body, turns);
             }
             Some((pull, finish(problem, metric, placed, run.pile, pass)))
         })
@@ -602,7 +870,7 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
                 .map(|(_, l)| l.count)
                 .max()
         };
-        if most(Pull::Centre) >= most(Pull::Corner) {
+        if most(Pull::Centre) >= most(Pull::Corner).max(most(Pull::Grid)) {
             layouts.retain(|(p, _)| *p == Pull::Centre);
         }
     }

@@ -4825,7 +4825,8 @@ mod window_wiring_tests {
     /// One raft for all (#556) as Damian ran it: a model alone, the box on,
     /// Fill bed, Generate. `BREADSLICER_ONE_RAFT_MODEL` names the model,
     /// `BREADSLICER_ONE_RAFT_DUMP` a file the scene is written to, triangle
-    /// by triangle (a byte for the kind: 0 model, 1 supports, 2 the raft).
+    /// by triangle (a byte for the kind: 0 model, 1 supports, 2 the raft; then
+    /// the leaf's index as a u16).
     #[test]
     #[ignore = "a measurement on a real model"]
     fn one_raft_for_all_on_a_filled_plate() {
@@ -4988,7 +4989,7 @@ mod window_wiring_tests {
             if let Some(out) = std::env::var_os("BREADSLICER_ONE_RAFT_DUMP") {
                 let mut f = std::io::BufWriter::new(std::fs::File::create(out).unwrap());
                 document.with_scene(|s| {
-                    for leaf in (0..).map_while(|i| s.leaf_id_at_index(i)) {
+                    for (index, leaf) in (0..).map_while(|i| s.leaf_id_at_index(i)).enumerate() {
                         let Some(q) = s.leaf(leaf) else { continue };
                         let world = q.world_transform();
                         let mesh = q.mesh();
@@ -4996,6 +4997,7 @@ mod window_wiring_tests {
                         let vs = mesh.vertices();
                         for face in mesh.faces() {
                             f.write_all(&[k]).unwrap();
+                            f.write_all(&(index as u16).to_le_bytes()).unwrap();
                             for i in 0..3 {
                                 let v = world.apply_to_vertex(vs[usize::from(face.vertices[i])]);
                                 for c in v.coords() {

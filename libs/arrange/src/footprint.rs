@@ -126,6 +126,9 @@ pub(crate) struct Footprint {
     /// reference, at every angle.
     pub(crate) radius: i32,
     pub(crate) angles: Arc<[f64]>,
+    /// How far the body stands turned about the vertical axis (rad): at
+    /// angle `k` it stands turned by `turn + angles[k]`.
+    pub(crate) turn: f64,
     pub(crate) shapes: Arc<[Shape]>,
     pub(crate) peel: Arc<[Peel]>,
 }
@@ -517,6 +520,7 @@ impl Base {
             reference,
             radius,
             angles: angles.into(),
+            turn,
             shapes: shapes.into(),
             peel: peel.into(),
         }

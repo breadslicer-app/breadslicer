@@ -802,14 +802,8 @@ fn an_arrangement_s_spread_is_what_its_bodies_measure_as_they_stand() {
     let s = Settings::default();
     let on = vec![Some(0); bodies.len()];
     let scattered = crate::spread_now(&bodies, &on, &[plate], &s);
-    let across = crate::arrange_across(
-        &bodies,
-        &[None; 4],
-        &[plate],
-        &s,
-        &AtomicBool::new(false),
-    )
-    .unwrap();
+    let across =
+        crate::arrange_across(&bodies, &[None; 4], &[plate], &s, &AtomicBool::new(false)).unwrap();
     let moved: Vec<Body> = bodies
         .iter()
         .zip(&across.placements)
@@ -878,4 +872,59 @@ fn under_one_raft_for_all_the_rafts_take_no_room() {
         .map(|b| body(vec![b.parts[1].clone()]))
         .collect();
     assert_kept_apart(&pillars, &out.placements, &plate, &one_raft);
+}
+
+/// An L of two bars, 12 × 4 mm each, turned by `turn` about its corner at
+/// `at`.
+fn l_body(mesh: &Arc<IndexedMesh>, turn: f64, at: [f64; 2]) -> Body {
+    let (s, c) = turn.sin_cos();
+    let bar = |size: [f64; 3], middle: [f64; 2]| {
+        let p = [c * middle[0] - s * middle[1], s * middle[0] + c * middle[1]];
+        turned_box(mesh, size, turn, [at[0] + p[0], at[1] + p[1]])
+    };
+    body(vec![
+        bar([12.0, 4.0, 4.0], [6.0, 2.0]),
+        bar([4.0, 12.0, 4.0], [2.0, 6.0]),
+    ])
+}
+
+/// A copy standing a quarter turn from another takes, at the angle one
+/// index short, the turn the other takes: Arrange all turns copies alike
+/// by how they end up standing, not by the index of their angle.
+#[test]
+fn copies_standing_turned_apart_are_turned_alike_by_their_turn() {
+    let mesh = cube();
+    let plate = plate(90.0, 70.0);
+    let frame = crate::Frame::new(&plate, &quarter_turns());
+    let first = frame
+        .footprint(&l_body(&mesh, 0.0, [20.0, 20.0]), false, &frame.angles)
+        .expect("drawn");
+    let turned = frame
+        .footprint(
+            &l_body(&mesh, std::f64::consts::FRAC_PI_2, [50.0, 20.0]),
+            false,
+            &frame.angles,
+        )
+        .expect("drawn");
+    for a in 0..4 {
+        let k = crate::search::turned_alike(&first, a, &turned).expect("a quarter turn");
+        assert_eq!(k, (a + 3) % 4, "angle {a}");
+        let (s, t) = (&first.shapes[a], &turned.shapes[k]);
+        assert_eq!(
+            [s.hi[0] - s.lo[0], s.hi[1] - s.lo[1]],
+            [t.hi[0] - t.lo[0], t.hi[1] - t.lo[1]],
+            "angle {a}: the same shape"
+        );
+    }
+    assert_eq!(
+        crate::search::turned_alike(
+            &first,
+            0,
+            &frame
+                .footprint(&l_body(&mesh, 0.3, [50.0, 50.0]), false, &frame.angles)
+                .expect("drawn")
+        ),
+        None,
+        "no angle stands that way"
+    );
 }
