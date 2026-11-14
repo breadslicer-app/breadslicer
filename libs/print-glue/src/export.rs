@@ -16,7 +16,6 @@ use sc_print_profiles::{
     EffectiveMaterial, PrinterProfile, ResolveError, ResolvedPrintConfig, SceneOverrides, resolve,
     snap_to_z_step,
 };
-use sc_scene::Scene;
 use sc_sl1cer::profile::{LayerSchedule, PackingMode};
 use sc_sla_formats::layer_images::lit_layer_count;
 use sc_sla_formats::{
@@ -122,8 +121,30 @@ impl std::error::Error for UnexportableSlice {
     }
 }
 
-/// Prepare the printer-file export of `contours`, cut from `scene`, for the
-/// chosen printer and material.
+/// Measure the resin `contours` cure on `printer` with `aa_level`, under the
+/// raster an export of them rasterises with, and keep it with them: a later
+/// [`prepare_export`] of the same contours reads it at once (#115, #434).
+/// Returns the volume, in cubic millimetres.
+pub fn measure_cured_resin(
+    contours: &PlateContours,
+    printer: &PrinterProfile,
+    aa_level: AaLevel,
+) -> f64 {
+    let LayerSchedule::Uniform(grid) = *contours.schedule();
+    let profile = project_hardware_to_slice_profile(
+        &printer.hardware,
+        grid.layer_height(),
+        aa_level,
+        PackingMode::None,
+        grid.first_layer_height(),
+        grid.total_layers(),
+    );
+    contours.lit_volume_mm3(&RasterSetup::from_profile(&profile))
+}
+
+/// Prepare the printer-file export of `contours` for the chosen printer and
+/// material. The resin it reports is what the layers light (#115, #434),
+/// measured once per slice and raster ([`PlateContours::lit_volume_mm3`]).
 ///
 /// `overrides` holds the per-print values the contours were sliced with, such
 /// as a requested layer height, and `aa_level` the anti-aliasing level to
@@ -142,7 +163,6 @@ impl std::error::Error for UnexportableSlice {
 /// layer is off the printer's Z step, or when the print program cannot be
 /// built.
 pub fn prepare_export(
-    scene: &Scene,
     contours: PlateContours,
     printer: &PrinterProfile,
     material: &EffectiveMaterial,
@@ -184,8 +204,9 @@ pub fn prepare_export(
         }
         _ => contours,
     };
+    let volume_mm3 = contours.lit_volume_mm3(&RasterSetup::from_profile(&profile));
     let program = project_to_print_program(
-        scene,
+        volume_mm3,
         &config,
         &profile,
         creation_time_now(),

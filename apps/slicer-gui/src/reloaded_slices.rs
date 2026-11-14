@@ -94,6 +94,9 @@ pub(crate) fn revalidate_persisted_slices(
     if !slices_in_sync(&token, scene, contours.schedule(), scale) {
         return None;
     }
+    // The resin the layers cure (#115, #434), measured while the project
+    // loads, with the raster a reloaded slice exports with.
+    sc_print_glue::export::measure_cured_resin(&contours, &printer_profile, AaLevel::Off);
     Some(ReloadedSlices {
         contours,
         token,

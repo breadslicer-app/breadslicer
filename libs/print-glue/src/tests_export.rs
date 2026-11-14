@@ -5,7 +5,7 @@
 
 use std::error::Error;
 
-use sc_mesh_core::primitives::IndexedTriangle;
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_fixtures::unit_cube_mesh;
 use sc_print_primitives::{AaLevel, PositiveFiniteMm};
 use sc_print_profiles::{
@@ -13,7 +13,7 @@ use sc_print_profiles::{
     SceneOverrides, resolve_layer_height,
 };
 use sc_scene::Scene;
-use sc_scene_fixtures::{meshes_as_roots, trio_as_roots};
+use sc_scene_fixtures::{leaves_as_roots, trio_as_roots};
 use sc_sl1cer::CancelToken;
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 use sc_sl1cer::profile::LayerSchedule;
@@ -150,13 +150,11 @@ fn contours_of(scene: &Scene, params: &SlicingParams) -> PlateContours {
 }
 
 fn export(
-    scene: &Scene,
     contours: PlateContours,
     material: &EffectiveMaterial,
     overrides: &SceneOverrides,
 ) -> Result<ExportJob, UnexportableSlice> {
     prepare_export(
-        scene,
         contours,
         &printer(),
         material,
@@ -178,8 +176,7 @@ fn contours_cut_at_a_requested_layer_height_export_under_the_same_request() {
     let scene = trio_as_roots();
     let contours = contours_of(&scene, &quarter_mm_layers());
 
-    let job =
-        export(&scene, contours, &calibrated(), &requesting(0.25)).expect("the export prepares");
+    let job = export(contours, &calibrated(), &requesting(0.25)).expect("the export prepares");
 
     assert_eq!(job.program.layer_height_mm, mm(0.25));
     // The prisms reach z = 2: 8 slabs of 0.25 mm.
@@ -197,7 +194,7 @@ fn the_same_contours_exported_without_the_request_are_refused() {
     let scene = trio_as_roots();
     let contours = contours_of(&scene, &quarter_mm_layers());
 
-    let err = export(&scene, contours, &calibrated(), &SceneOverrides::default())
+    let err = export(contours, &calibrated(), &SceneOverrides::default())
         .expect_err("the resin's own layer height is 0.05 mm");
 
     assert_eq!(
@@ -226,13 +223,8 @@ fn a_first_layer_off_the_z_step_is_refused() {
     .expect("z is strictly increasing");
     let contours = PlateContours::new(stack, schedule).expect("3 layers pair with 3");
 
-    let err = export(
-        &trio_as_roots(),
-        contours,
-        &calibrated(),
-        &SceneOverrides::default(),
-    )
-    .expect_err("a 0.057 mm first layer is off a 0.01 mm step");
+    let err = export(contours, &calibrated(), &SceneOverrides::default())
+        .expect_err("a 0.057 mm first layer is off a 0.01 mm step");
 
     match err {
         UnexportableSlice::FirstLayerOffZStep {
@@ -255,8 +247,8 @@ fn a_first_layer_that_slicing_snapped_onto_the_z_step_is_accepted() {
     };
     let contours = contours_of(&scene, &params);
 
-    let job = export(&scene, contours, &calibrated(), &SceneOverrides::default())
-        .expect("the export prepares");
+    let job =
+        export(contours, &calibrated(), &SceneOverrides::default()).expect("the export prepares");
 
     let first = job.program.layers[0].slab_top_mm.value();
     assert!((first - 0.06).abs() < 1e-12, "first slab top: {first}");
@@ -275,7 +267,6 @@ fn a_fresh_slice_exports_with_the_raster_and_the_layers_it_was_sliced_with() {
     let contours = plate.merge().expect("the leaves of 1 run merge");
 
     let job = prepare_export(
-        &scene,
         contours,
         &printer(),
         &calibrated(),
@@ -300,8 +291,8 @@ fn the_program_carries_a_record_for_each_contour_layer() {
     let scene = trio_as_roots();
     let contours = contours_of(&scene, &resin_defaults());
 
-    let job = export(&scene, contours, &calibrated(), &SceneOverrides::default())
-        .expect("the export prepares");
+    let job =
+        export(contours, &calibrated(), &SceneOverrides::default()).expect("the export prepares");
 
     assert_eq!(
         job.program.layers.len(),
@@ -314,8 +305,8 @@ fn the_program_names_the_machine_and_the_resin_it_was_sliced_for() {
     let scene = trio_as_roots();
     let contours = contours_of(&scene, &resin_defaults());
 
-    let job = export(&scene, contours, &calibrated(), &SceneOverrides::default())
-        .expect("the export prepares");
+    let job =
+        export(contours, &calibrated(), &SceneOverrides::default()).expect("the export prepares");
 
     assert_eq!(job.program.machine_name.as_str(), "Mars 5");
     assert_eq!(job.program.material_name.as_str(), "Blu");
@@ -328,8 +319,8 @@ fn the_job_reports_the_values_the_resin_left_to_the_resolver() {
     let scene = trio_as_roots();
     let contours = contours_of(&scene, &resin_defaults());
 
-    let job = export(&scene, contours, &calibrated(), &SceneOverrides::default())
-        .expect("the export prepares");
+    let job =
+        export(contours, &calibrated(), &SceneOverrides::default()).expect("the export prepares");
 
     assert_eq!(fallbacks_used(job.config()).len(), 12);
 }
@@ -344,35 +335,40 @@ fn a_resin_without_print_calibration_is_refused_by_the_resolver() {
         .merge()
         .expect("the leaves of 1 run merge");
 
-    let err = export(&scene, contours, &uncalibrated, &SceneOverrides::default())
+    let err = export(contours, &uncalibrated, &SceneOverrides::default())
         .expect_err("an unresolvable configuration cannot be written");
 
     assert!(matches!(err, UnexportableSlice::Configuration(_)), "{err}");
 }
 
 #[test]
-fn a_scene_that_cannot_be_measured_is_refused_by_the_program() {
-    // Only the program's volume reads the scene, so contours cut from a sound
-    // scene reach that measure.
-    let contours = contours_of(&trio_as_roots(), &resin_defaults());
-    let mut broken = unit_cube_mesh();
-    broken.faces[0] = IndexedTriangle::from_raw_indices([0, 1, 99]);
-
-    let err = export(
-        &meshes_as_roots([broken]),
-        contours,
-        &calibrated(),
-        &SceneOverrides::default(),
-    )
-    .expect_err("a scene with a dangling vertex index has no volume");
-
-    assert!(
-        matches!(
-            err,
-            UnexportableSlice::Program(UnprojectablePrint::Scene(_))
-        ),
-        "{err}"
-    );
+fn parts_that_overlap_count_once_in_the_resin() {
+    // Two 4 mm cubes, the second 2 mm along: 96 mm3 cured, though the meshes
+    // hold 128 (#434). Each layer's pixels, counted by their grey, give it.
+    let cube = |x: f64| {
+        let scale = AffineTransform3D::from_uniform_scale(4.0);
+        let place = AffineTransform3D::from_translation([x, 0.0, 2.0]);
+        (unit_cube_mesh(), Transform3D::Affine(place.compose(&scale)))
+    };
+    let scene = leaves_as_roots([cube(0.0), cube(2.0)]);
+    for aa in [AaLevel::Off, AaLevel::X4] {
+        let params = SlicingParams {
+            aa_level: aa,
+            ..resin_defaults()
+        };
+        let contours = contours_of(&scene, &params);
+        let job = prepare_export(
+            contours,
+            &printer(),
+            &calibrated(),
+            &SceneOverrides::default(),
+            aa,
+            SLICER_VERSION,
+        )
+        .expect("the export prepares");
+        let volume = job.program.volume_mm3.value();
+        assert!((volume - 96.0).abs() < 0.96, "{aa:?}: {volume} mm3");
+    }
 }
 
 #[test]
@@ -463,7 +459,6 @@ fn empty_layers_on_top_are_left_out_of_the_printer_file() {
     let lit_tops: Vec<f64> = contours.schedule().iter_slab_tops().collect();
 
     let job = export(
-        &scene,
         with_dark_top(contours, 2),
         &calibrated(),
         &SceneOverrides::default(),
@@ -487,8 +482,8 @@ fn a_slice_whose_top_layer_is_lit_exports_every_layer() {
     let contours = contours_of(&scene, &resin_defaults());
     let layers = contours.stack().layers().len();
 
-    let job = export(&scene, contours, &calibrated(), &SceneOverrides::default())
-        .expect("the export prepares");
+    let job =
+        export(contours, &calibrated(), &SceneOverrides::default()).expect("the export prepares");
 
     assert_eq!(job.program.layers.len(), layers);
 }
@@ -505,13 +500,8 @@ fn a_plate_that_lights_nothing_keeps_its_layers() {
     .expect("z is strictly increasing");
     let contours = PlateContours::new(stack, schedule).expect("3 layers pair with 3");
 
-    let job = export(
-        &trio_as_roots(),
-        contours,
-        &calibrated(),
-        &SceneOverrides::default(),
-    )
-    .expect("the export prepares");
+    let job =
+        export(contours, &calibrated(), &SceneOverrides::default()).expect("the export prepares");
 
     assert_eq!(job.program.layers.len(), 3);
 }

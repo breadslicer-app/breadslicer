@@ -1143,6 +1143,16 @@ fn run_slice(
             let contours = plate
                 .merge_with(filled.into_iter().chain(erased))
                 .map_err(|_| SliceFailure::SliceMerge)?;
+            // The resin the layers cure (#115, #434), measured here once so
+            // the Slice tab's estimate reads it at once.
+            sc_print_glue::export::measure_cured_resin(
+                &contours,
+                &printer_profile,
+                inputs.aa_level,
+            );
+            if cancel.is_cancelled() {
+                return Ok(SliceRunOutcome::Cancelled);
+            }
             capture(scene, contours, scale, review, layers)
                 .map(|completed| SliceRunOutcome::Completed(Box::new(completed)))
         }

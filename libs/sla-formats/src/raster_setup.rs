@@ -56,6 +56,14 @@ impl RasterSetup {
         self
     }
 
+    /// Sample the pixels at `aa` instead.
+    #[inline]
+    #[must_use]
+    pub fn with_aa(mut self, aa: AaLevel) -> Self {
+        self.aa = aa;
+        self
+    }
+
     /// Set the turn between the plate's image and the image a printer
     /// file stores.
     #[inline]

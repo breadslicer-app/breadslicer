@@ -143,7 +143,6 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
                 ..Default::default()
             };
             let job = prepare_export(
-                &scene,
                 merge_plate(plate, &sets)?,
                 &printer,
                 &material,
