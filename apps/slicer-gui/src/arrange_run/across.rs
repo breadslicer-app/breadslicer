@@ -35,6 +35,8 @@ pub(crate) struct Job {
     pub(crate) names: Vec<String>,
     /// Per body, its model: `None` for supports no model owns.
     pub(crate) models: Vec<Option<NodeId>>,
+    /// Per body, whether it is a model with no supports yet (#556).
+    pub(crate) bare: Vec<bool>,
     /// Per plate of the scene, whether objects stood on it.
     pub(crate) held: Vec<bool>,
     pub(crate) scope: ArrangeScope,
@@ -120,6 +122,7 @@ pub(crate) fn job(
         leaves: Vec::new(),
         names: Vec::new(),
         models: Vec::new(),
+        bare: Vec::new(),
         held: Vec::new(),
         scope,
     };
@@ -145,6 +148,7 @@ pub(crate) fn job(
         job.leaves.push(gathered.leaves[k].clone());
         job.names.push(gathered.names[k].clone());
         job.models.push(is_model.then_some(anchor));
+        job.bare.push(gathered.bare[k]);
     }
     job.held = held;
     Some(job).filter(|j| j.bodies.iter().any(|b| !b.fixed))

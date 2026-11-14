@@ -269,7 +269,7 @@ fn a_filled_copy_keeps_the_paint_of_its_model() {
 fn a_cancelled_or_stale_fill_adds_nothing() {
     let (document, leaves) = cubes(&[[10.0, 10.0]]);
     select(&document, &leaves);
-    let (bodies, sources) = gather_fill(&document, None).expect("a source");
+    let (bodies, _, sources) = gather_fill(&document, None).expect("a source");
     let settings = ArrangeOptions::default().settings();
     let cancelled = make(
         &bodies,

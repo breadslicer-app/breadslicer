@@ -54,6 +54,8 @@ pub(crate) struct Problem<'a> {
     pub(crate) balance: bool,
     pub(crate) passes: u32,
     pub(crate) deadline: Instant,
+    /// Tries the tighter passes ([`crate::Settings::tight`]).
+    pub(crate) tight: bool,
 }
 
 /// Where each body went in a pass.
@@ -499,11 +501,48 @@ pub(crate) fn fill(
     for a in 0..turns {
         variants.push((Pull::Grid, true, Turns::One(a)));
     }
+    // Packing tighter, a single body's copies also go on the densest
+    // lattice its shape keeps clear on, at each angle, as Arrange all's do
+    // (#556): as close as they can stand on every side.
+    let lattices: Vec<(usize, Vec<[i32; 2]>)> = if problem.tight && bodies == 1 {
+        (0..problem.footprints[0].shapes.len())
+            .into_par_iter()
+            .filter_map(|a| {
+                let shape = &problem.footprints[0].shapes[a];
+                if shape.hi[0] - shape.lo[0] > problem.plate.width as i32
+                    || shape.hi[1] - shape.lo[1] > problem.plate.height as i32
+                {
+                    return None;
+                }
+                let spots = dense_lattices(shape, problem.cell)
+                    .into_iter()
+                    .map(|(u, v)| lattice_spots(&problem.plate, shape, u, v, problem.cell))
+                    .max_by_key(Vec::len)?;
+                (!spots.is_empty()).then_some((a, spots))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let plain = variants.len();
+    for &(a, _) in &lattices {
+        variants.push((Pull::Grid, false, Turns::One(a)));
+    }
     let runs: Vec<Option<(Vec<Copied>, i64)>> = variants
         .par_iter()
         .enumerate()
         .map(|(v, &(pull, nearest, t))| {
-            let mut run = spots.pass(problem, pull);
+            let on_lattice = v.checked_sub(plain).map(|k| &lattices[k].1);
+            // Off its lattice, a lattice pass fills the edges as a corner
+            // pass does.
+            let mut run = spots.pass(
+                problem,
+                if on_lattice.is_some() {
+                    Pull::Corner
+                } else {
+                    pull
+                },
+            );
             let angles: Vec<Vec<usize>> = problem
                 .footprints
                 .iter()
@@ -515,6 +554,22 @@ pub(crate) fn fill(
                 .map(|fp| vec![0; fp.shapes.len()])
                 .collect();
             let mut copies: Vec<Copied> = Vec::new();
+            if let (Some(lattice), Turns::One(a)) = (on_lattice, t) {
+                let shape = &problem.footprints[0].shapes[a];
+                for &at in lattice {
+                    if limit.is_some_and(|l| copies.len() >= l) {
+                        break;
+                    }
+                    if cancel.load(Ordering::Relaxed) {
+                        return None;
+                    }
+                    if run.plate.fits(shape, at) {
+                        run.stamp(0, a, at);
+                        copies.push((0, a, at));
+                        placed.fetch_max(copies.len().saturating_sub(uncounted), Ordering::Relaxed);
+                    }
+                }
+            }
             // Each pass starts with another body, so no body is always the
             // one that gets the extra copy.
             let first = v % bodies;
@@ -729,7 +784,7 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
         .unwrap_or(1);
     let shaken = problem.passes.max(2);
     let mut kinds: Vec<(Pull, Turns)> = Vec::new();
-    if turns > 1 {
+    if problem.tight && turns > 1 {
         for pull in [Pull::Corner, Pull::Centre] {
             for a in 0..turns {
                 kinds.push((pull, Turns::One(a)));
@@ -747,7 +802,7 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
     // free spot leaves holes between them.
     let largest = (0..sizes.len()).max_by_key(|&i| (sizes[i], std::cmp::Reverse(i)));
     let lattices: Vec<(usize, Vec<[i32; 2]>)> = match largest {
-        Some(big) => (0..problem.footprints[big].shapes.len())
+        Some(big) if problem.tight => (0..problem.footprints[big].shapes.len())
             .into_par_iter()
             .filter_map(|a| {
                 let shape = &problem.footprints[big].shapes[a];
@@ -764,7 +819,7 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
                 (!spots.is_empty()).then_some((a, spots))
             })
             .collect(),
-        None => Vec::new(),
+        _ => Vec::new(),
     };
     let set = shaken + kinds.len() as u32;
     let layouts: Vec<Option<(Pull, Layout)>> = (0..set + lattices.len() as u32)

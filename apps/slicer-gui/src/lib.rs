@@ -93,6 +93,7 @@ mod split_bodies;
 mod start_dialog;
 mod startup_token;
 mod support_follow;
+mod support_forecast;
 mod support_shape;
 mod support_shape_edit;
 mod support_share;

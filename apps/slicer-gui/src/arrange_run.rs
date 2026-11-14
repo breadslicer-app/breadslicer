@@ -44,6 +44,7 @@ use crate::error_dialog::{DialogManager, ErrorTexts, HandPlacedChoice, InfoTexts
 use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision};
+use crate::support_forecast::{ForecastCtx, with_forecasts};
 use crate::support_persist::{in_force, model_of};
 use crate::viewport::ViewportController;
 
@@ -67,17 +68,12 @@ pub(crate) struct ArrangeOptions {
     /// Fill bed adds at most this many copies; 0 adds as many as fit.
     pub(crate) max_copies: u32,
     /// One raft for all (#556): the rafts take no room, so they lie on each
-    /// other and print as one; what stands on them keeps the gap, and at
-    /// least [`ONE_RAFT_GAP_MM`].
+    /// other and print as one; what stands on them keeps the gap.
     pub(crate) one_raft: bool,
     /// The top of the scene's rafts when the press was made (mm): under it
     /// nothing takes room with `one_raft`.
     pub(crate) raft_top_mm: f32,
 }
-
-/// Under one raft for all, trunks of neighbours stand at least this far
-/// apart (#556).
-pub(crate) const ONE_RAFT_GAP_MM: f32 = 2.0;
 
 /// Above the rafts' top, what is still raft (its rounding, the feet's first
 /// rise) takes no room either.
@@ -101,7 +97,7 @@ impl ArrangeOptions {
     pub(crate) fn settings(self) -> Settings {
         let (gap, free_below) = if self.one_raft {
             (
-                self.gap_mm.max(ONE_RAFT_GAP_MM),
+                self.gap_mm,
                 if self.raft_top_mm > 0.0 {
                     self.raft_top_mm + ONE_RAFT_SLACK_MM
                 } else {
@@ -117,6 +113,9 @@ impl ArrangeOptions {
             shadow_only: self.shadow_only,
             turns: if self.turns { 8 } else { 1 },
             free_below: f64::from(free_below),
+            // Under one raft for all the models pack tighter (#556);
+            // without it Arrange and Fill bed stay as they are.
+            tight: self.one_raft,
             ..Settings::default()
         }
     }
@@ -149,6 +148,9 @@ struct Gathered {
     /// Per body, the leaf that says which plate it stands on (#545): its
     /// model, or the supports no model owns.
     anchors: Vec<NodeId>,
+    /// Per body, whether it is a model with no supports yet: it is measured
+    /// with the supports it will get (#556).
+    bare: Vec<bool>,
 }
 
 /// A run in flight.
@@ -186,9 +188,6 @@ struct AcrossPending {
     again: bool,
     /// The card's settings it works with.
     options: ArrangeOptions,
-    /// It spaces out what Generate just placed (#556): its step joins
-    /// Generate's.
-    join: bool,
 }
 
 pub(crate) struct ArrangeRun {
@@ -207,6 +206,9 @@ pub(crate) struct ArrangeRun {
     /// The scene the last Arrange all left, with the settings and the
     /// plates it worked with (#560).
     arranged: Cell<Option<(SceneRevision, ArrangeOptions, ArrangeScope)>>,
+    /// What a model with no supports yet is measured with (#556): the
+    /// Supports tab's request, from its driver.
+    forecast: RefCell<Option<Rc<dyn Fn() -> ForecastCtx>>>,
 }
 
 /// The footprints drawn ahead (#560): once the scene has stood still a
@@ -255,6 +257,7 @@ impl ArrangeRun {
             fill: fill::Fill::default(),
             ahead: Ahead::default(),
             arranged: Cell::new(None),
+            forecast: RefCell::new(None),
         });
         run.push_options(ui);
         {
@@ -301,15 +304,6 @@ impl ArrangeRun {
         {
             let run = run.clone();
             ui.on_arrange_fill_requested(move || run.start_fill());
-        }
-        {
-            // Generate placed supports that run into a neighbour under one
-            // raft for all (#556): every plate is arranged again with them,
-            // in Generate's step.
-            let run = run.clone();
-            ui.on_arrange_after_supports(move || {
-                run.arrange_across(ArrangeScope::Plates, false, true);
-            });
         }
         run
     }
@@ -371,7 +365,27 @@ impl ArrangeRun {
             .ui
             .upgrade()
             .is_some_and(|ui| ui.get_arrange_one_raft());
-        self.options.get().on(&self.document, one_raft)
+        let mut options = self.options.get().on(&self.document, one_raft);
+        // Under one raft for all the raft the preset draws takes no room,
+        // also before any set is made (#556).
+        if options.one_raft
+            && let Some(ctx) = self.forecast_now()
+        {
+            options.raft_top_mm = options.raft_top_mm.max(ctx.raft_top_mm as f32);
+        }
+        options
+    }
+
+    /// Where the supports a model will get are worked out from (#556): the
+    /// Supports tab's driver.
+    pub(crate) fn set_forecast(&self, source: Rc<dyn Fn() -> ForecastCtx>) {
+        *self.forecast.borrow_mut() = Some(source);
+    }
+
+    /// The context models with no supports yet are measured in, when the
+    /// window has a Supports tab.
+    pub(crate) fn forecast_now(&self) -> Option<ForecastCtx> {
+        self.forecast.borrow().as_ref().map(|source| source())
     }
 
     /// Stops drawing ahead: a run of its own draws what it needs.
@@ -434,13 +448,14 @@ impl ArrangeRun {
             return;
         }
         let settings = self.options_now().settings();
+        let forecast = self.forecast_now();
         let mut leaves = Vec::new();
         let mut names = Vec::new();
         let mut work = Vec::new();
         for (gathered, plate) in jobs {
             leaves.push(gathered.leaves);
             names.push(gathered.names);
-            work.push((gathered.bodies, plate));
+            work.push((gathered.bodies, gathered.bare, plate));
         }
         *self.pending.borrow_mut() = Some(Pending {
             revision: self.document.scene_revision(),
@@ -454,16 +469,19 @@ impl ArrangeRun {
         crate::breadcrumbs::note(&format!(
             "arrange: {} plate(s), {} object(s), selection {selection}",
             work.len(),
-            work.iter().map(|(b, _)| b.len()).sum::<usize>()
+            work.iter().map(|(b, _, _)| b.len()).sum::<usize>()
         ));
         let slot = self.slot.clone();
         let cancel = self.cancel.clone();
         let ui_weak = self.ui.clone();
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                work.iter()
-                    .map(|(bodies, plate)| {
-                        sc_arrange::arrange(bodies, plate, &settings, &cancel).ok()
+                work.into_iter()
+                    .map(|(mut bodies, bare, plate)| {
+                        if let Some(ctx) = &forecast {
+                            with_forecasts(&mut bodies, &bare, ctx, &cancel)?;
+                        }
+                        sc_arrange::arrange(&bodies, &plate, &settings, &cancel).ok()
                     })
                     .collect::<Option<Vec<Outcome>>>()
             }))
@@ -479,7 +497,7 @@ impl ArrangeRun {
         let volume = self.ctrl.build_volume();
         let count = across::by_hand(&self.document, &volume, scope);
         if count == 0 {
-            self.arrange_across(scope, false, false);
+            self.arrange_across(scope, false);
             return;
         }
         let run = self.clone();
@@ -495,8 +513,8 @@ impl ArrangeRun {
                 details: Default::default(),
             },
             move |choice| match choice {
-                HandPlacedChoice::Keep => run.arrange_across(scope, true, false),
-                HandPlacedChoice::ArrangeToo => run.arrange_across(scope, false, false),
+                HandPlacedChoice::Keep => run.arrange_across(scope, true),
+                HandPlacedChoice::ArrangeToo => run.arrange_across(scope, false),
                 HandPlacedChoice::Cancel => {}
             },
         );
@@ -504,7 +522,7 @@ impl ArrangeRun {
 
     /// Starts an Arrange all of `scope` on a worker (#554); with
     /// `keep_by_hand`, the models placed by hand stay where they are.
-    fn arrange_across(self: &Rc<Self>, scope: ArrangeScope, keep_by_hand: bool, join: bool) {
+    fn arrange_across(self: &Rc<Self>, scope: ArrangeScope, keep_by_hand: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -533,9 +551,11 @@ impl ArrangeRun {
             return;
         };
         let settings = options.settings();
+        let forecast = self.forecast_now();
         let again = last.is_some_and(|(r, _, _)| r == revision);
-        let (bodies, stands_on, plates) = (
+        let (mut bodies, bare, stands_on, plates) = (
             job.bodies.clone(),
+            job.bare.clone(),
             job.stands_on.clone(),
             job.plates.clone(),
         );
@@ -549,7 +569,6 @@ impl ArrangeRun {
             started: Instant::now(),
             again,
             options,
-            join,
         });
         self.cancel.store(false, Ordering::Relaxed);
         self.stop_ahead();
@@ -559,6 +578,9 @@ impl ArrangeRun {
         let ui_weak = self.ui.clone();
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(ctx) = &forecast {
+                    with_forecasts(&mut bodies, &bare, ctx, &cancel)?;
+                }
                 sc_arrange::arrange_across(&bodies, &stands_on, &plates, &settings, &cancel).ok()
             }))
             .map_err(|payload| panic_message(&payload));
@@ -570,7 +592,7 @@ impl ArrangeRun {
     /// Arrange all pressed, past the hand-placed question (#560).
     #[cfg(test)]
     pub(crate) fn arrange_all_for_test(self: &Rc<Self>) {
-        self.arrange_across(ArrangeScope::Plates, false, false);
+        self.arrange_across(ArrangeScope::Plates, false);
     }
 
     /// Whether an Arrange all's worker has ended, its result waiting for the
@@ -660,9 +682,6 @@ impl ArrangeRun {
             }
             Err(EditNotApplied::NoSceneLoaded) => return,
         };
-        if pending.join {
-            self.document.join_last_steps(2);
-        }
         self.arranged.set(Some((
             self.document.scene_revision(),
             pending.options,
@@ -965,6 +984,11 @@ fn gather(
             i += 1;
             keep.get(i - 1).copied().unwrap_or(false)
         });
+        let mut i = 0;
+        gathered.bare.retain(|_| {
+            i += 1;
+            keep.get(i - 1).copied().unwrap_or(false)
+        });
     }
     Some(gathered).filter(|g| g.bodies.iter().any(|b| !b.fixed))
 }
@@ -982,6 +1006,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             follows: Vec::new(),
             names: Vec::new(),
             anchors: Vec::new(),
+            bare: Vec::new(),
         };
         let mut body_of: HashMap<NodeId, usize> = HashMap::new();
         let part = |leaf: NodeId| {
@@ -1011,6 +1036,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             gathered.follows.push(Vec::new());
             gathered.names.push(name(row));
             gathered.anchors.push(leaf);
+            gathered.bare.push(true);
         }
         for (row, &leaf) in rows.iter().enumerate() {
             let Some(query) = spatial.leaf(leaf) else {
@@ -1035,6 +1061,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             };
             match model.and_then(|m| body_of.get(&m).copied()) {
                 Some(i) => {
+                    gathered.bare[i] = false;
                     gathered.bodies[i].parts.push(support);
                     // A set in force is redrawn where its model goes, and
                     // imported supports follow it; any other moves with it
@@ -1057,6 +1084,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
                     gathered.follows.push(Vec::new());
                     gathered.names.push(name(row));
                     gathered.anchors.push(leaf);
+                    gathered.bare.push(false);
                 }
             }
         }
@@ -1527,7 +1555,7 @@ mod again_tests {
 
     /// Presses Arrange all and lets its worker finish.
     fn press(run: &Rc<ArrangeRun>) {
-        run.arrange_across(ArrangeScope::Plates, false, false);
+        run.arrange_across(ArrangeScope::Plates, false);
         let start = Instant::now();
         while run.across.borrow().is_some()
             && run

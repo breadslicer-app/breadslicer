@@ -107,6 +107,7 @@ pub fn fill(
         balance: false,
         passes: 0,
         deadline: started,
+        tight: settings.tight,
     };
     let staying = problem(frame.plate_with(bands, footprints.iter().flatten()));
     let others = footprints

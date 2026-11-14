@@ -2815,6 +2815,29 @@ impl DfSupportRun {
         request
     }
 
+    /// What a model with no supports yet is measured with by Fill bed and
+    /// Arrange (#556): the request a Generate press makes for it, the lift
+    /// it gets resting on the plate, and the top of one raft for all.
+    pub(crate) fn forecast_ctx(&self) -> crate::support_forecast::ForecastCtx {
+        let mut request = self.request_for_printer();
+        request.options = self.options.borrow().clone();
+        let lift_to_mm = self
+            .bus
+            .snapshot()
+            .lift_models_on_plate
+            .then(|| support_lift_mm(&request.options, request.layer_height_mm));
+        let raft_top_mm = if request.options.one_raft {
+            request.options.raft_top_mm().unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        crate::support_forecast::ForecastCtx {
+            request,
+            lift_to_mm,
+            raft_top_mm,
+        }
+    }
+
     /// The models a Generate press supports (#197, #388): every selected
     /// model and every model selected supports stand on, in the scene's
     /// order, each given its own set by the one run. `None`, for every
@@ -6461,20 +6484,9 @@ impl DfSupportRun {
         }
         // Copies given the supports of one standing like them were placed
         // without looking at their neighbours (#561): where they run into
-        // one, Arrange all spaces the models out.
-        // Under one raft for all (#556), the plate is arranged again with its
-        // supports, in this step.
-        let one_raft = self.options.borrow().one_raft;
-        if crowded > 0
-            && one_raft
-            && let Some(ui) = self.ui.upgrade()
-        {
-            self.show_status(ctr!(
-                "Workspace",
-                "Supports ran into a neighbour: arranging the plate again."
-            ));
-            ui.invoke_arrange_after_supports();
-        } else if crowded > 0 {
+        // one, Generate says so and moves nothing; Arrange all spaces the
+        // models out (#556: it measures them with their supports).
+        if crowded > 0 {
             self.dialogs.show_info(move || InfoTexts {
                 heading: ctr!("DfSupportDialog", "Supports run into a neighbour"),
                 message: ctr!(
@@ -10609,8 +10621,19 @@ mod hand_edit_tests {
                     "the session keeps the options it ran with"
                 );
                 let (_, mesh) = run.support_leaf().expect("the supports are back");
+                // Drawn again where the model stands: the same mesh, but for
+                // the last bit of a float (the set was drawn standing alone
+                // and moved there, #556).
                 let reopened = mesh.faces() == saved_mesh.faces()
-                    && mesh.vertices() == saved_mesh.vertices()
+                    && mesh.vertices().len() == saved_mesh.vertices().len()
+                    && mesh
+                        .vertices()
+                        .iter()
+                        .zip(saved_mesh.vertices())
+                        .all(|(a, b)| {
+                            let (a, b) = (a.as_array(), b.as_array());
+                            (0..3).all(|k| (a[k] - b[k]).abs() < 1e-4)
+                        })
                     && world_box(&document) == saved_box;
 
                 window.set_support_tool(1);

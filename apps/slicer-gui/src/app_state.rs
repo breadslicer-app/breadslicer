@@ -770,6 +770,21 @@ impl AppState {
             ctrl.dialogs(),
             ctrl.clone(),
         );
+        {
+            // Fill bed and Arrange measure a model with no supports yet with
+            // the ones it will get (#556).
+            let supports = Rc::downgrade(&df_support_run);
+            arrange_run.set_forecast(Rc::new(move || {
+                supports
+                    .upgrade()
+                    .map(|run| run.forecast_ctx())
+                    .unwrap_or_else(|| crate::support_forecast::ForecastCtx {
+                        request: Default::default(),
+                        lift_to_mm: None,
+                        raft_top_mm: 0.0,
+                    })
+            }));
+        }
         let orient_run = OrientRun::install(
             ui,
             ctrl.document(),
@@ -4919,8 +4934,12 @@ mod window_wiring_tests {
                     drivers._df_support_run.clone(),
                 )
             };
-            window.invoke_support_option_changed(14, 1.0);
-            assert!(window.get_arrange_one_raft());
+            // `BREADSLICER_ONE_RAFT_BOX=0` leaves one raft for all off.
+            let one_raft = std::env::var("BREADSLICER_ONE_RAFT_BOX").map_or(true, |v| v != "0");
+            if one_raft {
+                window.invoke_support_option_changed(14, 1.0);
+                assert!(window.get_arrange_one_raft());
+            }
 
             let t = Instant::now();
             window.invoke_arrange_fill_requested();
@@ -4934,14 +4953,39 @@ mod window_wiring_tests {
                 window.get_arrange_last_run()
             );
 
-            let t = Instant::now();
-            let mut options = sc_geom::df_supports::DfSupportOptions {
-                zones: Some(sc_geom::df_supports::zone_presets::minis_30()),
-                ..Default::default()
+            // `BREADSLICER_ONE_RAFT_ARRANGE=1`: Arrange all too, before
+            // Generate, the models still without supports.
+            if std::env::var_os("BREADSLICER_ONE_RAFT_ARRANGE").is_some() {
+                let t = Instant::now();
+                arrange.arrange_all_for_test();
+                while !arrange.across_done_for_test() {
+                    thread::sleep(Duration::from_millis(16));
+                }
+                window.invoke_arrange_finished();
+                println!(
+                    "arrange all: {:.2} s, {}",
+                    t.elapsed().as_secs_f64(),
+                    window.get_arrange_last_run()
+                );
+            }
+            // Where the models stand before Generate: it moves none (#556).
+            let poses = |document: &SceneDocument| {
+                document
+                    .with_scene(|s| {
+                        (0..)
+                            .map_while(|i| s.leaf_id_at_index(i))
+                            .filter_map(|leaf| {
+                                let q = s.leaf(leaf)?;
+                                (!sc_geom::df_supports::is_any_support_mesh(q.mesh()))
+                                    .then(|| (leaf, q.world_transform()))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
             };
-            options.one_raft = true;
-            options.raft = sc_geom::df_supports::RaftMode::Lines;
-            supports.generate_now(options);
+            let before = poses(&document);
+            let t = Instant::now();
+            supports.generate_now(supports.forecast_ctx().request.options);
             println!(
                 "generated: {:.2} s, {}, arranging {}",
                 t.elapsed().as_secs_f64(),
@@ -4956,6 +5000,26 @@ mod window_wiring_tests {
                 window.invoke_arrange_finished();
                 println!("arranged again: {}", window.get_arrange_last_run());
             }
+            let after = poses(&document);
+            let moved = before
+                .iter()
+                .filter(|(leaf, at)| {
+                    after
+                        .iter()
+                        .find(|(l, _)| l == leaf)
+                        .is_none_or(|(_, now)| {
+                            let affine = |t: &Transform3D| match t {
+                                Transform3D::Affine(a) => *a,
+                                Transform3D::Identity => {
+                                    sc_mesh_core::transform::AffineTransform3D::identity()
+                                }
+                            };
+                            let (a, b) = (affine(at), affine(now));
+                            (0..2).any(|k| (a.translation()[k] - b.translation()[k]).abs() > 1e-3)
+                        })
+                })
+                .count();
+            println!("models Generate moved in X/Y: {moved}");
             let t = Instant::now();
             supports.settle_plate_rafts();
             println!("raft settled in {:.2} s", t.elapsed().as_secs_f64());

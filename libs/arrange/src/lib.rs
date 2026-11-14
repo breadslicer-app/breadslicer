@@ -104,6 +104,10 @@ pub struct Settings {
     /// rafts, when every body stands on one raft for all (#556). Their rafts
     /// may lie on each other; what stands above keeps the gap. 0 keeps all.
     pub free_below: f64,
+    /// Packs tighter (#556): Arrange also tries every body turned alike,
+    /// in rows, and on the densest lattice the largest one keeps clear on;
+    /// a fill of one body tries that lattice too.
+    pub tight: bool,
 }
 
 impl Default for Settings {
@@ -118,6 +122,7 @@ impl Default for Settings {
             passes: 24,
             time_limit: Duration::from_secs(2),
             free_below: 0.0,
+            tight: false,
         }
     }
 }
@@ -450,6 +455,7 @@ pub fn arrange(
         balance: fixed.is_empty(),
         passes: settings.passes,
         deadline: started + settings.time_limit,
+        tight: settings.tight,
     };
     let layout = search::search(&problem, cancel).ok_or(Cancelled)?;
     let mut placements: Vec<Option<Placement>> = vec![None; bodies.len()];
@@ -686,6 +692,7 @@ pub fn arrange_across(
             balance: fixed.is_empty(),
             passes: settings.passes,
             deadline: Instant::now() + settings.time_limit,
+            tight: settings.tight,
         };
         let layout = search::search(&problem, cancel).ok_or(Cancelled)?;
         let mut still = Vec::new();

@@ -115,11 +115,13 @@ fn one_raft_for_all_turns_to_lines_and_another_raft_turns_it_off() {
             "drawn again on lines"
         );
 
-        // Arrange packs by what stands above the rafts, at least 2 mm apart.
+        // Arrange packs by what stands above the rafts, tighter, with the
+        // card's gap.
         let options = arrange.options_now();
         assert!(options.raft_top_mm > 0.0, "{options:?}");
         let settings = options.settings();
-        assert!(settings.gap >= 2.0 - 1e-9, "{settings:?}");
+        assert_eq!(settings.gap, f64::from(options.gap_mm), "{settings:?}");
+        assert!(settings.tight, "{settings:?}");
         assert!(
             settings.free_below > f64::from(options.raft_top_mm),
             "{settings:?}"
