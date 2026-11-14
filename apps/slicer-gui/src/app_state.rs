@@ -4871,7 +4871,7 @@ mod window_wiring_tests {
                 .flatten()
                 .expect("a model");
             // Turned as Damian had it: `BREADSLICER_ONE_RAFT_TURN` = x,z degrees.
-            if let Some(turn) = std::env::var("BREADSLICER_ONE_RAFT_TURN").ok() {
+            if let Ok(turn) = std::env::var("BREADSLICER_ONE_RAFT_TURN") {
                 let d: Vec<f64> = turn.split(',').filter_map(|v| v.parse().ok()).collect();
                 let before = document
                     .with_scene(|s| s.leaf(model).map(|q| q.local_transform()))

@@ -76,7 +76,10 @@ const KEPT: usize = 64;
 
 /// The forecasts kept: each with its mesh, so a key whose mesh is gone is
 /// never taken for another mesh at the same address.
-static FORECASTS: Mutex<Vec<(Key, Weak<IndexedMesh>, Arc<Forecast>)>> = Mutex::new(Vec::new());
+static FORECASTS: Mutex<Vec<Kept>> = Mutex::new(Vec::new());
+
+/// A forecast kept, with its key and its mesh.
+type Kept = (Key, Weak<IndexedMesh>, Arc<Forecast>);
 
 /// How far `linear` stands turned about the vertical axis, where its own X
 /// axis points from above (its Y axis when X stands upright), as Arrange
