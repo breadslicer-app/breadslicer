@@ -1166,6 +1166,10 @@ export component TransformInspector inherits VerticalLayout {
     in property <bool> arrange-turns;
     in property <bool> arrange-shadow-only;
     in property <bool> arrange-one-raft;
+    // How many models have supports made on another pillar grid than the
+    // Supports tab's (#576): Arrange and Fill bed measure them as they are.
+    in property <int> arrange-grid-stale;
+    callback arrange-grid-regenerate();
     // Fill bed (#356): a fill in flight, its count so far, and at most how
     // many copies it adds (0: as many as fit).
     in property <bool> arrange-filling;
@@ -1324,6 +1328,17 @@ export component TransformInspector inherits VerticalLayout {
         }
         if root.arrange-one-raft: Note {
             text: @tr("Inspector" => "One raft of lines under every model of the plate: Arrange and Fill bed pack the models closer, by what stands on it.");
+        }
+        if root.arrange-grid-stale > 0: WarningNote {
+            text: @tr("Inspector" => "{n} model has supports made on another grid: Arrange and Fill bed measure them as they are. Regenerate them to follow the grid of the Supports tab." | "{n} models have supports made on another grid: Arrange and Fill bed measure them as they are. Regenerate them to follow the grid of the Supports tab." % root.arrange-grid-stale);
+        }
+        if root.arrange-grid-stale > 0: ScButton {
+            text: @tr("Inspector" => "Regenerate their supports");
+            icon: Icons.rotate;
+            enabled: !root.arranging;
+            clicked => {
+                root.arrange-grid-regenerate();
+            }
         }
         NumberField {
             label: @tr("Inspector" => "Gap");
@@ -2013,6 +2028,10 @@ export component SupportsInspector inherits VerticalLayout {
     in property <bool> grid-on;
     in property <float> grid-spacing: 7;
     in property <string> grid-hint;
+    // How many models have supports made on another grid than this one
+    // (#576), and the press that makes theirs again.
+    in property <int> grid-stale;
+    callback grid-regenerate();
     // The raft would take the models' first layers (#131): the warning, empty
     // when it does not, and the label of its lift button.
     in property <string> raft-clash-message;
@@ -2582,6 +2601,9 @@ export component SupportsInspector inherits VerticalLayout {
         CheckBox {
             text: @tr("Inspector" => "Pillars on a grid");
             checked: root.grid-on;
+            // Under one raft for all the supports drop next to their model,
+            // off the grid (#576).
+            enabled: !root.one-raft;
             toggled => {
                 root.option-changed(12, self.checked ? root.grid-spacing : 0);
             }
@@ -2590,14 +2612,27 @@ export component SupportsInspector inherits VerticalLayout {
             label: @tr("Inspector" => "Grid spacing");
             unit: "mm";
             decimals: 1;
-            enabled: root.grid-on;
+            enabled: root.grid-on && !root.one-raft;
             value: root.grid-spacing;
             committed(v) => {
                 root.option-changed(13, v);
             }
         }
-        if root.grid-hint != "": Note {
+        if root.one-raft: Note {
+            text: @tr("Inspector" => "With one raft for all the supports drop next to their model, off the grid: the grid comes back with one raft for all off.");
+        }
+        if root.grid-hint != "" && !root.one-raft: Note {
             text: root.grid-hint;
+        }
+        if root.grid-stale > 0: WarningNote {
+            text: @tr("Inspector" => "{n} model has supports made on another grid. They are not made again on their own." | "{n} models have supports made on another grid. They are not made again on their own." % root.grid-stale);
+        }
+        if root.grid-stale > 0: ScButton {
+            text: @tr("Inspector" => "Regenerate their supports");
+            icon: Icons.rotate;
+            clicked => {
+                root.grid-regenerate();
+            }
         }
     }
 

@@ -2881,3 +2881,76 @@ fn the_ring_lies_on_the_surface_at_its_radius() {
     renderer.set_brush_ring(None);
     assert_eq!(frame(&mut renderer, &scene, &camera).rgba, bare.rgba);
 }
+
+/// How long the window waits on [`Renderer::upload_scene`] after a structural
+/// edit (#268), on the test device: 8 copies of a 2 M-triangle model, then
+/// supports added under one, then one replaced by a new mesh, then one
+/// deleted. A report, not a check.
+#[test]
+#[ignore = "a timing report"]
+fn upload_after_an_edit_timings() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
+        .expect("Renderer::new under the test device");
+    let sheet = |n: u32, z: f32| -> IndexedMesh {
+        let mut vertices = Vec::new();
+        for y in 0..=n {
+            for x in 0..=n {
+                vertices.push(Vertex::new([x as f32 * 0.05, y as f32 * 0.05, z]));
+            }
+        }
+        let mut faces = Vec::new();
+        let w = n + 1;
+        for y in 0..n {
+            for x in 0..n {
+                let i = y * w + x;
+                faces.push(IndexedTriangle::from_raw_indices([i, i + 1, i + w]));
+                faces.push(IndexedTriangle::from_raw_indices([i + 1, i + w + 1, i + w]));
+            }
+        }
+        IndexedMesh::new(None, vertices, faces)
+    };
+    let model = Arc::new(sheet(1000, 0.0));
+    let add = |scene: &mut Scene, mesh: Arc<IndexedMesh>, x: f64| -> NodeId {
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.0])),
+                LeafPayload::Mesh(mesh),
+            )
+            .unwrap();
+        scene.add_root(leaf).unwrap();
+        leaf
+    };
+    let mut scene = Scene::new();
+    let mut leaves = Vec::new();
+    for k in 0..8 {
+        leaves.push(add(&mut scene, model.clone(), k as f64 * 60.0));
+    }
+    let time = |what: &str, renderer: &mut Renderer, scene: &Scene| {
+        let t = std::time::Instant::now();
+        renderer.upload_scene(scene).unwrap();
+        eprintln!("{what}: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
+    };
+    time("8 copies, first upload", &mut renderer, &scene);
+    time("the same scene again", &mut renderer, &scene);
+    add(&mut scene, Arc::new(sheet(500, -1.0)), 0.0);
+    time(
+        "supports (0.5 M triangles) added under one",
+        &mut renderer,
+        &scene,
+    );
+    scene
+        .replace_inline_leaf_mesh(leaves[1], &model, Arc::new(sheet(1000, 0.0)))
+        .unwrap();
+    time(
+        "one model replaced by a new 2 M mesh",
+        &mut renderer,
+        &scene,
+    );
+    scene.remove_leaf(leaves[2]).unwrap();
+    time("one model deleted", &mut renderer, &scene);
+}

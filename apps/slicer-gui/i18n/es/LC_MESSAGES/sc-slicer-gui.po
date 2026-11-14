@@ -7758,3 +7758,27 @@ msgctxt "Inspector"
 msgid "One raft of lines under every model of the plate, drawn again as they move."
 msgstr "Una sola balsa de líneas bajo todos los modelos de la cama, que se rehace cuando se mueven."
 
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "{n} model has supports made on another grid: Arrange and Fill bed measure them as they are. Regenerate them to follow the grid of the Supports tab."
+msgid_plural "{n} models have supports made on another grid: Arrange and Fill bed measure them as they are. Regenerate them to follow the grid of the Supports tab."
+msgstr[0] "{n} modelo tiene soportes hechos con otra grilla: Acomodar y Llenar plataforma los miden como están. Regeneralos para que sigan la grilla de la pestaña Soportes."
+msgstr[1] "{n} modelos tienen soportes hechos con otra grilla: Acomodar y Llenar plataforma los miden como están. Regeneralos para que sigan la grilla de la pestaña Soportes."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Regenerate their supports"
+msgstr "Regenerar sus soportes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "With one raft for all the supports drop next to their model, off the grid: the grid comes back with one raft for all off."
+msgstr "Con una balsa para todo, los soportes bajan al lado de su modelo, sin la grilla: la grilla vuelve al apagar la balsa para todo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "{n} model has supports made on another grid. They are not made again on their own."
+msgid_plural "{n} models have supports made on another grid. They are not made again on their own."
+msgstr[0] "{n} modelo tiene soportes hechos con otra grilla. No se regeneran solos."
+msgstr[1] "{n} modelos tienen soportes hechos con otra grilla. No se regeneran solos."

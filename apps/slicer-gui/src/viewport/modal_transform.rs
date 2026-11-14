@@ -64,13 +64,19 @@ impl ModalGesture {
     /// The turn an R gesture has applied so far, in radians, right-handed
     /// about [`Self::turn_axis`] (snapped as the rotation is).
     pub(super) fn applied_turn(&self) -> f32 {
+        self.applied_turn_exact() as f32
+    }
+
+    /// [`Self::applied_turn`] in double precision, as the turn is made:
+    /// rounded in degrees (#576).
+    fn applied_turn_exact(&self) -> f64 {
         let axis = self.turn_axis();
         let sign = if axis.dot(self.view_axis) >= 0.0 {
             -1.0
         } else {
             1.0
         };
-        self.modifiers.angle(self.angle) * sign
+        self.modifiers.turn(self.angle) * sign
     }
 
     /// The axis an R gesture turns about: the locked axis, or the view
@@ -112,7 +118,7 @@ impl ModalGesture {
             ModalOp::Move => None,
             ModalOp::Rotate => AffineTransform3D::from_axis_angle(
                 self.turn_axis().to_array().map(f64::from),
-                f64::from(self.applied_turn()),
+                self.applied_turn_exact(),
             )
             .ok(),
             ModalOp::Scale => Some(match self.axis {
@@ -227,7 +233,7 @@ impl ModalGesture {
                 }
                 let rotation = AffineTransform3D::from_axis_angle(
                     self.turn_axis().to_array().map(f64::from),
-                    f64::from(self.applied_turn()),
+                    self.applied_turn_exact(),
                 )
                 .ok()?;
                 self.about_pivot(rotation)

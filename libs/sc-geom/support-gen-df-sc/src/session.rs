@@ -1040,6 +1040,14 @@ impl DfSupportSession {
         &self.hand_log
     }
 
+    /// The spacing of the pillar grid the supports were made on (#576),
+    /// `None` when they drop on their own. A raft drawn again under them
+    /// (#519) leaves it as it was: the supports stay where they are.
+    pub fn grid_mm(&self) -> Option<f64> {
+        let grid = &self.settings.supports.grid;
+        (grid.enabled && grid.pillars).then_some(grid.spacing_mm)
+    }
+
     /// The zone size (#360) a support added by hand takes when no size is
     /// asked for: the one the run's preset gives it. `None` for a run whose
     /// preset has no sizes of its own.

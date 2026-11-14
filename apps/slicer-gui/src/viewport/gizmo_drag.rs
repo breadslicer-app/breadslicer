@@ -177,7 +177,8 @@ pub(super) fn apply_drag_move(
             sign,
             ..
         } => {
-            let applied = modifiers.angle(sign * turn.update(cursor));
+            let exact = modifiers.turn(sign * turn.update(cursor));
+            let applied = exact as f32;
             let new_op = DragOp::Rotate {
                 axis,
                 start_angle,
@@ -187,7 +188,7 @@ pub(super) fn apply_drag_move(
             };
             // R(axis, applied) about the world-space pivot, expressed in
             // the leaf's parent space by `compose_about_pivot`.
-            let rotation = axis_rotation(axis, applied)
+            let rotation = axis_rotation_exact(axis, exact)
                 .map(|r| compose_about_pivot(&r, pivot, parent_world, original));
             rotation.map(|new_t| (new_t, new_op))
         }
@@ -235,7 +236,11 @@ pub(super) fn apply_drag_move(
 /// can't happen for `Axis::{X,Y,Z}` but the propagation keeps the
 /// caller's `?` chain typed.
 pub(super) fn axis_rotation(axis: Axis, angle: f32) -> Option<AffineTransform3D> {
-    let angle_f64 = angle as f64;
+    axis_rotation_exact(axis, f64::from(angle))
+}
+
+/// [`axis_rotation`] by an angle in double precision.
+fn axis_rotation_exact(axis: Axis, angle_f64: f64) -> Option<AffineTransform3D> {
     Some(match axis {
         Axis::X => AffineTransform3D::from_rotation_x(angle_f64),
         Axis::Y => AffineTransform3D::from_rotation_y(angle_f64),

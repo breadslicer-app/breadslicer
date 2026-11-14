@@ -77,14 +77,15 @@ impl Bvh {
             })
             .collect();
 
-        let mut nodes = Vec::with_capacity(count / LEAF_FACES * 2 + 2);
-        let mut faces = vec![0u32; count];
-        let mut written = 0usize;
-        let root = if count == 0 {
-            0
-        } else {
-            build_rec(&mut nodes, &mut faces, &mut written, &mut prims)
-        };
+        if count == 0 {
+            return Self {
+                nodes: Vec::new(),
+                faces: Vec::new(),
+                root: 0,
+            };
+        }
+        let (nodes, faces) = build_halves(&mut prims, PARALLEL_LEVELS);
+        let root = nodes.len() as u32 - 1;
         Self { nodes, faces, root }
     }
 
@@ -212,34 +213,64 @@ impl Bvh {
 
 /// Recursively split `prims` into nodes, appending leaves to `nodes` and their
 /// face indices to `faces`. `written` is the next free slot in `faces`.
-fn build_rec(
-    nodes: &mut Vec<FlatNode>,
-    faces: &mut [u32],
-    written: &mut usize,
-    prims: &mut [(u32, Aabb, Vec3)],
-) -> u32 {
+/// How many levels of the tree have their halves built side by side.
+const PARALLEL_LEVELS: u32 = 6;
+/// Fewer triangles than this are built on one core.
+const PARALLEL_MIN_FACES: usize = 1 << 15;
+
+/// The nodes and faces [`build_rec`] lays out for `prims`, the top
+/// `levels` levels' halves built on separate cores (#451): each half on
+/// its own, then the left's nodes and faces, the right's after them and
+/// the parent last, as one core builds them, so the tree is the same.
+fn build_halves(prims: &mut [(u32, Aabb, Vec3)], levels: u32) -> (Vec<FlatNode>, Vec<u32>) {
+    if levels == 0 || prims.len() < PARALLEL_MIN_FACES {
+        let mut nodes = Vec::with_capacity(prims.len() / LEAF_FACES * 2 + 2);
+        let mut faces = vec![0u32; prims.len()];
+        let mut written = 0usize;
+        build_rec(&mut nodes, &mut faces, &mut written, prims);
+        return (nodes, faces);
+    }
+    let bbox = bounds_of(prims);
+    let mid = split_at_median(prims);
+    let (left_slice, right_slice) = prims.split_at_mut(mid);
+    let ((mut nodes, mut faces), (right_nodes, right_faces)) = rayon::join(
+        || build_halves(left_slice, levels - 1),
+        || build_halves(right_slice, levels - 1),
+    );
+    let left = nodes.len() as u32 - 1;
+    let (node_shift, face_shift) = (nodes.len() as u32, faces.len() as u32);
+    nodes.extend(right_nodes.into_iter().map(|mut node| {
+        if node.is_leaf() {
+            node.a += face_shift;
+        } else {
+            node.a += node_shift;
+            node.b += node_shift;
+        }
+        node
+    }));
+    faces.extend(right_faces);
+    let right = nodes.len() as u32 - 1;
+    nodes.push(FlatNode {
+        min: bbox.min.to_array(),
+        max: bbox.max.to_array(),
+        a: left,
+        b: right,
+    });
+    (nodes, faces)
+}
+
+/// The box of `prims`.
+fn bounds_of(prims: &[(u32, Aabb, Vec3)]) -> Aabb {
     let mut bbox = Aabb::empty();
-    for &(_, bb, _) in prims.iter() {
+    for &(_, bb, _) in prims {
         bbox.union(&bb);
     }
+    bbox
+}
 
-    if prims.len() <= LEAF_FACES {
-        let first = *written as u32;
-        for &(face, _, _) in prims.iter() {
-            faces[*written] = face;
-            *written += 1;
-        }
-        let idx = nodes.len() as u32;
-        nodes.push(FlatNode {
-            min: bbox.min.to_array(),
-            max: bbox.max.to_array(),
-            a: first,
-            b: LEAF_FLAG | prims.len() as u32,
-        });
-        return idx;
-    }
-
-    // Split along the axis with the largest centroid spread, at the median.
+/// Splits `prims` along the axis their centroids spread most, at the
+/// median, and returns where the right half starts.
+fn split_at_median(prims: &mut [(u32, Aabb, Vec3)]) -> usize {
     let mut cmin = Vec3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
     let mut cmax = Vec3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
     for &(_, _, c) in prims.iter() {
@@ -263,6 +294,35 @@ fn build_rec(
         };
         av.total_cmp(&bv)
     });
+    mid
+}
+
+fn build_rec(
+    nodes: &mut Vec<FlatNode>,
+    faces: &mut [u32],
+    written: &mut usize,
+    prims: &mut [(u32, Aabb, Vec3)],
+) -> u32 {
+    let bbox = bounds_of(prims);
+
+    if prims.len() <= LEAF_FACES {
+        let first = *written as u32;
+        for &(face, _, _) in prims.iter() {
+            faces[*written] = face;
+            *written += 1;
+        }
+        let idx = nodes.len() as u32;
+        nodes.push(FlatNode {
+            min: bbox.min.to_array(),
+            max: bbox.max.to_array(),
+            a: first,
+            b: LEAF_FLAG | prims.len() as u32,
+        });
+        return idx;
+    }
+
+    // Split along the axis with the largest centroid spread, at the median.
+    let mid = split_at_median(prims);
     let (left_slice, right_slice) = prims.split_at_mut(mid);
 
     let left = build_rec(nodes, faces, written, left_slice);
@@ -388,4 +448,41 @@ pub fn ray_tri_closed(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Opt
     }
     let t = e2.dot(q) * inv_det;
     if t >= 0.0 { Some(t) } else { None }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shapes::icosphere;
+
+    /// The tree built on several cores is the one a single core builds
+    /// (#451): the same nodes, in the same places, over the same faces.
+    #[test]
+    fn the_tree_built_on_every_core_is_the_one_built_on_one() {
+        let mesh = icosphere(10.0, 7);
+        assert!(mesh.triangles.len() > 4 * PARALLEL_MIN_FACES);
+        let prims = |mesh: &IndexedMesh| -> Vec<(u32, Aabb, Vec3)> {
+            mesh.triangles
+                .iter()
+                .enumerate()
+                .map(|(i, tri)| {
+                    let [a, b, c] = tri.map(|v| mesh.positions[v as usize]);
+                    let mut bb = Aabb::empty();
+                    bb.expand(a);
+                    bb.expand(b);
+                    bb.expand(c);
+                    (i as u32, bb, a.add(b).add(c).scale(1.0 / 3.0))
+                })
+                .collect()
+        };
+        let (one_nodes, one_faces) = build_halves(&mut prims(&mesh), 0);
+        let (nodes, faces) = build_halves(&mut prims(&mesh), PARALLEL_LEVELS);
+        assert_eq!(faces, one_faces);
+        assert_eq!(nodes.len(), one_nodes.len());
+        for (a, b) in nodes.iter().zip(&one_nodes) {
+            assert_eq!((a.min, a.max, a.a, a.b), (b.min, b.max, b.a, b.b));
+        }
+        let built = Bvh::build(&mesh);
+        assert_eq!(built.root as usize, one_nodes.len() - 1);
+    }
 }

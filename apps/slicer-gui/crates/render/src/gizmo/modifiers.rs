@@ -8,6 +8,9 @@
 //!
 //! - **Snap** rounds what the gesture has done so far: moves to 1 mm, turns to
 //!   15°, scales to 10 %. With Shift as well, to 0.1 mm, 1° and 1 %.
+//! - Without Ctrl a turn still goes by tenths of a degree, as the readouts
+//!   show it (#576): the turn shown is the turn made, so the same number on
+//!   screen always stands a model the same way.
 //! - **Fine** scales the cursor's travel down to a tenth, from where Shift was
 //!   pressed, so the same drag moves slower. [`PrecisionCursor`] turns the
 //!   real cursor into that slower one; every gesture reads the slower cursor,
@@ -23,6 +26,8 @@ pub(crate) const SNAP_SCALE: f32 = 0.1;
 pub(crate) const SNAP_FINE_MM: f32 = 0.1;
 pub(crate) const SNAP_FINE_DEGREES: f32 = 1.0;
 pub(crate) const SNAP_FINE_SCALE: f32 = 0.01;
+/// Step of a free turn, in degrees: what the readouts show (#576).
+pub(crate) const FREE_DEGREES: f64 = 0.1;
 /// How much of the cursor's travel a fine drag keeps.
 pub(crate) const FINE_FACTOR: f32 = 0.1;
 
@@ -42,14 +47,22 @@ impl DragModifiers {
         self.round(mm, step)
     }
 
-    /// Rounds a turn of `radians`.
-    pub fn angle(self, radians: f32) -> f32 {
-        let step = if self.fine {
-            SNAP_FINE_DEGREES
-        } else {
-            SNAP_DEGREES
+    /// A turn of `radians` as it is made, in radians: rounded to its snap
+    /// step with Ctrl, else to a tenth of a degree, as the readouts show it
+    /// (#576). Worked out in degrees in double precision, so a turn of 37.0°
+    /// is the same turn however the gesture came to it.
+    pub fn turn(self, radians: f32) -> f64 {
+        let step = match (self.snap, self.fine) {
+            (true, true) => f64::from(SNAP_FINE_DEGREES),
+            (true, false) => f64::from(SNAP_DEGREES),
+            (false, _) => FREE_DEGREES,
         };
-        self.round(radians, step.to_radians())
+        ((f64::from(radians).to_degrees() / step).round() * step).to_radians()
+    }
+
+    /// [`Self::turn`] in single precision, for what is drawn.
+    pub fn angle(self, radians: f32) -> f32 {
+        self.turn(radians) as f32
     }
 
     /// Rounds a scale factor, never below one step (a snapped scale cannot
@@ -132,9 +145,18 @@ mod tests {
     };
 
     #[test]
-    fn without_ctrl_nothing_is_rounded() {
+    fn without_ctrl_nothing_is_rounded_but_turns_to_a_tenth_of_a_degree() {
         assert_approx_eq!(f32, NONE.distance(3.37), 3.37);
-        assert_approx_eq!(f32, NONE.angle(0.3), 0.3);
+        assert_approx_eq!(f32, NONE.angle(0.3), 17.2f32.to_radians(), epsilon = 1e-6);
+        // What the gesture makes of -36.99° and -37.01° is -37.0°, to the bit
+        // of a turn typed as -37 (#576).
+        for deg in [-36.99f32, -37.01, -37.04, -36.96] {
+            assert_eq!(
+                NONE.turn(deg.to_radians()),
+                (-37.0f64).to_radians(),
+                "{deg}"
+            );
+        }
         assert_approx_eq!(f32, NONE.factor(1.234), 1.234);
         // Shift alone does not round either: it only slows the cursor.
         let fine = DragModifiers {

@@ -202,7 +202,7 @@ impl DfSupportOptions {
             ShaftStyle::DragonFruit
         };
         if let Some(zones) = &o.zones {
-            apply_zones(zones, settings);
+            apply_zones(zones, settings, o.one_raft);
         }
         o.apply_raft(settings);
     }
@@ -251,7 +251,11 @@ fn zone_self_support_angle_deg(rules: &ZoneRules) -> f64 {
 /// Writes a zone preset into `settings` (#360): its rules, the overhang
 /// angle the scans classify by, its default size for supports placed by
 /// hand, the scans its zones read, its bracing and its sizes drawn exactly.
-fn apply_zones(zones: &ZonePreset, settings: &mut PipelineSettings) {
+/// Under one raft for all (#576) the grid of pillars is left off: its
+/// supports lean out to pillars fixed on the plate, a hundredth of a degree
+/// of a turn hangs one from another pillar further out, and the room a model
+/// takes swings with it; dropping near the model they keep it compact.
+fn apply_zones(zones: &ZonePreset, settings: &mut PipelineSettings, one_raft: bool) {
     let rules = zones.rules.clamped();
     let supports = &mut settings.supports;
     let auto = &mut supports.auto_support;
@@ -267,7 +271,7 @@ fn apply_zones(zones: &ZonePreset, settings: &mut PipelineSettings) {
         apply_zone_size(supports, &rules, i);
     }
     supports.dev_tools.max_lateral_mm = rules.search_ground_mm;
-    if let Some(spacing_mm) = zones.grid_mm {
+    if let Some(spacing_mm) = zones.grid_mm.filter(|_| !one_raft) {
         supports.grid.enabled = true;
         supports.grid.spacing_mm = spacing_mm;
         supports.grid.pillars = true;
@@ -421,6 +425,33 @@ mod options_tests {
             assert!(on.supports.grid.enabled && on.supports.grid.pillars);
             assert_eq!(on.supports.grid.spacing_mm, spacing, "{asked}");
         }
+    }
+
+    /// Under one raft for all the grid stays off (#576): the supports drop
+    /// near their model instead of leaning out to pillars, whatever the
+    /// preset's grid; the preset keeps it for when one raft for all goes off.
+    #[test]
+    fn under_one_raft_for_all_the_grid_stays_off() {
+        let base = PipelineSettings::defaults(0.05);
+        let minis = DfSupportOptions {
+            zones: Some(crate::zone_presets::minis_30()),
+            ..Default::default()
+        };
+        assert!(minis.zones.as_ref().unwrap().grid_mm.is_some());
+        let mut alone = base.clone();
+        minis.apply(&mut alone);
+        assert!(alone.supports.grid.enabled);
+        let mut shared = base.clone();
+        DfSupportOptions {
+            one_raft: true,
+            ..minis
+        }
+        .apply(&mut shared);
+        assert_eq!(shared.supports.grid, base.supports.grid);
+        assert_eq!(
+            shared.supports.auto_support.max_attachments_per_trunk,
+            base.supports.auto_support.max_attachments_per_trunk
+        );
     }
 
     /// A tip holds the overhang around it as far as its options space

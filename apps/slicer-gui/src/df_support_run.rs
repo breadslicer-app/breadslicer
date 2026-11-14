@@ -153,6 +153,10 @@ fn ahead_key(request: &DfSupportRequest, lift_on_plate: bool) -> String {
 /// How often the prescan watcher looks at the scene.
 const PRESCAN_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
+/// The scene and tab grid models with supports on another grid were
+/// counted on (#576), and those models.
+type GridCount = (Option<(SceneRevision, Option<u64>)>, Vec<NodeId>);
+
 /// The background prescan's state.
 #[derive(Default)]
 struct Prescan {
@@ -298,6 +302,13 @@ pub(crate) struct DfSupportRun {
     /// next run makes again. Taken by the run it starts; a Generate press
     /// drops it.
     redo: RefCell<Option<Redo>>,
+    /// The models whose supports were made on another grid than the tab's
+    /// (#576), the next run makes again from Regenerate. Taken by the run
+    /// it starts; a Generate press drops it.
+    regrid: RefCell<Option<Vec<NodeId>>>,
+    /// The models with supports made on another grid than the tab's (#576),
+    /// as last counted, and the scene and tab grid they were counted on.
+    grid_stale: RefCell<GridCount>,
     /// The states of sets out of date already made again on their own, or
     /// found beyond keeping (#526): each is tried once.
     healing_tried: RefCell<std::collections::HashSet<String>>,
@@ -1439,6 +1450,20 @@ fn recommended_grid_mm(options: &DfSupportOptions) -> Option<f64> {
 
 /// The spacing the grid of `options` shows, mm: its own, else the one its
 /// preset recommends, else the grid's fallback.
+/// The pillar grid the supports of `options` stand on, as its spacing's
+/// bits (#576): none without a zone preset's grid, nor under one raft for
+/// all, where the supports drop next to their model.
+fn grid_in_use(options: &DfSupportOptions) -> Option<u64> {
+    if options.one_raft {
+        return None;
+    }
+    options
+        .zones
+        .as_ref()
+        .and_then(|z| z.grid_mm)
+        .map(f64::to_bits)
+}
+
 fn shown_grid_mm(options: &DfSupportOptions) -> f64 {
     options
         .zones
@@ -1705,6 +1730,8 @@ impl DfSupportRun {
             generated_raft_top: Cell::new(None),
             status_timer: slint::Timer::default(),
             redo: RefCell::new(None),
+            regrid: RefCell::new(None),
+            grid_stale: RefCell::new((None, Vec::new())),
             healing_tried: RefCell::new(std::collections::HashSet::new()),
         });
         {
@@ -1893,8 +1920,13 @@ impl DfSupportRun {
                 // A Generate press supports what it supports: a card's row
                 // left waiting (#408) is dropped.
                 run.redo.borrow_mut().take();
+                run.regrid.borrow_mut().take();
                 run.start();
             });
+        }
+        {
+            let run = run.clone();
+            ui.on_support_grid_regenerate(move || run.regenerate_off_grid());
         }
         {
             let weak = Rc::downgrade(&run);
@@ -2093,7 +2125,7 @@ impl DfSupportRun {
         }
         // Supports made ahead are for the selection, without hand edits to
         // put back: a set made again from its card (#408) runs.
-        if self.redo.borrow().is_none() && self.take_ahead(&ui) {
+        if self.redo.borrow().is_none() && self.regrid.borrow().is_none() && self.take_ahead(&ui) {
             return;
         }
         {
@@ -2135,6 +2167,10 @@ impl DfSupportRun {
                 .keep
                 .map(|session| vec![(redo.model, (*session).clone())])
                 .unwrap_or_default();
+        }
+        // The supports made on another grid (#576), made again on the tab's.
+        if let Some(models) = self.regrid.borrow_mut().take() {
+            request.models = Some(models);
         }
         let lift = self.plate_lift(&request);
         self.launch(ui, request, lift);
@@ -2253,6 +2289,7 @@ impl DfSupportRun {
             self.refresh_raft_warning();
         }
         self.watch_wanted(&ui);
+        self.watch_grid(&ui);
         let mut prescan = self.prescan.borrow_mut();
         if let Some((job, revision, _)) = &prescan.running
             && let Some(finished) = job.try_poll()
@@ -2394,6 +2431,54 @@ impl DfSupportRun {
         *self.regenerating.borrow_mut() = Some((revision, wanted));
         // The person chose the pose: it is not lifted off the plate (#389).
         self.launch(ui, request, None);
+    }
+
+    /// Counts the models whose supports were made on another pillar grid
+    /// than the tab's (#576), for the notes of the Supports tab and of
+    /// Arrange: their supports are not made again on their own, and Arrange
+    /// and Fill bed measure them as they are. Counted again when the scene
+    /// or the tab's grid changes.
+    fn watch_grid(&self, ui: &MainWindow) {
+        let grid = grid_in_use(&self.options.borrow().clamped());
+        let key = (self.document.scene_revision(), grid);
+        if self.grid_stale.borrow().0 == Some(key) {
+            return;
+        }
+        let mut models: Vec<NodeId> = self
+            .document
+            .with_scene(|spatial| sets_in_force(spatial, &self.sessions))
+            .unwrap_or_default()
+            .iter()
+            // The grid the supports were made on: a raft drawn again under
+            // them since (#519) leaves them, and their grid, as they were.
+            .filter(|set| {
+                !set.unborn
+                    && set.session.options().is_some()
+                    && set.session.grid_mm().map(f64::to_bits) != grid
+            })
+            .map(|set| set.model)
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        models.retain(|&m| seen.insert(m));
+        ui.set_support_grid_stale(models.len() as i32);
+        *self.grid_stale.borrow_mut() = (Some(key), models);
+    }
+
+    /// Regenerate on the notes of supports made on another grid (#576): the
+    /// supports of those models are made again on the tab's grid, as a
+    /// Generate press of them alone would.
+    fn regenerate_off_grid(self: &Rc<Self>) {
+        let models = self.grid_stale.borrow().1.clone();
+        if models.is_empty() {
+            return;
+        }
+        crate::breadcrumbs::note(&format!(
+            "supports: made again on the grid, {} model(s)",
+            models.len()
+        ));
+        self.redo.borrow_mut().take();
+        *self.regrid.borrow_mut() = Some(models);
+        self.start();
     }
 
     /// Keeps the supports generated ahead in step with the scene: drops them
@@ -9925,6 +10010,74 @@ mod hand_edit_tests {
                 sets.iter()
                     .all(|(_, m)| !Arc::ptr_eq(m, &first_mesh) && !Arc::ptr_eq(m, &second_mesh))
             );
+        });
+    }
+
+    /// Supports made on another grid than the tab's are counted (#576), for
+    /// the notes in Supports and Arrange: changing the grid, or one raft for
+    /// all taking it off, makes nothing again on its own, and Regenerate
+    /// makes those models' supports again on the tab's grid.
+    #[test]
+    fn supports_made_on_another_grid_are_told_and_made_again_when_asked() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let count = |run: &Rc<DfSupportRun>| {
+                run.watch_grid(&window);
+                window.get_support_grid_stale()
+            };
+            let finish_run = |run: &Rc<DfSupportRun>| {
+                let handle = run.handle.borrow_mut().take().expect("a run started");
+                window.set_support_gen_in_progress(false);
+                run.finish(handle.join());
+            };
+            // Made without a grid, as the tab's options stand.
+            run.set_options(DfSupportOptions::default());
+            assert_eq!(count(&run), 0);
+
+            // Miniatures: a 7 mm grid the sets were not made on.
+            run.set_options(DfSupportOptions {
+                zones: Some(minis_30()),
+                ..DfSupportOptions::default()
+            });
+            assert_eq!(
+                run.options.borrow().zones.as_ref().unwrap().grid_mm,
+                Some(7.0)
+            );
+            assert_eq!(count(&run), 2);
+            assert!(
+                run.handle.borrow().is_none(),
+                "nothing is made again on its own"
+            );
+
+            // Regenerate makes both again, on the grid.
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                leaves[0],
+            )));
+            run.regenerate_off_grid();
+            finish_run(&run);
+            assert_eq!(count(&run), 0);
+            assert_eq!(run.sets_in_force().len(), 2);
+            assert!(
+                run.sets_in_force()
+                    .iter()
+                    .all(|s| s.session.grid_mm() == Some(7.0))
+            );
+
+            // Another spacing: told again, not made again.
+            run.on_option(13, 5.0);
+            assert_eq!(count(&run), 2);
+            assert!(run.handle.borrow().is_none());
+            run.on_option(13, 7.0);
+            assert_eq!(count(&run), 0);
+
+            // One raft for all takes the grid off: the sets drawn again on its
+            // raft (#519) keep their grid, and are told.
+            run.on_option(14, 1.0);
+            assert_eq!(count(&run), 2);
+            run.on_option(14, 0.0);
+            assert_eq!(count(&run), 0);
         });
     }
 

@@ -10,10 +10,11 @@
 //! position into one [`IndexedMesh`], and the session that edits them.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use rayon::prelude::*;
 use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{CsgPolicy, NodeId, Scene, SceneError, bake_mesh_to_world};
@@ -568,7 +569,6 @@ fn weld_piece(piece: &[f32]) -> (Vec<Vertex>, Vec<[u32; 3]>) {
 /// order (#3): the mesh is the one welding them in turn gives, several times
 /// sooner (a set of 600k triangles took ~0.6 s, the most of a hand click).
 pub fn weld_parts(soup: &[f32], parts: &[usize], name: &str) -> Option<IndexedMesh> {
-    use rayon::prelude::*;
     use std::hash::{BuildHasher, Hash, Hasher};
 
     // The pieces in order, each exact repeat of an earlier one left out:
@@ -709,6 +709,14 @@ fn standing_alone(model: &ModelInput) -> ModelInput {
     model
 }
 
+/// What the Supports tab shows of runs made side by side (#232): the
+/// reports of all of them, counted together, out of `total`.
+struct RunProgress {
+    done: AtomicU32,
+    total: u32,
+    models: usize,
+}
+
 /// Runs over models one by one, as one: their sets in order, their counts
 /// summed.
 fn merged(runs: Vec<DfSupportOutcome>) -> DfSupportOutcome {
@@ -801,22 +809,32 @@ fn run_with_copies(
         })
         .collect();
     // Each first one in a run of its own: standing alone in the middle of
-    // the plate, models would stand in each other.
-    let mut runs = Vec::with_capacity(leaves.len());
-    for (k, leaf) in leaves.iter().enumerate() {
-        let prefix = if k == 0 {
-            id_prefix.clone()
-        } else {
-            format!("{id_prefix}m{k}")
-        };
-        runs.push(run_df_supports(
-            std::slice::from_ref(leaf),
-            request,
-            worker,
-            prefix,
-            &copies[k..=k],
-        )?);
-    }
+    // the plate, models would stand in each other. The runs share nothing,
+    // so they run side by side (#232), each on its share of the cores.
+    let progress = RunProgress {
+        done: AtomicU32::new(0),
+        total: (5 * leaves.len()) as u32,
+        models: leaves.len(),
+    };
+    let runs = leaves
+        .par_iter()
+        .enumerate()
+        .map(|(k, leaf)| {
+            let prefix = if k == 0 {
+                id_prefix.clone()
+            } else {
+                format!("{id_prefix}m{k}")
+            };
+            run_df_supports(
+                std::slice::from_ref(leaf),
+                request,
+                worker,
+                prefix,
+                &copies[k..=k],
+                (&progress, k),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut outcome = merged(runs);
     let mut made: Vec<Option<DfSupportSet>> = outcome.sets.drain(..).map(Some).collect();
     // The sets in model order: each first one's, then each copy's from it.
@@ -1142,14 +1160,20 @@ fn run_df_supports(
     worker: &JobWorker<DfSupportOutcome>,
     id_prefix: String,
     copies: &[u64],
+    (progress, at): (&RunProgress, usize),
 ) -> Result<DfSupportOutcome, JobError> {
     let settings = settings_for(request);
     let models: Vec<ModelInput> = leaves.iter().map(|(_, m)| m.clone()).collect();
     let models = &models[..];
     let n = models.len();
-    // Reports: geometry per model, three per model, then each set drawn.
-    let total = (5 * n) as u32;
-    let mut completed = 0u32;
+    let report = |phase: String| {
+        worker.report_progress(JobProgress {
+            phase,
+            completed: progress.done.fetch_add(1, Ordering::Relaxed),
+            total: progress.total,
+        });
+    };
+    let place = format!("{}/{}", at + 1, progress.models);
     let cancel = CancelToken::new();
     let mut next = 0u64;
     let mut new_id = || {
@@ -1168,12 +1192,7 @@ fn run_df_supports(
             if worker.is_cancelled() {
                 cancel.cancel();
             }
-            worker.report_progress(JobProgress {
-                phase: format!("{} ({}/{})", stage_label(p.stage), p.model + 1, p.models),
-                completed,
-                total,
-            });
-            completed += 1;
+            report(format!("{} ({place})", stage_label(p.stage)));
         },
         &cancel,
     );
@@ -1219,26 +1238,17 @@ fn run_df_supports(
     session.warm();
     // Each model's supports and raft are drawn on their own.
     let mut sets = Vec::with_capacity(n);
-    for (i, ((model, _), session)) in leaves.iter().zip(session.split_by_model()).enumerate() {
+    for ((model, _), session) in leaves.iter().zip(session.split_by_model()) {
         if worker.is_cancelled() {
             return Err(JobError::Cancelled);
         }
-        worker.report_progress(JobProgress {
-            phase: format!("{} ({}/{n})", stage_label(Stage::Tessellate), i + 1),
-            completed,
-            total,
-        });
-        completed += 1;
+        report(format!("{} ({place})", stage_label(Stage::Tessellate)));
         // The hand edits of the model's old set go back on (#408), before
         // the set is drawn: a model the run found nothing on may still
         // carry supports added by hand.
         let (session, kept) = match request.keep_edits.iter().find(|(m, _)| m == model) {
             Some((_, old)) => {
-                worker.report_progress(JobProgress {
-                    phase: format!("Putting back the edits made by hand ({}/{n})", i + 1),
-                    completed,
-                    total,
-                });
+                report(format!("Putting back the edits made by hand ({place})"));
                 let (session, kept) = session
                     .with_hand_edits_of(old, &|| worker.is_cancelled())
                     .ok_or(JobError::Cancelled)?;
