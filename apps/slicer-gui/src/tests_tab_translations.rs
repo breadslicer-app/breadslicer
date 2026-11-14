@@ -446,8 +446,8 @@ struct SizeTexts {
     scale: &'static str,
 }
 
-/// #91: the OVERHANGS card shows with a model in the scene, its colour key
-/// only while the map is on. `BREADSLICER_OVERHANG_CARD_PNG` names a file for a
+/// #91: the OVERHANGS card shows in the View menu of the 3D view (#578),
+/// its colour key only while the map is on. `BREADSLICER_OVERHANG_CARD_PNG` names a file for a
 /// picture of the window.
 #[test]
 fn the_overhang_card_shows_in_spanish_and_its_key_follows_the_box() {
@@ -464,6 +464,12 @@ fn the_overhang_card_shows_in_spanish_and_its_key_follows_the_box() {
                 window.set_overhang_map_limit("52°".into());
             },
             |window| {
+                // The card lives in the View menu of the 3D view (#578).
+                ElementHandle::find_by_accessible_label(window, "Ver")
+                    .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
+                    .expect("the View chip")
+                    .invoke_accessible_default_action();
+                render_frames();
                 if let Some(path) = std::env::var_os("BREADSLICER_OVERHANG_CARD_PNG")
                     && on
                 {
@@ -623,8 +629,8 @@ fn the_transform_supports_and_slice_tabs_show_in_spanish() {
     for (section, spanish, english) in [
         (
             WorkspaceSection::Transform,
-            &["OBJETOS", "Abrí o soltá un modelo para empezar."][..],
-            &["OBJECTS", "Open or drop a model to start."][..],
+            &["ESCENA", "Agregar cama"][..],
+            &["SCENE", "Add plate"][..],
         ),
         (
             WorkspaceSection::Supports,
@@ -633,15 +639,15 @@ fn the_transform_supports_and_slice_tabs_show_in_spanish() {
                 "Generar soportes",
                 "UBICACIÓN",
                 "BALSA",
-                "DESDE ABAJO",
+                "ELEVACIÓN",
             ][..],
             &[
                 "AUTO SUPPORTS",
                 "Generate supports",
                 "PLACEMENT",
                 "RAFT",
-                "FROM BELOW",
-                "Supports as dotted lines",
+                "LIFT",
+                "Lift 5 mm when the model rests on the plate",
             ][..],
         ),
         (

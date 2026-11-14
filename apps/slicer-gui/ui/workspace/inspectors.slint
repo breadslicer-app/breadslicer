@@ -1102,16 +1102,6 @@ export component TransformInspector inherits VerticalLayout {
     in property <int> selected-count;
     in property <bool> needs-repair;
 
-    // A model picked in the view comes into sight in the list (#558).
-    changed selected-index => {
-        if self.selected-index >= 0 {
-            if self.selected-index * 32px < -objects-box.content-y {
-                objects-box.content-y = -self.selected-index * 32px;
-            } else if self.selected-index * 32px + 30px > -objects-box.content-y + objects-box.visible-height {
-                objects-box.content-y = objects-box.visible-height - self.selected-index * 32px - 30px;
-            }
-        }
-    }
     // What the MESH CHECK card says when a mesh does not slice: its short
     // status and which objects, why, and what to do (see `mesh_check.rs`).
     in property <string> check-note;
@@ -1226,89 +1216,6 @@ export component TransformInspector inherits VerticalLayout {
         }
     }
 
-    Card {
-        title: @tr("Inspector" => "OBJECTS");
-        note: root.objects.length;
-        collapsible: true;
-
-        if root.objects.length == 0: Note {
-            text: @tr("Inspector" => "Open or drop a model to start.");
-        }
-        // Five rows at most; past that the list scrolls in its own box and
-        // the cards below stay where they are (#558).
-        objects-box := ScrollView {
-            height: min(root.objects.length, 5) * 32px - (root.objects.length > 0 ? 2px : 0px);
-
-            VerticalLayout {
-                spacing: 2px;
-                alignment: start;
-
-                for item[i] in root.objects: ObjectRow {
-                text: item.text;
-                selected: i == root.selected-index || root.selected-rows[i];
-                clicked => {
-                    root.object-picked(i);
-                }
-                toggled => {
-                    root.object-toggled(i);
-                }
-            }
-            }
-        }
-    }
-
-    Card {
-        title: @tr("Inspector" => "PLATES");
-        note: root.plate-count > 1 ? @tr("Inspector" => "{} of {}", root.active-plate + 1, root.plate-count) : "";
-
-        Note {
-            text: root.plate-count > 1
-                ? @tr("Inspector" => "“{}” is active. Click a plate, or a model on it, to make it the active one.", root.plate-names[root.active-plate])
-                : @tr("Inspector" => "Add plates to lay out more prints side by side, then slice the one to print.");
-        }
-        if root.plate-count > 1 && root.active-plate-used: Note {
-            text: @tr("Inspector" => "Removing the active plate moves its models to the plate that takes its place. Shift+click the plate's own remove tool to remove them with it.");
-        }
-        if root.plate-count > 1 && root.can-send: Field {
-            label: @tr("Inspector" => "Send the selection to");
-            HorizontalLayout {
-                spacing: 8px;
-
-                send-combo := ComboBox {
-                    horizontal-stretch: 1;
-                    model: root.plate-names;
-                    current-index: root.active-plate;
-                }
-                ScButton {
-                    text: @tr("Inspector" => "Send");
-                    clicked => {
-                        root.plate-send(send-combo.current-index);
-                    }
-                }
-            }
-        }
-        HorizontalLayout {
-            spacing: 8px;
-
-            ScButton {
-                text: @tr("Inspector" => "Add plate");
-                icon: Icons.plus;
-                enabled: root.plate-count < 32;
-                clicked => {
-                    root.plate-add();
-                }
-            }
-            ScButton {
-                text: @tr("Inspector" => "Remove plate");
-                icon: Icons.trash;
-                enabled: root.plate-count > 1;
-                clicked => {
-                    root.plate-remove();
-                }
-            }
-        }
-    }
-
     if root.objects.length > 0: Card {
         title: @tr("Inspector" => "ARRANGE");
         note: "A";
@@ -1318,16 +1225,8 @@ export component TransformInspector inherits VerticalLayout {
                 ? @tr("Inspector" => "Packs the objects with their supports by their whole shadow: nothing reaches over another object.")
                 : @tr("Inspector" => "Packs the objects with their supports by their real shape: a part may reach over a shorter object, never closer than the gap.");
         }
-        CheckBox {
-            text: @tr("Inspector" => "One raft for all");
-            checked: root.arrange-one-raft;
-            enabled: !root.arranging;
-            toggled => {
-                root.arrange-option-changed(5, self.checked ? 1 : 0);
-            }
-        }
         if root.arrange-one-raft: Note {
-            text: @tr("Inspector" => "One raft of lines under every model of the plate: Arrange and Fill bed pack the models closer, by what stands on it.");
+            text: @tr("Inspector" => "One raft for all is on (Supports › Raft): Arrange and Fill bed pack the models closer, by what stands on it.");
         }
         if root.arrange-grid-stale > 0: WarningNote {
             text: @tr("Inspector" => "{n} model has supports made on another grid: Arrange and Fill bed measure them as they are. Regenerate them to follow the grid of the Supports tab." | "{n} models have supports made on another grid: Arrange and Fill bed measure them as they are. Regenerate them to follow the grid of the Supports tab." % root.arrange-grid-stale);
@@ -1541,14 +1440,6 @@ export component TransformInspector inherits VerticalLayout {
             clicked => {
                 root.orient-requested();
             }
-        }
-    }
-
-    if root.objects.length > 0: OverhangCard {
-        on <=> root.overhang-map-on;
-        limit: root.overhang-map-limit;
-        toggled(on) => {
-            root.overhang-map-toggled(on);
         }
     }
 
@@ -2676,18 +2567,17 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    OverhangCard {
-        on <=> root.overhang-map-on;
-        limit: root.overhang-map-limit;
-        toggled(on) => {
-            root.overhang-map-toggled(on);
-        }
-    }
-
-    if root.selection-valid: Card {
+    Card {
         title: @tr("Inspector" => "LIFT");
 
-        NumberField {
+        if root.raft-clash-message == "": CheckBox {
+            text: root.lift-on-plate-label;
+            checked: root.lift-on-plate;
+            toggled => {
+                root.lift-on-plate-toggled(self.checked);
+            }
+        }
+        if root.selection-valid: NumberField {
             label: @tr("Inspector" => "Height above plate");
             unit: "mm";
             value: root.lift;
@@ -2695,13 +2585,13 @@ export component SupportsInspector inherits VerticalLayout {
                 root.lift-edit(v);
             }
         }
-        ScButton {
+        if root.selection-valid: ScButton {
             text: @tr("Inspector" => "Drop to plate");
             clicked => {
                 root.drop-to-plate();
             }
         }
-        Note {
+        if root.selection-valid: Note {
             text: @tr("Inspector" => "Room under the model for the supports; moving it again marks them out of date.");
         }
     }
@@ -2840,30 +2730,6 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    Card {
-        title: @tr("Inspector" => "FROM BELOW");
-        collapsible: true;
-        expanded: false;
-
-        Note {
-            text: @tr("Inspector" => "When the camera goes under the plate.");
-        }
-        CheckBox {
-            text: @tr("Inspector" => "Hide the raft");
-            checked: root.hide-rafts-under-plate;
-            toggled => {
-                root.hide-rafts-under-plate-toggled(self.checked);
-            }
-        }
-        CheckBox {
-            text: @tr("Inspector" => "Supports as dotted lines");
-            checked: root.lines-under-plate;
-            toggled => {
-                root.lines-under-plate-toggled(self.checked);
-            }
-        }
-    }
-
     if root.page == 0: Card {
         title: @tr("Inspector" => "PRESETS");
         collapsible: true;
@@ -2942,11 +2808,6 @@ export component SupportsFooter inherits Rectangle {
     in property <float> progress;
     in property <bool> cancelable;
     in property <string> last-run;
-    // The lift box shows here unless the raft warning shows it.
-    in property <bool> show-lift: true;
-    in property <bool> lift-on-plate;
-    in property <string> lift-on-plate-label;
-    callback lift-on-plate-toggled(bool);
     callback generate-requested();
     callback cancel-requested();
 
@@ -2970,13 +2831,6 @@ export component SupportsFooter inherits Rectangle {
             enabled: root.has-scene && !root.running;
             clicked => {
                 root.generate-requested();
-            }
-        }
-        if root.show-lift: CheckBox {
-            text: root.lift-on-plate-label;
-            checked: root.lift-on-plate;
-            toggled => {
-                root.lift-on-plate-toggled(self.checked);
             }
         }
         if root.running: VerticalLayout {
@@ -3090,16 +2944,6 @@ export component SliceInspector inherits VerticalLayout {
         title: @tr("Inspector" => "PRINT SETUP");
         vertical-stretch: 0;
 
-        if root.plate-options.length > 1: Field {
-            label: @tr("SlicePanel" => "Plate");
-            plate-combo := ComboBox {
-                model: root.plate-options;
-                current-index: root.plate-current-index;
-                selected => {
-                    root.plate-picked(plate-combo.current-index);
-                }
-            }
-        }
         Field {
             label: @tr("SlicePanel" => "Printer");
             printer-combo := ComboBox {
@@ -3134,7 +2978,10 @@ export component SliceInspector inherits VerticalLayout {
             }
         }
         ScButton {
-            text: @tr("SlicePanel" => "Slice");
+            // The plate it slices, picked in the scene panel (#578).
+            text: root.plate-options.length > 1
+                ? @tr("SlicePanel" => "Slice “{}”", root.plate-options[root.plate-current-index])
+                : @tr("SlicePanel" => "Slice");
             icon: Icons.slice;
             kind: ButtonKind.primary;
             button-height: 38px;
@@ -3213,15 +3060,6 @@ export component SliceInspector inherits VerticalLayout {
                 source: root.layer-image;
                 image-fit: contain;
             }
-        }
-    }
-
-    OverhangCard {
-        vertical-stretch: 0;
-        on <=> root.overhang-map-on;
-        limit: root.overhang-map-limit;
-        toggled(on) => {
-            root.overhang-map-toggled(on);
         }
     }
 
@@ -3479,7 +3317,7 @@ export component ExportInspector inherits VerticalLayout {
         title: @tr("Inspector" => "ALSO");
 
         ScButton {
-            text: @tr("Inspector" => "Save project (.3mf with slices)");
+            text: @tr("Inspector" => "Save project (.bread)");
             icon: Icons.save;
             enabled: root.has-scene && !root.busy;
             clicked => {

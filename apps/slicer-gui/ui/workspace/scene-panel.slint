@@ -1,0 +1,355 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// The scene panel (#578): the plates and the objects on each, beside the
+// tool rail in every tab. Closed it takes no room; open it is as wide as
+// its names ask, within bounds. It took the OBJECTS and PLATES cards of the
+// Transform tab.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "../kit/theme.slint";
+import { Icons } from "../kit/icons.slint";
+import { Icon, ToolTipState } from "../kit/controls.slint";
+
+// One row: a plate (its index among the plates) or an object (its leaf
+// index, the row of the object list).
+export struct SceneRow {
+    plate: bool,
+    index: int,
+    text: string,
+    active: bool,
+}
+
+// Every row is this tall, so a row's place is its rank times it.
+global SceneMetrics {
+    out property <length> row: 26px;
+}
+
+// A small icon button on a plate's row.
+component RowTool inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    callback clicked();
+
+    width: 20px;
+    height: 20px;
+    border-radius: Theme.radius-sm;
+    background: touch.has-hover ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: self.label;
+    accessible-action-default => {
+        self.clicked();
+    }
+
+    Icon {
+        commands: root.icon;
+        size: 14px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        color: touch.has-hover ? Theme.text : Theme.text-muted;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+        changed has-hover => {
+            if self.has-hover {
+                ToolTipState.text = root.label;
+                ToolTipState.button-right = root.absolute-position.x + root.width;
+                ToolTipState.button-top = root.absolute-position.y;
+                ToolTipState.button-height = root.height;
+            } else {
+                ToolTipState.text = "";
+            }
+        }
+    }
+}
+
+component PlateRow inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    in property <bool> can-send;
+    in property <bool> can-remove;
+    callback picked();
+    callback send();
+    callback remove();
+
+    height: SceneMetrics.row;
+    accessible-role: list-item;
+    accessible-label: self.text;
+    accessible-item-selected: self.active;
+    accessible-action-default => {
+        self.picked();
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.picked();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 4px;
+        spacing: 6px;
+
+        VerticalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: root.active ? Theme.selection : Theme.border-strong;
+            }
+        }
+        Text {
+            text: root.text;
+            font-size: 10.5px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            color: root.active ? Theme.indicator : Theme.text-faint;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.can-send: VerticalLayout {
+            alignment: center;
+
+            RowTool {
+                icon: Icons.import;
+                label: @tr("Inspector" => "Send the selection here");
+                clicked => {
+                    root.send();
+                }
+            }
+        }
+        if root.can-remove: VerticalLayout {
+            alignment: center;
+
+            RowTool {
+                icon: Icons.trash;
+                label: @tr("Inspector" => "Remove this plate: its models go to the plate that takes its place");
+                clicked => {
+                    root.remove();
+                }
+            }
+        }
+    }
+}
+
+component ObjectRow inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked();
+    // Shift+click or Ctrl+click (#13).
+    callback toggled();
+    property <bool> extend: false;
+
+    height: SceneMetrics.row;
+    border-radius: Theme.radius;
+    background: self.selected ? Theme.hover : touch.has-hover ? Theme.raised : transparent;
+    accessible-role: list-item;
+    accessible-label: self.text;
+    accessible-item-selected: self.selected;
+    accessible-action-default => {
+        self.clicked();
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 8px;
+        spacing: 7px;
+
+        VerticalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: 3px;
+                height: 13px;
+                border-radius: 1.5px;
+                background: root.selected ? Theme.selection : transparent;
+            }
+        }
+        Text {
+            text: root.text;
+            color: root.selected ? Theme.text : Theme.text-soft;
+            font-size: Theme.font;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                root.extend = event.modifiers.shift || event.modifiers.control || event.modifiers.meta;
+            }
+        }
+        clicked => {
+            if (root.extend) {
+                root.toggled();
+            } else {
+                root.clicked();
+            }
+        }
+    }
+}
+
+export component ScenePanel inherits Rectangle {
+    in property <[SceneRow]> rows;
+    // The selected object (its row of the object list), and every selected
+    // one (#13).
+    in property <int> selected-index: -1;
+    in property <[bool]> selected-rows;
+    // Where each object's row stands among the rows, by its index.
+    in property <[int]> object-row-of;
+    in property <int> plate-count: 1;
+    // A selection that can go to another plate (#549).
+    in property <bool> can-send;
+    callback object-picked(int);
+    callback object-toggled(int);
+    callback plate-picked(int);
+    callback plate-send(int);
+    callback plate-remove();
+    callback plate-add();
+
+    // As wide as the longest name, within bounds.
+    width: clamp(list.preferred-width + 12px, 150px, 270px);
+    background: Theme.panel;
+
+    // A model picked in the view comes into sight in the list (#558).
+    changed selected-index => {
+        if self.selected-index >= 0 && self.selected-index < self.object-row-of.length {
+            if self.object-row-of[self.selected-index] * SceneMetrics.row < -box.viewport-y {
+                box.viewport-y = -self.object-row-of[self.selected-index] * SceneMetrics.row;
+            } else if (self.object-row-of[self.selected-index] + 1) * SceneMetrics.row > -box.viewport-y + box.visible-height {
+                box.viewport-y = box.visible-height - (self.object-row-of[self.selected-index] + 1) * SceneMetrics.row;
+            }
+        }
+    }
+
+    VerticalLayout {
+        padding-top: 10px;
+        padding-bottom: 8px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+
+            Text {
+                text: @tr("Inspector" => "SCENE");
+                font-size: 10.5px;
+                font-weight: 600;
+                letter-spacing: 1px;
+                color: Theme.text-faint;
+                horizontal-stretch: 1;
+            }
+        }
+
+        box := ScrollView {
+            vertical-stretch: 1;
+
+            list := VerticalLayout {
+                padding-left: 4px;
+                padding-right: 4px;
+                spacing: 0px;
+                alignment: start;
+
+                for row in root.rows: HorizontalLayout {
+                    height: SceneMetrics.row;
+
+                    if row.plate: PlateRow {
+                        horizontal-stretch: 1;
+                        text: row.text;
+                        active: row.active;
+                        can-send: root.can-send && !row.active && root.plate-count > 1;
+                        can-remove: row.active && root.plate-count > 1;
+                        picked => {
+                            root.plate-picked(row.index);
+                        }
+                        send => {
+                            root.plate-send(row.index);
+                        }
+                        remove => {
+                            root.plate-remove();
+                        }
+                    }
+                    if !row.plate: ObjectRow {
+                        horizontal-stretch: 1;
+                        text: row.text;
+                        selected: row.index == root.selected-index || root.selected-rows[row.index];
+                        clicked => {
+                            root.object-picked(row.index);
+                        }
+                        toggled => {
+                            root.object-toggled(row.index);
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+
+            add := Rectangle {
+                height: 26px;
+                border-radius: Theme.radius;
+                border-width: 1px;
+                border-color: add-touch.has-hover ? Theme.border-strong : Theme.border;
+                opacity: root.plate-count < 32 ? 1 : 0.4;
+                accessible-role: button;
+                accessible-label: @tr("Inspector" => "Add plate");
+                accessible-action-default => {
+                    root.plate-add();
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 6px;
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        Icon {
+                            commands: Icons.plus;
+                            size: 13px;
+                            color: Theme.text-muted;
+                        }
+                    }
+                    Text {
+                        text: @tr("Inspector" => "Add plate");
+                        font-size: Theme.font-sm;
+                        color: Theme.text-muted;
+                        vertical-alignment: center;
+                    }
+                }
+
+                add-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        if root.plate-count < 32 {
+                            root.plate-add();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        background: Theme.border;
+    }
+}

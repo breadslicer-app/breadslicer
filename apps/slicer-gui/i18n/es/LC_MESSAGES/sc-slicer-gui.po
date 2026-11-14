@@ -7782,3 +7782,58 @@ msgid "{n} model has supports made on another grid. They are not made again on t
 msgid_plural "{n} models have supports made on another grid. They are not made again on their own."
 msgstr[0] "{n} modelo tiene soportes hechos con otra grilla. No se regeneran solos."
 msgstr[1] "{n} modelos tienen soportes hechos con otra grilla. No se regeneran solos."
+
+#: src/ui
+msgctxt "Inspector"
+msgid "Scene"
+msgstr "Escena"
+
+#: src/ui
+msgctxt "Inspector"
+msgid "SCENE"
+msgstr "ESCENA"
+
+#: src/ui
+msgctxt "Inspector"
+msgid "View"
+msgstr "Ver"
+
+#: src/ui
+msgctxt "Inspector"
+msgid "Send the selection here"
+msgstr "Mandar la selección acá"
+
+#: src/ui
+msgctxt "Inspector"
+msgid "Remove this plate: its models go to the plate that takes its place"
+msgstr "Quitar esta cama: sus modelos pasan a la cama que toma su lugar"
+
+#: src/ui
+msgctxt "Inspector"
+msgid "One raft for all is on (Supports › Raft): Arrange and Fill bed pack the models closer, by what stands on it."
+msgstr "Una balsa para todo está prendida (Soportes › Balsa): Acomodar y Llenar plataforma juntan más los modelos, por lo que apoya en ella."
+
+#: src/ui
+msgctxt "Inspector"
+msgid "Save project (.bread)"
+msgstr "Guardar proyecto (.bread)"
+
+#: src/ui
+msgctxt "MenuBar"
+msgid "Generate Supports"
+msgstr "Generar soportes"
+
+#: src/ui
+msgctxt "MeshViewer"
+msgid "Perspective"
+msgstr "Perspectiva"
+
+#: src/ui
+msgctxt "MeshViewer"
+msgid "Orthographic"
+msgstr "Ortográfica"
+
+#: src/ui
+msgctxt "SlicePanel"
+msgid "Slice “{}”"
+msgstr "Laminar “{}”"

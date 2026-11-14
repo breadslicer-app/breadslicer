@@ -747,7 +747,7 @@ export component MeshViewer inherits Rectangle {
         background: #171a1d;
         border-color: #272d32; border-width: 1px;
         Text {
-            text: root.orthographic-view ? "Orthographic  5" : "Perspective  5";
+            text: (root.orthographic-view ? @tr("Orthographic") : @tr("Perspective")) + "  5";
             color: #8b959d; font-size: 11px; font-family: "Consolas";
             horizontal-alignment: center; vertical-alignment: center;
         }
