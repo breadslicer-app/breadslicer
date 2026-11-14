@@ -75,8 +75,9 @@ fn support_triangles_match_dragonfruit() {
             .map(|v| v.as_str().unwrap().to_owned())
             .collect();
         let raft: RaftSettings = serde_json::from_value(case["raft"].clone()).unwrap();
-        // Line rafts and their roots' feet are drawn our own way (#518).
-        if raft.bottom_mode == RaftBottomMode::Line {
+        // Rafts and the feet of the roots on them are drawn our own way: a
+        // line raft since #518, a solid one since #435.
+        if raft.bottom_mode != RaftBottomMode::Off {
             continue;
         }
         let soup_geometry = case["clearance"].as_bool().unwrap().then(|| {

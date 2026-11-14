@@ -2525,18 +2525,22 @@ impl DfSupportSession {
         &self,
         motion: &sc_mesh_core::transform::AffineTransform3D,
     ) -> Vec<support_gen_df::supports::rafts::crenelated::raft_types::SupportBaseCircle> {
+        use support_gen_df::features::slicing::support_world_triangles::{
+            raft_circle_of, root_shaft_radii,
+        };
         let (l, t) = (motion.linear(), motion.translation());
+        let raft = &self.settings.rafts.global;
+        let radii = root_shaft_radii(&self.state.collections);
         self.state
             .collections
             .roots
             .values()
             .map(|root| {
                 let p = root.transform.pos;
-                support_gen_df::supports::rafts::crenelated::raft_types::SupportBaseCircle {
-                    x: l[0][0] * p.x + l[0][1] * p.y + l[0][2] * p.z + t[0],
-                    y: l[1][0] * p.x + l[1][1] * p.y + l[1][2] * p.z + t[1],
-                    r: root.diameter * 0.5,
-                }
+                let mut circle = raft_circle_of(raft, &radii, root);
+                circle.x = l[0][0] * p.x + l[0][1] * p.y + l[0][2] * p.z + t[0];
+                circle.y = l[1][0] * p.x + l[1][1] * p.y + l[1][2] * p.z + t[1];
+                circle
             })
             .collect()
     }
@@ -3585,34 +3589,30 @@ mod session_tests {
         assert!(with(RaftMode::Lines, 0.5, false) > 0.0);
         assert_eq!(with(RaftMode::Off, 0.5, true), 0.0);
 
-        // The feet count too: a zone preset's join cone stands on the raft's
-        // plate and reaches past its wall, the ring seen from under the plate.
-        let mut request = crate::DfSupportRequest::default();
-        request.options.zones = Some(crate::zone_presets::minis_30());
-        let mut zoned = bare_slab(12.0, request);
-        zoned.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
-        let root = zoned
-            .state
-            .collections
-            .roots
-            .values()
-            .next()
-            .expect("its root");
-        let join = root.join_cone_mm.expect("a join cone");
-        let foot = root.transform.pos.z + root.disk_height.max(0.5) + join;
-        let top = zoned.raft_top_mm();
-        assert!((top - foot).abs() < 1e-9, "{top} {foot}");
-        assert!(top > 0.5 + wall, "past the raft's wall");
-        let mesh = zoned.mesh().unwrap().expect("drawn");
-        assert!(
-            mesh.vertices()
-                .iter()
-                .any(|v| (f64::from(v.as_array()[2]) - top).abs() < 1e-3),
-            "the mesh reaches that height"
-        );
+        // The feet count too: on a raft each root stands on a small foot,
+        // its cone up to the shaft (#435), with or without a zone preset;
+        // the mesh reaches the height told.
+        for zones in [Some(crate::zone_presets::minis_30()), None] {
+            let mut request = crate::DfSupportRequest::default();
+            request.options.zones = zones;
+            request.options.raft = RaftMode::Solid;
+            let mut set = bare_slab(12.0, request);
+            set.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+            let top = set.raft_top_mm();
+            assert!(top >= 0.5 + wall - 1e-9, "at least the raft's wall: {top}");
+            let mesh = set.mesh().unwrap().expect("drawn");
+            assert!(
+                mesh.vertices()
+                    .iter()
+                    .any(|v| (f64::from(v.as_array()[2]) - top).abs() < 1e-3),
+                "the mesh reaches {top}"
+            );
+        }
 
-        // A root's own cone, without a zone preset.
-        let mut plain = bare_slab(12.0, crate::DfSupportRequest::default());
+        // Without a raft a root stands on its own disk and cone.
+        let mut request = crate::DfSupportRequest::default();
+        request.options.raft = RaftMode::Off;
+        let mut plain = bare_slab(12.0, request);
         plain.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
         let root = plain
             .state
@@ -3624,10 +3624,7 @@ mod session_tests {
         let cone_top =
             root.transform.pos.z + root.disk_height.max(0.01) + root.cone_height.max(0.01);
         let top = plain.raft_top_mm();
-        assert!(
-            (top - cone_top.max(0.5 + wall)).abs() < 1e-9,
-            "{top} {cone_top}"
-        );
+        assert!((top - cone_top).abs() < 1e-9, "{top} {cone_top}");
     }
 
     /// #481: nothing of the raft the mesh draws reaches past the height the
@@ -3647,8 +3644,9 @@ mod session_tests {
             session.add_trunk_at([10.0, 5.0, 12.0]).expect("another");
             let with = support_soup(&session.state, &session.models, &session.settings).unwrap();
             let mut off = (*session.settings).clone();
-            off.rafts.global.bottom_mode = RaftBottomMode::Off;
-            off.rafts.per_model.clear();
+            // The same feet, standing on no raft of their own (#556): the
+            // raft is what the soup draws past them.
+            off.raft_apart = true;
             let alone = support_soup(&session.state, &session.models, &off).unwrap();
             let raft_from = with.parts[alone.parts.len() - 1];
             assert!(raft_from < with.floats.len(), "a raft is drawn");

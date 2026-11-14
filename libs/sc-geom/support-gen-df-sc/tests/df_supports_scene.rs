@@ -9,7 +9,8 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{LeafPayload, Scene};
 use support_gen_df_sc::{
-    DF_SUPPORT_MESH_NAME, DfSupportRequest, scene_models, start_df_prescan, start_df_supports,
+    DF_SUPPORT_MESH_NAME, DfSupportRequest, RaftMode, scene_models, start_df_prescan,
+    start_df_supports,
 };
 
 /// A closed 10 mm cube, outward-wound.
@@ -143,32 +144,36 @@ fn support_meshes_of_real_scenes_are_edge_manifold() {
             IndexedMesh::new(None, vertices, faces),
             [0.0, 0.0, 0.0],
         )]);
-        let outcome = start_df_supports(&scene, DfSupportRequest::default())
-            .unwrap()
-            .join()
-            .unwrap();
-        let Some(mesh) = outcome.merged_mesh() else {
-            continue;
-        };
-        let mut edges: std::collections::HashMap<(u32, u32), u32> = Default::default();
-        for f in mesh.faces() {
-            let v = f.vertices.map(u32::from);
-            for (a, b) in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
-                *edges.entry((a.min(b), a.max(b))).or_default() += 1;
+        for raft in [RaftMode::Lines, RaftMode::Solid] {
+            let mut request = DfSupportRequest::default();
+            request.options.raft = raft;
+            let outcome = start_df_supports(&scene, request).unwrap().join().unwrap();
+            let Some(mesh) = outcome.merged_mesh() else {
+                continue;
+            };
+            let mut edges: std::collections::HashMap<(u32, u32), u32> = Default::default();
+            for f in mesh.faces() {
+                let v = f.vertices.map(u32::from);
+                for (a, b) in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
+                    *edges.entry((a.min(b), a.max(b))).or_default() += 1;
+                }
             }
+            let bad = edges.values().filter(|&&c| c != 2).count();
+            assert_eq!(
+                bad, 0,
+                "{name}, {raft:?} raft: {bad} edges not shared by exactly two triangles"
+            );
+            // The slicer reads an inward-facing shell as a void (a sealed
+            // cavity): every support shell must face outward.
+            let inward = shell_volumes(&mesh).iter().filter(|&&v| v <= 0.0).count();
+            assert_eq!(
+                inward, 0,
+                "{name}, {raft:?} raft: {inward} support shells face inward"
+            );
+            checked += 1;
         }
-        let bad = edges.values().filter(|&&c| c != 2).count();
-        assert_eq!(
-            bad, 0,
-            "{name}: {bad} edges not shared by exactly two triangles"
-        );
-        // The slicer reads an inward-facing shell as a void (a sealed
-        // cavity): every support shell must face outward.
-        let inward = shell_volumes(&mesh).iter().filter(|&&v| v <= 0.0).count();
-        assert_eq!(inward, 0, "{name}: {inward} support shells face inward");
-        checked += 1;
     }
-    assert!(checked >= 8, "{checked} scenes supported");
+    assert!(checked >= 16, "{checked} scenes supported");
 }
 
 #[test]

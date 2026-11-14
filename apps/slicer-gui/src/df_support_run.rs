@@ -8036,6 +8036,7 @@ mod hand_edit_tests {
             // A raft that takes the model's first layers: the warning holds
             // the press back, and "Generate anyway" runs it.
             run.set_options(DfSupportOptions {
+                raft: RaftMode::Solid,
                 raft_thickness_mm: 3.0,
                 ..DfSupportOptions::default()
             });
@@ -8196,8 +8197,9 @@ mod hand_edit_tests {
                 let raft = run.options.borrow().raft;
                 (on_generate, label, after_lift, undone, after_off, raft)
             });
+        // The default raft of lines (#435) takes its first 12 layers.
         assert!(
-            on_generate.contains("17 layers")
+            on_generate.contains("12 layers")
                 && on_generate.contains("to 5 mm")
                 && on_generate.contains("turn the raft off"),
             "{on_generate}"
@@ -11357,9 +11359,11 @@ mod hand_edit_tests {
         document.install_graph(graph.clone(), PathBuf::from("slab.stl"));
         let run =
             DfSupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
-        let outcome = start_df_supports(&graph, DfSupportRequest::default())
-            .unwrap()
-            .join();
+        // On a solid raft, as these tests were written before the default
+        // became a raft of lines (#435).
+        let mut request = DfSupportRequest::default();
+        request.options.raft = RaftMode::Solid;
+        let outcome = start_df_supports(&graph, request).unwrap().join();
         *run.started_on.borrow_mut() = Some(document.scene_revision());
         run.finish(outcome);
         let (supports, _) = run.support_leaf().expect("the supports");

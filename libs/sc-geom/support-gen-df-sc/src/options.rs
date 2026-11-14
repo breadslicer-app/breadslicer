@@ -100,7 +100,9 @@ impl Default for DfSupportOptions {
             stabilization: true,
             bracing: true,
             smooth_shafts: true,
-            raft: RaftMode::Solid,
+            // A raft of lines (#435): as close to the supports, half the
+            // first layer of a solid plate, and it peels off better.
+            raft: RaftMode::Lines,
             raft_thickness_mm: 0.5,
             raft_wall: true,
             one_raft: false,
@@ -336,6 +338,14 @@ mod options_tests {
             applied.supports.auto_support, base.supports.auto_support,
             "the defaults are DragonFruit's"
         );
+        // But the raft: a raft of lines (#435).
+        assert_eq!(applied.rafts.global.bottom_mode, RaftBottomMode::Line);
+        let solid = DfSupportOptions {
+            raft: RaftMode::Solid,
+            ..Default::default()
+        };
+        let mut applied = base.clone();
+        solid.apply(&mut applied);
         assert_eq!(applied.rafts.global, base.rafts.global);
     }
 
@@ -467,14 +477,17 @@ mod options_tests {
 
     #[test]
     fn the_raft_top_is_its_plate_and_its_wall() {
-        let solid = DfSupportOptions::default();
+        let solid = DfSupportOptions {
+            raft: RaftMode::Solid,
+            ..Default::default()
+        };
         let top = solid.raft_top_mm().expect("a solid raft");
         assert!((top - 0.85).abs() < 1e-9, "{top}");
         assert_eq!(solid.raft_layers(0.05), 17);
         assert_eq!(solid.raft_layers(0.1), 9);
         let no_wall = DfSupportOptions {
             raft_wall: false,
-            ..Default::default()
+            ..solid.clone()
         };
         assert!((no_wall.raft_top_mm().unwrap() - 0.5).abs() < 1e-9);
         assert_eq!(no_wall.raft_layers(0.05), 10);

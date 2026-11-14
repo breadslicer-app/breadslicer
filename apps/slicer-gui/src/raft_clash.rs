@@ -171,8 +171,17 @@ mod raft_clash_tests {
 
     #[test]
     fn a_model_on_the_plate_clashes_with_the_default_raft() {
-        // Plate 0.5 mm plus wall 0.35 mm: 17 layers of 0.05 mm, 9 of 0.1 mm.
-        let options = DfSupportOptions::default();
+        // The default raft is of lines (#435): 0.6 mm, 12 layers of 0.05 mm.
+        let lines = DfSupportOptions::default();
+        let clash = raft_clash(&lines, 0.05, Some(0.0)).expect("in the raft");
+        assert_eq!(clash.layers, 12);
+        assert!((clash.raft_top_mm - 0.6).abs() < 1e-9);
+        // A solid one: plate 0.5 mm plus wall 0.35 mm, 17 layers of 0.05 mm,
+        // 9 of 0.1 mm.
+        let options = DfSupportOptions {
+            raft: RaftMode::Solid,
+            ..Default::default()
+        };
         let clash = raft_clash(&options, 0.05, Some(0.0)).expect("in the raft");
         assert_eq!(clash.layers, 17);
         assert!((clash.raft_top_mm - 0.85).abs() < 1e-9);
@@ -188,7 +197,10 @@ mod raft_clash_tests {
 
     #[test]
     fn a_model_above_the_raft_or_no_raft_is_clear() {
-        let options = DfSupportOptions::default();
+        let options = DfSupportOptions {
+            raft: RaftMode::Solid,
+            ..Default::default()
+        };
         assert_eq!(raft_clash(&options, 0.05, Some(0.85)), None);
         assert_eq!(raft_clash(&options, 0.05, Some(5.0)), None);
         assert_eq!(raft_clash(&options, 0.05, None), None);
@@ -199,7 +211,7 @@ mod raft_clash_tests {
         assert_eq!(raft_clash(&off, 0.05, Some(0.0)), None);
         let thin = DfSupportOptions {
             raft_wall: false,
-            ..Default::default()
+            ..options.clone()
         };
         assert_eq!(raft_clash(&thin, 0.05, Some(0.6)), None);
         assert_eq!(
