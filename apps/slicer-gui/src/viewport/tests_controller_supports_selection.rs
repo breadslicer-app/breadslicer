@@ -163,3 +163,49 @@ fn leaving_supports_with_the_supports_selected_selects_nothing() {
     ctrl.set_section(WorkspaceSection::Transform);
     assert_eq!(ctrl.selection(), Some(0));
 }
+
+#[test]
+fn nothing_is_selected_in_slice_and_leaving_it_brings_the_selection_back() {
+    // #140: the layers are scrubbed with no selection outline over them.
+    let ctrl = plate(
+        &[
+            (Piece::Model, [0.0; 3]),
+            (Piece::Supports, [3.0, 0.0, 0.0]),
+            (Piece::Model, [10.0, 0.0, 0.0]),
+        ],
+        WorkspaceSection::Supports,
+    );
+    ctrl.on_select_by_index(1);
+    ctrl.set_section(WorkspaceSection::Slice);
+    assert_eq!(ctrl.selection(), None, "the supports selected before");
+    // No click, row, Tab or box selects anything there.
+    click_over(&ctrl, [0.0; 3]);
+    assert_eq!(ctrl.selection(), None, "a click on a model");
+    ctrl.on_select_by_index(0);
+    ctrl.on_toggle_by_index(2);
+    ctrl.on_selection_cycle(1);
+    assert_eq!(ctrl.selection(), None, "the list and Tab");
+    let shift = PointerModifiers {
+        shift: true,
+        ..PointerModifiers::default()
+    };
+    ctrl.on_pointer_down(ScreenPoint::new(5.0, 5.0), shift.clone());
+    ctrl.on_pointer_move(ScreenPoint::new(195.0, 95.0), shift.clone());
+    ctrl.on_pointer_up(ScreenPoint::new(195.0, 95.0), shift);
+    assert_eq!(ctrl.selection(), None, "a box with Shift");
+    // Back in Supports the supports are selected again.
+    ctrl.set_section(WorkspaceSection::Supports);
+    assert_eq!(ctrl.selection(), Some(1));
+    // Back in Transform a model comes back, supports do not (#120).
+    ctrl.on_select_by_index(2);
+    ctrl.set_section(WorkspaceSection::Slice);
+    assert_eq!(ctrl.selection(), None);
+    ctrl.set_section(WorkspaceSection::Transform);
+    assert_eq!(ctrl.selection(), Some(2));
+    // Supports selected in Supports come back as nothing in Transform.
+    ctrl.set_section(WorkspaceSection::Supports);
+    ctrl.on_select_by_index(1);
+    ctrl.set_section(WorkspaceSection::Slice);
+    ctrl.set_section(WorkspaceSection::Transform);
+    assert_eq!(ctrl.selection(), None, "the supports stay in Supports");
+}
