@@ -1543,6 +1543,7 @@ impl SceneDocument {
         if edit.is_noop() && plates.is_none() {
             return;
         }
+        crate::temp_576::log_edit("undo step", &edit);
         let edit = self.with_paint_carried(edit);
         crate::breadcrumbs::note(&format!("edit: {}", edit_label(&edit)));
         let carried = self

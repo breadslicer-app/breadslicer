@@ -204,14 +204,26 @@ pub(crate) fn with_forecasts(
             continue;
         };
         let key = key_of(&model.mesh, &model.world, ctx);
-        let forecast = match kept(&key, &model.mesh) {
-            Some(f) => f,
+        let (forecast, hit) = match kept(&key, &model.mesh) {
+            Some(f) => (f, true),
             None => {
                 let f = Arc::new(work_out(&model.mesh, &model.world, ctx, cancel)?);
-                keep(key, &model.mesh, f.clone());
-                f
+                keep(key.clone(), &model.mesh, f.clone());
+                (f, false)
             }
         };
+        crate::temp_576::log(&format!(
+            "forecast {}: body {}
+        made at {}
+        lift {:.3}, supports {} triangles, key stands {:?} z {}",
+            if hit { "kept" } else { "worked out" },
+            crate::temp_576::stance(&Transform3D::Affine(model.world)),
+            crate::temp_576::stance(&Transform3D::Affine(forecast.at)),
+            forecast.lift,
+            forecast.supports.as_ref().map_or(0, |m| m.faces().len()),
+            key.stands,
+            key.z,
+        ));
         let lifted =
             AffineTransform3D::from_translation([0.0, 0.0, forecast.lift]).compose(&model.world);
         body.parts[0].world = lifted;

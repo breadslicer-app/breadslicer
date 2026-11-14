@@ -563,6 +563,11 @@ impl ArrangeRun {
             "arrange: across the plates, {} object(s), keep by hand {keep_by_hand}",
             bodies.len()
         ));
+        crate::temp_576::log(&format!(
+            "ARRANGE ALL pressed: gap {} turns {} free_below {:.3} tight {}",
+            settings.gap, settings.turns, settings.free_below, settings.tight
+        ));
+        crate::temp_576::log_scene("ARRANGE before", &self.document);
         *self.across.borrow_mut() = Some(AcrossPending {
             revision: self.document.scene_revision(),
             job,
@@ -651,6 +656,7 @@ impl ArrangeRun {
         }
         let applying = Instant::now();
         let outcome = across::apply(&self.document, &pending.job, &across, pending.again);
+        crate::temp_576::log_scene("ARRANGE after", &self.document);
         crate::breadcrumbs::note(&format!(
             "arrange: applied in {:.2} s, {} drawing(s) of supports kept, footprints kept {:.0} MB",
             applying.elapsed().as_secs_f64(),

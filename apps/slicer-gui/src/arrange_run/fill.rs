@@ -161,6 +161,29 @@ impl ArrangeRun {
         let settings = options.settings();
         let limit = (options.max_copies > 0).then_some(options.max_copies as usize);
         let forecast = self.forecast_now();
+        crate::temp_576::log(&format!(
+            "FILL pressed: settings gap {} margin {} turns {} shadow {} free_below {:.3} tight {}; forecast {:?}",
+            settings.gap,
+            settings.margin,
+            settings.turns,
+            settings.shadow_only,
+            settings.free_below,
+            settings.tight,
+            forecast.as_ref().map(|c| format!(
+                "one_raft {} raft {:?} lift_to {:?} raft_top {:.3} preset-hash {:x}",
+                c.request.options.one_raft,
+                c.request.options.raft,
+                c.lift_to_mm,
+                c.raft_top_mm,
+                {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    format!("{:?}", c.request.options).hash(&mut h);
+                    h.finish()
+                }
+            ))
+        ));
+        crate::temp_576::log_scene("FILL before", &self.document);
         *self.fill.pending.borrow_mut() = Some(Pending {
             revision: self.document.scene_revision(),
             sources: sources.clone(),
@@ -252,7 +275,9 @@ impl ArrangeRun {
             }
         };
         let seconds = format!("{:.1}", pending.started.elapsed().as_secs_f64());
-        let text = match land(&self.document, &pending, made) {
+        let landed = land(&self.document, &pending, made);
+        crate::temp_576::log_scene("FILL after", &self.document);
+        let text = match landed {
             Landed::Stale => ctr!(
                 "Inspector",
                 "The scene changed while filling; nothing was added."

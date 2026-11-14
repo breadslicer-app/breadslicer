@@ -2774,6 +2774,22 @@ impl ViewportController {
         let Some(gesture) = self.input.modal.take() else {
             return;
         };
+        crate::temp_576::log(&format!(
+            "modal {} {}: axis {:?}, view axis {:?}, angle {:.2} deg, applied {:.2} deg, ctrl {}, shift {}, camera {:?}",
+            gesture.op.key(),
+            if confirm { "confirmed" } else { "cancelled" },
+            gesture.axis,
+            gesture.view_axis,
+            gesture.angle.to_degrees(),
+            gesture.applied_turn().to_degrees(),
+            gesture.modifiers.snap,
+            gesture.modifiers.fine,
+            self.camera
+                .camera_cell()
+                .borrow()
+                .as_ref()
+                .map(|c| (c.yaw.to_degrees(), c.pitch.to_degrees())),
+        ));
         let group = self.input.modal_group.take();
         let document = self.session.document();
         if self.input.modal_revision.take() != Some(document.scene_revision()) {
@@ -4610,6 +4626,7 @@ impl ViewportController {
     /// [`NumericEdit::from_ui`] for the codes) as one undoable edit. Only in
     /// the Transform tab, with a selection, and never mid-gesture.
     pub(crate) fn on_numeric_edit(&self, code: i32, value: f32) {
+        crate::temp_576::log(&format!("card edit: code {code} value {value}"));
         // The lift (and dropping to the plate) is also a Supports setting:
         // the room under the model the supports fill.
         let lift_in_supports =
