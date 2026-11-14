@@ -4837,6 +4837,67 @@ mod window_wiring_tests {
         }
     }
 
+    /// A check box flips on the first click: also once the 3D view took
+    /// the keyboard. Its keyboard scope lies over its click area and kept
+    /// the press of a click for itself while it had no focus.
+    #[test]
+    fn a_check_box_flips_on_the_first_click() {
+        use slint::platform::PointerEventButton;
+        let flips = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            controller_of(&app, id).install_graph_for_test(meshes_as_roots([unit_cube_mesh()]));
+            window.set_workspace_section(WorkspaceSection::Transform);
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(1600.0, 1000.0));
+            crate::test_support::slint_thread::render_frames();
+            let click = |x: f32, y: f32| {
+                let position = slint::LogicalPosition::new(x, y);
+                for event in [
+                    WindowEvent::PointerMoved { position },
+                    WindowEvent::PointerPressed {
+                        position,
+                        button: PointerEventButton::Left,
+                    },
+                    WindowEvent::PointerReleased {
+                        position,
+                        button: PointerEventButton::Left,
+                    },
+                ] {
+                    window.window().dispatch_event(event);
+                }
+                crate::test_support::slint_thread::render_frames();
+            };
+            // The box's square, where it stands now.
+            let the_box = || {
+                let shadow = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                    &window,
+                    "Shadow only",
+                )
+                .find(|e| e.size().height > 0.0)
+                .expect("the box is drawn");
+                let (p, size) = (shadow.absolute_position(), shadow.size());
+                (p.x + 7.0, p.y + size.height / 2.0)
+            };
+            let mut flips = vec![window.get_arrange_shadow_only()];
+            let (x, y) = the_box();
+            click(x, y);
+            flips.push(window.get_arrange_shadow_only());
+            let (x, y) = the_box();
+            click(x, y);
+            flips.push(window.get_arrange_shadow_only());
+            // The 3D view takes the keyboard.
+            click(600.0, 500.0);
+            let (x, y) = the_box();
+            click(x, y);
+            flips.push(window.get_arrange_shadow_only());
+            flips
+        });
+        assert_eq!(flips, [false, true, false, true]);
+    }
+
     /// One raft for all (#556) as Damian ran it: a model alone, the box on,
     /// Fill bed, Generate. `BREADSLICER_ONE_RAFT_MODEL` names the model,
     /// `BREADSLICER_ONE_RAFT_DUMP` a file the scene is written to, triangle
