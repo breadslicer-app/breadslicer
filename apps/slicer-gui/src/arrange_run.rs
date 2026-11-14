@@ -83,7 +83,7 @@ impl Default for ArrangeOptions {
     fn default() -> Self {
         Self {
             gap_mm: 1.0,
-            margin_mm: 5.0,
+            margin_mm: 2.0,
             turns: true,
             shadow_only: false,
             max_copies: 0,

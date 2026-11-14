@@ -103,9 +103,7 @@ fn a_model_in_the_middle_moves_to_let_more_copies_in() {
         max: [50.0, 22.0],
         floor: 0.0,
     };
-    let filled = fill_now(&document, &plate, ArrangeOptions::default())
-        .expect("filled")
-        .0;
+    let filled = fill_now(&document, &plate, old_margin()).expect("filled").0;
     assert!(moved(&filled, 0), "it moves");
     let after = models(&document);
     assert_ne!(after[0].2, before[0].2);
@@ -131,7 +129,7 @@ fn copies_of_one_model_fill_the_room_left_in_one_step() {
     let (document, leaves) = cubes(&[[10.0, 10.0], [25.0, 20.0], [40.0, 30.0]]);
     select(&document, &leaves[..1]);
     let before = models(&document);
-    let filled = fill_now(&document, &plate(), ArrangeOptions::default())
+    let filled = fill_now(&document, &plate(), old_margin())
         .expect("filled")
         .0;
     let after = models(&document);
@@ -177,7 +175,7 @@ fn copies_of_two_models_mix_evenly() {
     // Different meshes, so the copies tell which model they copy.
     select(&document, &[leaves[0], leaves[2]]);
     let before = models(&document);
-    let filled = fill_now(&document, &plate(), ArrangeOptions::default())
+    let filled = fill_now(&document, &plate(), old_margin())
         .expect("filled")
         .0;
     let count = |source: usize| filled.copies.iter().filter(|c| c.source == source).count();
@@ -221,9 +219,7 @@ fn a_fill_takes_at_most_the_copies_asked_for() {
         max: [17.0, 17.0],
         floor: 0.0,
     };
-    let none = fill_now(&document, &small, ArrangeOptions::default())
-        .expect("ran")
-        .0;
+    let none = fill_now(&document, &small, old_margin()).expect("ran").0;
     assert!(none.copies.is_empty());
     assert_eq!(models(&document).len(), 4, "nothing added");
 }
@@ -263,6 +259,14 @@ fn a_filled_copy_keeps_the_paint_of_its_model() {
     );
 }
 
+/// The card's options with the edge margin these plates were sized for.
+fn old_margin() -> ArrangeOptions {
+    ArrangeOptions {
+        margin_mm: 5.0,
+        ..ArrangeOptions::default()
+    }
+}
+
 /// #356: a cancelled fill makes nothing, and a result worked out for a
 /// scene that changed since adds nothing.
 #[test]
@@ -270,7 +274,7 @@ fn a_cancelled_or_stale_fill_adds_nothing() {
     let (document, leaves) = cubes(&[[10.0, 10.0]]);
     select(&document, &leaves);
     let (bodies, _, sources) = gather_fill(&document, None).expect("a source");
-    let settings = ArrangeOptions::default().settings();
+    let settings = old_margin().settings();
     let cancelled = make(
         &bodies,
         &sources,

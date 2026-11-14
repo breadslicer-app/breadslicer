@@ -9595,9 +9595,11 @@ mod hand_edit_tests {
                 floor: 0.0,
             };
             document.set_selection(Selection::One(LeafId(model)));
-            let filled = fill_now(&document, &plate, ArrangeOptions::default())
-                .expect("filled")
-                .0;
+            let options = ArrangeOptions {
+                margin_mm: 5.0,
+                ..ArrangeOptions::default()
+            };
+            let filled = fill_now(&document, &plate, options).expect("filled").0;
             assert_eq!(filled.moved.len(), 1, "it moves; {size:?}");
             assert!(filled.copies.len() >= 7, "{}", filled.copies.len());
             assert_ne!(leaf_transform(&document, model), start);
