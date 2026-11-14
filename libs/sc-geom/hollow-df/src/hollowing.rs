@@ -3044,7 +3044,7 @@ pub(crate) fn classify_by_flood_fill(
     // parity so nested shells preserve their existing cavities.
 
     refine_non_surface_solid_components_with_parity(
-        &grid, &surface, &mut solid, mesh, source_bvh, ctl,
+        grid, surface, &mut solid, mesh, source_bvh, ctl,
     )?;
     let source_void_components = label_void_components(grid, &solid);
     Ok((solid, source_void_components))

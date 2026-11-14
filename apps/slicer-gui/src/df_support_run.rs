@@ -153,6 +153,10 @@ fn ahead_key(request: &DfSupportRequest, lift_on_plate: bool) -> String {
 /// How often the prescan watcher looks at the scene.
 const PRESCAN_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
+/// The scene and tab grid models with supports on another grid were
+/// counted on (#576), and those models.
+type GridCount = (Option<(SceneRevision, Option<u64>)>, Vec<NodeId>);
+
 /// The background prescan's state.
 #[derive(Default)]
 struct Prescan {
@@ -304,7 +308,7 @@ pub(crate) struct DfSupportRun {
     regrid: RefCell<Option<Vec<NodeId>>>,
     /// The models with supports made on another grid than the tab's (#576),
     /// as last counted, and the scene and tab grid they were counted on.
-    grid_stale: RefCell<(Option<(SceneRevision, Option<u64>)>, Vec<NodeId>)>,
+    grid_stale: RefCell<GridCount>,
     /// The states of sets out of date already made again on their own, or
     /// found beyond keeping (#526): each is tried once.
     healing_tried: RefCell<std::collections::HashSet<String>>,
