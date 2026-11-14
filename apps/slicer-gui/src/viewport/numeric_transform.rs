@@ -66,9 +66,11 @@ impl NumericEdit {
                 mm: value,
             },
             2 => NumericEdit::Lift(value),
+            // A tenth of a degree, as the card shows it: a turn typed as
+            // 37.09 is 37.1 (#576).
             3..=5 => NumericEdit::Rotation {
                 axis: (code - 3) as usize,
-                deg: value,
+                deg: (value * 10.0).round() / 10.0,
             },
             6 => NumericEdit::ScalePct(value),
             7..=9 => NumericEdit::Size {
@@ -430,6 +432,14 @@ mod numeric_transform_tests {
         assert_eq!(
             NumericEdit::from_ui(4, 30.0, c),
             Some(NumericEdit::Rotation { axis: 1, deg: 30.0 })
+        );
+        // A turn goes by tenths of a degree, as the card shows it (#576).
+        assert_eq!(
+            NumericEdit::from_ui(3, -37.09, c),
+            Some(NumericEdit::Rotation {
+                axis: 0,
+                deg: -37.1
+            })
         );
         assert_eq!(
             NumericEdit::from_ui(11, 0.0, c),

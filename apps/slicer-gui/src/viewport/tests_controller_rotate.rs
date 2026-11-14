@@ -249,3 +249,52 @@ fn cutting_the_ring_plane_would_turn_unevenly_on_a_tilted_camera() {
         .fold((f32::MAX, 0.0f32), |(lo, hi), &s| (lo.min(s), hi.max(s)));
     assert!(hi - lo > 5.0, "{steps:?}");
 }
+
+/// R X dragged anywhere turns by whole tenths of a degree, the turn the
+/// readout shows: a hand never lands on 37.00, and 36.99 and 37.01 stood a
+/// model different ways on the plate (#576).
+#[test]
+fn modal_r_turns_by_the_tenth_of_a_degree_it_shows() {
+    for elevation in [60.0, 20.0] {
+        let (ctrl, pivot) = tilted(elevation);
+        let centre = screen_of(&ctrl, pivot);
+        let press = (centre.0 + 90.0, centre.1 + 40.0);
+        ctrl.on_modal_transform_start(1, press.0, press.1);
+        ctrl.on_modal_transform_axis(0, press.0, press.1);
+        // An odd angle on screen, slowed down with Shift halfway.
+        let shift = PointerModifiers {
+            shift: true,
+            ..PointerModifiers::default()
+        };
+        ctrl.on_pointer_move(
+            ScreenPoint::new(centre.0 + 61.3, centre.1 + 77.7),
+            PointerModifiers::default(),
+        );
+        ctrl.on_pointer_move(ScreenPoint::new(centre.0 + 52.9, centre.1 + 83.1), shift);
+        ctrl.on_modal_transform_finish(true);
+        let m = ctrl
+            .document()
+            .with_scene(
+                |s| match s.leaf(s.leaf_id_at_index(0)?)?.local_transform() {
+                    Transform3D::Identity => None,
+                    Transform3D::Affine(a) => Some(*a.linear()),
+                },
+            )
+            .flatten()
+            .expect("turned");
+        let deg = m[2][1].atan2(m[1][1]).to_degrees();
+        let tenths = deg * 10.0;
+        assert!(deg.abs() > 1.0, "it turned: {deg}");
+        assert!(
+            (tenths - tenths.round()).abs() < 1e-9,
+            "{deg}° is no tenth of a degree"
+        );
+        // The very turn the card makes of the same number.
+        let typed = AffineTransform3D::from_rotation_x((tenths.round() / 10.0).to_radians());
+        for r in 0..3 {
+            for c in 0..3 {
+                assert!((m[r][c] - typed.linear()[r][c]).abs() < 1e-12, "{m:?}");
+            }
+        }
+    }
+}
