@@ -37,6 +37,7 @@ pub(crate) fn log(line: &str) {
             "==== app started, commit {}",
             crate::diagnostics::commit()
         ));
+        log(line);
         return;
     }
     let ms = std::time::SystemTime::now()
