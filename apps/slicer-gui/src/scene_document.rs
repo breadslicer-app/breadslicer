@@ -2032,7 +2032,9 @@ impl SceneDocument {
                     .iter()
                     .filter_map(|&id| {
                         let query = spatial.leaf(id)?;
-                        if !sc_geom::df_supports::is_any_support_mesh(query.mesh()) {
+                        if !sc_geom::df_supports::is_any_support_mesh(query.mesh())
+                            || sc_geom::df_supports::is_plate_raft(query.mesh())
+                        {
                             return None;
                         }
                         crate::support_persist::model_of(&sessions, id)
@@ -2047,7 +2049,54 @@ impl SceneDocument {
                 ids.push(owner);
             }
         }
+        // A raft for all selected is the raft of every set standing on it:
+        // they and their models are lit with it.
+        for set in self.sets_on_rafts(&ids) {
+            for id in [Some(set), crate::support_persist::model_of(&sessions, set)]
+                .into_iter()
+                .flatten()
+            {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
         self.with_their_rafts(self.with_their_supports(ids))
+    }
+
+    /// The support sets standing on the rafts for all among `ids` (#556):
+    /// those whose footprint on the plate the raft reaches.
+    fn sets_on_rafts(&self, ids: &[NodeId]) -> Vec<NodeId> {
+        self.with_scene(|spatial| {
+            let rafts: Vec<[f32; 4]> = ids
+                .iter()
+                .filter(|&&id| {
+                    spatial
+                        .leaf(id)
+                        .is_some_and(|q| sc_geom::df_supports::is_plate_raft(q.mesh()))
+                })
+                .filter_map(|&id| plate_footprint(spatial, id))
+                .collect();
+            if rafts.is_empty() {
+                return Vec::new();
+            }
+            (0..)
+                .map_while(|i| spatial.leaf_id_at_index(i))
+                .filter(|&id| {
+                    spatial.leaf(id).is_some_and(|q| {
+                        let mesh = q.mesh();
+                        sc_geom::df_supports::is_any_support_mesh(mesh)
+                            && !sc_geom::df_supports::is_plate_raft(mesh)
+                            && !sc_geom::df_supports::is_imported_supports(mesh)
+                    })
+                })
+                .filter(|&id| {
+                    plate_footprint(spatial, id)
+                        .is_some_and(|s| rafts.iter().any(|r| footprints_meet(r, &s)))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
     }
 
     /// `ids`, followed by the one raft for all (#556) under any support set
@@ -2055,12 +2104,7 @@ impl SceneDocument {
     /// whose footprint on the plate it reaches.
     pub(crate) fn with_their_rafts(&self, ids: Vec<NodeId>) -> Vec<NodeId> {
         self.with_scene(|spatial| {
-            let footprint = |id: NodeId| {
-                let query = spatial.leaf(id)?;
-                let aabb = query.transformed_aabb(query.world_transform())?;
-                let (lo, hi) = (aabb.min().coords(), aabb.max().coords());
-                Some([lo[0], lo[1], hi[0], hi[1]])
-            };
+            let footprint = |id: NodeId| plate_footprint(spatial, id);
             let sets: Vec<[f32; 4]> = ids
                 .iter()
                 .filter(|&&id| {
@@ -2086,10 +2130,7 @@ impl SceneDocument {
                 let Some(r) = footprint(raft) else {
                     continue;
                 };
-                if sets
-                    .iter()
-                    .any(|s| s[0] <= r[2] && r[0] <= s[2] && s[1] <= r[3] && r[1] <= s[3])
-                {
+                if sets.iter().any(|s| footprints_meet(s, &r)) {
                     all.push(raft);
                 }
             }
@@ -2915,6 +2956,20 @@ impl Drop for SceneSubscription {
             doc.listeners.borrow_mut().retain(|(id, _)| *id != self.id);
         }
     }
+}
+
+
+/// The box leaf `id` takes on the plate, as [min x, min y, max x, max y].
+fn plate_footprint(spatial: &SceneSpatial, id: NodeId) -> Option<[f32; 4]> {
+    let query = spatial.leaf(id)?;
+    let aabb = query.transformed_aabb(query.world_transform())?;
+    let (lo, hi) = (aabb.min().coords(), aabb.max().coords());
+    Some([lo[0], lo[1], hi[0], hi[1]])
+}
+
+/// Whether two boxes on the plate touch.
+fn footprints_meet(a: &[f32; 4], b: &[f32; 4]) -> bool {
+    a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]
 }
 
 #[cfg(test)]

@@ -238,4 +238,15 @@ fn supports_selected_light_the_one_raft_under_them() {
     assert!(ctrl.document().focus_ids().contains(&raft.unwrap()));
     ctrl.on_select_by_index(3);
     assert!(!ctrl.document().focus_ids().contains(&raft.unwrap()));
+    // The raft selected lights every set standing on it, and theirs alone.
+    ctrl.on_select_by_index(2);
+    let lit = ctrl.document().focus_ids();
+    let leaf = |i| {
+        ctrl.document()
+            .with_scene(|s| s.leaf_id_at_index(i))
+            .flatten()
+            .unwrap()
+    };
+    assert!(lit.contains(&leaf(1)), "the set on the raft");
+    assert!(!lit.contains(&leaf(3)), "the set off it");
 }
