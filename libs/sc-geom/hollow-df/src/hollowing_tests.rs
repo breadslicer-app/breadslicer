@@ -596,7 +596,6 @@ fn the_exact_cavity_of_a_sphere_is_closed_and_faces_inward() {
         "source {source}, cavity {inside}"
     );
     assert!(cavity.removed_voxels > 0);
-    assert!(!cavity.removed_voxel_indices.is_empty());
 }
 
 #[test]
@@ -687,5 +686,63 @@ fn clamped_smoothing_keeps_every_voxel_on_its_side() {
             smoothed[i] <= exact[i] + EXACT_SMOOTHING_CAP_VOXELS + 1e-6,
             "voxel {i} rose past the cap"
         );
+    }
+}
+
+/// The pieces found on every core (#451) are the ones the flood fill and
+/// the parity walk found: the same solid voxels, the same void pieces.
+#[test]
+fn the_pieces_found_on_every_core_are_the_flood_fills() {
+    let hollow_box = merged(&[cube(-10.0, 10.0, false), cube(-6.0, 6.0, true)]);
+    let island_in_a_hollow = merged(&[
+        cube(-10.0, 10.0, false),
+        cube(-6.0, 6.0, true),
+        cube(-2.0, 2.0, false),
+    ]);
+    let apart = merged(&[cube(-10.0, -4.0, false), cube(4.0, 10.0, false)]);
+    for (name, mesh) in [
+        ("sphere", icosphere(8.0, 3)),
+        ("hollow box", hollow_box),
+        ("island in a hollow", island_in_a_hollow),
+        ("two boxes", apart),
+    ] {
+        for voxel in [0.45, 0.8, 1.3] {
+            let grid = GridSpec::for_bbox_with_voxel(&mesh.bbox(), voxel);
+            let triangles: Vec<_> = mesh
+                .triangles
+                .iter()
+                .map(|t| {
+                    let [a, b, c] = t.map(|v| mesh.positions[v as usize]);
+                    TriangleCache::from_points(a, b, c)
+                })
+                .collect();
+            let surface = voxelize_surface(&grid, &triangles, Control::none());
+            let bvh = Bvh::build(&mesh);
+            let (solid, labels) =
+                classify_non_surface_pieces(&grid, &surface, &mesh, &bvh, Control::none()).unwrap();
+            let (expected, expected_labels) =
+                classify_by_flood_fill(&grid, &surface, &mesh, &bvh, Control::none()).unwrap();
+            assert_eq!(solid, expected, "{name} at {voxel} mm: solid voxels");
+            let mut to_old = std::collections::HashMap::new();
+            let mut to_new = std::collections::HashMap::new();
+            for (new, old) in labels.iter().zip(&expected_labels) {
+                assert_eq!(
+                    *to_old.entry(*new).or_insert(*old),
+                    *old,
+                    "{name}: a piece split"
+                );
+                assert_eq!(
+                    *to_new.entry(*old).or_insert(*new),
+                    *new,
+                    "{name}: pieces merged"
+                );
+            }
+            if name != "sphere" && name != "two boxes" {
+                assert!(
+                    to_old.len() > 2,
+                    "{name}: the sealed pocket is its own piece"
+                );
+            }
+        }
     }
 }

@@ -290,6 +290,25 @@ fn voxelize_surface(grid: &GridSpec, triangles: &[TriangleCache], ctl: Control<'
     let slab_depth = 8;
     let voxel_mm = grid.voxel_mm;
     let voxel_diag_half = (3.0f32).sqrt() * voxel_mm * 0.5;
+    let z_range = |tri: &TriangleCache| {
+        let min_iz = (((tri.min.z - grid.min.z) / voxel_mm).floor() as isize - 1).max(0) as usize;
+        let max_iz = (((tri.max.z - grid.min.z) / voxel_mm).ceil() as isize + 1)
+            .min(grid.nz as isize - 1) as usize;
+        (min_iz, max_iz)
+    };
+    // The triangles each slab reaches, in their order (#451): a slab looks
+    // at those alone, not at every triangle of the model.
+    let slabs = grid.nz.div_ceil(slab_depth);
+    let mut reaching: Vec<Vec<u32>> = vec![Vec::new(); slabs];
+    for (k, tri) in triangles.iter().enumerate() {
+        let (min_iz, max_iz) = z_range(tri);
+        if min_iz > max_iz {
+            continue;
+        }
+        for slab in min_iz / slab_depth..=(max_iz / slab_depth).min(slabs - 1) {
+            reaching[slab].push(k as u32);
+        }
+    }
     surface
         .par_chunks_mut(plane * slab_depth)
         .enumerate()
@@ -299,11 +318,9 @@ fn voxelize_surface(grid: &GridSpec, triangles: &[TriangleCache], ctl: Control<'
             }
             let z_start = slab * slab_depth;
             let z_end = z_start + cells.len() / plane;
-            for tri in triangles {
-                let min_iz =
-                    (((tri.min.z - grid.min.z) / voxel_mm).floor() as isize - 1).max(0) as usize;
-                let max_iz = (((tri.max.z - grid.min.z) / voxel_mm).ceil() as isize + 1)
-                    .min(grid.nz as isize - 1) as usize;
+            for &k in &reaching[slab] {
+                let tri = &triangles[k as usize];
+                let (min_iz, max_iz) = z_range(tri);
                 if min_iz >= z_end || max_iz < z_start {
                     continue;
                 }
@@ -489,79 +506,21 @@ impl HollowSession {
             })
             .collect();
 
-        let surface = voxelize_surface(&grid, &tri_cache, ctl);
+        // The ray tree the parity test and the wall read, built while the
+        // surface is voxelized (#451).
+        let (surface, source_bvh) = rayon::join(
+            || voxelize_surface(&grid, &tri_cache, ctl),
+            || Bvh::build(&mesh),
+        );
         drop(tri_cache);
 
-        // Outside flood-fill through non-surface voxels.
+        // The voxels the surface does not pass through, in their connected
+        // pieces: the pieces reaching the grid's edge are outside, the rest
+        // inside unless a parity test says they are a sealed air pocket of an
+        // already hollow source (nested shells keep their cavities).
         ctl.stage(Stage::FloodFill)?;
-        let mut outside = vec![false; nx * ny * nz];
-        let mut q = VecDeque::<(usize, usize, usize)>::new();
-        let mut push_seed = |x: usize, y: usize, z: usize| {
-            let i = grid.idx(x, y, z);
-            if surface[i] || outside[i] {
-                return;
-            }
-            outside[i] = true;
-            q.push_back((x, y, z));
-        };
-
-        for x in 0..nx {
-            for y in 0..ny {
-                push_seed(x, y, 0);
-                push_seed(x, y, nz - 1);
-            }
-        }
-        for x in 0..nx {
-            for z in 0..nz {
-                push_seed(x, 0, z);
-                push_seed(x, ny - 1, z);
-            }
-        }
-        for y in 0..ny {
-            for z in 0..nz {
-                push_seed(0, y, z);
-                push_seed(nx - 1, y, z);
-            }
-        }
-
-        while let Some((x, y, z)) = q.pop_front() {
-            for (dx, dy, dz) in N6 {
-                let nx_i = x as isize + dx;
-                let ny_i = y as isize + dy;
-                let nz_i = z as isize + dz;
-                if !grid.in_bounds(nx_i, ny_i, nz_i) {
-                    continue;
-                }
-                let ux = nx_i as usize;
-                let uy = ny_i as usize;
-                let uz = nz_i as usize;
-                let i = grid.idx(ux, uy, uz);
-                if surface[i] || outside[i] {
-                    continue;
-                }
-                outside[i] = true;
-                q.push_back((ux, uy, uz));
-            }
-        }
-
-        // Fill interior = !outside. This includes the surface layer itself.
-        let mut solid: Vec<bool> = outside.iter().map(|o| !*o).collect();
-        drop(outside);
-
-        // Flood-fill alone treats sealed air pockets in already-hollow source
-        // shells as "solid". Classify only the non-surface components with
-        // parity so nested shells preserve their existing cavities.
-        ctl.stage(Stage::ParityRefine)?;
-        let source_bvh = Bvh::build(&mesh);
-        refine_non_surface_solid_components_with_parity(
-            &grid,
-            &surface,
-            &mut solid,
-            &mesh,
-            &source_bvh,
-            ctl,
-        )?;
-        let source_void_components = label_void_components(&grid, &solid);
+        let (solid, source_void_components) =
+            classify_non_surface_pieces(&grid, &surface, &mesh, &source_bvh, ctl)?;
         let occupied_voxels = solid.iter().filter(|v| **v).count();
 
         // Two-pass 26-neighbour chamfer distance transform (face 1, edge √2,
@@ -1054,8 +1013,6 @@ impl HollowSession {
             infill,
             closed,
             removed_voxels: self.occupied_voxels.saturating_sub(kept),
-            removed_voxel_centers: collect_removed_voxel_centers(&self.grid, &self.solid, &keep),
-            removed_voxel_indices: collect_removed_voxel_indices(&self.grid, &self.solid, &keep),
             blocked_voxel_centers,
             blocked_voxel_indices,
         })
@@ -1072,9 +1029,6 @@ pub(crate) struct ExactCavity {
     /// The wall and the beams are edge-manifold: a result can be built.
     pub closed: bool,
     pub removed_voxels: usize,
-    /// Centres of the removed voxels on the cavity wall (x, y, z each).
-    pub removed_voxel_centers: Vec<f32>,
-    pub removed_voxel_indices: Vec<u32>,
     pub blocked_voxel_centers: Vec<f32>,
     pub blocked_voxel_indices: Vec<u32>,
 }
@@ -2862,6 +2816,241 @@ pub(crate) fn build_cylinder_mesh(
     }
 }
 
+/// How many grid slices one core labels at a time in
+/// [`classify_non_surface_pieces`].
+const LABEL_SLAB_SLICES: usize = 4;
+
+/// What the voxels the surface does not pass through are (#451): the
+/// solid mask, and each void voxel's piece (`-1` for solid ones; equal
+/// labels, the same piece).
+///
+/// Those voxels are split into their 6-connected pieces, each named by
+/// its first voxel. A piece reaching the grid's edge is outside; any
+/// other is inside, unless a parity ray from its first voxel finds it out
+/// of the mesh: a sealed air pocket of an already hollow source. The
+/// pieces are found on every core, a slab of slices per core joined
+/// slab to slab after, and give the same voxels as flooding the outside
+/// from the edges and walking each inside piece in turn.
+fn classify_non_surface_pieces(
+    grid: &GridSpec,
+    surface: &[bool],
+    mesh: &IndexedMesh,
+    bvh: &Bvh,
+    ctl: Control<'_>,
+) -> Result<(Vec<bool>, Vec<i32>), Cancelled> {
+    const NONE: u32 = u32::MAX;
+    let (nx, ny, nz) = (grid.nx, grid.ny, grid.nz);
+    let plane = nx * ny;
+    let cells = plane * nz;
+    // The memory bound on a grid keeps it far below this.
+    assert!(cells < i32::MAX as usize, "a grid of {cells} cells");
+
+    /// The root of `i` in `parent`, `offset` the index of `parent[0]`;
+    /// halves the path on the way.
+    fn root(parent: &mut [u32], offset: usize, mut i: u32) -> u32 {
+        loop {
+            let p = parent[i as usize - offset];
+            if p == i {
+                return i;
+            }
+            let pp = parent[p as usize - offset];
+            parent[i as usize - offset] = pp;
+            i = pp;
+        }
+    }
+    /// Joins the pieces of `a` and `b`, the later root under the earlier,
+    /// so a piece's root is its first voxel.
+    fn join(parent: &mut [u32], offset: usize, a: u32, b: u32) {
+        let (ra, rb) = (root(parent, offset, a), root(parent, offset, b));
+        if ra != rb {
+            let (low, high) = if ra < rb { (ra, rb) } else { (rb, ra) };
+            parent[high as usize - offset] = low;
+        }
+    }
+
+    // Each slab's pieces, on its own.
+    let mut parent = vec![NONE; cells];
+    parent
+        .par_chunks_mut(plane * LABEL_SLAB_SLICES)
+        .enumerate()
+        .for_each(|(slab, cells)| {
+            if ctl.is_cancelled() {
+                return;
+            }
+            let offset = slab * plane * LABEL_SLAB_SLICES;
+            for j in 0..cells.len() {
+                let i = offset + j;
+                if surface[i] {
+                    continue;
+                }
+                cells[j] = i as u32;
+                let x = i % nx;
+                let y = (i / nx) % ny;
+                if x > 0 && !surface[i - 1] {
+                    join(cells, offset, i as u32, (i - 1) as u32);
+                }
+                if y > 0 && !surface[i - nx] {
+                    join(cells, offset, i as u32, (i - nx) as u32);
+                }
+                if j >= plane && !surface[i - plane] {
+                    join(cells, offset, i as u32, (i - plane) as u32);
+                }
+            }
+        });
+    ctl.check()?;
+    // Joined across the slabs' faces.
+    for z in (LABEL_SLAB_SLICES..nz).step_by(LABEL_SLAB_SLICES) {
+        for k in 0..plane {
+            let i = z * plane + k;
+            if parent[i] != NONE && parent[i - plane] != NONE {
+                join(&mut parent, 0, i as u32, (i - plane) as u32);
+            }
+        }
+    }
+    // Every voxel straight to its root: a root comes before its voxels.
+    for i in 0..cells {
+        let p = parent[i];
+        if p != NONE {
+            parent[i] = parent[p as usize];
+        }
+    }
+
+    // The pieces reaching the edge.
+    let mut outside_root = vec![false; cells];
+    let mut edge = |x: usize, y: usize, z: usize| {
+        let p = parent[grid.idx(x, y, z)];
+        if p != NONE {
+            outside_root[p as usize] = true;
+        }
+    };
+    for z in 0..nz {
+        for y in 0..ny {
+            edge(0, y, z);
+            edge(nx - 1, y, z);
+        }
+        for x in 0..nx {
+            edge(x, 0, z);
+            edge(x, ny - 1, z);
+        }
+    }
+    for y in 0..ny {
+        for x in 0..nx {
+            edge(x, y, 0);
+            edge(x, y, nz - 1);
+        }
+    }
+
+    // The inside pieces a parity ray finds out of the mesh.
+    ctl.stage(Stage::ParityRefine)?;
+    let inside_roots: Vec<usize> = (0..cells)
+        .filter(|&i| parent[i] == i as u32 && !outside_root[i])
+        .collect();
+    let pockets: Vec<usize> = inside_roots
+        .into_par_iter()
+        .filter(|&i| {
+            let (x, y, z) = grid.coords(i);
+            !ctl.is_cancelled()
+                && !point_inside_mesh_parity(mesh, bvh, grid.center_world(x, y, z), grid.voxel_mm)
+        })
+        .collect();
+    ctl.check()?;
+    let mut void_root = outside_root;
+    for i in pockets {
+        void_root[i] = true;
+    }
+
+    let (solid, labels): (Vec<bool>, Vec<i32>) = parent
+        .par_iter()
+        .map(|&p| {
+            if p != NONE && void_root[p as usize] {
+                (false, p as i32)
+            } else {
+                (true, -1)
+            }
+        })
+        .unzip();
+    Ok((solid, labels))
+}
+
+/// The flood fill, parity walk and void labelling
+/// [`classify_non_surface_pieces`] replaced, kept to check it against.
+#[cfg(test)]
+pub(crate) fn classify_by_flood_fill(
+    grid: &GridSpec,
+    surface: &[bool],
+    mesh: &IndexedMesh,
+    source_bvh: &Bvh,
+    ctl: Control<'_>,
+) -> Result<(Vec<bool>, Vec<i32>), Cancelled> {
+    let (nx, ny, nz) = (grid.nx, grid.ny, grid.nz);
+    // Outside flood-fill through non-surface voxels.
+
+    let mut outside = vec![false; nx * ny * nz];
+    let mut q = VecDeque::<(usize, usize, usize)>::new();
+    let mut push_seed = |x: usize, y: usize, z: usize| {
+        let i = grid.idx(x, y, z);
+        if surface[i] || outside[i] {
+            return;
+        }
+        outside[i] = true;
+        q.push_back((x, y, z));
+    };
+
+    for x in 0..nx {
+        for y in 0..ny {
+            push_seed(x, y, 0);
+            push_seed(x, y, nz - 1);
+        }
+    }
+    for x in 0..nx {
+        for z in 0..nz {
+            push_seed(x, 0, z);
+            push_seed(x, ny - 1, z);
+        }
+    }
+    for y in 0..ny {
+        for z in 0..nz {
+            push_seed(0, y, z);
+            push_seed(nx - 1, y, z);
+        }
+    }
+
+    while let Some((x, y, z)) = q.pop_front() {
+        for (dx, dy, dz) in N6 {
+            let nx_i = x as isize + dx;
+            let ny_i = y as isize + dy;
+            let nz_i = z as isize + dz;
+            if !grid.in_bounds(nx_i, ny_i, nz_i) {
+                continue;
+            }
+            let ux = nx_i as usize;
+            let uy = ny_i as usize;
+            let uz = nz_i as usize;
+            let i = grid.idx(ux, uy, uz);
+            if surface[i] || outside[i] {
+                continue;
+            }
+            outside[i] = true;
+            q.push_back((ux, uy, uz));
+        }
+    }
+
+    // Fill interior = !outside. This includes the surface layer itself.
+    let mut solid: Vec<bool> = outside.iter().map(|o| !*o).collect();
+    drop(outside);
+
+    // Flood-fill alone treats sealed air pockets in already-hollow source
+    // shells as "solid". Classify only the non-surface components with
+    // parity so nested shells preserve their existing cavities.
+
+    refine_non_surface_solid_components_with_parity(
+        &grid, &surface, &mut solid, mesh, source_bvh, ctl,
+    )?;
+    let source_void_components = label_void_components(grid, &solid);
+    Ok((solid, source_void_components))
+}
+
+#[cfg(test)]
 fn refine_non_surface_solid_components_with_parity(
     grid: &GridSpec,
     surface: &[bool],
@@ -2918,6 +3107,7 @@ fn refine_non_surface_solid_components_with_parity(
     Ok(())
 }
 
+#[cfg(test)]
 fn label_void_components(grid: &GridSpec, solid: &[bool]) -> Vec<i32> {
     let mut labels = vec![-1i32; solid.len()];
     let mut queue = VecDeque::<usize>::new();

@@ -72,13 +72,16 @@ impl WallDistances {
             Some(previous) => previous.dist.clone(),
             None => chamfer.to_vec(),
         };
-        let plane = grid.nx * grid.ny;
-        dist.par_chunks_mut(plane)
+        // Row by row: a few slices dense with surface would hold the other
+        // cores up, a slice at a time (#451).
+        let row = grid.nx;
+        dist.par_chunks_mut(row)
             .enumerate()
-            .try_for_each(|(z, layer)| {
+            .try_for_each(|(r, cells)| {
                 ctl.check()?;
-                for (k, d) in layer.iter_mut().enumerate() {
-                    let i = z * plane + k;
+                let (y, z) = (r % grid.ny, r / grid.ny);
+                for (x, d) in cells.iter_mut().enumerate() {
+                    let i = r * row + x;
                     let c = chamfer[i];
                     // The surface layer stays at 0: its centres lie on either
                     // side of the surface, and 0 only ever keeps material.
@@ -94,7 +97,7 @@ impl WallDistances {
                     // The chamfer bounds the distance from above: a path of
                     // `c` voxels to a surface voxel, then half its diagonal.
                     let cap = band.min(c + SURFACE_VOXEL_OFFSET);
-                    let p = grid.center_world(k % grid.nx, k / grid.nx, z);
+                    let p = grid.center_world(x, y, z);
                     *d = bvh
                         .nearest_distance(mesh, p, cap * voxel * 1.0001)
                         .map_or(cap, |mm| (mm / voxel).min(cap));

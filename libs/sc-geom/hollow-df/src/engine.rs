@@ -370,9 +370,6 @@ pub struct HollowPreview {
     /// The cavity wall, facing inward (into the cavity).
     pub cavity: IndexedMesh,
     pub infill: Option<IndexedMesh>,
-    /// Centers of removed voxels on the cavity wall, for solid-area editing.
-    pub removed_voxel_centers: Vec<f32>,
-    pub removed_voxel_indices: Vec<u32>,
     pub blocked_voxel_centers: Vec<f32>,
     pub blocked_voxel_indices: Vec<u32>,
     pub stats: HollowStats,
@@ -925,8 +922,6 @@ impl Session {
         Ok(HollowPreview {
             cavity: cavity.wall.clone(),
             infill,
-            removed_voxel_centers: cavity.removed_voxel_centers.clone(),
-            removed_voxel_indices: cavity.removed_voxel_indices.clone(),
             blocked_voxel_centers: cavity.blocked_voxel_centers.clone(),
             blocked_voxel_indices: cavity.blocked_voxel_indices.clone(),
             stats,

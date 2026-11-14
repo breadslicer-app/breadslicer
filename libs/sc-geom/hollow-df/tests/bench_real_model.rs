@@ -59,6 +59,46 @@ fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1e3
 }
 
+/// When each stage was first reported, to print how long each took.
+struct StageClock {
+    start: Instant,
+    marks: std::sync::Mutex<Vec<(hollow_df::Stage, Instant)>>,
+}
+
+impl StageClock {
+    fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            marks: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn mark(&self, stage: hollow_df::Stage) {
+        let mut marks = self.marks.lock().unwrap();
+        if !marks.iter().any(|(s, _)| *s == stage) {
+            marks.push((stage, Instant::now()));
+        }
+    }
+
+    /// Each stage and how long it ran, up to the next one or to now.
+    fn report(&self, what: &str) {
+        let end = Instant::now();
+        let marks = self.marks.lock().unwrap();
+        let mut line = format!("{what} stages:");
+        let mut before = self.start;
+        if let Some((_, first)) = marks.first() {
+            line += &format!(" [setup] {:.0}", (*first - before).as_secs_f64() * 1e3);
+        }
+        for (k, (stage, at)) in marks.iter().enumerate() {
+            let next = marks.get(k + 1).map_or(end, |(_, t)| *t);
+            line += &format!(" | {stage:?} {:.0}", (next - *at).as_secs_f64() * 1e3);
+            before = next;
+        }
+        let _ = before;
+        eprintln!("{line} ms");
+    }
+}
+
 /// The hollow `SC_BENCH_FILL` asks for.
 fn bench_fill() -> HollowFill {
     let pattern = match std::env::var("SC_BENCH_FILL").as_deref() {
@@ -142,8 +182,11 @@ fn real_model_hollow_timings() {
     );
 
     let t = Instant::now();
-    let session = Session::build(mesh, &request, None, Control::none()).unwrap();
+    let clock = StageClock::new();
+    let mark = |stage| clock.mark(stage);
+    let session = Session::build(mesh, &request, None, Control::new(None, Some(&mark))).unwrap();
     let session_ms = ms(t);
+    clock.report("session");
     let grid = session.grid();
     eprintln!(
         "grid: requested {:.3} mm, used {:.4} mm ({} voxels on the largest extent, bound {:?}), dims {:?}, ~{} MB",
@@ -156,8 +199,13 @@ fn real_model_hollow_timings() {
     );
 
     let t = Instant::now();
-    let preview = session.preview(&settings, Control::none()).unwrap();
+    let clock = StageClock::new();
+    let mark = |stage| clock.mark(stage);
+    let preview = session
+        .preview(&settings, Control::new(None, Some(&mark)))
+        .unwrap();
     let preview_ms = ms(t);
+    clock.report("preview");
 
     let (apply_ms, applied) = timed_apply(&session, &settings, &[]);
 

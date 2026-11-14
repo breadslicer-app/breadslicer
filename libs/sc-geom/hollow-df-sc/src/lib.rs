@@ -435,9 +435,6 @@ pub enum HollowResult {
         /// The cavity wall in the leaf's local frame, facing inward.
         cavity: IndexedMesh,
         infill: Option<IndexedMesh>,
-        /// Removed voxels on the cavity wall (local frame), for solid-area editing.
-        removed_voxel_centers: Vec<[f32; 3]>,
-        removed_voxel_indices: Vec<u32>,
     },
     Apply {
         /// The printable hollow in the leaf's local frame, edge-manifold,
@@ -626,20 +623,11 @@ fn run_hollow(
             let preview = session
                 .preview_with_drains(&settings, &drains, ctl)
                 .map_err(to_job)?;
-            let centers = preview
-                .removed_voxel_centers
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .map(|c| frame.frame_to_local([c[0], c[1], c[2]]))
-                .collect();
             (
                 preview.stats,
                 HollowResult::Preview {
                     cavity: leaf_mesh(&preview.cavity, frame, None),
                     infill: preview.infill.as_ref().map(|m| leaf_mesh(m, frame, None)),
-                    removed_voxel_centers: centers,
-                    removed_voxel_indices: preview.removed_voxel_indices,
                 },
             )
         }
