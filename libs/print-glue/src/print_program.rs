@@ -14,8 +14,6 @@ use sc_print_primitives::{
     PositiveFiniteMm, PositiveFiniteSec, VolumeMm3, VolumeOutOfRange,
 };
 use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
-use sc_scene::Scene;
-use sc_scene::SceneError;
 use sc_sl1cer::profile::SliceProfile;
 use sc_sla_formats::{CreationTime, LayerProgram, MotionStage, PrintProgram, RasterSetup};
 
@@ -48,9 +46,7 @@ impl std::error::Error for SlabTopOutOfRange {}
 pub enum UnprojectablePrint {
     /// A scheduled layer has no representable height.
     SlabTop(SlabTopOutOfRange),
-    /// The scene could not be traversed for the material it encloses.
-    Scene(SceneError),
-    /// The traversal's total is not a volume.
+    /// The resin the layers cure is not a volume.
     Volume(VolumeOutOfRange),
     /// That volume at the resin's density is not a mass.
     Mass(MassOutOfRange),
@@ -63,7 +59,6 @@ impl fmt::Display for UnprojectablePrint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SlabTop(err) => err.fmt(f),
-            Self::Scene(err) => write!(f, "cannot measure what the scene encloses: {err}"),
             Self::Volume(err) => err.fmt(f),
             Self::Mass(err) => err.fmt(f),
             Self::PrintTime(err) => write!(f, "the print takes no expressible time: {err}"),
@@ -75,7 +70,6 @@ impl std::error::Error for UnprojectablePrint {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::SlabTop(err) => Some(err),
-            Self::Scene(err) => Some(err),
             Self::Volume(err) => Some(err),
             Self::Mass(err) => Some(err),
             Self::PrintTime(err) => Some(err),
@@ -86,22 +80,20 @@ impl std::error::Error for UnprojectablePrint {
 /// Build the [`PrintProgram`] for a scene under a resolved configuration, 1
 /// record per layer of `profile`'s schedule.
 ///
-/// `scene` must be the one that was sliced and `profile` the one the contours
-/// were sliced under.
-///
-/// The reported volume is everything `scene` encloses, so geometry the machine
-/// will not reach still counts towards it, and the reported weight is that
-/// volume at the resin's cured density, which is what the print's resin weighs
-/// rather than what pouring it costs. The reported duration is what the layer
+/// `profile` must be the one the contours were sliced under, and `volume_mm3`
+/// the resin its layers cure ([`crate::PlateContours::lit_volume_mm3`]): what
+/// the machine lights, parts that overlap counted once (#434). The reported
+/// weight is that volume at the resin's cured density, which is what the
+/// print's resin weighs rather than what pouring it costs. The reported duration is what the layer
 /// schedule adds up to under the printer's own time calibration.
 ///
 /// # Errors
 ///
 /// [`UnprojectablePrint`] when a scheduled layer has no representable height,
-/// when the scene yields no volume to weigh, or when the calibrated schedule
+/// when the volume is not one, or when the calibrated schedule
 /// overflows a duration.
 pub(crate) fn project_to_print_program(
-    scene: &Scene,
+    volume_mm3: f64,
     config: &ResolvedPrintConfig,
     profile: &SliceProfile,
     created_at: CreationTime,
@@ -136,7 +128,7 @@ pub(crate) fn project_to_print_program(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let volume_mm3 = plate_volume(scene)?;
+    let volume_mm3 = VolumeMm3::new(volume_mm3).map_err(UnprojectablePrint::Volume)?;
     let mass_g = material
         .cured_density_g_per_cm3
         .mass_of(volume_mm3)
@@ -163,15 +155,6 @@ pub(crate) fn project_to_print_program(
         created_at,
         slicer_version,
     })
-}
-
-/// Measure the material a scene encloses, as the validated volume a printer
-/// file carries.
-fn plate_volume(scene: &Scene) -> Result<VolumeMm3, UnprojectablePrint> {
-    let total = scene
-        .world_volume_mm3()
-        .map_err(UnprojectablePrint::Scene)?;
-    VolumeMm3::new(total).map_err(UnprojectablePrint::Volume)
 }
 
 /// Add up what the layer records ask for: light, pauses and travel, second

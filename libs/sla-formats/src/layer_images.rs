@@ -120,6 +120,39 @@ pub fn lit_layer_count(stack: &ContourStack, raster: &RasterSetup) -> usize {
         .map_or(0, |index| index + 1)
 }
 
+/// The area each layer of `stack` lights with `raster`'s settings, in
+/// square millimetres: every pixel counted by its grey, as the printer
+/// cures it, so parts that overlap count once (#115, #434). A layer
+/// without contours lights nothing; the placeholder pixel of a dark
+/// layer (#309) is left out. Every core takes a share of the layers.
+pub fn lit_areas_mm2(stack: &ContourStack, raster: &RasterSetup) -> Vec<f64> {
+    let layers = stack.layers();
+    let frames = Frames::new(layers, raster, 1);
+    let plate = raster.build_volume();
+    let pixel_mm2 = plate.x().value() / f64::from(frames.width.max(1))
+        * (plate.y().value() / f64::from(frames.height.max(1)));
+    layers
+        .par_iter()
+        .map(|layer| {
+            if layer.polygons().is_empty() {
+                return 0.0;
+            }
+            let pixels = rasterize_layer(
+                layer,
+                &frames.pixel_map,
+                raster.aa(),
+                raster.min_alpha_pct(),
+            );
+            let grey: u64 = pixels
+                .runs()
+                .iter()
+                .map(|run| u64::from(run.value) * u64::from(run.length))
+                .sum();
+            grey as f64 / f64::from(u8::MAX) * pixel_mm2
+        })
+        .collect()
+}
+
 /// What every layer's frame is made with.
 struct Frames<'a> {
     layers: &'a [ContourLayer],

@@ -5,8 +5,6 @@
 
 use std::num::NonZeroU32;
 
-use sc_mesh_core::primitives::IndexedTriangle;
-use sc_mesh_fixtures::unit_cube_mesh;
 use sc_print_primitives::{
     LightPwm, NonEmptyString, NonNegativeFiniteSec, PanelRotation, PixelResolution,
     PositiveFiniteMm,
@@ -14,8 +12,6 @@ use sc_print_primitives::{
 use sc_print_profiles::{
     EffectiveMaterial, MaterialProfile, PrinterProfile, ResolvedPrintConfig, SceneOverrides,
 };
-use sc_scene::SceneError;
-use sc_scene_fixtures::{meshes_as_roots, trio_as_roots};
 use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode, SliceProfile};
 use sc_sla_formats::{CreationTime, PrintProgram};
 
@@ -349,7 +345,7 @@ fn created_at() -> CreationTime {
 fn program(printer_toml: &str, total_layers: u32) -> PrintProgram {
     let config = resolved_config(printer_toml);
     let profile = slice_profile(&config, total_layers);
-    project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12").unwrap()
+    project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12").unwrap()
 }
 
 fn exposures(program: &PrintProgram) -> Vec<f64> {
@@ -438,7 +434,7 @@ fn every_layer_records_its_slab_top() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
 
     let scheduled: Vec<f64> = profile.layer_schedule().iter_slab_tops().collect();
@@ -455,7 +451,7 @@ fn the_raster_setup_comes_from_the_slice_profile() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
 
     assert_eq!(program.raster.build_volume(), profile.build_volume());
@@ -562,7 +558,7 @@ fn the_bottom_motion_stops_where_the_bottom_layers_do() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_MOTION_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
     let bottom = BOTTOM_LAYER_COUNT as usize;
 
@@ -585,7 +581,7 @@ fn a_split_travel_lands_as_the_vendor_files_record_it() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_SPLIT_TRAVEL_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
 
     for layer in &program.layers[BOTTOM_LAYER_COUNT as usize..] {
@@ -607,7 +603,7 @@ fn a_split_travel_rises_and_returns_the_same_distance() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_SPLIT_TRAVEL_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
 
     for layer in &program.layers {
@@ -628,7 +624,7 @@ fn the_bottom_layers_take_their_own_split_travel() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_SPLIT_TRAVEL_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
 
     for layer in &program.layers[..BOTTOM_LAYER_COUNT as usize] {
@@ -673,7 +669,7 @@ fn the_calibrated_waits_reach_every_record() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_WAITS_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
 
     for layer in &program.layers {
@@ -688,7 +684,7 @@ fn the_bottom_waits_stop_where_the_bottom_layers_do() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_WAITS_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
     let bottom = BOTTOM_LAYER_COUNT as usize;
 
@@ -709,7 +705,7 @@ fn the_transition_band_holds_the_normal_waits_while_its_exposure_still_ramps() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_WAITS_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
     let band = BOTTOM_LAYER_COUNT as usize..(BOTTOM_LAYER_COUNT + TRANSITION_COUNT) as usize;
 
@@ -734,7 +730,7 @@ fn the_bottom_light_pwm_stops_where_the_bottom_layers_do() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_LIGHT_PWM_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
     let bottom = BOTTOM_LAYER_COUNT as usize;
 
@@ -767,7 +763,7 @@ fn a_layer_beyond_the_representable_height_names_itself() {
         PackingMode::None,
     );
 
-    let err = project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+    let err = project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
         .unwrap_err();
     match err {
         UnprojectablePrint::SlabTop(err) => {
@@ -779,7 +775,7 @@ fn a_layer_beyond_the_representable_height_names_itself() {
 }
 
 #[test]
-fn the_program_reports_the_material_the_plate_encloses() {
+fn the_program_reports_the_resin_it_is_given() {
     let program = program(PRINTER_TOML, 20);
     let volume = program.volume_mm3.value();
     assert!((volume - SCENE_VOLUME_MM3).abs() < 1e-6, "volume: {volume}",);
@@ -804,7 +800,7 @@ fn a_denser_resin_weighs_more_for_the_same_plate() {
     let config = resolved_config_for(PRINTER_TOML, &dense);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
 
     let expected = SCENE_VOLUME_MM3 / 1_000.0 * 2.0;
@@ -816,14 +812,7 @@ fn a_denser_resin_weighs_more_for_the_same_plate() {
 fn an_empty_plate_weighs_nothing() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
-    let program = project_to_print_program(
-        &meshes_as_roots([]),
-        &config,
-        &profile,
-        created_at(),
-        "0.0.12",
-    )
-    .unwrap();
+    let program = project_to_print_program(0.0, &config, &profile, created_at(), "0.0.12").unwrap();
     assert_eq!(program.mass_g.value(), 0.0);
 }
 
@@ -834,7 +823,7 @@ const SCHEDULE_SEC: f64 = 68.0 + 11.1;
 fn timed_program(printer_toml: &str) -> PrintProgram {
     let config = resolved_config_for(printer_toml, MATERIAL_FOR_TIMING_TOML);
     let profile = slice_profile(&config, 2);
-    project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12").unwrap()
+    project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12").unwrap()
 }
 
 #[test]
@@ -861,7 +850,7 @@ fn the_reported_time_counts_both_halves_of_a_split_travel() {
     );
     let profile = slice_profile(&config, 2);
     let program =
-        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
             .unwrap();
 
     let reported = program.print_time_sec.value();
@@ -892,34 +881,18 @@ fn a_calibration_that_subtracts_more_than_the_print_takes_reports_no_time() {
 fn an_empty_plate_encloses_nothing() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
-    let program = project_to_print_program(
-        &meshes_as_roots([]),
-        &config,
-        &profile,
-        created_at(),
-        "0.0.12",
-    )
-    .unwrap();
+    let program = project_to_print_program(0.0, &config, &profile, created_at(), "0.0.12").unwrap();
     assert_eq!(program.volume_mm3.value(), 0.0);
 }
 
 #[test]
-fn a_scene_that_cannot_be_measured_stops_the_projection() {
-    let mut mesh = unit_cube_mesh();
-    mesh.faces[0] = IndexedTriangle::from_raw_indices([0, 1, 99]);
-    let scene = meshes_as_roots([mesh]);
+fn a_volume_that_is_not_one_stops_the_projection() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
 
     let err =
-        project_to_print_program(&scene, &config, &profile, created_at(), "0.0.12").unwrap_err();
-    assert!(
-        matches!(
-            err,
-            UnprojectablePrint::Scene(SceneError::InvalidMeshFaces { .. })
-        ),
-        "err: {err:?}",
-    );
+        project_to_print_program(f64::NAN, &config, &profile, created_at(), "0.0.12").unwrap_err();
+    assert!(matches!(err, UnprojectablePrint::Volume(_)), "err: {err:?}");
 }
 
 #[test]
@@ -1031,7 +1004,7 @@ bottom_second_travel = { lift_distance_mm = 5.0, lift_speed_mm_min = 360.0, retr
 fn m7_pro_print_time_sec(printer_toml: &str) -> f64 {
     let config = resolved_config_for(printer_toml, M7_PRO_PRINT_MATERIAL_TOML);
     let profile = slice_profile(&config, 404);
-    project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+    project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
         .unwrap()
         .print_time_sec
         .value()

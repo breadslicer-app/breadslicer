@@ -221,7 +221,6 @@ fn export_job(
         return Err(ExportFailure::Stale);
     }
     sc_print_glue::export::prepare_export(
-        scene,
         held.contours,
         printer,
         material,

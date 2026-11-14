@@ -13,9 +13,9 @@
 
 use std::fmt;
 use std::num::NonZeroU32;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
-use sc_print_primitives::{AaLevel, PositiveFiniteMm, ScaleCompensation};
+use sc_print_primitives::{AaLevel, PanelRotation, PositiveFiniteMm, ScaleCompensation};
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile, resolve_scale_compensation};
 use sc_scene::Scene;
 use sc_scene::node::NodeId;
@@ -23,6 +23,8 @@ use sc_sl1cer::contour::{ContourStack, LayerAlignmentError, merge_stacks};
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile, UniformSchedule};
 use sc_sl1cer::{CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_scene_with_progress};
+use sc_sla_formats::RasterSetup;
+use sc_sla_formats::layer_images::lit_areas_mm2;
 
 use crate::prepare::{UnsliceableSelection, slice_profile_for_selection};
 use crate::scale_compensation::{
@@ -227,6 +229,7 @@ impl SlicedPlate {
         Ok(PlateContours {
             stack: Arc::new(stack),
             schedule: *self.profile.layer_schedule(),
+            lit: Arc::default(),
         })
     }
 }
@@ -238,6 +241,18 @@ impl SlicedPlate {
 pub struct PlateContours {
     stack: Arc<ContourStack>,
     schedule: LayerSchedule,
+    /// The area each layer lights, once measured, and the raster it was
+    /// measured with; shared by the clones, as the stack is.
+    lit: Arc<Mutex<Option<LitAreas>>>,
+}
+
+/// The area each layer of a plate lights (#115, #434), and the raster
+/// that lights them, unturned and without anti-aliasing: neither changes the
+/// area.
+#[derive(Debug)]
+struct LitAreas {
+    raster: RasterSetup,
+    areas_mm2: Arc<[f64]>,
 }
 
 impl PlateContours {
@@ -257,6 +272,7 @@ impl PlateContours {
         Ok(Self {
             stack: Arc::new(stack),
             schedule,
+            lit: Arc::default(),
         })
     }
 
@@ -275,6 +291,48 @@ impl PlateContours {
         &self.schedule
     }
 
+    /// Return the area each layer lights on `raster`'s pixels, in square
+    /// millimetres (#115, #434). Measured once per raster and kept, so a slice
+    /// can measure it in the background and an estimate read it at once.
+    ///
+    /// The pixels are taken whole, without anti-aliasing: its greys add up to
+    /// the same area, at a 30th of the time (Worm, 3536 layers on the M7 Pro:
+    /// 329.944 ml in 0.9 s; with 4× anti-aliasing 329.942 ml in 26.6 s).
+    pub fn lit_areas_mm2(&self, raster: &RasterSetup) -> Arc<[f64]> {
+        let raster = raster
+            .clone()
+            .with_panel_rotation(PanelRotation::None)
+            .with_aa(AaLevel::Off);
+        let mut lit = self.lit.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(known) = lit.as_ref().filter(|known| known.raster == raster) {
+            return Arc::clone(&known.areas_mm2);
+        }
+        let areas_mm2: Arc<[f64]> = lit_areas_mm2(&self.stack, &raster).into();
+        *lit = Some(LitAreas {
+            raster,
+            areas_mm2: Arc::clone(&areas_mm2),
+        });
+        areas_mm2
+    }
+
+    /// Return the resin the layers cure with `raster`'s settings, in cubic
+    /// millimetres: each layer's lit area times its height, so parts that
+    /// overlap count once and a hollow counts what its walls take (#115,
+    /// #434).
+    pub fn lit_volume_mm3(&self, raster: &RasterSetup) -> f64 {
+        let areas = self.lit_areas_mm2(raster);
+        let mut below = 0.0;
+        self.schedule
+            .iter_slab_tops()
+            .zip(areas.iter())
+            .map(|(top, area)| {
+                let height = top - below;
+                below = top;
+                area * height
+            })
+            .sum()
+    }
+
     /// Keep only the first `layers` layers, and the schedule's slabs under
     /// them. A count at or past the stack's length keeps everything.
     pub(crate) fn truncated(self, layers: NonZeroU32) -> Self {
@@ -283,7 +341,17 @@ impl PlateContours {
             return self;
         }
         let LayerSchedule::Uniform(grid) = self.schedule;
+        let lit = self
+            .lit
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|known| LitAreas {
+                raster: known.raster.clone(),
+                areas_mm2: known.areas_mm2[..kept.min(known.areas_mm2.len())].into(),
+            });
         Self {
+            lit: Arc::new(Mutex::new(lit)),
             stack: Arc::new(ContourStack::new_unchecked(
                 self.stack.layers()[..kept].to_vec(),
             )),
