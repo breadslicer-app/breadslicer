@@ -100,6 +100,14 @@ pub struct Settings {
     pub passes: u32,
     /// No pass starts after this long.
     pub time_limit: Duration,
+    /// The height above the plate under which nothing takes room (mm): the
+    /// rafts, when every body stands on one raft for all (#556). Their rafts
+    /// may lie on each other; what stands above keeps the gap. 0 keeps all.
+    pub free_below: f64,
+    /// Packs tighter (#556): Arrange also tries every body turned alike,
+    /// in rows, and on the densest lattice the largest one keeps clear on;
+    /// a fill of one body tries that lattice too.
+    pub tight: bool,
 }
 
 impl Default for Settings {
@@ -113,6 +121,8 @@ impl Default for Settings {
             band: 1.0,
             passes: 24,
             time_limit: Duration::from_secs(2),
+            free_below: 0.0,
+            tight: false,
         }
     }
 }
@@ -194,6 +204,7 @@ impl Frame {
             fine: cell * 0.5,
             band: (!settings.shadow_only).then_some(settings.band.max(0.1)),
             floor: plate.floor,
+            free: settings.free_below.max(0.0),
         };
         let origin = [
             plate.min[0] + settings.margin - gap * 0.5,
@@ -444,6 +455,7 @@ pub fn arrange(
         balance: fixed.is_empty(),
         passes: settings.passes,
         deadline: started + settings.time_limit,
+        tight: settings.tight,
     };
     let layout = search::search(&problem, cancel).ok_or(Cancelled)?;
     let mut placements: Vec<Option<Placement>> = vec![None; bodies.len()];
@@ -680,6 +692,7 @@ pub fn arrange_across(
             balance: fixed.is_empty(),
             passes: settings.passes,
             deadline: Instant::now() + settings.time_limit,
+            tight: settings.tight,
         };
         let layout = search::search(&problem, cancel).ok_or(Cancelled)?;
         let mut still = Vec::new();

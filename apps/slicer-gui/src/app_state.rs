@@ -770,6 +770,21 @@ impl AppState {
             ctrl.dialogs(),
             ctrl.clone(),
         );
+        {
+            // Fill bed and Arrange measure a model with no supports yet with
+            // the ones it will get (#556).
+            let supports = Rc::downgrade(&df_support_run);
+            arrange_run.set_forecast(Rc::new(move || {
+                supports
+                    .upgrade()
+                    .map(|run| run.forecast_ctx())
+                    .unwrap_or_else(|| crate::support_forecast::ForecastCtx {
+                        request: Default::default(),
+                        lift_to_mm: None,
+                        raft_top_mm: 0.0,
+                    })
+            }));
+        }
         let orient_run = OrientRun::install(
             ui,
             ctrl.document(),
@@ -4820,6 +4835,244 @@ mod window_wiring_tests {
                 window.invoke_support_share_cancelled();
             });
         }
+    }
+
+    /// One raft for all (#556) as Damian ran it: a model alone, the box on,
+    /// Fill bed, Generate. `BREADSLICER_ONE_RAFT_MODEL` names the model,
+    /// `BREADSLICER_ONE_RAFT_DUMP` a file the scene is written to, triangle
+    /// by triangle (a byte for the kind: 0 model, 1 supports, 2 the raft; then
+    /// the leaf's index as a u16).
+    #[test]
+    #[ignore = "a measurement on a real model"]
+    fn one_raft_for_all_on_a_filled_plate() {
+        use std::io::Write;
+        use std::time::{Duration, Instant};
+        let Some(path) = std::env::var_os("BREADSLICER_ONE_RAFT_MODEL") else {
+            return;
+        };
+        let path = PathBuf::from(path);
+        on_fresh_slint_thread(move || {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            let volume = BuildVolume::new(223.642, 126.976, 230.0);
+            controller.set_build_volume(volume);
+            let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("it opens");
+            let scene = match loaded.content {
+                sc_project_formats::LoadedContent::Mesh(scene) => scene,
+                sc_project_formats::LoadedContent::Project(p) => p.scene,
+            };
+            let document = controller.document();
+            document.install_graph(scene, path.clone());
+            // In the middle of the plate, lifted 5 mm as Generate lifts it.
+            let model = document
+                .with_scene(|s| s.leaf_id_at_index(0))
+                .flatten()
+                .expect("a model");
+            // Turned as Damian had it: `BREADSLICER_ONE_RAFT_TURN` = x,z degrees.
+            if let Ok(turn) = std::env::var("BREADSLICER_ONE_RAFT_TURN") {
+                let d: Vec<f64> = turn.split(',').filter_map(|v| v.parse().ok()).collect();
+                let before = document
+                    .with_scene(|s| s.leaf(model).map(|q| q.local_transform()))
+                    .flatten()
+                    .unwrap();
+                let r = sc_mesh_core::transform::AffineTransform3D::from_rotation_z(
+                    d.get(1).copied().unwrap_or(0.0).to_radians(),
+                )
+                .compose(
+                    &sc_mesh_core::transform::AffineTransform3D::from_rotation_x(
+                        d.first().copied().unwrap_or(0.0).to_radians(),
+                    ),
+                );
+                let after = Transform3D::Affine(r.compose(&match before {
+                    Transform3D::Affine(a) => a,
+                    Transform3D::Identity => sc_mesh_core::transform::AffineTransform3D::identity(),
+                }));
+                document
+                    .apply_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+                        node_id: model,
+                        before,
+                        after,
+                    })
+                    .unwrap();
+            }
+            let (lo, hi) = document
+                .with_scene(|s| {
+                    let q = s.leaf(model)?;
+                    let b = q.transformed_aabb(q.world_transform())?;
+                    Some((b.min().coords(), b.max().coords()))
+                })
+                .flatten()
+                .expect("its box");
+            let before = document
+                .with_scene(|s| s.leaf(model).map(|q| q.local_transform()))
+                .flatten()
+                .unwrap();
+            let lift = sc_mesh_core::transform::AffineTransform3D::from_translation([
+                -(f64::from(lo[0]) + f64::from(hi[0])) / 2.0,
+                -(f64::from(lo[1]) + f64::from(hi[1])) / 2.0,
+                5.0 - f64::from(lo[2]),
+            ]);
+            let after = Transform3D::Affine(lift.compose(&match before {
+                Transform3D::Affine(a) => a,
+                Transform3D::Identity => sc_mesh_core::transform::AffineTransform3D::identity(),
+            }));
+            let edit = sc_scene_edit::SceneEdit::SetLocalTransform {
+                node_id: model,
+                before,
+                after,
+            };
+            document.apply_edit(edit.clone()).unwrap();
+            document.push_edit(edit);
+            document.set_selection(Selection::One(LeafId(model)));
+            let (arrange, supports) = {
+                let windows = app.main_windows.borrow();
+                let drivers = &windows[&id]._drivers;
+                (
+                    drivers._arrange_run.clone(),
+                    drivers._df_support_run.clone(),
+                )
+            };
+            // `BREADSLICER_ONE_RAFT_BOX=0` leaves one raft for all off.
+            let one_raft = std::env::var("BREADSLICER_ONE_RAFT_BOX").map_or(true, |v| v != "0");
+            if one_raft {
+                window.invoke_support_option_changed(14, 1.0);
+                assert!(window.get_arrange_one_raft());
+            }
+
+            let t = Instant::now();
+            window.invoke_arrange_fill_requested();
+            while !arrange.fill_done_for_test() {
+                thread::sleep(Duration::from_millis(16));
+            }
+            window.invoke_arrange_finished();
+            println!(
+                "fill bed: {:.2} s, {}",
+                t.elapsed().as_secs_f64(),
+                window.get_arrange_last_run()
+            );
+
+            // `BREADSLICER_ONE_RAFT_ARRANGE=1`: Arrange all too, before
+            // Generate, the models still without supports.
+            if std::env::var_os("BREADSLICER_ONE_RAFT_ARRANGE").is_some() {
+                let t = Instant::now();
+                arrange.arrange_all_for_test();
+                while !arrange.across_done_for_test() {
+                    thread::sleep(Duration::from_millis(16));
+                }
+                window.invoke_arrange_finished();
+                println!(
+                    "arrange all: {:.2} s, {}",
+                    t.elapsed().as_secs_f64(),
+                    window.get_arrange_last_run()
+                );
+            }
+            // Where the models stand before Generate: it moves none (#556).
+            let poses = |document: &SceneDocument| {
+                document
+                    .with_scene(|s| {
+                        (0..)
+                            .map_while(|i| s.leaf_id_at_index(i))
+                            .filter_map(|leaf| {
+                                let q = s.leaf(leaf)?;
+                                (!sc_geom::df_supports::is_any_support_mesh(q.mesh()))
+                                    .then(|| (leaf, q.world_transform()))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            };
+            let before = poses(&document);
+            let t = Instant::now();
+            supports.generate_now(supports.forecast_ctx().request.options);
+            println!(
+                "generated: {:.2} s, {}, arranging {}",
+                t.elapsed().as_secs_f64(),
+                window.get_supports_last_run(),
+                window.get_arranging()
+            );
+            if window.get_arranging() {
+                while !arrange.across_done_for_test() {
+                    crate::test_support::slint_thread::render_frames();
+                    thread::sleep(Duration::from_millis(16));
+                }
+                window.invoke_arrange_finished();
+                println!("arranged again: {}", window.get_arrange_last_run());
+            }
+            let after = poses(&document);
+            let moved = before
+                .iter()
+                .filter(|(leaf, at)| {
+                    after
+                        .iter()
+                        .find(|(l, _)| l == leaf)
+                        .is_none_or(|(_, now)| {
+                            let affine = |t: &Transform3D| match t {
+                                Transform3D::Affine(a) => *a,
+                                Transform3D::Identity => {
+                                    sc_mesh_core::transform::AffineTransform3D::identity()
+                                }
+                            };
+                            let (a, b) = (affine(at), affine(now));
+                            (0..2).any(|k| (a.translation()[k] - b.translation()[k]).abs() > 1e-3)
+                        })
+                })
+                .count();
+            println!("models Generate moved in X/Y: {moved}");
+            let t = Instant::now();
+            supports.settle_plate_rafts();
+            println!("raft settled in {:.2} s", t.elapsed().as_secs_f64());
+            let kind = |mesh: &sc_mesh_core::IndexedMesh| -> u8 {
+                if sc_geom::df_supports::is_plate_raft(mesh) {
+                    2
+                } else if sc_geom::df_supports::is_any_support_mesh(mesh) {
+                    1
+                } else {
+                    0
+                }
+            };
+            let counts = document
+                .with_scene(|s| {
+                    let mut c = [0usize; 3];
+                    for leaf in (0..).map_while(|i| s.leaf_id_at_index(i)) {
+                        if let Some(q) = s.leaf(leaf) {
+                            c[usize::from(kind(q.mesh()))] += 1;
+                        }
+                    }
+                    c
+                })
+                .unwrap();
+            println!(
+                "scene: {} models, {} support sets, {} rafts; undo {}",
+                counts[0],
+                counts[1],
+                counts[2],
+                document.undo_len()
+            );
+            if let Some(out) = std::env::var_os("BREADSLICER_ONE_RAFT_DUMP") {
+                let mut f = std::io::BufWriter::new(std::fs::File::create(out).unwrap());
+                document.with_scene(|s| {
+                    for (index, leaf) in (0..).map_while(|i| s.leaf_id_at_index(i)).enumerate() {
+                        let Some(q) = s.leaf(leaf) else { continue };
+                        let world = q.world_transform();
+                        let mesh = q.mesh();
+                        let k = kind(mesh);
+                        let vs = mesh.vertices();
+                        for face in mesh.faces() {
+                            f.write_all(&[k]).unwrap();
+                            f.write_all(&(index as u16).to_le_bytes()).unwrap();
+                            for i in 0..3 {
+                                let v = world.apply_to_vertex(vs[usize::from(face.vertices[i])]);
+                                for c in v.coords() {
+                                    f.write_all(&c.to_le_bytes()).unwrap();
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
     }
 
     #[test]

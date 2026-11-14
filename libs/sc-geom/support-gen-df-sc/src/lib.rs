@@ -59,6 +59,46 @@ pub use support_gen_df::supports::auto_support::zone_rules::{
 /// The name the generated support mesh carries.
 pub const DF_SUPPORT_MESH_NAME: &str = "Supports";
 
+/// The name one raft for all carries (#556): the raft under every set of a
+/// plate standing on one, a mesh of its own.
+pub const PLATE_RAFT_NAME: &str = "Raft";
+
+/// Whether `mesh` is one raft for all (#556).
+pub fn is_plate_raft(mesh: &IndexedMesh) -> bool {
+    mesh.meta()
+        .as_ref()
+        .and_then(|m| m.name.as_deref())
+        .is_some_and(|name| name == PLATE_RAFT_NAME)
+}
+
+/// One raft for all (#556): a raft of lines under the roots of every set of
+/// `sets` that stands on one, each moved by its motion (where its leaf moved
+/// it since its session was drawn), in world space. `None` when none does
+/// or nothing is drawn.
+pub fn plate_raft(
+    sets: &[(
+        &DfSupportSession,
+        sc_mesh_core::transform::AffineTransform3D,
+    )],
+) -> Option<IndexedMesh> {
+    let on: Vec<_> = sets
+        .iter()
+        .filter(|(session, _)| session.stands_on_one_raft())
+        .collect();
+    let (raft, robust) = on.first()?.0.raft_settings();
+    let mut circles: Vec<_> = on
+        .iter()
+        .flat_map(|(session, motion)| session.raft_roots(motion))
+        .collect();
+    // The same scene draws the same raft whatever order its sets come in.
+    circles.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    let sink = support_gen_df::features::slicing::support_world_triangles::plate_raft_parts(
+        &circles, &raft, robust,
+    )
+    .ok()?;
+    weld_parts(&sink.floats, &sink.parts, PLATE_RAFT_NAME)
+}
+
 /// The name support meshes carried before, still found in saved projects.
 const LEGACY_SUPPORT_MESH_NAME: &str = "Supports (DragonFruit)";
 
@@ -83,14 +123,14 @@ pub use sc_mesh_core::presupported::{
 /// Whether a mesh named `name` is supports of any kind: generated here, or
 /// imported with a pre-supported file (#258).
 pub fn is_any_support_mesh_name(name: &str) -> bool {
-    is_support_mesh_name(name) || is_imported_supports_name(name)
+    is_support_mesh_name(name) || is_imported_supports_name(name) || name == PLATE_RAFT_NAME
 }
 
 /// Whether `mesh` is supports of any kind: generated here, or imported with
 /// a pre-supported file (#258). Neither is a model: a run supports neither,
 /// and neither is hollowed, oriented or arranged on its own.
 pub fn is_any_support_mesh(mesh: &IndexedMesh) -> bool {
-    is_support_mesh(mesh) || is_imported_supports(mesh)
+    is_support_mesh(mesh) || is_imported_supports(mesh) || is_plate_raft(mesh)
 }
 
 /// What the run is asked for.
@@ -651,11 +691,88 @@ fn copies_of(models: &[(NodeId, ModelInput)], request: &DfSupportRequest) -> Vec
     of
 }
 
+/// Where a model is made its supports standing alone (mm): near the
+/// plate's middle, off its very origin, where a lone tip right above it
+/// found no way down (a 1 mm cube got no support); in eighths of a
+/// millimetre, so moving a model there and back adds no rounding.
+const STANDING_ALONE_AT: [f64; 2] = [0.375, 0.625];
+
+/// `model` as it stands, but at [`STANDING_ALONE_AT`] and not turned about
+/// Z (#556): its supports made there are the same wherever it is moved in
+/// X/Y and however it is turned about Z, so the room Fill bed and Arrange
+/// keep for them, worked out before, is the room they take.
+fn standing_alone(model: &ModelInput) -> ModelInput {
+    let mut model = model.clone();
+    model.transform.position.x = STANDING_ALONE_AT[0];
+    model.transform.position.y = STANDING_ALONE_AT[1];
+    model.transform.rotation.z = 0.0;
+    model
+}
+
+/// Runs over models one by one, as one: their sets in order, their counts
+/// summed.
+fn merged(runs: Vec<DfSupportOutcome>) -> DfSupportOutcome {
+    let mut runs = runs.into_iter();
+    let Some(mut out) = runs.next() else {
+        return DfSupportOutcome {
+            sets: Vec::new(),
+            support: SupportState::default(),
+            models: 0,
+            islands: 0,
+            placed: Vec::new(),
+            triangles: 0,
+            crowded: Vec::new(),
+            timings: PerfFrame::default(),
+        };
+    };
+    for run in runs {
+        out.sets.extend(run.sets);
+        out.models += run.models;
+        out.islands += run.islands;
+        out.triangles += run.triangles;
+        for (name, count) in run.placed {
+            match out.placed.iter_mut().find(|(k, _)| *k == name) {
+                Some(entry) => entry.1 += count,
+                None => out.placed.push((name, count)),
+            }
+        }
+        let (to, from) = (&mut out.support.collections, run.support.collections);
+        to.roots.extend(from.roots);
+        to.trunks.extend(from.trunks);
+        to.branches.extend(from.branches);
+        to.leaves.extend(from.leaves);
+        to.twigs.extend(from.twigs);
+        to.sticks.extend(from.sticks);
+        to.braces.extend(from.braces);
+        to.stumps.extend(from.stumps);
+        to.kickstands.extend(from.kickstands);
+        to.knots.extend(from.knots);
+        out.timings.total += run.timings.total;
+        for entry in run.timings.entries {
+            match out
+                .timings
+                .entries
+                .iter_mut()
+                .find(|e| e.label == entry.label)
+            {
+                Some(e) => {
+                    e.total += entry.total;
+                    e.count += entry.count;
+                }
+                None => out.timings.entries.push(entry),
+            }
+        }
+    }
+    out
+}
+
 /// The run of `request` over `models`, made once for each group of copies
 /// standing alike ([`copies_of`]) and handed to the rest of the group: the
-/// first one's supports turned and moved onto each, drawn as its mesh. The
-/// supports of a copy are not placed knowing its neighbours: the sets that
-/// run into another model are named in [`DfSupportOutcome::crowded`].
+/// supports made for the model [`standing_alone`] turned and moved onto
+/// each, drawn as its mesh. A model whose hand edits are kept is run as it
+/// stands. The supports of a copy are not placed knowing its neighbours:
+/// the sets that run into another model are named in
+/// [`DfSupportOutcome::crowded`].
 fn run_with_copies(
     scene: &Scene,
     models: &[(NodeId, ModelInput)],
@@ -664,16 +781,43 @@ fn run_with_copies(
     id_prefix: String,
 ) -> Result<DfSupportOutcome, JobError> {
     let of = copies_of(models, request);
-    if of.iter().all(Option::is_none) {
-        return run_df_supports(models, request, worker, id_prefix, &[]);
-    }
+    let keeps = |leaf: &NodeId| request.keep_edits.iter().any(|(m, _)| m == leaf);
     let firsts: Vec<usize> = (0..models.len()).filter(|&i| of[i].is_none()).collect();
     let copies: Vec<u64> = firsts
         .iter()
         .map(|&f| 1 + of.iter().filter(|o| **o == Some(f)).count() as u64)
         .collect();
-    let leaves: Vec<(NodeId, ModelInput)> = firsts.iter().map(|&f| models[f].clone()).collect();
-    let mut outcome = run_df_supports(&leaves, request, worker, id_prefix, &copies)?;
+    // What each first one is run as: alone, unless its hand edits are kept.
+    let alone: Vec<Option<ModelInput>> = firsts
+        .iter()
+        .map(|&f| (!keeps(&models[f].0)).then(|| standing_alone(&models[f].1)))
+        .collect();
+    let leaves: Vec<(NodeId, ModelInput)> = firsts
+        .iter()
+        .zip(&alone)
+        .map(|(&f, alone)| match alone {
+            Some(input) => (models[f].0, input.clone()),
+            None => models[f].clone(),
+        })
+        .collect();
+    // Each first one in a run of its own: standing alone in the middle of
+    // the plate, models would stand in each other.
+    let mut runs = Vec::with_capacity(leaves.len());
+    for (k, leaf) in leaves.iter().enumerate() {
+        let prefix = if k == 0 {
+            id_prefix.clone()
+        } else {
+            format!("{id_prefix}m{k}")
+        };
+        runs.push(run_df_supports(
+            std::slice::from_ref(leaf),
+            request,
+            worker,
+            prefix,
+            &copies[k..=k],
+        )?);
+    }
+    let mut outcome = merged(runs);
     let mut made: Vec<Option<DfSupportSet>> = outcome.sets.drain(..).map(Some).collect();
     // The sets in model order: each first one's, then each copy's from it.
     let mut sets: Vec<DfSupportSet> = Vec::with_capacity(models.len());
@@ -685,7 +829,17 @@ fn run_with_copies(
         let set = match of[i] {
             None => {
                 let k = firsts.iter().position(|&f| f == i).expect("a first");
-                made[k].take()
+                // Made standing alone: turned and moved to where it stands,
+                // its own drawing.
+                match (&alone[k], made[k].take()) {
+                    (Some(input), Some(set)) => {
+                        let mut carried = carried_set(&set, 0, input, &models[i]);
+                        carried.same_as = None;
+                        carried.kept = set.kept;
+                        Some(carried)
+                    }
+                    (_, set) => set,
+                }
             }
             Some(first) if at[first] != usize::MAX => {
                 let source = &sets[at[first]];
@@ -940,16 +1094,24 @@ pub fn start_df_prescan(scene: &Scene, request: DfSupportRequest) -> JobHandle<D
             let leaves =
                 scene_model_leaves(&scene, None).map_err(|e| JobError::Failed(e.to_string()))?;
             // A copy standing as an earlier model does takes that one's
-            // supports (#561): only the first of each is scanned.
+            // supports (#561): only the first of each is scanned, as the run
+            // makes its supports, standing alone (#556).
             let of = copies_of(&leaves, &request);
-            let models: Vec<&ModelInput> = leaves
+            let keeps = |leaf: &NodeId| request.keep_edits.iter().any(|(m, _)| m == leaf);
+            let models: Vec<ModelInput> = leaves
                 .iter()
                 .zip(&of)
                 .filter(|(_, of)| of.is_none())
-                .map(|((_, model), _)| model)
+                .map(|((leaf, model), _)| {
+                    if keeps(leaf) {
+                        model.clone()
+                    } else {
+                        standing_alone(model)
+                    }
+                })
                 .collect();
             let mut scans = ScanCache::default();
-            for model in models.iter().copied() {
+            for model in &models {
                 if worker.is_cancelled() {
                     return Err(JobError::Cancelled);
                 }

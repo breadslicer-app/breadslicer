@@ -238,7 +238,8 @@ fn a_set_rebuilds_among_other_models() {
 /// 1 document: it opens as one set per model, the first in the file's leaf.
 #[test]
 fn a_version_1_document_of_two_models_opens_as_two_sets() {
-    let two = scene_with(vec![(cube(), [0.0, 0.0, 8.0]), (cube(), [40.0, 0.0, 8.0])]);
+    // Not copies of each other (#561): a run then made each its own.
+    let two = scene_with(vec![(cube(), [0.0, 0.0, 8.0]), (cube(), [40.0, 0.0, 6.0])]);
     let outcome = start_df_supports(&two, DfSupportRequest::default())
         .unwrap()
         .join()
@@ -274,7 +275,7 @@ fn a_version_1_document_of_two_models_opens_as_two_sets() {
         .unwrap();
     reopened.add_root(leaf).unwrap();
     let mut models = Vec::new();
-    for offset in [[0.0, 0.0, 8.0], [40.0, 0.0, 8.0]] {
+    for offset in [[0.0, 0.0, 8.0], [40.0, 0.0, 6.0]] {
         let id = reopened
             .add_leaf(
                 None,
@@ -296,9 +297,13 @@ fn a_version_1_document_of_two_models_opens_as_two_sets() {
             set.session.state().collections.roots.len(),
             original.session.state().collections.roots.len()
         );
+        // Drawn again where its model stands. The shared document is made
+        // here from two runs, one per model (#556), where an old file came
+        // from one run: the split draws a few joints apart.
         let shown = reopened.leaf_mesh_arc(set.leaf).expect("a support leaf");
         let drawn = original.mesh.as_ref().unwrap();
-        assert_eq!(shown.faces().len(), drawn.faces().len());
+        let (a, b) = (shown.faces().len() as f64, drawn.faces().len() as f64);
+        assert!((a - b).abs() <= b * 0.01, "{a} faces against {b}");
     }
 }
 

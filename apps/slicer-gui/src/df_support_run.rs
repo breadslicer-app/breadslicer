@@ -196,6 +196,8 @@ pub(crate) struct DfSupportRun {
     regenerating: RefCell<Option<(SceneRevision, SupportsWanted)>>,
     poll_timer: Rc<slint::Timer>,
     prescan: RefCell<Prescan>,
+    /// One raft for all (#556), kept in step with its sets.
+    plate_rafts: crate::plate_raft::PlateRafts,
     /// Supports computed while the person works on something else.
     ahead: RefCell<Ahead>,
     /// Where supports are recommended while placed by hand (#524).
@@ -1515,6 +1517,15 @@ fn save_hand_sizes(hand: &ZonePreset) {
     }
 }
 
+/// `options` as a preset holds them: without one raft for all, which is how
+/// the plate prints (#556).
+fn preset_part(options: &DfSupportOptions) -> DfSupportOptions {
+    DfSupportOptions {
+        one_raft: false,
+        ..options.clone()
+    }
+}
+
 /// Whether the shape panel shows the support as a plan, as it was left.
 fn load_shape_flat() -> bool {
     support_data_dir()
@@ -1652,6 +1663,7 @@ impl DfSupportRun {
             regenerating: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
+            plate_rafts: crate::plate_raft::PlateRafts::default(),
             ahead: RefCell::new(Ahead::default()),
             hints: RefCell::new(crate::support_hints::Hints::default()),
             last_change,
@@ -2263,6 +2275,17 @@ impl DfSupportRun {
         }
         drop(prescan);
         self.heal_stale_sets(&ui);
+        if !ui.get_loading()
+            && !ui.get_slicing_in_progress()
+            && !ui.get_repairing_in_progress()
+            && !ui.get_arranging()
+            && self.handle.borrow().is_none()
+            && !self.editing()
+            && !self.ctrl.is_mid_gesture()
+        {
+            self.plate_rafts
+                .tick(&self.document, &self.ctrl.build_volume());
+        }
         self.support_hints(&ui);
         let mut prescan = self.prescan.borrow_mut();
         let tab_wants = matches!(
@@ -2792,6 +2815,29 @@ impl DfSupportRun {
         request
     }
 
+    /// What a model with no supports yet is measured with by Fill bed and
+    /// Arrange (#556): the request a Generate press makes for it, the lift
+    /// it gets resting on the plate, and the top of one raft for all.
+    pub(crate) fn forecast_ctx(&self) -> crate::support_forecast::ForecastCtx {
+        let mut request = self.request_for_printer();
+        request.options = self.options.borrow().clone();
+        let lift_to_mm = self
+            .bus
+            .snapshot()
+            .lift_models_on_plate
+            .then(|| support_lift_mm(&request.options, request.layer_height_mm));
+        let raft_top_mm = if request.options.one_raft {
+            request.options.raft_top_mm().unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        crate::support_forecast::ForecastCtx {
+            request,
+            lift_to_mm,
+            raft_top_mm,
+        }
+    }
+
     /// The models a Generate press supports (#197, #388): every selected
     /// model and every model selected supports stand on, in the scene's
     /// order, each given its own set by the one run. `None`, for every
@@ -2867,7 +2913,10 @@ impl DfSupportRun {
 
     /// Pushes the options and the preset list to the Supports tab.
     fn push_options(&self, ui: &MainWindow) {
-        let o = self.options.borrow().clone();
+        let full = self.options.borrow().clone();
+        // One raft for all is how the plate prints, not part of a preset
+        // (#556): the presets are told apart without it.
+        let o = preset_part(&full);
         let presets = self.presets.borrow();
         let names: Vec<slint::SharedString> = presets
             .iter()
@@ -2895,13 +2944,14 @@ impl DfSupportRun {
         ui.set_support_stabilization(o.stabilization);
         ui.set_support_bracing(o.bracing);
         ui.set_support_smooth(o.smooth_shafts);
-        ui.set_support_raft_index(match o.raft {
+        ui.set_support_raft_index(match full.raft_drawn() {
             RaftMode::Solid => 0,
             RaftMode::Lines => 1,
             RaftMode::Off => 2,
         });
         ui.set_support_raft_thickness(o.raft_thickness_mm as f32);
         ui.set_support_raft_wall(o.raft_wall);
+        ui.set_arrange_one_raft(full.one_raft);
         ui.set_support_zone_summary(zone_summary(&o));
         ui.set_support_grid_on(o.zones.as_ref().is_some_and(|z| z.grid_mm.is_some()));
         ui.set_support_grid_spacing(shown_grid_mm(&o) as f32);
@@ -3773,10 +3823,11 @@ impl DfSupportRun {
         if let Some(i) = self.editing.get() {
             let mut presets = self.presets.borrow_mut();
             if let Some(p) = presets.get_mut(i).filter(|p| p.built_in) {
+                let kept = preset_part(&options);
                 if let Some(factory) = p.factory.as_ref() {
-                    save_card(i, &options, factory);
+                    save_card(i, &kept, factory);
                 }
-                p.options = options.clone();
+                p.options = kept;
             }
         }
         *self.options.borrow_mut() = options;
@@ -3952,6 +4003,22 @@ impl DfSupportRun {
         self.finish(outcome);
     }
 
+    /// Draws the plates' one raft for all (#556) until the scene stands
+    /// still with it, as the watcher does: for tests.
+    #[cfg(test)]
+    pub(crate) fn settle_plate_rafts(&self) {
+        let volume = self.ctrl.build_volume();
+        for _ in 0..2000 {
+            let revision = self.document.scene_revision();
+            self.plate_rafts.tick(&self.document, &volume);
+            std::thread::sleep(Duration::from_millis(5));
+            self.plate_rafts.tick(&self.document, &volume);
+            if self.document.scene_revision() == revision && !self.plate_rafts.busy() {
+                return;
+            }
+        }
+    }
+
     /// Waits for the hand edit being made off the UI thread, and settles it
     /// as the UI's poll does. Returns the longest the UI thread was held by
     /// one poll: what landing the edit costs it.
@@ -4010,7 +4077,19 @@ impl DfSupportRun {
                     2 => RaftMode::Off,
                     _ => RaftMode::Solid,
                 };
+                // One raft for all stands on lines (#556): lines picked keep
+                // it, another raft turns it off.
+                if o.one_raft && o.raft == RaftMode::Lines {
+                    // As it stood: the preset keeps its raft under it.
+                    o.raft = self.options.borrow().raft;
+                } else {
+                    o.one_raft = false;
+                }
             }
+            // One raft for all (#556): a raft of lines, drawn once for the
+            // plate under every set; the preset keeps its own raft for when
+            // it goes off.
+            14 => o.one_raft = on,
             10 => o.raft_thickness_mm = v,
             11 => o.raft_wall = on,
             12 | 13 => {
@@ -4027,7 +4106,7 @@ impl DfSupportRun {
             _ => return,
         }
         self.set_options(o);
-        if matches!(code, 9..=11) {
+        if matches!(code, 9..=11 | 14) {
             self.rafts_follow();
         }
     }
@@ -4146,7 +4225,7 @@ impl DfSupportRun {
     /// they share the most with, which takes them as its changes. Options
     /// that are one of the person's own presets are none.
     fn find_card(&self) {
-        let o = self.options.borrow().clone();
+        let o = preset_part(&self.options.borrow());
         let mut presets = self.presets.borrow_mut();
         let built_in = presets.iter().take_while(|p| p.built_in).count();
         if let Some(i) = presets.iter().position(|p| p.options == o) {
@@ -4175,7 +4254,10 @@ impl DfSupportRun {
             .borrow()
             .get(index.max(0) as usize)
             .map(|p| p.options.clone());
-        if let Some(options) = picked {
+        if let Some(mut options) = picked {
+            // One raft for all is how the plate prints, not the preset's: it
+            // stays on (#556).
+            options.one_raft = self.options.borrow().one_raft;
             let built_in = self
                 .presets
                 .borrow()
@@ -5832,6 +5914,7 @@ impl DfSupportRun {
                     .any(|(id, z)| *id == model && *z < crate::raft_clash::RESTING_MM);
                 if rests {
                     request.options.raft = RaftMode::Off;
+                    request.options.one_raft = false;
                 }
                 let session =
                     sc_geom::df_supports::empty_df_session(spatial.graph(), model, &request)
@@ -6401,7 +6484,8 @@ impl DfSupportRun {
         }
         // Copies given the supports of one standing like them were placed
         // without looking at their neighbours (#561): where they run into
-        // one, Arrange all spaces the models out.
+        // one, Generate says so and moves nothing; Arrange all spaces the
+        // models out (#556: it measures them with their supports).
         if crowded > 0 {
             self.dialogs.show_info(move || InfoTexts {
                 heading: ctr!("DfSupportDialog", "Supports run into a neighbour"),
@@ -9511,9 +9595,11 @@ mod hand_edit_tests {
                 floor: 0.0,
             };
             document.set_selection(Selection::One(LeafId(model)));
-            let filled = fill_now(&document, &plate, ArrangeOptions::default())
-                .expect("filled")
-                .0;
+            let options = ArrangeOptions {
+                margin_mm: 5.0,
+                ..ArrangeOptions::default()
+            };
+            let filled = fill_now(&document, &plate, options).expect("filled").0;
             assert_eq!(filled.moved.len(), 1, "it moves; {size:?}");
             assert!(filled.copies.len() >= 7, "{}", filled.copies.len());
             assert_ne!(leaf_transform(&document, model), start);
@@ -10537,8 +10623,19 @@ mod hand_edit_tests {
                     "the session keeps the options it ran with"
                 );
                 let (_, mesh) = run.support_leaf().expect("the supports are back");
+                // Drawn again where the model stands: the same mesh, but for
+                // the last bit of a float (the set was drawn standing alone
+                // and moved there, #556).
                 let reopened = mesh.faces() == saved_mesh.faces()
-                    && mesh.vertices() == saved_mesh.vertices()
+                    && mesh.vertices().len() == saved_mesh.vertices().len()
+                    && mesh
+                        .vertices()
+                        .iter()
+                        .zip(saved_mesh.vertices())
+                        .all(|(a, b)| {
+                            let (a, b) = (a.as_array(), b.as_array());
+                            (0..3).all(|k| (a[k] - b[k]).abs() < 1e-4)
+                        })
                     && world_box(&document) == saved_box;
 
                 window.set_support_tool(1);

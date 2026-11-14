@@ -1023,6 +1023,7 @@ impl DfSupportSession {
             recipe.options.raft = o.raft;
             recipe.options.raft_thickness_mm = o.raft_thickness_mm;
             recipe.options.raft_wall = o.raft_wall;
+            recipe.options.one_raft = o.one_raft;
             Arc::new(recipe)
         });
         Some(next)
@@ -2512,6 +2513,47 @@ impl DfSupportSession {
         raft_and_feet_top_mm(&self.state.collections, &self.settings.rafts.global)
     }
 
+    /// Whether this set stands on one raft for all (#556): its drawing has no
+    /// raft of its own, [`crate::plate_raft`] draws it for every such set.
+    pub fn stands_on_one_raft(&self) -> bool {
+        self.settings.raft_apart
+    }
+
+    /// Where this set's roots stand, moved by `motion` (where its leaf moved
+    /// it since), and how wide: what one raft for all is drawn under.
+    pub fn raft_roots(
+        &self,
+        motion: &sc_mesh_core::transform::AffineTransform3D,
+    ) -> Vec<support_gen_df::supports::rafts::crenelated::raft_types::SupportBaseCircle> {
+        let (l, t) = (motion.linear(), motion.translation());
+        self.state
+            .collections
+            .roots
+            .values()
+            .map(|root| {
+                let p = root.transform.pos;
+                support_gen_df::supports::rafts::crenelated::raft_types::SupportBaseCircle {
+                    x: l[0][0] * p.x + l[0][1] * p.y + l[0][2] * p.z + t[0],
+                    y: l[1][0] * p.x + l[1][1] * p.y + l[1][2] * p.z + t[1],
+                    r: root.diameter * 0.5,
+                }
+            })
+            .collect()
+    }
+
+    /// The raft these supports are drawn on.
+    pub(crate) fn raft_settings(
+        &self,
+    ) -> (
+        support_gen_df::supports::rafts::crenelated::raft_types::RaftSettings,
+        bool,
+    ) {
+        (
+            self.settings.rafts.global,
+            self.settings.robust_raft_geometry,
+        )
+    }
+
     /// The tip diameter of support `id`, when it has one.
     fn tip_diameter(&self, id: &str) -> Option<f64> {
         let c = &self.state.collections;
@@ -3623,6 +3665,72 @@ mod session_tests {
         }
     }
 
+    /// #556: a set standing on one raft for all draws no raft of its own,
+    /// its roots keeping their feet on lines; the plate's raft is one mesh
+    /// under the roots of every such set, each where its leaf moved it.
+    #[test]
+    fn one_raft_for_all_is_drawn_once_under_every_set() {
+        use sc_mesh_core::transform::AffineTransform3D;
+        let mut request = crate::DfSupportRequest::default();
+        request.options.one_raft = true;
+        request.options.raft = crate::options::RaftMode::Solid;
+        let mut session = bare_slab(12.0, request);
+        session.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+        session.add_trunk_at([10.0, 5.0, 12.0]).expect("another");
+        assert!(session.stands_on_one_raft());
+        let options = session.options().expect("its options");
+        assert_eq!(
+            options.raft_drawn(),
+            crate::options::RaftMode::Lines,
+            "lines"
+        );
+        assert!(options.one_raft);
+        assert_eq!(
+            session.settings.rafts.global.bottom_mode,
+            RaftBottomMode::Line
+        );
+
+        // Its own drawing: the supports and their feet, no raft.
+        let own = session.mesh().unwrap().expect("drawn");
+        let mut lines = request_lines();
+        let mut with_raft = bare_slab(12.0, std::mem::take(&mut lines));
+        with_raft.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
+        with_raft.add_trunk_at([10.0, 5.0, 12.0]).expect("another");
+        let drawn_with = with_raft.mesh().unwrap().expect("drawn");
+        assert!(
+            own.faces().len() < drawn_with.faces().len(),
+            "no raft of its own"
+        );
+
+        // The plate's raft, under this set and a copy of it moved 30 mm.
+        let moved = AffineTransform3D::from_translation([0.0, 30.0, 0.0]);
+        let raft =
+            crate::plate_raft(&[(&session, AffineTransform3D::identity()), (&session, moved)])
+                .expect("one raft");
+        assert!(crate::is_plate_raft(&raft));
+        assert!(crate::is_any_support_mesh(&raft));
+        let (lo, hi) =
+            raft.vertices()
+                .iter()
+                .fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| {
+                    let p = v.as_array();
+                    (
+                        std::array::from_fn(|k| lo[k].min(p[k])),
+                        std::array::from_fn(|k| hi[k].max(p[k])),
+                    )
+                });
+        assert!(lo[1] < 6.0 && hi[1] > 34.0, "under both: {lo:?} {hi:?}");
+        assert!(f64::from(hi[2]) <= session.raft_top_mm() + 1e-4, "{hi:?}");
+        // A set on a raft of its own adds nothing to it.
+        assert!(crate::plate_raft(&[(&with_raft, AffineTransform3D::identity())]).is_none());
+    }
+
+    fn request_lines() -> crate::DfSupportRequest {
+        let mut request = crate::DfSupportRequest::default();
+        request.options.raft = crate::options::RaftMode::Lines;
+        request
+    }
+
     /// #518: on a line raft the roots stand on small feet, a little wider
     /// than a line, not on their disks; and the feet stay under the height
     /// the view from under the plate hides.
@@ -4554,10 +4662,13 @@ mod session_tests {
         assert_eq!(outcome.crowded, vec![copy]);
     }
 
-    /// A model turned about Z stands on the same raft whether the turn is
-    /// in its mesh or in its transform (#561).
+    /// A model's supports, raft and all, are the same wherever it stands
+    /// moved in X/Y and however it is turned about Z: they are made for it
+    /// standing alone in the middle of the plate, then turned and moved
+    /// with it (#556), so the room Fill bed and Arrange keep for them is
+    /// the room they take.
     #[test]
-    fn a_turned_model_stands_on_the_raft_it_would_baked() {
+    fn a_model_moved_and_turned_takes_its_supports_along() {
         use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
         use sc_scene::LeafPayload;
         let l_shape = [
@@ -4567,53 +4678,35 @@ mod session_tests {
         let base = boxes_scene(&l_shape);
         let leaf = crate::scene_model_leaves(&base, None).unwrap()[0].0;
         let mesh = base.leaf_mesh_arc(leaf).unwrap().clone();
-        let turn = AffineTransform3D::from_translation([60.0, 50.0, 0.0])
-            .compose(&AffineTransform3D::from_rotation_z(0.8));
-        let mut turned = sc_scene::Scene::new();
-        let a = turned
-            .add_leaf(
-                None,
-                Transform3D::Affine(turn),
-                LeafPayload::Mesh(mesh.clone()),
-            )
-            .unwrap();
-        turned.add_root(a).unwrap();
-        let baked_mesh = sc_scene::bake_mesh_to_world(&mesh, &Transform3D::Affine(turn)).unwrap();
-        let mut baked = sc_scene::Scene::new();
-        let b = baked
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(baked_mesh)),
-            )
-            .unwrap();
-        baked.add_root(b).unwrap();
-        let raft = |scene: &sc_scene::Scene| {
-            let out = crate::start_df_supports(scene, crate::DfSupportRequest::default())
+        let standing = |at: AffineTransform3D| {
+            let mut scene = sc_scene::Scene::new();
+            let a = scene
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(at),
+                    LeafPayload::Mesh(mesh.clone()),
+                )
+                .unwrap();
+            scene.add_root(a).unwrap();
+            let out = crate::start_df_supports(&scene, crate::DfSupportRequest::default())
                 .unwrap()
                 .join()
                 .unwrap();
-            let mesh = out.sets[0].mesh.clone().unwrap();
-            let low: Vec<[f32; 3]> = mesh
-                .vertices()
-                .iter()
-                .map(|v| *v.as_array())
-                .filter(|v| v[2] < 0.3)
-                .collect();
-            let lo = low
-                .iter()
-                .fold([f32::MAX; 2], |m, v| [m[0].min(v[0]), m[1].min(v[1])]);
-            let hi = low
-                .iter()
-                .fold([f32::MIN; 2], |m, v| [m[0].max(v[0]), m[1].max(v[1])]);
-            (lo, hi, out.sets[0].session.state().collections.roots.len())
+            out.sets[0].mesh.clone().unwrap()
         };
-        let (a, b) = (raft(&turned), raft(&baked));
-        for k in 0..2 {
-            assert!(
-                (a.0[k] - b.0[k]).abs() < 0.5 && (a.1[k] - b.1[k]).abs() < 0.5,
-                "{a:?} {b:?}"
-            );
+        let plain = standing(AffineTransform3D::identity());
+        let turn = AffineTransform3D::from_translation([60.0, 50.0, 0.0])
+            .compose(&AffineTransform3D::from_rotation_z(0.8));
+        let turned = standing(turn);
+        assert_eq!(plain.faces(), turned.faces());
+        for (p, t) in plain.vertices().iter().zip(turned.vertices()) {
+            let moved = turn.apply_to_vertex(*p).as_array().map(f64::from);
+            let t = t.as_array().map(f64::from);
+            let d = (0..3)
+                .map(|k| (moved[k] - t[k]).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            assert!(d < 1e-3, "{moved:?} against {t:?}");
         }
     }
 

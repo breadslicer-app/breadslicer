@@ -1165,6 +1165,7 @@ export component TransformInspector inherits VerticalLayout {
     in property <float> arrange-margin;
     in property <bool> arrange-turns;
     in property <bool> arrange-shadow-only;
+    in property <bool> arrange-one-raft;
     // Fill bed (#356): a fill in flight, its count so far, and at most how
     // many copies it adds (0: as many as fit).
     in property <bool> arrange-filling;
@@ -1312,6 +1313,17 @@ export component TransformInspector inherits VerticalLayout {
             text: root.arrange-shadow-only
                 ? @tr("Inspector" => "Packs the objects with their supports by their whole shadow: nothing reaches over another object.")
                 : @tr("Inspector" => "Packs the objects with their supports by their real shape: a part may reach over a shorter object, never closer than the gap.");
+        }
+        CheckBox {
+            text: @tr("Inspector" => "One raft for all");
+            checked: root.arrange-one-raft;
+            enabled: !root.arranging;
+            toggled => {
+                root.arrange-option-changed(5, self.checked ? 1 : 0);
+            }
+        }
+        if root.arrange-one-raft: Note {
+            text: @tr("Inspector" => "One raft of lines under every model of the plate: Arrange and Fill bed pack the models closer, by what stands on it.");
         }
         NumberField {
             label: @tr("Inspector" => "Gap");
@@ -1991,6 +2003,8 @@ export component SupportsInspector inherits VerticalLayout {
     in property <int> raft-index;
     in property <float> raft-thickness;
     in property <bool> raft-wall;
+    // One raft for all (#556).
+    in property <bool> one-raft;
     // A zone preset's summary (#360), empty without one: the preset sizes
     // and spaces the supports itself, so the placement knobs give way to it.
     in property <string> zone-summary;
@@ -2761,6 +2775,16 @@ export component SupportsInspector inherits VerticalLayout {
                     root.option-changed(9, i);
                 }
             }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "One raft for all");
+            checked: root.one-raft;
+            toggled => {
+                root.option-changed(14, self.checked ? 1 : 0);
+            }
+        }
+        if root.one-raft: Note {
+            text: @tr("Inspector" => "One raft of lines under every model of the plate, drawn again as they move.");
         }
         NumberField {
             label: @tr("Inspector" => "Thickness");

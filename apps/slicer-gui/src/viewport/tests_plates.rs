@@ -462,7 +462,10 @@ fn arrange_all_adds_plates_for_what_does_not_fit() {
     let applied = crate::arrange_run::arrange_on_plates_now(
         document.as_ref(),
         &v,
-        Default::default(),
+        crate::arrange_run::ArrangeOptions {
+            margin_mm: 5.0,
+            ..Default::default()
+        },
         crate::arrange_run::ArrangeScope::Plates,
     )
     .expect("arranged");
@@ -493,7 +496,10 @@ fn a_plates_own_arrange_sends_what_does_not_fit_to_new_plates() {
     crate::arrange_run::arrange_on_plates_now(
         document.as_ref(),
         &v,
-        Default::default(),
+        crate::arrange_run::ArrangeOptions {
+            margin_mm: 5.0,
+            ..Default::default()
+        },
         crate::arrange_run::ArrangeScope::ActivePlate,
     )
     .expect("arranged");

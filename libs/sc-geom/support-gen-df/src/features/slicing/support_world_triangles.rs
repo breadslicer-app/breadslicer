@@ -34,6 +34,7 @@ use crate::supports::rafts::crenelated::geometry::generate_unioned_line_raft_mes
 use crate::supports::rafts::crenelated::geometry::model_plate_footprint::{
     PlateFootprintSource, collect_model_plate_footprint,
 };
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonWithHoles;
 use crate::supports::rafts::crenelated::geometry::robust_wall::{
     robust_chamfered_base, robust_wall_from_polygons,
 };
@@ -557,6 +558,10 @@ pub struct SupportSliceInput<'a> {
     /// built on rings without collinear points (`robust_wall`), so the raft
     /// is closed and manifold. `false` is DragonFruit's output.
     pub robust_raft_geometry: bool,
+    /// Whether the rafts are drawn; without, the roots keep the feet they
+    /// stand on the raft with (SoulCrafted, #556: one raft for many sets,
+    /// drawn apart by [`plate_raft_parts`]).
+    pub draw_rafts: bool,
 }
 
 /// The entity fields the generic walk needs, read per type.
@@ -1026,7 +1031,25 @@ pub fn build_support_and_raft_world_parts(
         }
     }
 
-    append_slice_rafts(&mut sink, input, &visible_root_ids, &root_model_key)?;
+    if input.draw_rafts {
+        append_slice_rafts(&mut sink, input, &visible_root_ids, &root_model_key)?;
+    }
+    Ok(sink)
+}
+
+/// One raft under every root of `circles` (SoulCrafted, #556): the raft of
+/// many sets standing together, drawn as [`append_slice_rafts`] draws one
+/// model's, with no model to clear.
+pub fn plate_raft_parts(
+    circles: &[SupportBaseCircle],
+    raft: &RaftSettings,
+    robust_raft_geometry: bool,
+) -> Result<TriangleSink, ClipperError> {
+    let mut sink = TriangleSink::default();
+    if raft.bottom_mode == RaftBottomMode::Off || circles.is_empty() {
+        return Ok(sink);
+    }
+    append_raft_of(&mut sink, circles, raft, &[], &[], robust_raft_geometry)?;
     Ok(sink)
 }
 
@@ -1074,12 +1097,35 @@ fn append_slice_rafts(
         if circles.is_empty() {
             continue;
         }
-        let parts = build_raft_footprint_meshes(circles, raft, Some(&clearance))?;
+        append_raft_of(
+            sink,
+            circles,
+            raft,
+            &clearance,
+            &clearance_cut,
+            input.robust_raft_geometry,
+        )?;
+    }
+    Ok(())
+}
+
+/// The raft under the roots `circles`, cleared of `clearance` (its lines of
+/// `clearance_cut`).
+fn append_raft_of(
+    sink: &mut TriangleSink,
+    circles: &[SupportBaseCircle],
+    raft: &RaftSettings,
+    clearance: &[PolygonWithHoles],
+    clearance_cut: &[PolygonWithHoles],
+    robust_raft_geometry: bool,
+) -> Result<(), ClipperError> {
+    {
+        let parts = build_raft_footprint_meshes(circles, raft, Some(clearance))?;
         if parts.base_mesh.is_none() && parts.footprint.is_empty() {
-            continue;
+            return Ok(());
         }
         let trimmed = !is_untrimmed_footprint(&parts.footprint);
-        let robust_base = (input.robust_raft_geometry && trimmed && parts.base_mesh.is_some())
+        let robust_base = (robust_raft_geometry && trimmed && parts.base_mesh.is_some())
             .then(|| robust_chamfered_base(&parts.footprint, raft));
         if let Some(base) = robust_base.as_ref().or(parts.base_mesh.as_ref()) {
             append_geometry_triangles(sink, base);
@@ -1099,7 +1145,7 @@ fn append_slice_rafts(
             let edges: Vec<(Vector2, Vector2)> =
                 pairs.iter().map(|&(a, b)| (nodes[a], nodes[b])).collect();
             let union_edges =
-                filter_line_raft_edges(&edges, Some(&clearance_cut), raft.line_width_mm);
+                filter_line_raft_edges(&edges, Some(clearance_cut), raft.line_width_mm);
             let union = generate_unioned_line_raft_mesh(
                 &union_edges,
                 raft.line_width_mm,
@@ -1122,7 +1168,7 @@ fn append_slice_rafts(
                 }
             }
         }
-        if input.robust_raft_geometry && raft.wall_enabled {
+        if robust_raft_geometry && raft.wall_enabled {
             let base_z = raft_wall_base_height_mm(raft);
             if let Some(wall) = robust_wall_from_polygons(&parts.footprint, raft, base_z)? {
                 append_geometry_triangles(sink, &wall);

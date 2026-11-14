@@ -44,6 +44,7 @@ use crate::error_dialog::{DialogManager, ErrorTexts, HandPlacedChoice, InfoTexts
 use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision};
+use crate::support_forecast::{ForecastCtx, with_forecasts};
 use crate::support_persist::{in_force, model_of};
 use crate::viewport::ViewportController;
 
@@ -66,29 +67,72 @@ pub(crate) struct ArrangeOptions {
     pub(crate) shadow_only: bool,
     /// Fill bed adds at most this many copies; 0 adds as many as fit.
     pub(crate) max_copies: u32,
+    /// One raft for all (#556): the rafts take no room, so they lie on each
+    /// other and print as one; what stands on them keeps the gap.
+    pub(crate) one_raft: bool,
+    /// The top of the scene's rafts when the press was made (mm): under it
+    /// nothing takes room with `one_raft`.
+    pub(crate) raft_top_mm: f32,
 }
+
+/// Above the rafts' top, what is still raft (its rounding, the feet's first
+/// rise) takes no room either.
+const ONE_RAFT_SLACK_MM: f32 = 0.05;
 
 impl Default for ArrangeOptions {
     fn default() -> Self {
         Self {
             gap_mm: 1.0,
-            margin_mm: 5.0,
+            margin_mm: 2.0,
             turns: true,
             shadow_only: false,
             max_copies: 0,
+            one_raft: false,
+            raft_top_mm: 0.0,
         }
     }
 }
 
 impl ArrangeOptions {
     pub(crate) fn settings(self) -> Settings {
+        let (gap, free_below) = if self.one_raft {
+            (
+                self.gap_mm,
+                if self.raft_top_mm > 0.0 {
+                    self.raft_top_mm + ONE_RAFT_SLACK_MM
+                } else {
+                    0.0
+                },
+            )
+        } else {
+            (self.gap_mm, 0.0)
+        };
         Settings {
-            gap: f64::from(self.gap_mm),
+            gap: f64::from(gap),
             margin: f64::from(self.margin_mm),
             shadow_only: self.shadow_only,
             turns: if self.turns { 8 } else { 1 },
+            free_below: f64::from(free_below),
+            // Under one raft for all the models pack tighter (#556);
+            // without it Arrange and Fill bed stay as they are.
+            tight: self.one_raft,
             ..Settings::default()
         }
+    }
+
+    /// These options with one raft for all as the Supports tab has it
+    /// (#556), and the rafts' top of `document` as it stands.
+    pub(crate) fn on(mut self, document: &SceneDocument, one_raft: bool) -> Self {
+        self.one_raft = one_raft;
+        self.raft_top_mm = if self.one_raft {
+            let sessions = document.support_sessions();
+            document
+                .with_scene(|spatial| crate::support_persist::raft_top_mm(spatial, &sessions))
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        self
     }
 }
 
@@ -104,6 +148,9 @@ struct Gathered {
     /// Per body, the leaf that says which plate it stands on (#545): its
     /// model, or the supports no model owns.
     anchors: Vec<NodeId>,
+    /// Per body, whether it is a model with no supports yet: it is measured
+    /// with the supports it will get (#556).
+    bare: Vec<bool>,
 }
 
 /// A run in flight.
@@ -159,6 +206,9 @@ pub(crate) struct ArrangeRun {
     /// The scene the last Arrange all left, with the settings and the
     /// plates it worked with (#560).
     arranged: Cell<Option<(SceneRevision, ArrangeOptions, ArrangeScope)>>,
+    /// What a model with no supports yet is measured with (#556): the
+    /// Supports tab's request, from its driver.
+    forecast: RefCell<Option<Rc<dyn Fn() -> ForecastCtx>>>,
 }
 
 /// The footprints drawn ahead (#560): once the scene has stood still a
@@ -207,6 +257,7 @@ impl ArrangeRun {
             fill: fill::Fill::default(),
             ahead: Ahead::default(),
             arranged: Cell::new(None),
+            forecast: RefCell::new(None),
         });
         run.push_options(ui);
         {
@@ -273,7 +324,7 @@ impl ArrangeRun {
         {
             return;
         }
-        let now = (self.document.scene_revision(), self.options.get());
+        let now = (self.document.scene_revision(), self.options_now());
         if self.ahead.drawn.get() == Some(now) {
             return;
         }
@@ -307,6 +358,36 @@ impl ArrangeRun {
         });
     }
 
+    /// The card's options as a press now uses them: with one raft for all
+    /// as the Supports tab has it (#556).
+    pub(crate) fn options_now(&self) -> ArrangeOptions {
+        let one_raft = self
+            .ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_arrange_one_raft());
+        let mut options = self.options.get().on(&self.document, one_raft);
+        // Under one raft for all the raft the preset draws takes no room,
+        // also before any set is made (#556).
+        if options.one_raft
+            && let Some(ctx) = self.forecast_now()
+        {
+            options.raft_top_mm = options.raft_top_mm.max(ctx.raft_top_mm as f32);
+        }
+        options
+    }
+
+    /// Where the supports a model will get are worked out from (#556): the
+    /// Supports tab's driver.
+    pub(crate) fn set_forecast(&self, source: Rc<dyn Fn() -> ForecastCtx>) {
+        *self.forecast.borrow_mut() = Some(source);
+    }
+
+    /// The context models with no supports yet are measured in, when the
+    /// window has a Supports tab.
+    pub(crate) fn forecast_now(&self) -> Option<ForecastCtx> {
+        self.forecast.borrow().as_ref().map(|source| source())
+    }
+
     /// Stops drawing ahead: a run of its own draws what it needs.
     fn stop_ahead(&self) {
         self.ahead.cancel.store(true, Ordering::Relaxed);
@@ -329,6 +410,14 @@ impl ArrangeRun {
             2 => o.turns = value != 0.0,
             3 => o.shadow_only = value != 0.0,
             4 => o.max_copies = value.round().clamp(0.0, 9999.0) as u32,
+            5 => {
+                // One raft for all is the supports' (#556): the box here
+                // stands for the one in the Supports tab.
+                if let Some(ui) = self.ui.upgrade() {
+                    ui.invoke_support_option_changed(14, value);
+                }
+                return;
+            }
             _ => return,
         }
         self.options.set(o);
@@ -358,14 +447,15 @@ impl ArrangeRun {
         if jobs.is_empty() {
             return;
         }
-        let settings = self.options.get().settings();
+        let settings = self.options_now().settings();
+        let forecast = self.forecast_now();
         let mut leaves = Vec::new();
         let mut names = Vec::new();
         let mut work = Vec::new();
         for (gathered, plate) in jobs {
             leaves.push(gathered.leaves);
             names.push(gathered.names);
-            work.push((gathered.bodies, plate));
+            work.push((gathered.bodies, gathered.bare, plate));
         }
         *self.pending.borrow_mut() = Some(Pending {
             revision: self.document.scene_revision(),
@@ -379,16 +469,19 @@ impl ArrangeRun {
         crate::breadcrumbs::note(&format!(
             "arrange: {} plate(s), {} object(s), selection {selection}",
             work.len(),
-            work.iter().map(|(b, _)| b.len()).sum::<usize>()
+            work.iter().map(|(b, _, _)| b.len()).sum::<usize>()
         ));
         let slot = self.slot.clone();
         let cancel = self.cancel.clone();
         let ui_weak = self.ui.clone();
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                work.iter()
-                    .map(|(bodies, plate)| {
-                        sc_arrange::arrange(bodies, plate, &settings, &cancel).ok()
+                work.into_iter()
+                    .map(|(mut bodies, bare, plate)| {
+                        if let Some(ctx) = &forecast {
+                            with_forecasts(&mut bodies, &bare, ctx, &cancel)?;
+                        }
+                        sc_arrange::arrange(&bodies, &plate, &settings, &cancel).ok()
                     })
                     .collect::<Option<Vec<Outcome>>>()
             }))
@@ -440,7 +533,8 @@ impl ArrangeRun {
         // stands (#560).
         let revision = self.document.scene_revision();
         let last = self.arranged.get();
-        if last == Some((revision, self.options.get(), scope)) {
+        let options = self.options_now();
+        if last == Some((revision, options, scope)) {
             ui.set_arrange_last_run(ctr!(
                 "Inspector",
                 "Already arranged: nothing changed since the last Arrange."
@@ -456,10 +550,12 @@ impl ArrangeRun {
             ui.set_arrange_last_run(ctr!("Inspector", "Everything is already in place."));
             return;
         };
-        let settings = self.options.get().settings();
+        let settings = options.settings();
+        let forecast = self.forecast_now();
         let again = last.is_some_and(|(r, _, _)| r == revision);
-        let (bodies, stands_on, plates) = (
+        let (mut bodies, bare, stands_on, plates) = (
             job.bodies.clone(),
+            job.bare.clone(),
             job.stands_on.clone(),
             job.plates.clone(),
         );
@@ -472,7 +568,7 @@ impl ArrangeRun {
             job,
             started: Instant::now(),
             again,
-            options: self.options.get(),
+            options,
         });
         self.cancel.store(false, Ordering::Relaxed);
         self.stop_ahead();
@@ -482,6 +578,9 @@ impl ArrangeRun {
         let ui_weak = self.ui.clone();
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(ctx) = &forecast {
+                    with_forecasts(&mut bodies, &bare, ctx, &cancel)?;
+                }
                 sc_arrange::arrange_across(&bodies, &stands_on, &plates, &settings, &cancel).ok()
             }))
             .map_err(|payload| panic_message(&payload));
@@ -885,6 +984,11 @@ fn gather(
             i += 1;
             keep.get(i - 1).copied().unwrap_or(false)
         });
+        let mut i = 0;
+        gathered.bare.retain(|_| {
+            i += 1;
+            keep.get(i - 1).copied().unwrap_or(false)
+        });
     }
     Some(gathered).filter(|g| g.bodies.iter().any(|b| !b.fixed))
 }
@@ -902,6 +1006,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             follows: Vec::new(),
             names: Vec::new(),
             anchors: Vec::new(),
+            bare: Vec::new(),
         };
         let mut body_of: HashMap<NodeId, usize> = HashMap::new();
         let part = |leaf: NodeId| {
@@ -931,12 +1036,16 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             gathered.follows.push(Vec::new());
             gathered.names.push(name(row));
             gathered.anchors.push(leaf);
+            gathered.bare.push(true);
         }
         for (row, &leaf) in rows.iter().enumerate() {
             let Some(query) = spatial.leaf(leaf) else {
                 continue;
             };
-            if !is_any_support_mesh(query.mesh()) {
+            // One raft for all (#556) is drawn again where its sets go.
+            if !is_any_support_mesh(query.mesh())
+                || sc_geom::df_supports::is_plate_raft(query.mesh())
+            {
                 continue;
             }
             let Some(support) = part(leaf) else {
@@ -952,6 +1061,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             };
             match model.and_then(|m| body_of.get(&m).copied()) {
                 Some(i) => {
+                    gathered.bare[i] = false;
                     gathered.bodies[i].parts.push(support);
                     // A set in force is redrawn where its model goes, and
                     // imported supports follow it; any other moves with it
@@ -974,6 +1084,7 @@ fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
                     gathered.follows.push(Vec::new());
                     gathered.names.push(name(row));
                     gathered.anchors.push(leaf);
+                    gathered.bare.push(false);
                 }
             }
         }
@@ -1336,12 +1447,20 @@ mod real_scene {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3.0);
+            // One raft for all per run (#556): `1,0` arranges under one
+            // raft first, then each on its own.
+            let one_raft: Vec<bool> = std::env::var("BREADSLICER_ARRANGE_ONE_RAFT")
+                .ok()
+                .map(|v| v.split(',').map(|k| k.trim() == "1").collect())
+                .unwrap_or_default();
             for run in 0..runs {
                 let options = ArrangeOptions {
                     gap_mm: gaps.get(run).copied().unwrap_or(1.0),
+                    one_raft: one_raft.get(run).copied().unwrap_or(false),
                     ..ArrangeOptions::default()
                 };
                 _arrange.options.set(options);
+                let options = options.on(&document, options.one_raft);
                 let settings = options.settings();
                 let busy = idle(wait);
                 let triangles: usize = document
@@ -1355,8 +1474,10 @@ mod real_scene {
                     })
                     .unwrap_or(0);
                 println!(
-                    "before run {run} (gap {}): window busy {busy:.2} s of {wait} s, {} drawings kept, supports {:.1} M triangles, footprints kept {} ({:.0} MB), memory {:.0} MB",
+                    "before run {run} (gap {}, one raft {} at {:.2} mm): window busy {busy:.2} s of {wait} s, {} drawings kept, supports {:.1} M triangles, footprints kept {} ({:.0} MB), memory {:.0} MB",
                     options.gap_mm,
+                    options.one_raft,
+                    options.raft_top_mm,
                     document.support_sessions().borrow().len(),
                     triangles as f64 / 1e6,
                     sc_arrange::kept_parts(),

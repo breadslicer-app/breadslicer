@@ -7742,3 +7742,19 @@ msgstr "Largo"
 msgctxt "Inspector"
 msgid "TRUNK"
 msgstr "TRONCO"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "One raft for all"
+msgstr "Una balsa para todo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "One raft of lines under every model of the plate: Arrange and Fill bed pack the models closer, by what stands on it."
+msgstr "Una sola balsa de líneas bajo todos los modelos de la cama: Acomodar y Llenar plataforma juntan más los modelos, por lo que está arriba de la balsa."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "One raft of lines under every model of the plate, drawn again as they move."
+msgstr "Una sola balsa de líneas bajo todos los modelos de la cama, que se rehace cuando se mueven."
+

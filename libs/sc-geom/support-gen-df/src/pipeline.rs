@@ -131,6 +131,10 @@ pub struct PipelineSettings {
     /// Closed, manifold raft geometry for a contour slicer (SoulCrafted's;
     /// see `robust_wall`). `false` keeps DragonFruit's.
     pub robust_raft_geometry: bool,
+    /// The raft is drawn apart, for many sets at once (SoulCrafted, #556):
+    /// a set's own drawing leaves it out and keeps the feet its roots stand
+    /// on it with.
+    pub raft_apart: bool,
 }
 
 impl PipelineSettings {
@@ -148,6 +152,7 @@ impl PipelineSettings {
             tip_drawing: TipDrawing::default(),
             shaft_style: ShaftStyle::DragonFruit,
             robust_raft_geometry: false,
+            raft_apart: false,
         }
     }
 }
@@ -857,6 +862,7 @@ pub fn support_soup(
         tip_drawing: settings.tip_drawing,
         shaft_style: settings.shaft_style,
         robust_raft_geometry: settings.robust_raft_geometry,
+        draw_rafts: !settings.raft_apart,
     })
 }
 

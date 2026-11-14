@@ -765,9 +765,10 @@ export component MainWindow inherits Window {
     in property <bool> arranging: false;
     in property <string> arrange-last-run;
     in property <float> arrange-gap: 1;
-    in property <float> arrange-margin: 5;
+    in property <float> arrange-margin: 2;
     in property <bool> arrange-turns: true;
     in property <bool> arrange-shadow-only: false;
+    in property <bool> arrange-one-raft: false;
     // Fill bed (#356): a fill in flight (`arranging` is set too), its count
     // so far, and at most how many copies it adds (0: as many as fit).
     in property <bool> arrange-filling: false;
@@ -791,6 +792,8 @@ export component MainWindow inherits Window {
     callback plate-remove-requested(bool);
     // The Arrange tool of the active plate, drawn on its rim (#545).
     callback plate-arrange-requested();
+    // Generate's supports run into a neighbour under one raft for all
+    // (#556): Arrange all, joined to Generate's step.
     // A plate's name being edited where it lies on the plate (#545): the keys
     // go to a hidden field, the name shows on the plate as it is typed.
     in-out property <string> plate-name-text;
@@ -2277,6 +2280,7 @@ export component MainWindow inherits Window {
                                     arrange-margin: root.arrange-margin;
                                     arrange-turns: root.arrange-turns;
                                     arrange-shadow-only: root.arrange-shadow-only;
+                                    arrange-one-raft: root.arrange-one-raft;
                                     plate-count: root.plate-count;
                                     active-plate: root.active-plate;
                                     active-plate-used: root.active-plate-used;
@@ -2453,6 +2457,7 @@ export component MainWindow inherits Window {
                                     raft-index: root.support-raft-index;
                                     raft-thickness: root.support-raft-thickness;
                                     raft-wall: root.support-raft-wall;
+                                    one-raft: root.arrange-one-raft;
                                     zone-summary: root.support-zone-summary;
                                     grid-on: root.support-grid-on;
                                     grid-spacing: root.support-grid-spacing;
