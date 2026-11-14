@@ -10,7 +10,6 @@
 //! `every_test_file_is_a_module` fails when a new file is not listed below.
 
 mod bench_real_model;
-mod df_parity_hollow;
 
 /// A file in `tests/` that is not declared above would never be compiled or
 /// run, because `autotests = false`.
