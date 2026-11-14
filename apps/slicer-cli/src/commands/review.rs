@@ -967,8 +967,9 @@ mod review_output_tests {
 
     #[test]
     fn the_review_knows_the_raft_of_the_generated_supports() {
+        // A raft of lines (#435): 0.6 mm.
         let top = df_raft_top_mm().expect("the default supports stand on a raft");
-        assert!((top - 0.85).abs() < 1e-9, "{top}");
+        assert!((top - 0.6).abs() < 1e-9, "{top}");
     }
 
     #[test]

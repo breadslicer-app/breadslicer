@@ -164,19 +164,46 @@ fn split_at_t_junctions(g: &mut BufferGeometry) {
     for t in corners.as_chunks::<3>().0 {
         let [a, b, c] = *t;
         let flat = a[2] == b[2] && b[2] == c[2];
-        let rims: Vec<Vec<(f64, [f32; 3])>> = if flat {
+        let mut rims: Vec<Vec<(f64, [f32; 3])>> = if flat {
             vec![on_edge(a, b), on_edge(b, c), on_edge(c, a)]
         } else {
             Vec::new()
         };
+        // A point lies on one edge only: on a sliver two edges nearly
+        // overlap, and the same point is found on both (#435).
+        let mut seen: Vec<[f32; 3]> = Vec::new();
+        for rim in &mut rims {
+            rim.retain(|(_, p)| {
+                let new = !seen.contains(p);
+                seen.push(*p);
+                new
+            });
+        }
         if rims.iter().all(Vec::is_empty) {
             for p in [a, b, c] {
                 out.extend_from_slice(&p);
             }
             continue;
         }
+        let corners = [a, b, c];
+        let busy: Vec<usize> = (0..3).filter(|&k| !rims[k].is_empty()).collect();
+        if let [edge] = busy[..] {
+            // Points on one edge: a fan about the corner across from it,
+            // which stands off their line (a fan about the centre of a
+            // sliver may fall on them).
+            let opposite = corners[(edge + 2) % 3];
+            let mut line = vec![corners[edge]];
+            line.extend(rims[edge].iter().map(|&(_, p)| p));
+            line.push(corners[(edge + 1) % 3]);
+            for w in line.windows(2) {
+                for p in [opposite, w[0], w[1]] {
+                    out.extend_from_slice(&p);
+                }
+            }
+            continue;
+        }
         let mut ring = Vec::new();
-        for (corner, rim) in [a, b, c].into_iter().zip(&rims) {
+        for (corner, rim) in corners.into_iter().zip(&rims) {
             ring.push(corner);
             ring.extend(rim.iter().map(|&(_, p)| p));
         }

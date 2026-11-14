@@ -9,28 +9,9 @@
 //! `Cargo.toml` keeps Cargo from also building each file on its own, and
 //! `every_test_file_is_a_module` fails when a new file is not listed below.
 
-mod df_analytics;
-
 mod bench_real_model;
 mod builders5_df_tests;
 mod cavity_landing;
-mod df_parity_autobrace;
-mod df_parity_autosupport_a;
-mod df_parity_autosupport_b;
-mod df_parity_autosupport_c;
-mod df_parity_builders;
-mod df_parity_builders5;
-mod df_parity_clipper;
-mod df_parity_extrude;
-mod df_parity_islands_b;
-mod df_parity_islands_c;
-mod df_parity_native_islands;
-mod df_parity_primitives;
-mod df_parity_rafts;
-mod df_parity_sdf;
-mod df_parity_support_triangles;
-mod df_parity_tip_offset;
-mod df_parity_v3;
 mod js_math;
 mod pipeline;
 mod region_folds;

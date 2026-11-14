@@ -22,7 +22,7 @@ use crate::supports::rafts::crenelated::geometry::build_line_raft_edge_pairs::{
     BuildLineRaftEdgePairsOptions, build_line_raft_edge_pairs,
 };
 use crate::supports::rafts::crenelated::geometry::compute_raft_footprint::{
-    inflate_model_plate_clearance, raft_band_top_mm, raft_wall_base_height_mm,
+    inflate_model_plate_clearance, raft_band_top_mm, raft_solid_height_mm, raft_wall_base_height_mm,
 };
 use crate::supports::rafts::crenelated::geometry::generate_chamfered_beam::generate_chamfered_beam;
 use crate::supports::rafts::crenelated::geometry::generate_raft_from_footprint::{
@@ -300,14 +300,15 @@ pub fn append_contact_cone_primitive(
 /// the shaft's tube is at its full width (SoulCrafted, #360).
 const ROOT_NECK_ABOVE_JOIN_MM: f64 = 1.0;
 
-/// On a line raft a root's foot is a small cone standing on the lines, this
-/// much wider than a line where the lines meet (SoulCrafted, #518): the lines
-/// carry the supports to the plate, and a root's full disk only adds resin
-/// and suction on it.
+/// On a raft a root's foot is a small cone standing on it, this much wider
+/// than a line of a line raft (SoulCrafted, #518; on a solid raft too since
+/// #435): the raft carries the supports to the plate, and a root's full disk
+/// only adds resin, room and suction on it.
 const LINE_FOOT_SPREAD: f64 = 1.15;
 
-/// How wide and how tall a root's foot on a line raft is: its radius at the
-/// lines and the height of its 45° cone up to the shaft's radius.
+/// How wide and how tall a root's foot on a raft is: its radius where it
+/// stands on the raft and the height of its 45° cone up to the shaft's
+/// radius.
 fn line_foot(raft: &RaftSettings, shaft_radius: f64) -> (f64, f64) {
     let radius = js_max(
         shaft_radius,
@@ -317,7 +318,7 @@ fn line_foot(raft: &RaftSettings, shaft_radius: f64) -> (f64, f64) {
 }
 
 /// The radius each root's shaft leaves it at, by root id.
-fn root_shaft_radii(state: &SupportCollections) -> HashMap<&str, f64> {
+pub fn root_shaft_radii(state: &SupportCollections) -> HashMap<&str, f64> {
     let first_radius = |segments: &[Segment]| {
         segments
             .first()
@@ -337,6 +338,26 @@ fn root_shaft_radii(state: &SupportCollections) -> HashMap<&str, f64> {
         }
     }
     radii
+}
+
+/// The circle a root takes on `raft`, by which the raft's outline is drawn
+/// around the roots: its foot as it is drawn, the small one standing on the
+/// raft (#435), so a raft reaches past the roots as little as it can.
+pub fn raft_circle_of(
+    raft: &RaftSettings,
+    radii: &HashMap<&str, f64>,
+    root: &Roots,
+) -> SupportBaseCircle {
+    let r = if raft.bottom_mode == RaftBottomMode::Off {
+        root.diameter * 0.5
+    } else {
+        line_foot(raft, shaft_radius_of(radii, root)).0
+    };
+    SupportBaseCircle {
+        x: root.transform.pos.x,
+        y: root.transform.pos.y,
+        r,
+    }
 }
 
 /// A root's shaft radius, or the share of its disk a shaft takes when none
@@ -701,7 +722,7 @@ pub fn build_support_and_raft_world_triangles(
 /// them: the raft's plate or lines and its wall, each root's disk, and its
 /// cone or its join cone; the neck above, as wide as the shaft, does not count
 /// (SoulCrafted, #481: what the view from under the plate hides). A root on
-/// a line raft counts its foot's cone instead (#518).
+/// a raft counts its foot's cone instead (#518, #435).
 pub fn raft_and_feet_top_mm(state: &SupportCollections, raft: &RaftSettings) -> f64 {
     let raft_on = raft.bottom_mode != RaftBottomMode::Off;
     let raft_top = if raft_on { raft_band_top_mm(raft) } else { 0.0 };
@@ -715,9 +736,9 @@ pub fn raft_and_feet_top_mm(state: &SupportCollections, raft: &RaftSettings) -> 
         .roots
         .values()
         .map(|root| {
-            if raft.bottom_mode == RaftBottomMode::Line {
+            if raft_on {
                 let (_, rise) = line_foot(raft, shaft_radius_of(&radii, root));
-                return root.transform.pos.z + js_max(0.01, raft.line_height_mm) + rise;
+                return root.transform.pos.z + js_max(0.01, raft_solid_height_mm(raft)) + rise;
             }
             let disk_height = js_max(0.01, root.disk_height);
             let foot = match root.join_cone_mm.filter(|j| *j > 0.0) {
@@ -774,12 +795,13 @@ pub fn build_support_and_raft_world_parts(
         let base = root.transform.pos;
         let root_radius = js_max(0.05, root.diameter * 0.5);
         let top_radius = shaft_radius_of(&root_top_radius, root);
-        if input.raft.bottom_mode == RaftBottomMode::Line {
-            // SoulCrafted (#518): on the lines, a pad as wide as the foot up
-            // their height, a 45° cone from it to the shaft, and a neck of
-            // the shaft's width up past where the shaft leaves the root.
+        if input.raft.bottom_mode != RaftBottomMode::Off {
+            // SoulCrafted (#518, #435 for a solid raft): on the raft, a pad as
+            // wide as the foot up its height, a 45° cone from it to the
+            // shaft, and a neck of the shaft's width up past where the shaft
+            // leaves the root.
             let (foot, rise) = line_foot(input.raft, top_radius);
-            let line_top = js_max(0.01, input.raft.line_height_mm);
+            let line_top = js_max(0.01, raft_solid_height_mm(input.raft));
             let up = |z: f64| base.add(Vec3::new(0.0, 0.0, z));
             append_frustum(
                 &mut sink,
@@ -1067,6 +1089,7 @@ fn append_slice_rafts(
     }
     let mut order: Vec<String> = Vec::new();
     let mut by_model: HashMap<String, Vec<SupportBaseCircle>> = HashMap::new();
+    let radii = root_shaft_radii(input.state);
     for root in input.state.roots.values() {
         let by_model_visible = input.visible_model_ids.contains(&root.base.model_id);
         if !by_model_visible && !visible_root_ids.contains(root.base.id.as_str()) {
@@ -1083,11 +1106,7 @@ fn append_slice_rafts(
                 order.push(key);
                 Vec::new()
             })
-            .push(SupportBaseCircle {
-                x: root.transform.pos.x,
-                y: root.transform.pos.y,
-                r: root.diameter * 0.5,
-            });
+            .push(raft_circle_of(raft, &radii, root));
     }
     let clearance =
         collect_model_plate_footprint(input.plate_clearance_models, raft_band_top_mm(raft))?;

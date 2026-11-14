@@ -2,8 +2,6 @@
 //! bulge into a bicone at joints and nowhere else, and on DragonFruit's own
 //! support states they replace the joint spheres without opening the soup
 //! any further.
-//! DragonFruit's style stays the default (its parity is
-//! `df_parity_support_triangles`).
 
 use std::collections::{HashMap, HashSet};
 

@@ -108,7 +108,14 @@ fn prepared(window: &MainWindow) -> Prepared {
         "the model is the hollow"
     );
     assert_eq!(entry.drains.len(), 1, "drained");
-    p.supports.generate_now(Default::default());
+    // On a solid raft: a raft of lines (the default since #435) is drawn
+    // again where the copy lands, and its beams may join by a vertex more or
+    // less there.
+    p.supports
+        .generate_now(sc_geom::df_supports::DfSupportOptions {
+            raft: sc_geom::df_supports::RaftMode::Solid,
+            ..Default::default()
+        });
     let (edit, refused) = p.supports.add_supports_at(&[[46.0, 34.0, 5.0]]);
     assert!(matches!(edit, HandEdit::Applied), "{edit:?} {refused:?}");
     let set = set_of(&p.document, p.model).expect("a set in force");

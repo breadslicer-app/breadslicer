@@ -5001,6 +5001,19 @@ mod window_wiring_tests {
                 window.invoke_support_option_changed(14, 1.0);
                 assert!(window.get_arrange_one_raft());
             }
+            // `BREADSLICER_ONE_RAFT_RAFT=solid|lines|off`: each model's raft.
+            if let Ok(raft) = std::env::var("BREADSLICER_ONE_RAFT_RAFT") {
+                let code = match raft.as_str() {
+                    "solid" => 0.0,
+                    "off" => 2.0,
+                    _ => 1.0,
+                };
+                window.invoke_support_option_changed(9, code);
+            }
+            // `BREADSLICER_ONE_RAFT_WALL=0/1`: the raft's wall off or on.
+            if let Ok(wall) = std::env::var("BREADSLICER_ONE_RAFT_WALL") {
+                window.invoke_support_option_changed(11, if wall == "0" { 0.0 } else { 1.0 });
+            }
 
             let t = Instant::now();
             window.invoke_arrange_fill_requested();
