@@ -3591,7 +3591,7 @@ impl ViewportController {
                 .filter(|&(_, plate)| plate == active)
                 .map(|(id, _)| id)
                 .collect();
-            focus = document.with_their_supports(models);
+            focus = document.with_their_rafts(document.with_their_supports(models));
         }
         *self.focus_cache.borrow_mut() = Some((key, focus.clone()));
         focus

@@ -2047,7 +2047,55 @@ impl SceneDocument {
                 ids.push(owner);
             }
         }
-        self.with_their_supports(ids)
+        self.with_their_rafts(self.with_their_supports(ids))
+    }
+
+    /// `ids`, followed by the one raft for all (#556) under any support set
+    /// among them: that raft is no set's own, but it stands under the sets
+    /// whose footprint on the plate it reaches.
+    pub(crate) fn with_their_rafts(&self, ids: Vec<NodeId>) -> Vec<NodeId> {
+        self.with_scene(|spatial| {
+            let footprint = |id: NodeId| {
+                let query = spatial.leaf(id)?;
+                let aabb = query.transformed_aabb(query.world_transform())?;
+                let (lo, hi) = (aabb.min().coords(), aabb.max().coords());
+                Some([lo[0], lo[1], hi[0], hi[1]])
+            };
+            let sets: Vec<[f32; 4]> = ids
+                .iter()
+                .filter(|&&id| {
+                    spatial.leaf(id).is_some_and(|q| {
+                        sc_geom::df_supports::is_any_support_mesh(q.mesh())
+                            && !sc_geom::df_supports::is_plate_raft(q.mesh())
+                    })
+                })
+                .filter_map(|&id| footprint(id))
+                .collect();
+            if sets.is_empty() {
+                return ids.clone();
+            }
+            let mut all = ids.clone();
+            for raft in (0..).map_while(|i| spatial.leaf_id_at_index(i)) {
+                if all.contains(&raft)
+                    || !spatial
+                        .leaf(raft)
+                        .is_some_and(|q| sc_geom::df_supports::is_plate_raft(q.mesh()))
+                {
+                    continue;
+                }
+                let Some(r) = footprint(raft) else {
+                    continue;
+                };
+                if sets
+                    .iter()
+                    .any(|s| s[0] <= r[2] && r[0] <= s[2] && s[1] <= r[3] && r[1] <= s[3])
+                {
+                    all.push(raft);
+                }
+            }
+            all
+        })
+        .unwrap_or(ids)
     }
 
     /// `ids`, followed by the supports of each model among them that are not
