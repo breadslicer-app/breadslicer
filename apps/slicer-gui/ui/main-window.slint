@@ -313,6 +313,10 @@ export component MainWindow inherits Window {
     in property <bool> support-grid-on;
     in property <float> support-grid-spacing: 7;
     in property <string> support-grid-hint;
+    // Models with supports made on another grid (#576), and the press that
+    // makes theirs again; shown in Supports and in Arrange.
+    in property <int> support-grid-stale;
+    callback support-grid-regenerate();
     callback support-option-changed(int, float);
     // The raft would take the models' first layers (#131): the warning and
     // the label of its lift button, both empty when it does not.
@@ -2281,6 +2285,10 @@ export component MainWindow inherits Window {
                                     arrange-turns: root.arrange-turns;
                                     arrange-shadow-only: root.arrange-shadow-only;
                                     arrange-one-raft: root.arrange-one-raft;
+                                    arrange-grid-stale: root.support-grid-stale;
+                                    arrange-grid-regenerate => {
+                                        root.support-grid-regenerate();
+                                    }
                                     plate-count: root.plate-count;
                                     active-plate: root.active-plate;
                                     active-plate-used: root.active-plate-used;
@@ -2462,6 +2470,10 @@ export component MainWindow inherits Window {
                                     grid-on: root.support-grid-on;
                                     grid-spacing: root.support-grid-spacing;
                                     grid-hint: root.support-grid-hint;
+                                    grid-stale: root.support-grid-stale;
+                                    grid-regenerate => {
+                                        root.support-grid-regenerate();
+                                    }
                                     raft-clash-message: root.support-raft-clash-message;
                                     raft-lift-label: root.support-raft-lift-label;
                                     lift-on-plate: root.support-lift-on-plate;
