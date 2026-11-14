@@ -1185,7 +1185,10 @@ export component SharePicker inherits Rectangle {
             root.cancelled();
         }
     }
+    // Over the click area: it keeps the keyboard from opening on, and must
+    // not keep a click outside the card for itself.
     scope := FocusScope {
+        focus-on-click: false;
         key-pressed(event) => {
             if event.text == Key.Escape {
                 root.cancelled();

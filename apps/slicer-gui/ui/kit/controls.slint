@@ -803,8 +803,12 @@ export component ScCheckBox inherits Rectangle {
             root.flip();
         }
     }
+    // Over the click area: it takes the keyboard from the click, and would
+    // otherwise keep a press for itself while it has no focus, so the first
+    // click only focused the box.
     scope := FocusScope {
         enabled: root.enabled;
+        focus-on-click: false;
         key-pressed(event) => {
             if event.text == " " || event.text == Key.Return {
                 root.flip();
