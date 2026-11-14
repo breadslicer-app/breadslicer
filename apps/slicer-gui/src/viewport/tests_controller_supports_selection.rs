@@ -24,6 +24,8 @@ use crate::{PointerModifiers, WorkspaceSection};
 enum Piece {
     Model,
     Supports,
+    /// The one raft for all of a plate (#556).
+    Raft,
 }
 
 /// A controller holding a unit cube per piece, each its own root at its
@@ -34,9 +36,14 @@ fn plate(pieces: &[(Piece, [f64; 3])], section: WorkspaceSection) -> ViewportCon
     let mut scene = Scene::new();
     for &(piece, at) in pieces {
         let mut mesh = unit_cube_mesh();
-        if let Piece::Supports = piece {
+        let name = match piece {
+            Piece::Model => None,
+            Piece::Supports => Some(sc_geom::df_supports::DF_SUPPORT_MESH_NAME),
+            Piece::Raft => Some(sc_geom::df_supports::PLATE_RAFT_NAME),
+        };
+        if let Some(name) = name {
             mesh.meta = Some(MeshMetadata {
-                name: Some(sc_geom::df_supports::DF_SUPPORT_MESH_NAME.to_owned()),
+                name: Some(name.to_owned()),
                 ..Default::default()
             });
         }
@@ -162,4 +169,84 @@ fn leaving_supports_with_the_supports_selected_selects_nothing() {
     ctrl.on_select_by_index(0);
     ctrl.set_section(WorkspaceSection::Transform);
     assert_eq!(ctrl.selection(), Some(0));
+}
+
+#[test]
+fn nothing_is_selected_in_slice_and_leaving_it_brings_the_selection_back() {
+    // #140: the layers are scrubbed with no selection outline over them.
+    let ctrl = plate(
+        &[
+            (Piece::Model, [0.0; 3]),
+            (Piece::Supports, [3.0, 0.0, 0.0]),
+            (Piece::Model, [10.0, 0.0, 0.0]),
+        ],
+        WorkspaceSection::Supports,
+    );
+    ctrl.on_select_by_index(1);
+    ctrl.set_section(WorkspaceSection::Slice);
+    assert_eq!(ctrl.selection(), None, "the supports selected before");
+    // No click, row, Tab or box selects anything there.
+    click_over(&ctrl, [0.0; 3]);
+    assert_eq!(ctrl.selection(), None, "a click on a model");
+    ctrl.on_select_by_index(0);
+    ctrl.on_toggle_by_index(2);
+    ctrl.on_selection_cycle(1);
+    assert_eq!(ctrl.selection(), None, "the list and Tab");
+    let shift = PointerModifiers {
+        shift: true,
+        ..PointerModifiers::default()
+    };
+    ctrl.on_pointer_down(ScreenPoint::new(5.0, 5.0), shift.clone());
+    ctrl.on_pointer_move(ScreenPoint::new(195.0, 95.0), shift.clone());
+    ctrl.on_pointer_up(ScreenPoint::new(195.0, 95.0), shift);
+    assert_eq!(ctrl.selection(), None, "a box with Shift");
+    // Back in Supports the supports are selected again.
+    ctrl.set_section(WorkspaceSection::Supports);
+    assert_eq!(ctrl.selection(), Some(1));
+    // Back in Transform a model comes back, supports do not (#120).
+    ctrl.on_select_by_index(2);
+    ctrl.set_section(WorkspaceSection::Slice);
+    assert_eq!(ctrl.selection(), None);
+    ctrl.set_section(WorkspaceSection::Transform);
+    assert_eq!(ctrl.selection(), Some(2));
+    // Supports selected in Supports come back as nothing in Transform.
+    ctrl.set_section(WorkspaceSection::Supports);
+    ctrl.on_select_by_index(1);
+    ctrl.set_section(WorkspaceSection::Slice);
+    ctrl.set_section(WorkspaceSection::Transform);
+    assert_eq!(ctrl.selection(), None, "the supports stay in Supports");
+}
+
+#[test]
+fn supports_selected_light_the_one_raft_under_them() {
+    // The one raft for all is no set's own: it is outlined with the sets it
+    // stands under, not with sets elsewhere on the plate.
+    let ctrl = plate(
+        &[
+            (Piece::Model, [0.0; 3]),
+            (Piece::Supports, [0.0, 0.0, -1.0]),
+            (Piece::Raft, [0.5, 0.0, -2.0]),
+            (Piece::Supports, [20.0, 0.0, -1.0]),
+        ],
+        WorkspaceSection::Supports,
+    );
+    let raft = ctrl
+        .document()
+        .with_scene(|s| s.leaf_id_at_index(2))
+        .flatten();
+    ctrl.on_select_by_index(1);
+    assert!(ctrl.document().focus_ids().contains(&raft.unwrap()));
+    ctrl.on_select_by_index(3);
+    assert!(!ctrl.document().focus_ids().contains(&raft.unwrap()));
+    // The raft selected lights every set standing on it, and theirs alone.
+    ctrl.on_select_by_index(2);
+    let lit = ctrl.document().focus_ids();
+    let leaf = |i| {
+        ctrl.document()
+            .with_scene(|s| s.leaf_id_at_index(i))
+            .flatten()
+            .unwrap()
+    };
+    assert!(lit.contains(&leaf(1)), "the set on the raft");
+    assert!(!lit.contains(&leaf(3)), "the set off it");
 }

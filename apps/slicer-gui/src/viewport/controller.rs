@@ -115,6 +115,9 @@ pub(crate) struct ViewportController {
     /// the cap key.
     review_highlight: RefCell<Option<Arc<sc_review::CavityFill>>>,
     highlight_generation: Cell<u64>,
+    /// The selection the Slice tab put aside (#140): nothing is selected
+    /// there, and leaving it brings back what is still in the scene.
+    kept_out_of_slice: RefCell<Selection>,
     /// The name of the printer whose plate the viewport shows, drawn under
     /// the word on the plate's front tab; `None` for the placeholder plate.
     plate_printer_name: RefCell<Option<String>>,
@@ -276,6 +279,7 @@ impl ViewportController {
             render: RenderHost::new(ui),
             input,
             slice_view_key: Cell::new(None),
+            kept_out_of_slice: RefCell::new(Selection::None),
             review_highlight: RefCell::new(None),
             highlight_generation: Cell::new(0),
             plate_printer_name: RefCell::new(None),
@@ -345,6 +349,7 @@ impl ViewportController {
             render: RenderHost::new_for_test(),
             input: InputDispatch::new(),
             slice_view_key: Cell::new(None),
+            kept_out_of_slice: RefCell::new(Selection::None),
             review_highlight: RefCell::new(None),
             highlight_generation: Cell::new(0),
             plate_printer_name: RefCell::new(None),
@@ -1205,12 +1210,31 @@ impl ViewportController {
     /// half-finished transform cannot linger in a section that forbids editing.
     /// Leaving Supports takes the supports out of the selection: they are
     /// selected only there (#120). The models selected with them stay.
+    /// Nothing is selected in the Slice tab (#140): entering it puts the
+    /// selection aside, leaving it brings back what is still in the scene.
     pub(crate) fn set_section(&self, section: WorkspaceSection) {
         self.on_modal_transform_finish(false);
+        let before = self.session.section();
         if !self.session.set_section(section) {
             return;
         }
         crate::breadcrumbs::note(&format!("tab: {section:?}"));
+        let document = self.session.document();
+        if section == WorkspaceSection::Slice {
+            *self.kept_out_of_slice.borrow_mut() = document.selection();
+            if document.selection() != Selection::None {
+                self.input.gizmo_fsm().clear_hover();
+                document.set_selection(Selection::None);
+            }
+        } else if before == WorkspaceSection::Slice {
+            let kept = self.kept_out_of_slice.replace(Selection::None);
+            let back = document
+                .with_scene(|spatial| kept.retained(|id| spatial.leaf(id).is_some()))
+                .unwrap_or(Selection::None);
+            if document.selection() == Selection::None {
+                document.set_selection(back);
+            }
+        }
         // The Review card is the Slice tab's: its highlight goes with it.
         if section != WorkspaceSection::Slice {
             self.set_review_highlight(None);
@@ -1219,7 +1243,6 @@ impl ViewportController {
             self.cancel_transform_gestures();
         }
         if !self.supports_selectable() {
-            let document = self.session.document();
             let kept = document
                 .with_scene(|spatial| {
                     document
@@ -2229,6 +2252,10 @@ impl ViewportController {
     /// outside the Supports tab (#120), and the list shows the selection it
     /// had again.
     pub(crate) fn on_select_by_index(&self, idx: usize) {
+        if !self.selectable() {
+            self.mirror_selection_to_ui();
+            return;
+        }
         self.on_modal_transform_finish(false);
         let supports_selectable = self.supports_selectable();
         let document = self.session.document();
@@ -2257,6 +2284,10 @@ impl ViewportController {
     /// Shift+click does in the viewport. The supports' row does nothing
     /// outside the Supports tab (#120).
     pub(crate) fn on_toggle_by_index(&self, idx: usize) {
+        if !self.selectable() {
+            self.mirror_selection_to_ui();
+            return;
+        }
         self.on_modal_transform_finish(false);
         let supports_selectable = self.supports_selectable();
         let document = self.session.document();
@@ -2288,6 +2319,12 @@ impl ViewportController {
         self.session.section() == WorkspaceSection::Supports
     }
 
+    /// Whether anything can be selected: not in the Slice tab, whose layers
+    /// would be drawn under selection outlines (#140).
+    fn selectable(&self) -> bool {
+        self.session.section() != WorkspaceSection::Slice
+    }
+
     /// Cycles the selection for Tab and Shift+Tab.
     ///
     /// - `delta == 1` advances forward (Tab); `delta == -1` advances backward
@@ -2302,6 +2339,9 @@ impl ViewportController {
     ///
     /// Tab does not abort an in-progress drag.
     pub(crate) fn on_selection_cycle(&self, delta: i32) {
+        if !self.selectable() {
+            return;
+        }
         let scene_len = self
             .session
             .document()
@@ -2904,6 +2944,10 @@ impl ViewportController {
             Some(kind) => DragPhase::Pressed([cursor.x, cursor.y], kind),
             None => DragPhase::Idle,
         });
+        // Nothing is selected in the Slice tab (#140): Shift draws no box.
+        if !self.selectable() {
+            modifiers.shift = false;
+        }
         let boxing = self.input.on_pointer_down(
             self.session.document(),
             self.camera.camera_cell(),
@@ -2998,6 +3042,9 @@ impl ViewportController {
     /// Shift+click: the object under `cursor` joins the selection, or leaves
     /// it when it was in it. Empty space keeps the selection as it is.
     fn run_toggle_pick_at(&self, cursor: ScreenPoint) {
+        if !self.selectable() {
+            return;
+        }
         let pick = self.input.pick_at(
             self.session.document(),
             self.camera.camera_cell(),
@@ -3014,6 +3061,9 @@ impl ViewportController {
     /// the selection (see [`super::box_select`]). Outside the Supports tab,
     /// supports in the box bring their model instead (#120).
     fn select_in_box(&self, from: ScreenPoint, to: ScreenPoint) {
+        if !self.selectable() {
+            return;
+        }
         let Some(viewport) = self.render.viewport() else {
             return;
         };
@@ -3541,7 +3591,7 @@ impl ViewportController {
                 .filter(|&(_, plate)| plate == active)
                 .map(|(id, _)| id)
                 .collect();
-            focus = document.with_their_supports(models);
+            focus = document.with_their_rafts(document.with_their_supports(models));
         }
         *self.focus_cache.borrow_mut() = Some((key, focus.clone()));
         focus
@@ -3904,7 +3954,9 @@ impl ViewportController {
         match pick {
             Some(node_id) => {
                 let document = self.session.document();
-                document.set_selection(Selection::One(LeafId(node_id)));
+                if self.selectable() {
+                    document.set_selection(Selection::One(LeafId(node_id)));
+                }
                 // Picking a model makes its plate the active one (#545).
                 if let Some(plate) = self.plate_of_leaf(node_id) {
                     document.set_active_plate(plate);
