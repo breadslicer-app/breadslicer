@@ -343,6 +343,44 @@ fn zoomed_out_texels_average_and_zoomed_in_pixels_are_blocks_with_a_grid() {
     );
 }
 
+/// An overlay made with its margin still holds the view after a pan of a
+/// third of the view, at the same scale; a zoom does not fit it.
+#[test]
+fn the_margin_holds_a_pan_and_not_a_zoom() {
+    let (layer, _) = square_layer();
+    let (w, h) = layer.size();
+    let view = View {
+        u0: 0.50,
+        v0: 0.40,
+        u1: 0.52,
+        v1: 0.43,
+        shown_width: w as f32 * 4.0,
+        shown_height: h as f32 * 4.0,
+    };
+    let (x, y) = axes(&layer, view, MARGIN).expect("axes");
+    let panned = View {
+        u0: 0.5066,
+        u1: 0.5266,
+        ..view
+    };
+    let (px, py) = axes(&layer, panned, 0.0).expect("axes");
+    assert!(x.holds(&px) && y.holds(&py), "a pan stays inside");
+    let zoomed = View {
+        shown_width: w as f32 * 8.0,
+        shown_height: h as f32 * 8.0,
+        ..view
+    };
+    let (zx, _) = axes(&layer, zoomed, 0.0).expect("axes");
+    assert!(!x.holds(&zx), "another scale is made again");
+    let far = View {
+        u0: 0.6,
+        u1: 0.62,
+        ..view
+    };
+    let (fx, _) = axes(&layer, far, 0.0).expect("axes");
+    assert!(!x.holds(&fx), "a view out of the margin is made again");
+}
+
 /// A review rectangle in mm lands on the printer pixels it covers.
 #[test]
 fn a_highlight_in_mm_lands_on_its_printer_pixels() {

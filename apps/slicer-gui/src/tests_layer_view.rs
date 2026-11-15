@@ -550,6 +550,46 @@ fn the_pane_zooms_to_real_pixels_and_lays_them_where_they_lie() {
     });
 }
 
+/// A drag or a plain wheel that moves the zoomed image tells the new view,
+/// as a zoom does (#429): the real pixels are made again for it.
+#[test]
+fn moving_the_zoomed_image_tells_the_new_view() {
+    on_fresh_slint_thread(|| {
+        let ui = window_with_pane(SIZES[0]);
+        let seen: Rc<RefCell<Vec<[f32; 6]>>> = Rc::default();
+        {
+            let seen = seen.clone();
+            ui.on_layer_view_changed(move |u0, v0, u1, v1, w, h| {
+                seen.borrow_mut().push([u0, v0, u1, v1, w, h]);
+            });
+        }
+        for _ in 0..8 {
+            click(&ui, &button(&ui, "+"));
+        }
+        let pane = ElementHandle::find_by_element_type_name(&ui, "LayerView")
+            .next()
+            .expect("the pane is drawn");
+        let last = |seen: &Rc<RefCell<Vec<[f32; 6]>>>| *seen.borrow().last().expect("a view");
+        let before = last(&seen);
+        drag(&ui, middle(&pane), (-80.0, -50.0));
+        let dragged = last(&seen);
+        assert!(
+            dragged[0] > before[0] + 0.001,
+            "a drag left: {before:?} -> {dragged:?}"
+        );
+        assert!(
+            dragged[1] > before[1] + 0.001,
+            "a drag up: {before:?} -> {dragged:?}"
+        );
+        wheel(&ui, middle(&pane), false);
+        let wheeled = last(&seen);
+        assert!(
+            wheeled[1] > dragged[1] + 0.001,
+            "the wheel scrolls: {dragged:?} -> {wheeled:?}"
+        );
+    });
+}
+
 fn controller_with_2_layers() -> ViewportController {
     let square = |half: f64| {
         let outer = ClosedRing::new(vec![

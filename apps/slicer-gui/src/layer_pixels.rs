@@ -54,8 +54,16 @@ const MAX_BLOCK_PX: u32 = 48;
 /// The overlay never holds more texels than this: a few times a large pane.
 const MAX_TILE_TEXELS: u64 = 4_000_000;
 
-/// How long the pane's view keeps still before the overlay is made again.
-const SETTLE: std::time::Duration = std::time::Duration::from_millis(50);
+/// While the pane's view moves, the overlay is made again at most this
+/// often, and only once the view leaves the part it was made for.
+const THROTTLE: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Once the view keeps still this long, the overlay is made with its margin.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// The overlay reaches this share of the view's width and height past each
+/// edge, so a pan shows the printer's pixels at once.
+const MARGIN: f32 = 0.5;
 
 /// The pane's background: the overlay is drawn opaque over it, so the
 /// coarse image underneath never shows through a dark pixel.
@@ -240,6 +248,14 @@ impl Axis {
         (p - self.start) / self.k
     }
 
+    /// Whether an overlay of this axis holds `other`'s pixels at its scale.
+    fn holds(&self, other: &Axis) -> bool {
+        self.k == other.k
+            && self.s == other.s
+            && self.start <= other.start
+            && other.start + other.len <= self.start + self.len
+    }
+
     fn grid_at(&self, texel: u32) -> bool {
         self.s >= GRID_FROM_PX && texel % self.s == self.s - 1
     }
@@ -283,11 +299,20 @@ pub(crate) struct View {
 /// The printer pixels `view` reaches of `layer`, and how many texels each
 /// gets (or how many a texel takes), across and along. `None` for a view of
 /// nothing.
-fn axes(layer: &PixelLayer, view: View) -> Option<(Axis, Axis)> {
+fn axes(layer: &PixelLayer, view: View, margin: f32) -> Option<(Axis, Axis)> {
     let (w, h) = layer.size();
     if view.shown_width <= 0.0 || view.shown_height <= 0.0 || view.u1 <= view.u0 {
         return None;
     }
+    let seen = view;
+    let (du, dv) = ((view.u1 - view.u0) * margin, (view.v1 - view.v0) * margin);
+    let view = View {
+        u0: view.u0 - du,
+        u1: view.u1 + du,
+        v0: view.v0 - dv,
+        v1: view.v1 + dv,
+        ..view
+    };
     let span = |a: f32, b: f32, count: u32| {
         let lo = (f64::from(a.clamp(0.0, 1.0)) * f64::from(count)).floor() as u32;
         let hi = (f64::from(b.clamp(0.0, 1.0)) * f64::from(count)).ceil() as u32;
@@ -298,6 +323,10 @@ fn axes(layer: &PixelLayer, view: View) -> Option<(Axis, Axis)> {
     let mut ax = Axis::new(x0, x1, f64::from(view.shown_width) / f64::from(w));
     let mut ay = Axis::new(y0, y1, f64::from(view.shown_height) / f64::from(h));
     while u64::from(ax.texels()) * u64::from(ay.texels()) > MAX_TILE_TEXELS {
+        if margin > 0.0 {
+            // Fewer pixels round the view rather than coarser ones.
+            return axes(layer, seen, if margin > 0.2 { margin / 2.0 } else { 0.0 });
+        }
         if ax.s > 1 || ay.s > 1 {
             ax.s = (ax.s / 2).max(1);
             ay.s = (ay.s / 2).max(1);
@@ -322,7 +351,16 @@ pub(crate) fn tile(
     highlight: &[[u32; 4]],
     greys: &[u8; 256],
 ) -> Option<Tile> {
-    let (ax, ay) = axes(layer, view)?;
+    Some(tile_of(layer, axes(layer, view, 0.0)?, highlight, greys))
+}
+
+/// The overlay of `layer`'s pixels on `axes`, as [`tile`] makes it.
+fn tile_of(
+    layer: &PixelLayer,
+    (ax, ay): (Axis, Axis),
+    highlight: &[[u32; 4]],
+    greys: &[u8; 256],
+) -> Tile {
     let (w, h) = layer.size();
     let (x0, x1, y0) = (ax.start, ax.start + ax.len, ay.start);
 
@@ -401,7 +439,7 @@ pub(crate) fn tile(
             pixels[(ty * tw + tx) as usize] = opaque(colour);
         }
     }
-    Some(Tile {
+    Tile {
         image,
         #[cfg(test)]
         greys: texel_greys,
@@ -409,7 +447,7 @@ pub(crate) fn tile(
         u1: (ax.start + ax.len) as f32 / w as f32,
         v0: y0 as f32 / h as f32,
         v1: (ay.start + ay.len) as f32 / h as f32,
-    })
+    }
 }
 
 /// The printer pixels `rects` reach (`[x0, y0, x1, y1]` in printer-frame mm,
@@ -466,7 +504,11 @@ pub(crate) struct LayerPixels {
     slot: Slot,
     view: Cell<Option<View>>,
     generation: Cell<i32>,
-    /// Makes the overlay once the view settles.
+    /// The overlay on show reaches past its view.
+    margined: Cell<bool>,
+    /// Makes the overlay again while the view moves, now and then.
+    throttle: slint::Timer,
+    /// Makes the overlay with its margin once the view keeps still.
     settle: slint::Timer,
     /// What the overlay on show was made of: the layer, its view's pixels
     /// and scale, the greys and the highlight.
@@ -492,6 +534,8 @@ impl LayerPixels {
     ) -> Rc<Self> {
         let pixels = Rc::new_cyclic(|me| Self {
             me: me.clone(),
+            margined: Cell::new(false),
+            throttle: slint::Timer::default(),
             settle: slint::Timer::default(),
             shown: RefCell::new(None),
             ui: ui.as_weak(),
@@ -529,17 +573,27 @@ impl LayerPixels {
         pixels
     }
 
-    /// Keeps the pane's view, and makes the overlay once the view has kept
-    /// still for [`SETTLE`]: a zoom step reports it several times over, and
-    /// a fast zoom or a drag many times a second. Meanwhile the overlay on
-    /// show stretches with the image, still lying where its pixels do.
+    /// Keeps the pane's view. While it moves the overlay is made again at
+    /// most every [`THROTTLE`], and only when the view leaves the part it
+    /// was made for; once it keeps still for [`SETTLE`], with its margin. A
+    /// zoom step reports the view several times over: by the time a timer
+    /// fires, it has settled.
     fn on_view(&self, view: View) {
         self.view.set(Some(view));
+        if !self.throttle.running() {
+            let me = self.me.clone();
+            self.throttle
+                .start(slint::TimerMode::SingleShot, THROTTLE, move || {
+                    if let Some(pixels) = me.upgrade() {
+                        pixels.refresh(false);
+                    }
+                });
+        }
         let me = self.me.clone();
         self.settle
             .start(slint::TimerMode::SingleShot, SETTLE, move || {
                 if let Some(pixels) = me.upgrade() {
-                    pixels.refresh();
+                    pixels.refresh(true);
                 }
             });
     }
@@ -581,7 +635,7 @@ impl LayerPixels {
 
     /// Shows the part on show at the printer's resolution once its layer is
     /// rasterised, and starts rasterising it otherwise.
-    fn refresh(&self) {
+    fn refresh(&self, settled: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -599,7 +653,7 @@ impl LayerPixels {
             .filter(|(known, _)| *known == key)
             .map(|(_, layer)| layer.clone());
         match (ready, self.view.get()) {
-            (Some(layer), Some(view)) => self.show(&ui, &layer, view, key),
+            (Some(layer), Some(view)) => self.show(&ui, &layer, view, key, settled),
             (Some(_), None) => {}
             (None, _) => {
                 ui.set_layer_pixel_shown(false);
@@ -609,7 +663,11 @@ impl LayerPixels {
         }
     }
 
-    fn show(&self, ui: &MainWindow, layer: &PixelLayer, view: View, key: Key) {
+    /// Shows the overlay of `view`, unless the one on show holds it already.
+    /// It reaches past the view by [`MARGIN`] once `settled`, or while the
+    /// view pans at the scale of the one on show; a zoom gets the view alone,
+    /// which is quicker.
+    fn show(&self, ui: &MainWindow, layer: &PixelLayer, view: View, key: Key, settled: bool) {
         let plate = printer_plate_mm(self.printer.borrow().as_ref().map(|(_, p)| p.as_ref()));
         let highlight = plate
             .map(|plate| {
@@ -621,25 +679,42 @@ impl LayerPixels {
             })
             .unwrap_or_default();
         let greys = layer.stored_greys(self.panel.selected_print_format());
-        let Some(axes) = axes(layer, view) else {
+        let Some(seen) = axes(layer, view, 0.0) else {
             ui.set_layer_pixel_shown(false);
+            *self.shown.borrow_mut() = None;
             return;
         };
-        let made = Shown {
+        let (fits, panning) = match self.shown.borrow().as_ref() {
+            Some(on_show)
+                if on_show.key == key
+                    && on_show.greys[..] == greys[..]
+                    && on_show.highlight == highlight =>
+            {
+                let (x, y) = on_show.axes;
+                (
+                    x.holds(&seen.0) && y.holds(&seen.1),
+                    (x.k, x.s, y.k, y.s) == (seen.0.k, seen.0.s, seen.1.k, seen.1.s),
+                )
+            }
+            _ => (false, false),
+        };
+        if fits && (self.margined.get() || !settled) {
+            // The overlay on show holds the view: nothing to make again.
+            return;
+        }
+        let margined = settled || panning;
+        let margin = if margined { MARGIN } else { 0.0 };
+        let Some(axes) = axes(layer, view, margin) else {
+            return;
+        };
+        let tile = tile_of(layer, axes, &highlight, &greys);
+        self.margined.set(margined);
+        *self.shown.borrow_mut() = Some(Shown {
             key,
             axes,
             greys: greys.to_vec(),
-            highlight: highlight.clone(),
-        };
-        if self.shown.borrow().as_ref() == Some(&made) {
-            // The same overlay: nothing to make again.
-            return;
-        }
-        let Some(tile) = tile(layer, view, &highlight, &greys) else {
-            ui.set_layer_pixel_shown(false);
-            return;
-        };
-        *self.shown.borrow_mut() = Some(made);
+            highlight,
+        });
         ui.set_layer_pixel_tile(slint::Image::from_rgba8(tile.image));
         ui.set_layer_pixel_u0(tile.u0);
         ui.set_layer_pixel_v0(tile.v0);
@@ -688,7 +763,7 @@ impl LayerPixels {
                 ui.set_layer_pixel_generation(self.generation.get());
             }
         }
-        self.refresh();
+        self.refresh(true);
     }
 
     /// The place and grey of the printer pixel at `(u, v)`, fractions of the
