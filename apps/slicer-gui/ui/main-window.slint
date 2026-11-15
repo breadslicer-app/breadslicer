@@ -618,6 +618,8 @@ export component MainWindow inherits Window {
     // match the held slice, then lowered again after a short delay; shows
     // the transient "already up to date" hint in the Slice panel.
     in property <bool> slice-up-to-date: false;
+    // The Slice tab's PRINT SETUP open or folded (#578), as left.
+    in-out property <bool> slice-setup-open: true;
     // What Slice every plate did, line by line, until the next slice (#547).
     in property <string> slice-every-plate-note;
     // Slice control panel geometry (per-window live state). Same
@@ -2168,6 +2170,7 @@ export component MainWindow inherits Window {
                             export-every-plate => {
                                 root.slice-export-every-plate-requested();
                             }
+                            setup-open <=> root.slice-setup-open;
                             overhang-map-on <=> root.overhang-map-on;
                             overhang-map-limit: root.overhang-map-limit;
                             overhang-map-toggled(on) => {

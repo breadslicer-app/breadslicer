@@ -107,6 +107,12 @@ fn the_pictures_of_the_app_are_written_when_asked() {
                 &ruler_dir,
                 &format!("{language}-4-slice-export-plates"),
             );
+            window.set_slice_setup_open(false);
+            write(
+                window.window(),
+                &ruler_dir,
+                &format!("{language}-4-slice-setup-folded"),
+            );
         });
         // Many objects: the list keeps to five rows and scrolls (#558); the
         // one picked in the view comes into sight.

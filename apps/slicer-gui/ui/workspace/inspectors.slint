@@ -2880,6 +2880,9 @@ export component SliceInspector inherits VerticalLayout {
     callback export-printer-file();
     // With several plates (#549): each plate sliced in turn, a file each.
     callback export-every-plate();
+    // PRINT SETUP open or folded: kept by the window, so it stays as left
+    // when the tab is left and come back to.
+    in-out property <bool> setup-open: true;
     in property <[string]> printer-options;
     in-out property <int> printer-current-index: -1;
     in property <[string]> resin-options;
@@ -2952,10 +2955,19 @@ export component SliceInspector inherits VerticalLayout {
     }
 
     spacing: 12px;
+    // What the review cannot take of the height stays below it, not between
+    // the cards (PRINT SETUP folded leaves more over).
+    alignment: start;
 
     Card {
         title: @tr("Inspector" => "PRINT SETUP");
         vertical-stretch: 0;
+        collapsible: true;
+        expanded <=> root.setup-open;
+        // Folded, the resin in use beside the title: the printer is in the
+        // top bar.
+        note: !root.setup-open && root.resin-current-index >= 0
+            ? root.resin-options[root.resin-current-index] : "";
 
         Field {
             label: @tr("SlicePanel" => "Printer");
@@ -3004,29 +3016,35 @@ export component SliceInspector inherits VerticalLayout {
                 }
             }
         }
-        // One action (#578): Slice, and once the slice is up to date and
-        // a format is picked, Export in its place. The plate is the one
-        // picked in the scene panel.
-        if !root.export-enabled: ScButton {
+    }
+
+    // Slice, then Export (#578): Export works once the slice is up to date
+    // and a format is picked, and is the one drawn as the main action then.
+    // The plate is the one picked in the scene panel.
+    VerticalLayout {
+        spacing: 8px;
+        vertical-stretch: 0;
+
+        ScButton {
             text: root.plate-options.length > 1
                 ? @tr("SlicePanel" => "Slice “{}”", root.plate-options[root.plate-current-index])
                 : @tr("SlicePanel" => "Slice");
             icon: Icons.slice;
-            kind: ButtonKind.primary;
+            kind: root.export-enabled ? ButtonKind.normal : ButtonKind.primary;
             button-height: 38px;
             enabled: root.printer-current-index >= 0 && root.resin-current-index >= 0 && !root.slicing && !root.review-fixing;
             clicked => {
                 root.slice-requested();
             }
         }
-        if root.export-enabled: ScButton {
+        ScButton {
             text: root.plate-options.length > 1
                 ? @tr("SlicePanel" => "Export “{}”", root.plate-options[root.plate-current-index])
                 : @tr("SlicePanel" => "Export for printer");
             icon: Icons.file;
-            kind: ButtonKind.primary;
+            kind: root.export-enabled ? ButtonKind.primary : ButtonKind.normal;
             button-height: 38px;
-            enabled: !root.slicing && !root.exporting && !root.review-fixing;
+            enabled: root.export-enabled && !root.slicing && !root.exporting && !root.review-fixing;
             clicked => {
                 root.export-printer-file();
             }

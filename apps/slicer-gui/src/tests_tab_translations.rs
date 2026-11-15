@@ -347,8 +347,8 @@ fn in_language<R: Send>(
 }
 
 #[test]
-fn an_up_to_date_slice_offers_export_in_its_place_in_spanish() {
-    let shown = |enabled: bool| {
+fn slice_then_export_stand_under_print_setup_in_spanish() {
+    let buttons = |enabled: bool| {
         in_spanish(
             WorkspaceSection::Slice,
             move |window| {
@@ -357,18 +357,26 @@ fn an_up_to_date_slice_offers_export_in_its_place_in_spanish() {
                 window.set_slice_export_enabled(enabled);
             },
             |window| {
+                let at = |label: &str| {
+                    ElementHandle::find_by_accessible_label(window, label)
+                        .filter(|e| e.size().height > 0.0)
+                        .map(|e| e.absolute_position().y)
+                        .fold(f32::NEG_INFINITY, f32::max)
+                };
                 (
-                    shows(window, "Exportar para la impresora"),
+                    at("Laminar"),
+                    at("Exportar para la impresora"),
                     shows(window, "Export for printer"),
                 )
             },
         )
     };
-    let (export, english) = shown(false);
-    assert!(!export && !english, "a slice to make offers Slice alone");
-    let (export, english) = shown(true);
-    assert!(export, "an up to date slice offers Export, in Spanish");
-    assert!(!english, "no English label");
+    for enabled in [false, true] {
+        let (slice, export, english) = buttons(enabled);
+        assert!(export.is_finite(), "Export shows, in Spanish ({enabled})");
+        assert!(slice < export, "Slice stands before Export ({enabled})");
+        assert!(!english, "no English label ({enabled})");
+    }
 }
 
 #[test]
