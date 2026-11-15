@@ -52,7 +52,14 @@ pub(crate) const GRID_FROM_PX: u32 = 6;
 const MAX_BLOCK_PX: u32 = 48;
 
 /// The overlay never holds more texels than this: a few times a large pane.
-const MAX_TILE_TEXELS: u64 = 12_000_000;
+const MAX_TILE_TEXELS: u64 = 4_000_000;
+
+/// How long the pane's view keeps still before the overlay is made again.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// The pane's background: the overlay is drawn opaque over it, so the
+/// coarse image underneath never shows through a dark pixel.
+const BACKGROUND_RGB: [u8; 3] = [0x0e, 0x0f, 0x10];
 
 /// Covered pixels' colour: the cap's, so the overlay and the cap read alike.
 const FILL_RGB: [u8; 3] = [191, 199, 217];
@@ -252,6 +259,9 @@ impl Axis {
 /// plate, as fractions of the plate (the rows from its back).
 pub(crate) struct Tile {
     pub(crate) image: SharedPixelBuffer<Rgba8Pixel>,
+    /// Each texel's grey, before it is coloured.
+    #[cfg(test)]
+    pub(crate) greys: Vec<u8>,
     pub(crate) u0: f32,
     pub(crate) v0: f32,
     pub(crate) u1: f32,
@@ -270,18 +280,10 @@ pub(crate) struct View {
     pub(crate) shown_height: f32,
 }
 
-/// The overlay of `layer` for `view`: the printer pixels it reaches, one
-/// texel for several zoomed out, a block of texels each zoomed in, each
-/// pixel's grey the one `greys` says the file stores for it, with
-/// `highlight`'s printer pixels (`[x0, y0, x1, y1)`, plate columns from the
-/// minimum X and rows from the back) drawn in the review's highlight (#409).
-/// `None` for a view of nothing.
-pub(crate) fn tile(
-    layer: &PixelLayer,
-    view: View,
-    highlight: &[[u32; 4]],
-    greys: &[u8; 256],
-) -> Option<Tile> {
+/// The printer pixels `view` reaches of `layer`, and how many texels each
+/// gets (or how many a texel takes), across and along. `None` for a view of
+/// nothing.
+fn axes(layer: &PixelLayer, view: View) -> Option<(Axis, Axis)> {
     let (w, h) = layer.size();
     if view.shown_width <= 0.0 || view.shown_height <= 0.0 || view.u1 <= view.u0 {
         return None;
@@ -304,6 +306,25 @@ pub(crate) fn tile(
             ay.k *= 2;
         }
     }
+
+    Some((ax, ay))
+}
+
+/// The overlay of `layer` for `view`: the printer pixels it reaches, one
+/// texel for several zoomed out, a block of texels each zoomed in, each
+/// pixel's grey the one `greys` says the file stores for it, with
+/// `highlight`'s printer pixels (`[x0, y0, x1, y1)`, plate columns from the
+/// minimum X and rows from the back) drawn in the review's highlight (#409).
+/// `None` for a view of nothing.
+pub(crate) fn tile(
+    layer: &PixelLayer,
+    view: View,
+    highlight: &[[u32; 4]],
+    greys: &[u8; 256],
+) -> Option<Tile> {
+    let (ax, ay) = axes(layer, view)?;
+    let (w, h) = layer.size();
+    let (x0, x1, y0) = (ax.start, ax.start + ax.len, ay.start);
 
     let (bx, by) = (ax.bins() as usize, ay.bins() as usize);
     // The mean grey of each bin, as 0..=255.
@@ -346,8 +367,21 @@ pub(crate) fn tile(
     let (tw, th) = (ax.texels(), ay.texels());
     let mut image = SharedPixelBuffer::<Rgba8Pixel>::new(tw, th);
     let pixels = image.make_mut_slice();
-    let [r, g, b] = FILL_RGB;
-    let [hr, hg, hb] = crate::slice_cap::HIGHLIGHT_RGB;
+    // Opaque colours: the pixel's grey over the pane's background, a third
+    // darker on the grid.
+    let mix = |grey: u8, of: [u8; 3]| -> [u8; 3] {
+        std::array::from_fn(|i| {
+            let (lo, hi) = (i32::from(BACKGROUND_RGB[i]), i32::from(of[i]));
+            (lo + (hi - lo) * i32::from(grey) / 255) as u8
+        })
+    };
+    let opaque = |[r, g, b]: [u8; 3]| Rgba8Pixel { r, g, b, a: 255 };
+    let darker = |c: [u8; 3]| c.map(|v| (u16::from(v) * 7 / 10) as u8);
+    let fill: Vec<[u8; 3]> = (0..=u8::MAX).map(|g| mix(g, FILL_RGB)).collect();
+    let empty_grid = mix(22, [255, 255, 255]);
+    let mark = crate::slice_cap::HIGHLIGHT_RGB;
+    #[cfg(test)]
+    let mut texel_greys = Vec::with_capacity((tw * th) as usize);
     for ty in 0..th {
         let bin_row = (ty / ay.s) as usize;
         let grid_row = ay.grid_at(ty);
@@ -355,36 +389,22 @@ pub(crate) fn tile(
             let bin = bin_row * bx + (tx / ax.s) as usize;
             let grid = grid_row || ax.grid_at(tx);
             let grey = means[bin];
-            pixels[(ty * tw + tx) as usize] = if marked[bin] {
-                Rgba8Pixel {
-                    r: hr,
-                    g: hg,
-                    b: hb,
-                    a: if grid { 200 } else { 255 },
-                }
-            } else if grid {
-                if grey == 0 {
-                    Rgba8Pixel {
-                        r: 255,
-                        g: 255,
-                        b: 255,
-                        a: 22,
-                    }
-                } else {
-                    Rgba8Pixel {
-                        r: r / 10 * 7,
-                        g: g / 10 * 7,
-                        b: b / 10 * 7,
-                        a: grey,
-                    }
-                }
-            } else {
-                Rgba8Pixel { r, g, b, a: grey }
+            #[cfg(test)]
+            texel_greys.push(grey);
+            let colour = match (marked[bin], grid) {
+                (true, false) => mark,
+                (true, true) => darker(mark),
+                (false, false) => fill[usize::from(grey)],
+                (false, true) if grey == 0 => empty_grid,
+                (false, true) => darker(fill[usize::from(grey)]),
             };
+            pixels[(ty * tw + tx) as usize] = opaque(colour);
         }
     }
     Some(Tile {
         image,
+        #[cfg(test)]
+        greys: texel_greys,
         u0: x0 as f32 / w as f32,
         u1: (ax.start + ax.len) as f32 / w as f32,
         v0: y0 as f32 / h as f32,
@@ -446,6 +466,21 @@ pub(crate) struct LayerPixels {
     slot: Slot,
     view: Cell<Option<View>>,
     generation: Cell<i32>,
+    /// Makes the overlay once the view settles.
+    settle: slint::Timer,
+    /// What the overlay on show was made of: the layer, its view's pixels
+    /// and scale, the greys and the highlight.
+    shown: RefCell<Option<Shown>>,
+    me: std::rc::Weak<Self>,
+}
+
+/// What an overlay was made of: equal, it would come out the same.
+#[derive(Clone, Debug, PartialEq)]
+struct Shown {
+    key: Key,
+    axes: (Axis, Axis),
+    greys: Vec<u8>,
+    highlight: Vec<[u32; 4]>,
 }
 
 impl LayerPixels {
@@ -455,7 +490,10 @@ impl LayerPixels {
         ctrl: Rc<ViewportController>,
         panel: Rc<SlicePanelBridge>,
     ) -> Rc<Self> {
-        let pixels = Rc::new(Self {
+        let pixels = Rc::new_cyclic(|me| Self {
+            me: me.clone(),
+            settle: slint::Timer::default(),
+            shown: RefCell::new(None),
             ui: ui.as_weak(),
             document,
             ctrl,
@@ -491,9 +529,19 @@ impl LayerPixels {
         pixels
     }
 
+    /// Keeps the pane's view, and makes the overlay once the view has kept
+    /// still for [`SETTLE`]: a zoom step reports it several times over, and
+    /// a fast zoom or a drag many times a second. Meanwhile the overlay on
+    /// show stretches with the image, still lying where its pixels do.
     fn on_view(&self, view: View) {
         self.view.set(Some(view));
-        self.refresh();
+        let me = self.me.clone();
+        self.settle
+            .start(slint::TimerMode::SingleShot, SETTLE, move || {
+                if let Some(pixels) = me.upgrade() {
+                    pixels.refresh();
+                }
+            });
     }
 
     /// The held slice's contours, printer and anti-aliasing, and the layer on
@@ -539,6 +587,7 @@ impl LayerPixels {
         };
         let Some((contours, printer, key)) = self.target() else {
             ui.set_layer_pixel_shown(false);
+            *self.shown.borrow_mut() = None;
             return;
         };
         let res = printer.hardware.pixel_resolution();
@@ -550,16 +599,17 @@ impl LayerPixels {
             .filter(|(known, _)| *known == key)
             .map(|(_, layer)| layer.clone());
         match (ready, self.view.get()) {
-            (Some(layer), Some(view)) => self.show(&ui, &layer, view),
+            (Some(layer), Some(view)) => self.show(&ui, &layer, view, key),
             (Some(_), None) => {}
             (None, _) => {
                 ui.set_layer_pixel_shown(false);
+                *self.shown.borrow_mut() = None;
                 self.start(contours, &printer, key);
             }
         }
     }
 
-    fn show(&self, ui: &MainWindow, layer: &PixelLayer, view: View) {
+    fn show(&self, ui: &MainWindow, layer: &PixelLayer, view: View, key: Key) {
         let plate = printer_plate_mm(self.printer.borrow().as_ref().map(|(_, p)| p.as_ref()));
         let highlight = plate
             .map(|plate| {
@@ -571,10 +621,25 @@ impl LayerPixels {
             })
             .unwrap_or_default();
         let greys = layer.stored_greys(self.panel.selected_print_format());
+        let Some(axes) = axes(layer, view) else {
+            ui.set_layer_pixel_shown(false);
+            return;
+        };
+        let made = Shown {
+            key,
+            axes,
+            greys: greys.to_vec(),
+            highlight: highlight.clone(),
+        };
+        if self.shown.borrow().as_ref() == Some(&made) {
+            // The same overlay: nothing to make again.
+            return;
+        }
         let Some(tile) = tile(layer, view, &highlight, &greys) else {
             ui.set_layer_pixel_shown(false);
             return;
         };
+        *self.shown.borrow_mut() = Some(made);
         ui.set_layer_pixel_tile(slint::Image::from_rgba8(tile.image));
         ui.set_layer_pixel_u0(tile.u0);
         ui.set_layer_pixel_v0(tile.v0);

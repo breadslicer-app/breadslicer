@@ -70,7 +70,7 @@ fn contours() -> PlateContours {
 }
 
 /// What the pane shows of layer 1 drawn one texel to a printer pixel: the
-/// part from -25 to +25 mm round the plate's centre, where the parts lie, as
+/// part from -20 to +20 mm round the plate's centre, where the parts lie, as
 /// greys, rows from the back. With the plate's size in printer pixels and
 /// the part's first column and row.
 struct Shown {
@@ -93,7 +93,7 @@ fn shown(
     let layer = PixelLayer::new(&raster, &setup);
     let (w, h) = layer.size();
     let plate = printer.hardware.build_volume();
-    let (fx, fy) = (25.0 / plate.x_mm(), 25.0 / plate.y_mm());
+    let (fx, fy) = (20.0 / plate.x_mm(), 20.0 / plate.y_mm());
     let tile = tile(
         &layer,
         View {
@@ -114,13 +114,12 @@ fn shown(
     let x1 = (f64::from(tile.u1) * f64::from(w)).round() as usize;
     let y1 = (f64::from(tile.v1) * f64::from(h)).round() as usize;
     assert_eq!((x1 - x0, y1 - y0), (tw, th), "one texel to a printer pixel");
-    let pixels = tile.image.as_slice();
     Shown {
         size: (w as usize, h as usize),
         x0,
         y0,
         rows: (0..th)
-            .map(|row| (0..tw).map(|x| pixels[row * tw + x].a).collect())
+            .map(|row| (0..tw).map(|x| tile.greys[row * tw + x]).collect())
             .collect(),
     }
 }
@@ -295,7 +294,9 @@ fn zoomed_out_texels_average_and_zoomed_in_pixels_are_blocks_with_a_grid() {
     let sum: u64 = (0..h)
         .map(|r| layer.row(r).iter().map(|&g| u64::from(g)).sum::<u64>())
         .sum();
-    let texels: u64 = out.image.as_slice().iter().map(|p| u64::from(p.a)).sum();
+    let texels: u64 = out.greys.iter().map(|&g| u64::from(g)).sum();
+    // Opaque everywhere: the pane's coarse image never shows through.
+    assert!(out.image.as_slice().iter().all(|p| p.a == 255));
     let ratio = texels as f64 * 64.0 / sum as f64;
     assert!(
         (ratio - 1.0).abs() < 0.01,
@@ -321,7 +322,8 @@ fn zoomed_out_texels_average_and_zoomed_in_pixels_are_blocks_with_a_grid() {
     assert_eq!(tw % 8, 0);
     let px = near.image.as_slice();
     // Inside the disc: a lit block, its last column and row darker.
-    assert_eq!(px[0].a, 255);
+    assert_eq!(near.greys[0], 255);
+    assert!(px.iter().all(|p| p.a == 255), "opaque");
     assert!(
         px[7].r < px[0].r,
         "the grid runs along the block's far edge"
