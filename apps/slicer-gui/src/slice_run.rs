@@ -632,7 +632,7 @@ impl SliceRun {
                 context: None,
                 message: ctr!(
                     "ErrorDialog",
-                    "Nothing stands on “{}” to slice. Pick another plate in the Slice card, or move models onto this one.",
+                    "Nothing stands on “{}” to slice. Pick another plate in the scene panel, or move models onto this one.",
                     name
                 ),
                 details: Default::default(),

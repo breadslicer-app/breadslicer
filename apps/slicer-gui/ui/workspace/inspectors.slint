@@ -2867,6 +2867,19 @@ export component SliceInspector inherits VerticalLayout {
     // and what it did.
     callback slice-every-plate();
     in property <string> every-plate-note;
+    // The printer file, written from here once the slice is up to date
+    // (#578): its format, why it may not be written, and the action that
+    // takes the place of Slice.
+    in property <[string]> format-options;
+    in-out property <int> format-current-index: -1;
+    in property <string> format-note;
+    in property <bool> export-enabled;
+    // A save, an export or a load running.
+    in property <bool> exporting;
+    callback format-picked(int);
+    callback export-printer-file();
+    // With several plates (#549): each plate sliced in turn, a file each.
+    callback export-every-plate();
     in property <[string]> printer-options;
     in-out property <int> printer-current-index: -1;
     in property <[string]> resin-options;
@@ -2967,6 +2980,20 @@ export component SliceInspector inherits VerticalLayout {
             }
         }
         Field {
+            label: @tr("SlicePanel" => "Print format");
+            format-combo := ComboBox {
+                model: root.format-options;
+                current-index <=> root.format-current-index;
+                enabled: root.format-options.length > 0;
+                selected => {
+                    root.format-picked(format-combo.current-index);
+                }
+            }
+        }
+        if root.format-note != "": Note {
+            text: root.format-note;
+        }
+        Field {
             label: @tr("SlicePanel" => "First layer height (mm)");
             first-layer-input := LineEdit {
                 text: root.first-layer-height-text;
@@ -2977,8 +3004,10 @@ export component SliceInspector inherits VerticalLayout {
                 }
             }
         }
-        ScButton {
-            // The plate it slices, picked in the scene panel (#578).
+        // One action (#578): Slice, and once the slice is up to date and
+        // a format is picked, Export in its place. The plate is the one
+        // picked in the scene panel.
+        if !root.export-enabled: ScButton {
             text: root.plate-options.length > 1
                 ? @tr("SlicePanel" => "Slice “{}”", root.plate-options[root.plate-current-index])
                 : @tr("SlicePanel" => "Slice");
@@ -2990,12 +3019,32 @@ export component SliceInspector inherits VerticalLayout {
                 root.slice-requested();
             }
         }
+        if root.export-enabled: ScButton {
+            text: root.plate-options.length > 1
+                ? @tr("SlicePanel" => "Export “{}”", root.plate-options[root.plate-current-index])
+                : @tr("SlicePanel" => "Export for printer");
+            icon: Icons.file;
+            kind: ButtonKind.primary;
+            button-height: 38px;
+            enabled: !root.slicing && !root.exporting && !root.review-fixing;
+            clicked => {
+                root.export-printer-file();
+            }
+        }
         if root.plate-options.length > 1: ScButton {
             text: @tr("SlicePanel" => "Slice every plate");
             icon: Icons.slice;
             enabled: root.printer-current-index >= 0 && root.resin-current-index >= 0 && !root.slicing && !root.review-fixing;
             clicked => {
                 root.slice-every-plate();
+            }
+        }
+        if root.plate-options.length > 1: ScButton {
+            text: @tr("SlicePanel" => "Export every plate");
+            icon: Icons.file;
+            enabled: root.format-options.length > 0 && !root.slicing && !root.exporting && !root.review-fixing;
+            clicked => {
+                root.export-every-plate();
             }
         }
         if root.up-to-date: Note {
@@ -3244,92 +3293,6 @@ export component SliceInspector inherits VerticalLayout {
                 if root.review-state == 1 && root.review-rows.length > 0: Note {
                     text: @tr("Review" => "Click a finding to show its layer and centre the view on it.");
                 }
-            }
-        }
-    }
-}
-
-export component ExportInspector inherits VerticalLayout {
-    in property <[string]> format-options;
-    in-out property <int> format-current-index: -1;
-    in property <string> format-note;
-    in property <bool> export-enabled;
-    in property <bool> busy;
-    in property <bool> has-scene;
-    callback format-picked(int);
-    callback export-printer-file();
-    // With several plates (#549): each plate sliced in turn, a file each.
-    in property <int> plate-count: 1;
-    // The plate the file is of, with several (#547).
-    in property <string> plate-name;
-    callback export-every-plate();
-    callback save-project();
-    callback export-mesh();
-
-    spacing: 12px;
-
-    Card {
-        title: @tr("Inspector" => "PRINTER FILE");
-
-        Field {
-            label: @tr("SlicePanel" => "Print format");
-            format-combo := ComboBox {
-                model: root.format-options;
-                current-index <=> root.format-current-index;
-                enabled: root.format-options.length > 0;
-                selected => {
-                    root.format-picked(format-combo.current-index);
-                }
-            }
-        }
-        if root.format-note != "": Note {
-            text: root.format-note;
-        }
-        ScButton {
-            text: root.plate-count > 1 && root.plate-name != ""
-                ? @tr("SlicePanel" => "Export “{}”", root.plate-name)
-                : @tr("SlicePanel" => "Export for printer");
-            icon: Icons.file;
-            kind: ButtonKind.primary;
-            button-height: 38px;
-            enabled: root.export-enabled && !root.busy;
-            clicked => {
-                root.export-printer-file();
-            }
-        }
-        if !root.export-enabled: Note {
-            text: @tr("Inspector" => "Slice first: the printer file is written from the held slice.");
-        }
-        if root.plate-count > 1: ScButton {
-            text: @tr("SlicePanel" => "Export every plate");
-            icon: Icons.file;
-            enabled: root.format-options.length > 0 && root.has-scene && !root.busy;
-            clicked => {
-                root.export-every-plate();
-            }
-        }
-        if root.plate-count > 1: Note {
-            text: @tr("Inspector" => "Slices each plate with models on it in turn and writes a file for each, named after the plate.");
-        }
-    }
-
-    Card {
-        title: @tr("Inspector" => "ALSO");
-
-        ScButton {
-            text: @tr("Inspector" => "Save project (.bread)");
-            icon: Icons.save;
-            enabled: root.has-scene && !root.busy;
-            clicked => {
-                root.save-project();
-            }
-        }
-        ScButton {
-            text: @tr("Inspector" => "Export mesh (STL / OBJ / 3MF)");
-            icon: Icons.file;
-            enabled: root.has-scene && !root.busy;
-            clicked => {
-                root.export-mesh();
             }
         }
     }

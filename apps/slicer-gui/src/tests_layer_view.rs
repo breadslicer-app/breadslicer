@@ -365,7 +365,7 @@ fn tool_buttons_say_what_they_do_under_the_pointer() {
         assert!(!ui.get_slice_split());
 
         // Leaving the tab takes the button and its tooltip away.
-        ui.set_workspace_section(WorkspaceSection::Export);
+        ui.set_workspace_section(WorkspaceSection::Supports);
         render_frames();
         assert_eq!(tooltip_text(&ui), None);
     });

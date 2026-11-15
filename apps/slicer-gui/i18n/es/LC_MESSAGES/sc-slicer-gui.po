@@ -882,6 +882,11 @@ msgstr "Transformar"
 
 #: ui/main-window.slint
 msgctxt "Workspace"
+msgid "Prepare"
+msgstr "Preparar"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
 msgid "Slice"
 msgstr "Laminar"
 
@@ -7039,8 +7044,8 @@ msgstr "Cama"
 
 #: src/slice_run.rs
 msgctxt "ErrorDialog"
-msgid "Nothing stands on “{}” to slice. Pick another plate in the Slice card, or move models onto this one."
-msgstr "No hay nada sobre “{}” para laminar. Elegí otra cama en la tarjeta Laminar o mové modelos a esta."
+msgid "Nothing stands on “{}” to slice. Pick another plate in the scene panel, or move models onto this one."
+msgstr "No hay nada sobre “{}” para laminar. Elegí otra cama en el panel de escena o mové modelos a esta."
 
 #: ui/workspace/inspectors.slint
 msgctxt "SlicePanel"

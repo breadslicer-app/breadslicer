@@ -4,7 +4,7 @@
  */
 
 //! Section gating: layout tools are silenced outside the Transform section,
-//! undo/redo is silenced in Slice and Export, and selection stays live
+//! undo/redo is silenced in Slice, and selection stays live
 //! everywhere.
 //!
 //! These drive the controller with a light single-leaf fixture. The
@@ -93,19 +93,6 @@ fn undo_runs_in_hollow() {
         ctrl.reachable_leaf_count_for_test(),
         1,
         "undo in Hollow restores the deleted leaf; history is reachable until the slice"
-    );
-}
-
-#[test]
-fn undo_is_silenced_in_export() {
-    let ctrl = controller_in(WorkspaceSection::Transform);
-    ctrl.on_delete_requested();
-    ctrl.set_section(WorkspaceSection::Export);
-    ctrl.on_undo_requested();
-    assert_eq!(
-        ctrl.reachable_leaf_count_for_test(),
-        0,
-        "undo must be a no-op in the Export section"
     );
 }
 

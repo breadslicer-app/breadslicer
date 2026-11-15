@@ -61,7 +61,7 @@ const PANEL_COMPONENTS: &[&str] = &[
 /// The texts of the main window that belong to the Transform, Supports and
 /// Slice tabs: their tool rail and the hints of the status bar.
 const PANEL_MAIN_WINDOW_TEXTS: &[(&str, &str)] = &[
-    ("Workspace", "Transform"),
+    ("Workspace", "Prepare"),
     ("Workspace", "Supports"),
     ("Workspace", "Slice"),
     ("Inspector", "Move"),
@@ -104,11 +104,10 @@ const PANEL_MAIN_WINDOW_TEXTS: &[(&str, &str)] = &[
     ("Workspace", "{} object(s)"),
 ];
 
-/// The texts of the main window that belong to the Hollow and Export tabs:
-/// their tab labels, the drain tool's button and the hints of the status bar.
+/// The texts of the main window that belong to the Hollow tab: its label,
+/// the drain tool's button and the hints of the status bar.
 const MAIN_WINDOW_TEXTS: &[(&str, &str)] = &[
     ("Workspace", "Hollow"),
-    ("Workspace", "Export"),
     ("Inspector", "Drain holes"),
     (
         "Workspace",
@@ -228,9 +227,9 @@ fn main_window_text(&(context, message): &(&str, &str)) -> SlintText {
 }
 
 #[test]
-fn every_text_of_the_hollow_and_export_tabs_has_spanish() {
+fn every_text_of_the_hollow_and_slice_tabs_has_spanish() {
     let spanish = spanish();
-    let mut texts: Vec<SlintText> = ["HollowInspector", "ExportInspector"]
+    let mut texts: Vec<SlintText> = ["HollowInspector", "SliceInspector"]
         .into_iter()
         .flat_map(|name| slint_texts(component_source(INSPECTORS, name)))
         .collect();
@@ -348,25 +347,28 @@ fn in_language<R: Send>(
 }
 
 #[test]
-fn a_disabled_export_says_why_in_spanish() {
-    let (spanish, english) = in_spanish(
-        WorkspaceSection::Export,
-        |window| window.set_slice_export_enabled(false),
-        |window| {
-            (
-                shows(
-                    window,
-                    "Laminá primero: el archivo de impresora se escribe a partir del laminado actual.",
-                ),
-                shows(
-                    window,
-                    "Slice first: the printer file is written from the held slice.",
-                ),
-            )
-        },
-    );
-    assert!(spanish, "the note shows in Spanish");
-    assert!(!english, "no English note");
+fn an_up_to_date_slice_offers_export_in_its_place_in_spanish() {
+    let shown = |enabled: bool| {
+        in_spanish(
+            WorkspaceSection::Slice,
+            move |window| {
+                window.set_slice_printer_current_index(0);
+                window.set_slice_resin_current_index(0);
+                window.set_slice_export_enabled(enabled);
+            },
+            |window| {
+                (
+                    shows(window, "Exportar para la impresora"),
+                    shows(window, "Export for printer"),
+                )
+            },
+        )
+    };
+    let (export, english) = shown(false);
+    assert!(!export && !english, "a slice to make offers Slice alone");
+    let (export, english) = shown(true);
+    assert!(export, "an up to date slice offers Export, in Spanish");
+    assert!(!english, "no English label");
 }
 
 #[test]

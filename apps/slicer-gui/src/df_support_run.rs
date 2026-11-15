@@ -10256,12 +10256,11 @@ mod hand_edit_tests {
             });
             assert_eq!(shown(), Some(55.0));
 
-            // Supports and Slice show it too (#484); Hollow and Export not.
+            // Supports and Slice show it too (#484); Hollow not.
             for (section, on) in [
                 (WorkspaceSection::Supports, true),
                 (WorkspaceSection::Slice, true),
                 (WorkspaceSection::Hollow, false),
-                (WorkspaceSection::Export, false),
                 (WorkspaceSection::Transform, true),
             ] {
                 run.ctrl.set_section(section);

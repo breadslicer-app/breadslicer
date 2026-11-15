@@ -11,7 +11,7 @@ import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
 import { CaptionButton, CaptionKind, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
-import { CutCard, ExportInspector, HollowInspector, OrientCard, OrientOption, OverhangCard, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
+import { CutCard, HollowInspector, OrientCard, OrientOption, OverhangCard, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { ScenePanel, SceneRow } from "./workspace/scene-panel.slint";
 import { Card, Note, ScCheckBox } from "./kit/controls.slint";
 import { LayerView } from "./workspace/layer-view.slint";
@@ -54,12 +54,13 @@ export enum MenuLayout { Bar, Compact }
 // The pages the top bar links to so people can support the project.
 export enum SupportPage { Patreon, KoFi }
 
-// The workflow tabs (BS-68): Transform hosts the scene-editing tools and
-// the mesh repair; Hollow and Supports are taken in either order once the
-// pose is set; Slice holds the slicing flow and the layer view; Export
-// writes the printer file. Per-window live state, not persisted; a freshly
-// loaded scene opens in Transform.
-export enum WorkspaceSection { Transform, Hollow, Supports, Slice, Export }
+// The workflow tabs (BS-68): Transform, shown as Prepare, hosts the
+// scene-editing tools and the mesh repair; Hollow and Supports are taken in
+// either order once the pose is set; Slice holds the slicing flow, the layer
+// view and the printer file, written from its footer once the slice is up to
+// date (#578). Per-window live state, not persisted; a freshly loaded scene
+// opens in Transform.
+export enum WorkspaceSection { Transform, Hollow, Supports, Slice }
 
 export component MainWindow inherits Window {
     // The window's focus goes to the workspace, so the keys it takes work
@@ -206,9 +207,8 @@ export component MainWindow inherits Window {
     // section from mesh health at load time).
     in property <WorkspaceSection> workspace-section: WorkspaceSection.Transform;
     // Whether undo and redo apply in the active tab: everywhere a scene can
-    // still be edited, not in Slice and Export, which show a held result.
-    out property <bool> history-allowed: root.workspace-section != WorkspaceSection.Slice
-        && root.workspace-section != WorkspaceSection.Export;
+    // still be edited, not in Slice, which shows a held result.
+    out property <bool> history-allowed: root.workspace-section != WorkspaceSection.Slice;
     // True when a mesh of the scene does not slice: the Transform inspector
     // then leads with the repair card, which says which objects and why.
     // Pushed by Rust on load, after a repair, and as the scene changes.
@@ -1352,7 +1352,7 @@ export component MainWindow inherits Window {
 
                         WorkflowTab {
                             number: "1";
-                            label: @tr("Workspace" => "Transform");
+                            label: @tr("Workspace" => "Prepare");
                             active: root.workspace-section == WorkspaceSection.Transform;
                             enabled: root.has-scene;
                             dot: root.mesh-needs-repair ? Theme.warning : transparent;
@@ -1403,15 +1403,6 @@ export component MainWindow inherits Window {
                             dot: root.slice-layer-count > 0 ? Theme.success : transparent;
                             clicked => {
                                 root.section-change-requested(WorkspaceSection.Slice);
-                            }
-                        }
-                        WorkflowTab {
-                            number: "5";
-                            label: @tr("Workspace" => "Export");
-                            active: root.workspace-section == WorkspaceSection.Export;
-                            enabled: root.has-scene;
-                            clicked => {
-                                root.section-change-requested(WorkspaceSection.Export);
                             }
                         }
                     }
@@ -1646,7 +1637,8 @@ export component MainWindow inherits Window {
                                 root.slice-split = !root.slice-split;
                             }
                         }
-                        if root.workspace-section == WorkspaceSection.Export: ToolButton {
+                        // Once the slice is up to date, as in the panel (#578).
+                        if root.workspace-section == WorkspaceSection.Slice && root.slice-export-enabled: ToolButton {
                             icon: Icons.file;
                             label: root.plate-count > 1
                                 ? @tr("SlicePanel" => "Export “{}”", root.plate-names[root.active-plate])
@@ -2161,6 +2153,20 @@ export component MainWindow inherits Window {
                             }
                             slice-every-plate => {
                                 root.slice-every-plate-requested();
+                            }
+                            format-options: root.slice-print-format-options;
+                            format-current-index <=> root.slice-print-format-current-index;
+                            format-note: root.slice-print-format-note;
+                            export-enabled: root.slice-export-enabled;
+                            exporting: root.saving-in-progress || root.loading;
+                            format-picked(i) => {
+                                root.slice-print-format-picked(i);
+                            }
+                            export-printer-file => {
+                                root.slice-export-requested();
+                            }
+                            export-every-plate => {
+                                root.slice-export-every-plate-requested();
                             }
                             overhang-map-on <=> root.overhang-map-on;
                             overhang-map-limit: root.overhang-map-limit;
@@ -2708,31 +2714,6 @@ export component MainWindow inherits Window {
                                     }
                                     drop-to-plate => {
                                         root.numeric-edit(10, 0);
-                                    }
-                                }
-                                if root.workspace-section == WorkspaceSection.Export: ExportInspector {
-                                    format-options: root.slice-print-format-options;
-                                    format-current-index <=> root.slice-print-format-current-index;
-                                    format-note: root.slice-print-format-note;
-                                    export-enabled: root.slice-export-enabled;
-                                    plate-count: root.plate-count;
-                                    plate-name: root.plate-count > 1 ? root.plate-names[root.active-plate] : "";
-                                    busy: root.slicing-in-progress || root.saving-in-progress || root.loading;
-                                    has-scene: root.has-scene;
-                                    format-picked(i) => {
-                                        root.slice-print-format-picked(i);
-                                    }
-                                    export-printer-file => {
-                                        root.slice-export-requested();
-                                    }
-                                    export-every-plate => {
-                                        root.slice-export-every-plate-requested();
-                                    }
-                                    save-project => {
-                                        root.save-requested();
-                                    }
-                                    export-mesh => {
-                                        root.export-as-requested();
                                     }
                                 }
                             }
