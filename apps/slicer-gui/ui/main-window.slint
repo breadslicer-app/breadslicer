@@ -557,6 +557,10 @@ export component MainWindow inherits Window {
         && root.slice-layer-count > 0 && !TextInputInterface.text-input-focused
         && !root.message-open && !start-layer.visible && !root.loading
         && !root.slicing-in-progress && !root.saving-in-progress && !root.modal-transform-active;
+    // Ctrl+1 to Ctrl+4 open the workflow tabs (#583): whenever a click on
+    // a tab would, unless something modal is up.
+    property <bool> tab-key-on: root.has-scene && !root.message-open && !start-layer.visible
+        && !root.loading && !root.modal-transform-active;
     callback support-preset-picked(int);
     callback support-preset-save(string);
     callback support-preset-delete();
@@ -1269,6 +1273,17 @@ export component MainWindow inherits Window {
         focus-on-click: false;
         focus-on-tab-navigation: false;
         capture-key-pressed(event) => {
+            // Ctrl+1 to Ctrl+4: the workflow tabs (#583). The window takes
+            // them before the view, whose plain digits turn the camera.
+            if (event.modifiers.control && !event.modifiers.alt && !event.modifiers.shift
+                && (event.text == "1" || event.text == "2" || event.text == "3" || event.text == "4")) {
+                if (root.tab-key-on && !event.repeat) {
+                    root.section-change-requested(event.text == "1" ? WorkspaceSection.Transform
+                        : event.text == "2" ? WorkspaceSection.Hollow
+                        : event.text == "3" ? WorkspaceSection.Supports : WorkspaceSection.Slice);
+                }
+                return accept;
+            }
             if (!root.layer-key-on) {
                 return reject;
             }
@@ -1373,6 +1388,7 @@ export component MainWindow inherits Window {
 
                         WorkflowTab {
                             number: "1";
+                            shortcut: "Ctrl+1";
                             label: @tr("Workspace" => "Prepare");
                             active: root.workspace-section == WorkspaceSection.Transform;
                             enabled: root.has-scene;
@@ -1389,6 +1405,7 @@ export component MainWindow inherits Window {
                         }
                         WorkflowTab {
                             number: "2";
+                            shortcut: "Ctrl+2";
                             label: @tr("Workspace" => "Hollow");
                             active: root.workspace-section == WorkspaceSection.Hollow;
                             enabled: root.has-scene;
@@ -1403,6 +1420,7 @@ export component MainWindow inherits Window {
                         }
                         WorkflowTab {
                             number: "3";
+                            shortcut: "Ctrl+3";
                             label: @tr("Workspace" => "Supports");
                             active: root.workspace-section == WorkspaceSection.Supports;
                             enabled: root.has-scene;
@@ -1418,6 +1436,7 @@ export component MainWindow inherits Window {
                         }
                         WorkflowTab {
                             number: "4";
+                            shortcut: "Ctrl+4";
                             label: @tr("Workspace" => "Slice");
                             active: root.workspace-section == WorkspaceSection.Slice;
                             enabled: root.has-scene;

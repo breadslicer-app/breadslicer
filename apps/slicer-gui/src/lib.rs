@@ -138,6 +138,8 @@ mod tests_start_dialog;
 #[cfg(test)]
 mod tests_surface_paint;
 #[cfg(test)]
+mod tests_tab_keys;
+#[cfg(test)]
 mod tests_tab_translations;
 #[cfg(test)]
 mod tests_ui_inventory;

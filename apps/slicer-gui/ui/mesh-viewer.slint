@@ -337,7 +337,9 @@ export component MeshViewer inherits Rectangle {
                 return accept;
             }
             // Ctrl flips each axis to its opposite, matching the
-            // Blender/CAD convention for numpad-based view switching.
+            // Blender/CAD convention for numpad-based view switching. In
+            // the main window Ctrl+1 and Ctrl+3 open tabs (#583) and never
+            // get here: Back and Left stay on the view wheel.
             if (event.text == "1") {
                 root.axis-view-requested(event.modifiers.control ? AxisView.Back : AxisView.Front);
                 return accept;

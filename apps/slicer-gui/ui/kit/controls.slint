@@ -143,6 +143,8 @@ export component WorkflowTab inherits Rectangle {
     in property <bool> enabled: true;
     // An optional status dot (transparent for none).
     in property <brush> dot: transparent;
+    // The key that opens the tab, named in its tooltip (#583).
+    in property <string> shortcut;
     callback clicked();
 
     height: Theme.topbar-height;
@@ -197,16 +199,31 @@ export component WorkflowTab inherits Rectangle {
         clicked => {
             root.clicked();
         }
+        changed has-hover => {
+            if self.has-hover && root.shortcut != "" {
+                ToolTipState.text = root.label + " (" + root.shortcut + ")";
+                ToolTipState.button-left = root.absolute-position.x;
+                ToolTipState.button-right = root.absolute-position.x + root.width;
+                ToolTipState.button-top = root.absolute-position.y;
+                ToolTipState.button-height = root.height;
+                ToolTipState.below = true;
+            } else {
+                ToolTipState.text = "";
+            }
+        }
     }
 }
 
 // The tool button under the pointer: what `ToolTip` says, and the edges of
-// the button it sits beside, in the window's coordinates.
+// the button it sits beside, in the window's coordinates. A tab of the top
+// bar asks for it below, centred on it.
 export global ToolTipState {
     in-out property <string> text;
+    in-out property <length> button-left;
     in-out property <length> button-right;
     in-out property <length> button-top;
     in-out property <length> button-height;
+    in-out property <bool> below;
 }
 
 // What the tool button under the pointer does. 1 in the window, over all
@@ -215,10 +232,14 @@ export global ToolTipState {
 export component ToolTip inherits Rectangle {
     in property <length> window-width;
     property <length> gap: 6px;
-    property <bool> fits-beside: ToolTipState.button-right + root.gap + root.width + 4px <= root.window-width;
+    property <bool> fits-beside: !ToolTipState.below
+        && ToolTipState.button-right + root.gap + root.width + 4px <= root.window-width;
+    property <length> centred-x: (ToolTipState.button-left + ToolTipState.button-right - root.width) / 2;
 
     visible: ToolTipState.text != "";
-    x: root.fits-beside ? ToolTipState.button-right + root.gap : root.window-width - root.width - 4px;
+    x: root.fits-beside ? ToolTipState.button-right + root.gap
+        : ToolTipState.below ? clamp(root.centred-x, 4px, root.window-width - root.width - 4px)
+        : root.window-width - root.width - 4px;
     y: root.fits-beside
         ? ToolTipState.button-top + (ToolTipState.button-height - root.height) / 2
         : ToolTipState.button-top + ToolTipState.button-height + root.gap;
@@ -301,6 +322,7 @@ export component ToolButton inherits Rectangle {
                 ToolTipState.button-right = root.absolute-position.x + root.width;
                 ToolTipState.button-top = root.absolute-position.y;
                 ToolTipState.button-height = root.height;
+                ToolTipState.below = false;
             } else {
                 ToolTipState.text = "";
             }
