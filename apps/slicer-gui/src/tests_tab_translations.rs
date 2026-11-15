@@ -474,10 +474,11 @@ fn the_overhang_card_shows_in_spanish_and_its_key_follows_the_box() {
                 window.set_overhang_map_limit("52°".into());
             },
             |window| {
-                // The card lives in the View menu of the 3D view (#578).
-                ElementHandle::find_by_accessible_label(window, "Ver")
+                // The card lives in the Scene settings chip of the 3D view
+                // (#578, #581).
+                ElementHandle::find_by_accessible_label(window, "Ajustes de escena")
                     .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
-                    .expect("the View chip")
+                    .expect("the Scene settings chip")
                     .invoke_accessible_default_action();
                 render_frames();
                 if let Some(path) = std::env::var_os("BREADSLICER_OVERHANG_CARD_PNG")
@@ -812,4 +813,27 @@ fn the_orient_card_pictures_are_written_when_asked() {
             },
         );
     }
+}
+
+/// The chip under the 3D view is Scene settings, not View, which is the menu
+/// bar's (#581); in Spanish its whole name fits it.
+#[test]
+fn the_scene_settings_chip_reads_whole_in_spanish() {
+    let (chip, name, view) = in_spanish(
+        WorkspaceSection::Transform,
+        |_| {},
+        |window| {
+            let chip = ElementHandle::find_by_accessible_label(window, "Ajustes de escena")
+                .find(|e| e.size().height > 0.0)
+                .map(|e| e.size().width);
+            let name = ElementHandle::find_by_accessible_label(window, "Ajustes de escena ▾")
+                .find(|e| e.size().height > 0.0)
+                .map(|e| e.size().width);
+            (chip, name, shows(window, "Ver ▾"))
+        },
+    );
+    let chip = chip.expect("the chip shows, named in Spanish");
+    let name = name.expect("its name shows");
+    assert!(name <= chip, "the name fits: {name} in {chip}");
+    assert!(!view, "no chip is called View any more");
 }
