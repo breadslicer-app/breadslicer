@@ -345,6 +345,7 @@ fn axes(layer: &PixelLayer, view: View, margin: f32) -> Option<(Axis, Axis)> {
 /// `highlight`'s printer pixels (`[x0, y0, x1, y1)`, plate columns from the
 /// minimum X and rows from the back) drawn in the review's highlight (#409).
 /// `None` for a view of nothing.
+#[cfg(test)]
 pub(crate) fn tile(
     layer: &PixelLayer,
     view: View,
