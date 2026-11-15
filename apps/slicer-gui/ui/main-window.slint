@@ -2081,24 +2081,25 @@ export component MainWindow inherits Window {
 
                     // What the view draws, for every tab (#578): the overhang
                     // map and what shows from under the plate. Beside the
-                    // projection chip of the view.
+                    // projection chip of the view. Scene settings, not View,
+                    // which is the menu bar's (#581).
                     if root.has-scene: Rectangle {
                         x: 140px;
                         y: parent.height - 38px;
-                        width: 64px;
+                        width: scene-settings-text.preferred-width + 20px;
                         height: 24px;
                         border-radius: 2px;
                         background: #171a1d;
                         border-color: view-touch.has-hover ? Theme.border-strong : #272d32;
                         border-width: 1px;
                         accessible-role: button;
-                        accessible-label: @tr("Inspector" => "View");
+                        accessible-label: @tr("Inspector" => "Scene settings");
                         accessible-action-default => {
                             view-pop.show();
                         }
 
-                        Text {
-                            text: @tr("Inspector" => "View") + " ▾";
+                        scene-settings-text := Text {
+                            text: @tr("Inspector" => "Scene settings") + " ▾";
                             color: root.overhang-map-on ? Theme.text : #8b959d;
                             font-size: 11px;
                             font-family: "Consolas";

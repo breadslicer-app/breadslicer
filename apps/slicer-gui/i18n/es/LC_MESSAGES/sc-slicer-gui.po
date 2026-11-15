@@ -7805,8 +7805,8 @@ msgstr "ESCENA"
 
 #: src/ui
 msgctxt "Inspector"
-msgid "View"
-msgstr "Ver"
+msgid "Scene settings"
+msgstr "Ajustes de escena"
 
 #: src/ui
 msgctxt "Inspector"
