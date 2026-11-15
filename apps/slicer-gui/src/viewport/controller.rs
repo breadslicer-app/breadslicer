@@ -1524,22 +1524,30 @@ impl ViewportController {
                 crate::slice_cap::build_cap_raster(l, build_volume).map(|r| (r, l.z_mm()))
             })
             .flatten()?;
-        if let Some(footprint) = self.review_highlight.borrow().as_ref() {
-            let rects: Vec<[f64; 4]> = footprint
-                .slabs
-                .iter()
-                .filter(|slab| slab.bottom_mm <= z_mm && z_mm < slab.top_mm)
-                .flat_map(|slab| {
-                    slab.rects
-                        .iter()
-                        .map(|r| [r.x0_mm, r.y0_mm, r.x1_mm, r.y1_mm])
-                })
-                .collect();
-            if !rects.is_empty() {
-                crate::slice_cap::highlight_cap(&mut raster, &rects, build_volume);
-            }
+        let rects = self.review_highlight_rects(z_mm);
+        if !rects.is_empty() {
+            crate::slice_cap::highlight_cap(&mut raster, &rects, build_volume);
         }
         Some(raster)
+    }
+
+    /// The highlighted finding's pixels (#409) on the layer cut at `z_mm`, as
+    /// `[x0, y0, x1, y1]` rectangles in printer-frame mm, centred on the
+    /// plate.
+    pub(crate) fn review_highlight_rects(&self, z_mm: f64) -> Vec<[f64; 4]> {
+        let Some(footprint) = self.review_highlight.borrow().clone() else {
+            return Vec::new();
+        };
+        footprint
+            .slabs
+            .iter()
+            .filter(|slab| slab.bottom_mm <= z_mm && z_mm < slab.top_mm)
+            .flat_map(|slab| {
+                slab.rects
+                    .iter()
+                    .map(|r| [r.x0_mm, r.y0_mm, r.x1_mm, r.y1_mm])
+            })
+            .collect()
     }
 
     pub(crate) fn on_viewport_resized(&self, w: f32, h: f32) {

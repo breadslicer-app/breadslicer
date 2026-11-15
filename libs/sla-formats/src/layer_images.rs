@@ -22,7 +22,7 @@ use sc_print_primitives::{Mirror, PanelRotation};
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 use sc_sl1cer::raster::pixel_map::PixelMap;
 use sc_sl1cer::raster::rasterize_layer;
-use sc_sl1cer::raster::rle::RleRun;
+use sc_sl1cer::raster::rle::{LayerRaster, RleRun};
 
 use crate::raster_setup::RasterSetup;
 use crate::row_order::turn_ccw;
@@ -153,6 +153,40 @@ pub fn lit_areas_mm2(stack: &ContourStack, raster: &RasterSetup) -> Vec<f64> {
         .collect()
 }
 
+/// The projection a printer file's layer images are rasterised with:
+/// `raster`'s plate and pixels, rows from the plate's minimum Y (front)
+/// edge, and columns from its maximum X edge unless the printer mirrors X
+/// (then from its minimum X edge); rows run the other way when it mirrors
+/// Y. The plate's image runs its columns the other way from the raster
+/// tier, so its X mirror is the raster's X mirror inverted.
+pub fn plate_pixel_map(raster: &RasterSetup) -> PixelMap {
+    let plate = raster.build_volume();
+    let mirror = raster.mirror();
+    PixelMap::new(
+        plate.x(),
+        plate.y(),
+        *raster.pixel_resolution(),
+        Mirror {
+            x: !mirror.x,
+            y: mirror.y,
+        },
+    )
+}
+
+/// The pixels a printer file holds for `layer` with `raster`'s settings,
+/// before the panel's turn: the very rasterisation [`write_layer_images`]
+/// encodes, laid out as [`plate_pixel_map`] says, with the greys of its
+/// anti-aliasing (#429). A layer that lights nothing comes back dark: the
+/// file's placeholder pixel (#309) is not part of it.
+pub fn layer_pixels(layer: &ContourLayer, raster: &RasterSetup) -> LayerRaster {
+    rasterize_layer(
+        layer,
+        &plate_pixel_map(raster),
+        raster.aa(),
+        raster.min_alpha_pct(),
+    )
+}
+
 /// What every layer's frame is made with.
 struct Frames<'a> {
     layers: &'a [ContourLayer],
@@ -166,21 +200,7 @@ struct Frames<'a> {
 
 impl<'a> Frames<'a> {
     fn new(layers: &'a [ContourLayer], raster: &'a RasterSetup, dimmest_stored: u8) -> Self {
-        let plate = raster.build_volume();
-        // The raster tier numbers rows from the plate's minimum Y and
-        // columns from its minimum X; the plate's image runs its columns
-        // the other way, so its X mirror is the raster's X mirror
-        // inverted.
-        let mirror = raster.mirror();
-        let pixel_map = PixelMap::new(
-            plate.x(),
-            plate.y(),
-            *raster.pixel_resolution(),
-            Mirror {
-                x: !mirror.x,
-                y: mirror.y,
-            },
-        );
+        let pixel_map = plate_pixel_map(raster);
         Self {
             layers,
             raster,
@@ -199,12 +219,7 @@ impl<'a> Frames<'a> {
         scratch: &mut Scratch,
         use_rows: impl FnOnce(&[RleRun]) -> R,
     ) -> R {
-        let pixels = rasterize_layer(
-            &self.layers[index],
-            &self.pixel_map,
-            self.raster.aa(),
-            self.raster.min_alpha_pct(),
-        );
+        let pixels = layer_pixels(&self.layers[index], self.raster);
         match self.rotation {
             PanelRotation::None => use_rows(pixels.runs()),
             PanelRotation::Ccw90 => {

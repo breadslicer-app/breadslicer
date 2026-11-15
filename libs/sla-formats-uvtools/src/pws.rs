@@ -112,7 +112,6 @@ pub(crate) fn decode(
 
 /// The grey a pixel of grey `value` reads back as after a round trip through
 /// `levels` planes.
-#[cfg(test)]
 pub(crate) fn quantise(value: u8, levels: u8) -> u8 {
     let lit = (1..=levels)
         .filter(|&level| value >= threshold(level, levels))

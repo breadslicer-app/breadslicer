@@ -34,6 +34,13 @@ pub const MAX_RUN_LENGTH: u32 = 0x0FFF_FFFF;
 /// so a grey of 1 is stored dark.
 pub const DIMMEST_STORED: u8 = 2;
 
+/// The grey a pixel of grey `grey` reads back as: its top 7 bits, the lowest
+/// bit lit on any pixel stored lit (#429).
+pub fn stored_grey(grey: u8) -> u8 {
+    let pixel = grey >> 1;
+    if pixel == 0 { 0 } else { (pixel << 1) | 1 }
+}
+
 /// Append `runs` to `out` as one layer image, in the order they
 /// arrive.
 ///

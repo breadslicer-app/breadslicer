@@ -62,4 +62,4 @@ pub use printer_file_format::{
 };
 pub use raster_setup::RasterSetup;
 pub use threemf::write_scene_slices;
-pub use write::{write_printer_file, write_slice};
+pub use write::{stored_greys, write_printer_file, write_slice};

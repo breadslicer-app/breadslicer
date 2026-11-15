@@ -23,6 +23,7 @@ use crate::error::WriteFailure;
 use crate::preview::{PreviewSizes, PrintPreviews};
 use crate::print_program::PrintProgram;
 use crate::printer_file_format::PrinterFileFormat;
+use crate::raster_setup::RasterSetup;
 
 /// An output a printer file can be written to: a stream that can also go back,
 /// which an archive needs to patch its directory.
@@ -38,6 +39,14 @@ pub trait PrinterFileWriter: Send + Sync {
     /// Reports the sizes `format` carries its 2 previews at, as
     /// [`PrinterFileFormat::preview_sizes`] does for the built-in formats.
     fn preview_sizes(&self, format: PrinterFileFormat) -> Option<PreviewSizes>;
+
+    /// The grey a pixel rasterised at `grey` with `raster`'s settings reads
+    /// back as from a file of `format`: a codec that keeps fewer bits than 8
+    /// stores fewer greys (#429). Every grey by default.
+    fn stored_grey(&self, format: PrinterFileFormat, raster: &RasterSetup, grey: u8) -> u8 {
+        let _ = (format, raster);
+        grey
+    }
 
     /// Writes `stack` as a file of `format` running the schedule in `program`.
     ///

@@ -35,6 +35,12 @@ const GREY_LIMIT: u32 = 0xf;
 /// stored dark.
 pub(crate) const DIMMEST_STORED: u8 = 0x10;
 
+/// The grey a pixel of grey `grey` reads back as: its high nibble, repeated.
+pub(crate) fn stored_grey(grey: u8) -> u8 {
+    let nibble = grey >> 4;
+    (nibble << 4) | nibble
+}
+
 /// Encodes a frame of `runs`, rows in image order, as a PW0 layer image.
 pub(crate) fn encode(runs: &[RleRun]) -> Vec<u8> {
     let mut out = Vec::with_capacity(256);

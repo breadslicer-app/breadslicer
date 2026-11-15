@@ -655,6 +655,25 @@ export component MainWindow inherits Window {
     in-out property <length> slice-view-height: 0px;
     in-out property <bool> slice-view-minimized: false;
     in property <image> slice-view-image;
+    // The layer pane's real printer pixels (#429): the part on show at the
+    // printer's resolution, laid over the pane's image where it lies
+    // (fractions of the plate, rows from its back), the printer's pixels
+    // across the plate, and a count that moves on each layer rasterised.
+    in property <image> layer-pixel-tile;
+    in property <bool> layer-pixel-shown;
+    in property <float> layer-pixel-u0;
+    in property <float> layer-pixel-v0;
+    in property <float> layer-pixel-u1;
+    in property <float> layer-pixel-v1;
+    in property <int> layer-pixel-columns;
+    in property <int> layer-pixel-generation;
+    // The part of the pane's image on show changed: fractions from its left
+    // and top edges, and its size on screen.
+    callback layer-view-changed(float, float, float, float, float, float);
+    // A layer finished rasterising on its worker.
+    callback layer-pixels-ready();
+    // The place and grey of the printer pixel at a fraction of the image.
+    pure callback layer-pixel-readout(float, float, int) -> string;
 
     changed theme => {
         Palette.color-scheme =
@@ -1921,8 +1940,24 @@ export component MainWindow inherits Window {
                             right-gutter: 48px;
                             source: root.slice-view-image;
                             caption: @tr("LayerView" => "Layer {} of {}", Math.round(root.selected-layer-index) + 1, root.slice-layer-count);
+                            pixel-columns: root.layer-pixel-columns;
+                            tile: root.layer-pixel-tile;
+                            tile-shown: root.layer-pixel-shown;
+                            tile-u0: root.layer-pixel-u0;
+                            tile-v0: root.layer-pixel-v0;
+                            tile-u1: root.layer-pixel-u1;
+                            tile-v1: root.layer-pixel-v1;
+                            pixel-generation: root.layer-pixel-generation;
+                            // Another format stores other greys.
+                            format-index: root.slice-print-format-current-index;
                             close-requested => {
                                 root.slice-split = false;
+                            }
+                            view-changed(u0, v0, u1, v1, w, h) => {
+                                root.layer-view-changed(u0, v0, u1, v1, w, h);
+                            }
+                            pixel-readout(u, v, generation) => {
+                                return root.layer-pixel-readout(u, v, generation);
                             }
                         }
                     }
