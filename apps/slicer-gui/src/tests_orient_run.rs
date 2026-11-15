@@ -801,7 +801,7 @@ fn the_card_holds_its_last_row_with_advanced_open_and_three_options() {
         }
         let (apply_top, apply_bottom) = drawn_span(&f.window, "Apply A");
         let (_, close_bottom) = drawn_span(&f.window, "Close");
-        let (objects_top, _) = drawn_span(&f.window, "OBJECTS");
+        let (objects_top, _) = drawn_span(&f.window, "MOVE");
         assert!(note_bottom < apply_top);
         // The card body has 12 px of padding below its last row.
         for (name, bottom) in [("Apply", apply_bottom), ("Close", close_bottom)] {

@@ -61,7 +61,7 @@ const PANEL_COMPONENTS: &[&str] = &[
 /// The texts of the main window that belong to the Transform, Supports and
 /// Slice tabs: their tool rail and the hints of the status bar.
 const PANEL_MAIN_WINDOW_TEXTS: &[(&str, &str)] = &[
-    ("Workspace", "Transform"),
+    ("Workspace", "Prepare"),
     ("Workspace", "Supports"),
     ("Workspace", "Slice"),
     ("Inspector", "Move"),
@@ -104,11 +104,10 @@ const PANEL_MAIN_WINDOW_TEXTS: &[(&str, &str)] = &[
     ("Workspace", "{} object(s)"),
 ];
 
-/// The texts of the main window that belong to the Hollow and Export tabs:
-/// their tab labels, the drain tool's button and the hints of the status bar.
+/// The texts of the main window that belong to the Hollow tab: its label,
+/// the drain tool's button and the hints of the status bar.
 const MAIN_WINDOW_TEXTS: &[(&str, &str)] = &[
     ("Workspace", "Hollow"),
-    ("Workspace", "Export"),
     ("Inspector", "Drain holes"),
     (
         "Workspace",
@@ -228,9 +227,9 @@ fn main_window_text(&(context, message): &(&str, &str)) -> SlintText {
 }
 
 #[test]
-fn every_text_of_the_hollow_and_export_tabs_has_spanish() {
+fn every_text_of_the_hollow_and_slice_tabs_has_spanish() {
     let spanish = spanish();
-    let mut texts: Vec<SlintText> = ["HollowInspector", "ExportInspector"]
+    let mut texts: Vec<SlintText> = ["HollowInspector", "SliceInspector"]
         .into_iter()
         .flat_map(|name| slint_texts(component_source(INSPECTORS, name)))
         .collect();
@@ -348,25 +347,36 @@ fn in_language<R: Send>(
 }
 
 #[test]
-fn a_disabled_export_says_why_in_spanish() {
-    let (spanish, english) = in_spanish(
-        WorkspaceSection::Export,
-        |window| window.set_slice_export_enabled(false),
-        |window| {
-            (
-                shows(
-                    window,
-                    "Laminá primero: el archivo de impresora se escribe a partir del laminado actual.",
-                ),
-                shows(
-                    window,
-                    "Slice first: the printer file is written from the held slice.",
-                ),
-            )
-        },
-    );
-    assert!(spanish, "the note shows in Spanish");
-    assert!(!english, "no English note");
+fn slice_then_export_stand_under_print_setup_in_spanish() {
+    let buttons = |enabled: bool| {
+        in_spanish(
+            WorkspaceSection::Slice,
+            move |window| {
+                window.set_slice_printer_current_index(0);
+                window.set_slice_resin_current_index(0);
+                window.set_slice_export_enabled(enabled);
+            },
+            |window| {
+                let at = |label: &str| {
+                    ElementHandle::find_by_accessible_label(window, label)
+                        .filter(|e| e.size().height > 0.0)
+                        .map(|e| e.absolute_position().y)
+                        .fold(f32::NEG_INFINITY, f32::max)
+                };
+                (
+                    at("Laminar"),
+                    at("Exportar para la impresora"),
+                    shows(window, "Export for printer"),
+                )
+            },
+        )
+    };
+    for enabled in [false, true] {
+        let (slice, export, english) = buttons(enabled);
+        assert!(export.is_finite(), "Export shows, in Spanish ({enabled})");
+        assert!(slice < export, "Slice stands before Export ({enabled})");
+        assert!(!english, "no English label ({enabled})");
+    }
 }
 
 #[test]
@@ -446,8 +456,8 @@ struct SizeTexts {
     scale: &'static str,
 }
 
-/// #91: the OVERHANGS card shows with a model in the scene, its colour key
-/// only while the map is on. `BREADSLICER_OVERHANG_CARD_PNG` names a file for a
+/// #91: the OVERHANGS card shows in the View menu of the 3D view (#578),
+/// its colour key only while the map is on. `BREADSLICER_OVERHANG_CARD_PNG` names a file for a
 /// picture of the window.
 #[test]
 fn the_overhang_card_shows_in_spanish_and_its_key_follows_the_box() {
@@ -464,6 +474,12 @@ fn the_overhang_card_shows_in_spanish_and_its_key_follows_the_box() {
                 window.set_overhang_map_limit("52°".into());
             },
             |window| {
+                // The card lives in the View menu of the 3D view (#578).
+                ElementHandle::find_by_accessible_label(window, "Ver")
+                    .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
+                    .expect("the View chip")
+                    .invoke_accessible_default_action();
+                render_frames();
                 if let Some(path) = std::env::var_os("BREADSLICER_OVERHANG_CARD_PNG")
                     && on
                 {
@@ -623,8 +639,8 @@ fn the_transform_supports_and_slice_tabs_show_in_spanish() {
     for (section, spanish, english) in [
         (
             WorkspaceSection::Transform,
-            &["OBJETOS", "Abrí o soltá un modelo para empezar."][..],
-            &["OBJECTS", "Open or drop a model to start."][..],
+            &["ESCENA", "Agregar cama"][..],
+            &["SCENE", "Add plate"][..],
         ),
         (
             WorkspaceSection::Supports,
@@ -633,15 +649,15 @@ fn the_transform_supports_and_slice_tabs_show_in_spanish() {
                 "Generar soportes",
                 "UBICACIÓN",
                 "BALSA",
-                "DESDE ABAJO",
+                "ELEVACIÓN",
             ][..],
             &[
                 "AUTO SUPPORTS",
                 "Generate supports",
                 "PLACEMENT",
                 "RAFT",
-                "FROM BELOW",
-                "Supports as dotted lines",
+                "LIFT",
+                "Lift 5 mm when the model rests on the plate",
             ][..],
         ),
         (

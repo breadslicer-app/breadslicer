@@ -4837,6 +4837,63 @@ mod window_wiring_tests {
         }
     }
 
+    /// The scene panel (#578) lists each plate with the objects on it; a
+    /// model sent to another plate moves under it, and the panel closed
+    /// takes no room.
+    #[test]
+    fn the_scene_panel_lists_each_plate_with_its_objects() {
+        let rows = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            window.show().expect("the window shows");
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(1600.0, 1000.0));
+            load_selected_cube(&app, id);
+            let controller = controller_of(&app, id);
+            let read = |window: &MainWindow| -> Vec<(bool, i32, bool)> {
+                use slint::Model;
+                window
+                    .get_scene_rows()
+                    .iter()
+                    .map(|row| (row.plate, row.index, row.active))
+                    .collect()
+            };
+            let mut seen = vec![read(&window)];
+            controller.add_plate();
+            seen.push(read(&window));
+            controller.send_selection_to_plate(1);
+            seen.push(read(&window));
+            {
+                use slint::Model;
+                assert_eq!(window.get_object_row_of().row_data(0), Some(2));
+            }
+            crate::test_support::slint_thread::render_frames();
+            let view = |window: &MainWindow| {
+                i_slint_backend_testing::ElementHandle::find_by_element_id(window, "MainWindow::mv")
+                    .next()
+                    .expect("the view")
+                    .size()
+                    .width
+            };
+            let open = view(&window);
+            window.set_show_object_list(false);
+            crate::test_support::slint_thread::render_frames();
+            let closed = view(&window);
+            assert!(closed >= open + 150.0, "closed {closed}, open {open}");
+            seen
+        });
+        assert_eq!(
+            rows,
+            vec![
+                vec![(true, 0, true), (false, 0, false)],
+                vec![(true, 0, true), (false, 0, false), (true, 1, false)],
+                vec![(true, 0, false), (true, 1, true), (false, 0, false)],
+            ]
+        );
+    }
+
     /// A check box flips on the first click: also once the 3D view took
     /// the keyboard. Its keyboard scope lies over its click area and kept
     /// the press of a click for itself while it had no focus.

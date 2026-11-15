@@ -42,12 +42,19 @@ pub(super) struct RenderHost {
     /// and a redraw can be flagged alone (e.g. camera moved without a
     /// scene change).
     frame: Cell<FrameState>,
-    /// True between a `viewport-resized` event and the debounce timer
-    /// firing in `on_resize_settled`. While set,
-    /// `handle_before_rendering` rounds the render target size up to
-    /// the next `RESIZE_BUCKET` multiple so drag resizes don't churn
-    /// the MSAA/target allocations on every pointer move.
+    /// True while a drag resizes the view: from its second change, with a
+    /// frame drawn between, until the debounce timer fires in
+    /// `on_resize_settled`. While set, `handle_before_rendering` rounds the
+    /// render target size up to the next `RESIZE_BUCKET` multiple so drag
+    /// resizes don't churn the MSAA/target allocations on every pointer
+    /// move. A change in one go (the scene panel opened or closed, #578)
+    /// never sets it: its first frame is drawn at the exact size, with no
+    /// stretch to snap out of 200 ms later.
     resizing: Cell<bool>,
+    /// A `viewport-resized` came since the last settle, and whether a
+    /// frame was drawn after it: the next change then is a drag.
+    resize_seen: Cell<bool>,
+    drawn_since_resize: Cell<bool>,
     /// The effective render-target size the device last refused a
     /// frame at; paints at that size are skipped until the viewport
     /// changes or a frame succeeds.
@@ -65,6 +72,8 @@ impl RenderHost {
             viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
             resizing: Cell::new(false),
+            resize_seen: Cell::new(false),
+            drawn_since_resize: Cell::new(false),
             refused_size: Cell::new(None),
             pacer: Some(FramePacer::new(ui.as_weak())),
         }
@@ -82,6 +91,8 @@ impl RenderHost {
             viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
             resizing: Cell::new(false),
+            resize_seen: Cell::new(false),
+            drawn_since_resize: Cell::new(false),
             refused_size: Cell::new(None),
             pacer: None,
         }
@@ -146,14 +157,13 @@ impl RenderHost {
     /// resize-in-progress, and pings the window.
     pub(super) fn on_viewport_resized(&self, w: f32, h: f32) {
         self.refused_size.set(None);
-        render_scheduler::on_viewport_resized(
-            &self.viewport,
-            &self.resizing,
-            &self.frame,
-            &self.ui,
-            w,
-            h,
-        );
+        // A change after a frame drawn at the last one is a drag.
+        if self.resize_seen.get() && self.drawn_since_resize.get() {
+            self.resizing.set(true);
+        }
+        self.resize_seen.set(true);
+        self.drawn_since_resize.set(false);
+        render_scheduler::on_viewport_resized(&self.viewport, &self.frame, &self.ui, w, h);
     }
 
     /// `viewport-resized` debounce-fired callback. Drops the bucketed
@@ -162,6 +172,8 @@ impl RenderHost {
     /// that persisted during the drag.
     pub(super) fn on_resize_settled(&self) {
         self.refused_size.set(None);
+        self.resize_seen.set(false);
+        self.drawn_since_resize.set(false);
         render_scheduler::on_resize_settled(&self.resizing, &self.frame, &self.ui, || {
             if let Some(r) = self.renderer.borrow_mut().as_mut() {
                 r.invalidate_sizing();
@@ -173,6 +185,8 @@ impl RenderHost {
     /// Delegates to `render_scheduler::bucketed_size` against the
     /// live resize flag.
     pub(super) fn bucketed_size(&self, width: u32, height: u32) -> (u32, u32) {
+        // Asked once per frame drawn: a later change is a drag.
+        self.drawn_since_resize.set(self.resize_seen.get());
         render_scheduler::bucketed_size(width, height, self.resizing.get())
     }
 
@@ -268,34 +282,46 @@ mod render_host_tests {
     }
 
     #[test]
-    fn on_viewport_resized_stores_size_and_latches_resizing() {
+    fn on_viewport_resized_stores_size_and_draws_one_change_exact() {
         let rh = RenderHost::new_for_test();
         rh.on_viewport_resized(800.0, 600.0);
         let vp = rh.viewport().expect("non-empty size");
         assert_eq!(vp.width(), 800.0);
         assert_eq!(vp.height(), 600.0);
-        assert!(rh.is_resizing());
+        // One change (the scene panel opened, #578): drawn at its size.
+        assert!(!rh.is_resizing());
+        assert_eq!(rh.bucketed_size(1234, 567), (1234, 567));
         assert!(rh.redraw_owed());
+    }
+
+    #[test]
+    fn changes_in_one_go_stay_exact_and_a_drag_latches_resizing() {
+        let rh = RenderHost::new_for_test();
+        // Width and height told one after the other, no frame between.
+        rh.on_viewport_resized(800.0, 600.0);
+        rh.on_viewport_resized(900.0, 600.0);
+        assert!(!rh.is_resizing());
+        assert_eq!(rh.bucketed_size(1234, 567), (1234, 567));
+        // A frame was drawn: the next change is a drag.
+        rh.on_viewport_resized(950.0, 600.0);
+        assert!(rh.is_resizing());
+        let (w, h) = rh.bucketed_size(65, 65);
+        assert_eq!((w, h), (128, 128));
     }
 
     #[test]
     fn on_resize_settled_clears_resizing() {
         let rh = RenderHost::new_for_test();
         rh.on_viewport_resized(800.0, 600.0);
+        rh.bucketed_size(800, 600);
+        rh.on_viewport_resized(820.0, 600.0);
+        assert!(rh.is_resizing());
         rh.on_resize_settled();
         assert!(!rh.is_resizing());
-    }
-
-    #[test]
-    fn bucketed_size_uses_live_resize_flag() {
-        let rh = RenderHost::new_for_test();
-        // Not resizing yet: exact pass-through.
-        assert_eq!(rh.bucketed_size(1234, 567), (1234, 567));
-        rh.on_viewport_resized(800.0, 600.0);
-        // Now resizing: rounds up to the bucket.
-        let (w, h) = rh.bucketed_size(65, 65);
-        assert!(w >= 65);
-        assert!(h >= 65);
+        // After the settle, a single change is exact again.
+        rh.bucketed_size(820, 600);
+        rh.on_viewport_resized(700.0, 600.0);
+        assert!(!rh.is_resizing());
     }
 
     #[test]

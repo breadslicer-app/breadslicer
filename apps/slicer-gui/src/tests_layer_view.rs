@@ -59,6 +59,9 @@ fn sliced_window(size: (u32, u32)) -> MainWindow {
     let ui = MainWindow::new().expect("the headless platform creates a main window");
     ui.window().set_size(PhysicalSize::new(size.0, size.1));
     ui.set_has_scene(true);
+    // The pane's sizes are measured against the whole width beside the
+    // rail: the scene panel (#578) stays closed.
+    ui.set_show_object_list(false);
     ui.set_workspace_section(WorkspaceSection::Slice);
     ui.set_slice_layer_count(1128);
     ui.set_selected_layer_index(1127.0);
@@ -362,7 +365,7 @@ fn tool_buttons_say_what_they_do_under_the_pointer() {
         assert!(!ui.get_slice_split());
 
         // Leaving the tab takes the button and its tooltip away.
-        ui.set_workspace_section(WorkspaceSection::Export);
+        ui.set_workspace_section(WorkspaceSection::Supports);
         render_frames();
         assert_eq!(tooltip_text(&ui), None);
     });

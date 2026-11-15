@@ -936,6 +936,8 @@ impl ViewportController {
             ui.set_mesh_rendering(slint::Image::default());
             ui.set_has_scene(false);
             push_object_list(&ui, Vec::new());
+            ui.set_scene_rows(slint::ModelRc::default());
+            ui.set_object_row_of(slint::ModelRc::default());
             ui.set_selected_object_index(-1);
             ui.set_gizmo_keyboard_focus_active(false);
         }
@@ -4306,6 +4308,41 @@ impl ViewportController {
                 .iter()
                 .any(|&(_, plate)| plate == plates.active());
         ui.set_active_plate_used(active_used);
+        self.mirror_scene_rows(&ui);
+    }
+
+    /// Shows the scene panel's rows (#578): every plate, the objects on it
+    /// under it (each by its row of the object list), and where each
+    /// object's row stands, to bring the selected one into sight.
+    fn mirror_scene_rows(&self, ui: &MainWindow) {
+        let document = self.session.document();
+        let plates = document.plates();
+        let volume = self.session.build_volume();
+        let names = document.plate_names();
+        let (objects, on_plate) = document
+            .with_scene(|spatial| {
+                let graph = spatial.graph();
+                let objects = build_object_list_names(graph);
+                let on_plate: Vec<u32> = graph
+                    .reachable_leaves(
+                        sc_scene::CsgPolicy::Descend,
+                        sc_scene::ReferencePolicy::Skip,
+                    )
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|leaf| {
+                        crate::plate_layout::plate_of_leaf(spatial, &volume, plates, leaf)
+                            .unwrap_or(0)
+                            .min(plates.count().saturating_sub(1))
+                    })
+                    .collect();
+                (objects, on_plate)
+            })
+            .unwrap_or_default();
+        let (rows, row_of) =
+            scene_rows(&names, plates.count(), plates.active(), &objects, &on_plate);
+        ui.set_scene_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+        ui.set_object_row_of(slint::ModelRc::new(slint::VecModel::from(row_of)));
     }
 
     fn on_plates_changed(&self) {
@@ -6948,3 +6985,40 @@ fn plate_length(mm: f32) -> String {
 #[cfg(test)]
 #[path = "tests_plates.rs"]
 mod tests_plates;
+
+/// The scene panel's rows (#578): each plate, then the objects standing on
+/// it in the order of the object list; and, by object, the rank of its row.
+pub(crate) fn scene_rows(
+    plate_names: &[String],
+    plate_count: u32,
+    active: u32,
+    objects: &[String],
+    on_plate: &[u32],
+) -> (Vec<crate::SceneRow>, Vec<i32>) {
+    let mut rows = Vec::with_capacity(plate_count as usize + objects.len());
+    let mut row_of = vec![0; objects.len()];
+    for plate in 0..plate_count.max(1) {
+        let name = plate_names
+            .get(plate as usize)
+            .cloned()
+            .unwrap_or_else(|| format!("Plate {}", plate + 1));
+        rows.push(crate::SceneRow {
+            plate: true,
+            index: plate as i32,
+            text: name.into(),
+            active: plate == active,
+        });
+        for (i, name) in objects.iter().enumerate() {
+            if on_plate.get(i).copied().unwrap_or(0) == plate {
+                row_of[i] = rows.len() as i32;
+                rows.push(crate::SceneRow {
+                    plate: false,
+                    index: i as i32,
+                    text: name.as_str().into(),
+                    active: false,
+                });
+            }
+        }
+    }
+    (rows, row_of)
+}

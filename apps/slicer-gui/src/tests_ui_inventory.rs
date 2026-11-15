@@ -37,7 +37,6 @@ fn the_pictures_of_the_app_are_written_when_asked() {
             ("2-hollow", WorkspaceSection::Hollow),
             ("3-supports", WorkspaceSection::Supports),
             ("4-slice", WorkspaceSection::Slice),
-            ("5-export", WorkspaceSection::Export),
         ] {
             for selected in [false, true] {
                 let dir = dir.clone();
@@ -78,6 +77,41 @@ fn the_pictures_of_the_app_are_written_when_asked() {
                 window.window(),
                 &ruler_dir,
                 &format!("{language}-4-slice-ruler"),
+            );
+            // Up to date with a format picked: Export takes Slice's place
+            // (#578).
+            let names = |list: &[&str]| {
+                slint::ModelRc::new(slint::VecModel::from(
+                    list.iter()
+                        .map(|name| slint::SharedString::from(*name))
+                        .collect::<Vec<_>>(),
+                ))
+            };
+            window.set_slice_printer_options(names(&["Anycubic Photon Mono M7 Pro"]));
+            window.set_slice_printer_current_index(0);
+            window.set_slice_resin_options(names(&["Standard Resin+"]));
+            window.set_slice_resin_current_index(0);
+            window.set_slice_print_format_options(names(&["Anycubic ZIP (.pwsz)"]));
+            window.set_slice_print_format_current_index(0);
+            window.set_slice_up_to_date(true);
+            window.set_slice_export_enabled(true);
+            write(
+                window.window(),
+                &ruler_dir,
+                &format!("{language}-4-slice-export"),
+            );
+            window.set_plate_count(2);
+            window.set_plate_names(names(&["Plate 1", "Plate 2"]));
+            write(
+                window.window(),
+                &ruler_dir,
+                &format!("{language}-4-slice-export-plates"),
+            );
+            window.set_slice_setup_open(false);
+            write(
+                window.window(),
+                &ruler_dir,
+                &format!("{language}-4-slice-setup-folded"),
             );
         });
         // Many objects: the list keeps to five rows and scrolls (#558); the

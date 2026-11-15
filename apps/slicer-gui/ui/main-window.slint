@@ -11,7 +11,9 @@ import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
 import { CaptionButton, CaptionKind, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
-import { CutCard, ExportInspector, HollowInspector, OrientCard, OrientOption, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
+import { CutCard, HollowInspector, OrientCard, OrientOption, OverhangCard, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
+import { ScenePanel, SceneRow } from "./workspace/scene-panel.slint";
+import { Card, Note, ScCheckBox } from "./kit/controls.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { PresetCard, ShapeCallout, ShapeSize, ShareItem, SharePicker, ZoneRow } from "./workspace/support-shape.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
@@ -52,12 +54,13 @@ export enum MenuLayout { Bar, Compact }
 // The pages the top bar links to so people can support the project.
 export enum SupportPage { Patreon, KoFi }
 
-// The workflow tabs (BS-68): Transform hosts the scene-editing tools and
-// the mesh repair; Hollow and Supports are taken in either order once the
-// pose is set; Slice holds the slicing flow and the layer view; Export
-// writes the printer file. Per-window live state, not persisted; a freshly
-// loaded scene opens in Transform.
-export enum WorkspaceSection { Transform, Hollow, Supports, Slice, Export }
+// The workflow tabs (BS-68): Transform, shown as Prepare, hosts the
+// scene-editing tools and the mesh repair; Hollow and Supports are taken in
+// either order once the pose is set; Slice holds the slicing flow, the layer
+// view and the printer file, written from its footer once the slice is up to
+// date (#578). Per-window live state, not persisted; a freshly loaded scene
+// opens in Transform.
+export enum WorkspaceSection { Transform, Hollow, Supports, Slice }
 
 export component MainWindow inherits Window {
     // The window's focus goes to the workspace, so the keys it takes work
@@ -160,6 +163,11 @@ export component MainWindow inherits Window {
     in property <float> save-progress: 0.0;
     in property <ThemePreference> theme: ThemePreference.System;
     in property <[StandardListViewItem]> object-list: [];
+    // The scene panel (#578): its rows (plates and the objects on each),
+    // and where each object's row stands. Whether it is open is
+    // `show-object-list`, kept in the settings.
+    in property <[SceneRow]> scene-rows: [];
+    in property <[int]> object-row-of: [];
     in-out property <int> selected-object-index: -1;
     // Every selected row (#13), indexed like `object-list`, and how many
     // objects are selected. `selected-object-index` is the primary one.
@@ -199,9 +207,8 @@ export component MainWindow inherits Window {
     // section from mesh health at load time).
     in property <WorkspaceSection> workspace-section: WorkspaceSection.Transform;
     // Whether undo and redo apply in the active tab: everywhere a scene can
-    // still be edited, not in Slice and Export, which show a held result.
-    out property <bool> history-allowed: root.workspace-section != WorkspaceSection.Slice
-        && root.workspace-section != WorkspaceSection.Export;
+    // still be edited, not in Slice, which shows a held result.
+    out property <bool> history-allowed: root.workspace-section != WorkspaceSection.Slice;
     // True when a mesh of the scene does not slice: the Transform inspector
     // then leads with the repair card, which says which objects and why.
     // Pushed by Rust on load, after a repair, and as the scene changes.
@@ -611,6 +618,8 @@ export component MainWindow inherits Window {
     // match the held slice, then lowered again after a short delay; shows
     // the transient "already up to date" hint in the Slice panel.
     in property <bool> slice-up-to-date: false;
+    // The Slice tab's PRINT SETUP open or folded (#578), as left.
+    in-out property <bool> slice-setup-open: true;
     // What Slice every plate did, line by line, until the next slice (#547).
     in property <string> slice-every-plate-note;
     // Slice control panel geometry (per-window live state). Same
@@ -899,8 +908,8 @@ export component MainWindow inherits Window {
     // It proves the crate's interface works inside the GUI.
 
     callback support-gen-requested();
-    // Tools > Generate Supports (DragonFruit): the native port of
-    // DragonFruit's auto-support (islands, placement, bracing, raft), run on
+    // Tools > Generate Supports: the auto-support (islands, placement,
+    // bracing, raft), run on
     // the scene as a cancellable job. The supports and raft are pasted as one
     // undoable object. Shares the progress panel above.
     callback df-support-requested();
@@ -1125,18 +1134,10 @@ export component MainWindow inherits Window {
             title: @tr("MenuBar" => "Tools");
 
             MenuItem {
-                title: @tr("MenuBar" => "Generate Supports (DragonFruit)…");
+                title: @tr("MenuBar" => "Generate Supports");
                 enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
                 activated => {
                     root.df-support-requested();
-                }
-            }
-
-            MenuItem {
-                title: @tr("MenuBar" => "Generate Support (trivial for test)…");
-                enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
-                activated => {
-                    root.support-gen-requested();
                 }
             }
         }
@@ -1353,7 +1354,7 @@ export component MainWindow inherits Window {
 
                         WorkflowTab {
                             number: "1";
-                            label: @tr("Workspace" => "Transform");
+                            label: @tr("Workspace" => "Prepare");
                             active: root.workspace-section == WorkspaceSection.Transform;
                             enabled: root.has-scene;
                             dot: root.mesh-needs-repair ? Theme.warning : transparent;
@@ -1404,15 +1405,6 @@ export component MainWindow inherits Window {
                             dot: root.slice-layer-count > 0 ? Theme.success : transparent;
                             clicked => {
                                 root.section-change-requested(WorkspaceSection.Slice);
-                            }
-                        }
-                        WorkflowTab {
-                            number: "5";
-                            label: @tr("Workspace" => "Export");
-                            active: root.workspace-section == WorkspaceSection.Export;
-                            enabled: root.has-scene;
-                            clicked => {
-                                root.section-change-requested(WorkspaceSection.Export);
                             }
                         }
                     }
@@ -1512,6 +1504,22 @@ export component MainWindow inherits Window {
                         padding: 6px;
                         spacing: 4px;
                         alignment: start;
+
+                        // The scene panel, in every tab (#578).
+                        ToolButton {
+                            icon: Icons.scene-panel;
+                            label: @tr("Inspector" => "Scene");
+                            active: root.show-object-list;
+                            enabled: root.has-scene;
+                            clicked => {
+                                root.show-object-list = !root.show-object-list;
+                                root.object-list-visibility-changed(root.show-object-list);
+                            }
+                        }
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.border;
+                        }
 
                         if root.workspace-section == WorkspaceSection.Transform: ToolButton {
                             icon: Icons.move;
@@ -1631,7 +1639,8 @@ export component MainWindow inherits Window {
                                 root.slice-split = !root.slice-split;
                             }
                         }
-                        if root.workspace-section == WorkspaceSection.Export: ToolButton {
+                        // Once the slice is up to date, as in the panel (#578).
+                        if root.workspace-section == WorkspaceSection.Slice && root.slice-export-enabled: ToolButton {
                             icon: Icons.file;
                             label: root.plate-count > 1
                                 ? @tr("SlicePanel" => "Export “{}”", root.plate-names[root.active-plate])
@@ -1649,6 +1658,37 @@ export component MainWindow inherits Window {
                         x: parent.width - 1px;
                         width: 1px;
                         background: Theme.border;
+                    }
+                }
+
+                // The scene panel (#578): closed it takes no room.
+                if root.has-scene && root.show-object-list: ScenePanel {
+                    rows: root.scene-rows;
+                    selected-index: root.selected-object-index;
+                    selected-rows: root.selected-object-rows;
+                    object-row-of: root.object-row-of;
+                    plate-count: root.plate-count;
+                    can-send: root.has-scene && root.selection-valid;
+                    object-picked(i) => {
+                        root.selected-object-index = i;
+                        root.object-list-selection-changed(i);
+                        mv.focus-viewport();
+                    }
+                    object-toggled(i) => {
+                        root.object-list-toggle(i);
+                        mv.focus-viewport();
+                    }
+                    plate-picked(i) => {
+                        root.plate-picked(i);
+                    }
+                    plate-send(i) => {
+                        root.plate-send-requested(i);
+                    }
+                    plate-remove => {
+                        root.plate-remove-requested(false);
+                    }
+                    plate-add => {
+                        root.plate-add-requested();
                     }
                 }
 
@@ -1874,6 +1914,9 @@ export component MainWindow inherits Window {
                         if root.has-scene && root.workspace-section == WorkspaceSection.Slice
                             && root.slice-split && root.slice-layer-count > 0: LayerView {
                             horizontal-stretch: 1;
+                            // Room for its buttons, with the scene panel open
+                            // in a small window too (#578).
+                            min-width: 250px;
                             // The layer slider sits over the pane's right edge.
                             right-gutter: 48px;
                             source: root.slice-view-image;
@@ -2000,6 +2043,89 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
+
+                    // What the view draws, for every tab (#578): the overhang
+                    // map and what shows from under the plate. Beside the
+                    // projection chip of the view.
+                    if root.has-scene: Rectangle {
+                        x: 140px;
+                        y: parent.height - 38px;
+                        width: 64px;
+                        height: 24px;
+                        border-radius: 2px;
+                        background: #171a1d;
+                        border-color: view-touch.has-hover ? Theme.border-strong : #272d32;
+                        border-width: 1px;
+                        accessible-role: button;
+                        accessible-label: @tr("Inspector" => "View");
+                        accessible-action-default => {
+                            view-pop.show();
+                        }
+
+                        Text {
+                            text: @tr("Inspector" => "View") + " ▾";
+                            color: root.overhang-map-on ? Theme.text : #8b959d;
+                            font-size: 11px;
+                            font-family: "Consolas";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        view-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                view-pop.show();
+                            }
+                        }
+
+                        view-pop := PopupWindow {
+                            x: 0px;
+                            y: -view-box.preferred-height - 6px;
+                            width: 300px;
+                            close-policy: PopupClosePolicy.close-on-click-outside;
+
+                            view-box := Rectangle {
+                                width: 300px;
+                                background: Theme.card;
+                                border-radius: Theme.radius-lg;
+                                border-width: 1px;
+                                border-color: Theme.border-strong;
+
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 12px;
+
+                                    OverhangCard {
+                                        on <=> root.overhang-map-on;
+                                        limit: root.overhang-map-limit;
+                                        toggled(on) => {
+                                            root.overhang-map-toggled(on);
+                                        }
+                                    }
+                                    Card {
+                                        title: @tr("Inspector" => "FROM BELOW");
+
+                                        Note {
+                                            text: @tr("Inspector" => "When the camera goes under the plate.");
+                                        }
+                                        ScCheckBox {
+                                            text: @tr("Inspector" => "Hide the raft");
+                                            checked: root.support-hide-rafts-under-plate;
+                                            toggled => {
+                                                root.support-hide-rafts-under-plate-toggled(self.checked);
+                                            }
+                                        }
+                                        ScCheckBox {
+                                            text: @tr("Inspector" => "Supports as dotted lines");
+                                            checked: root.support-lines-under-plate;
+                                            toggled => {
+                                                root.support-lines-under-plate-toggled(self.checked);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Inspector.
@@ -2030,6 +2156,21 @@ export component MainWindow inherits Window {
                             slice-every-plate => {
                                 root.slice-every-plate-requested();
                             }
+                            format-options: root.slice-print-format-options;
+                            format-current-index <=> root.slice-print-format-current-index;
+                            format-note: root.slice-print-format-note;
+                            export-enabled: root.slice-export-enabled;
+                            exporting: root.saving-in-progress || root.loading;
+                            format-picked(i) => {
+                                root.slice-print-format-picked(i);
+                            }
+                            export-printer-file => {
+                                root.slice-export-requested();
+                            }
+                            export-every-plate => {
+                                root.slice-export-every-plate-requested();
+                            }
+                            setup-open <=> root.slice-setup-open;
                             overhang-map-on <=> root.overhang-map-on;
                             overhang-map-limit: root.overhang-map-limit;
                             overhang-map-toggled(on) => {
@@ -2578,31 +2719,6 @@ export component MainWindow inherits Window {
                                         root.numeric-edit(10, 0);
                                     }
                                 }
-                                if root.workspace-section == WorkspaceSection.Export: ExportInspector {
-                                    format-options: root.slice-print-format-options;
-                                    format-current-index <=> root.slice-print-format-current-index;
-                                    format-note: root.slice-print-format-note;
-                                    export-enabled: root.slice-export-enabled;
-                                    plate-count: root.plate-count;
-                                    plate-name: root.plate-count > 1 ? root.plate-names[root.active-plate] : "";
-                                    busy: root.slicing-in-progress || root.saving-in-progress || root.loading;
-                                    has-scene: root.has-scene;
-                                    format-picked(i) => {
-                                        root.slice-print-format-picked(i);
-                                    }
-                                    export-printer-file => {
-                                        root.slice-export-requested();
-                                    }
-                                    export-every-plate => {
-                                        root.slice-export-every-plate-requested();
-                                    }
-                                    save-project => {
-                                        root.save-requested();
-                                    }
-                                    export-mesh => {
-                                        root.export-as-requested();
-                                    }
-                                }
                             }
                     }
                         if root.workspace-section == WorkspaceSection.Supports && root.support-page == 0: SupportsFooter {
@@ -2612,12 +2728,6 @@ export component MainWindow inherits Window {
                             progress: root.support-gen-progress;
                             cancelable: root.support-gen-cancelable;
                             last-run: root.supports-last-run;
-                            show-lift: root.support-raft-clash-message == "";
-                            lift-on-plate: root.support-lift-on-plate;
-                            lift-on-plate-label: root.support-lift-on-plate-label;
-                            lift-on-plate-toggled(on) => {
-                                root.support-lift-on-plate-toggled(on);
-                            }
                             generate-requested => {
                                 root.df-support-requested();
                             }
@@ -2873,18 +2983,10 @@ export component MainWindow inherits Window {
                 title: @tr("MenuBar" => "Tools");
 
                 MenuItem {
-                    title: @tr("MenuBar" => "Generate Supports (DragonFruit)…");
+                    title: @tr("MenuBar" => "Generate Supports");
                     enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
                     activated => {
                         root.df-support-requested();
-                    }
-                }
-
-                MenuItem {
-                    title: @tr("MenuBar" => "Generate Support (trivial for test)…");
-                    enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
-                    activated => {
-                        root.support-gen-requested();
                     }
                 }
             }

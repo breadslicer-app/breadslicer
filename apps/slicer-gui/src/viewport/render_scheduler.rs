@@ -43,19 +43,17 @@ pub(super) fn mark_dirty(frame: &Cell<FrameState>, ui: &Weak<MainWindow>) {
     request_redraw(ui);
 }
 
-/// `viewport-resized` callback handler. Stores the new size, latches
-/// the resize-in-progress flag (so the next `handle_before_rendering`
-/// runs the bucketed-size math), and pings the window.
+/// `viewport-resized` callback handler. Stores the new size and pings
+/// the window. Whether the change is a drag (bucketed sizes) is the
+/// render host's to say.
 pub(super) fn on_viewport_resized(
     viewport: &Cell<Option<ViewportSize>>,
-    resizing: &Cell<bool>,
     frame: &Cell<FrameState>,
     ui: &Weak<MainWindow>,
     w: f32,
     h: f32,
 ) {
     viewport.set(ViewportSize::new(w, h));
-    resizing.set(true);
     mark_dirty(frame, ui);
 }
 
@@ -165,17 +163,15 @@ mod render_scheduler_tests {
     // --- on_viewport_resized ---
 
     #[test]
-    fn on_viewport_resized_stores_size_flags_resizing_and_marks_dirty() {
+    fn on_viewport_resized_stores_size_and_marks_dirty() {
         let viewport = Cell::new(None);
-        let resizing = Cell::new(false);
         let frame = Cell::new(FrameState::default());
         let ui: Weak<MainWindow> = Weak::default();
-        on_viewport_resized(&viewport, &resizing, &frame, &ui, 800.0, 600.0);
+        on_viewport_resized(&viewport, &frame, &ui, 800.0, 600.0);
 
         let vp = viewport.get().expect("non-empty viewport size");
         assert_eq!(vp.width(), 800.0);
         assert_eq!(vp.height(), 600.0);
-        assert!(resizing.get());
         assert!(frame.get().redraw_owed());
     }
 
@@ -183,16 +179,12 @@ mod render_scheduler_tests {
     fn on_viewport_resized_with_invalid_size_clears_viewport() {
         // ViewportSize::new rejects zero / negative / non-finite
         // dimensions and returns None; the cell ends up empty.
-        // resizing still latches so the next render uses the prior
-        // bucket until a valid size arrives.
         let viewport = Cell::new(None);
-        let resizing = Cell::new(false);
         let frame = Cell::new(FrameState::default());
         let ui: Weak<MainWindow> = Weak::default();
-        on_viewport_resized(&viewport, &resizing, &frame, &ui, 0.0, 600.0);
+        on_viewport_resized(&viewport, &frame, &ui, 0.0, 600.0);
 
         assert!(viewport.get().is_none());
-        assert!(resizing.get());
         assert!(frame.get().redraw_owed());
     }
 
