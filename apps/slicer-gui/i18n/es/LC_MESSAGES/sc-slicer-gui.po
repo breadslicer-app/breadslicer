@@ -5736,6 +5736,11 @@ msgstr "Capa {} de {}"
 
 #: ui/workspace/layer-view.slint
 msgctxt "LayerView"
+msgid "Pixel {} × {}  ·  grey {}"
+msgstr "Píxel {} × {}  ·  gris {}"
+
+#: ui/workspace/layer-view.slint
+msgctxt "LayerView"
 msgid "Fit"
 msgstr "Ajustar"
 

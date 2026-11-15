@@ -238,6 +238,7 @@ struct WindowDrivers {
     _repair_run: Rc<RepairRun>,
     _arrange_run: Rc<ArrangeRun>,
     _orient_run: Rc<OrientRun>,
+    _layer_pixels: Rc<crate::layer_pixels::LayerPixels>,
     _cut_run: Rc<CutRun>,
     /// Asks about the supports a file came with (#258).
     _presupported_import: Rc<crate::presupported_import::PresupportedImport>,
@@ -826,7 +827,14 @@ impl AppState {
             ctrl.dialogs(),
         );
         let layer_keys = crate::layer_keys::LayerKeys::install(ui);
+        let layer_pixels = crate::layer_pixels::LayerPixels::install(
+            ui,
+            ctrl.document(),
+            ctrl.clone(),
+            slice_panel.clone(),
+        );
         WindowDrivers {
+            _layer_pixels: layer_pixels,
             _hollow_run: hollow_run,
             _split_bodies: split_bodies,
             _presupported_import: presupported_import,

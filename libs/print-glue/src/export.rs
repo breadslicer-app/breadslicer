@@ -130,6 +130,18 @@ pub fn measure_cured_resin(
     printer: &PrinterProfile,
     aa_level: AaLevel,
 ) -> f64 {
+    contours.lit_volume_mm3(&export_raster(contours, printer, aa_level))
+}
+
+/// The raster an export of `contours` for `printer` with `aa_level` writes
+/// its layer images with: the plate, pixels, mirror, panel turn and
+/// anti-aliasing of the file (#429). Its pixels for a layer are
+/// [`sc_sla_formats::layer_images::layer_pixels`].
+pub fn export_raster(
+    contours: &PlateContours,
+    printer: &PrinterProfile,
+    aa_level: AaLevel,
+) -> RasterSetup {
     let LayerSchedule::Uniform(grid) = *contours.schedule();
     let profile = project_hardware_to_slice_profile(
         &printer.hardware,
@@ -139,7 +151,7 @@ pub fn measure_cured_resin(
         grid.first_layer_height(),
         grid.total_layers(),
     );
-    contours.lit_volume_mm3(&RasterSetup::from_profile(&profile))
+    RasterSetup::from_profile(&profile).with_panel_rotation(printer.hardware.panel_rotation())
 }
 
 /// Prepare the printer-file export of `contours` for the chosen printer and

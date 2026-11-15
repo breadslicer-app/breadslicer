@@ -23,6 +23,25 @@ use crate::options::WriterOptions;
 use crate::preview::PrintPreviews;
 use crate::print_program::PrintProgram;
 use crate::printer_file_format::{CtbVariant, GooVersion, PrinterFileFormat};
+use crate::raster_setup::RasterSetup;
+
+/// The grey each rasterised grey reads back as from a printer file of
+/// `format` written with `raster`'s settings, indexed by the rasterised grey:
+/// what a layer's pixels hold once the format's codec has stored them (#429).
+pub fn stored_greys(format: PrinterFileFormat, raster: &RasterSetup) -> [u8; 256] {
+    let mut table = [0u8; 256];
+    for (grey, stored) in (0..=u8::MAX).zip(table.iter_mut()) {
+        *stored = match format {
+            PrinterFileFormat::Goo(GooVersion::V3_0) => grey,
+            PrinterFileFormat::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5) => {
+                crate::ctb::rle7::stored_grey(grey)
+            }
+            _ => external::writer_for(format)
+                .map_or(grey, |writer| writer.stored_grey(format, raster, grey)),
+        };
+    }
+    table
+}
 
 /// Write a sliced contour stack to disk using `format`'s writer.
 ///

@@ -479,6 +479,117 @@ fn the_layer_slider_moves_the_pane_to_its_layer() {
 }
 
 /// A controller holding a slice of 2 layers: a wide square, then a small one.
+/// With the printer's pixels known, the zoom reaches a printer pixel 24 screen
+/// pixels across (#429); the pane tells which part of its image is on show,
+/// lays the real pixels where they lie on it, and reads out the pixel under
+/// the cursor.
+#[test]
+fn the_pane_zooms_to_real_pixels_and_lays_them_where_they_lie() {
+    on_fresh_slint_thread(|| {
+        let ui = window_with_pane(SIZES[0]);
+        let seen: Rc<RefCell<Vec<[f32; 6]>>> = Rc::default();
+        {
+            let seen = seen.clone();
+            ui.on_layer_view_changed(move |u0, v0, u1, v1, w, h| {
+                seen.borrow_mut().push([u0, v0, u1, v1, w, h]);
+            });
+        }
+        ui.on_layer_pixel_readout(|u, v, _| format!("{u:.2} {v:.2}").into());
+        // The M7 Pro's panel.
+        ui.set_layer_pixel_columns(13312);
+        render_frames();
+        let fitted = picture_width(&ui);
+        let picture = element(&ui, PICTURE);
+        let centre = middle(&picture);
+        for _ in 0..60 {
+            ctrl_wheel(&ui, centre, true);
+        }
+        let most = picture_width(&ui) / fitted;
+        let reach = 24.0 * 13312.0 / fitted;
+        assert!(most > 32.0, "the zoom goes past 32: {most}");
+        assert!(
+            (most - reach).abs() / reach < 0.01,
+            "{most} against {reach}"
+        );
+
+        let [u0, v0, u1, v1, w, _] = *seen.borrow().last().expect("the pane told its view");
+        assert!((w - picture_width(&ui)).abs() < 0.5, "{w}");
+        assert!(
+            u0 > 0.4 && u1 < 0.6 && u0 < u1,
+            "the middle is on show: {u0} {u1}"
+        );
+        assert!(v0 > 0.4 && v1 < 0.6 && v0 < v1, "{v0} {v1}");
+
+        // A tile over the middle lies where its fractions say.
+        ui.set_layer_pixel_tile(checkered_image(8, 8));
+        ui.set_layer_pixel_u0(0.5);
+        ui.set_layer_pixel_v0(0.5);
+        ui.set_layer_pixel_u1(0.5 + 8.0 / 13312.0);
+        ui.set_layer_pixel_v1(0.5 + 8.0 / 5120.0);
+        ui.set_layer_pixel_shown(true);
+        render_frames();
+        let picture = element(&ui, PICTURE);
+        let tile = element(&ui, "LayerView::tile-image");
+        let left = picture.absolute_position().x + picture.size().width * 0.5;
+        let top = picture.absolute_position().y + picture.size().height * 0.5;
+        assert!((tile.absolute_position().x - left).abs() < 0.5);
+        assert!((tile.absolute_position().y - top).abs() < 0.5);
+        let block = picture.size().width / 13312.0;
+        assert!(
+            (tile.size().width - 8.0 * block).abs() < 0.5,
+            "8 pixels across"
+        );
+
+        hover(&ui, LogicalPosition::new(left + 1.0, top + 1.0));
+        let readout = element(&ui, "LayerView::readout-text");
+        let text = readout
+            .accessible_label()
+            .map(|t| t.to_string())
+            .unwrap_or_default();
+        assert_eq!(text, "0.50 0.50", "the pixel under the cursor is read out");
+    });
+}
+
+/// A drag or a plain wheel that moves the zoomed image tells the new view,
+/// as a zoom does (#429): the real pixels are made again for it.
+#[test]
+fn moving_the_zoomed_image_tells_the_new_view() {
+    on_fresh_slint_thread(|| {
+        let ui = window_with_pane(SIZES[0]);
+        let seen: Rc<RefCell<Vec<[f32; 6]>>> = Rc::default();
+        {
+            let seen = seen.clone();
+            ui.on_layer_view_changed(move |u0, v0, u1, v1, w, h| {
+                seen.borrow_mut().push([u0, v0, u1, v1, w, h]);
+            });
+        }
+        for _ in 0..8 {
+            click(&ui, &button(&ui, "+"));
+        }
+        let pane = ElementHandle::find_by_element_type_name(&ui, "LayerView")
+            .next()
+            .expect("the pane is drawn");
+        let last = |seen: &Rc<RefCell<Vec<[f32; 6]>>>| *seen.borrow().last().expect("a view");
+        let before = last(&seen);
+        drag(&ui, middle(&pane), (-80.0, -50.0));
+        let dragged = last(&seen);
+        assert!(
+            dragged[0] > before[0] + 0.001,
+            "a drag left: {before:?} -> {dragged:?}"
+        );
+        assert!(
+            dragged[1] > before[1] + 0.001,
+            "a drag up: {before:?} -> {dragged:?}"
+        );
+        wheel(&ui, middle(&pane), false);
+        let wheeled = last(&seen);
+        assert!(
+            wheeled[1] > dragged[1] + 0.001,
+            "the wheel scrolls: {dragged:?} -> {wheeled:?}"
+        );
+    });
+}
+
 fn controller_with_2_layers() -> ViewportController {
     let square = |half: f64| {
         let outer = ClosedRing::new(vec![

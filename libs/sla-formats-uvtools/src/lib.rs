@@ -49,7 +49,7 @@ mod resample;
 use sc_sl1cer::contour::ContourStack;
 use sc_sla_formats::{
     CtbVariant, PreviewSizes, PrintPreviews, PrintProgram, PrinterFileFormat, PrinterFileSink,
-    PrinterFileWriter, WriteFailure,
+    PrinterFileWriter, RasterSetup, WriteFailure,
 };
 
 /// The writer this crate installs.
@@ -78,6 +78,23 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::AnycubicZip(_) => Some(anycubic_zip::PREVIEW_SIZES),
             PrinterFileFormat::AnycubicBinary(_) => Some(anycubic_binary::PREVIEW_SIZES),
             _ => None,
+        }
+    }
+
+    fn stored_grey(&self, format: PrinterFileFormat, raster: &RasterSetup, grey: u8) -> u8 {
+        match format {
+            PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4) => {
+                sc_sla_formats::ctb::rle7::stored_grey(grey)
+            }
+            PrinterFileFormat::AnycubicZip(_) => pw0::stored_grey(grey),
+            PrinterFileFormat::AnycubicBinary(variant) => {
+                if anycubic_binary::uses_bit_planes(variant) {
+                    pws::quantise(grey, raster.aa().factor())
+                } else {
+                    pw0::stored_grey(grey)
+                }
+            }
+            _ => grey,
         }
     }
 

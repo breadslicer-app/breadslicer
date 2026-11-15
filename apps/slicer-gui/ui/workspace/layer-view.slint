@@ -5,8 +5,10 @@
 
 // The Slice tab's layer pane (BS-72): the selected layer's image beside the
 // 3D view, zoomable (Ctrl + wheel at the cursor, or the buttons at the middle)
-// and pannable (drag or the wheel), the way DragonFruit's Printing mode shows
-// a layer.
+// and pannable (drag or the wheel). Over the image lie the printer's own
+// pixels of the part on show (#429), made in Rust: a grid between them once
+// they are a few screen pixels across, and the pixel under the cursor read
+// out at the bottom.
 
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
@@ -17,9 +19,32 @@ export component LayerView inherits Rectangle {
     in property <string> caption;
     // Room on the right for what the window draws over the pane.
     in property <length> right-gutter: 12px;
+    // The printer's pixels across the plate, 0 while unknown.
+    in property <int> pixel-columns;
+    // The part on show at the printer's resolution, and where it lies on the
+    // image: fractions from its left and top edges.
+    in property <image> tile;
+    in property <bool> tile-shown;
+    in property <float> tile-u0;
+    in property <float> tile-v0;
+    in property <float> tile-u1;
+    in property <float> tile-v1;
+    // Moves on each layer rasterised, so the readout reads it again.
+    in property <int> pixel-generation;
+    // The printer file's format picked: the greys shown are the ones it
+    // stores.
+    in property <int> format-index;
     callback close-requested();
+    // The part of the image on show: fractions from its left and top edges,
+    // and the image's size on screen in logical pixels.
+    callback view-changed(float, float, float, float, float, float);
+    pure callback pixel-readout(float, float, int) -> string;
 
     property <float> zoom: 1;
+    // Far enough in to see a printer pixel 24 screen pixels across.
+    property <float> max-zoom: root.pixel-columns > 0
+        ? max(32, 24 * root.pixel-columns / max(1, root.source.width * root.fit))
+        : 32;
     // Image size at zoom 1: the image fitted into the pane.
     property <float> fit: Math.min(
         (self.width - 12px - self.right-gutter) / max(1px, self.source.width * 1px),
@@ -30,7 +55,7 @@ export component LayerView inherits Rectangle {
     // Zooms by `factor`, holding still the point of the image at (`x`, `y`)
     // of the content.
     function zoom-at(factor: float, x: length, y: length) {
-        let new-zoom = clamp(root.zoom * factor, 1, 32);
+        let new-zoom = clamp(root.zoom * factor, 1, root.max-zoom);
         let scale = new-zoom / root.zoom;
         let new-width = root.shown-width * scale;
         let new-height = root.shown-height * scale;
@@ -46,6 +71,41 @@ export component LayerView inherits Rectangle {
         root.zoom = new-zoom;
         flick.content-x = clamp(on-screen-x - new-x, flick.width - new-content-width, 0px);
         flick.content-y = clamp(on-screen-y - new-y, flick.height - new-content-height, 0px);
+    }
+
+    // Tells which part of the image is on show.
+    function report() {
+        if root.shown-width <= 0 || root.shown-height <= 0 {
+            return;
+        }
+        let left = -flick.content-x - picture.x;
+        let top = -flick.content-y - picture.y;
+        root.view-changed(
+            clamp(left / root.shown-width, 0, 1),
+            clamp(top / root.shown-height, 0, 1),
+            clamp((left + flick.width) / root.shown-width, 0, 1),
+            clamp((top + flick.height) / root.shown-height, 0, 1),
+            root.shown-width / 1px,
+            root.shown-height / 1px);
+    }
+
+    init => {
+        root.report();
+    }
+    changed zoom => {
+        root.report();
+    }
+    changed shown-width => {
+        root.report();
+    }
+    changed shown-height => {
+        root.report();
+    }
+    changed source => {
+        root.report();
+    }
+    changed format-index => {
+        root.report();
     }
 
     // Zooms by `factor` at the middle of what is on show.
@@ -73,7 +133,30 @@ export component LayerView inherits Rectangle {
             image-rendering: root.zoom >= 4 ? pixelated : smooth;
         }
 
-        TouchArea {
+        if root.tile-shown: tile-image := Image {
+            x: picture.x + root.tile-u0 * root.shown-width;
+            y: picture.y + root.tile-v0 * root.shown-height;
+            width: (root.tile-u1 - root.tile-u0) * root.shown-width;
+            height: (root.tile-v1 - root.tile-v0) * root.shown-height;
+            source: root.tile;
+            image-fit: fill;
+            image-rendering: pixelated;
+        }
+
+        changed content-x => {
+            root.report();
+        }
+        changed content-y => {
+            root.report();
+        }
+        changed width => {
+            root.report();
+        }
+        changed height => {
+            root.report();
+        }
+
+        pointer := TouchArea {
             scroll-event(event) => {
                 if event.modifiers.control {
                     root.zoom-at(event.delta-y > 0 ? 1.25 : 0.8, self.mouse-x, self.mouse-y);
@@ -81,6 +164,33 @@ export component LayerView inherits Rectangle {
                 }
                 return reject;
             }
+        }
+    }
+
+    // The printer pixel under the cursor.
+    property <string> readout: pointer.has-hover
+        ? root.pixel-readout(
+            (pointer.mouse-x - picture.x) / max(1px, root.shown-width),
+            (pointer.mouse-y - picture.y) / max(1px, root.shown-height),
+            root.pixel-generation + root.format-index * 7919)
+        : "";
+    if root.readout != "": Rectangle {
+        x: 18px;
+        y: root.height - 18px - self.height;
+        width: readout-text.preferred-width + 16px;
+        height: 22px;
+        background: Theme.chrome;
+        border-radius: 2px;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        readout-text := Text {
+            text: root.readout;
+            font-family: Theme.mono;
+            font-size: Theme.font-xs;
+            color: Theme.text-soft;
+            vertical-alignment: center;
+            horizontal-alignment: center;
         }
     }
 
