@@ -56,8 +56,8 @@ use sc_geom::df_hollow::hollow_df::{
     DrainDepth, GridRequest, HollowFill, HollowSettings, InfillMode, ResolutionBound, Stage,
 };
 use sc_geom::df_hollow::{
-    HollowKind, HollowOutcome, HollowPlug, HollowRequest, HollowResult, LeafFrame, PreparedHollow,
-    WorldDrain, WorldSolidArea, start_hollow_mesh,
+    HOLLOW_ENGINE_VERSION, HollowKind, HollowOutcome, HollowPlug, HollowRequest, HollowResult,
+    LeafFrame, PreparedHollow, WorldDrain, WorldSolidArea, start_hollow_mesh,
 };
 use sc_geom::{JobError, JobHandle};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
@@ -432,6 +432,12 @@ pub(crate) struct Hollowed {
     pub(crate) plugs: Vec<PlugLink>,
     /// The areas drawn to stay solid (#179), in the leaf's local frame.
     pub(crate) solids: Vec<LassoRegion>,
+    /// The engine that made the cavity ([`HOLLOW_ENGINE_VERSION`]); `None`
+    /// for a hollow read from a file saved before it was recorded (#446).
+    pub(crate) engine: Option<u32>,
+    /// The model's stretch when it was hollowed ([`LeafFrame::stretch_rows`]):
+    /// its scale, which the cavity was made at. `None` as `engine`.
+    pub(crate) stretch: Option<[f64; 9]>,
 }
 
 /// The job in flight and what it needs to land.
@@ -445,6 +451,8 @@ struct Job {
     drains: Vec<LocalDrain>,
     solids: Vec<LassoRegion>,
     options: HollowOptions,
+    /// The model's stretch at the start ([`LeafFrame::stretch_rows`]).
+    stretch: [f64; 9],
 }
 
 pub(crate) struct HollowRun {
@@ -1299,6 +1307,9 @@ impl HollowRun {
             return;
         }
         let options = *self.options.borrow();
+        let Ok(frame) = LeafFrame::of(world) else {
+            return;
+        };
         let request = HollowRequest {
             kind: HollowKind::Apply,
             grid: GridRequest {
@@ -1322,6 +1333,7 @@ impl HollowRun {
                     drains,
                     solids,
                     options,
+                    stretch: frame.stretch_rows(),
                 });
                 ui.set_hollow_running(true);
                 crate::breadcrumbs::started("hollow");
@@ -1614,6 +1626,8 @@ impl HollowRun {
             options: job.options,
             plugs: plug_links,
             solids: job.solids,
+            engine: Some(HOLLOW_ENGINE_VERSION),
+            stretch: Some(job.stretch),
         });
         self.refresh_ui();
     }
@@ -3341,6 +3355,51 @@ mod tests {
                 .unwrap();
             assert!(Arc::ptr_eq(&shown, &hollow), "one undo step back");
             assert_eq!(window.get_hollow_solid_count(), 1);
+        });
+    }
+
+    /// #446: a hollow made here records the engine that made it and the
+    /// model's stretch, so a later build can tell what made its cavity.
+    #[test]
+    fn a_hollow_records_its_engine_and_the_models_stretch() {
+        use crate::selection::{LeafId, Selection};
+        use crate::test_support::slint_thread::on_fresh_slint_thread;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut cube = sc_mesh_fixtures::unit_cube_mesh();
+            for v in &mut cube.vertices {
+                *v = Vertex::new(v.as_array().map(|c| c * 20.0));
+            }
+            let world = Transform3D::Affine(
+                AffineTransform3D::from_translation([50.0, 50.0, 10.0])
+                    .compose(&AffineTransform3D::from_non_uniform_scale([1.5, 1.0, 0.75])),
+            );
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(None, world, LeafPayload::Mesh(Arc::new(cube)))
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, std::path::PathBuf::from("cube.stl"));
+            document.set_selection(Selection::One(LeafId(leaf)));
+            window.set_workspace_section(WorkspaceSection::Hollow);
+            let run = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            run.on_option(0, 2.0);
+            run.on_apply();
+            land_job(&run);
+            let last = document
+                .hollows()
+                .borrow()
+                .last()
+                .cloned()
+                .expect("a hollow");
+            assert_eq!(last.engine, Some(HOLLOW_ENGINE_VERSION));
+            let stretch = last.stretch.expect("the stretch is recorded");
+            let want = [1.5, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.75];
+            for (got, want) in stretch.iter().zip(want) {
+                assert!((got - want).abs() < 1e-9, "{stretch:?}");
+            }
         });
     }
 

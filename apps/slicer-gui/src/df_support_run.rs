@@ -12949,6 +12949,8 @@ mod hand_edit_tests {
                 options: HollowOptions::default(),
                 plugs: Vec::new(),
                 solids: Vec::new(),
+                engine: None,
+                stretch: None,
             });
 
             ctrl.open_models(vec![dragon]);

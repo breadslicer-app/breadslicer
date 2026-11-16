@@ -36,6 +36,14 @@ use sc_scene::{NodeId, Scene, SceneError};
 
 pub use hollow_df;
 
+/// The cavity this build's engine makes, as a number saved with each hollow
+/// (#446). A later build that changes the cavity bumps it, so it can tell a
+/// hollow made before the change from one it made itself, instead of
+/// silently making the whole cavity over at the next drain.
+///
+/// 1: the exact wall (#265), the preview's cavity as the result (#29).
+pub const HOLLOW_ENGINE_VERSION: u32 = 1;
+
 type M3 = [[f64; 3]; 3];
 
 const IDENTITY: M3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
@@ -168,6 +176,18 @@ impl LeafFrame {
     /// A world direction at the current pose, in the physical frame.
     pub fn world_dir_to_frame(&self, d: [f32; 3]) -> [f32; 3] {
         apply(&transpose(&self.rotation), d.map(f64::from)).map(|v| v as f32)
+    }
+
+    /// The stretch, row by row: what a hollow saves of its model's scale
+    /// (#446).
+    pub fn stretch_rows(&self) -> [f64; 9] {
+        let mut out = [0.0; 9];
+        for i in 0..3 {
+            for j in 0..3 {
+                out[i * 3 + j] = self.stretch[i][j];
+            }
+        }
+        out
     }
 
     /// The stretch quantized: two poses with the same key share a voxel
