@@ -92,6 +92,21 @@ fn set_slice_result_stores_the_params() {
     assert_eq!(held.aa_level, AaLevel::Off);
 }
 
+/// #19: the held slice takes the anti-aliasing in force, for its export
+/// and its pixels, and stays current: a reopened project's slice, saved
+/// without its level, exports with the one set now.
+#[test]
+fn the_held_slice_follows_the_aa_level_in_force() {
+    let (doc, _) = loaded_document();
+    let rev = doc.scene_revision();
+    doc.set_slice_result(sample_result(rev));
+    doc.follow_aa_level(AaLevel::X4);
+    let held = doc.held_slice().expect("a result was stored");
+    assert_eq!(held.params.aa_level, AaLevel::X4);
+    assert_eq!(held.params.geometry, rev);
+    assert!(!doc.held_slice_changed());
+}
+
 #[test]
 fn a_committed_edit_moves_the_scene_revision() {
     let (doc, node_id) = loaded_document();

@@ -145,10 +145,14 @@ pub(crate) fn decide_re_slice(
     let Some(held) = held else {
         return ReSliceDecision::FirstSlice;
     };
+    // The anti-aliasing level is not compared (#19): it changes the raster
+    // an export writes, never the contours, and a held slice follows the
+    // level in force ([`SceneDocument::follow_aa_level`]).
+    //
+    // [`SceneDocument::follow_aa_level`]: crate::scene_document::SceneDocument::follow_aa_level
     let scalars_match = held.printer == current.printer
         && held.resin == current.resin
         && held.first_layer_height == current.first_layer_height
-        && held.aa_level == current.aa_level
         && held.plate == current.plate;
     if scalars_match && !geometry_changed && !layers_changed {
         ReSliceDecision::Unchanged
@@ -248,8 +252,10 @@ mod decide_re_slice_tests {
         );
     }
 
+    /// #19: the anti-aliasing level changes the raster an export draws from
+    /// the contours, not the contours: a held slice stays current.
     #[test]
-    fn a_different_aa_level_is_a_change() {
+    fn a_different_aa_level_keeps_the_slice() {
         let held = params();
         let current = SliceParams {
             aa_level: AaLevel::X4,
@@ -257,7 +263,7 @@ mod decide_re_slice_tests {
         };
         assert_eq!(
             decide_re_slice(Some(&held), &current, false, false),
-            ReSliceDecision::Changed
+            ReSliceDecision::Unchanged
         );
     }
 

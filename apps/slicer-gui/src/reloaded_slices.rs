@@ -46,7 +46,9 @@ impl ReloadedSlices {
     /// Builds the held slice result, stamping the scene-geometry marker
     /// captured after the fresh install, so the reloaded slice reads as in sync
     /// and re-persists without a re-slice. The anti-aliasing level is not
-    /// persisted and does not feed the token, so it defaults to `Off`.
+    /// persisted and does not feed the token: it starts `Off`, and the Slice
+    /// panel gives it the level in force (#19), which only changes the raster
+    /// an export draws from these contours.
     pub(crate) fn into_slice_result(self, geometry: SceneRevision) -> SliceResult {
         SliceResult {
             contours: self.contours,

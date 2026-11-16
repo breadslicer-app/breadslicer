@@ -205,6 +205,9 @@ impl SlicePanelBridge {
             return;
         };
         let snapshot = self.bus.snapshot();
+        // The held slice exports with the anti-aliasing in force (#19): one
+        // reopened, brought back for its plate, or with the level changed.
+        self.document.follow_aa_level(snapshot.aa_level);
         let selection = self
             .document
             .print_selection()
@@ -387,8 +390,8 @@ impl PanelUpdate {
             | PreferencesChange::DefaultResin => Some(Self::Full),
             // The format labels and the note come from `ctr!`.
             PreferencesChange::Language => Some(Self::Full),
-            // A slice ran with an AA level, so the level moves only the export
-            // gate.
+            // The held slice takes the new level (#19) in the export gate's
+            // refresh: its contours stay.
             PreferencesChange::AaLevel => Some(Self::ExportGate),
             PreferencesChange::Profiles => Some(Self::Profiles),
             // A format pick calls the bus while it borrows `shown_printer`,

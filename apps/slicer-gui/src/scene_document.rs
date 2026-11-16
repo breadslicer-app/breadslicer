@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_spatial::{PrimedMesh, SceneSpatial};
-use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
 use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload, ReviewDecision};
 use sc_scene::Scene;
 use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind};
@@ -1193,6 +1193,16 @@ impl SceneDocument {
             .set(self.slice_generation.get().wrapping_add(1));
         self.notify(SceneEvent::SliceChanged);
         replaced
+    }
+
+    /// Makes the held slice export and show its pixels with `level`, the
+    /// anti-aliasing in force (#19). The level only changes the raster drawn
+    /// from the contours, so the slice stays current; a project reopened, or
+    /// a plate's slice brought back, takes the level in force this way.
+    pub(crate) fn follow_aa_level(&self, level: AaLevel) {
+        if let Some(held) = self.slice_result.borrow_mut().as_mut() {
+            held.params.aa_level = level;
+        }
     }
 
     /// Returns the held slice, or `None` when the current scene has not been
