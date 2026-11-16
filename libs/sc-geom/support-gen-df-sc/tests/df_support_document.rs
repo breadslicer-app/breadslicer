@@ -299,11 +299,12 @@ fn a_version_1_document_of_two_models_opens_as_two_sets() {
         );
         // Drawn again where its model stands. The shared document is made
         // here from two runs, one per model (#556), where an old file came
-        // from one run: the split draws a few joints apart.
+        // from one run: the split draws a few joints and braces apart, and
+        // a brace is three pieces since its ends fit their shafts (#238).
         let shown = reopened.leaf_mesh_arc(set.leaf).expect("a support leaf");
         let drawn = original.mesh.as_ref().unwrap();
         let (a, b) = (shown.faces().len() as f64, drawn.faces().len() as f64);
-        assert!((a - b).abs() <= b * 0.01, "{a} faces against {b}");
+        assert!((a - b).abs() <= b * 0.02, "{a} faces against {b}");
     }
 }
 
