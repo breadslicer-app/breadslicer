@@ -57,6 +57,19 @@
 //! ```
 //!
 //! A hollow with no such area is written as version 1 or 2, as before.
+//!
+//! Version 4 adds what made the cavity (#446), after the areas, which it
+//! always holds (none is a count of 0):
+//!
+//! ```text
+//! … as in version 3, up to the areas
+//! u8 set: 1 the engine, 2 the stretch
+//! u32 engine                              HOLLOW_ENGINE_VERSION, 0 if unset
+//! 9 f64 stretch, row by row               the model's scale, identity if unset
+//! ```
+//!
+//! Every hollow made since is written as version 4. One read from an older
+//! file, which knows neither, keeps its version when saved again.
 
 use std::sync::Arc;
 
@@ -75,7 +88,7 @@ use crate::scene_document::SceneDocument;
 pub(crate) const DF_HOLLOWER: &str = "df";
 
 /// The newest document version this build writes and reads.
-pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 3;
+pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 4;
 
 /// The hollows to save with the scene of `spatial`: each hollow made here
 /// that a leaf still shows, once, with the first leaf that shows it. Copies
@@ -163,6 +176,8 @@ fn restore(scene: &Scene, document: &HollowDocument) -> Result<Hollowed, String>
         options: decoded.options,
         plugs,
         solids: decoded.solids,
+        engine: decoded.engine,
+        stretch: decoded.stretch,
     })
 }
 
@@ -241,7 +256,8 @@ fn needs_shapes(hollowed: &Hollowed) -> bool {
 
 /// The document of `hollowed`, and its version.
 fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
-    let solids = !hollowed.solids.is_empty();
+    let record = hollowed.engine.is_some() || hollowed.stretch.is_some();
+    let solids = record || !hollowed.solids.is_empty();
     let shapes = solids || needs_shapes(hollowed);
     let mut out = Vec::new();
     let f32s = |out: &mut Vec<u8>, values: &[f32]| {
@@ -317,7 +333,17 @@ fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
             }
         }
     }
-    let version = if solids {
+    if record {
+        out.push(u8::from(hollowed.engine.is_some()) | u8::from(hollowed.stretch.is_some()) << 1);
+        out.extend_from_slice(&hollowed.engine.unwrap_or(0).to_le_bytes());
+        let identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        for v in hollowed.stretch.unwrap_or(identity) {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    let version = if record {
+        4
+    } else if solids {
         3
     } else if shapes {
         2
@@ -343,6 +369,10 @@ impl<'a> Reader<'a> {
 
     fn u32(&mut self) -> Option<u32> {
         Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
+    }
+
+    fn f64(&mut self) -> Option<f64> {
+        Some(f64::from_le_bytes(self.take(8)?.try_into().ok()?))
     }
 
     fn f32(&mut self) -> Option<f32> {
@@ -382,14 +412,17 @@ struct Decoded {
     /// Each plug: its drain and the fingerprint of its model.
     plugs: Vec<(usize, Fingerprint)>,
     solids: Vec<LassoRegion>,
+    engine: Option<u32>,
+    stretch: Option<[f64; 9]>,
 }
 
-/// Reads a document of `version` (1, 2 or 3).
+/// Reads a document of `version` (1 to 4).
 fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
-    let (shapes, solids) = match version {
-        0 | 1 => (false, false),
-        2 => (true, false),
-        3 => (true, true),
+    let (shapes, solids, record) = match version {
+        0 | 1 => (false, false, false),
+        2 => (true, false, false),
+        3 => (true, true, false),
+        4 => (true, true, true),
         _ => return None,
     };
     let mut input = Reader(bytes);
@@ -495,16 +528,39 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
     } else {
         Vec::new()
     };
+    let (engine, stretch) = if record {
+        let set = input.u8()?;
+        if set >> 2 != 0 {
+            return None;
+        }
+        let engine = input.u32()?;
+        let mut stretch = [0.0; 9];
+        for v in &mut stretch {
+            *v = input.f64()?;
+            if !v.is_finite() {
+                return None;
+            }
+        }
+        (
+            (set & 1 != 0).then_some(engine),
+            (set & 2 != 0).then_some(stretch),
+        )
+    } else {
+        (None, None)
+    };
     input.0.is_empty().then_some(Decoded {
         options,
         drains,
         plugs,
         solids,
+        engine,
+        stretch,
     })
 }
 
 #[cfg(test)]
 mod hollow_persist_tests {
+    use sc_geom::df_hollow::HOLLOW_ENGINE_VERSION;
     use sc_mesh_fixtures::unit_cube_mesh;
 
     use super::*;
@@ -526,7 +582,62 @@ mod hollow_persist_tests {
             },
             plugs: Vec::new(),
             solids: Vec::new(),
+            engine: None,
+            stretch: None,
         }
+    }
+
+    /// `hollowed` as a hollow made now records it: the engine and a model
+    /// stretched along x (#446).
+    fn recorded() -> Hollowed {
+        Hollowed {
+            engine: Some(HOLLOW_ENGINE_VERSION),
+            stretch: Some([1.25, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.8]),
+            ..hollowed()
+        }
+    }
+
+    /// #446: the engine and the stretch are written as version 4 and read
+    /// back as they were, with the drains, areas and plugs of any version.
+    #[test]
+    fn the_engine_and_the_stretch_read_back_as_version_4() {
+        let shaped_recorded = Hollowed {
+            engine: recorded().engine,
+            stretch: recorded().stretch,
+            ..shaped()
+        };
+        for base in [recorded(), shaped_recorded] {
+            let (version, bytes) = encode(&base);
+            assert_eq!(version, 4);
+            let decoded = decode(&bytes, version).expect("it decodes");
+            assert_eq!(decoded.engine, base.engine);
+            assert_eq!(decoded.stretch, base.stretch);
+            assert_eq!(decoded.drains, base.drains);
+            assert_eq!(decoded.options, base.options);
+            assert_eq!(decoded.plugs.len(), base.plugs.len());
+            assert!(decoded.solids.is_empty());
+            // Cut short, or read as version 3, it is malformed.
+            assert!(decode(&bytes[..bytes.len() - 1], version).is_none());
+            assert!(decode(&bytes, 3).is_none());
+        }
+        // One of the two known: the other reads back unknown.
+        let engine_only = Hollowed {
+            stretch: None,
+            ..recorded()
+        };
+        let (version, bytes) = encode(&engine_only);
+        let decoded = decode(&bytes, version).expect("it decodes");
+        assert_eq!(
+            (decoded.engine, decoded.stretch),
+            (engine_only.engine, None)
+        );
+        // A set bit no version has is malformed.
+        let mut bad = bytes.clone();
+        let set = bad.len() - 4 - 72 - 1;
+        bad[set] |= 4;
+        assert!(decode(&bad, version).is_none());
+        // A hollow read from an older file keeps its version.
+        assert_eq!(encode(&hollowed()).0, 1);
     }
 
     /// `hollowed` with shaped drains (#316, #317, #318), a plug and the
@@ -712,7 +823,7 @@ mod hollow_persist_tests {
                 .unwrap();
             scene.add_root(leaf).unwrap();
             document.install_graph(scene, PathBuf::from("hollow.stl"));
-            let made = hollowed();
+            let made = recorded();
             document.hollows().borrow_mut().push(Hollowed {
                 hollow,
                 ..made.clone()
@@ -736,13 +847,16 @@ mod hollow_persist_tests {
             let kept = reopened.hollows().borrow().first().cloned();
             (
                 run.hollow_at([0.3, -0.2, 2.05]),
-                kept.map(|k| (k.options, k.drains)),
+                kept.map(|k| (k.options, k.drains, k.engine, k.stretch)),
             )
         });
         let (_, drains) = found.expect("the review finds the hollow");
         assert_eq!(drains, 1);
-        let made = hollowed();
-        assert_eq!(kept, Some((made.options, made.drains)));
+        let made = recorded();
+        assert_eq!(
+            kept,
+            Some((made.options, made.drains, made.engine, made.stretch))
+        );
     }
 
     /// #356: copies of a hollowed model (Fill bed) show its very mesh. The
