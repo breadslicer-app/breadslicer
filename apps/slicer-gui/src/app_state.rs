@@ -760,6 +760,12 @@ impl AppState {
             ctrl.document(),
         );
         crate::export_print_file::wire_export_print_file(ui, ctrl.clone(), slice_panel.clone());
+        crate::printer_settings_import::wire(
+            ui,
+            self.catalog.clone(),
+            self.prefs.clone(),
+            ctrl.dialogs(),
+        );
         let repair_run = RepairRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let arrange_run = ArrangeRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let support_gen_run =

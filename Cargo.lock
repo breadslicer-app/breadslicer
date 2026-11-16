@@ -5230,6 +5230,7 @@ dependencies = [
  "sc-print-primitives",
  "semver",
  "serde",
+ "serde_json",
  "tempfile",
  "toml_edit",
  "zip",

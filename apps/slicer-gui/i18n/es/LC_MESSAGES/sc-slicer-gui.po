@@ -7862,3 +7862,54 @@ msgstr "Ortográfica"
 msgctxt "SlicePanel"
 msgid "Slice “{}”"
 msgstr "Laminar “{}”"
+
+#: ui/main-window.slint
+msgctxt "MenuBar"
+msgid "Import printer settings…"
+msgstr "Importar ajustes de impresora…"
+
+#: src/printer_settings_import.rs
+msgctxt "FileDialog"
+msgid "Import printer settings"
+msgstr "Importar ajustes de impresora"
+
+#: src/printer_settings_import.rs
+msgctxt "FileDialog"
+msgid "Lychee or Photon Workshop printer settings"
+msgstr "Ajustes de impresora de Lychee o Photon Workshop"
+
+#: src/printer_settings_import.rs
+#, rust-format
+msgctxt "PrinterSettingsImport"
+msgid "{}: no printer of ours has its panel and plate."
+msgstr "{}: ninguna impresora nuestra tiene su pantalla y su cama."
+
+#: src/printer_settings_import.rs
+#, rust-format
+msgctxt "PrinterSettingsImport"
+msgid "{}: not imported, no place for them here: {}"
+msgstr "{}: sin importar, no tienen lugar acá: {}"
+
+#: src/printer_settings_import.rs
+msgctxt "PrinterSettingsImport"
+msgid "Printer settings imported"
+msgstr "Ajustes de impresora importados"
+
+#: src/printer_settings_import.rs
+#, rust-format
+msgctxt "PrinterSettingsImport"
+msgid "One resin was added to your resins."
+msgid_plural "{n} resins were added to your resins."
+msgstr[0] "Se agregó una resina a tus resinas."
+msgstr[1] "Se agregaron {n} resinas a tus resinas."
+
+#: src/printer_settings_import.rs
+msgctxt "PrinterSettingsImport"
+msgid "Printer settings not imported"
+msgstr "No se importaron los ajustes de impresora"
+
+#: src/printer_settings_import.rs
+#, rust-format
+msgctxt "PrinterSettingsImport"
+msgid "The file was not imported: {}"
+msgstr "No se importó el archivo: {}"
