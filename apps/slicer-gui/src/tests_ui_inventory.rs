@@ -318,7 +318,7 @@ fn the_pictures_of_the_cards_are_written_when_asked() {
                     .collect();
             window.set_start_recent(std::rc::Rc::new(slint::VecModel::from(recent)).into());
             window.set_start_last_name("Tortle Monk.stl".into());
-            window.set_start_version("0.3.1".into());
+            window.set_start_version("0.4.0-alpha.1".into());
             window.set_start_open(true);
             write(window.window(), &dir, &format!("{language}-start"));
         });
