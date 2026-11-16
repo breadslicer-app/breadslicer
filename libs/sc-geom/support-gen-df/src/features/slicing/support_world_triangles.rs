@@ -226,6 +226,75 @@ fn append_segment_primitive(
     append_frustum(sink, start, end, radius, radius, shaft_radial);
 }
 
+/// How much of its host's radius a brace end takes (#238): inside the
+/// host's 12-sided section (its flats are 0.966 of the radius) with room to
+/// spare, so no edge of the brace's end pokes out of the shaft it hangs on.
+pub const BRACE_END_FIT: f64 = 0.92;
+
+/// A brace from `start` to `end` (two knots on the axes of their hosts),
+/// `radius` along its length and narrowing over its last stretch at each end
+/// to `end_radii`. The inherited brace kept one radius, the mean of both
+/// hosts': on the thinner host its end stuck out of the shaft, a sliver that
+/// started in mid-air below it (#238).
+fn append_brace_primitive(
+    sink: &mut TriangleSink,
+    (start, end): (Vec3, Vec3),
+    radius: f64,
+    end_radii: (f64, f64),
+    bezier: Option<&BezierCurve>,
+    tessellation: &SupportSliceTessellation,
+) {
+    let length = end.sub(start).length();
+    if !length.is_finite() || length <= 1e-6 {
+        return;
+    }
+    // Each end narrows over two of its host's radii, at most 45 % of the
+    // brace: the narrow end is inside the host, the full width outside it.
+    let ramp = |r: f64| (2.0 * r / length).min(0.45);
+    let (ta, tb) = (
+        ramp(end_radii.0 / BRACE_END_FIT),
+        ramp(end_radii.1 / BRACE_END_FIT),
+    );
+    let radius_at = |t: f64| {
+        if t < ta {
+            end_radii.0 + (radius - end_radii.0) * t / ta
+        } else if t > 1.0 - tb {
+            end_radii.1 + (radius - end_radii.1) * (1.0 - t) / tb
+        } else {
+            radius
+        }
+    };
+    type Path = Box<dyn Fn(f64) -> Vec3>;
+    let (point_at, steps, sides): (Path, Vec<f64>, u32) = match bezier {
+        Some(curve) => {
+            let (p1, p2) = (curve.control_point1, curve.control_point2);
+            let n = tessellation.bezier_steps.max(2);
+            let mut ts: Vec<f64> = (0..=n).map(|i| i as f64 / n as f64).collect();
+            ts.extend([ta, 1.0 - tb]);
+            ts.sort_by(f64::total_cmp);
+            ts.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+            (
+                Box::new(move |t| get_bezier_point_at_t(start, p1, p2, end, t)),
+                ts,
+                tessellation.bezier_radial_segments.max(3),
+            )
+        }
+        None => {
+            let mut ts = vec![0.0, ta, 1.0 - tb, 1.0];
+            ts.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+            (
+                Box::new(move |t| start.add(end.sub(start).multiply_scalar(t))),
+                ts,
+                tessellation.shaft_radial_segments.max(3),
+            )
+        }
+    };
+    for w in steps.windows(2) {
+        let (r0, r1) = (radius_at(w[0]), radius_at(w[1]));
+        append_frustum(sink, point_at(w[0]), point_at(w[1]), r0, r1, sides);
+    }
+}
+
 fn segment_bezier(segment: &Segment) -> Option<&BezierCurve> {
     match &segment.shape {
         SegmentShape::Bezier(curve) => Some(curve),
@@ -980,13 +1049,16 @@ pub fn build_support_and_raft_world_parts(
                     continue;
                 };
                 let profile_d = js_max(0.001, brace.profile.diameter);
+                // A knot is its host's width plus 0.1 mm: less that, the host.
                 let start_d = js_max(0.05, start.diameter.unwrap_or(profile_d + 0.1) - 0.1);
                 let end_d = js_max(0.05, end.diameter.unwrap_or(profile_d + 0.1) - 0.1);
-                append_segment_primitive(
+                let radius = js_max(0.001, (start_d + end_d) * 0.25);
+                let fit = |d: f64| js_max(0.001, (d * 0.5 * BRACE_END_FIT).min(radius));
+                append_brace_primitive(
                     &mut sink,
-                    start.pos,
-                    end.pos,
-                    (start_d + end_d) * 0.5,
+                    (start.pos, end.pos),
+                    radius,
+                    (fit(start_d), fit(end_d)),
                     brace.curve.as_ref().map(|c| &c.curve),
                     &tessellation,
                 );
@@ -1421,4 +1493,85 @@ fn append_smooth_shaft(
         }
     }
     true
+}
+
+#[cfg(test)]
+mod brace_end_tests {
+    use super::*;
+
+    /// The corners of `sink` at the brace end `at`, as far from `at` as the
+    /// end's radius: the cap that meets the host.
+    fn cap_corners(sink: &TriangleSink, at: Vec3, radius: f64) -> Vec<Vec3> {
+        sink.floats
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])))
+            .filter(|p| p.sub(at).length() <= radius + 1e-4)
+            .collect()
+    }
+
+    /// Off the vertical axis through `axis`, in the plane.
+    fn off_axis(p: Vec3, axis: Vec3) -> f64 {
+        (p.x - axis.x).hypot(p.y - axis.y)
+    }
+
+    /// #238: a brace between a thin and a thick trunk ends inside each one,
+    /// within the flats of its 12-sided section, not wider than the thin
+    /// one as the mean of the two was.
+    #[test]
+    fn a_brace_ends_inside_each_shaft_it_joins() {
+        let tess = SUPPORT_SLICE_TESSELLATION;
+        let (thin, thick) = (0.5, 0.8);
+        let (start, end) = (Vec3::new(0.0, 0.0, 5.0), Vec3::new(4.0, 0.0, 7.0));
+        let radius = (thin + thick) / 2.0;
+        let flats = (std::f64::consts::PI / f64::from(tess.shaft_radial_segments)).cos();
+        for bezier in [
+            None,
+            Some(BezierCurve {
+                control_point1: Vec3::new(1.0, 0.5, 5.5),
+                control_point2: Vec3::new(3.0, -0.5, 6.5),
+                ..BezierCurve::default()
+            }),
+        ] {
+            let ends = (
+                (thin * BRACE_END_FIT).min(radius),
+                (thick * BRACE_END_FIT).min(radius),
+            );
+            let mut sink = TriangleSink::default();
+            append_brace_primitive(
+                &mut sink,
+                (start, end),
+                radius,
+                ends,
+                bezier.as_ref(),
+                &tess,
+            );
+            for (at, host, r) in [(start, thin, ends.0), (end, thick, ends.1)] {
+                let corners = cap_corners(&sink, at, r);
+                assert!(corners.len() >= 3, "the end at {at:?} has a cap");
+                let widest = corners.iter().map(|&p| off_axis(p, at)).fold(0.0, f64::max);
+                assert!(
+                    widest < host * flats,
+                    "the end sticks {widest:.3} mm off the axis of a {host} mm shaft"
+                );
+            }
+            // Away from the ends it keeps its width.
+            if bezier.is_none() {
+                let axis = end.sub(start).normalize();
+                let widest = sink
+                    .floats
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|p| {
+                        let w =
+                            Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])).sub(start);
+                        w.sub(axis.multiply_scalar(w.dot(axis))).length()
+                    })
+                    .fold(0.0, f64::max);
+                assert!((widest - radius).abs() < 1e-3, "{widest} against {radius}");
+            }
+        }
+    }
 }
