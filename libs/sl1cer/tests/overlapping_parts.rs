@@ -32,22 +32,22 @@ use sc_sl1cer::raster::pixel_map::PixelMap;
 use sc_sl1cer::raster::rasterize_layer_binary;
 use sc_sl1cer::slice_leaf;
 
-const PLATE_MM: f64 = 24.0;
+pub(crate) const PLATE_MM: f64 = 24.0;
 /// 0.024 mm pixels: no mesh coordinate here lands on a pixel centre.
-const PLATE_PX: u32 = 1000;
-const LAYER_MM: f64 = 0.05;
+pub(crate) const PLATE_PX: u32 = 1000;
+pub(crate) const LAYER_MM: f64 = 0.05;
 
 /// A mesh under construction, with equal positions welded into one
 /// vertex, as the STL importer does.
 #[derive(Default)]
-struct Welded {
-    vertices: Vec<[f32; 3]>,
+pub(crate) struct Welded {
+    pub(crate) vertices: Vec<[f32; 3]>,
     index: HashMap<[u32; 3], u32>,
-    faces: Vec<[u32; 3]>,
+    pub(crate) faces: Vec<[u32; 3]>,
 }
 
 impl Welded {
-    fn vertex(&mut self, p: [f64; 3]) -> u32 {
+    pub(crate) fn vertex(&mut self, p: [f64; 3]) -> u32 {
         let p = p.map(|c| c as f32);
         *self.index.entry(p.map(f32::to_bits)).or_insert_with(|| {
             self.vertices.push(p);
@@ -58,7 +58,13 @@ impl Welded {
     /// A prism between two loops of the same length, CCW seen from
     /// above, on the planes `z0` and `z1`, faces outward. `caps`
     /// triangulates the loops (CCW index triples).
-    fn prism(&mut self, bottom: &[[f64; 2]], top: &[[f64; 2]], caps: &[[usize; 3]], z: [f64; 2]) {
+    pub(crate) fn prism(
+        &mut self,
+        bottom: &[[f64; 2]],
+        top: &[[f64; 2]],
+        caps: &[[usize; 3]],
+        z: [f64; 2],
+    ) {
         let lo: Vec<u32> = bottom
             .iter()
             .map(|&[x, y]| self.vertex([x, y, z[0]]))
@@ -79,7 +85,7 @@ impl Welded {
         }
     }
 
-    fn cuboid(&mut self, min: [f64; 3], max: [f64; 3]) {
+    pub(crate) fn cuboid(&mut self, min: [f64; 3], max: [f64; 3]) {
         let square = [
             [min[0], min[1]],
             [max[0], min[1]],
@@ -89,14 +95,14 @@ impl Welded {
         self.prism(&square, &square, &[[0, 1, 2], [0, 2, 3]], [min[2], max[2]]);
     }
 
-    fn turned_inside_out(mut self) -> Self {
+    pub(crate) fn turned_inside_out(mut self) -> Self {
         for f in &mut self.faces {
             f.swap(1, 2);
         }
         self
     }
 
-    fn mesh(self) -> IndexedMesh {
+    pub(crate) fn mesh(self) -> IndexedMesh {
         IndexedMesh {
             meta: None,
             vertices: self.vertices.into_iter().map(Vertex::new).collect(),
@@ -218,7 +224,7 @@ fn profile(layers: u32) -> SliceProfile {
     )
 }
 
-fn pixel_map() -> PixelMap {
+pub(crate) fn pixel_map() -> PixelMap {
     let side = PositiveFiniteMm::new(PLATE_MM).unwrap();
     PixelMap::new(
         side,
@@ -228,7 +234,7 @@ fn pixel_map() -> PixelMap {
     )
 }
 
-fn slice(mesh: &IndexedMesh, layers: u32) -> ContourStack {
+pub(crate) fn slice(mesh: &IndexedMesh, layers: u32) -> ContourStack {
     let mut scene = Scene::new();
     let leaf = scene
         .add_leaf(
@@ -313,7 +319,7 @@ fn slicer_raster(layer: &ContourLayer, map: &PixelMap) -> Vec<bool> {
 
 /// Every layer of `mesh` lights exactly the reference's pixels; returns
 /// the lit pixel count per layer.
-fn assert_matches_reference(mesh: &IndexedMesh, layers: u32) -> Vec<usize> {
+pub(crate) fn assert_matches_reference(mesh: &IndexedMesh, layers: u32) -> Vec<usize> {
     let map = pixel_map();
     let stack = slice(mesh, layers);
     stack

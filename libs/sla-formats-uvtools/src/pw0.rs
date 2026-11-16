@@ -165,6 +165,23 @@ mod pw0_tests {
         assert_eq!(encode(&[run(0x81, 2), run(0x8e, 3)]), [0x85]);
     }
 
+    /// #43: a PW0 image keeps each grey's high nibble, `(v >> 4) × 17`:
+    /// never more than a sixteenth of full white off, black and white
+    /// exact, and greys never lighter than rasterised but at the top of a
+    /// nibble.
+    #[test]
+    fn a_stored_grey_is_its_high_nibble_times_17() {
+        for v in 0..=u8::MAX {
+            let stored = stored_grey(v);
+            assert_eq!(stored, (v >> 4) * 17, "{v}");
+            assert!(
+                i32::from(stored).abs_diff(i32::from(v)) <= 15,
+                "{v}: {stored}"
+            );
+        }
+        assert_eq!((stored_grey(0), stored_grey(255)), (0, 255));
+    }
+
     #[test]
     fn a_frame_too_short_for_its_size_is_refused() {
         assert!(decode(&encode(&[run(0, 10)]), 11).is_err());

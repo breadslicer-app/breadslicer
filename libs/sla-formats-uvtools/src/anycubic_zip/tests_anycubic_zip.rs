@@ -43,21 +43,26 @@ fn the_archive_holds_the_entries_uvtools_writes_in_its_order() {
     assert_eq!(file.entries, expected);
 }
 
+/// Every layer of every variant (#23: `.pm7` and `.pm7m` too, which the
+/// slicing research did not open in UVtools) reads back as the slicer
+/// rasterised it, at the 16 greys PW0 keeps.
 #[test]
 fn every_layer_reads_back_as_the_slicer_rasterised_it_at_16_greys() {
-    for aa in [AaLevel::Off, AaLevel::X8] {
-        let raster = raster(aa, Mirror { x: true, y: false });
-        let program = program("Photon Mono M7 Pro", raster.clone(), 6);
-        let stack = stack(6);
-        let mut out = Cursor::new(Vec::new());
-        write_file(AnycubicZipVariant::Pwsz, &program, None, &stack, &mut out).unwrap();
+    for variant in AnycubicZipVariant::ALL {
+        for aa in [AaLevel::Off, AaLevel::X8] {
+            let raster = raster(aa, Mirror { x: true, y: false });
+            let program = program("Photon Mono M7 Pro", raster.clone(), 6);
+            let stack = stack(6);
+            let mut out = Cursor::new(Vec::new());
+            write_file(variant, &program, None, &stack, &mut out).unwrap();
 
-        let file = read_anycubic_zip(Cursor::new(out.into_inner())).unwrap();
-        let quantised: Vec<Vec<u8>> = expected_images(&stack, &raster)
-            .into_iter()
-            .map(|image| image.into_iter().map(|grey| (grey >> 4) * 17).collect())
-            .collect();
-        assert_eq!(file.layers, quantised, "{aa:?}");
+            let file = read_anycubic_zip(Cursor::new(out.into_inner())).unwrap();
+            let quantised: Vec<Vec<u8>> = expected_images(&stack, &raster)
+                .into_iter()
+                .map(|image| image.into_iter().map(|grey| (grey >> 4) * 17).collect())
+                .collect();
+            assert_eq!(file.layers, quantised, "{variant:?} {aa:?}");
+        }
     }
 }
 

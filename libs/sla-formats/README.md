@@ -8,8 +8,8 @@ looked at.
 Written for the
 [Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md).
 
-This crate only writes. Reading printer files back is not a goal, and mesh
-formats belong to
+This crate only writes; the tests read what it writes back with decoders of
+their own. Mesh formats belong to
 [`sc-mesh-formats`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-formats/).
 
 ## Formats
@@ -20,7 +20,13 @@ formats belong to
 | `svg-combined`  | debug   | file      | Every layer as a group in one SVG. |
 | `png-per-layer` | debug   | directory | One 8-bit grayscale PNG per layer, rasterised with the run's anti-aliasing. |
 | `3mf`           | printer | file      | A package using the [3MF Slice Extension](https://github.com/3MFConsortium/spec_slice), conventionally named `*.slices.3mf`. |
-| SL1, CTB, GOO   | printer | -         | Planned. Asking for one today returns `WriterError::NotImplemented`. |
+| GOO v3.0        | printer | file      | Elegoo `.goo`, all 256 greys. Written here. |
+| CTB v5          | printer | file      | Chitubox `.ctb`, plain and encrypted, 7-bit greys. Written here. |
+| CTB v2–v4       | printer | file      | Older `.ctb` revisions. Written by `sc-sla-formats-uvtools`. |
+| CXDLP v2, v3    | printer | file      | Creality Halot `.cxdlp`, the panel turned as the printer reads it. Written by `sc-sla-formats-uvtools`. |
+| Anycubic ZIP    | printer | file      | `.pwsz`, `.pm7`, `.pm7m`, `.pm4u`, `.pp1`, `.pp1m`; PW0 layers, 16 greys. Written by `sc-sla-formats-uvtools`. |
+| Anycubic binary | printer | file      | The 21 extensions Photon Workshop wrote before the ZIP; PW0 or bit-plane layers. Written by `sc-sla-formats-uvtools`. |
+| GOO v5.1, SL1   | printer | -         | Not written: asking for one is refused (`WriterError::PrinterFormatNotImplemented`). |
 
 Debug formats are for inspection, regression fixtures and visual checking,
 not for feeding to a printer. Each layer file is self-describing: the SVG
