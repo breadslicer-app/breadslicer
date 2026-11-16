@@ -1,0 +1,26 @@
+[identity]
+id = "creality-halot-water-washable-resin-gray-50um"
+brand = "Creality"
+family = "water-washable"
+name = "HALOT Water Washable Resin-Gray (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.creality-halot-x1]
+normal_exposure_sec = 1.8
+bottom_exposure_sec = 30.0
+bottom_layer_count = 4
+wait_before_cure_sec = 4.0
+bottom_wait_before_cure_sec = 6.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 180.0
+retract_speed_mm_min = 180.0
+bottom_lift_distance_mm = 5.0
+bottom_lift_speed_mm_min = 120.0
+bottom_retract_speed_mm_min = 120.0

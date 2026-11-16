@@ -16,6 +16,7 @@
 pub mod anycubic_wiki;
 pub mod cli;
 pub mod creality_blog;
+pub mod creality_wiki;
 pub mod dragonfruit;
 pub mod elegoo_settings;
 pub mod format;
