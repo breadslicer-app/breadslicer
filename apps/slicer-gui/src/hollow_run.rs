@@ -1414,6 +1414,7 @@ impl HollowRun {
             }
         };
         *self.prepared.borrow_mut() = Some(outcome.prepared.clone());
+        let joined_parts = outcome.prepared.session().joined_parts();
         let still_there = self
             .document
             .with_scene(|spatial| {
@@ -1558,6 +1559,15 @@ impl HollowRun {
         if let Some(why) = coarsened {
             summary.push(' ');
             summary.push_str(&why);
+        }
+        // Parts that overlapped are hollowed as one solid (#453): the model
+        // keeps their union, with no faces buried inside it.
+        if joined_parts {
+            summary.push(' ');
+            summary.push_str(&ctr!(
+                "HollowRun",
+                "Its parts overlapped: they were joined into one solid and hollowed together."
+            ));
         }
         if !drains.is_empty() {
             summary.push(' ');

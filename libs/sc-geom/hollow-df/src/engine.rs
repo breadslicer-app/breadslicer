@@ -440,6 +440,9 @@ pub struct Session {
     inner: HollowSession,
     grid: GridInfo,
     source_volume_mm3: f64,
+    /// Whether the source's parts overlapped and were joined into one solid
+    /// to hollow it (#453).
+    joined_parts: bool,
     /// The exact wall distances measured so far: the widest band a preview
     /// or an apply has needed. It only grows; a narrower wall reads it
     /// clamped, so the result does not depend on what was measured before.
@@ -457,6 +460,7 @@ impl Clone for Session {
             inner: self.inner.clone(),
             grid: self.grid,
             source_volume_mm3: self.source_volume_mm3,
+            joined_parts: self.joined_parts,
             wall: Mutex::new(self.measured_wall()),
             cavity: Mutex::new(self.cached_cavity()),
             shell: self.shell.clone(),
@@ -564,6 +568,9 @@ impl Session {
     /// Voxelizes `mesh` (in a frame whose millimetres are physical) at the
     /// requested voxel size. `max_cells`, when given, refuses grids larger
     /// than that before allocating them.
+    ///
+    /// A model whose parts overlap is hollowed as one solid, their union
+    /// (#453, [`Session::joined_parts`]).
     pub fn build(
         mesh: IndexedMesh,
         request: &GridRequest,
@@ -573,6 +580,10 @@ impl Session {
         if mesh.triangles.is_empty() || mesh.positions.is_empty() {
             return Err(HollowError::EmptyMesh);
         }
+        let (mesh, joined_parts) = match crate::overlap::joined_parts(&mesh) {
+            Some(joined) => (joined, true),
+            None => (mesh, false),
+        };
         let bbox = mesh.bbox();
         let diag = bbox.max.sub(bbox.min);
         let max_extent = diag.x.max(diag.y).max(diag.z).max(1e-3);
@@ -639,6 +650,7 @@ impl Session {
             grid: GridInfo::of(&inner.grid(), requested, resolution, bound),
             inner,
             source_volume_mm3,
+            joined_parts,
             wall: Mutex::new(None),
             cavity: Mutex::new(None),
             shell: OnceLock::new(),
@@ -754,6 +766,12 @@ impl Session {
             (self.source_mesh(), self.inner.source_bvh()),
             cavity.drain_target(),
         )
+    }
+
+    /// Whether the model's parts overlapped and it is hollowed as their
+    /// union, one solid (#453): the result is that solid, hollow.
+    pub fn joined_parts(&self) -> bool {
+        self.joined_parts
     }
 
     pub fn grid(&self) -> &GridInfo {

@@ -4802,6 +4802,11 @@ msgid "Saves {} of {} ml ({} %). Wall {} mm, voxel {} mm."
 msgstr "Ahorra {} de {} ml ({} %). Pared de {} mm, vóxel de {} mm."
 
 #: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Its parts overlapped: they were joined into one solid and hollowed together."
+msgstr "Sus partes se pisaban: se unieron en un solo sólido y se ahuecaron juntas."
+
+#: src/hollow_run.rs
 #, rust-format
 msgctxt "HollowRun"
 msgid "The voxel was enlarged from {} mm: at most {} voxels per side."

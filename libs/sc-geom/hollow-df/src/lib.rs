@@ -22,6 +22,7 @@ pub mod drain;
 pub mod engine;
 pub mod hollowing;
 pub mod mesh;
+pub mod overlap;
 pub mod punch;
 pub mod shapes;
 mod smoothing;
