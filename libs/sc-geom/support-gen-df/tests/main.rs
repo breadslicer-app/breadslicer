@@ -15,6 +15,7 @@ mod cavity_landing;
 mod js_math;
 mod pipeline;
 mod region_folds;
+mod slice_detail;
 mod smooth_shafts;
 mod support_primitives;
 mod support_type_registry;

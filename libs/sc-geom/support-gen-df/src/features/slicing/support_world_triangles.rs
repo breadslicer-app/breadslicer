@@ -71,51 +71,26 @@ pub struct SupportSliceTessellation {
     pub joint_radial_segments: u32,
 }
 
-/// `resolveSupportSliceTessellation`: fewer segments as the scene grows.
-pub fn resolve_support_slice_tessellation(state: &SupportCollections) -> SupportSliceTessellation {
-    let mut segment_count = 0usize;
-    let mut shaftless_count = 0usize;
-    for descriptor in &SUPPORT_TYPES {
-        if !descriptor.has_segments {
-            shaftless_count += match descriptor.location.key() {
-                SupportCollectionKey::Leaves => state.leaves.len(),
-                SupportCollectionKey::Braces => state.braces.len(),
-                _ => 0,
-            };
-            continue;
-        }
-        segment_count += match descriptor.location.key() {
-            SupportCollectionKey::Trunks => state.trunks.values().map(|e| e.segments.len()).sum(),
-            SupportCollectionKey::Branches => {
-                state.branches.values().map(|e| e.segments.len()).sum()
-            }
-            SupportCollectionKey::Twigs => state.twigs.values().map(|e| e.segments.len()).sum(),
-            SupportCollectionKey::Sticks => state.sticks.values().map(|e| e.segments.len()).sum(),
-            SupportCollectionKey::Stumps => state.stumps.values().map(|e| e.segments.len()).sum(),
-            SupportCollectionKey::Kickstands => {
-                state.kickstands.values().map(|e| e.segments.len()).sum()
-            }
-            _ => 0,
-        };
-    }
-    let primitive_count = segment_count + state.roots.len() + shaftless_count;
-    let t = |s, b, st, r, c, j| SupportSliceTessellation {
-        shaft_radial_segments: s,
-        bezier_radial_segments: b,
-        bezier_steps: st,
-        root_radial_segments: r,
-        contact_cone_radial_segments: c,
-        joint_radial_segments: j,
-    };
-    if segment_count >= 20_000 || primitive_count >= 24_000 {
-        t(3, 3, 4, 4, 4, 4)
-    } else if segment_count >= 8_000 || primitive_count >= 10_000 {
-        t(6, 6, 6, 8, 6, 6)
-    } else if segment_count >= 3_000 || primitive_count >= 4_000 {
-        t(8, 7, 8, 10, 8, 8)
-    } else {
-        t(12, 10, 12, 14, 12, 12)
-    }
+/// The detail every support set is drawn and sliced at, whatever its size.
+///
+/// The inherited budget dropped to 8, 6 and finally 3 sides per shaft as a set
+/// grew (#503): fine for a viewer, but this mesh is the one that is printed, so
+/// a large model got shafts with up to 59 % less section than its preset asks
+/// for. Every set now keeps the detail a small one always had.
+pub const SUPPORT_SLICE_TESSELLATION: SupportSliceTessellation = SupportSliceTessellation {
+    shaft_radial_segments: 12,
+    bezier_radial_segments: 10,
+    bezier_steps: 12,
+    root_radial_segments: 14,
+    contact_cone_radial_segments: 12,
+    joint_radial_segments: 12,
+};
+
+/// The tessellation a set is sliced at: [`SUPPORT_SLICE_TESSELLATION`] for
+/// every set, so a shaft's section never depends on how many supports share
+/// its set.
+pub fn resolve_support_slice_tessellation(_state: &SupportCollections) -> SupportSliceTessellation {
+    SUPPORT_SLICE_TESSELLATION
 }
 
 /// A triangle soup (nine floats per triangle) and where each piece of it
