@@ -144,11 +144,25 @@ pub struct SmartPlacementV3Context {
 // everywhere else in the support system.
 const COLLISION_AVOIDANCE_MM: f64 = 0.48;
 
+/// The step the router's shaft radius is rounded up to (#233).
+pub const CLEARANCE_RADIUS_STEP_MM: f64 = 0.025;
+
 /// The clearance the router asks the column map for, from the shaft it clears.
 /// One function for both the ask and the prewarm, so a prewarmed map cannot
 /// miss the clearance the hover then asks for and rebuild anyway.
+///
+/// The shaft's radius is rounded up to [`CLEARANCE_RADIUS_STEP_MM`] (#233):
+/// trunk diameters are continuous (from area and height), and each new
+/// clearance built a column map over every vertex of the model (~60 ms on
+/// 1.9 M of them), up to 180 maps a run. Rounded, trunks within 0.05 mm of
+/// one another share a map, and a shaft keeps at most 0.025 mm more room
+/// from the model, never less.
 pub fn column_clearance_mm(shaft_diameter_mm: f64) -> f64 {
-    shaft_diameter_mm / 2.0 + COLLISION_AVOIDANCE_MM
+    let radius = shaft_diameter_mm / 2.0;
+    // A hair under the step, so a radius already on it is not pushed up a
+    // step by its rounding error.
+    let steps = (radius / CLEARANCE_RADIUS_STEP_MM - 1e-9).ceil();
+    steps * CLEARANCE_RADIUS_STEP_MM + COLLISION_AVOIDANCE_MM
 }
 
 /// The column map's cell size, shared with the prewarm for the same reason.
@@ -945,4 +959,28 @@ fn route(
         error: Some(LimitationCode::CollisionWithModel),
         ..standard
     })
+}
+
+#[cfg(test)]
+mod clearance_tests {
+    use super::*;
+
+    /// #233: shafts whose diameters differ by less than 0.05 mm ask for one
+    /// clearance, never less room than their own radius gives.
+    #[test]
+    fn close_shafts_share_one_clearance_and_none_gets_less_room() {
+        let mut clearances = std::collections::BTreeSet::new();
+        for k in 0..=400 {
+            let d = 1.0 + f64::from(k) * 0.001;
+            let c = column_clearance_mm(d);
+            let own = d / 2.0 + COLLISION_AVOIDANCE_MM;
+            assert!(c >= own - 1e-12, "{d}: {c} < {own}");
+            assert!(c - own <= CLEARANCE_RADIUS_STEP_MM + 1e-12, "{d}: {c}");
+            clearances.insert((c * 1e6).round() as i64);
+        }
+        // 0.4 mm of diameters in 0.001 mm steps: 0.2 mm of radius, 8 steps.
+        assert!(clearances.len() <= 9, "{}", clearances.len());
+        // A radius on the step stays there.
+        assert_eq!(column_clearance_mm(1.1), 0.55 + COLLISION_AVOIDANCE_MM);
+    }
 }
