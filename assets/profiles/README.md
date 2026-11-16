@@ -146,6 +146,12 @@ Lychee files that print correctly on it hold (UVtools reads them back
 identically from both). The 6 transition layers belong to the M7 Pro's
 profile, and the resin's price is not a profile field.
 
+The Creality Halot X1 resins come from the resin parameter table of
+Creality's wiki page for that machine, read by
+`profiles-converter --format creality-wiki` from the saved page. The wiki
+has the same tables for the X1 Neo and the Halot Sky 2025, which are not
+in the catalog yet: their rows are left out until they are.
+
 `creality-halot-one-printer-profile-50um` is not a resin calibration: the
 Halot One exposes with the profile stored on the printer, not the file's
 values, so this profile only writes what known-good Lychee files for it
