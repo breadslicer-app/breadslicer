@@ -5615,6 +5615,14 @@ msgid "Models: {}, islands: {}, support roots: {}, triangles: {}."
 msgstr "Modelos: {}, islas: {}, raíces de soporte: {}, triángulos: {}."
 
 #: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "One support did not fit once sized and was left out: Analyze islands shows what it held."
+msgid_plural "{n} supports did not fit once sized and were left out: Analyze islands shows what they held."
+msgstr[0] "Un soporte no entró con su tamaño final y quedó afuera: Analizar islas muestra lo que sostenía."
+msgstr[1] "{n} soportes no entraron con su tamaño final y quedaron afuera: Analizar islas muestra lo que sostenían."
+
+#: src/df_support_run.rs
 msgctxt "DfSupportDialog"
 msgid "Preparing scans…"
 msgstr "Preparando el análisis…"

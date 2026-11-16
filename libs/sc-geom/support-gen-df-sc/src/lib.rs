@@ -232,6 +232,10 @@ pub struct DfSupportOutcome {
     /// Models whose supports, made for another copy (#561), run into a
     /// neighbouring model: Arrange all spaces them out.
     pub crowded: Vec<NodeId>,
+    /// Supports the plan took off once sized (they crossed the model or
+    /// another shaft) and could not place again (#236): their contacts are
+    /// left for Fix all.
+    pub unplaced: usize,
     /// Where the run spent its time.
     pub timings: PerfFrame,
 }
@@ -730,6 +734,7 @@ fn merged(runs: Vec<DfSupportOutcome>) -> DfSupportOutcome {
             placed: Vec::new(),
             triangles: 0,
             crowded: Vec::new(),
+            unplaced: 0,
             timings: PerfFrame::default(),
         };
     };
@@ -738,6 +743,7 @@ fn merged(runs: Vec<DfSupportOutcome>) -> DfSupportOutcome {
         out.models += run.models;
         out.islands += run.islands;
         out.triangles += run.triangles;
+        out.unplaced += run.unplaced;
         for (name, count) in run.placed {
             match out.placed.iter_mut().find(|(k, _)| *k == name) {
                 Some(entry) => entry.1 += count,
@@ -1203,11 +1209,25 @@ fn run_df_supports(
     };
     let mut placed: Vec<(String, u64)> = Vec::new();
     let mut islands = 0;
+    let mut unplaced = 0;
     for (i, m) in out.models.iter().enumerate() {
         // A model stands for its copies too (#561).
         let copies = copies.get(i).copied().unwrap_or(1);
         islands += m.islands.filtered.len() * copies as usize;
         if let Some(plan) = &m.plan {
+            unplaced += plan
+                .result
+                .analytics
+                .as_ref()
+                .and_then(|a| a.forest_report.as_ref())
+                .and_then(|f| f.orphans.as_ref())
+                .map_or(0, |orphans| {
+                    orphans
+                        .iter()
+                        .filter(|o| o.was_placed_again() == Some(false))
+                        .count()
+                })
+                * copies as usize;
             for (&kind, &count) in &plan.result.placed {
                 if count <= 0 {
                     continue;
@@ -1292,5 +1312,6 @@ fn run_df_supports(
         islands,
         placed,
         crowded: Vec::new(),
+        unplaced,
     })
 }

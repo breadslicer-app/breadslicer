@@ -1242,6 +1242,24 @@ pub struct OrphanInfo {
     pub knot_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Placed again after the cull, with the final sizes (#63, #236).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replaced: bool,
+}
+
+impl OrphanInfo {
+    /// Whether the plan placed it again after the cull (#63, #236): `None`
+    /// for one it does not try (its knot or host went missing).
+    pub fn was_placed_again(&self) -> Option<bool> {
+        matches!(
+            self.reason,
+            OrphanReason::HostCulled
+                | OrphanReason::HostBlocked
+                | OrphanReason::Blocked
+                | OrphanReason::Cross
+        )
+        .then_some(self.replaced)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1254,6 +1272,9 @@ pub enum OrphanReason {
     Cross,
     Blocked,
     HostBlocked,
+    /// Its host was culled (as [`OrphanReason::HostBlocked`]): the member
+    /// is placed again (#63).
+    HostCulled,
 }
 
 /// A shaft-hosted member as the cull reads it.
@@ -1298,10 +1319,14 @@ fn member_views(draft: &SupportState, type_id: SupportTypeId) -> Vec<MemberView<
 /// through the model on its way to its contact ([`contact_cone_crosses_model`])
 /// is culled too: a trunk as a blocked host (its members are placed again), a
 /// leaf or a branch as blocked, a stick or a stump by itself.
+///
+/// The supports named in `crossing` (placed again after a cull and found
+/// through the model, #236) are culled as blocked.
 pub fn validate_and_cull_orphans(
     draft: &SupportState,
     mesh: Option<&PlanMesh<'_>>,
     cones_clear: bool,
+    crossing: &HashSet<String>,
 ) -> (SupportState, Vec<OrphanInfo>) {
     let mut orphans: Vec<OrphanInfo> = Vec::new();
     const DRIFT_TOL_SQ: f64 = 0.25; // 0.5mm
@@ -1316,8 +1341,11 @@ pub fn validate_and_cull_orphans(
             entity,
         } in collect_host_entities(draft)
         {
-            let mut blocked = false;
+            let mut blocked = crossing.contains(host_id);
             for seg in &entity.segments {
+                if blocked {
+                    break;
+                }
                 let (Some(a), Some(b)) = (&seg.bottom_joint, &seg.top_joint) else {
                     continue;
                 };
@@ -1362,6 +1390,7 @@ pub fn validate_and_cull_orphans(
                     } else {
                         format!("{type_name} shaft pierces mesh{where_}")
                     }),
+                    replaced: false,
                 });
                 hosts_to_remove.insert(host_id.to_owned());
             }
@@ -1389,8 +1418,19 @@ pub fn validate_and_cull_orphans(
                 host_id: host.map(str::to_owned),
                 knot_id: knot.map(str::to_owned),
                 detail: Some(detail),
+                replaced: false,
             });
         };
+        if crossing.contains(member.id) {
+            push(
+                orphans,
+                OrphanReason::Blocked,
+                None,
+                Some(member.knot_id),
+                "placed again through the mesh".to_owned(),
+            );
+            return false;
+        }
         if member.knot_id.is_empty() {
             push(
                 orphans,
@@ -1563,10 +1603,11 @@ pub fn validate_and_cull_orphans(
                 orphans.push(OrphanInfo {
                     id: member.id.to_owned(),
                     kind: type_id,
-                    reason: OrphanReason::MissingHost,
+                    reason: OrphanReason::HostCulled,
                     host_id: Some(culled_host_id.to_owned()),
                     knot_id: Some(knot.id.clone()),
                     detail: Some(format!("{name} culled (blocked)")),
+                    replaced: false,
                 });
                 members_to_remove
                     .get_mut(&type_id)
@@ -1601,6 +1642,7 @@ pub fn validate_and_cull_orphans(
                     host_id: None,
                     knot_id: None,
                     detail: Some(crossing_detail("Stick", cone)),
+                    replaced: false,
                 });
                 sticks_to_remove.insert(id.clone());
             }
@@ -1614,6 +1656,7 @@ pub fn validate_and_cull_orphans(
                     host_id: None,
                     knot_id: None,
                     detail: Some(crossing_detail("Stump", &stump.contact_cone)),
+                    replaced: false,
                 });
                 stumps_to_remove.insert(id.clone());
             }

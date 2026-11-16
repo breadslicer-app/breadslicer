@@ -6429,6 +6429,7 @@ impl DfSupportRun {
             .filter_map(|set| set.kept.clone())
             .collect();
         let crowded = outcome.crowded.len();
+        let unplaced = outcome.unplaced;
         // One set per model it placed supports on (#197). A copy that took
         // another's supports (#561) shows that one's mesh, turned and moved
         // onto it by its leaf: one mesh for every copy.
@@ -6555,6 +6556,10 @@ impl DfSupportRun {
                 });
                 return;
             }
+        }
+        // Supports left out once sized are said even when the card is off.
+        if unplaced > 0 && replaced_note.is_none() {
+            self.show_status(unplaced_note(unplaced).into());
         }
         match replaced_note {
             Some(ReplacedNote::Same) => self.show_status(ctr!(
@@ -7663,9 +7668,10 @@ fn lost_line(edit: &LostEdit) -> slint::SharedString {
     }
 }
 
-/// One line: models, islands, roots and triangles.
+/// One line: models, islands, roots and triangles, and the supports that
+/// could not be placed again once sized (#236).
 fn summary_message(outcome: &DfSupportOutcome) -> String {
-    ctr!(
+    let mut line = ctr!(
         "Inspector",
         "Models: {}, islands: {}, support roots: {}, triangles: {}.",
         outcome.models,
@@ -7677,6 +7683,22 @@ fn summary_message(outcome: &DfSupportOutcome) -> String {
             .map(|set| set.session.state().collections.roots.len())
             .sum::<usize>(),
         outcome.triangles
+    )
+    .to_string();
+    if outcome.unplaced > 0 {
+        line.push(' ');
+        line.push_str(&unplaced_note(outcome.unplaced));
+    }
+    line
+}
+
+/// Supports the plan took off once sized and could not place again (#236).
+fn unplaced_note(n: usize) -> String {
+    ctr!(
+        "Inspector",
+        "One support did not fit once sized and was left out: Analyze islands shows what it held.",
+        "{n} supports did not fit once sized and were left out: Analyze islands shows what they held.",
+        n
     )
     .to_string()
 }
