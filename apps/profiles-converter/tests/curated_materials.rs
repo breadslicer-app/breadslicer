@@ -38,10 +38,12 @@ const RESINS_WITHOUT_A_FIGURE: [&str; 1] = [
 ///
 /// Anycubic and Creality: converted from their resin settings pages,
 /// which state no density; their data sheets are still to be read. The
-/// owner's hand-written profiles are listed apart, above.
-const UNRESEARCHED: [fn(&str) -> bool; 2] = [
+/// owner's hand-written profiles are listed apart, above. Piocreat: the
+/// resins Creality's Halot X1 page tunes, which states no density either.
+const UNRESEARCHED: [fn(&str) -> bool; 3] = [
     |id| id.starts_with("anycubic-") && !OWNER_PRINT_SETTINGS.contains(&id),
     |id| id.starts_with("creality-") && !OWNER_PRINT_SETTINGS.contains(&id),
+    |id| id.starts_with("piocreat-"),
 ];
 
 /// Resins whose vendor publishes no density for any of them, as tests

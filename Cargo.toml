@@ -96,9 +96,9 @@ sc-geom = { path = "libs/sc-geom", version = "0.0.2" }
 
 # The GUI's own crates, split from `apps/slicer-gui` so that an edit rebuilds
 # less of it (#361).
-sc-slicer-gui-base = { path = "apps/slicer-gui/crates/base", version = "0.3.1" }
-sc-slicer-gui-render = { path = "apps/slicer-gui/crates/render", version = "0.3.1" }
-sc-slicer-gui-ui = { path = "apps/slicer-gui/crates/ui", version = "0.3.1" }
+sc-slicer-gui-base = { path = "apps/slicer-gui/crates/base", version = "0.4.0-alpha.1" }
+sc-slicer-gui-render = { path = "apps/slicer-gui/crates/render", version = "0.4.0-alpha.1" }
+sc-slicer-gui-ui = { path = "apps/slicer-gui/crates/ui", version = "0.4.0-alpha.1" }
 
 # Slint's default feature set minus FemtoVG renderer. One spec for every GUI
 # crate, so the generated interface and the code that drives it agree.

@@ -1,6 +1,6 @@
 [package]
 name = "sc-slicer-gui-base"
-version = "0.3.1"
+version = "0.4.0-alpha.1"
 edition.workspace = true
 license = "AGPL-3.0-or-later"
 description = "What every Breadslicer GUI crate shares: the event trail, the scrubbing of personal paths out of it, the startup timings and the translation macro."
