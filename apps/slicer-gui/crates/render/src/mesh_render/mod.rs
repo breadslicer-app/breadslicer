@@ -548,6 +548,8 @@ impl Renderer {
         self.scene = None;
         self.adopted = scene_upload::UploadedMeshes::default();
         self.world_boxes.clear();
+        // The scene's smooth-shaded meshes go with it (#269).
+        smooth_shading::clear_smooth_cache();
         self.target_manager.msaa = None;
         self.target_manager.targets = None;
     }

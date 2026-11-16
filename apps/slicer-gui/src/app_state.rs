@@ -4350,8 +4350,9 @@ mod window_wiring_tests {
     #[derive(Clone, Copy, Debug)]
     struct AlignedView {
         name: &'static str,
-        /// The digit, and whether it goes with Ctrl.
-        shortcut: (&'static str, bool),
+        /// The digit, and whether it goes with Ctrl; none for Back and Left,
+        /// on the view wheel only since Ctrl+1 and Ctrl+3 open tabs (#583).
+        shortcut: Option<(&'static str, bool)>,
         /// Its place on the view wheel, from the wheel's middle.
         wheel: (f32, f32),
         /// The world axis it looks along.
@@ -4361,37 +4362,37 @@ mod window_wiring_tests {
     const ALIGNED_VIEWS: [AlignedView; 6] = [
         AlignedView {
             name: "Top",
-            shortcut: ("7", false),
+            shortcut: Some(("7", false)),
             wheel: (0.0, -112.0),
             depth: 2,
         },
         AlignedView {
             name: "Bottom",
-            shortcut: ("7", true),
+            shortcut: Some(("7", true)),
             wheel: (0.0, 112.0),
             depth: 2,
         },
         AlignedView {
             name: "Front",
-            shortcut: ("1", false),
+            shortcut: Some(("1", false)),
             wheel: (-100.0, -77.0),
             depth: 1,
         },
         AlignedView {
             name: "Back",
-            shortcut: ("1", true),
+            shortcut: None,
             wheel: (100.0, -77.0),
             depth: 1,
         },
         AlignedView {
             name: "Right",
-            shortcut: ("3", false),
+            shortcut: Some(("3", false)),
             wheel: (120.0, 0.0),
             depth: 0,
         },
         AlignedView {
             name: "Left",
-            shortcut: ("3", true),
+            shortcut: None,
             wheel: (-120.0, 0.0),
             depth: 0,
         },
@@ -4412,6 +4413,13 @@ mod window_wiring_tests {
         ViewEntry::WheelSwipe,
         ViewEntry::WheelClick,
     ];
+
+    /// The ways to reach `view`: by its shortcut only when it has one.
+    fn entries_of(view: AlignedView) -> impl Iterator<Item = ViewEntry> {
+        VIEW_ENTRIES
+            .into_iter()
+            .filter(move |entry| view.shortcut.is_some() || !matches!(entry, ViewEntry::Shortcut))
+    }
 
     impl SupportedCubes {
         fn new(cubes: &[[f64; 3]], orthographic: bool) -> Self {
@@ -4523,7 +4531,7 @@ mod window_wiring_tests {
             match entry {
                 ViewEntry::Shortcut => {
                     let ctrl: slint::SharedString = slint::platform::Key::Control.into();
-                    let (digit, with_ctrl) = view.shortcut;
+                    let (digit, with_ctrl) = view.shortcut.expect("a view with a shortcut");
                     if with_ctrl {
                         self.key_down(&ctrl);
                     }
@@ -4695,7 +4703,7 @@ mod window_wiring_tests {
         on_fresh_slint_thread(|| {
             for orthographic in [false, true] {
                 for view in ALIGNED_VIEWS {
-                    for entry in VIEW_ENTRIES {
+                    for entry in entries_of(view) {
                         let shown = SupportedCubes::new(&[[20.0, 20.0, 8.3]], orthographic);
                         shown.enter(view, entry);
                         let how = format!("{view:?} by {entry:?}, ortho {orthographic}");
@@ -4712,7 +4720,9 @@ mod window_wiring_tests {
         on_fresh_slint_thread(|| {
             for view in ALIGNED_VIEWS {
                 let shown = SupportedCubes::new(&[[20.0, 20.0, 8.3], [50.0, 20.7, 8.3]], false);
-                shown.enter(view, ViewEntry::Shortcut);
+                // Back and Left have no shortcut since #583: the wheel.
+                let entry = entries_of(view).next().expect("a way to the view");
+                shown.enter(view, entry);
                 assert_g_keeps_depth(&shown, view, view.name);
             }
         });
@@ -4726,7 +4736,7 @@ mod window_wiring_tests {
         on_fresh_slint_thread(|| {
             for orthographic in [false, true] {
                 for view in ALIGNED_VIEWS {
-                    for entry in VIEW_ENTRIES {
+                    for entry in entries_of(view) {
                         let how = format!("{view:?} by {entry:?}, ortho {orthographic}");
                         let shown = SupportedCubes::new(&[[20.0, 20.0, 8.3]], orthographic);
                         shown.enter(view, entry);
