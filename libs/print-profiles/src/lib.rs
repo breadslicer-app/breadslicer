@@ -30,6 +30,7 @@ pub mod calibration_target;
 pub mod effective_material;
 pub mod generic_machine;
 pub mod image_asset_ref;
+pub mod import;
 pub mod library;
 pub mod listing;
 pub mod loader;

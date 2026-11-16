@@ -690,6 +690,9 @@ export component MainWindow inherits Window {
     callback open-file-requested();
     // File > Import model (#384): models join the scene.
     callback import-model-requested();
+    // File > Import printer settings (#565): a Lychee or Photon Workshop
+    // printer export becomes resins of the user's library.
+    callback import-printer-settings-requested();
     callback close-current-scene();
     // File > Clear Scene: the scene goes, the window stays, empty.
     callback clear-current-scene();
@@ -1029,6 +1032,13 @@ export component MainWindow inherits Window {
                 enabled: !root.loading;
                 activated => {
                     root.import-model-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Import printer settings…");
+                activated => {
+                    root.import-printer-settings-requested();
                 }
             }
             // TODO: "Open Recent"
@@ -2917,6 +2927,13 @@ export component MainWindow inherits Window {
                     enabled: !root.loading;
                     activated => {
                         root.import-model-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Import printer settings…");
+                    activated => {
+                        root.import-printer-settings-requested();
                     }
                 }
 
