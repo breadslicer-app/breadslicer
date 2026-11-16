@@ -11,10 +11,12 @@
 
 mod cube_contours;
 mod curved_contours;
+mod edge_cases;
 mod face_at_cutting_height;
 mod multi_leaf_contours;
 mod non_finite_vertex_rejection;
 mod overlapping_parts;
+mod raster_accuracy;
 mod split_bodies;
 mod torus_contours;
 

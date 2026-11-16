@@ -412,3 +412,64 @@ fn a_layer_without_contours_is_written_with_one_placeholder_pixel() {
         assert_eq!(lit, [(under, crate::layer_images::PLACEHOLDER_GREY)]);
     }
 }
+
+/// #23: every layer image, read back by the independent decoder, holds
+/// the pixels the slicer rasterised for it: as many lit, with their greys,
+/// binary and anti-aliased (the format keeps all 256 greys).
+#[test]
+fn every_layer_reads_back_as_the_slicer_rasterised_it() {
+    use sc_sl1cer::raster::rasterize_layer;
+    for aa in [AaLevel::Off, AaLevel::X4] {
+        let profile = SliceProfile::new(
+            BuildVolume::new(PLATE_MM, PLATE_MM, PLATE_Z_MM).unwrap(),
+            PixelResolution::new(PIXELS_PER_SIDE, PIXELS_PER_SIDE).unwrap(),
+            LayerSchedule::uniform(LAYER_HEIGHT_MM, LAYER_HEIGHT_MM, 3).unwrap(),
+            Mirror::default(),
+            aa,
+            PackingMode::None,
+        );
+        let raster = RasterSetup::from_profile(&profile);
+        let map = sc_sl1cer::raster::pixel_map::PixelMap::new(
+            mm(PLATE_MM),
+            mm(PLATE_MM),
+            PixelResolution::new(PIXELS_PER_SIDE, PIXELS_PER_SIDE).unwrap(),
+            Mirror::default(),
+        );
+        let (mut program, _) = three_layer_case();
+        program.raster = raster.clone();
+        // Rectangles off the pixel grid, so anti-aliasing leaves greys.
+        let stack = ContourStack::new_unchecked(vec![
+            rect_layer(0.05, (-3.9, 3.7), (-3.3, 4.1)),
+            rect_layer(0.15, (-2.1, 1.9), (-1.7, 2.3)),
+            rect_layer(0.25, (-0.9, 1.1), (-1.2, 0.8)),
+        ]);
+        let bytes = written(&program, &stack);
+        let (starts, _) = walk_records(&bytes, program.layers.len());
+        for (index, (start, layer)) in starts.iter().zip(stack.layers()).enumerate() {
+            let mut stored = pixels_of(image_of(&bytes, *start));
+            let mut rasterised: Vec<u8> = rasterize_layer(layer, &map, aa, 0.0)
+                .runs()
+                .iter()
+                .flat_map(|run| std::iter::repeat_n(run.value, run.length as usize))
+                .collect();
+            // The file's row order is the printer's: compare what is lit.
+            stored.sort_unstable();
+            rasterised.sort_unstable();
+            // As many lit, each grey within one step: the file rasterises in
+            // the printer's frame, where a coverage on a half step (a
+            // tenth of a pixel: 25.5) may round the other way.
+            let lit = |pixels: &[u8]| pixels.iter().filter(|&&g| g != 0).count();
+            assert_eq!(lit(&stored), lit(&rasterised), "{aa:?} layer {index}");
+            let worst = stored
+                .iter()
+                .zip(&rasterised)
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap_or(0);
+            assert!(worst <= 1, "{aa:?} layer {index}: a grey {worst} off");
+            if aa != AaLevel::Off {
+                assert!(stored.iter().any(|&g| g != 0 && g != 255), "greys kept");
+            }
+        }
+    }
+}
