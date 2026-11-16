@@ -487,6 +487,7 @@ export component MainWindow inherits Window {
     // The wall the selected model's size calls for (HollowRun).
     in property <float> hollow-recommended-wall: 2;
     in property <float> hollow-voxel: 0.65;
+    in property <float> hollow-min-width: 2;
     in property <int> hollow-fill-index: 0;
     in property <float> hollow-cell: 6;
     in property <float> hollow-beam: 0.8;
@@ -2547,6 +2548,7 @@ export component MainWindow inherits Window {
                                     wall: root.hollow-wall;
                                     recommended-wall: root.hollow-recommended-wall;
                                     voxel: root.hollow-voxel;
+                                    narrowest-cavity: root.hollow-min-width;
                                     fill-index: root.hollow-fill-index;
                                     cell: root.hollow-cell;
                                     beam: root.hollow-beam;

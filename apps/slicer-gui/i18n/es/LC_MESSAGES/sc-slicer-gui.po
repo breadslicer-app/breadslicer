@@ -4587,6 +4587,16 @@ msgstr "Detalle (vóxel)"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
+msgid "Narrowest cavity"
+msgstr "Cavidad más angosta"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Narrower channels stay solid: they trap resin and are hard to wash. 0 keeps them all."
+msgstr "Los canales más angostos quedan macizos: atrapan resina y cuestan lavarlos. Con 0 quedan todos."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
 msgid "Inside"
 msgstr "Interior"
 

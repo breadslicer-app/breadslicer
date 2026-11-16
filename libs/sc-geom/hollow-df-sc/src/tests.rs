@@ -974,3 +974,38 @@ fn overlapping_parts_of_real_models() {
         );
     }
 }
+
+/// #454 measured by hand: the resin a narrowest cavity of 2 mm keeps, and
+/// what it costs. `HOLLOW_WIDTH_STLS`: binary STL paths split by `|`.
+#[test]
+#[ignore = "measured by hand on real models"]
+fn narrowest_cavity_on_real_models() {
+    let Ok(paths) = std::env::var("HOLLOW_WIDTH_STLS") else {
+        return;
+    };
+    for path in paths.split('|') {
+        let mesh = as_engine(&read_binary_stl(path));
+        let session = hollow_df::Session::build(
+            mesh,
+            &hollow_df::GridRequest::default(),
+            None,
+            hollow_df::Control::none(),
+        )
+        .unwrap();
+        for width in [0.0, 2.0] {
+            let settings = hollow_df::HollowSettings {
+                min_cavity_width_mm: width,
+                ..hollow_df::HollowSettings::default()
+            };
+            let started = std::time::Instant::now();
+            let preview = session
+                .preview(&settings, hollow_df::Control::none())
+                .unwrap();
+            println!(
+                "{path}: width {width}: cavity {:.1} mm3 in {:.2} s",
+                preview.stats.cavity_volume_mm3,
+                started.elapsed().as_secs_f64()
+            );
+        }
+    }
+}

@@ -131,6 +131,9 @@ fn stage_text(stage: Stage) -> slint::SharedString {
     }
 }
 
+/// The narrowest cavity channel kept by default (#454).
+pub(crate) const DEFAULT_MIN_CAVITY_WIDTH_MM: f32 = 2.0;
+
 /// The Hollow tab's settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct HollowOptions {
@@ -154,6 +157,9 @@ pub(crate) struct HollowOptions {
     /// than the hole.
     pub(crate) drain_plug: bool,
     pub(crate) plug_clearance_mm: f32,
+    /// The narrowest a cavity channel may be (#454): narrower ones stay
+    /// solid. 0 keeps them all.
+    pub(crate) min_width_mm: f32,
 }
 
 impl Default for HollowOptions {
@@ -172,6 +178,8 @@ impl Default for HollowOptions {
             drain_inner_radius_mm: 1.0,
             drain_plug: false,
             plug_clearance_mm: DEFAULT_PLUG_CLEARANCE_MM,
+            // Damian's: 1.5 mm traps resin.
+            min_width_mm: DEFAULT_MIN_CAVITY_WIDTH_MM,
         }
     }
 }
@@ -209,6 +217,7 @@ impl HollowOptions {
         HollowSettings {
             fill,
             wall_thickness_mm: self.wall_mm,
+            min_cavity_width_mm: self.min_width_mm,
             ..HollowSettings::default()
         }
     }
@@ -1075,6 +1084,7 @@ impl HollowRun {
         let o = *self.options.borrow();
         ui.set_hollow_wall(o.wall_mm);
         ui.set_hollow_voxel(o.voxel_mm);
+        ui.set_hollow_min_width(o.min_width_mm);
         ui.set_hollow_fill_index(i32::from(o.fill));
         ui.set_hollow_cell(o.cell_mm);
         ui.set_hollow_beam(o.beam_mm);
@@ -1091,7 +1101,8 @@ impl HollowRun {
     /// cell, 5 beam radius, 6 drain radius (2 was the smoothing, gone with
     /// #29); the drain tool's shape: 7 depth set (0 or 1), 8 that depth, 9
     /// cone (0 or 1), 10 its inner radius, 11 plug (0 or 1), 12 its
-    /// clearance. Values are clamped to what the engine accepts.
+    /// clearance; 13 the narrowest cavity (#454). Values are clamped to what
+    /// the engine accepts.
     fn on_option(&self, code: i32, value: f32) {
         {
             let mut o = self.options.borrow_mut();
@@ -1109,6 +1120,7 @@ impl HollowRun {
                 10 => o.drain_inner_radius_mm = value.clamp(0.3, 10.0),
                 11 => o.drain_plug = on,
                 12 => o.plug_clearance_mm = value.clamp(0.0, 1.0),
+                13 => o.min_width_mm = value.clamp(0.0, 20.0),
                 _ => return,
             }
         }
