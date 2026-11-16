@@ -948,3 +948,29 @@ fn a_real_model_hollows_without_regions() {
         Err(e) => println!("APPLY failed: {e:?}"),
     }
 }
+
+/// #453 measured by hand: which real models have parts that overlap, and
+/// what joining them costs. `HOLLOW_JOIN_STLS`: binary STL paths split by `|`.
+#[test]
+#[ignore = "measured by hand on real models"]
+fn overlapping_parts_of_real_models() {
+    let Ok(paths) = std::env::var("HOLLOW_JOIN_STLS") else {
+        return;
+    };
+    for path in paths.split('|') {
+        let mesh = as_engine(&read_binary_stl(path));
+        let (_, parts) = hollow_df::topology::face_shells(&mesh);
+        println!("{path}: {parts} parts…");
+        let started = std::time::Instant::now();
+        let joined = hollow_df::overlap::joined_parts(&mesh);
+        println!(
+            "{path}: {} triangles, {parts} parts, volume {:.1}; joined {:?} in {:.2} s",
+            mesh.triangles.len(),
+            mesh.signed_volume(),
+            joined
+                .as_ref()
+                .map(|j| (j.triangles.len(), (j.signed_volume() * 10.0).round() / 10.0)),
+            started.elapsed().as_secs_f64()
+        );
+    }
+}

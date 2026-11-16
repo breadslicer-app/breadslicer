@@ -2253,3 +2253,70 @@ fn a_closed_source_with_a_needle_hollows() {
         .expect("it hollows");
     assert!(is_edge_manifold(&applied.mesh));
 }
+
+/// Two boxes that overlap in the middle (#453): hollowed as their union,
+/// one 40 × 20 × 20 box, with one cavity as large as that box's.
+#[test]
+fn overlapping_parts_hollow_as_one_solid() {
+    let settings = HollowSettings::default();
+    let hollow = |mesh: IndexedMesh| {
+        let session = Session::build(mesh, &GridRequest::default(), None, Control::none()).unwrap();
+        let applied = session.apply(&settings, &[], Control::none()).unwrap();
+        (session.joined_parts(), applied)
+    };
+    let (joined, whole) = hollow(tessellated_box(
+        [-20.0, -10.0, -10.0],
+        [20.0, 10.0, 10.0],
+        6,
+    ));
+    assert!(!joined);
+    let (joined, pair) = hollow(crate::shapes::merged(&[
+        tessellated_box([-20.0, -10.0, -10.0], [5.0, 10.0, 10.0], 6),
+        tessellated_box([-5.0, -10.0, -10.0], [20.0, 10.0, 10.0], 6),
+    ]));
+    assert!(joined);
+    assert!(is_edge_manifold(&pair.mesh));
+    assert_eq!(face_shells(&pair.cavity).1, 1);
+    let (a, b) = (whole.stats.cavity_volume_mm3, pair.stats.cavity_volume_mm3);
+    assert!(
+        (a - b).abs() < 1e-3 * a,
+        "cavity {b} mm³, as one box {a} mm³"
+    );
+    // The result is the union, hollow: no buried face is left in it.
+    assert!((pair.mesh.signed_volume() - whole.mesh.signed_volume()).abs() < 1e-3 * a);
+}
+
+/// Parts that do not overlap, and a model with its own sealed cavity, go
+/// in as they are: the same result as before (#453).
+#[test]
+fn parts_apart_are_hollowed_as_they_are() {
+    let apart = crate::shapes::merged(&[
+        tessellated_box([-30.0, -10.0, -10.0], [-5.0, 10.0, 10.0], 6),
+        tessellated_box([5.0, -10.0, -10.0], [30.0, 10.0, 10.0], 6),
+    ]);
+    assert!(crate::overlap::joined_parts(&apart).is_none());
+    let hollow_already = crate::shapes::merged(&[
+        crate::shapes::cube(-20.0, 20.0, false),
+        crate::shapes::cube(-15.0, 15.0, true),
+    ]);
+    assert!(crate::overlap::joined_parts(&hollow_already).is_none());
+    assert!(crate::overlap::joined_parts(&icosphere(20.0, 3)).is_none());
+}
+
+/// An overlapping model that is already hollow keeps its cavity: the
+/// inward part is taken out of the union.
+#[test]
+fn a_hollow_with_overlapping_parts_keeps_its_cavity() {
+    let mesh = crate::shapes::merged(&[
+        tessellated_box([-20.0, -10.0, -10.0], [5.0, 10.0, 10.0], 6),
+        tessellated_box([-5.0, -10.0, -10.0], [20.0, 10.0, 10.0], 6),
+        crate::shapes::cube(-4.0, 4.0, true),
+    ]);
+    let joined = crate::overlap::joined_parts(&mesh).expect("the boxes overlap");
+    let want = 40.0 * 20.0 * 20.0 - 8.0f64.powi(3);
+    assert!(
+        (joined.signed_volume() - want).abs() < 1e-3 * want,
+        "{}",
+        joined.signed_volume()
+    );
+}
