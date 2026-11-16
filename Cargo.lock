@@ -2233,6 +2233,7 @@ name = "hollow-df"
 version = "0.0.1"
 dependencies = [
  "ahash",
+ "manifold-rust",
  "rayon",
  "smallvec",
 ]
