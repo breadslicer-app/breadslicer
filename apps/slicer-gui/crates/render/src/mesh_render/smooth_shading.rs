@@ -62,6 +62,33 @@ pub(super) fn shades_smooth(mesh: &IndexedMesh) -> bool {
 
 static CACHE: Mutex<Vec<(CacheKey, Arc<SmoothMesh>)>> = Mutex::new(Vec::new());
 const CACHE_SIZE: usize = 8;
+/// The most the cache holds (#269): the oldest entries go past it, the
+/// newest always stays.
+pub(super) const CACHE_BYTE_BUDGET: usize = 512 << 20;
+
+impl SmoothMesh {
+    /// What it takes in memory, near enough.
+    fn bytes(&self) -> usize {
+        self.vertices.len() * size_of::<GpuVertex>() + (self.indices.len() + self.source.len()) * 4
+    }
+}
+
+/// Drops the oldest entries of `cache` while it holds more than `budget`
+/// bytes; the newest always stays.
+fn keep_within(cache: &mut Vec<(CacheKey, Arc<SmoothMesh>)>, budget: usize) {
+    let mut held: usize = cache.iter().map(|(_, m)| m.bytes()).sum();
+    while cache.len() > 1 && held > budget {
+        held -= cache.remove(0).1.bytes();
+    }
+}
+
+/// Empties the cache (#269): a closed scene's meshes are not kept for the
+/// next one.
+pub(super) fn clear_smooth_cache() {
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.clear();
+    }
+}
 
 fn key_of(mesh: &IndexedMesh) -> CacheKey {
     let v = mesh.vertices();
@@ -90,6 +117,7 @@ pub(super) fn smooth_mesh(mesh: &IndexedMesh) -> Arc<SmoothMesh> {
             cache.remove(0);
         }
         cache.push((key, built.clone()));
+        keep_within(&mut cache, CACHE_BYTE_BUDGET);
     }
     built
 }
@@ -305,5 +333,52 @@ mod tests {
             smooth.vertices.len(),
             t.elapsed().as_secs_f64() * 1000.0
         );
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
+
+    use super::*;
+
+    /// A strip of `n` quads: a support-sized mesh of its own, so the cache
+    /// keeps it apart from every other.
+    fn strip(n: usize, z: f32) -> IndexedMesh {
+        let mut vertices = Vec::new();
+        let mut faces = Vec::new();
+        for i in 0..=n {
+            vertices.push(Vertex::new([i as f32, 0.0, z]));
+            vertices.push(Vertex::new([i as f32, 1.0, z]));
+        }
+        for i in 0..n as u32 {
+            let (a, b, c, d) = (2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 3);
+            faces.push(IndexedTriangle::from_raw_indices([a, c, b]));
+            faces.push(IndexedTriangle::from_raw_indices([b, c, d]));
+        }
+        IndexedMesh::new(None, vertices, faces)
+    }
+
+    /// #269: past its budget the cache drops its oldest meshes, keeping the
+    /// newest whatever it takes.
+    #[test]
+    fn the_cache_keeps_to_its_budget() {
+        let built: Vec<Arc<SmoothMesh>> = (0..4)
+            .map(|k| Arc::new(build(&strip(1000, k as f32), CREASE_DEG)))
+            .collect();
+        let one = built[0].bytes();
+        let mut cache: Vec<(CacheKey, Arc<SmoothMesh>)> = built
+            .iter()
+            .enumerate()
+            .map(|(k, m)| ((k, 0, 0, [0; 6]), m.clone()))
+            .collect();
+        keep_within(&mut cache, 2 * one);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache[1].0.0, 3, "the newest stays");
+        keep_within(&mut cache, 0);
+        assert_eq!(cache.len(), 1);
+
+        // The global cache is shared by the tests running beside this one:
+        // emptying it with the scene is left to `Renderer::clear_scene`.
     }
 }

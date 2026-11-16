@@ -17,11 +17,12 @@
 //! would not be able to inspect a closure to decide what to invalidate.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_spatial::{PrimedMesh, SceneSpatial};
 use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
@@ -106,6 +107,11 @@ pub(crate) enum SaveRecorded {
 /// Maximum number of entries kept on each of the undo and redo stacks. On
 /// overflow the oldest entry (front of the deque) is discarded.
 pub(crate) const UNDO_STACK_CAP: usize = 256;
+
+/// The most the meshes the history keeps may take (#269): past it, the
+/// oldest steps go, as past [`UNDO_STACK_CAP`] steps. A mesh several steps
+/// hold, or the scene shows, counts once.
+pub(crate) const HISTORY_BYTE_BUDGET: usize = 2 << 30;
 
 /// Coarse-grained dispatch hint for document listeners.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -432,7 +438,7 @@ pub(crate) struct PaintCarried {
 pub(crate) fn leaf_mesh_swap(
     scene: &Scene,
     leaf: NodeId,
-    after: Arc<sc_mesh_core::IndexedMesh>,
+    after: Arc<IndexedMesh>,
 ) -> Option<SceneEdit> {
     let node = scene.node(leaf)?;
     // A set of supports is drawn where its session stands, in world space:
@@ -468,11 +474,7 @@ fn flatten_edit(edit: &SceneEdit, out: &mut Vec<SceneEdit>) {
 }
 
 /// [`leaf_mesh_swap`], the leaf's transform left as it is.
-fn leaf_mesh_swap_as_is(
-    scene: &Scene,
-    leaf: NodeId,
-    after: Arc<sc_mesh_core::IndexedMesh>,
-) -> Option<SceneEdit> {
+fn leaf_mesh_swap_as_is(scene: &Scene, leaf: NodeId, after: Arc<IndexedMesh>) -> Option<SceneEdit> {
     let node = scene.node(leaf)?;
     match &node.kind {
         NodeKind::Leaf(LeafPayload::Mesh(before)) => Some(SceneEdit::ReplaceLeafMesh {
@@ -1321,6 +1323,40 @@ impl SceneDocument {
     }
 
     /// Takes `entry`, the oldest, off the stack for good: it stays applied.
+    /// The bytes of the meshes the history holds, each once (#269).
+    fn history_bytes(&self) -> usize {
+        let mut seen: HashSet<*const IndexedMesh> = HashSet::new();
+        let mut bytes = 0;
+        for entry in self
+            .undo_stack
+            .borrow()
+            .iter()
+            .chain(self.redo_stack.borrow().iter())
+        {
+            edit_meshes(&entry.edit, &mut |mesh| {
+                if seen.insert(Arc::as_ptr(mesh)) {
+                    bytes += mesh_bytes(mesh);
+                }
+            });
+        }
+        bytes
+    }
+
+    /// Drops the oldest steps while the history holds more than
+    /// [`HISTORY_BYTE_BUDGET`] (#269); the newest step always stays.
+    fn trim_history(&self) {
+        self.trim_history_to(HISTORY_BYTE_BUDGET);
+    }
+
+    fn trim_history_to(&self, budget: usize) {
+        while self.undo_stack.borrow().len() > 1 && self.history_bytes() > budget {
+            let gone = self.undo_stack.borrow_mut().pop_front();
+            if let Some(gone) = gone {
+                self.note_evicted(&gone);
+            }
+        }
+    }
+
     fn note_evicted(&self, entry: &HistoryEntry) {
         if entry.marks.is_some() {
             return;
@@ -1582,6 +1618,7 @@ impl SceneDocument {
             });
         }
         self.redo_stack.borrow_mut().clear();
+        self.trim_history();
         for moved in moved {
             // As a hand edit does: the moved set's session is the one that
             // drew it as the scene now stands.
@@ -2968,6 +3005,35 @@ impl Drop for SceneSubscription {
     }
 }
 
+/// Calls `visit` with each mesh `edit` holds (#269).
+fn edit_meshes(edit: &SceneEdit, visit: &mut dyn FnMut(&Arc<IndexedMesh>)) {
+    match edit {
+        SceneEdit::AddLeaf { payload, .. } | SceneEdit::RemoveLeaf { payload, .. } => {
+            if let LeafPayload::Mesh(mesh) = payload {
+                visit(mesh);
+            }
+        }
+        SceneEdit::AddMeshResource { mesh, .. } | SceneEdit::RemoveMeshResource { mesh, .. } => {
+            visit(mesh);
+        }
+        SceneEdit::ReplaceMeshResource { before, after, .. }
+        | SceneEdit::ReplaceLeafMesh { before, after, .. } => {
+            visit(before);
+            visit(after);
+        }
+        SceneEdit::Compound(edits) => {
+            for edit in edits {
+                edit_meshes(edit, visit);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// What a mesh's vertices and faces take, near enough.
+fn mesh_bytes(mesh: &IndexedMesh) -> usize {
+    size_of_val(mesh.vertices()) + size_of_val(mesh.faces())
+}
 
 /// The box leaf `id` takes on the plate, as [min x, min y, max x, max y].
 fn plate_footprint(spatial: &SceneSpatial, id: NodeId) -> Option<[f32; 4]> {
@@ -3484,6 +3550,34 @@ mod scene_document_tests {
         doc.install_graph(empty_graph(), fixture_path());
         assert!(!doc.undo().unwrap());
         assert!(!doc.redo().unwrap());
+    }
+
+    /// #269: past its byte budget the history drops its oldest steps, each
+    /// mesh counted once, the newest step kept whatever it takes.
+    #[test]
+    fn the_history_keeps_to_its_byte_budget() {
+        let doc = SceneDocument::new();
+        doc.install_graph(graph_with_one_object(), fixture_path());
+        let node_id = first_leaf_id(&doc).node_id();
+        let mut before = Arc::new(sc_mesh_fixtures::unit_cube_mesh());
+        let one = mesh_bytes(&before);
+        assert!(one > 0);
+        for _ in 0..6 {
+            let after = Arc::new((*before).clone());
+            doc.push_edit(SceneEdit::ReplaceLeafMesh {
+                node_id,
+                before: before.clone(),
+                after: after.clone(),
+            });
+            before = after;
+        }
+        // Six steps hold seven meshes, one shared by each pair of steps.
+        assert_eq!(doc.history_bytes(), 7 * one);
+        doc.trim_history_to(3 * one);
+        assert_eq!(doc.undo_stack.borrow().len(), 2);
+        assert!(doc.history_bytes() <= 3 * one);
+        doc.trim_history_to(0);
+        assert_eq!(doc.undo_stack.borrow().len(), 1);
     }
 
     #[test]
