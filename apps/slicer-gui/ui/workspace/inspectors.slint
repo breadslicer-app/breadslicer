@@ -1577,6 +1577,8 @@ export component HollowInspector inherits VerticalLayout {
     in property <float> wall;
     in property <float> recommended-wall;
     in property <float> voxel;
+    // The narrowest cavity channel kept (#454); 0 keeps them all.
+    in property <float> narrowest-cavity;
     in property <int> fill-index;
     in property <float> cell;
     in property <float> beam;
@@ -1723,6 +1725,17 @@ export component HollowInspector inherits VerticalLayout {
             committed(v) => {
                 root.option-changed(1, v);
             }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Narrowest cavity");
+            unit: "mm";
+            value: root.narrowest-cavity;
+            committed(v) => {
+                root.option-changed(13, v);
+            }
+        }
+        Note {
+            text: @tr("Inspector" => "Narrower channels stay solid: they trap resin and are hard to wash. 0 keeps them all.");
         }
         LabeledRow {
             label: @tr("Inspector" => "Inside");

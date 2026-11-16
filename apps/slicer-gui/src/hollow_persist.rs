@@ -70,6 +70,16 @@
 //!
 //! Every hollow made since is written as version 4. One read from an older
 //! file, which knows neither, keeps its version when saved again.
+//!
+//! Version 5 adds the narrowest cavity kept (#454), after the stretch:
+//!
+//! ```text
+//! … as in version 4
+//! f32 min width                           0 keeps every channel
+//! ```
+//!
+//! A hollow with a minimum width is written as version 5; without (0, and
+//! every hollow read from an older file, made before it), as before.
 
 use std::sync::Arc;
 
@@ -88,7 +98,7 @@ use crate::scene_document::SceneDocument;
 pub(crate) const DF_HOLLOWER: &str = "df";
 
 /// The newest document version this build writes and reads.
-pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 4;
+pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 5;
 
 /// The hollows to save with the scene of `spatial`: each hollow made here
 /// that a leaf still shows, once, with the first leaf that shows it. Copies
@@ -256,7 +266,8 @@ fn needs_shapes(hollowed: &Hollowed) -> bool {
 
 /// The document of `hollowed`, and its version.
 fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
-    let record = hollowed.engine.is_some() || hollowed.stretch.is_some();
+    let width = hollowed.options.min_width_mm > 0.0;
+    let record = width || hollowed.engine.is_some() || hollowed.stretch.is_some();
     let solids = record || !hollowed.solids.is_empty();
     let shapes = solids || needs_shapes(hollowed);
     let mut out = Vec::new();
@@ -341,7 +352,12 @@ fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
             out.extend_from_slice(&v.to_le_bytes());
         }
     }
-    let version = if record {
+    if width {
+        out.extend_from_slice(&hollowed.options.min_width_mm.to_le_bytes());
+    }
+    let version = if width {
+        5
+    } else if record {
         4
     } else if solids {
         3
@@ -418,11 +434,12 @@ struct Decoded {
 
 /// Reads a document of `version` (1 to 4).
 fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
-    let (shapes, solids, record) = match version {
-        0 | 1 => (false, false, false),
-        2 => (true, false, false),
-        3 => (true, true, false),
-        4 => (true, true, true),
+    let (shapes, solids, record, width) = match version {
+        0 | 1 => (false, false, false, false),
+        2 => (true, false, false, false),
+        3 => (true, true, false, false),
+        4 => (true, true, true, false),
+        5 => (true, true, true, true),
         _ => return None,
     };
     let mut input = Reader(bytes);
@@ -439,6 +456,8 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
         cell_mm,
         beam_mm,
         drain_radius_mm,
+        // Made before #454 kept channels open: as it was.
+        min_width_mm: 0.0,
         ..HollowOptions::default()
     };
     if shapes {
@@ -548,6 +567,13 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
     } else {
         (None, None)
     };
+    if width {
+        let w = input.f32()?;
+        if !(w.is_finite() && w > 0.0) {
+            return None;
+        }
+        options.min_width_mm = w;
+    }
     input.0.is_empty().then_some(Decoded {
         options,
         drains,
@@ -578,6 +604,8 @@ mod hollow_persist_tests {
             options: HollowOptions {
                 wall_mm: 3.1,
                 fill: 2,
+                // As hollows were made before #454.
+                min_width_mm: 0.0,
                 ..HollowOptions::default()
             },
             plugs: Vec::new(),
@@ -638,6 +666,33 @@ mod hollow_persist_tests {
         assert!(decode(&bad, version).is_none());
         // A hollow read from an older file keeps its version.
         assert_eq!(encode(&hollowed()).0, 1);
+    }
+
+    /// #454: a hollow made with a narrowest cavity writes it as version 5
+    /// and reads it back; one read from an older file keeps every channel.
+    #[test]
+    fn the_narrowest_cavity_reads_back_as_version_5() {
+        for base in [hollowed(), recorded()] {
+            let h = Hollowed {
+                options: HollowOptions {
+                    min_width_mm: 2.0,
+                    ..base.options
+                },
+                ..base
+            };
+            let (version, bytes) = encode(&h);
+            assert_eq!(version, 5);
+            let decoded = decode(&bytes, version).expect("it decodes");
+            assert_eq!(decoded.options, h.options);
+            assert_eq!(decoded.engine, h.engine);
+            assert_eq!(decoded.stretch, h.stretch);
+            assert!(decode(&bytes[..bytes.len() - 1], version).is_none());
+            assert!(decode(&bytes, 4).is_none());
+        }
+        let (version, bytes) = encode(&recorded());
+        assert_eq!(version, 4);
+        assert_eq!(decode(&bytes, version).unwrap().options.min_width_mm, 0.0);
+        assert!(HollowOptions::default().min_width_mm > 0.0);
     }
 
     /// `hollowed` with shaped drains (#316, #317, #318), a plug and the

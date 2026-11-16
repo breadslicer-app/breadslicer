@@ -645,6 +645,9 @@ fn the_result_is_the_preview() {
                     } else {
                         Vec::new()
                     },
+                    // The narrowest channel kept (#454) holds the preview
+                    // to the result too.
+                    min_cavity_width_mm: if solid { 0.0 } else { 2.0 },
                 };
                 let case = format!("{name}, voxel {voxel}, wall {wall}, {fill:?}, solid {solid}");
                 let preview = session.preview(&settings, Control::none()).unwrap();
@@ -2319,4 +2322,109 @@ fn a_hollow_with_overlapping_parts_keeps_its_cavity() {
         "{}",
         joined.signed_volume()
     );
+}
+
+/// #454: the dumbbell's bar leaves a channel 1.2 mm across inside a 2 mm
+/// wall. With a minimum width of 2 mm it stays solid: the two blocks keep
+/// one cavity each (the larger kept, as for any pocket), the bar none; at 1
+/// mm, or 0, the channel stays open. The preview is the result.
+#[test]
+fn a_channel_narrower_than_the_minimum_width_stays_solid() {
+    let dumbbell = crate::shapes::merged(&[
+        tessellated_box([-25.0, -10.0, -10.0], [-5.0, 10.0, 10.0], 6),
+        tessellated_box([-5.5, -2.6, -2.6], [5.5, 2.6, 2.6], 6),
+        tessellated_box([5.0, -10.0, -10.0], [25.0, 12.0, 12.0], 6),
+    ]);
+    let session = Session::build(dumbbell, &GridRequest::default(), None, Control::none()).unwrap();
+    let reach_x = |cavity: &IndexedMesh| {
+        cavity
+            .positions
+            .iter()
+            .map(|p| p.x)
+            .fold(f32::INFINITY, f32::min)
+    };
+    let mut cavities = Vec::new();
+    for width in [0.0, 1.0, 2.0] {
+        let settings = HollowSettings {
+            min_cavity_width_mm: width,
+            ..HollowSettings::default()
+        };
+        let preview = session.preview(&settings, Control::none()).unwrap();
+        let applied = session.apply(&settings, &[], Control::none()).unwrap();
+        assert_eq!(
+            preview.cavity, applied.cavity,
+            "width {width}: the preview is the result"
+        );
+        assert!(is_edge_manifold(&applied.mesh));
+        assert_eq!(face_shells(&applied.cavity).1, 1);
+        cavities.push((reach_x(&applied.cavity), applied.stats.cavity_volume_mm3));
+    }
+    // Open, the cavity runs through the bar into the left block.
+    assert!(
+        cavities[0].0 < -20.0 && cavities[1].0 < -20.0,
+        "{cavities:?}"
+    );
+    // Closed, only the larger block's cavity is left, past the bar.
+    assert!(cavities[2].0 > 5.0, "{cavities:?}");
+}
+
+/// #454: a minimum width leaves a wide cavity's walls where they were: the
+/// ball reaches them. Only the corners, where it does not, keep a little.
+#[test]
+fn a_minimum_width_keeps_a_wide_cavity_s_walls() {
+    let session = cube_session();
+    let plain = session
+        .apply(&HollowSettings::default(), &[], Control::none())
+        .unwrap();
+    let narrowest = session
+        .apply(
+            &HollowSettings {
+                min_cavity_width_mm: 2.0,
+                ..HollowSettings::default()
+            },
+            &[],
+            Control::none(),
+        )
+        .unwrap();
+    let (a, b) = (
+        plain.stats.cavity_volume_mm3,
+        narrowest.stats.cavity_volume_mm3,
+    );
+    assert!(b <= a && b > a * 0.995, "{b} against {a}");
+    // Mid-face, the cavity's wall is where it was.
+    let face = |cavity: &IndexedMesh| {
+        cavity
+            .positions
+            .iter()
+            .filter(|p| p.y.abs() < 5.0 && p.z.abs() < 5.0)
+            .map(|p| p.x)
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    assert!((face(&plain.cavity) - face(&narrowest.cavity)).abs() < 1e-4);
+}
+
+#[test]
+fn the_squared_distance_transform_is_exact() {
+    use crate::hollowing::squared_distance_transform_for_test as sdt;
+    let (nx, ny, nz) = (7usize, 5usize, 4usize);
+    let sources = [(1usize, 1usize, 1usize), (5, 3, 2), (0, 4, 3)];
+    let mut field = vec![f32::INFINITY; nx * ny * nz];
+    for &(x, y, z) in &sources {
+        field[z * nx * ny + y * nx + x] = 0.0;
+    }
+    sdt(nx, ny, nz, &mut field);
+    for z in 0..nz {
+        for y in 0..ny {
+            for x in 0..nx {
+                let want = sources
+                    .iter()
+                    .map(|&(a, b, c)| {
+                        let d = |p: usize, q: usize| (p as f32 - q as f32).powi(2);
+                        d(x, a) + d(y, b) + d(z, c)
+                    })
+                    .fold(f32::INFINITY, f32::min);
+                assert_eq!(field[z * nx * ny + y * nx + x], want, "({x}, {y}, {z})");
+            }
+        }
+    }
 }

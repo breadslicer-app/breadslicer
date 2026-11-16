@@ -224,6 +224,8 @@ pub struct HollowSettings {
     pub fill: HollowFill,
     pub wall_thickness_mm: f32,
     pub solid_areas: Vec<SolidArea>,
+    /// The narrowest a cavity channel may be (#454); 0 keeps every one.
+    pub min_cavity_width_mm: f32,
 }
 
 impl Default for HollowSettings {
@@ -232,6 +234,7 @@ impl Default for HollowSettings {
             fill: HollowFill::Cavity,
             wall_thickness_mm: DEFAULT_WALL_THICKNESS_MM,
             solid_areas: Vec::new(),
+            min_cavity_width_mm: 0.0,
         }
     }
 }
@@ -681,7 +684,11 @@ impl Session {
             return Ok(cavity);
         }
         let options = self.options(settings);
-        let dist = self.wall_distances(settings.wall_thickness_mm, ctl)?;
+        // A minimum width reads how far past the wall the cavity reaches.
+        let dist = self.wall_distances(
+            settings.wall_thickness_mm + settings.min_cavity_width_mm.max(0.0) * 0.5,
+            ctl,
+        )?;
         let cavity = Arc::new(BuiltCavity::new(
             self.inner.exact_cavity(&options, &dist, ctl)?,
         ));
@@ -864,6 +871,7 @@ impl Session {
             preview_surface_only: false,
             rotation_quat: [0.0, 0.0, 0.0, 1.0],
             exact_wall: true,
+            min_cavity_width_mm: settings.min_cavity_width_mm.max(0.0),
             solid_regions: settings
                 .solid_areas
                 .iter()
