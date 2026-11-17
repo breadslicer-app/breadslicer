@@ -2,7 +2,9 @@
 //! it lands in (see `support_gen_df::supports::auto_support::zone_rules`),
 //! with their bracing. Three ship: "Miniatures 20~65 mm" and "Statues
 //! 150 mm+", Damian's setups tuned over many prints, value for value, and
-//! "Figures 65~150 mm" between them (#479, names #490).
+//! "Figures 65~150 mm" between them (#479, names #490). A fourth,
+//! "Skeleton + islands", is a workflow resin supporters share, under test
+//! (#604).
 
 use serde::{Deserialize, Serialize};
 use support_gen_df::supports::auto_bracing::settings::{
@@ -345,13 +347,86 @@ pub fn figures_70() -> ZonePreset {
     preset
 }
 
+/// A size of the skeleton + islands recipe: a J3D size with its own trunk
+/// and tip length.
+fn recipe_size(id: &str, trunk: f64, tip: f64, tip_length: f64) -> SupportSize {
+    SupportSize {
+        trunk_diameter_mm: trunk,
+        tip_length_mm: tip_length,
+        ..j3d(id, tip)
+    }
+}
+
+/// "Skeleton + islands": the workflow resin supporters pass around for a
+/// well-known closed slicer, as one preset (#604). Its steps, in order:
+/// a sparse frame of heavy tips that searches 30 mm sideways for the plate
+/// rather than landing on the model; islands supported by size, the large
+/// with heavy tips, the middle with medium, the small with light; then
+/// parenting and bracing. Its three sizes are the ones the tester sent:
+/// heavy 1.3 mm trunk, 0.60 tip, 3.0 long; medium 1.0, 0.30, 2.0; light
+/// 0.75, 0.20, 2.0. No pillar grid: the recipe has none.
+pub fn skeleton_islands() -> ZonePreset {
+    let mut sizes = support_sizes()
+        .into_iter()
+        .filter(|s| ["extrasmall", "small", "medium", "large"].contains(&s.id.as_str()))
+        .collect::<Vec<_>>();
+    sizes.extend([
+        recipe_size("top-light", 0.75, 0.20, 2.0),
+        recipe_size("top-medium", 1.0, 0.30, 2.0),
+        recipe_size("top-heavy", 1.3, 0.60, 3.0),
+    ]);
+    ZonePreset {
+        rules: ZoneRules {
+            sizes,
+            first_layer: vec![
+                area(0.0, 0.8, "top-light"),
+                area(1.05, 2.0, "top-medium"),
+                area(50.0, 2.0, "top-heavy"),
+            ],
+            ignore_small_islands: IgnoreSmallIslands {
+                enabled: false,
+                volume_mm3: 0.02,
+                height_mm: 0.1,
+            },
+            reinforcement: vec![
+                volume(0.1, 1.5, 1.0, "top-light"),
+                volume(10.0, 1.5, 1.8, "top-medium"),
+                volume(95.0, 1.5, 2.5, "top-heavy"),
+            ],
+            // The frame: heavy tips, low density.
+            overhang: OverhangRule {
+                enabled: true,
+                angle_deg: 38.0,
+                spacing_mm: SKELETON_SPACING_MM,
+                size: "top-heavy".to_owned(),
+                min_area_mm2: 0.8,
+            },
+            // The recipe has no stabilization pass.
+            stabilization: StabilizationRule {
+                enabled: false,
+                spacing_mm: 3.8,
+                size: "extrasmall".to_owned(),
+                min_area_mm2: 4.0,
+            },
+            search_ground_mm: 30.0,
+        },
+        bracing: auto_support_bracing(),
+        auto_lift_mm: 5.0,
+        grid_mm: None,
+    }
+}
+
+/// How far apart the frame's heavy tips stand: the recipe's "low density",
+/// sparser than any other preset's overhang tips.
+pub const SKELETON_SPACING_MM: f64 = 3.5;
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn every_band_names_a_size_that_exists() {
-        for preset in [minis_30(), figures_70(), figures_150()] {
+        for preset in [minis_30(), figures_70(), figures_150(), skeleton_islands()] {
             let r = &preset.rules;
             let names = r
                 .first_layer
@@ -376,6 +451,28 @@ mod tests {
         let mut back = mid;
         back.rules.overhang = big.rules.overhang.clone();
         assert_eq!(back, big);
+    }
+
+    #[test]
+    fn the_skeleton_recipe_is_heavy_and_sparse_and_sizes_its_islands() {
+        let p = skeleton_islands();
+        let size = |id: &str| p.rules.sizes[p.rules.size_index(id).unwrap()].clone();
+        let numbers = |s: SupportSize| (s.trunk_diameter_mm, s.tip_diameter_mm, s.tip_length_mm);
+        assert_eq!(numbers(size("top-heavy")), (1.3, 0.6, 3.0));
+        assert_eq!(numbers(size("top-medium")), (1.0, 0.3, 2.0));
+        assert_eq!(numbers(size("top-light")), (0.75, 0.2, 2.0));
+        assert_eq!(p.rules.overhang.size, "top-heavy");
+        assert!(p.rules.overhang.spacing_mm > minis_30().rules.overhang.spacing_mm);
+        let islands: Vec<&str> = p
+            .rules
+            .first_layer
+            .iter()
+            .map(|b| b.size.as_str())
+            .collect();
+        assert_eq!(islands, ["top-light", "top-medium", "top-heavy"]);
+        assert_eq!(p.rules.search_ground_mm, 30.0);
+        assert!(p.grid_mm.is_none());
+        assert!(!p.rules.stabilization.enabled);
     }
 
     #[test]

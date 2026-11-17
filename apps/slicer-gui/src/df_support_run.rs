@@ -44,7 +44,9 @@ use std::time::{Duration, Instant};
 
 use sc_geom::JobError;
 use sc_geom::JobHandle;
-use sc_geom::df_supports::zone_presets::{ZonePreset, figures_70, figures_150, minis_30};
+use sc_geom::df_supports::zone_presets::{
+    ZonePreset, figures_70, figures_150, minis_30, skeleton_islands,
+};
 use sc_geom::df_supports::{
     AddNote, AddOptions, BraceEnd, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
     DfSupportSession, EditError, EditPreview, HandBraceRefusal, HandEditKind, KeptEdits, LostEdit,
@@ -1326,6 +1328,7 @@ fn built_in_presets() -> Vec<Preset> {
         zones(ctr!("Inspector", "Miniatures 20~65 mm"), minis_30()),
         zones(ctr!("Inspector", "Figures 65~150 mm"), figures_70()),
         zones(ctr!("Inspector", "Statues 150 mm+"), figures_150()),
+        zones(ctr!("Inspector", "Skeleton + islands"), skeleton_islands()),
     ]
 }
 
@@ -1336,6 +1339,7 @@ fn preset_cards() -> Vec<(slint::SharedString, &'static str)> {
         (ctr!("Inspector", "Miniatures"), "20–65 mm"),
         (ctr!("Inspector", "Figures"), "65–150 mm"),
         (ctr!("Inspector", "Statues"), "150 mm+"),
+        (ctr!("Inspector", "Skeleton"), ""),
     ]
 }
 
@@ -1437,7 +1441,7 @@ fn zone_summary(options: &DfSupportOptions) -> slint::SharedString {
 /// preset has those zones, or it leaves the grid off.
 fn recommended_grid_mm(options: &DfSupportOptions) -> Option<f64> {
     let zones = options.zones.as_ref()?;
-    [minis_30(), figures_70(), figures_150()]
+    [minis_30(), figures_70(), figures_150(), skeleton_islands()]
         .into_iter()
         .find(|preset| {
             ZonePreset {
@@ -10687,10 +10691,11 @@ mod hand_edit_tests {
             .iter()
             .filter(|p| p.options.zones.is_some())
             .collect();
-        assert_eq!(zoned.len(), 3);
+        assert_eq!(zoned.len(), 4);
         assert_eq!(zoned[0].name, "Miniatures 20~65 mm");
         assert_eq!(zoned[1].name, "Figures 65~150 mm");
         assert_eq!(zoned[2].name, "Statues 150 mm+");
+        assert_eq!(zoned[3].name, "Skeleton + islands");
         for preset in zoned {
             let text = toml::to_string_pretty(&preset.options).expect("a preset saves");
             let back: DfSupportOptions = toml::from_str(&text).expect("a preset reads back");
