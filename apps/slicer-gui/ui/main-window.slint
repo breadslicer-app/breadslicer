@@ -20,6 +20,7 @@ import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 import { ExtendDialog } from "extend-dialog.slint";
 import { ForkDialog } from "fork-dialog.slint";
+import { PrinterDialog } from "printer-dialog.slint";
 import { AppMessage, MessageAnswer, MessageKind, MessageLayer } from "message-layer.slint";
 import { RecentFileRow, StartLayer, StartOpen } from "start-dialog.slint";
 import { ProfileViewDialog } from "profile-view-dialog.slint";
@@ -30,7 +31,7 @@ import { ProfileViewDialog } from "profile-view-dialog.slint";
 // thread the first time any text is laid out (e.g. opening a menu).
 import "../assets/fonts/NotoSans-Variable.ttf";
 
-export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, ProfileViewDialog, RecentFileRow, StartOpen, Theme, ThemePreference }
+export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, PrinterDialog, ProfileViewDialog, RecentFileRow, StartOpen, Theme, ThemePreference }
 
 // Load-pipeline phase shown by the floating progress panel. Values
 // mirror the Rust-side worker phases; the Rust poll maps between the

@@ -6,6 +6,7 @@
 mod extend_dialog;
 mod fork_dialog;
 mod preferences_follow;
+mod printer_dialog;
 mod profile_editor;
 mod profile_view_dialog;
 
@@ -57,6 +58,7 @@ use crate::{
 
 use extend_dialog::open_extend_dialog;
 use fork_dialog::open_fork_dialog;
+use printer_dialog::open_printer_dialog;
 use profile_editor::open_profile_editor;
 use profile_view_dialog::open_profile_view_dialog;
 
@@ -619,6 +621,33 @@ pub(crate) fn build_preferences_window(
         let prefs_weak = prefs_weak.clone();
         move || spawn_export(prefs_weak.clone(), ExportScope::Printers)
     });
+    // Holds the printer form while it is open, like `fork_dialog` below.
+    let printer_dialog: Rc<RefCell<Option<crate::slint_ui::PrinterDialog>>> =
+        Rc::new(RefCell::new(None));
+    for edit in [false, true] {
+        let open = {
+            let prefs_weak = prefs_weak.clone();
+            let bus = bus.clone();
+            let catalog_handle = catalog_handle.clone();
+            let refresh_view = refresh_view.clone();
+            let printer_dialog = printer_dialog.clone();
+            move || {
+                open_printer_dialog(
+                    &prefs_weak,
+                    &bus,
+                    &catalog_handle,
+                    &refresh_view,
+                    &printer_dialog,
+                    edit,
+                );
+            }
+        };
+        if edit {
+            prefs.on_edit_printer_requested(open);
+        } else {
+            prefs.on_add_printer_requested(open);
+        }
+    }
     prefs.on_export_materials_requested({
         let prefs_weak = prefs_weak.clone();
         move || spawn_export(prefs_weak.clone(), ExportScope::Materials)
@@ -1008,6 +1037,12 @@ fn apply_printing(
         .map(|i| i as i32)
         .unwrap_or(-1);
     window.set_selected_printer_index(printer_index);
+    window.set_selected_printer_is_custom(
+        usize::try_from(printer_index)
+            .ok()
+            .and_then(|i| catalog.printers().get(i))
+            .is_some_and(|entry| entry.source == ProfileSource::User),
+    );
 
     let resin_index = snap
         .default_resin

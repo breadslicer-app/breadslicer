@@ -158,7 +158,7 @@ fn automatic_label(format: PrinterFileFormat) -> String {
 /// Returns the label the dropdown shows: the extension the file is written
 /// with, plus the revision, because revisions of a family share an extension
 /// and produce different bytes.
-fn format_label(format: PrinterFileFormat) -> String {
+pub(crate) fn format_label(format: PrinterFileFormat) -> String {
     match format {
         PrinterFileFormat::Goo(GooVersion::V3_0) => ctr!("SlicePanel", ".goo (V3.0)"),
         PrinterFileFormat::Goo(GooVersion::V5_1) => ctr!("SlicePanel", ".goo (V5.1)"),

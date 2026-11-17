@@ -1,0 +1,312 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Theme } from "kit/theme.slint";
+import { Palette, ScrollView } from "std-widgets.slint";
+import {
+    ScButton as Button, ScCheckBox as CheckBox, ScComboBox as ComboBox, ScLineEdit as LineEdit,
+} from "kit/controls.slint";
+import { ThemePreference } from "preferences/appearance.slint";
+
+// A label and its field, on one row of the form.
+component FieldLabel inherits Text {
+    horizontal-stretch: 0;
+    font-size: Theme.font-sm;
+    color: Theme.text.transparentize(0.3);
+    vertical-alignment: center;
+}
+
+// The form that adds a printer by hand, or edits one the user added (#600).
+// It only holds what is typed; Rust reads it into a profile, checks it and
+// saves it.
+export component PrinterDialog inherits Window {
+    background: Theme.panel;
+    title: root.editing
+        ? @tr("PrinterDialog" => "Edit printer")
+        : @tr("PrinterDialog" => "Add printer");
+    icon: @image-url("../assets/images/breadslicer.png");
+    default-font-family: "Noto Sans";
+
+    in-out property <ThemePreference> theme: ThemePreference.System;
+
+    // True while a printer the user added is open: it keeps its id and can be
+    // deleted.
+    in property <bool> editing;
+    // The printers to start from, the first entry being an empty form.
+    in property <[string]> start-from-names;
+    in-out property <int> start-from-index: 0;
+    in property <[string]> format-names;
+    in-out property <int> format-index: 0;
+
+    in-out property <string> manufacturer;
+    in-out property <string> model-name;
+    in-out property <string> resolution-x;
+    in-out property <string> resolution-y;
+    in-out property <string> pixel-x;
+    in-out property <string> pixel-y;
+    in-out property <string> plate-x;
+    in-out property <string> plate-y;
+    in-out property <string> build-height;
+    in-out property <bool> mirror-x;
+    in-out property <bool> mirror-y;
+    in-out property <bool> turned;
+    in-out property <bool> grayscale: true;
+
+    // What the panel fields make, as they are typed.
+    in property <string> summary;
+    in property <string> error-message;
+
+    callback start-from-picked(int);
+    callback fields-edited();
+    callback confirm-requested();
+    callback delete-requested();
+    callback cancel-requested();
+
+    min-width: 480px;
+    preferred-width: 520px;
+    min-height: 420px;
+    preferred-height: 620px;
+
+    forward-focus: manufacturer-input;
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
+
+    FocusScope {
+        width: parent.width;
+        height: parent.height;
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.cancel-requested();
+                return accept;
+            }
+            return reject;
+        }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+
+            Text {
+                text: root.title;
+                font-size: Theme.font-lg;
+                font-weight: 600;
+                color: Theme.text;
+            }
+
+            ScrollView {
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    spacing: 10px;
+                    alignment: start;
+
+                    if !root.editing: HorizontalLayout {
+                        spacing: 8px;
+                        FieldLabel {
+                            text: @tr("PrinterDialog" => "Start from");
+                            width: 150px;
+                        }
+                        ComboBox {
+                            model: root.start-from-names;
+                            current-index <=> root.start-from-index;
+                            horizontal-stretch: 1;
+                            selected => {
+                                root.start-from-picked(root.start-from-index);
+                            }
+                        }
+                    }
+
+                    GridLayout {
+                        spacing: 8px;
+
+                        Row {
+                            FieldLabel {
+                                text: @tr("PrinterDialog" => "Manufacturer");
+                                width: 150px;
+                            }
+                            manufacturer-input := LineEdit {
+                                text <=> root.manufacturer;
+                                colspan: 2;
+                                enabled: !root.editing;
+                            }
+                        }
+                        Row {
+                            FieldLabel {
+                                text: @tr("PrinterDialog" => "Model name");
+                                width: 150px;
+                            }
+                            LineEdit {
+                                text <=> root.model-name;
+                                colspan: 2;
+                            }
+                        }
+                        Row {
+                            Rectangle {
+                                width: 150px;
+                            }
+                            FieldLabel {
+                                text: "X";
+                                horizontal-alignment: center;
+                            }
+                            FieldLabel {
+                                text: "Y";
+                                horizontal-alignment: center;
+                            }
+                        }
+                        Row {
+                            FieldLabel {
+                                text: @tr("PrinterDialog" => "Resolution (px)");
+                                width: 150px;
+                            }
+                            LineEdit {
+                                text <=> root.resolution-x;
+                                edited => {
+                                    root.fields-edited();
+                                }
+                            }
+                            LineEdit {
+                                text <=> root.resolution-y;
+                                edited => {
+                                    root.fields-edited();
+                                }
+                            }
+                        }
+                        Row {
+                            FieldLabel {
+                                text: @tr("PrinterDialog" => "Pixel size (µm)");
+                                width: 150px;
+                            }
+                            LineEdit {
+                                text <=> root.pixel-x;
+                                edited => {
+                                    root.fields-edited();
+                                }
+                            }
+                            LineEdit {
+                                text <=> root.pixel-y;
+                                edited => {
+                                    root.fields-edited();
+                                }
+                            }
+                        }
+                        Row {
+                            FieldLabel {
+                                text: @tr("PrinterDialog" => "Plate (mm)");
+                                width: 150px;
+                            }
+                            LineEdit {
+                                text <=> root.plate-x;
+                                edited => {
+                                    root.fields-edited();
+                                }
+                            }
+                            LineEdit {
+                                text <=> root.plate-y;
+                                edited => {
+                                    root.fields-edited();
+                                }
+                            }
+                        }
+                        Row {
+                            FieldLabel {
+                                text: @tr("PrinterDialog" => "Build height (mm)");
+                                width: 150px;
+                            }
+                            LineEdit {
+                                text <=> root.build-height;
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: @tr("PrinterDialog" => "Give the pixel size or the plate size: the other one follows.");
+                        font-size: Theme.font-xs;
+                        color: Theme.text.transparentize(0.4);
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: root.summary;
+                        font-size: Theme.font-sm;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        FieldLabel {
+                            text: @tr("PrinterDialog" => "File format");
+                            width: 150px;
+                        }
+                        ComboBox {
+                            model: root.format-names;
+                            current-index <=> root.format-index;
+                            horizontal-stretch: 1;
+                        }
+                    }
+
+                    CheckBox {
+                        text: @tr("PrinterDialog" => "Mirror the image in X");
+                        checked <=> root.mirror-x;
+                    }
+                    CheckBox {
+                        text: @tr("PrinterDialog" => "Mirror the image in Y");
+                        checked <=> root.mirror-y;
+                    }
+                    CheckBox {
+                        text: @tr("PrinterDialog" => "The file stores the image turned a quarter (like the Halot One)");
+                        checked <=> root.turned;
+                    }
+                    CheckBox {
+                        text: @tr("PrinterDialog" => "Grey levels (anti-aliasing)");
+                        checked <=> root.grayscale;
+                    }
+                }
+            }
+
+            Text {
+                text: root.error-message;
+                color: Theme.danger;
+                font-size: Theme.font-sm;
+                wrap: word-wrap;
+                visible: root.error-message != "";
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                if root.editing: Button {
+                    text: @tr("PrinterDialog" => "Delete printer");
+                    clicked => {
+                        root.delete-requested();
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: root.editing
+                        ? @tr("PrinterDialog" => "Save")
+                        : @tr("PrinterDialog" => "Add printer");
+                    primary: true;
+                    clicked => {
+                        root.confirm-requested();
+                    }
+                }
+                Button {
+                    text: @tr("PrinterDialog" => "Cancel");
+                    clicked => {
+                        root.cancel-requested();
+                    }
+                }
+            }
+        }
+    }
+}

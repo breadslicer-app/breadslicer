@@ -18,7 +18,7 @@ use crate::language::LanguagePreference;
 use crate::preferences_bus::PreferencesSnapshot;
 use crate::slint_ui::{
     AboutWindow, ExtendDialog, ForkDialog, MainWindow, MenuLayout, PreferencesWindow,
-    ProfileViewDialog,
+    PrinterDialog, ProfileViewDialog,
 };
 
 pub(crate) trait WindowPreferences {
@@ -88,6 +88,12 @@ impl WindowPreferences for ProfileViewDialog {
 }
 
 impl WindowPreferences for ForkDialog {
+    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
+        self.set_theme(prefs.theme);
+    }
+}
+
+impl WindowPreferences for PrinterDialog {
     fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
         self.set_theme(prefs.theme);
     }
