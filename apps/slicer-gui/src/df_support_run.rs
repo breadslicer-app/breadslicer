@@ -297,7 +297,7 @@ pub(crate) struct DfSupportRun {
     raft_checked_at: Cell<Instant>,
     // What Generate goes on to once its supports are in: the islands it
     // left, found and supported (#606).
-    after_generate: RefCell<Option<Box<dyn Fn()>>>,
+    after_generate: RefCell<Option<Box<dyn Fn() -> bool>>>,
     /// The raft top of the supports this driver pasted last, `Some(None)`
     /// for supports without a raft.
     generated_raft_top: Cell<Option<Option<f64>>>,
@@ -6367,8 +6367,9 @@ impl DfSupportRun {
         );
     }
 
-    /// Sets what Generate goes on to once its new supports are in (#606).
-    pub(crate) fn set_after_generate(&self, then: impl Fn() + 'static) {
+    /// Sets what Generate goes on to once its new supports are in (#606),
+    /// which tells whether it started.
+    pub(crate) fn set_after_generate(&self, then: impl Fn() -> bool + 'static) {
         *self.after_generate.borrow_mut() = Some(Box::new(then));
     }
 
@@ -6582,9 +6583,8 @@ impl DfSupportRun {
         }
         // New supports: the islands they left are found and supported
         // (#606), as one procedure with Generate.
-        if !unchanged && let Some(then) = self.after_generate.borrow().as_ref() {
-            then();
-        }
+        let islands_next =
+            !unchanged && self.after_generate.borrow().as_ref().is_some_and(|then| then());
         // Copies given the supports of one standing like them were placed
         // without looking at their neighbours (#561): where they run into
         // one, Generate says so and moves nothing; Arrange all spaces the
@@ -6602,6 +6602,15 @@ impl DfSupportRun {
         }
         if !kept.is_empty() {
             self.show_kept_edits(kept, details);
+            return;
+        }
+        // With the islands to find, the status bar says it and the islands
+        // step tells its end there (#606): no card in between.
+        if islands_next {
+            self.show_status(ctr!(
+                "Workspace",
+                "Supports generated. Finding the islands and supporting them…"
+            ));
             return;
         }
         self.dialogs
@@ -6787,7 +6796,7 @@ impl DfSupportRun {
 
     /// Shows `text` in the status bar in place of its hint for a few
     /// seconds; a newer note restarts the time.
-    fn show_status(&self, text: slint::SharedString) {
+    pub(crate) fn show_status(&self, text: slint::SharedString) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -8267,7 +8276,10 @@ mod hand_edit_tests {
             let count = Rc::new(Cell::new(0));
             {
                 let count = count.clone();
-                run.set_after_generate(move || count.set(count.get() + 1));
+                run.set_after_generate(move || {
+                    count.set(count.get() + 1);
+                    true
+                });
             }
             let generate = |run: &Rc<DfSupportRun>| {
                 run.start();

@@ -257,6 +257,9 @@ pub(crate) struct ReviewPanel {
     /// Whether the review about to be shown was asked for by Generate,
     /// which supports every island once it lands (#606).
     support_islands: Cell<bool>,
+    /// Whether the island run under way is Generate's (#606): its slices
+    /// show no modal, and its end is told in the status bar.
+    quiet_run: Cell<bool>,
     /// The Fix All press being carried out (#163), pass by pass.
     run: RefCell<Option<FixRun>>,
     /// Fix All's supports being placed off the UI thread (#390): how far
@@ -377,6 +380,7 @@ impl ReviewPanel {
             fix_all_slicing: Cell::new(false),
             analyzing: Cell::new(false),
             support_islands: Cell::new(false),
+            quiet_run: Cell::new(false),
             run: RefCell::new(None),
             placing: RefCell::new(None),
             before_run: RefCell::new(None),
@@ -540,6 +544,11 @@ impl ReviewPanel {
     /// island, as Generate asks (#606).
     pub(crate) fn support_islands_once_shown(&self, on: bool) {
         self.support_islands.set(on);
+    }
+
+    /// Whether the run slicing now is Generate's islands step (#606).
+    pub(crate) fn runs_quietly(&self) -> bool {
+        self.quiet_run.get() && self.fixing()
     }
 
     /// Records that the slice about to be shown cured the fills `ids`.
@@ -949,6 +958,11 @@ impl ReviewPanel {
             self.keep_for_undo(run);
         }
         self.show_pass(None);
+        if self.quiet_run.replace(false)
+            && let Some(message) = &message
+        {
+            self.supports.show_status(message.clone());
+        }
         self.push(message);
     }
 
@@ -1437,7 +1451,11 @@ impl ReviewPanel {
         };
         self.publish_islands();
         if yes {
-            self.push(Some(self.after_yes()));
+            let message = self.after_yes();
+            if self.quiet_run.replace(false) {
+                self.supports.show_status(message.clone());
+            }
+            self.push(Some(message));
             return;
         }
         let nothing_left = self.fix_all_plan().is_empty();
@@ -1467,7 +1485,13 @@ impl ReviewPanel {
             self.ask_for_supports();
         } else if analyzing && support_islands {
             crate::breadcrumbs::note("review: supporting the islands after Generate");
+            self.quiet_run.set(true);
             self.add_island_supports();
+            // Nothing to support: the step ends here.
+            if !self.fixing() {
+                self.quiet_run.set(false);
+                self.supports.show_status(self.after_yes());
+            }
         }
     }
 

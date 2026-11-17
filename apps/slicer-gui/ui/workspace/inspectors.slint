@@ -2545,7 +2545,10 @@ export component SupportsInspector inherits VerticalLayout {
         note: root.islands-left > 0 ? @tr("Inspector" => "{n} left" | "{n} left" % root.islands-left) : "";
         note-color: Theme.warning;
 
-        if root.islands-left < 0: Note {
+        if root.islands-busy: Note {
+            text: @tr("Inspector" => "Finding the islands and supporting them…");
+        }
+        if root.islands-left < 0 && !root.islands-busy: Note {
             text: @tr("Inspector" => "Slices the plate and marks in red where a part starts with nothing under it.");
         }
         if root.islands-left == 0: Note {
@@ -3218,11 +3221,12 @@ export component SliceInspector inherits VerticalLayout {
                 }
                 // The list takes the room left in the tab and scrolls on its own;
                 // the setup, the Slice button and the result above stay put.
+                // At least as tall as its rows, up to about nine of them.
                 if root.review-state == 1 && root.review-rows.length > 0: ScrollView {
                     vertical-stretch: 1;
-                    min-height: 96px;
+                    min-height: Math.min(review-list.preferred-height, 280px);
 
-                    VerticalLayout {
+                    review-list := VerticalLayout {
                             spacing: 2px;
                             alignment: start;
 

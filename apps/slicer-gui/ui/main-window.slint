@@ -586,6 +586,9 @@ export component MainWindow inherits Window {
     // input-capturing progress modal. `slicing-in-progress` is set by the
     // Rust driver when a slice starts and cleared on every exit path.
     in-out property <bool> slicing-in-progress: false;
+    // A slice Generate's islands step makes (#606): no modal over the
+    // window, the Supports tab's islands card says it is on its way.
+    in property <bool> slice-quiet: false;
     // The Fix All pass a slice is for (#163), under the modal's title;
     // empty for any other slice.
     in property <string> slice-fix-pass;
@@ -3307,7 +3310,7 @@ export component MainWindow inherits Window {
     // pointer and keyboard events so the scene can't be edited mid-slice,
     // with a centered progress card and a Cancel button. Last child, so
     // it renders on top of everything. Shown only while a slice runs.
-    if root.slicing-in-progress: Rectangle {
+    if root.slicing-in-progress && !root.slice-quiet: Rectangle {
         width: parent.width;
         height: parent.height;
         background: #000000cc;

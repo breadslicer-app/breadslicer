@@ -43,7 +43,7 @@ struct Window {
 /// press Slice and Repair themselves, in their own order.
 fn window_with(graph: Scene) -> Window {
     let w = window_with_islands(graph);
-    w.supports.set_after_generate(|| {});
+    w.supports.set_after_generate(|| false);
     w
 }
 
@@ -548,10 +548,19 @@ fn generate_analyzes_the_islands_on_its_own() {
         for defect in [None, Some(Defect::Crack)] {
             let w = window_with_islands(one(slab(defect)));
             w.ctrl.set_section(WorkspaceSection::Supports);
-            w.generate();
+            w.supports.generate_now(DfSupportOptions::default());
+            let shown = w.close_cards();
+            assert!(
+                shown.iter().all(|c| c != "Supports generated"),
+                "{defect:?}: no card for the supports: {shown:?}"
+            );
             assert!(
                 w.window.get_slicing_in_progress(),
                 "{defect:?}: the islands analysis starts with no press"
+            );
+            assert!(
+                w.window.get_slice_quiet(),
+                "{defect:?}: with no modal over the window"
             );
             w.finish_slice();
             if defect.is_some() {

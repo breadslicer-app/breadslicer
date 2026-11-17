@@ -192,6 +192,9 @@ pub(crate) struct SliceRun {
     // Whether the islands analysis in flight was started by Generate, which
     // goes on to support every island once it lands (#606).
     islands_after: Cell<bool>,
+    // Whether the slice about to start runs without the modal (#606): the
+    // ones Generate's islands step makes.
+    quiet: Cell<bool>,
     progress: Arc<SliceProgressCell>,
     slot: SliceSlot,
     // The current run's cancel token, so the modal's Cancel can trip it. `None`
@@ -246,6 +249,7 @@ impl SliceRun {
             ctrl,
             trigger: Cell::new(SliceTrigger::Button),
             islands_after: Cell::new(false),
+            quiet: Cell::new(false),
             progress: Arc::new(SliceProgressCell::default()),
             slot: Arc::new(Mutex::new(None)),
             cancel: RefCell::new(None),
@@ -266,17 +270,21 @@ impl SliceRun {
             // Fix All (#156) slices again on its own: no overwrite to confirm.
             let weak = Rc::downgrade(&run);
             run.review.set_reslice(move || {
-                weak.upgrade()
-                    .is_some_and(|run| run.start_with(SliceTrigger::FixAll))
+                weak.upgrade().is_some_and(|run| {
+                    // The islands Generate supports slice again quietly (#606).
+                    run.quiet.set(run.review.runs_quietly());
+                    let started = run.start_with(SliceTrigger::FixAll);
+                    run.quiet.set(false);
+                    started
+                })
             });
         }
         {
             // Generate finds the islands it left and supports them (#606).
             let weak = Rc::downgrade(&run);
             run.review.supports().set_after_generate(move || {
-                if let Some(run) = weak.upgrade() {
-                    run.islands_after_generate();
-                }
+                weak.upgrade()
+                    .is_some_and(|run| run.islands_after_generate())
             });
         }
         {
@@ -427,8 +435,9 @@ impl SliceRun {
     /// Returns whether a slice started.
     /// After Generate (#606): the islands analysis, whose review goes on to
     /// support every island. Without a printer and a resin there is no
-    /// slice to analyze, and Generate says nothing more.
-    fn islands_after_generate(self: &Rc<Self>) {
+    /// slice to analyze, and Generate says nothing more. Tells whether the
+    /// analysis started.
+    fn islands_after_generate(self: &Rc<Self>) -> bool {
         let snapshot = self.bus.snapshot();
         let selection = self
             .document
@@ -441,12 +450,14 @@ impl SliceRun {
         )
         .is_none()
         {
-            return;
+            return false;
         }
         crate::breadcrumbs::note("slice: the islands after Generate");
-        if self.start_with(SliceTrigger::Islands) {
-            self.islands_after.set(true);
-        }
+        self.quiet.set(true);
+        let started = self.start_with(SliceTrigger::Islands);
+        self.islands_after.set(started);
+        self.quiet.set(false);
+        started
     }
 
     fn start_with(self: &Rc<Self>, trigger: SliceTrigger) -> bool {
@@ -692,6 +703,7 @@ impl SliceRun {
         ui.set_slice_completed(0);
         ui.set_slice_total(0);
         ui.set_slice_progress(0.0);
+        ui.set_slice_quiet(self.quiet.get());
         ui.set_slicing_in_progress(true);
 
         let cancel = CancelToken::new();
@@ -839,6 +851,7 @@ impl SliceRun {
         let fill_ids = std::mem::take(&mut *self.pending_fills.borrow_mut());
         if let Some(ui) = self.ui.upgrade() {
             ui.set_slicing_in_progress(false);
+            ui.set_slice_quiet(false);
         }
         let Some(result) = taken else {
             return;
@@ -914,7 +927,9 @@ impl SliceRun {
                     let weak = Rc::downgrade(self);
                     let started = self.repair.repair_for_slice(&leaves, move || {
                         if let Some(run) = weak.upgrade() {
+                            run.quiet.set(run.islands_after.get());
                             run.start_with(SliceTrigger::IslandsRepaired);
+                            run.quiet.set(false);
                         }
                     });
                     if started {
