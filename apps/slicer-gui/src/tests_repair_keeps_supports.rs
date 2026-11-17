@@ -47,6 +47,24 @@ fn window_with(graph: Scene) -> Window {
     w
 }
 
+/// A project opened as the app opens it: its scene, with its supports
+/// editable again.
+fn window_with_bread(path: &std::path::Path) -> Window {
+    let loaded = sc_project_formats::load_scene(path, None, |_| {}).expect("it opens");
+    let sc_project_formats::LoadedContent::Project(mut project) = loaded.content else {
+        panic!("a .bread is a project")
+    };
+    let restored = support_persist::restore_supports(&mut project.scene, project.supports);
+    assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+    eprintln!(
+        "printer {:?}, resin {:?}",
+        project.payload.printer, project.payload.resin
+    );
+    let w = window_with_prefs(project.scene, true);
+    support_persist::install_sets(&w.document, restored.sets);
+    w
+}
+
 /// The window as the app wires it: Generate goes on to the islands (#606).
 fn window_with_islands(graph: Scene) -> Window {
     window_with_prefs(graph, false)
@@ -691,5 +709,106 @@ fn a_real_mini_through_generate_and_its_islands() {
             })
             .unwrap_or_default();
         eprintln!("sets in force, reviewed as supports: {sets:?}");
+    });
+}
+
+/// What a project's leaves are, and what slicing it says (#606): Damian's
+/// "Model inside the raft" after a slice again. `BREADSLICER_RAFT_BREAD`
+/// names the project.
+#[test]
+#[ignore = "reads a project named by BREADSLICER_RAFT_BREAD"]
+fn a_projects_leaves_and_what_its_slice_says() {
+    let Ok(path) = std::env::var("BREADSLICER_RAFT_BREAD") else {
+        return;
+    };
+    on_fresh_slint_thread(move || {
+        let w = window_with_bread(std::path::Path::new(&path));
+        let tell = |w: &Window, when: &str| {
+            w.document.with_scene(|spatial| {
+                let sessions = w.document.support_sessions();
+                let in_force: Vec<NodeId> = support_persist::sets_in_force(spatial, &sessions)
+                    .iter()
+                    .map(|set| set.leaf)
+                    .collect();
+                let reviewed: Vec<NodeId> = support_persist::review_sets(spatial, &sessions)
+                    .iter()
+                    .map(|set| set.leaf)
+                    .collect();
+                eprintln!("-- {when}: in force {in_force:?}, reviewed as supports {reviewed:?}");
+                for i in 0.. {
+                    let Some(id) = spatial.leaf_id_at_index(i) else {
+                        break;
+                    };
+                    let Some(mesh) = spatial.graph().leaf_mesh_arc(id) else {
+                        continue;
+                    };
+                    let query = spatial.leaf(id).expect("leaf");
+                    eprintln!(
+                        "   {id:?} {:?} support={} faces={} bottom={:?}",
+                        mesh.meta().as_ref().and_then(|m| m.name.clone()),
+                        sc_geom::df_supports::is_any_support_mesh(mesh),
+                        mesh.faces().len(),
+                        query.minimum_world_z(query.world_transform()),
+                    );
+                }
+            });
+        };
+        tell(&w, "opened");
+        if std::env::var("BREADSLICER_RAFT_GENERATE").is_ok_and(|v| v == "1") {
+            w.ctrl.set_section(WorkspaceSection::Supports);
+            w.supports.press_generate_and_wait(DfSupportOptions {
+                zones: Some(sc_geom::df_supports::zone_presets::minis_30()),
+                one_raft: true,
+                ..DfSupportOptions::default()
+            });
+            assert!(
+                !w.window.get_slicing_in_progress(),
+                "the step waits for the one raft for all"
+            );
+            w.supports.settle_plate_rafts();
+            let mut steps = Vec::new();
+            for _ in 0..40 {
+                if w.window.get_slicing_in_progress() {
+                    steps.push("slice");
+                    w.finish_slice();
+                } else if w.window.get_repairing_in_progress() {
+                    steps.push("repair");
+                    w.finish_repair();
+                } else if w.slice.review.fixing() {
+                    steps.push("tips");
+                    w.supports.settle_edit();
+                } else {
+                    break;
+                }
+            }
+            eprintln!("generate steps {steps:?}");
+            tell(&w, "generated");
+            eprintln!("summary: {}", w.window.get_review_summary());
+        }
+        w.ctrl.set_section(WorkspaceSection::Slice);
+        eprintln!("stale before Slice: {}", w.window.get_review_stale());
+        w.window.invoke_slice_requested();
+        if !w.window.get_slicing_in_progress() {
+            eprintln!("Slice: already up to date");
+        }
+        for _ in 0..40 {
+            if w.window.get_slicing_in_progress() {
+                w.finish_slice();
+            } else if w.window.get_repairing_in_progress() {
+                w.finish_repair();
+            } else if w.slice.review.fixing() {
+                w.supports.settle_edit();
+            } else {
+                break;
+            }
+        }
+        tell(&w, "sliced");
+        eprintln!("summary: {}", w.window.get_review_summary());
+        for row in slint::Model::iter(&w.window.get_review_rows()) {
+            eprintln!(
+                "  [{}] {} | {} | {}",
+                row.severity, row.title, row.layers, row.detail
+            );
+        }
     });
 }

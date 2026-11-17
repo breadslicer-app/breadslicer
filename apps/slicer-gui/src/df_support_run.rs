@@ -298,6 +298,10 @@ pub(crate) struct DfSupportRun {
     // What Generate goes on to once its supports are in: the islands it
     // left, found and supported (#606).
     after_generate: RefCell<Option<Box<dyn Fn() -> bool>>>,
+    // Generate's step waiting for the one raft for all (#556) to be drawn
+    // under its new supports, with the run's summary for the status bar
+    // if the step cannot start (#606).
+    islands_after_raft: RefCell<Option<String>>,
     /// The raft top of the supports this driver pasted last, `Some(None)`
     /// for supports without a raft.
     generated_raft_top: Cell<Option<Option<f64>>>,
@@ -1736,6 +1740,7 @@ impl DfSupportRun {
             raft_checked_at: Cell::new(Instant::now()),
             generated_raft_top: Cell::new(None),
             after_generate: RefCell::new(None),
+            islands_after_raft: RefCell::new(None),
             status_timer: slint::Timer::default(),
             redo: RefCell::new(None),
             regrid: RefCell::new(None),
@@ -2330,6 +2335,7 @@ impl DfSupportRun {
         {
             self.plate_rafts
                 .tick(&self.document, &self.ctrl.build_volume());
+            self.go_on_after_rafts();
         }
         self.support_hints(&ui);
         let mut prescan = self.prescan.borrow_mut();
@@ -4120,6 +4126,7 @@ impl DfSupportRun {
             std::thread::sleep(Duration::from_millis(5));
             self.plate_rafts.tick(&self.document, &volume);
             if self.document.scene_revision() == revision && !self.plate_rafts.busy() {
+                self.go_on_after_rafts();
                 return;
             }
         }
@@ -6386,6 +6393,22 @@ impl DfSupportRun {
         );
     }
 
+    /// Generate's step, waiting for the one raft for all (#606), goes on once
+    /// every raft is drawn: the step's slice sees it.
+    fn go_on_after_rafts(&self) {
+        if self.islands_after_raft.borrow().is_none() || !self.plate_rafts.settled(&self.document)
+        {
+            return;
+        }
+        let Some(summary) = self.islands_after_raft.borrow_mut().take() else {
+            return;
+        };
+        let started = self.after_generate.borrow().as_ref().is_some_and(|then| then());
+        if !started {
+            self.show_status(summary.into());
+        }
+    }
+
     /// Sets what Generate goes on to once its new supports are in (#606),
     /// which tells whether it started.
     pub(crate) fn set_after_generate(&self, then: impl Fn() -> bool + 'static) {
@@ -6602,8 +6625,16 @@ impl DfSupportRun {
         }
         // New supports: the islands they left are found and supported
         // (#606), as one procedure with Generate.
-        let islands_next =
-            !unchanged && self.after_generate.borrow().as_ref().is_some_and(|then| then());
+        // Under one raft for all the step waits for that raft (#556): it is
+        // drawn once the scene stands still, and the slice has to see it.
+        let islands_next = !unchanged
+            && self.after_generate.borrow().is_some()
+            && if self.options.borrow().one_raft {
+                *self.islands_after_raft.borrow_mut() = Some(summary.clone());
+                true
+            } else {
+                self.after_generate.borrow().as_ref().is_some_and(|then| then())
+            };
         // Copies given the supports of one standing like them were placed
         // without looking at their neighbours (#561): where they run into
         // one, Generate says so and moves nothing; Arrange all spaces the
