@@ -165,6 +165,15 @@ Sonic Mighty 12K, Mighty Revo 16K, Mega 8K S and Mega 8K V2, which are
 not in the catalog yet, and on the Sonic Mini 4K it states a word where
 the BASF resins' lift speed goes, so those 16 rows are left out.
 
+Prusa's SL1 and SL1S settings are read by `profiles-converter --format
+prusa-sla` from the vendor bundle Prusa publishes for PrusaSlicer,
+`PrusaResearchSLA/<version>.ini` in
+<https://github.com/prusa3d/PrusaSlicer-settings-prusa-sla> (version 1.0.11
+gives 370 resins of 24 brands). They are not in this library yet: these
+machines tilt the vat instead of lifting the platform, so a profile has no
+travel to give them, and the `.sl1` file is not written yet. The bundle's
+tilt, tower and delay settings have no place in our profiles either.
+
 `creality-halot-one-printer-profile-50um` is not a resin calibration: the
 Halot One exposes with the profile stored on the printer, not the file's
 values, so this profile only writes what known-good Lychee files for it
