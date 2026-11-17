@@ -189,6 +189,9 @@ pub(crate) struct SliceRun {
     ctrl: Rc<crate::viewport::ViewportController>,
     // What asked for the slice in flight.
     trigger: Cell<SliceTrigger>,
+    // Whether the islands analysis in flight was started by Generate, which
+    // goes on to support every island once it lands (#606).
+    islands_after: Cell<bool>,
     progress: Arc<SliceProgressCell>,
     slot: SliceSlot,
     // The current run's cancel token, so the modal's Cancel can trip it. `None`
@@ -242,6 +245,7 @@ impl SliceRun {
             repair,
             ctrl,
             trigger: Cell::new(SliceTrigger::Button),
+            islands_after: Cell::new(false),
             progress: Arc::new(SliceProgressCell::default()),
             slot: Arc::new(Mutex::new(None)),
             cancel: RefCell::new(None),
@@ -264,6 +268,15 @@ impl SliceRun {
             run.review.set_reslice(move || {
                 weak.upgrade()
                     .is_some_and(|run| run.start_with(SliceTrigger::FixAll))
+            });
+        }
+        {
+            // Generate finds the islands it left and supports them (#606).
+            let weak = Rc::downgrade(&run);
+            run.review.supports().set_after_generate(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.islands_after_generate();
+                }
             });
         }
         {
@@ -412,6 +425,30 @@ impl SliceRun {
     /// already asked for (Fix All, or a Repair from a refused slice's card)
     /// launches on a changed input without asking to overwrite the held one.
     /// Returns whether a slice started.
+    /// After Generate (#606): the islands analysis, whose review goes on to
+    /// support every island. Without a printer and a resin there is no
+    /// slice to analyze, and Generate says nothing more.
+    fn islands_after_generate(self: &Rc<Self>) {
+        let snapshot = self.bus.snapshot();
+        let selection = self
+            .document
+            .print_selection()
+            .in_force(&PrintDefaults::from(&snapshot));
+        if SliceParams::for_selection(
+            &selection,
+            snapshot.aa_level,
+            self.document.scene_revision(),
+        )
+        .is_none()
+        {
+            return;
+        }
+        crate::breadcrumbs::note("slice: the islands after Generate");
+        if self.start_with(SliceTrigger::Islands) {
+            self.islands_after.set(true);
+        }
+    }
+
     fn start_with(self: &Rc<Self>, trigger: SliceTrigger) -> bool {
         let Some(ui) = self.ui.upgrade() else {
             return false;
@@ -795,6 +832,9 @@ impl SliceRun {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
         *self.cancel.borrow_mut() = None;
+        // Whether Generate asked for this analysis (#606): only a review
+        // that lands goes on, and a slice repaired on its own keeps it.
+        let islands_after = self.islands_after.replace(false);
         let pending = self.pending_params.borrow_mut().take();
         let fill_ids = std::mem::take(&mut *self.pending_fills.borrow_mut());
         if let Some(ui) = self.ui.upgrade() {
@@ -842,6 +882,7 @@ impl SliceRun {
                     // After the slice is stored: the panel ties the findings
                     // to the slice now held, which cured these fills.
                     self.review.fills_landed(fill_ids);
+                    self.review.support_islands_once_shown(islands_after);
                     self.review.show(completed.review);
                     self.tell_landed(true);
                 } else {
@@ -877,6 +918,7 @@ impl SliceRun {
                         }
                     });
                     if started {
+                        self.islands_after.set(islands_after);
                         return;
                     }
                 }

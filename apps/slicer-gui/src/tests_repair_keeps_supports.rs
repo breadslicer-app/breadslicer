@@ -39,7 +39,16 @@ struct Window {
     supports: Rc<DfSupportRun>,
 }
 
+/// The window, with Generate's islands step (#606) off: these flows
+/// press Slice and Repair themselves, in their own order.
 fn window_with(graph: Scene) -> Window {
+    let w = window_with_islands(graph);
+    w.supports.set_after_generate(|| {});
+    w
+}
+
+/// The window as the app wires it: Generate goes on to the islands (#606).
+fn window_with_islands(graph: Scene) -> Window {
     let window = MainWindow::new().expect("the headless platform creates a main window");
     let bus = PreferencesBus::new(PreferencesSnapshot {
         default_printer: Some(PrinterId::new("elegoo-saturn-4-ultra").expect("valid id")),
@@ -518,6 +527,51 @@ fn analyzing_islands_repairs_on_its_own_and_keeps_the_supports() {
                 w.window.get_workspace_section(),
                 WorkspaceSection::Supports,
                 "{defect:?}: back on the Supports tab"
+            );
+            let in_force = w
+                .document
+                .with_scene(|spatial| {
+                    support_persist::sets_in_force(spatial, &w.document.support_sessions()).len()
+                })
+                .unwrap_or_default();
+            assert_eq!(in_force, 1, "{defect:?}: the supports stay editable");
+        }
+    });
+}
+
+/// Generate goes on to the islands by itself (#606): the analysis starts
+/// with no press, repairs a model the slicer refuses on its own (#526) and
+/// lands with no card to answer; the supports stay editable.
+#[test]
+fn generate_analyzes_the_islands_on_its_own() {
+    on_fresh_slint_thread(|| {
+        for defect in [None, Some(Defect::Crack)] {
+            let w = window_with_islands(one(slab(defect)));
+            w.ctrl.set_section(WorkspaceSection::Supports);
+            w.generate();
+            assert!(
+                w.window.get_slicing_in_progress(),
+                "{defect:?}: the islands analysis starts with no press"
+            );
+            w.finish_slice();
+            if defect.is_some() {
+                assert!(
+                    w.window.get_repairing_in_progress(),
+                    "{defect:?}: Repair runs on its own"
+                );
+                w.finish_repair();
+                w.finish_slice();
+            }
+            let cards = w.close_cards();
+            assert!(
+                cards.iter().all(|c| !c.contains("have no support")),
+                "{defect:?}: no question to answer: {cards:?}"
+            );
+            assert!(w.document.slice_params().is_some(), "{defect:?}: sliced");
+            assert_eq!(
+                w.window.get_workspace_section(),
+                WorkspaceSection::Supports,
+                "{defect:?}: still on the Supports tab"
             );
             let in_force = w
                 .document

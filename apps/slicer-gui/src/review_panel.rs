@@ -254,6 +254,9 @@ pub(crate) struct ReviewPanel {
     /// Whether the slice in flight analyzes the islands for the Supports
     /// tab (#525): no question at its end.
     analyzing: Cell<bool>,
+    /// Whether the review about to be shown was asked for by Generate,
+    /// which supports every island once it lands (#606).
+    support_islands: Cell<bool>,
     /// The Fix All press being carried out (#163), pass by pass.
     run: RefCell<Option<FixRun>>,
     /// Fix All's supports being placed off the UI thread (#390): how far
@@ -373,6 +376,7 @@ impl ReviewPanel {
             notes_open: Cell::new(false),
             fix_all_slicing: Cell::new(false),
             analyzing: Cell::new(false),
+            support_islands: Cell::new(false),
             run: RefCell::new(None),
             placing: RefCell::new(None),
             before_run: RefCell::new(None),
@@ -525,6 +529,17 @@ impl ReviewPanel {
         if let Some(before) = self.before_run.borrow_mut().take() {
             let_go(before.slice);
         }
+    }
+
+    /// The supports run, whose Generate goes on to the islands (#606).
+    pub(crate) fn supports(&self) -> &Rc<DfSupportRun> {
+        &self.supports
+    }
+
+    /// Whether the review about to be shown goes on to support every
+    /// island, as Generate asks (#606).
+    pub(crate) fn support_islands_once_shown(&self, on: bool) {
+        self.support_islands.set(on);
     }
 
     /// Records that the slice about to be shown cured the fills `ids`.
@@ -1384,6 +1399,7 @@ impl ReviewPanel {
         }
         let by_run = self.fix_all_slicing.replace(false);
         let analyzing = self.analyzing.replace(false);
+        let support_islands = self.support_islands.replace(false);
         let yes = by_run
             && self
                 .run
@@ -1445,9 +1461,13 @@ impl ReviewPanel {
                 passes
             ),
         }));
-        // An analysis asked from the Supports tab answers there (#525).
+        // An analysis asked from the Supports tab answers there (#525);
+        // the one Generate asked for supports the islands it found (#606).
         if !by_run && !analyzing {
             self.ask_for_supports();
+        } else if analyzing && support_islands {
+            crate::breadcrumbs::note("review: supporting the islands after Generate");
+            self.add_island_supports();
         }
     }
 

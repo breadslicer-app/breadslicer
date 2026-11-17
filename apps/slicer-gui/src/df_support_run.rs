@@ -295,6 +295,9 @@ pub(crate) struct DfSupportRun {
     raft_layer_height_mm: Cell<f64>,
     /// When the raft warning was last brought up to date with the scene.
     raft_checked_at: Cell<Instant>,
+    // What Generate goes on to once its supports are in: the islands it
+    // left, found and supported (#606).
+    after_generate: RefCell<Option<Box<dyn Fn()>>>,
     /// The raft top of the supports this driver pasted last, `Some(None)`
     /// for supports without a raft.
     generated_raft_top: Cell<Option<Option<f64>>>,
@@ -1732,6 +1735,7 @@ impl DfSupportRun {
             raft_layer_height_mm: Cell::new(DfSupportRequest::default().layer_height_mm),
             raft_checked_at: Cell::new(Instant::now()),
             generated_raft_top: Cell::new(None),
+            after_generate: RefCell::new(None),
             status_timer: slint::Timer::default(),
             redo: RefCell::new(None),
             regrid: RefCell::new(None),
@@ -6363,6 +6367,11 @@ impl DfSupportRun {
         );
     }
 
+    /// Sets what Generate goes on to once its new supports are in (#606).
+    pub(crate) fn set_after_generate(&self, then: impl Fn() + 'static) {
+        *self.after_generate.borrow_mut() = Some(Box::new(then));
+    }
+
     fn finish(&self, outcome: Result<DfSupportOutcome, JobError>) {
         let ended = match &outcome {
             Ok(_) => "ok".to_owned(),
@@ -6570,6 +6579,11 @@ impl DfSupportRun {
                 "Supports regenerated: replaced the previous set."
             )),
             None => {}
+        }
+        // New supports: the islands they left are found and supported
+        // (#606), as one procedure with Generate.
+        if !unchanged && let Some(then) = self.after_generate.borrow().as_ref() {
+            then();
         }
         // Copies given the supports of one standing like them were placed
         // without looking at their neighbours (#561): where they run into
@@ -8227,6 +8241,47 @@ mod hand_edit_tests {
         assert_eq!(notice, "Supports regenerated: same result as before.");
         assert!(editable, "the supports stay editable by hand");
         assert!(undone, "one undo step in total takes the supports away");
+    }
+
+    /// Generate goes on to the islands (#606) once its new supports are in,
+    /// and not when it changed nothing (#287).
+    #[test]
+    fn generate_goes_on_to_the_islands_once_its_supports_are_in() {
+        let calls = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 3.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let count = Rc::new(Cell::new(0));
+            {
+                let count = count.clone();
+                run.set_after_generate(move || count.set(count.get() + 1));
+            }
+            let generate = |run: &Rc<DfSupportRun>| {
+                run.start();
+                let handle = run.handle.borrow_mut().take().expect("a run started");
+                window.set_support_gen_in_progress(false);
+                run.finish(handle.join());
+            };
+            run.set_options(DfSupportOptions::default());
+            generate(&run);
+            let first = count.get();
+            generate(&run);
+            (first, count.get())
+        });
+        assert_eq!(calls, (1, 1), "once for the new supports, not for the same ones");
     }
 
     /// Generate with the model on the plate raises the raft warning (#131);

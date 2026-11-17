@@ -2915,6 +2915,39 @@ mod fix_all {
         assert_eq!(moved, (-1, 0), "a moved model takes the marks away");
     }
 
+    /// The analysis Generate asks for (#606) asks nothing and supports
+    /// every island on its own; the one asked from the Supports tab waits
+    /// for the button.
+    #[test]
+    fn the_analysis_after_generate_supports_the_islands_on_its_own() {
+        let (asked, fixing, after, by_hand) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            answer_the_question(&w, MessageAnswer::Cancel);
+            w.panel.support_islands_once_shown(true);
+            ANALYZE.set(true);
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            ANALYZE.set(false);
+            let asked = w.panel.ctrl.dialogs().queued_for_test();
+            let fixing = w.panel.fixing();
+            let _ = wait_fix_all(&w.panel);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            w.window.set_workspace_section(WorkspaceSection::Supports);
+            w.panel.supports.support_hints(&w.window);
+            let after = w.window.get_support_islands_left();
+
+            let w = island_window();
+            answer_the_question(&w, MessageAnswer::Cancel);
+            ANALYZE.set(true);
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            ANALYZE.set(false);
+            (asked, fixing, after, w.panel.fixing())
+        });
+        assert!(asked.is_empty(), "it asks nothing: {asked:?}");
+        assert!(fixing, "the islands' supports start on their own");
+        assert_eq!(after, 0, "no island left: {after}");
+        assert!(!by_hand, "an analysis asked by hand waits for the button");
+    }
+
     /// An ignored island is out of the question, and a slice with nothing
     /// left to ask about asks nothing.
     #[test]
