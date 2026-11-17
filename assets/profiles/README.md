@@ -152,6 +152,19 @@ Creality's wiki page for that machine, read by
 has the same tables for the X1 Neo and the Halot Sky 2025, which are not
 in the catalog yet: their rows are left out until they are.
 
+Phrozen's resins, and the BASF Forward AM and Loctite resins Phrozen
+tunes for its machines, come from the service behind Phrozen's resin
+profile pages (`phrozen3d.com/pages/resin-<printer>`):
+`https://resin.phrozen3d.info/api/resin-variants?machine=<name>`, with
+`/api/resins?machine=<name>` for each resin's brand. Its answers, saved
+as `<machine>.variants.json` and `<machine>.resins.json`, are read by
+`profiles-converter --format phrozen-api`. Phrozen publishes each
+exposure as a value and a tolerance (`35 ± 5`); a profile takes the
+value. Each colour is its own profile. The service also answers for the
+Sonic Mighty 12K, Mighty Revo 16K, Mega 8K S and Mega 8K V2, which are
+not in the catalog yet, and on the Sonic Mini 4K it states a word where
+the BASF resins' lift speed goes, so those 16 rows are left out.
+
 `creality-halot-one-printer-profile-50um` is not a resin calibration: the
 Halot One exposes with the profile stored on the printer, not the file's
 values, so this profile only writes what known-good Lychee files for it

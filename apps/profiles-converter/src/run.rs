@@ -22,6 +22,7 @@ use crate::elegoo_settings::{ElegooSettingsError, ElegooSettingsReader};
 use crate::format::SourceFormat;
 use crate::material_curation::{MaterialCuration, MaterialCurationError};
 use crate::material_fold::{FoldError, fold};
+use crate::phrozen_api::{PhrozenApiError, PhrozenApiReader};
 use crate::printer_library::{PrinterLibrary, PrinterLibraryError};
 use crate::profile::ConvertedProfile;
 use crate::reader::ProfileReader;
@@ -39,6 +40,7 @@ pub enum RunError {
     AnycubicWiki(AnycubicWikiError),
     CrealityBlog(CrealityBlogError),
     CrealityWiki(CrealityWikiError),
+    PhrozenApi(PhrozenApiError),
     UvtoolsCatalog(UvtoolsCatalogError),
     PrinterLibrary(PrinterLibraryError),
     MaterialCuration(MaterialCurationError),
@@ -54,6 +56,7 @@ impl fmt::Display for RunError {
             Self::AnycubicWiki(err) => write!(f, "{err}"),
             Self::CrealityBlog(err) => write!(f, "{err}"),
             Self::CrealityWiki(err) => write!(f, "{err}"),
+            Self::PhrozenApi(err) => write!(f, "{err}"),
             Self::UvtoolsCatalog(err) => write!(f, "{err}"),
             Self::PrinterLibrary(err) => write!(f, "{err}"),
             Self::MaterialCuration(err) => write!(f, "{err}"),
@@ -71,6 +74,7 @@ impl std::error::Error for RunError {
             Self::AnycubicWiki(err) => Some(err),
             Self::CrealityBlog(err) => Some(err),
             Self::CrealityWiki(err) => Some(err),
+            Self::PhrozenApi(err) => Some(err),
             Self::UvtoolsCatalog(err) => Some(err),
             Self::PrinterLibrary(err) => Some(err),
             Self::MaterialCuration(err) => Some(err),
@@ -122,6 +126,9 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
         SourceFormat::CrealityWikiPages => CrealityWikiReader
             .read(&paths)
             .map_err(RunError::CrealityWiki)?,
+        SourceFormat::PhrozenApi => PhrozenApiReader
+            .read(&paths)
+            .map_err(RunError::PhrozenApi)?,
         SourceFormat::UvtoolsCatalog => {
             let reader = match printers {
                 Some(printers) => UvtoolsCatalogReader::consulting(printers),
