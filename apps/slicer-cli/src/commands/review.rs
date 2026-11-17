@@ -363,6 +363,7 @@ fn note_too_small(report: &mut ReviewReport, sets: &[SupportSet]) {
     let options = TipPlanOptions::for_tip(diameter_mm).with_smallest(smallest);
     let plan = plan_all_tips(&report.islands, &report.growths, &options);
     plan.note_too_small(&mut report.findings, &report.islands);
+    plan.note_no_room(&mut report.findings, &report.growths);
 }
 
 /// Places `tip` on the set it falls on, taking only a tip that `start`

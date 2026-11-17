@@ -73,10 +73,11 @@ fn an_island_too_narrow_takes_the_smallest_tip_or_is_a_note() {
     assert_eq!(finding.title, TOO_SMALL_TITLE);
 }
 
-/// A region where no contact ever fits gets no tip, and says so.
+/// A region where no contact ever fits gets no tip, and says so; its
+/// finding is a note (#606): nothing can be placed for it.
 #[test]
 fn a_growth_no_contact_fits_on_is_left_with_no_room() {
-    let report = body(10)
+    let mut report = body(10)
         .model(4..6, Shape::rect(111.0, 51.0, 119.0, 59.0))
         .model(6..10, Shape::rect(100.0, 40.0, 130.0, 70.0))
         .tip(115.0, 55.0, 4, 3.0)
@@ -85,6 +86,13 @@ fn a_growth_no_contact_fits_on_is_left_with_no_room() {
     let plan = plan_all_tips(&[], &report.growths, &TipPlanOptions::for_tip(5.0));
     assert!(plan.growth.is_empty());
     assert_eq!(plan.no_room, [0]);
+    plan.note_no_room(&mut report.findings, &report.growths);
+    let finding = report
+        .findings
+        .iter()
+        .find(|finding| finding.check == CheckKind::SurfaceGrowth)
+        .expect("the region");
+    assert_eq!(finding.severity, Severity::Info);
 }
 
 fn islands(builder: FixtureBuilder) -> Vec<Island> {

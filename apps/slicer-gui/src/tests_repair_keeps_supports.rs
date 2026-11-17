@@ -49,10 +49,16 @@ fn window_with(graph: Scene) -> Window {
 
 /// The window as the app wires it: Generate goes on to the islands (#606).
 fn window_with_islands(graph: Scene) -> Window {
+    window_with_prefs(graph, false)
+}
+
+/// [`window_with_islands`], with the Supports tab's lift box as `lift`.
+fn window_with_prefs(graph: Scene, lift: bool) -> Window {
     let window = MainWindow::new().expect("the headless platform creates a main window");
     let bus = PreferencesBus::new(PreferencesSnapshot {
         default_printer: Some(PrinterId::new("elegoo-saturn-4-ultra").expect("valid id")),
         default_resin: Some(MaterialId::new("standard-405").expect("valid id")),
+        lift_models_on_plate: lift,
         ..PreferencesSnapshot::for_tests()
     });
     let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));
@@ -590,5 +596,96 @@ fn generate_analyzes_the_islands_on_its_own() {
                 .unwrap_or_default();
             assert_eq!(in_force, 1, "{defect:?}: the supports stay editable");
         }
+    });
+}
+
+/// Generate on a real mini lifted 5 mm, the islands step included (#606),
+/// and what the review says at the end. `BREADSLICER_CHAIN_MODEL` names the
+/// mesh, `BREADSLICER_CHAIN_PRESET` the preset (`minis`, the default, or
+/// `skeleton`).
+#[test]
+#[ignore = "reads a model named by BREADSLICER_CHAIN_MODEL"]
+fn a_real_mini_through_generate_and_its_islands() {
+    let Ok(path) = std::env::var("BREADSLICER_CHAIN_MODEL") else {
+        return;
+    };
+    let preset = std::env::var("BREADSLICER_CHAIN_PRESET").unwrap_or_default();
+    // On the plate, lifted by the box as a press does; else lifted 5 mm.
+    let on_plate = std::env::var("BREADSLICER_CHAIN_ON_PLATE").is_ok_and(|v| v == "1");
+    let lift = if on_plate { 0.0 } else { 5.0 };
+    on_fresh_slint_thread(move || {
+        let loaded = sc_mesh_formats::load_mesh_from_path(std::path::Path::new(&path), None, None)
+            .expect("the mini loads");
+        let mesh = loaded
+            .graph
+            .roots()
+            .iter()
+            .find_map(|&leaf| loaded.graph.leaf_mesh_arc(leaf).cloned())
+            .expect("a mesh");
+        let bottom = mesh
+            .vertices()
+            .iter()
+            .map(|v| f64::from(v[2]))
+            .fold(f64::INFINITY, f64::min);
+        let mut graph = Scene::new();
+        let leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, lift - bottom])),
+                LeafPayload::Mesh(mesh),
+            )
+            .expect("leaf");
+        graph.add_root(leaf).expect("root");
+        let w = window_with_prefs(graph, on_plate);
+        w.ctrl.set_section(WorkspaceSection::Supports);
+        let zones = match preset.as_str() {
+            "skeleton" => sc_geom::df_supports::zone_presets::skeleton_islands(),
+            _ => sc_geom::df_supports::zone_presets::minis_30(),
+        };
+        let options = DfSupportOptions {
+            zones: Some(zones),
+            ..DfSupportOptions::default()
+        };
+        let started = Instant::now();
+        w.supports.press_generate_and_wait(options);
+        let mut steps = Vec::new();
+        for _ in 0..40 {
+            if w.window.get_slicing_in_progress() {
+                steps.push("slice");
+                w.finish_slice();
+            } else if w.window.get_repairing_in_progress() {
+                steps.push("repair");
+                w.finish_repair();
+            } else if w.slice.review.fixing() {
+                steps.push("tips");
+                w.supports.settle_edit();
+                if !w.window.get_slicing_in_progress() && w.slice.review.fixing() {
+                    std::thread::sleep(Duration::from_millis(20));
+                    slint::platform::update_timers_and_animations();
+                }
+            } else {
+                break;
+            }
+        }
+        eprintln!("steps {steps:?} in {:?}", started.elapsed());
+        eprintln!("summary: {}", w.window.get_review_summary());
+        eprintln!("status: {}", w.window.get_status_notice());
+        for row in slint::Model::iter(&w.window.get_review_rows()) {
+            eprintln!(
+                "  [{}] {} | {} | {}",
+                row.severity, row.title, row.layers, row.detail
+            );
+        }
+        let sets = w
+            .document
+            .with_scene(|spatial| {
+                let sessions = w.document.support_sessions();
+                (
+                    support_persist::sets_in_force(spatial, &sessions).len(),
+                    support_persist::review_sets(spatial, &sessions).len(),
+                )
+            })
+            .unwrap_or_default();
+        eprintln!("sets in force, reviewed as supports: {sets:?}");
     });
 }

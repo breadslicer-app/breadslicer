@@ -4079,6 +4079,19 @@ impl DfSupportRun {
     /// Generates supports for every model of the scene with `options`, then
     /// and there, as a finished run puts them in: what other modules' tests
     /// start from.
+    /// The Generate button with `options` in the tab, waited for: the lift of
+    /// the models on the plate (#389) and what follows (#606) as pressed.
+    #[cfg(test)]
+    pub(crate) fn press_generate_and_wait(self: &Rc<Self>, options: DfSupportOptions) {
+        self.set_options(options);
+        self.start();
+        let handle = self.handle.borrow_mut().take().expect("a run started");
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_gen_in_progress(false);
+        }
+        self.finish(handle.join());
+    }
+
     #[cfg(test)]
     pub(crate) fn generate_now(&self, options: DfSupportOptions) {
         let graph = self
@@ -4439,6 +4452,12 @@ impl DfSupportRun {
     /// The support mesh this driver pasted: its leaf and current mesh.
     fn support_leaf(&self) -> Option<(NodeId, Arc<sc_mesh_core::IndexedMesh>)> {
         self.document.with_scene(support_leaf).flatten()
+    }
+
+    /// Whether the scene has supports of ours in force: what the review may
+    /// add tips to on its own (#606).
+    pub(crate) fn any_set_in_force(&self) -> bool {
+        !self.sets_in_force().is_empty()
     }
 
     /// Every support set of the scene in force.

@@ -262,6 +262,7 @@ fn review_stacks(
                 Some(mut report) => ReviewOutcome::Reviewed {
                     tips: tip_plan(&report.islands, &report.growths, supports).map(|plan| {
                         plan.note_too_small(&mut report.findings, &report.islands);
+                        plan.note_no_room(&mut report.findings, &report.growths);
                         Box::new(plan)
                     }),
                     growths: report.growths,
