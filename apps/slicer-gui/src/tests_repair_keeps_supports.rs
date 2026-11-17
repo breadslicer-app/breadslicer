@@ -631,7 +631,11 @@ fn a_real_mini_through_generate_and_its_islands() {
         let leaf = graph
             .add_leaf(
                 None,
-                Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, lift - bottom])),
+                Transform3D::Affine(AffineTransform3D::from_translation([
+                    0.0,
+                    0.0,
+                    lift - bottom,
+                ])),
                 LeafPayload::Mesh(mesh),
             )
             .expect("leaf");
