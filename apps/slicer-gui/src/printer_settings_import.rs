@@ -5,7 +5,7 @@
 
 //! File > Import printer settings (#565): a printer export of Lychee
 //! (`.lyp`), a resin export of Lychee (`.lyr`, #618) or a Photon Workshop
-//! settings file (`.pwsp`) the person picks becomes one
+//! settings file (`.pwsp`) or a CHITUBOX one (`.cfgx`) the person picks becomes one
 //! material profile per resin, in their own library, calibrated for the
 //! printer of our catalog the file's printer is. Nothing else of the file
 //! is kept, and the printer is never copied: its flags are ours.
@@ -138,6 +138,8 @@ pub(crate) fn import_file(
     }
     let source = if extension.eq_ignore_ascii_case("lyp") {
         "lychee"
+    } else if extension.eq_ignore_ascii_case("cfgx") {
+        "chitubox"
     } else {
         "workshop"
     };
@@ -209,8 +211,12 @@ pub(crate) fn wire(
         let dialog = crate::error_dialog::file_dialog_over(ui.window())
             .set_title(ctr!("FileDialog", "Import printer settings").to_string())
             .add_filter(
-                ctr!("FileDialog", "Lychee or Photon Workshop printer settings").to_string(),
-                &["lyp", "lyr", "pwsp"],
+                ctr!(
+                    "FileDialog",
+                    "Lychee, Photon Workshop or CHITUBOX printer settings"
+                )
+                .to_string(),
+                &["lyp", "lyr", "pwsp", "cfgx"],
             );
         let (catalog, prefs, dialogs) = (catalog.clone(), prefs.clone(), dialogs.clone());
         if let Err(err) = slint::spawn_local(async move {
@@ -287,6 +293,42 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("lift_speed_mm_min = 120.0"), "{text}");
+    }
+
+    /// A CHITUBOX export for the M7 Pro lands as a resin of the user's
+    /// library set for our M7 Pro.
+    #[test]
+    fn a_chitubox_export_lands_as_a_resin_for_our_printer() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("m7.cfgx");
+        std::fs::write(
+            &file,
+            r#"{"printerinfo": {
+                "machinename": {"currentvalue": "Anycubic Photon Mono M7 Pro"},
+                "resolutionx": {"currentvalue": 13312}, "resolutiony": {"currentvalue": 5120},
+                "machinewidth": {"currentvalue": 223.642}, "machinedepth": {"currentvalue": 126.48}},
+              "material": [{"name": "Default", "slice": [{"name": "Fast Resin_Fast",
+                "print": {"layerheight": {"currentvalue": 0.1},
+                          "normalexposuretime": {"currentvalue": 1.4},
+                          "bottomlayercount": {"currentvalue": 3},
+                          "normallayerliftheight": {"currentvalue": 2.0},
+                          "normallayerliftspeed": {"currentvalue": 360.0},
+                          "normallayerdropspeed": {"currentvalue": 900.0}}}]}]}"#,
+        )
+        .unwrap();
+        let library = dir.path().join("library");
+        let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::platform_default());
+        let report = import_file(&file, &catalog, &library, None).expect("it imports");
+        assert_eq!(report.imported.len(), 1, "{report:?}");
+        let saved = library
+            .join("materials")
+            .join("chitubox-chitubox-fast-resin-fast.toml");
+        let text = std::fs::read_to_string(saved).expect("the resin is saved");
+        assert!(
+            text.contains("[per_printer.anycubic-photon-mono-m7-pro]"),
+            "{text}"
+        );
+        assert!(text.contains("normal_exposure_sec = 1.4"), "{text}");
     }
 
     /// #618: a Lychee resin file goes to the printer its name names, else

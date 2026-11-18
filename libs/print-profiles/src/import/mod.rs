@@ -4,7 +4,8 @@
  */
 
 //! Printer and resin settings a person exports from another slicer and
-//! brings in (#565): Lychee's `.lyp` and Photon Workshop's `.pwsp`. Only
+//! brings in (#565): Lychee's `.lyp`, Photon Workshop's `.pwsp` and
+//! CHITUBOX's `.cfgx`. Only
 //! the files the person chooses are read, and their layout was worked out
 //! from such exported files alone, for interoperability. Nothing of either
 //! program ships here.
@@ -30,12 +31,14 @@ use crate::{
 
 pub mod msgpack;
 
+mod chitubox;
 mod lychee;
 mod workshop;
 
 #[cfg(test)]
 mod tests;
 
+pub use chitubox::read_chitubox;
 pub use lychee::{read_lychee, read_lychee_resins};
 pub use workshop::read_photon_workshop;
 
@@ -84,7 +87,7 @@ impl std::fmt::Display for ImportError {
 
 impl std::error::Error for ImportError {}
 
-/// Reads `bytes`, a file named with `extension` (`lyp` or `pwsp`).
+/// Reads `bytes`, a file named with `extension` (`lyp`, `pwsp` or `cfgx`).
 pub fn read_printer_settings(
     extension: &str,
     bytes: &[u8],
@@ -92,6 +95,7 @@ pub fn read_printer_settings(
     match extension.to_ascii_lowercase().as_str() {
         "lyp" => read_lychee(bytes),
         "pwsp" => read_photon_workshop(bytes),
+        "cfgx" => read_chitubox(bytes),
         other => Err(ImportError::Unreadable(format!(
             "files ending in .{other} are not printer settings"
         ))),

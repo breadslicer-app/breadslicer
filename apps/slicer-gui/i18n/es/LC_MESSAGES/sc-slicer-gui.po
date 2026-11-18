@@ -8745,3 +8745,7 @@ msgstr "Cada ajuste tiene su casillero; uno vacío muestra “—”. Arriba ele
 msgctxt "PrinterPicker"
 msgid "From the maker's published settings. Saving makes it a resin of your own; the one that ships stays as it is."
 msgstr "Son los ajustes que publica el fabricante. Al guardar queda como resina tuya; la que viene con la app no cambia."
+
+msgctxt "FileDialog"
+msgid "Lychee, Photon Workshop or CHITUBOX printer settings"
+msgstr "Ajustes de impresora de Lychee, Photon Workshop o CHITUBOX"

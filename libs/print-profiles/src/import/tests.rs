@@ -399,3 +399,82 @@ fn real_exports() {
         }
     }
 }
+
+/// A CHITUBOX export (#565): the printer, and the resin's settings, the
+/// 2-stage lift and its slow approach to the film in the first stage.
+#[test]
+fn a_chitubox_export_gives_its_printer_and_resin() {
+    let file = br#"{
+        "printerinfo": {
+            "machinename": {"currentvalue": "Anycubic Photon Mono M7 Pro"},
+            "resolutionx": {"currentvalue": 13312},
+            "resolutiony": {"currentvalue": 5120},
+            "machinewidth": {"currentvalue": 223.64199829101562},
+            "machinedepth": {"currentvalue": 126.4800033569336}
+        },
+        "material": [{"name": "Default", "slice": [{"name": "Fast Resin_Fast",
+            "print": {
+                "layerheight": {"currentvalue": 0.10000000149011612},
+                "bottomlayercount": {"currentvalue": 3},
+                "normalexposuretime": {"currentvalue": 1.399999976158142},
+                "bottomlayerexposuretime": {"currentvalue": 15.0},
+                "transitionlayercount": {"currentvalue": 15},
+                "printwaitmode": {"currentvalue": 1},
+                "normalresttimeafterretract": {"currentvalue": 0.5},
+                "normalresttimebeforelift": {"currentvalue": 0.0},
+                "normalresttimeafterlift": {"currentvalue": 0.0},
+                "normallayerliftheight": {"currentvalue": 2.0},
+                "normallayerliftheight2": {"currentvalue": 4.0},
+                "normallayerliftspeed": {"currentvalue": 360.0},
+                "normallayerliftspeed2": {"currentvalue": 900.0},
+                "normallayerdropspeed": {"currentvalue": 900.0},
+                "normallayerdropspeed2": {"currentvalue": 360.0},
+                "normallayerdropheight2": {"currentvalue": 4.0},
+                "bottomlayerliftheight": {"currentvalue": 5.0},
+                "bottomlayerliftspeed": {"currentvalue": 120.0},
+                "bottomlayerdropspeed": {"currentvalue": 240.0}
+            },
+            "advanced": {
+                "normallightintensitypwm": {"currentvalue": 255},
+                "bottomlightintensitypwm": {"currentvalue": 200},
+                "enable_scale_compensation": {"currentvalue": true},
+                "compensation_x": {"currentvalue": 101.0},
+                "compensation_y": {"currentvalue": 101.0},
+                "compensation_z": {"currentvalue": 100.0}
+            }}]}]
+    }"#;
+    let printers = read_printer_settings("cfgx", file).unwrap();
+    assert_eq!(printers.len(), 1);
+    let p = &printers[0];
+    assert_eq!(p.name, "Anycubic Photon Mono M7 Pro");
+    assert_eq!(p.resolution, (13312, 5120));
+    let r = &p.resins[0];
+    assert_eq!(r.name, "Fast Resin_Fast");
+    assert_eq!(r.brand, "CHITUBOX");
+    assert_eq!(r.layer_height_mm, Some(0.1));
+    let s = &r.settings;
+    assert_eq!(s.normal_exposure_sec.map(|v| v.value()), Some(1.4));
+    assert_eq!(s.bottom_exposure_sec.map(|v| v.value()), Some(15.0));
+    assert_eq!(s.bottom_layer_count, Some(3));
+    assert_eq!(s.wait_before_cure_sec.map(|v| v.value()), Some(0.5));
+    assert_eq!(s.lift_distance_mm.map(|v| v.value()), Some(2.0));
+    assert_eq!(s.lift_speed_mm_min.map(|v| v.value()), Some(360.0));
+    // The slow approach to the film is the first stage's retract.
+    assert_eq!(s.retract_speed_mm_min.map(|v| v.value()), Some(360.0));
+    let second = s.second_travel.expect("2 stages");
+    assert_eq!(second.lift_distance_mm.value(), 4.0);
+    assert_eq!(second.lift_speed_mm_min.value(), 900.0);
+    assert_eq!(second.retract_speed_mm_min.value(), 900.0);
+    assert_eq!(
+        s.bottom_retract_speed_mm_min.map(|v| v.value()),
+        Some(240.0)
+    );
+    assert!(s.bottom_second_travel.is_none());
+    assert_eq!(s.light_pwm.map(|v| v.percent()), Some(100.0), "255 of 255");
+    assert!(
+        s.bottom_light_pwm
+            .is_some_and(|v| (v.percent() - 78.43).abs() < 0.01)
+    );
+    assert!(r.scale.is_some());
+    assert_eq!(r.not_imported, vec!["transitionlayercount".to_owned()]);
+}
