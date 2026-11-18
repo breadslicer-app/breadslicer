@@ -117,6 +117,12 @@ pub(crate) struct ViewportController {
     /// an empty image. Shares the cap key space with the 3D cut so the 2 stay
     /// in lockstep.
     slice_view_key: Cell<Option<u64>>,
+    /// Whether the held slice still shows the scene, so every tab's slider
+    /// goes through its layers.
+    slice_current: Cell<bool>,
+    /// When the frame being painted got through its stages: set up, cut and
+    /// labels, drawn. A slow frame tells the log where it went.
+    paint_marks: Cell<[Option<std::time::Instant>; 3]>,
     /// The pixels of the review finding last clicked (#409), highlighted on
     /// the cut and in the slice-view panel, and a count of its changes for
     /// the cap key.
@@ -293,6 +299,8 @@ impl ViewportController {
             render: RenderHost::new(ui),
             input,
             slice_view_key: Cell::new(None),
+            slice_current: Cell::new(false),
+            paint_marks: Cell::new([None; 3]),
             kept_out_of_slice: RefCell::new(Selection::None),
             review_highlight: RefCell::new(None),
             highlight_generation: Cell::new(0),
@@ -366,6 +374,8 @@ impl ViewportController {
             render: RenderHost::new_for_test(),
             input: InputDispatch::new(),
             slice_view_key: Cell::new(None),
+            slice_current: Cell::new(false),
+            paint_marks: Cell::new([None; 3]),
             kept_out_of_slice: RefCell::new(Selection::None),
             review_highlight: RefCell::new(None),
             highlight_generation: Cell::new(0),
@@ -665,6 +675,7 @@ impl ViewportController {
             SceneEvent::Installed => {
                 self.on_scene_installed();
                 self.mirror_prep_layers_to_ui();
+                self.mirror_slice_current_to_ui();
             }
             SceneEvent::Cleared => self.on_scene_cleared(),
             SceneEvent::Painted => self.mark_dirty(),
@@ -685,6 +696,7 @@ impl ViewportController {
                 if !self.gesture_active() {
                     self.mirror_plates_to_ui();
                     self.mirror_prep_layers_to_ui();
+                    self.mirror_slice_current_to_ui();
                 }
             }
             SceneEvent::Restructured => {
@@ -701,13 +713,22 @@ impl ViewportController {
                 }
                 self.mirror_plates_to_ui();
                 self.mirror_prep_layers_to_ui();
+                self.mirror_slice_current_to_ui();
                 self.mark_dirty();
             }
             SceneEvent::SliceChanged => {
                 self.mirror_slice_layer_count_to_ui();
+                self.mirror_slice_current_to_ui();
                 self.mirror_slice_estimate_to_ui();
             }
-            SceneEvent::UndoStackChanged => self.mirror_undo_state_to_ui(),
+            SceneEvent::UndoStackChanged => {
+                self.mirror_undo_state_to_ui();
+                // An edit counts toward the scene's revision once it is on
+                // the stack, not as it applies.
+                if !self.gesture_active() {
+                    self.mirror_slice_current_to_ui();
+                }
+            }
             SceneEvent::DirtyChanged => self.mirror_dirty_state_to_ui(),
         }
     }
@@ -755,6 +776,23 @@ impl ViewportController {
         if at >= (before - 1) as f32 || at > (count - 1) as f32 {
             ui.set_prep_layer_index((count - 1).max(0) as f32);
         }
+    }
+
+    /// Whether the held slice still shows the scene: then the tabs before
+    /// Slice slide through its layers too, with its cut capped. Worked out
+    /// when the scene or the slice changes, not each frame.
+    fn mirror_slice_current_to_ui(&self) {
+        let document = self.session.document();
+        let current = document.slice_layer_count().unwrap_or(0) > 0
+            && document
+                .slice_params()
+                .is_some_and(|p| p.plate == document.slice_plate())
+            && !document.held_slice_changed();
+        self.slice_current.set(current);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_slice_layers_current(current);
+        }
+        self.mark_dirty();
     }
 
     /// Pushes the held slice's layer count to the UI, sizing and enabling the
@@ -4653,6 +4691,7 @@ impl ViewportController {
 
     fn on_plates_changed(&self) {
         self.mirror_plates_to_ui();
+        self.mirror_slice_current_to_ui();
         self.mark_dirty();
     }
 
@@ -5320,7 +5359,45 @@ impl ViewportController {
     /// when any of the required pieces are missing (renderer, UI handle,
     /// viewport, or camera), or when the viewport's width or height rounds to 0
     /// pixels.
+    /// A frame that takes longer than this goes in the log, stage by stage,
+    /// so a stutter a tester sees can be found from their report.
+    const SLOW_PAINT: std::time::Duration = std::time::Duration::from_millis(80);
+
     fn on_paint(&self) {
+        let start = std::time::Instant::now();
+        self.paint_marks.set([None; 3]);
+        self.paint_frame();
+        let total = start.elapsed();
+        if total < Self::SLOW_PAINT {
+            return;
+        }
+        let mut last = start;
+        let stages = ["set up", "cut and labels", "drawn"]
+            .iter()
+            .zip(self.paint_marks.get())
+            .filter_map(|(name, mark)| {
+                let mark = mark?;
+                let took = mark - last;
+                last = mark;
+                Some(format!("{name} {:.0} ms", took.as_secs_f64() * 1e3))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        crate::breadcrumbs::note(&format!(
+            "paint: slow frame {:.0} ms in {:?} ({stages}, handed over {:.0} ms)",
+            total.as_secs_f64() * 1e3,
+            self.session.section(),
+            (start + total - last).as_secs_f64() * 1e3,
+        ));
+    }
+
+    fn mark_paint(&self, stage: usize) {
+        let mut marks = self.paint_marks.get();
+        marks[stage] = Some(std::time::Instant::now());
+        self.paint_marks.set(marks);
+    }
+
+    fn paint_frame(&self) {
         if !self.render.frame().redraw_owed() || self.render.hold_frame() {
             return;
         }
@@ -5369,6 +5446,7 @@ impl ViewportController {
             renderer.set_plate_names(&names, editing);
         }
         renderer.set_focus(&self.focus());
+        self.mark_paint(0);
 
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -5408,11 +5486,18 @@ impl ViewportController {
         // here on the paint thread; it holds whole layer numbers as a float, so
         // round it to the layer index.
         let selected_layer = ui.get_selected_layer_index().round().max(0.0) as u32;
-        let clip_z = crate::workspace_section::clip_z_from(
-            self.session.section(),
+        // With the slice still showing the scene, every tab cuts at its
+        // layers, as Slice does.
+        let slice_section = if self.slice_current.get() {
+            WorkspaceSection::Slice
+        } else {
+            self.session.section()
+        };
+        let slice_clip = crate::workspace_section::clip_z_from(
+            slice_section,
             self.session.document().slice_layer_top_z(selected_layer),
-        )
-        .or_else(|| {
+        );
+        let clip_z = slice_clip.or_else(|| {
             // The other tabs cut the view where their slider stands (#611);
             // at the top, nothing.
             let count = ui.get_prep_layer_count();
@@ -5427,7 +5512,12 @@ impl ViewportController {
         // (nothing clipped) clears the cap.
         // The highlighted finding (#409) rides in the key: a click rebuilds
         // the selected layer's cap, and only that.
-        let cap_key = clip_z.map(|_| {
+        // Only a cut at the slice's layers has a cap of its own; the 0.05 mm
+        // cut is closed by the models' back faces.
+        // While a gesture moves something off the slice, the cut is closed
+        // the same way.
+        let capped = self.session.section() == WorkspaceSection::Slice || !self.gesture_active();
+        let cap_key = slice_clip.filter(|_| capped).map(|_| {
             let mut key = DefaultHasher::new();
             (
                 self.session.document().slice_generation(),
@@ -5491,6 +5581,7 @@ impl ViewportController {
         // trigger that repaints (slider, section, scene, slice completion)
         // refreshes the panel with no extra wiring.
         self.reconcile_slice_view_image(&ui, cap_key, selected_layer, &build_volume);
+        self.mark_paint(1);
 
         if self.render.is_refused_size((eff_w, eff_h)) {
             self.render.update_frame(FrameState::after_render);
@@ -5548,6 +5639,7 @@ impl ViewportController {
                 )
             })
             .unwrap_or_else(|| renderer.render(None, build_volume, camera, eff_w, eff_h));
+        self.mark_paint(2);
 
         let texture = match texture {
             Ok(Some(texture)) => texture,

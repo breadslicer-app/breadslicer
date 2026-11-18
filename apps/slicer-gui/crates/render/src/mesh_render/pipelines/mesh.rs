@@ -48,6 +48,10 @@ pub(in crate::mesh_render) struct MeshPipeline {
     /// main pipeline with the front faces culled, so a support mesh's
     /// inside draws through `fs_cap` where the raft no longer covers it.
     pub(in crate::mesh_render) cap_pipeline: wgpu::RenderPipeline,
+    /// The layer slider's cut outside the slice view: the main pipeline with
+    /// the front faces culled, so a cut mesh's inside draws through
+    /// `fs_layer_cut` as the flat face of the cut.
+    pub(in crate::mesh_render) layer_cut_pipeline: wgpu::RenderPipeline,
     /// Preview overlays: the mesh shader's `fs_overlay`, no culling, depth
     /// neither tested nor written, stencil untouched, alpha-blended.
     pub(in crate::mesh_render) overlay_pipeline: wgpu::RenderPipeline,
@@ -260,6 +264,13 @@ impl MeshPipeline {
             "vs_main",
             &plain_buffers,
             "fs_cap",
+        );
+        let layer_cut_pipeline = solid_pipeline(
+            "mesh-viewer layer cut pipeline",
+            wgpu::Face::Front,
+            "vs_main",
+            &plain_buffers,
+            "fs_layer_cut",
         );
 
         let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -617,6 +628,7 @@ impl MeshPipeline {
             pipeline,
             map_pipeline,
             cap_pipeline,
+            layer_cut_pipeline,
             overlay_pipeline,
             hint_pipeline,
             island_mark_pipeline,

@@ -1559,6 +1559,12 @@ impl Renderer {
                     &[]
                 };
                 self.record_mesh_objects(&mut pass, inst, selection, hidden);
+                // The layer slider cuts the models outside the slice view
+                // too; there no cap quad covers the cut, so it is closed
+                // with the models' own back faces.
+                if clip_z.is_some() && !matches!(self.pipelines.cap_state, CapState::Shown { .. }) {
+                    self.record_layer_cuts(&mut pass, inst, selection, hidden);
+                }
                 self.record_selection_marks(&mut pass, inst, selection, hidden, &support_objects);
                 if supports_hidden {
                     // Nothing of the supports: no cuts, lines or fades.
@@ -1872,6 +1878,41 @@ impl Renderer {
             } else {
                 0
             });
+            pass.draw_indexed(0..obj.index_count(), 0, 0..1);
+        }
+    }
+
+    /// The cut the layer slider leaves outside the slice view: every drawn
+    /// mesh again, back faces only, through the layer cut pipeline. A back
+    /// face shows only where the front faces before it were cut away, so
+    /// this fills each cut model with the flat face of its cut. Same stencil
+    /// as the object, so a selected model's outline takes its cut in.
+    fn record_layer_cuts(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        inst: &InstalledScene,
+        selection: &[NodeId],
+        hidden: &[bool],
+    ) {
+        pass.set_pipeline(&self.pipelines.mesh.layer_cut_pipeline);
+        pass.set_bind_group(
+            MeshBindGroup::Uniforms.idx(),
+            &self.pipelines.mesh.uniforms_bind_group,
+            &[],
+        );
+        for (i, obj) in inst.gpu.objects().iter().enumerate() {
+            if hidden.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let offset = (i as u64 * inst.gpu.model_stride()) as u32;
+            pass.set_bind_group(
+                MeshBindGroup::Models.idx(),
+                &inst.models_bind_group,
+                &[offset],
+            );
+            pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
+            pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_stencil_reference(u32::from(selection.binary_search(&obj.node_id()).is_ok()));
             pass.draw_indexed(0..obj.index_count(), 0, 0..1);
         }
     }
