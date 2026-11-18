@@ -49,6 +49,12 @@ export component PrinterPreferences inherits PreferencesPage {
     callback favourite-toggled(int);
     callback import-requested();
     callback export-printers-requested();
+    // Opens the form for a new printer (#600).
+    callback add-printer-requested();
+    // Opens the form on the selected printer, which the user added.
+    callback edit-printer-requested();
+    // Whether the selected printer is one the user added, so it can be edited.
+    in property <bool> selected-is-custom;
 
     property <length> tile-w: 128px;
     property <length> tile-h: 148px;
@@ -191,6 +197,19 @@ export component PrinterPreferences inherits PreferencesPage {
         vertical-stretch: 0;
         spacing: 8px;
         alignment: start;
+        Button {
+            text: @tr("PreferencesPage" => "Add printer...");
+            clicked => {
+                root.add-printer-requested();
+            }
+        }
+        Button {
+            text: @tr("PreferencesPage" => "Edit printer...");
+            enabled: root.selected-is-custom;
+            clicked => {
+                root.edit-printer-requested();
+            }
+        }
         Button {
             text: @tr("PreferencesPage" => "Import package...");
             clicked => {

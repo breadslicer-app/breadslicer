@@ -60,6 +60,7 @@ mod preferences_filters;
 mod preferences_window;
 mod presupported_import;
 mod print_format;
+mod printer_form;
 mod printer_settings_import;
 mod print_selection;
 pub mod profile_catalog;

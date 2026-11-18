@@ -101,6 +101,9 @@ export component PreferencesWindow inherits Window {
     callback delete-requested(int, bool);
     callback import-requested();
     callback export-printers-requested();
+    callback add-printer-requested();
+    callback edit-printer-requested();
+    in property <bool> selected-printer-is-custom;
     callback export-materials-requested();
 
     changed theme => {
@@ -207,6 +210,13 @@ export component PreferencesWindow inherits Window {
                 export-printers-requested => {
                     root.export-printers-requested();
                 }
+                add-printer-requested => {
+                    root.add-printer-requested();
+                }
+                edit-printer-requested => {
+                    root.edit-printer-requested();
+                }
+                selected-is-custom: root.selected-printer-is-custom;
             }
             if(side-bar.current-item == 2) : ResinPreferences {
                 resin-rows: root.resin-rows;

@@ -7913,3 +7913,201 @@ msgstr "No se importaron los ajustes de impresora"
 msgctxt "PrinterSettingsImport"
 msgid "The file was not imported: {}"
 msgstr "No se importó el archivo: {}"
+
+#: ui/printer-dialog.slint
+msgctxt "PreferencesPage"
+msgid "Add printer..."
+msgstr "Agregar impresora..."
+
+#: ui/printer-dialog.slint
+msgctxt "PreferencesPage"
+msgid "Edit printer..."
+msgstr "Editar impresora..."
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Edit printer"
+msgstr "Editar impresora"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Add printer"
+msgstr "Agregar impresora"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Start from"
+msgstr "Partir de"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Manufacturer"
+msgstr "Fabricante"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Model name"
+msgstr "Modelo"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Resolution (px)"
+msgstr "Resolución (px)"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Pixel size (µm)"
+msgstr "Tamaño de píxel (µm)"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Plate (mm)"
+msgstr "Cama (mm)"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Build height (mm)"
+msgstr "Altura de impresión (mm)"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Give the pixel size or the plate size: the other one follows."
+msgstr "Poné el tamaño de píxel o el de la cama: el otro sale solo."
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "File format"
+msgstr "Formato de archivo"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Mirror the image in X"
+msgstr "Espejar la imagen en X"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Mirror the image in Y"
+msgstr "Espejar la imagen en Y"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "The file stores the image turned a quarter (like the Halot One)"
+msgstr "El archivo guarda la imagen girada un cuarto de vuelta (como la Halot One)"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Grey levels (anti-aliasing)"
+msgstr "Niveles de gris (antialias)"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Delete printer"
+msgstr "Borrar impresora"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Save"
+msgstr "Guardar"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Empty form"
+msgstr "Formulario vacío"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Delete printer?"
+msgstr "¿Borrar la impresora?"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "A printer with this manufacturer and name already exists."
+msgstr "Ya hay una impresora con este fabricante y modelo."
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Resolution X"
+msgstr "Resolución X"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Resolution Y"
+msgstr "Resolución Y"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Pixel size X"
+msgstr "Tamaño de píxel X"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Pixel size Y"
+msgstr "Tamaño de píxel Y"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Plate X"
+msgstr "Cama X"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Plate Y"
+msgstr "Cama Y"
+
+#: ui/printer-dialog.slint
+msgctxt "PrinterDialog"
+msgid "Build height"
+msgstr "Altura de impresión"
+
+#: src/printer_form/mod.rs
+#, rust-format
+msgctxt "PrinterDialog"
+msgid "{} (copy)"
+msgstr "{} (copia)"
+
+#: src/printer_form/mod.rs
+#, rust-format
+msgctxt "PrinterDialog"
+msgid "Deleting {} removes the printer you added. Resins keep their settings for it."
+msgstr "Borrar {} quita la impresora que agregaste. Las resinas conservan sus ajustes para ella."
+
+#: src/printer_form/mod.rs
+#, rust-format
+msgctxt "PrinterDialog"
+msgid "Plate {} × {} mm, pixels of {} × {} µm."
+msgstr "Cama de {} × {} mm, píxeles de {} × {} µm."
+
+#: src/printer_form/mod.rs
+#, rust-format
+msgctxt "PrinterDialog"
+msgid "{} is missing."
+msgstr "Falta {}."
+
+#: src/printer_form/mod.rs
+#, rust-format
+msgctxt "PrinterDialog"
+msgid "{} is not a number."
+msgstr "{} no es un número."
+
+#: src/printer_form/mod.rs
+#, rust-format
+msgctxt "PrinterDialog"
+msgid "{} is out of range ({})."
+msgstr "{} está fuera de rango ({})."
+
+#: src/printer_form/mod.rs
+#, rust-format
+msgctxt "PrinterDialog"
+msgid "Give the pixel size or the plate size for {}."
+msgstr "Poné el tamaño de píxel o el de la cama para {}."
+
+#: src/printer_form/mod.rs
+#, rust-format
+msgctxt "PrinterDialog"
+msgid "{} is {} mm, but the pixels make {} mm. Leave one of the two empty."
+msgstr "{} dice {} mm, pero los píxeles dan {} mm. Dejá uno de los dos vacío."
