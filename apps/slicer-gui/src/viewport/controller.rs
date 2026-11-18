@@ -89,6 +89,10 @@ pub(crate) const ISLAND_VIEW_PITCH: f32 = -0.61;
 /// surface around a model's vertices, read on a worker (#498).
 const MAP_WAIT_PING_MS: u64 = 100;
 
+/// The layers the slider of the tabs before Slice cuts the view by (#611):
+/// the thinnest layer most resins print.
+const PREP_LAYER_MM: f64 = 0.05;
+
 /// A plate's name being edited where it lies (#545): the plate, the text so
 /// far, and the bytes its caret and the selection's other end stand at.
 pub(crate) struct NameBeingEdited {
@@ -647,7 +651,10 @@ impl ViewportController {
             self.paint_owed.set(true);
         }
         match event {
-            SceneEvent::Installed => self.on_scene_installed(),
+            SceneEvent::Installed => {
+                self.on_scene_installed();
+                self.mirror_prep_layers_to_ui();
+            }
             SceneEvent::Cleared => self.on_scene_cleared(),
             SceneEvent::Painted => self.mark_dirty(),
             SceneEvent::PlatesChanged => self.on_plates_changed(),
@@ -666,6 +673,7 @@ impl ViewportController {
                 // Whether the active plate is empty, once a gesture lands.
                 if !self.gesture_active() {
                     self.mirror_plates_to_ui();
+                    self.mirror_prep_layers_to_ui();
                 }
             }
             SceneEvent::Restructured => {
@@ -681,6 +689,7 @@ impl ViewportController {
                     self.refresh_object_list_on(&ui);
                 }
                 self.mirror_plates_to_ui();
+                self.mirror_prep_layers_to_ui();
                 self.mark_dirty();
             }
             SceneEvent::SliceChanged => {
@@ -704,6 +713,36 @@ impl ViewportController {
     fn mirror_dirty_state_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_scene_dirty(self.session.document().is_dirty());
+        }
+    }
+
+    /// Sizes the layer slider of the other tabs (#611): layers of
+    /// [`PREP_LAYER_MM`] up to the top of the scene. A slider left at the top
+    /// stays at the top, so it never cuts a model that grew.
+    fn mirror_prep_layers_to_ui(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let top = self
+            .session
+            .document()
+            .with_scene(|spatial| {
+                (0..)
+                    .map_while(|i| spatial.leaf_id_at_index(i))
+                    .filter_map(|id| {
+                        let q = spatial.leaf(id)?;
+                        let b = q.transformed_aabb(q.world_transform())?;
+                        Some(f64::from(b.max().coords()[2]))
+                    })
+                    .fold(0.0f64, f64::max)
+            })
+            .unwrap_or(0.0);
+        let count = (top / PREP_LAYER_MM).ceil().max(0.0) as i32;
+        let before = ui.get_prep_layer_count();
+        let at = ui.get_prep_layer_index();
+        ui.set_prep_layer_count(count);
+        if at >= (before - 1) as f32 || at > (count - 1) as f32 {
+            ui.set_prep_layer_index((count - 1).max(0) as f32);
         }
     }
 
@@ -5323,7 +5362,15 @@ impl ViewportController {
         let clip_z = crate::workspace_section::clip_z_from(
             self.session.section(),
             self.session.document().slice_layer_top_z(selected_layer),
-        );
+        )
+        .or_else(|| {
+            // The other tabs cut the view where their slider stands (#611);
+            // at the top, nothing.
+            let count = ui.get_prep_layer_count();
+            let at = ui.get_prep_layer_index().round() as i32;
+            (self.session.section() != WorkspaceSection::Slice && count > 0 && at < count - 1)
+                .then(|| ((at.max(0) + 1) as f64 * PREP_LAYER_MM) as f32)
+        });
 
         // Slice-view cap: fill the cut with the selected layer's coverage so it
         // reads solid. Keyed on the slice generation plus the layer, so a

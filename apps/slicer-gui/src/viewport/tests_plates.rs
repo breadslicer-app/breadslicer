@@ -899,3 +899,33 @@ fn shift_click_in_the_object_list_takes_a_range() {
     ctrl.on_range_by_index(2);
     assert_eq!(document.selection_node_ids(), leaves[2..=4].to_vec());
 }
+
+/// The tabs before Slice get a layer slider too (#611): layers of 0.05 mm
+/// up to the top of the scene, parked at the top, where it cuts nothing.
+#[test]
+fn the_tabs_before_slice_have_a_layer_slider_to_the_top_of_the_scene() {
+    let ui = MainWindow::new().expect("the headless platform creates a main window");
+    let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&ui));
+    ctrl.register_document_listener();
+    ctrl.set_build_volume(volume());
+    let mut g = Scene::new();
+    let at = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [0.0, 0.0, 0.0],
+    ));
+    let leaf = g
+        .add_leaf(None, at, LeafPayload::Mesh(Arc::new(box_mesh())))
+        .expect("leaf");
+    g.add_root(leaf).expect("root");
+    ctrl.install_graph_for_test(g);
+    let top = ctrl
+        .document()
+        .with_scene(|s| {
+            let q = s.leaf(leaf).unwrap();
+            q.transformed_aabb(q.world_transform()).unwrap().max().coords()[2]
+        })
+        .unwrap();
+    let count = ui.get_prep_layer_count();
+    assert_eq!(count, (f64::from(top) / 0.05).ceil() as i32);
+    assert_eq!(ui.get_prep_layer_index(), (count - 1) as f32, "at the top");
+}
