@@ -37,7 +37,7 @@ use super::preferences_follow::follow_preferences;
 #[derive(Clone)]
 enum Purpose {
     Add,
-    Edit(PrinterProfile),
+    Edit(Box<PrinterProfile>),
 }
 
 /// Opens the form. With `edit`, it opens on the selected printer when the user
@@ -58,7 +58,7 @@ pub(super) fn open_printer_dialog(
     let purpose = match (edit, &selected) {
         (true, Some((id, index))) if catalog.printers()[*index].source == ProfileSource::User => {
             match libraries.load_printer_by_id(id) {
-                Ok(profile) => Purpose::Edit(profile),
+                Ok(profile) => Purpose::Edit(Box::new(profile)),
                 Err(err) => {
                     eprintln!("cannot open printer {id}: {err}");
                     return;
@@ -87,7 +87,7 @@ pub(super) fn open_printer_dialog(
     )));
     // The printers to start from, after the empty form.
     let starts: Vec<PrinterId> = catalog.printers().iter().map(|e| e.id.clone()).collect();
-    let mut names = vec![SharedString::from(ctr!("PrinterDialog", "Empty form"))];
+    let mut names = vec![ctr!("PrinterDialog", "Empty form")];
     names.extend(
         catalog
             .printers()
@@ -101,7 +101,7 @@ pub(super) fn open_printer_dialog(
         Purpose::Edit(profile) => {
             dialog.set_editing(true);
             fill(&dialog, &draft_of(profile), &formats);
-            *base.borrow_mut() = Some(profile.clone());
+            *base.borrow_mut() = Some((**profile).clone());
         }
         Purpose::Add => {
             dialog.set_editing(false);
@@ -245,7 +245,7 @@ pub(super) fn open_printer_dialog(
                 catalog_handle: catalog_handle.clone(),
                 refresh_view: refresh_view.clone(),
                 slot: slot.clone(),
-                profile: profile.clone(),
+                profile: (**profile).clone(),
             });
         }
     });

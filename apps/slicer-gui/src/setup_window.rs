@@ -158,7 +158,7 @@ fn groups(catalog: &ProfileCatalog) -> (Vec<Group>, Vec<PickNav>) {
     let mut groups = vec![Group::Popular, Group::Mine, Group::All];
     let mut nav = vec![
         PickNav {
-            label: ctr!("PrinterPicker", "Popular").into(),
+            label: ctr!("PrinterPicker", "Popular"),
             count: printers
                 .iter()
                 .filter(|e| popular_rank(e).is_some())
@@ -166,7 +166,7 @@ fn groups(catalog: &ProfileCatalog) -> (Vec<Group>, Vec<PickNav>) {
             rule: false,
         },
         PickNav {
-            label: ctr!("PrinterPicker", "My printers").into(),
+            label: ctr!("PrinterPicker", "My printers"),
             count: printers
                 .iter()
                 .filter(|e| e.source == ProfileSource::User)
@@ -174,7 +174,7 @@ fn groups(catalog: &ProfileCatalog) -> (Vec<Group>, Vec<PickNav>) {
             rule: false,
         },
         PickNav {
-            label: ctr!("PrinterPicker", "All printers").into(),
+            label: ctr!("PrinterPicker", "All printers"),
             count: printers.len() as i32,
             rule: true,
         },

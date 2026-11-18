@@ -1663,7 +1663,7 @@ mod again_tests {
             assert!(document.undo().unwrap());
             assert_eq!(document.undo_len(), steps);
             let lifted = document
-                .with_scene(|spatial| crate::raft_clash::model_bottoms(spatial))
+                .with_scene(crate::raft_clash::model_bottoms)
                 .unwrap();
             assert!(
                 lifted.iter().all(|&(_, z)| z > 5.0),
