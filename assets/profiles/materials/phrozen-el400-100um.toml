@@ -1,0 +1,100 @@
+[identity]
+id = "phrozen-el400-100um"
+brand = "Phrozen"
+family = "standard"
+name = "EL400 (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.phrozen-sonic-mega-8k]
+normal_exposure_sec = 15.0
+bottom_exposure_sec = 32.5
+bottom_layer_count = 6
+wait_before_cure_sec = 14.0
+bottom_wait_before_cure_sec = 14.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 130.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 45.0
+bottom_retract_speed_mm_min = 130.0
+
+[per_printer.phrozen-sonic-mighty-4k]
+normal_exposure_sec = 15.0
+bottom_exposure_sec = 27.5
+bottom_layer_count = 6
+lift_distance_mm = 10.0
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 130.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 45.0
+bottom_retract_speed_mm_min = 130.0
+
+[per_printer.phrozen-sonic-mighty-8k]
+normal_exposure_sec = 12.5
+bottom_exposure_sec = 27.5
+bottom_layer_count = 6
+wait_before_cure_sec = 11.5
+bottom_wait_before_cure_sec = 11.5
+lift_distance_mm = 10.0
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 130.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 45.0
+bottom_retract_speed_mm_min = 130.0
+
+[per_printer.phrozen-sonic-mighty-revo]
+normal_exposure_sec = 12.5
+bottom_exposure_sec = 27.5
+bottom_layer_count = 6
+wait_before_cure_sec = 12.0
+bottom_wait_before_cure_sec = 12.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 130.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 45.0
+bottom_retract_speed_mm_min = 130.0
+
+[per_printer.phrozen-sonic-mini-4k]
+normal_exposure_sec = 11.0
+bottom_exposure_sec = 22.5
+bottom_layer_count = 6
+lift_distance_mm = 10.0
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 130.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 45.0
+bottom_retract_speed_mm_min = 130.0
+
+[per_printer.phrozen-sonic-mini-8k]
+normal_exposure_sec = 12.5
+bottom_exposure_sec = 22.5
+bottom_layer_count = 6
+wait_before_cure_sec = 9.0
+bottom_wait_before_cure_sec = 9.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 130.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 45.0
+bottom_retract_speed_mm_min = 130.0
+
+[per_printer.phrozen-sonic-mini-8k-s]
+normal_exposure_sec = 11.0
+bottom_exposure_sec = 22.5
+bottom_layer_count = 6
+wait_before_cure_sec = 9.0
+bottom_wait_before_cure_sec = 9.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 130.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 45.0
+bottom_retract_speed_mm_min = 130.0

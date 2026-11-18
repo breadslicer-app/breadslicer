@@ -40,10 +40,15 @@ const RESINS_WITHOUT_A_FIGURE: [&str; 1] = [
 /// which state no density; their data sheets are still to be read. The
 /// owner's hand-written profiles are listed apart, above. Piocreat: the
 /// resins Creality's Halot X1 page tunes, which states no density either.
-const UNRESEARCHED: [fn(&str) -> bool; 3] = [
+/// Phrozen, BASF Forward AM and Loctite: the resins Phrozen's settings
+/// service tunes, which states a density for one resin only.
+const UNRESEARCHED: [fn(&str) -> bool; 6] = [
     |id| id.starts_with("anycubic-") && !OWNER_PRINT_SETTINGS.contains(&id),
     |id| id.starts_with("creality-") && !OWNER_PRINT_SETTINGS.contains(&id),
     |id| id.starts_with("piocreat-"),
+    |id| id.starts_with("phrozen-"),
+    |id| id.starts_with("basf-forward-am-"),
+    |id| id.starts_with("loctite-"),
 ];
 
 /// Resins whose vendor publishes no density for any of them, as tests

@@ -1,0 +1,100 @@
+[identity]
+id = "phrozen-aqua-macaroon-resin-purple-50um"
+brand = "Phrozen"
+family = "standard"
+name = "Aqua Macaroon Resin Purple (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.phrozen-sonic-mega-8k]
+normal_exposure_sec = 4.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 6
+wait_before_cure_sec = 4.0
+bottom_wait_before_cure_sec = 4.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mighty-4k]
+normal_exposure_sec = 4.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 6
+lift_distance_mm = 8.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mighty-8k]
+normal_exposure_sec = 4.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 6
+wait_before_cure_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mighty-revo]
+normal_exposure_sec = 4.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 6
+wait_before_cure_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mini-4k]
+normal_exposure_sec = 3.5
+bottom_exposure_sec = 20.0
+bottom_layer_count = 6
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mini-8k]
+normal_exposure_sec = 4.8
+bottom_exposure_sec = 20.0
+bottom_layer_count = 6
+wait_before_cure_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mini-8k-s]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 15.0
+bottom_layer_count = 6
+wait_before_cure_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
