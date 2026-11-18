@@ -54,6 +54,7 @@ fn sample_material_resolved() -> MaterialResolved {
             family: NonEmptyString::new("Standard Resin").unwrap(),
             name: NonEmptyString::new("Standard Grey").unwrap(),
             profile_version: Version::new(1, 0, 0),
+            origin: None,
         },
         layer_height_mm: PositiveFiniteMm::new(0.05).unwrap(),
         normal_exposure_sec: PositiveFiniteSec::new(2.5).unwrap(),

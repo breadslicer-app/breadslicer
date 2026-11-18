@@ -420,6 +420,7 @@ impl PanelUpdate {
             | PreferencesChange::LastOpenDir
             | PreferencesChange::StartDialog
             | PreferencesChange::RecentFiles
+            | PreferencesChange::ResinPrices
             | PreferencesChange::PrescanSupports
             | PreferencesChange::SmoothModels
             | PreferencesChange::FrameRate

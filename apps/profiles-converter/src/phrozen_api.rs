@@ -330,6 +330,7 @@ impl ProfileReader for PhrozenApiReader {
                         name: NonEmptyString::new(&format!("{named} ({} um)", microns(height)))
                             .expect("not empty"),
                         profile_version: Version::new(1, 0, 0),
+                        origin: None,
                     },
                     intent: MaterialIntent {
                         target_energy_density_mj_per_cm2: None,

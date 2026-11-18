@@ -832,6 +832,7 @@ impl ReviewPanel {
         };
         if self.markable_models().is_none() || plan.is_empty() {
             self.supports.show_status(self.after_yes());
+            self.supports.tell_edges_if_pending();
             return;
         }
         crate::breadcrumbs::note(&format!("review: {kind:?} on its own, up to {REPEAT_PASSES} passes"));
@@ -1008,6 +1009,7 @@ impl ReviewPanel {
         {
             self.supports.show_status(message.clone());
         }
+        self.supports.tell_edges_if_pending();
         self.push(message);
     }
 
@@ -1498,6 +1500,7 @@ impl ReviewPanel {
         // A run nobody pressed for ends in the status bar (#606).
         if by_run && self.quiet_run.replace(false) {
             self.supports.show_status(self.after_yes());
+            self.supports.tell_edges_if_pending();
         }
         if yes {
             self.push(Some(self.after_yes()));

@@ -20,6 +20,7 @@ fn sample_identity() -> MaterialIdentity {
         family: NonEmptyString::new("Standard Resin").unwrap(),
         name: NonEmptyString::new("Standard Grey").unwrap(),
         profile_version: Version::new(1, 0, 0),
+        origin: None,
     }
 }
 

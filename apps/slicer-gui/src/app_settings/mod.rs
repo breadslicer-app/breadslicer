@@ -573,6 +573,11 @@ pub(crate) struct AppSettings {
     /// diagnostics file leaves them out. Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     recent_files: Vec<RecentFile>,
+    /// What the user pays for each resin (#101): bottle price and content,
+    /// and what a print loses on top of what it cures. Not in the profiles:
+    /// it changes with the country and the shop. Omitted in TOML while empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    resin_prices: BTreeMap<MaterialId, crate::resin_cost::ResinPrice>,
 }
 
 impl Default for AppSettings {
@@ -605,6 +610,7 @@ impl Default for AppSettings {
             last_open_dir: None,
             show_start_dialog: default_show_start_dialog(),
             recent_files: Vec::new(),
+            resin_prices: BTreeMap::new(),
         }
     }
 }
@@ -1007,6 +1013,17 @@ impl AppSettings {
 
     pub(crate) fn set_recent_files(&mut self, files: Vec<RecentFile>) {
         self.recent_files = files;
+    }
+
+    pub(crate) fn resin_prices(&self) -> BTreeMap<MaterialId, crate::resin_cost::ResinPrice> {
+        self.resin_prices.clone()
+    }
+
+    pub(crate) fn set_resin_prices(
+        &mut self,
+        prices: BTreeMap<MaterialId, crate::resin_cost::ResinPrice>,
+    ) {
+        self.resin_prices = prices;
     }
 }
 

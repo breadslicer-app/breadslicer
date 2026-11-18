@@ -61,13 +61,23 @@ fn save_resins(
     printer: &PrinterId,
     ours: &str,
     source: &str,
+    file: &Path,
     library: &Path,
     report: &mut ImportReport,
 ) -> Result<(), String> {
+    // Where each came from (#20): the file, and the day.
+    let origin = sc_print_profiles::ProfileOrigin::imported_from(
+        &file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        &crate::profile_origin::today(),
+    );
     for resin in resins {
-        let Some(profile) = material_profile(resin, printer, source) else {
+        let Some(mut profile) = material_profile(resin, printer, source) else {
             continue;
         };
+        profile.identity.origin = Some(origin.clone());
         save_material_profile_to_library(library, &profile).map_err(|e| e.to_string())?;
         let name = format!("{} {}", profile.identity.brand, profile.identity.name);
         if !resin.not_imported.is_empty() {
@@ -133,7 +143,15 @@ pub(crate) fn import_file(
                 |e| format!("{} {}", e.manufacturer, e.name),
             );
         let mut report = ImportReport::default();
-        save_resins(&resins, &printer, &ours, "lychee", library, &mut report)?;
+        save_resins(
+            &resins,
+            &printer,
+            &ours,
+            "lychee",
+            path,
+            library,
+            &mut report,
+        )?;
         return Ok(report);
     }
     let source = if extension.eq_ignore_ascii_case("lyp") {
@@ -155,7 +173,15 @@ pub(crate) fn import_file(
             .iter()
             .find(|p| p.identity.id == id)
             .map_or_else(|| id.as_str().to_owned(), |p| p.identity.name.to_string());
-        save_resins(&printer.resins, &id, &ours, source, library, &mut report)?;
+        save_resins(
+            &printer.resins,
+            &id,
+            &ours,
+            source,
+            path,
+            library,
+            &mut report,
+        )?;
     }
     Ok(report)
 }
@@ -329,6 +355,8 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("normal_exposure_sec = 1.4"), "{text}");
+        // It says the file it came from (#20).
+        assert!(text.contains("imported_from = "), "{text}");
     }
 
     /// #618: a Lychee resin file goes to the printer its name names, else

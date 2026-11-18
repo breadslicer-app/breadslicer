@@ -31,6 +31,7 @@ struct Window {
     ctrl: Rc<ViewportController>,
     document: Rc<SceneDocument>,
     slice: Rc<SliceRun>,
+    cost: Rc<crate::resin_cost::ResinCostPanel>,
     /// The cube on the first plate and the one on the second.
     cubes: [NodeId; 2],
 }
@@ -54,7 +55,7 @@ fn two_plates() -> Window {
     let window = MainWindow::new().expect("the headless platform creates a main window");
     let bus = PreferencesBus::new(PreferencesSnapshot {
         default_printer: Some(PrinterId::new("elegoo-saturn-4-ultra").expect("valid id")),
-        default_resin: Some(MaterialId::new("standard-405").expect("valid id")),
+        default_resin: Some(MaterialId::new("siraya-tech-blu-easy-grey").expect("valid id")),
         ..PreferencesSnapshot::for_tests()
     });
     let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));
@@ -86,6 +87,12 @@ fn two_plates() -> Window {
         supports,
         hollow,
     );
+    let cost = crate::resin_cost::ResinCostPanel::install(
+        &window,
+        bus.clone(),
+        document.clone(),
+        ctrl.clone(),
+    );
     let slice = SliceRun::install(
         &window,
         bus,
@@ -101,6 +108,7 @@ fn two_plates() -> Window {
         ctrl,
         document,
         slice,
+        cost,
         cubes: [first, other],
     }
 }
@@ -288,4 +296,144 @@ fn back_on_a_plate_its_slice_comes_back() {
             "plate 1 changed: its slice is not brought back"
         );
     });
+}
+
+/// A plate whose model sticks out of it is not sliced (tester,
+/// 2026-11-18): the card names it and offers Arrange all; back on the
+/// plate, it slices.
+#[test]
+fn a_model_past_the_plate_is_not_sliced() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        w.document.set_active_plate(0);
+        let heading = "Models past the plate";
+        let told = || {
+            w.ctrl
+                .dialogs()
+                .error_headings_for_test()
+                .iter()
+                .filter(|h| h.as_str() == heading)
+                .count()
+        };
+        let nudge = |dx: f32| {
+            let edit = crate::plate_layout::moved_by(
+                &w.document,
+                w.cubes[0],
+                glam::Vec3::new(dx, 0.0, 0.0),
+            )
+            .expect("a move");
+            w.document.apply_edit(edit.clone()).expect("applies");
+            w.document.push_edit(edit);
+        };
+        // The 10 mm cube 50 mm left of the centre, moved 58 mm more: 3.56 mm
+        // past the plate's left edge.
+        nudge(-58.0);
+        w.window.invoke_slice_requested();
+        assert!(!w.window.get_slicing_in_progress(), "nothing sliced");
+        assert_eq!(told(), 1);
+        nudge(58.0);
+        w.press_slice();
+        assert_eq!(told(), 1, "back on the plate, it slices");
+    });
+}
+
+/// With `BREADSLICER_UI_SHOTS` naming a folder, the Slice tab of a short
+/// window after a slice (#628): the tab scrolls as a whole,
+/// so the review keeps its room; scrolled to the top and to the bottom.
+#[test]
+fn the_slice_tab_of_a_short_window_is_pictured_when_asked() {
+    let Some(dir) = std::env::var_os("BREADSLICER_UI_SHOTS").map(PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("the folder is made");
+    on_fresh_slint_thread(move || {
+        let w = two_plates();
+        w.window.show().expect("the window shows");
+        w.window
+            .window()
+            .set_size(slint::LogicalSize::new(1280.0, 720.0));
+        w.window.set_has_scene(true);
+        w.ctrl.register_document_listener();
+        w.document.set_active_plate(0);
+        w.press_slice();
+        w.window.invoke_slice_price_edited(0, "30".into());
+        w.window.invoke_slice_price_edited(1, "$".into());
+        w.window.invoke_slice_price_edited(2, "1000".into());
+        let shot = |name: &str| {
+            crate::test_support::slint_thread::render_frames();
+            let picture = w.window.window().take_snapshot().expect("a snapshot");
+            image::RgbaImage::from_raw(
+                picture.width(),
+                picture.height(),
+                picture.as_bytes().to_vec(),
+            )
+            .expect("RGBA")
+            .save(dir.join(format!("slice-short-{name}.png")))
+            .expect("written");
+        };
+        shot("top");
+        w.window
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(1150.0, 400.0),
+                delta_x: 0.0,
+                delta_y: -2000.0,
+            });
+        shot("bottom");
+    });
+}
+
+/// The resin's price makes the cost of the print (#101): the resin it
+/// cures at the bottle's price per ml, with the losses on top; weighing what
+/// the bottle lost sets the losses.
+#[test]
+fn a_priced_resin_tells_what_the_print_costs() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        // The estimate is worked out as the window's controller hears of the
+        // slice.
+        w.ctrl.register_document_listener();
+        w.document.set_active_plate(1);
+        w.press_slice();
+        let estimate = w.ctrl.last_estimate().unwrap_or_else(|| {
+            panic!(
+                "an estimate: {} ({})",
+                w.window.get_slice_estimate_note(),
+                w.window.get_slice_estimate_valid()
+            )
+        });
+        assert_eq!(w.window.get_slice_cost(), "", "no price yet");
+        assert!(!w.window.get_slice_cost_note().is_empty());
+        w.window.invoke_slice_price_edited(1, "$".into());
+        w.window.invoke_slice_price_edited(0, "30".into());
+        w.window.invoke_slice_price_edited(2, "1000".into());
+        let cost = estimate.volume_ml * 30.0 / 1000.0;
+        assert_eq!(
+            w.window.get_slice_cost().as_str(),
+            crate::resin_cost::money("$", cost)
+        );
+        // Weighed: 10 % more than the slice cures.
+        let liquid = estimate.liquid_g.expect("the resin gives a density");
+        w.window
+            .invoke_slice_price_edited(4, format!("{:.4}", liquid * 1.1).into());
+        assert_eq!(w.window.get_slice_price_losses().as_str(), "10.0");
+        assert_eq!(
+            w.window.get_slice_cost().as_str(),
+            crate::resin_cost::money("$", cost * 1.1)
+        );
+        // Kept for the resin, and an emptied price takes it away.
+        let snapshot = w.cost_bus_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        w.window.invoke_slice_price_edited(0, "".into());
+        assert_eq!(w.window.get_slice_cost(), "");
+        assert!(w.cost_bus_snapshot().is_empty());
+    });
+}
+
+impl Window {
+    fn cost_bus_snapshot(
+        &self,
+    ) -> std::collections::BTreeMap<MaterialId, crate::resin_cost::ResinPrice> {
+        self.cost.prices_for_test()
+    }
 }

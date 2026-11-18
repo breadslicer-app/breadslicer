@@ -747,6 +747,7 @@ fn new_profile(
             name,
             profile_version: Version::new(1, 0, 0),
             image_asset_path: None,
+            origin: None,
         },
         hardware: catalogued.hardware,
         capabilities: PrinterCapabilities {

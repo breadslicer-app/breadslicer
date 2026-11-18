@@ -23,4 +23,7 @@ pub struct PrinterIdentity {
     pub profile_version: Version,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_asset_path: Option<ImageAssetRef>,
+    /// Where it came from, for a profile of the user's own (#20).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<crate::profile_origin::ProfileOrigin>,
 }

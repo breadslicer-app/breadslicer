@@ -130,6 +130,9 @@ enum Kind {
         /// The user's own printer being changed, which keeps its id.
         editing: Option<PrinterId>,
         formats: Vec<PrinterFileFormat>,
+        /// The latest prints exported for it (#45), whose real times fit
+        /// its print time.
+        prints: Vec<crate::print_log::PrintRecord>,
     },
     Resin {
         base: MaterialProfile,
@@ -266,6 +269,12 @@ impl Form {
                     .map(|p| p.identity.id.clone()),
                 base: profile.clone(),
                 formats: formats.clone(),
+                prints: match (&profile, crate::print_log::log_path()) {
+                    (Some(p), Some(log)) => {
+                        crate::print_log::latest_of(&log, p.identity.id.as_str())
+                    }
+                    _ => Vec::new(),
+                },
             },
             texts: HashMap::new(),
             checks: HashMap::new(),
@@ -343,6 +352,7 @@ impl Form {
             t.insert("time_mult".into(), read(&tc, &["print_time_multiplier"]));
             t.insert("time_offset".into(), read(&tc, &["print_time_offset_sec"]));
             t.insert("time_layer".into(), read(&tc, &["per_layer_overhead_sec"]));
+            t.insert("time_error".into(), read(&tc, &["print_time_error_sec"]));
             form.checks.insert("two_stage".into(), caps.two_stage_lift);
         }
         form.checks.insert("mirror_x".into(), draft.mirror_x);
@@ -504,6 +514,7 @@ impl Form {
                 base,
                 editing,
                 formats,
+                ..
             } => self.shown_printer(base.as_ref(), editing.is_some(), formats),
             Kind::Resin {
                 base,
@@ -622,6 +633,35 @@ impl Form {
                 ],
             ),
         ];
+        let mut right = right;
+        // The prints exported for it (#45): how long each really took fits
+        // its print time.
+        if !self.prints().is_empty() {
+            let fields = self
+                .prints()
+                .iter()
+                .enumerate()
+                .map(|(i, print)| {
+                    let key = format!("real_{i}");
+                    number(
+                        &key,
+                        ctr!(
+                            "PrinterPicker",
+                            "{} · {} · estimated {}",
+                            print.file,
+                            print.at,
+                            crate::export_print_file::format_duration(print.estimate_sec)
+                        ),
+                        "h:mm",
+                        &self.t(&key),
+                    )
+                })
+                .collect();
+            right.push(section(
+                ctr!("PrinterPicker", "HOW LONG YOUR PRINTS TOOK"),
+                fields,
+            ));
+        }
         let draft = self.draft(formats);
         let summary = match panel_of(&draft) {
             (Some(x), Some(y)) => ctr!(
@@ -634,6 +674,33 @@ impl Form {
             )
             .to_string(),
             _ => String::new(),
+        };
+        // The tilt at which a wall moves one pixel a layer (#273, #95).
+        let summary = match panel_of(&draft) {
+            (Some(x), Some(y)) if x.pixel_um > 0.0 && y.pixel_um > 0.0 => {
+                let tilt = |pixel_um: f64| (pixel_um / 1000.0 / 0.05).atan().to_degrees();
+                let line = ctr!(
+                    "PrinterPicker",
+                    "At 0.05 mm layers, a wall tilted {}° (X) or {}° (Y) from upright moves one pixel a layer.",
+                    format!("{:.1}", tilt(x.pixel_um)),
+                    format!("{:.1}", tilt(y.pixel_um))
+                );
+                if summary.is_empty() {
+                    line.to_string()
+                } else {
+                    format!(
+                        "{summary}
+{line}"
+                    )
+                }
+            }
+            _ => summary,
+        };
+        let fit = self.time_fit_line();
+        let summary = match (summary.is_empty(), fit.is_empty()) {
+            (_, true) => summary,
+            (true, false) => fit,
+            (false, false) => format!("{summary}\n{fit}"),
         };
         let title = match base {
             Some(p) if mine => format!(
@@ -659,7 +726,8 @@ impl Form {
             right,
             summary,
             note: if mine {
-                String::new()
+                // Where it came from (#20).
+                crate::profile_origin::line(base.and_then(|b| b.identity.origin.as_ref()))
             } else {
                 ctr!(
                     "PrinterPicker",
@@ -879,13 +947,17 @@ impl Form {
             chip: at,
             left,
             right,
-            summary: String::new(),
+            summary: self.light_off_lines(),
             note: if mine {
-                ctr!(
+                let slots = ctr!(
                     "PrinterPicker",
                     "Every slot is always there; an empty one shows “—”. The printer above picks whose settings show."
-                )
-                .to_string()
+                );
+                // Where it came from (#20).
+                match crate::profile_origin::line(base.identity.origin.as_ref()) {
+                    origin if origin.is_empty() => slots.to_string(),
+                    origin => format!("{origin}. {slots}"),
+                }
             } else {
                 ctr!(
                     "PrinterPicker",
@@ -932,11 +1004,19 @@ impl Form {
         materials: &BTreeSet<MaterialId>,
     ) -> Result<Saved, String> {
         match &self.kind {
-            Kind::Printer {
-                base,
-                editing,
-                formats,
-            } => {
+            Kind::Printer { .. } => {
+                if let Some(fit) = self.time_fit() {
+                    self.apply_time_fit(fit);
+                }
+                let (base, editing, formats) = match &self.kind {
+                    Kind::Printer {
+                        base,
+                        editing,
+                        formats,
+                        ..
+                    } => (base, editing, formats),
+                    Kind::Resin { .. } => unreachable!("matched a printer"),
+                };
                 let printer =
                     self.built_printer(base.as_ref(), editing.as_ref(), formats, printers)?;
                 save_printer_profile_to_library(library, &printer).map_err(|e| e.to_string())?;
@@ -952,6 +1032,149 @@ impl Form {
                 save_edited_profile(library, &resin, EditedProfileKind::Full)?;
                 Ok(Saved::Resin(resin.identity.id))
             }
+        }
+    }
+
+    /// What a layer of the block shown spends with the light off (#273,
+    /// #95): the platform's rise and return and the waits, as typed, for
+    /// the layers and the bottom layers.
+    fn light_off_lines(&self) -> String {
+        let num = |key: &str| {
+            crate::resin_cost::parse_number(&self.t(key)).filter(|v| v.is_finite() && *v >= 0.0)
+        };
+        let travel = |distance: &str, speed: &str| match (num(distance), num(speed)) {
+            (Some(d), Some(v)) if v > 0.0 => Some(d / v * 60.0),
+            (Some(0.0), _) => Some(0.0),
+            (None, _) => Some(0.0),
+            _ => None,
+        };
+        let off = |prefix: &str| -> Option<f64> {
+            let key = |k: &str| format!("{prefix}{k}");
+            let lift = travel(&key("lift_distance_mm"), &key("lift_speed_mm_min"))?;
+            let back = travel(&key("lift_distance_mm"), &key("retract_speed_mm_min"))?;
+            let lift2 = travel(
+                &key("second_lift_distance_mm"),
+                &key("second_lift_speed_mm_min"),
+            )?;
+            let back2 = travel(
+                &key("second_lift_distance_mm"),
+                &key("second_retract_speed_mm_min"),
+            )?;
+            let waits: f64 = [
+                "wait_before_cure_sec",
+                "wait_after_cure_sec",
+                "wait_after_lift_sec",
+            ]
+            .iter()
+            .map(|k| num(&key(k)).unwrap_or(0.0))
+            .sum();
+            let light_off = lift + back + lift2 + back2 + waits;
+            (light_off > 0.0).then_some(light_off)
+        };
+        let mut lines = Vec::new();
+        if let Some(light_off) = off("") {
+            let exposure = num("normal_exposure_sec").unwrap_or(0.0);
+            lines.push(
+                ctr!(
+                    "PrinterPicker",
+                    "Between layers the light is off for {} s (rise, return and waits); a layer takes {} s.",
+                    tidy((light_off * 100.0).round() / 100.0),
+                    tidy(((light_off + exposure) * 100.0).round() / 100.0)
+                )
+                .to_string(),
+            );
+        }
+        if let Some(light_off) = off("bottom_") {
+            let exposure = num("bottom_exposure_sec").unwrap_or(0.0);
+            lines.push(
+                ctr!(
+                    "PrinterPicker",
+                    "Bottom layers: the light is off for {} s; a layer takes {} s.",
+                    tidy((light_off * 100.0).round() / 100.0),
+                    tidy(((light_off + exposure) * 100.0).round() / 100.0)
+                )
+                .to_string(),
+            );
+        }
+        lines.join(
+            "
+",
+        )
+    }
+
+    /// The prints offered to time, as the form holds them.
+    fn prints(&self) -> &[crate::print_log::PrintRecord] {
+        match &self.kind {
+            Kind::Printer { prints, .. } => prints,
+            Kind::Resin { .. } => &[],
+        }
+    }
+
+    /// What the real times typed for the prints say (#45).
+    fn time_fit(&self) -> Option<crate::print_log::TimeFit> {
+        let points: Vec<(f64, u32, f64)> = self
+            .prints()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, print)| {
+                let real = crate::print_log::parse_duration(&self.t(&format!("real_{i}")))?;
+                Some((print.schedule_sec, print.layers, real))
+            })
+            .collect();
+        crate::print_log::fit(&points)
+    }
+
+    /// The fit into the print time's fields: it replaces what they held.
+    fn apply_time_fit(&mut self, fit: crate::print_log::TimeFit) {
+        let tidy3 = |v: f64| tidy((v * 1000.0).round() / 1000.0);
+        self.texts.insert("time_mult".into(), String::new());
+        self.texts
+            .insert("time_offset".into(), tidy3(fit.per_print_sec));
+        self.texts
+            .insert("time_layer".into(), tidy3(fit.per_layer_sec));
+        self.texts.insert(
+            "time_error".into(),
+            fit.error_sec.map(|e| tidy(e.round())).unwrap_or_default(),
+        );
+    }
+
+    /// The line on what the typed times make.
+    fn time_fit_line(&self) -> String {
+        if self.prints().is_empty() {
+            return String::new();
+        }
+        let typed = (0..self.prints().len())
+            .filter(|i| !self.t(&format!("real_{i}")).trim().is_empty())
+            .count();
+        match self.time_fit() {
+            Some(fit) => {
+                let range = fit
+                    .error_sec
+                    .map(|e| {
+                        ctr!(
+                            "PrinterPicker",
+                            ", within ± {}",
+                            crate::export_print_file::format_duration(e.max(1.0))
+                        )
+                        .to_string()
+                    })
+                    .unwrap_or_default();
+                ctr!(
+                    "PrinterPicker",
+                    "From {} of your prints: {} s more a layer and {} more a print{}. Saving keeps it as the print time.",
+                    fit.prints,
+                    tidy((fit.per_layer_sec * 100.0).round() / 100.0),
+                    crate::export_print_file::format_duration(fit.per_print_sec.abs()),
+                    range
+                )
+                .to_string()
+            }
+            None if typed > 0 => ctr!(
+                "PrinterPicker",
+                "Write how long at least 2 prints of different heights took."
+            )
+            .to_string(),
+            None => String::new(),
         }
     }
 
@@ -1044,6 +1267,12 @@ impl Form {
             "per_layer_overhead_sec",
             "time_layer",
             ctr!("PrinterPicker", "Time per layer"),
+        )?;
+        self.put(
+            &mut time,
+            "print_time_error_sec",
+            "time_error",
+            ctr!("PrinterPicker", "Time per print"),
         )?;
         printer.time_calibration = toml::Value::Table(time)
             .try_into::<PrinterTimeCalibration>()
@@ -1212,6 +1441,97 @@ mod tests {
     use super::*;
     use sc_print_profiles::ProfileLibraries;
 
+    /// How long the prints exported for a printer really took fit its
+    /// print time (#45): what each layer and each print cost on top of the
+    /// schedule, and how far the prints came from it.
+    #[test]
+    fn the_real_times_of_its_prints_fit_a_printer_s_print_time() {
+        let base = m7_pro();
+        let mut form = Form::printer(Some(base.clone()), true);
+        // 1.2 s a layer and 150 s a print on top of each schedule.
+        let prints: Vec<(f64, u32)> = vec![(2000.0, 300), (5000.0, 800), (8000.0, 1500)];
+        if let Kind::Printer {
+            prints: offered, ..
+        } = &mut form.kind
+        {
+            *offered = prints
+                .iter()
+                .map(|&(schedule_sec, layers)| crate::print_log::PrintRecord {
+                    printer: base.identity.id.as_str().to_owned(),
+                    file: format!("{layers}.pwsz"),
+                    at: "2026-11-18 14:05".into(),
+                    layers,
+                    schedule_sec,
+                    estimate_sec: schedule_sec,
+                })
+                .collect();
+        }
+        let shown = form.shown();
+        let keys: Vec<String> = shown
+            .right
+            .iter()
+            .flat_map(|s| slint::Model::iter(&s.fields).map(|f| f.key.to_string()))
+            .collect();
+        assert!(keys.iter().any(|k| k == "real_2"), "{keys:?}");
+        for (i, &(schedule, layers)) in prints.iter().enumerate() {
+            let real = schedule + 1.2 * f64::from(layers) + 150.0;
+            form.edited(&format!("real_{i}"), &format!("{}", (real / 60.0)));
+        }
+        assert!(
+            form.shown().summary.contains("3"),
+            "{}",
+            form.shown().summary
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let Saved::Printer(id) = form
+            .save(dir.path(), &BTreeSet::new(), &BTreeSet::new())
+            .unwrap()
+        else {
+            panic!("a printer");
+        };
+        let saved = ProfileLibraries::new(Some(dir.path().into()), Vec::new())
+            .load_printer_by_id(&id)
+            .unwrap();
+        let time = saved.time_calibration;
+        assert_eq!(time.print_time_multiplier, None);
+        assert!((time.per_layer_overhead_sec.unwrap().value() - 1.2).abs() < 1e-3);
+        assert!((time.print_time_offset_sec.unwrap().value() - 150.0).abs() < 1e-2);
+        assert!(time.print_time_error_sec.unwrap().value() < 1.0);
+    }
+
+    /// The resin form says how long the light is off between layers, as
+    /// typed, and the printer form the tilt that moves a pixel a layer
+    /// (#273, #95), checked against the sums by hand.
+    #[test]
+    fn the_forms_work_out_the_light_off_time_and_the_pixel_tilt() {
+        let base = ProfileLibraries::platform_default()
+            .load_material_by_id(&MaterialId::new("siraya-tech-blu-easy-grey").unwrap())
+            .unwrap();
+        let mut form = Form::resin(base, true, None, |id| id.as_str().to_owned());
+        for (key, value) in [
+            ("normal_exposure_sec", "2"),
+            ("lift_distance_mm", "6"),
+            ("lift_speed_mm_min", "60"),
+            ("retract_speed_mm_min", "180"),
+            ("second_lift_distance_mm", ""),
+            ("wait_before_cure_sec", "0.5"),
+            ("wait_after_cure_sec", "0"),
+            ("wait_after_lift_sec", "0"),
+        ] {
+            form.edited(key, value);
+        }
+        // 6 mm at 1 mm/s up, at 3 mm/s down, and 0.5 s: 8.5 s off, 10.5 s
+        // a layer.
+        let summary = form.shown().summary;
+        assert!(
+            summary.contains("8.5 s") && summary.contains("10.5 s"),
+            "{summary}"
+        );
+        // The M7 Pro's 16.8 µm pixels at 0.05 mm layers: atan(0.336).
+        let printer = Form::printer(Some(m7_pro()), true).shown().summary;
+        assert!(printer.contains("18.6°"), "{printer}");
+    }
+
     fn m7_pro() -> PrinterProfile {
         ProfileLibraries::platform_default()
             .load_printer_by_id(&PrinterId::new("anycubic-photon-mono-m7-pro").unwrap())
@@ -1259,6 +1579,11 @@ mod tests {
         assert_eq!(saved.time_calibration, base.time_calibration);
         assert_eq!(saved.hardware, base.hardware);
         assert!(saved.constraints.z_step_mm.is_some());
+        let origin = saved.identity.origin.expect("an origin");
+        assert_eq!(
+            origin.made_from_id.as_deref(),
+            Some(base.identity.id.as_str())
+        );
     }
 
     /// A resin that ships, saved, becomes a resin of the user's own with
@@ -1293,5 +1618,12 @@ mod tests {
         assert_eq!(saved.per_printer.len(), base.per_printer.len());
         let block = &saved.per_printer[&target];
         assert_eq!(block.normal_exposure_sec.map(|s| s.value()), Some(2.5));
+        // It says where it came from (#20).
+        let origin = saved.identity.origin.expect("an origin");
+        assert_eq!(
+            origin.made_from_id.as_deref(),
+            Some(base.identity.id.as_str())
+        );
+        assert!(origin.made_on.is_some());
     }
 }

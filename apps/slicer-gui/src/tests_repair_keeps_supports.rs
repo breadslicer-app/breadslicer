@@ -75,7 +75,7 @@ fn window_with_prefs(graph: Scene, lift: bool) -> Window {
     let window = MainWindow::new().expect("the headless platform creates a main window");
     let bus = PreferencesBus::new(PreferencesSnapshot {
         default_printer: Some(PrinterId::new("elegoo-saturn-4-ultra").expect("valid id")),
-        default_resin: Some(MaterialId::new("standard-405").expect("valid id")),
+        default_resin: Some(MaterialId::new("siraya-tech-blu-easy-grey").expect("valid id")),
         lift_models_on_plate: lift,
         ..PreferencesSnapshot::for_tests()
     });
@@ -667,6 +667,34 @@ fn a_real_mini_through_generate_and_its_islands() {
         };
         let started = Instant::now();
         w.supports.press_generate_and_wait(options);
+        // How far the supports reach from the middle in X and Y (#628):
+        // after Generate, and after the islands and Fix all it goes on to.
+        let reach = |w: &Window| {
+            w.document
+                .with_scene(|spatial| {
+                    let mut r = [
+                        f32::INFINITY,
+                        f32::NEG_INFINITY,
+                        f32::INFINITY,
+                        f32::NEG_INFINITY,
+                    ];
+                    for leaf in (0..).map_while(|i| spatial.leaf_id_at_index(i)) {
+                        let q = spatial.leaf(leaf).unwrap();
+                        if !sc_geom::df_supports::is_any_support_mesh(q.mesh()) {
+                            continue;
+                        }
+                        if let Some(a) = q.transformed_aabb(q.world_transform()) {
+                            r[0] = r[0].min(a.min().coords()[0]);
+                            r[1] = r[1].max(a.max().coords()[0]);
+                            r[2] = r[2].min(a.min().coords()[1]);
+                            r[3] = r[3].max(a.max().coords()[1]);
+                        }
+                    }
+                    r
+                })
+                .unwrap()
+        };
+        eprintln!("supports reach after Generate: {:?}", reach(&w));
         let mut steps = Vec::new();
         for _ in 0..40 {
             if w.window.get_slicing_in_progress() {
@@ -687,6 +715,7 @@ fn a_real_mini_through_generate_and_its_islands() {
             }
         }
         eprintln!("steps {steps:?} in {:?}", started.elapsed());
+        eprintln!("supports reach after the islands: {:?}", reach(&w));
         eprintln!("summary: {}", w.window.get_review_summary());
         eprintln!("status: {}", w.window.get_status_notice());
         for row in slint::Model::iter(&w.window.get_review_rows()) {

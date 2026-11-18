@@ -487,6 +487,13 @@ impl SliceRun {
         };
 
         current.plate = self.document.slice_plate();
+        // What sticks out of the plate would not print whole: no slice of it
+        // to export, and Arrange all puts it back (#628).
+        if matches!(trigger, SliceTrigger::Button | SliceTrigger::EveryPlate)
+            && self.tell_parts_past_plate(current.plate)
+        {
+            return false;
+        }
         // The plate's own slice, kept aside, while still current (#547).
         if self.bring_back_plate_slice() {
             self.show_up_to_date_hint();
@@ -531,6 +538,59 @@ impl SliceRun {
                 false
             }
         }
+    }
+
+    /// Whether something on plate `plate` sticks out of it (past its edge,
+    /// or above the printer's height; a raft's edge does not count), and
+    /// when it does, the card that names it and offers Arrange all.
+    fn tell_parts_past_plate(&self, plate: u32) -> bool {
+        let volume = self.ctrl.build_volume();
+        let plates = self.document.plates();
+        let sessions = self.document.support_sessions();
+        let past = self
+            .document
+            .with_scene(|spatial| {
+                let past = crate::support_edges::past_on(
+                    spatial,
+                    &volume,
+                    plates,
+                    &|leaf| support_persist::model_of(&sessions, leaf),
+                    support_persist::raft_top_mm(spatial, &sessions),
+                    Some(plate),
+                    crate::support_edges::Reach::Everything,
+                );
+                let names = object_names_by_leaf(spatial.graph());
+                past.iter()
+                    .map(|id| names.get(id).cloned().unwrap_or_default())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
+        if past.is_empty() {
+            return false;
+        }
+        crate::breadcrumbs::note(&format!("slice: {} past the plate, refused", past.len()));
+        let count = past.len();
+        let details = past.join("\n");
+        let ui = self.ui.clone();
+        self.dialogs.show_error_with_action(
+            move || ErrorTexts {
+                heading: ctr!("SliceDialog", "Models past the plate"),
+                context: None,
+                message: ctr!(
+                    "SliceDialog",
+                    "{} model(s) or their supports reach past the plate and would not print whole. Press Arrange all to put everything on the plate, then slice.",
+                    count
+                ),
+                details: details.as_str().into(),
+            },
+            || ctr!("SliceDialog", "Arrange all"),
+            move || {
+                if let Some(ui) = ui.upgrade() {
+                    ui.invoke_arrange_requested(false);
+                }
+            },
+        );
+        true
     }
 
     /// Slices the active plate for every plate's slice or export (#547,

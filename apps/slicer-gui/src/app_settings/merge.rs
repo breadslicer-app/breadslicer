@@ -45,6 +45,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         last_open_dir,
         show_start_dialog,
         recent_files,
+        resin_prices,
     } = theirs;
     AppSettings {
         version,
@@ -126,6 +127,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
             &ours.recent_files,
             recent_files,
         ),
+        resin_prices: merge_map(&base.resin_prices, &ours.resin_prices, resin_prices),
     }
 }
 

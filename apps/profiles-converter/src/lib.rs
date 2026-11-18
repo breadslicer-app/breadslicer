@@ -23,6 +23,7 @@ pub mod format;
 pub mod html_tables;
 pub mod material_curation;
 pub mod material_fold;
+pub mod liqcreate;
 pub mod phrozen_api;
 pub mod printer_library;
 pub mod profile;

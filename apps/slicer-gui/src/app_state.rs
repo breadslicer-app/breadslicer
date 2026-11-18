@@ -239,6 +239,8 @@ struct WindowDrivers {
     _arrange_run: Rc<ArrangeRun>,
     _orient_run: Rc<OrientRun>,
     _layer_pixels: Rc<crate::layer_pixels::LayerPixels>,
+    /// The Slice tab's resin cost (#101).
+    _resin_cost: Rc<crate::resin_cost::ResinCostPanel>,
     _cut_run: Rc<CutRun>,
     /// Asks about the supports a file came with (#258).
     _presupported_import: Rc<crate::presupported_import::PresupportedImport>,
@@ -404,6 +406,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_last_open_dir(snap.last_open_dir.clone());
     settings.set_show_start_dialog(snap.show_start_dialog);
     settings.set_recent_files(snap.recent_files.clone());
+    settings.set_resin_prices(snap.resin_prices.clone());
 }
 
 /// Saves the changes that `snap` makes to `base` into `file`, and returns the
@@ -576,6 +579,7 @@ impl AppState {
             last_open_dir: settings.last_open_dir(),
             show_start_dialog: settings.show_start_dialog(),
             recent_files: settings.recent_files(),
+            resin_prices: settings.resin_prices(),
         };
         let prefs = PreferencesBus::new(snapshot);
         // Loads and saves put their files in the recent list (#381).
@@ -853,8 +857,15 @@ impl AppState {
             ctrl.clone(),
             slice_panel.clone(),
         );
+        let resin_cost = crate::resin_cost::ResinCostPanel::install(
+            ui,
+            self.prefs.clone(),
+            ctrl.document(),
+            ctrl.clone(),
+        );
         WindowDrivers {
             _layer_pixels: layer_pixels,
+            _resin_cost: resin_cost,
             _hollow_run: hollow_run,
             _split_bodies: split_bodies,
             _presupported_import: presupported_import,

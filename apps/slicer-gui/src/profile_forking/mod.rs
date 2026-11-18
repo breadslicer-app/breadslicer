@@ -96,6 +96,12 @@ pub(crate) fn build_fork(
             family: source.identity.family.clone(),
             name,
             profile_version: source.identity.profile_version.clone(),
+            // Where it came from (#20).
+            origin: Some(sc_print_profiles::ProfileOrigin::made_from(
+                &format!("{} {}", source.identity.brand, source.identity.name),
+                source.identity.id.as_str(),
+                &crate::profile_origin::today(),
+            )),
         },
         intent: if parts.intent {
             source.intent

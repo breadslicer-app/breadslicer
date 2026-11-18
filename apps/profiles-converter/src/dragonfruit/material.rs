@@ -397,6 +397,7 @@ pub(crate) fn map_material(
                 family,
                 name,
                 profile_version: Version::new(raw.profile_version, 0, 0),
+                origin: None,
             },
             intent,
             defaults,

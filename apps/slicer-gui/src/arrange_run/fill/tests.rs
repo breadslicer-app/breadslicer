@@ -467,3 +467,181 @@ fn fill_bed_on_a_real_model() {
         );
     }
 }
+
+/// A report (#628): fills an M7 Pro plate with copies of an STL measured
+/// with their forecast supports, as the window does, then generates their
+/// supports and tells which reach past the plate's edge.
+///
+/// `BREADSLICER_EDGE_STL=<model.stl>`, `BREADSLICER_EDGE_ONE_RAFT=1`.
+#[test]
+#[ignore = "a report on a local model, not a check"]
+fn fill_then_generate_keeps_the_supports_on_the_plate() {
+    let Some(path) = std::env::var_os("BREADSLICER_EDGE_STL") else {
+        return;
+    };
+    let bytes = std::fs::read(&path).unwrap();
+    let (loaded, _) =
+        sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).expect("an STL");
+    let leaf = loaded.roots()[0];
+    let mesh = loaded.leaf_mesh_arc(leaf).unwrap().clone();
+    let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+    for v in mesh.vertices() {
+        for k in 0..3 {
+            lo[k] = lo[k].min(v.coords()[k]);
+            hi[k] = hi[k].max(v.coords()[k]);
+        }
+    }
+    let world = AffineTransform3D::from_translation([
+        -f64::from(lo[0] + hi[0]) / 2.0,
+        -f64::from(lo[1] + hi[1]) / 2.0,
+        -f64::from(lo[2]),
+    ]);
+    let (w, h) = (223.642, 126.976);
+    let plate = Plate {
+        min: [-w / 2.0, -h / 2.0],
+        max: [w / 2.0, h / 2.0],
+        floor: 0.0,
+    };
+    let one_raft = std::env::var_os("BREADSLICER_EDGE_ONE_RAFT").is_some();
+    let options = sc_geom::df_supports::DfSupportOptions {
+        zones: Some(sc_geom::df_supports::zone_presets::minis_30()),
+        one_raft,
+        ..Default::default()
+    };
+    let request = sc_geom::df_supports::DfSupportRequest {
+        layer_height_mm: 0.05,
+        pixel_pitch_mm: Some([0.016_8, 0.024_8]),
+        options: options.clone(),
+        ..Default::default()
+    };
+    let ctx = crate::support_forecast::ForecastCtx {
+        lift_to_mm: Some(crate::raft_clash::support_lift_mm(&options, 0.05)),
+        request: request.clone(),
+        raft_top_mm: if one_raft {
+            options.raft_top_mm().unwrap_or(0.0)
+        } else {
+            0.0
+        },
+    };
+    let mut bodies = vec![sc_arrange::Body {
+        parts: vec![sc_arrange::Part {
+            mesh: mesh.clone(),
+            world,
+        }],
+        fixed: false,
+    }];
+    crate::support_forecast::with_forecasts(&mut bodies, &[true], &ctx, &AtomicBool::new(false))
+        .expect("a forecast");
+    let s = ArrangeOptions {
+        one_raft,
+        raft_top_mm: ctx.raft_top_mm as f32,
+        ..ArrangeOptions::default()
+    }
+    .settings();
+    let filled = sc_arrange::fill(
+        &bodies,
+        &[0],
+        &plate,
+        &s,
+        None,
+        &std::sync::atomic::AtomicUsize::new(0),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    // The original where it stood, then each copy.
+    let mut at = vec![bodies[0].parts[0].world];
+    at.extend(
+        filled
+            .copies
+            .iter()
+            .map(|c| c.placement.motion().compose(&bodies[0].parts[0].world)),
+    );
+    let past = |a: [f32; 3], b: [f32; 3]| {
+        [
+            plate.min[0] - f64::from(a[0]),
+            f64::from(b[0]) - plate.max[0],
+            plate.min[1] - f64::from(a[1]),
+            f64::from(b[1]) - plate.max[1],
+        ]
+        .into_iter()
+        .fold(f64::NEG_INFINITY, f64::max)
+    };
+    let bounds = |mesh: &IndexedMesh, t: &AffineTransform3D| {
+        let (mut a, mut b) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+        for v in mesh.vertices() {
+            let p = t.apply_to_vertex(*v).coords();
+            for k in 0..3 {
+                a[k] = a[k].min(p[k]);
+                b[k] = b[k].max(p[k]);
+            }
+        }
+        (a, b)
+    };
+    let mut forecast_past = 0.0f64;
+    if let Some(sup) = bodies[0].parts.get(1) {
+        for t in &at {
+            let motion = t.compose(&bodies[0].parts[0].world.inverse().unwrap());
+            let (a, b) = bounds(&sup.mesh, &motion.compose(&sup.world));
+            forecast_past = forecast_past.max(past(a, b));
+        }
+    }
+    let mut scene = Scene::new();
+    let rid = scene.add_mesh_resource_arc(mesh.clone());
+    for t in &at {
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Affine(*t),
+                LeafPayload::MeshResource(rid),
+            )
+            .unwrap();
+        scene.add_root(leaf).unwrap();
+    }
+    let outcome = sc_geom::df_supports::start_df_supports(&scene, request)
+        .unwrap()
+        .join()
+        .unwrap();
+    let mut worst = f64::NEG_INFINITY;
+    let mut out = 0;
+    let mut drawn: Vec<Option<Arc<IndexedMesh>>> = Vec::new();
+    for set in &outcome.sets {
+        let (mesh, t) = match (&set.same_as, &set.mesh) {
+            (Some(same), _) => (
+                drawn[same.set].clone().unwrap(),
+                match same.transform() {
+                    Transform3D::Affine(a) => a,
+                    Transform3D::Identity => AffineTransform3D::identity(),
+                },
+            ),
+            (None, Some(m)) => (Arc::new(m.clone()), AffineTransform3D::identity()),
+            (None, None) => {
+                drawn.push(None);
+                continue;
+            }
+        };
+        drawn.push(set.same_as.is_none().then(|| mesh.clone()));
+        let (a, b) = bounds(&mesh, &t);
+        let p = past(a, b);
+        worst = worst.max(p);
+        if p > 0.01 {
+            out += 1;
+        }
+    }
+    let mut raft_past = f64::NEG_INFINITY;
+    if one_raft {
+        let sets: Vec<_> = outcome
+            .sets
+            .iter()
+            .map(|set| (&set.session, AffineTransform3D::identity()))
+            .collect();
+        if let Some(raft) = sc_geom::df_supports::plate_raft(&sets) {
+            let (a, b) = bounds(&raft, &AffineTransform3D::identity());
+            raft_past = past(a, b);
+        }
+    }
+    println!("one raft for all reaches {raft_past:.2} mm past the edge");
+    println!(
+        "{} copies; forecast reaches {forecast_past:.2} mm past the edge at most; generated: {out} sets past the edge, {worst:.2} mm at most",
+        at.len()
+    );
+}
