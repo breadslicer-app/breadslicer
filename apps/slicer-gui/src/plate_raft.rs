@@ -113,6 +113,12 @@ impl PlateRafts {
         *self.job.borrow_mut() = Some(Job { revision, done: rx });
     }
 
+    /// Whether every plate's raft matches its sets as the scene stands: none
+    /// is being drawn, and the scene was looked at since its last change.
+    pub(crate) fn settled(&self, document: &SceneDocument) -> bool {
+        self.job.borrow().is_none() && self.checked.get() == Some(document.scene_revision())
+    }
+
     /// Whether a raft is being drawn.
     #[cfg(test)]
     pub(crate) fn busy(&self) -> bool {

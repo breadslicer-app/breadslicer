@@ -227,3 +227,29 @@ fn one_raft_for_all_lays_one_raft_under_the_sets_in_their_undo_step() {
         assert_eq!(document.undo_len(), steps + 1);
     });
 }
+
+/// The one raft for all is supports to the review (#606): a set with no
+/// contacts, never a model standing in its own raft.
+#[test]
+fn the_review_reads_the_one_raft_for_all_as_supports() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (document, run) = supported_slab(&window);
+        run.on_option(9, 1.0);
+        run.on_option(14, 1.0);
+        settle_rafts(&document, &run);
+        let rafts = plate_rafts(&document);
+        assert_eq!(rafts.len(), 1, "one raft on the plate");
+        let sets = document
+            .with_scene(|spatial| {
+                crate::support_persist::review_sets(spatial, &document.support_sessions())
+            })
+            .expect("a scene");
+        let raft = sets
+            .iter()
+            .find(|set| set.leaf == rafts[0].0)
+            .expect("the raft is read as supports");
+        assert!(raft.contacts.is_empty(), "and takes no tip");
+        assert_eq!(sets.len(), 2, "the set and the raft");
+    });
+}

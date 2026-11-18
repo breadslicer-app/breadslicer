@@ -254,6 +254,15 @@ pub(crate) struct ReviewPanel {
     /// Whether the slice in flight analyzes the islands for the Supports
     /// tab (#525): no question at its end.
     analyzing: Cell<bool>,
+    /// Whether the review about to be shown was asked for by Generate,
+    /// which supports every island once it lands (#606).
+    support_islands: Cell<bool>,
+    /// Whether the island run under way is Generate's (#606): its slices
+    /// show no modal, and its end is told in the status bar.
+    quiet_run: Cell<bool>,
+    /// Whether a slice of a plate with supports puts the tips it finds
+    /// missing in on its own (#606), rather than asking.
+    tips_on_their_own: Cell<bool>,
     /// The Fix All press being carried out (#163), pass by pass.
     run: RefCell<Option<FixRun>>,
     /// Fix All's supports being placed off the UI thread (#390): how far
@@ -373,6 +382,9 @@ impl ReviewPanel {
             notes_open: Cell::new(false),
             fix_all_slicing: Cell::new(false),
             analyzing: Cell::new(false),
+            support_islands: Cell::new(false),
+            quiet_run: Cell::new(false),
+            tips_on_their_own: Cell::new(true),
             run: RefCell::new(None),
             placing: RefCell::new(None),
             before_run: RefCell::new(None),
@@ -525,6 +537,29 @@ impl ReviewPanel {
         if let Some(before) = self.before_run.borrow_mut().take() {
             let_go(before.slice);
         }
+    }
+
+    /// The supports run, whose Generate goes on to the islands (#606).
+    pub(crate) fn supports(&self) -> &Rc<DfSupportRun> {
+        &self.supports
+    }
+
+    /// Whether the review about to be shown goes on to support every
+    /// island, as Generate asks (#606).
+    pub(crate) fn support_islands_once_shown(&self, on: bool) {
+        self.support_islands.set(on);
+    }
+
+    /// The question after a slice comes back for a plate with supports too:
+    /// what the tests written around it start from.
+    #[cfg(test)]
+    pub(crate) fn ask_before_tips(&self) {
+        self.tips_on_their_own.set(false);
+    }
+
+    /// Whether the run slicing now is Generate's islands step (#606).
+    pub(crate) fn runs_quietly(&self) -> bool {
+        self.quiet_run.get() && self.fixing()
     }
 
     /// Records that the slice about to be shown cured the fills `ids`.
@@ -721,6 +756,14 @@ impl ReviewPanel {
         if offered == 0 {
             return;
         }
+        // Supports of ours on the plate: the tips they lack go in on their
+        // own, as Yes would put them (#606). The question stays for a plate
+        // with none, whose person may not want any.
+        if self.tips_on_their_own.get() && self.supports.any_set_in_force() {
+            crate::breadcrumbs::note("review: the islands' tips go in on their own");
+            self.run_quietly(RunKind::Islands);
+            return;
+        }
         let regions = plan
             .first_tips()
             .filter_map(|(i, _)| self.finding(i as i32))
@@ -772,6 +815,32 @@ impl ReviewPanel {
     /// (#163), pass
     /// after pass ([`FixRun`]). The supports are placed off the UI thread
     /// (#390); the rest follows once they are in ([`Self::fix_all_landed`]).
+    /// A run the person did not press for (#606): Generate's Fix All, or the
+    /// tips a slice found missing. Up to [`REPEAT_PASSES`] passes, its slices
+    /// with no modal, its end told in the status bar.
+    fn run_quietly(self: &Rc<Self>, kind: RunKind) {
+        let slicing = self
+            .ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_slicing_in_progress());
+        if self.fixing() || slicing {
+            return;
+        }
+        let plan = match kind {
+            RunKind::Islands => self.islands_plan(),
+            RunKind::FixAll => self.fix_all_plan(),
+        };
+        if self.markable_models().is_none() || plan.is_empty() {
+            self.supports.show_status(self.after_yes());
+            return;
+        }
+        crate::breadcrumbs::note(&format!("review: {kind:?} on its own, up to {REPEAT_PASSES} passes"));
+        self.quiet_run.set(true);
+        let marks = self.marks.borrow().clone();
+        *self.run.borrow_mut() = Some(FixRun::new(kind, REPEAT_PASSES, marks));
+        self.start_pass();
+    }
+
     fn fix_all(self: &Rc<Self>) {
         if self.fixing()
             || self
@@ -934,6 +1003,11 @@ impl ReviewPanel {
             self.keep_for_undo(run);
         }
         self.show_pass(None);
+        if self.quiet_run.replace(false)
+            && let Some(message) = &message
+        {
+            self.supports.show_status(message.clone());
+        }
         self.push(message);
     }
 
@@ -1384,6 +1458,7 @@ impl ReviewPanel {
         }
         let by_run = self.fix_all_slicing.replace(false);
         let analyzing = self.analyzing.replace(false);
+        let support_islands = self.support_islands.replace(false);
         let yes = by_run
             && self
                 .run
@@ -1420,6 +1495,10 @@ impl ReviewPanel {
             0
         };
         self.publish_islands();
+        // A run nobody pressed for ends in the status bar (#606).
+        if by_run && self.quiet_run.replace(false) {
+            self.supports.show_status(self.after_yes());
+        }
         if yes {
             self.push(Some(self.after_yes()));
             return;
@@ -1445,9 +1524,14 @@ impl ReviewPanel {
                 passes
             ),
         }));
-        // An analysis asked from the Supports tab answers there (#525).
+        // An analysis asked from the Supports tab answers there (#525);
+        // the one Generate asked for supports the islands it found (#606).
         if !by_run && !analyzing {
             self.ask_for_supports();
+        } else if analyzing && support_islands {
+            // Generate goes on to every fix it can make (#606).
+            crate::breadcrumbs::note("review: fixing all after Generate");
+            self.run_quietly(RunKind::FixAll);
         }
     }
 

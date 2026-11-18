@@ -421,11 +421,26 @@ pub(crate) fn support_owners(
 }
 
 /// What the review reads of the supports in force (#432): each leaf a
-/// session drew, and where its supports touch the model.
+/// session drew, and where its supports touch the model. The one raft for
+/// all of a plate (#556) comes along with no contacts and no tip: supports,
+/// never a model in its own raft (#606).
 pub(crate) fn review_sets(
     spatial: &SceneSpatial,
     sessions: &RefCell<SupportSessions>,
 ) -> Vec<SupportSet> {
+    let rafts = (0..)
+        .map_while(|i| spatial.leaf_id_at_index(i))
+        .filter(|&id| {
+            spatial
+                .graph()
+                .leaf_mesh_arc(id)
+                .is_some_and(|mesh| sc_geom::df_supports::is_plate_raft(mesh))
+        })
+        .map(|leaf| SupportSet {
+            leaf,
+            tip_diameter_mm: 0.0,
+            contacts: Vec::new(),
+        });
     sets_in_force(spatial, sessions)
         .into_iter()
         .map(|drawn| SupportSet {
@@ -438,6 +453,7 @@ pub(crate) fn review_sets(
                 .flat_map(|piece| piece.contacts)
                 .collect(),
         })
+        .chain(rafts)
         .collect()
 }
 

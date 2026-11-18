@@ -2465,6 +2465,12 @@ mod fix_all {
 
     /// [`island_window`], Fix All repeating until clean or not (#163).
     fn island_window_repeating(repeat: bool) -> IslandWindow {
+        island_window_with(repeat, false)
+    }
+
+    /// [`island_window_repeating`]; `on_their_own`, whether its slice puts
+    /// the missing tips in on its own (#606) or asks, as it did before.
+    fn island_window_with(repeat: bool, on_their_own: bool) -> IslandWindow {
         let window = MainWindow::new().expect("the headless platform creates a main window");
         let bus = PreferencesBus::new(PreferencesSnapshot {
             fix_all_repeat: repeat,
@@ -2501,6 +2507,9 @@ mod fix_all {
                 true
             }
         });
+        if !on_their_own {
+            panel.ask_before_tips();
+        }
         slice_with(&document, &panel, false, &island_profile());
         IslandWindow {
             window,
@@ -2619,6 +2628,38 @@ mod fix_all {
             dialogs.answer(MessageAnswer::Close, false);
         }
         dialogs.answer(answer, false);
+    }
+
+    /// A slice of a plate that has supports puts the tips its islands lack
+    /// in on its own (#606): no question, pass after pass until none is
+    /// left, the end told in the status bar.
+    #[test]
+    fn a_slice_of_a_plate_with_supports_puts_the_missing_tips_in() {
+        let (queued, fixing, left, status) = on_fresh_slint_thread(|| {
+            let w = island_window_with(false, true);
+            let queued: Vec<_> = w
+                .panel
+                .ctrl
+                .dialogs()
+                .queued_for_test()
+                .into_iter()
+                .filter(|(kind, _)| *kind != MessageKind::Info)
+                .collect();
+            let fixing = w.panel.fixing();
+            for _ in 0..REPEAT_PASSES {
+                if !w.panel.fixing() {
+                    break;
+                }
+                let _ = wait_fix_all(&w.panel);
+                slice_with(&w.document, &w.panel, true, &island_profile());
+            }
+            let left = w.panel.islands_plan().first_tips().count();
+            (queued, fixing, left, w.window.get_status_notice().to_string())
+        });
+        assert!(queued.is_empty(), "nothing asked: {queued:?}");
+        assert!(fixing, "the tips go in on their own");
+        assert_eq!(left, 0, "no tip left to place");
+        assert!(status.starts_with("The supports are in"), "{status}");
     }
 
     /// A slice whose list has islands ends with one question (#437), and No
@@ -2913,6 +2954,39 @@ mod fix_all {
         assert!(fixing, "Support all starts the run");
         assert_eq!(after, 0, "no island left: {after}");
         assert_eq!(moved, (-1, 0), "a moved model takes the marks away");
+    }
+
+    /// The analysis Generate asks for (#606) asks nothing and supports
+    /// every island on its own; the one asked from the Supports tab waits
+    /// for the button.
+    #[test]
+    fn the_analysis_after_generate_supports_the_islands_on_its_own() {
+        let (asked, fixing, after, by_hand) = on_fresh_slint_thread(|| {
+            let w = island_window();
+            answer_the_question(&w, MessageAnswer::Cancel);
+            w.panel.support_islands_once_shown(true);
+            ANALYZE.set(true);
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            ANALYZE.set(false);
+            let asked = w.panel.ctrl.dialogs().queued_for_test();
+            let fixing = w.panel.fixing();
+            let _ = wait_fix_all(&w.panel);
+            slice_with(&w.document, &w.panel, true, &island_profile());
+            w.window.set_workspace_section(WorkspaceSection::Supports);
+            w.panel.supports.support_hints(&w.window);
+            let after = w.window.get_support_islands_left();
+
+            let w = island_window();
+            answer_the_question(&w, MessageAnswer::Cancel);
+            ANALYZE.set(true);
+            slice_with(&w.document, &w.panel, false, &island_profile());
+            ANALYZE.set(false);
+            (asked, fixing, after, w.panel.fixing())
+        });
+        assert!(asked.is_empty(), "it asks nothing: {asked:?}");
+        assert!(fixing, "the islands' supports start on their own");
+        assert_eq!(after, 0, "no island left: {after}");
+        assert!(!by_hand, "an analysis asked by hand waits for the button");
     }
 
     /// An ignored island is out of the question, and a slice with nothing
@@ -3250,6 +3324,8 @@ mod fix_all {
     fn a_tip_by_hand_on_a_model_with_no_set_starts_one_that_slices() {
         let (before, born, queued, sliced, after_undo) = on_fresh_slint_thread(|| {
             let w = bare_window();
+            // The tip by hand alone: its slice asks, as before #606.
+            w.panel.ask_before_tips();
             let dialogs = w.panel.ctrl.dialogs();
             while !dialogs.queued_for_test().is_empty() {
                 dialogs.answer(MessageAnswer::Close, false);

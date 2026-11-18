@@ -81,7 +81,8 @@ pub(crate) enum ReviewOutcome {
 pub(crate) struct SupportSet {
     pub(crate) leaf: NodeId,
     pub(crate) contacts: Vec<SupportContact>,
-    /// The contact diameter of a tip added to it.
+    /// The contact diameter of a tip added to it; 0 for the one raft for
+    /// all of a plate, which takes no tip.
     pub(crate) tip_diameter_mm: f64,
 }
 
@@ -262,6 +263,7 @@ fn review_stacks(
                 Some(mut report) => ReviewOutcome::Reviewed {
                     tips: tip_plan(&report.islands, &report.growths, supports).map(|plan| {
                         plan.note_too_small(&mut report.findings, &report.islands);
+                        plan.note_no_room(&mut report.findings, &report.growths);
                         Box::new(plan)
                     }),
                     growths: report.growths,
@@ -289,6 +291,7 @@ fn tip_plan(
         .sets
         .iter()
         .map(|set| set.tip_diameter_mm)
+        .filter(|d| *d > 0.0)
         .reduce(f64::max)
         .or(supports.bare_tip_mm)?;
     let smallest = sc_geom::df_supports::zone_presets::smallest_size().tip_diameter_mm;

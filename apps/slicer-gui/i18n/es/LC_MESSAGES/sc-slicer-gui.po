@@ -3109,6 +3109,11 @@ msgstr "Soportes regenerados: mismo resultado que antes."
 
 #: src/df_support_run.rs
 msgctxt "Workspace"
+msgid "Supports generated. Finding the islands and supporting them…"
+msgstr "Soportes generados. Buscando las islas y poniéndoles soportes…"
+
+#: src/df_support_run.rs
+msgctxt "Workspace"
 msgid "Supports regenerated: replaced the previous set."
 msgstr "Soportes regenerados: reemplazaron a los anteriores."
 
@@ -6951,6 +6956,11 @@ msgstr "Lamina la plataforma y marca en rojo dónde empieza una parte sin nada a
 msgctxt "Inspector"
 msgid "No island is left without a support."
 msgstr "No queda ninguna isla sin soporte."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Finding the islands and supporting them…"
+msgstr "Buscando las islas y poniéndoles soportes…"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"

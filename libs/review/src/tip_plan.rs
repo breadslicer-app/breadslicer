@@ -274,6 +274,22 @@ impl TipPlan {
         }
     }
 
+    /// Writes down the regions that grew at once with room for no more
+    /// tips as notes (#606): nothing can be placed for them, so nothing is
+    /// asked of anyone; the row still says what they have and want.
+    pub fn note_no_room(&self, findings: &mut [Finding], growths: &[Growth]) {
+        for growth in self.no_room.iter().filter_map(|&i| growths.get(i)) {
+            let finding = findings.iter_mut().find(|finding| {
+                finding.check == CheckKind::SurfaceGrowth
+                    && finding.first_layer == growth.layer
+                    && matches!(finding.fix, Some(SuggestedFix::AddSupport { at }) if at == growth.at)
+            });
+            if let Some(finding) = finding {
+                finding.severity = Severity::Info;
+            }
+        }
+    }
+
     /// The tips of region `growth`.
     pub fn of_growth(&self, growth: usize) -> impl Iterator<Item = &PlannedTip> + '_ {
         self.growth.iter().filter(move |tip| tip.island == growth)

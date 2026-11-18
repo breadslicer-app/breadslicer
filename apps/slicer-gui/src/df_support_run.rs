@@ -295,6 +295,13 @@ pub(crate) struct DfSupportRun {
     raft_layer_height_mm: Cell<f64>,
     /// When the raft warning was last brought up to date with the scene.
     raft_checked_at: Cell<Instant>,
+    // What Generate goes on to once its supports are in: the islands it
+    // left, found and supported (#606).
+    after_generate: RefCell<Option<Box<dyn Fn() -> bool>>>,
+    // Generate's step waiting for the one raft for all (#556) to be drawn
+    // under its new supports, with the run's summary for the status bar
+    // if the step cannot start (#606).
+    islands_after_raft: RefCell<Option<String>>,
     /// The raft top of the supports this driver pasted last, `Some(None)`
     /// for supports without a raft.
     generated_raft_top: Cell<Option<Option<f64>>>,
@@ -1732,6 +1739,8 @@ impl DfSupportRun {
             raft_layer_height_mm: Cell::new(DfSupportRequest::default().layer_height_mm),
             raft_checked_at: Cell::new(Instant::now()),
             generated_raft_top: Cell::new(None),
+            after_generate: RefCell::new(None),
+            islands_after_raft: RefCell::new(None),
             status_timer: slint::Timer::default(),
             redo: RefCell::new(None),
             regrid: RefCell::new(None),
@@ -2326,6 +2335,7 @@ impl DfSupportRun {
         {
             self.plate_rafts
                 .tick(&self.document, &self.ctrl.build_volume());
+            self.go_on_after_rafts();
         }
         self.support_hints(&ui);
         let mut prescan = self.prescan.borrow_mut();
@@ -4075,6 +4085,19 @@ impl DfSupportRun {
     /// Generates supports for every model of the scene with `options`, then
     /// and there, as a finished run puts them in: what other modules' tests
     /// start from.
+    /// The Generate button with `options` in the tab, waited for: the lift of
+    /// the models on the plate (#389) and what follows (#606) as pressed.
+    #[cfg(test)]
+    pub(crate) fn press_generate_and_wait(self: &Rc<Self>, options: DfSupportOptions) {
+        self.set_options(options);
+        self.start();
+        let handle = self.handle.borrow_mut().take().expect("a run started");
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_gen_in_progress(false);
+        }
+        self.finish(handle.join());
+    }
+
     #[cfg(test)]
     pub(crate) fn generate_now(&self, options: DfSupportOptions) {
         let graph = self
@@ -4103,6 +4126,7 @@ impl DfSupportRun {
             std::thread::sleep(Duration::from_millis(5));
             self.plate_rafts.tick(&self.document, &volume);
             if self.document.scene_revision() == revision && !self.plate_rafts.busy() {
+                self.go_on_after_rafts();
                 return;
             }
         }
@@ -4435,6 +4459,12 @@ impl DfSupportRun {
     /// The support mesh this driver pasted: its leaf and current mesh.
     fn support_leaf(&self) -> Option<(NodeId, Arc<sc_mesh_core::IndexedMesh>)> {
         self.document.with_scene(support_leaf).flatten()
+    }
+
+    /// Whether the scene has supports of ours in force: what the review may
+    /// add tips to on its own (#606).
+    pub(crate) fn any_set_in_force(&self) -> bool {
+        !self.sets_in_force().is_empty()
     }
 
     /// Every support set of the scene in force.
@@ -6363,6 +6393,28 @@ impl DfSupportRun {
         );
     }
 
+    /// Generate's step, waiting for the one raft for all (#606), goes on once
+    /// every raft is drawn: the step's slice sees it.
+    fn go_on_after_rafts(&self) {
+        if self.islands_after_raft.borrow().is_none() || !self.plate_rafts.settled(&self.document)
+        {
+            return;
+        }
+        let Some(summary) = self.islands_after_raft.borrow_mut().take() else {
+            return;
+        };
+        let started = self.after_generate.borrow().as_ref().is_some_and(|then| then());
+        if !started {
+            self.show_status(summary.into());
+        }
+    }
+
+    /// Sets what Generate goes on to once its new supports are in (#606),
+    /// which tells whether it started.
+    pub(crate) fn set_after_generate(&self, then: impl Fn() -> bool + 'static) {
+        *self.after_generate.borrow_mut() = Some(Box::new(then));
+    }
+
     fn finish(&self, outcome: Result<DfSupportOutcome, JobError>) {
         let ended = match &outcome {
             Ok(_) => "ok".to_owned(),
@@ -6571,6 +6623,18 @@ impl DfSupportRun {
             )),
             None => {}
         }
+        // New supports: the islands they left are found and supported
+        // (#606), as one procedure with Generate.
+        // Under one raft for all the step waits for that raft (#556): it is
+        // drawn once the scene stands still, and the slice has to see it.
+        let islands_next = !unchanged
+            && self.after_generate.borrow().is_some()
+            && if self.options.borrow().one_raft {
+                *self.islands_after_raft.borrow_mut() = Some(summary.clone());
+                true
+            } else {
+                self.after_generate.borrow().as_ref().is_some_and(|then| then())
+            };
         // Copies given the supports of one standing like them were placed
         // without looking at their neighbours (#561): where they run into
         // one, Generate says so and moves nothing; Arrange all spaces the
@@ -6588,6 +6652,15 @@ impl DfSupportRun {
         }
         if !kept.is_empty() {
             self.show_kept_edits(kept, details);
+            return;
+        }
+        // With the islands to find, the status bar says it and the islands
+        // step tells its end there (#606): no card in between.
+        if islands_next {
+            self.show_status(ctr!(
+                "Workspace",
+                "Supports generated. Finding the islands and supporting them…"
+            ));
             return;
         }
         self.dialogs
@@ -6773,7 +6846,7 @@ impl DfSupportRun {
 
     /// Shows `text` in the status bar in place of its hint for a few
     /// seconds; a newer note restarts the time.
-    fn show_status(&self, text: slint::SharedString) {
+    pub(crate) fn show_status(&self, text: slint::SharedString) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -8227,6 +8300,50 @@ mod hand_edit_tests {
         assert_eq!(notice, "Supports regenerated: same result as before.");
         assert!(editable, "the supports stay editable by hand");
         assert!(undone, "one undo step in total takes the supports away");
+    }
+
+    /// Generate goes on to the islands (#606) once its new supports are in,
+    /// and not when it changed nothing (#287).
+    #[test]
+    fn generate_goes_on_to_the_islands_once_its_supports_are_in() {
+        let calls = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 3.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let count = Rc::new(Cell::new(0));
+            {
+                let count = count.clone();
+                run.set_after_generate(move || {
+                    count.set(count.get() + 1);
+                    true
+                });
+            }
+            let generate = |run: &Rc<DfSupportRun>| {
+                run.start();
+                let handle = run.handle.borrow_mut().take().expect("a run started");
+                window.set_support_gen_in_progress(false);
+                run.finish(handle.join());
+            };
+            run.set_options(DfSupportOptions::default());
+            generate(&run);
+            let first = count.get();
+            generate(&run);
+            (first, count.get())
+        });
+        assert_eq!(calls, (1, 1), "once for the new supports, not for the same ones");
     }
 
     /// Generate with the model on the plate raises the raft warning (#131);
