@@ -31,6 +31,9 @@ pub(crate) fn short_name(id: &str) -> String {
         "light" => "LT".to_owned(),
         "factory-medium" => "XL".to_owned(),
         "heavy" => "XXL".to_owned(),
+        "top-light" => "Lt".to_owned(),
+        "top-medium" => "Md".to_owned(),
+        "top-heavy" => "Hv".to_owned(),
         other => other.chars().take(3).collect::<String>().to_uppercase(),
     }
 }

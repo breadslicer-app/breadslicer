@@ -3301,7 +3301,8 @@ mod window_wiring_tests {
             [
                 "Miniatures 20~65 mm",
                 "Figures 65~150 mm",
-                "Statues 150 mm+"
+                "Statues 150 mm+",
+                "Skeleton + islands"
             ]
         );
     }
