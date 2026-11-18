@@ -320,6 +320,7 @@ pub(crate) fn map_printer(raw: RawPrinter) -> Result<MappedPrinter, PrinterMapEr
             name,
             profile_version: Version::new(raw.profile_version, 0, 0),
             image_asset_path: None,
+            origin: None,
         },
         hardware,
         capabilities,

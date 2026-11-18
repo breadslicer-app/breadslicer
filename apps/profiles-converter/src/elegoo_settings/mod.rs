@@ -407,6 +407,7 @@ fn identity_of(
         family: NonEmptyString::new(family_of(resin)).expect("a constant that is not empty"),
         name: NonEmptyString::new(&name).expect("a resin and a colour are both non-empty"),
         profile_version: Version::new(1, 0, 0),
+        origin: None,
     }
 }
 

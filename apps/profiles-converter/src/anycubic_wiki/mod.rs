@@ -478,6 +478,7 @@ fn identity_of(
         family: NonEmptyString::new(family_of(resin)).expect("a constant that is not empty"),
         name: NonEmptyString::new(&name).expect("a resin name is never empty"),
         profile_version: Version::new(1, 0, 0),
+        origin: None,
     }
 }
 

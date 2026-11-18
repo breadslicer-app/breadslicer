@@ -393,6 +393,17 @@ pub(crate) fn build_printer(
             image_asset_path: base
                 .filter(|b| editing == Some(&b.identity.id))
                 .and_then(|b| b.identity.image_asset_path.clone()),
+            // Where it came from (#20): the user's own printer changed keeps
+            // its own; a copy names the printer it was made from.
+            origin: match base {
+                Some(b) if editing == Some(&b.identity.id) => b.identity.origin.clone(),
+                Some(b) => Some(sc_print_profiles::ProfileOrigin::made_from(
+                    &format!("{} {}", b.identity.manufacturer, b.identity.name),
+                    b.identity.id.as_str(),
+                    &crate::profile_origin::today(),
+                )),
+                None => None,
+            },
         },
         hardware,
         capabilities,

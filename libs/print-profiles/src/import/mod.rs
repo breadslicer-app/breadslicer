@@ -219,6 +219,7 @@ pub fn material_profile(
             family: NonEmptyString::new("imported").expect("not empty"),
             name,
             profile_version: Version::new(1, 0, 0),
+            origin: None,
         },
         intent: MaterialIntent {
             target_energy_density_mj_per_cm2: None,

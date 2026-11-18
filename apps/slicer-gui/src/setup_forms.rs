@@ -705,7 +705,8 @@ impl Form {
             right,
             summary,
             note: if mine {
-                String::new()
+                // Where it came from (#20).
+                crate::profile_origin::line(base.and_then(|b| b.identity.origin.as_ref()))
             } else {
                 ctr!(
                     "PrinterPicker",
@@ -927,11 +928,15 @@ impl Form {
             right,
             summary: String::new(),
             note: if mine {
-                ctr!(
+                let slots = ctr!(
                     "PrinterPicker",
                     "Every slot is always there; an empty one shows “—”. The printer above picks whose settings show."
-                )
-                .to_string()
+                );
+                // Where it came from (#20).
+                match crate::profile_origin::line(base.identity.origin.as_ref()) {
+                    origin if origin.is_empty() => slots.to_string(),
+                    origin => format!("{origin}. {slots}"),
+                }
             } else {
                 ctr!(
                     "PrinterPicker",
@@ -1453,6 +1458,11 @@ mod tests {
         assert_eq!(saved.time_calibration, base.time_calibration);
         assert_eq!(saved.hardware, base.hardware);
         assert!(saved.constraints.z_step_mm.is_some());
+        let origin = saved.identity.origin.expect("an origin");
+        assert_eq!(
+            origin.made_from_id.as_deref(),
+            Some(base.identity.id.as_str())
+        );
     }
 
     /// A resin that ships, saved, becomes a resin of the user's own with
@@ -1487,5 +1497,12 @@ mod tests {
         assert_eq!(saved.per_printer.len(), base.per_printer.len());
         let block = &saved.per_printer[&target];
         assert_eq!(block.normal_exposure_sec.map(|s| s.value()), Some(2.5));
+        // It says where it came from (#20).
+        let origin = saved.identity.origin.expect("an origin");
+        assert_eq!(
+            origin.made_from_id.as_deref(),
+            Some(base.identity.id.as_str())
+        );
+        assert!(origin.made_on.is_some());
     }
 }

@@ -94,6 +94,7 @@ mod slice_panel;
 mod slice_projection;
 mod slice_result;
 mod print_log;
+mod profile_origin;
 mod resin_cost;
 mod slice_run;
 mod slice_selection;
