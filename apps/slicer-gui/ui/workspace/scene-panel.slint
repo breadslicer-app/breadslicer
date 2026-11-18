@@ -148,9 +148,12 @@ component ObjectRow inherits Rectangle {
     in property <string> text;
     in property <bool> selected;
     callback clicked();
-    // Shift+click or Ctrl+click (#13).
+    // Ctrl+click (#13): one row in or out.
     callback toggled();
+    // Shift+click (#619): every row from the last one clicked.
+    callback ranged();
     property <bool> extend: false;
+    property <bool> range: false;
 
     height: SceneMetrics.row;
     border-radius: Theme.radius;
@@ -191,11 +194,14 @@ component ObjectRow inherits Rectangle {
         mouse-cursor: pointer;
         pointer-event(event) => {
             if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
-                root.extend = event.modifiers.shift || event.modifiers.control || event.modifiers.meta;
+                root.extend = event.modifiers.control || event.modifiers.meta;
+                root.range = event.modifiers.shift && !root.extend;
             }
         }
         clicked => {
-            if (root.extend) {
+            if (root.range) {
+                root.ranged();
+            } else if (root.extend) {
                 root.toggled();
             } else {
                 root.clicked();
@@ -217,6 +223,7 @@ export component ScenePanel inherits Rectangle {
     in property <bool> can-send;
     callback object-picked(int);
     callback object-toggled(int);
+    callback object-ranged(int);
     callback plate-picked(int);
     callback plate-send(int);
     callback plate-remove();
@@ -293,6 +300,9 @@ export component ScenePanel inherits Rectangle {
                         }
                         toggled => {
                             root.object-toggled(row.index);
+                        }
+                        ranged => {
+                            root.object-ranged(row.index);
                         }
                     }
                 }

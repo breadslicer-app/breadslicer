@@ -4,7 +4,8 @@
  */
 
 //! File > Import printer settings (#565): a printer export of Lychee
-//! (`.lyp`) or Photon Workshop (`.pwsp`) the person picks becomes one
+//! (`.lyp`), a resin export of Lychee (`.lyr`, #618) or a Photon Workshop
+//! settings file (`.pwsp`) or a CHITUBOX one (`.cfgx`) the person picks becomes one
 //! material profile per resin, in their own library, calibrated for the
 //! printer of our catalog the file's printer is. Nothing else of the file
 //! is kept, and the printer is never copied: its flags are ours.
@@ -13,8 +14,10 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
+use sc_print_primitives::PrinterId;
 use sc_print_profiles::import::{
-    ImportedPrinter, matching_printer, material_profile, read_printer_settings,
+    ImportedPrinter, ImportedResin, matching_printer, material_profile, printer_named_in,
+    read_lychee_resins, read_printer_settings,
 };
 use sc_print_profiles::writer::save_material_profile_to_library;
 use sc_print_profiles::{PrinterProfile, ProfileLibraries};
@@ -51,19 +54,92 @@ fn candidates(catalog: &ProfileCatalog, printer: &ImportedPrinter) -> Vec<Printe
         .collect()
 }
 
-/// Imports the file at `path` into the library at `library`.
+/// Saves `resins` into the library at `library` as set for `printer`
+/// (named `ours`), noting each in `report`.
+fn save_resins(
+    resins: &[ImportedResin],
+    printer: &PrinterId,
+    ours: &str,
+    source: &str,
+    library: &Path,
+    report: &mut ImportReport,
+) -> Result<(), String> {
+    for resin in resins {
+        let Some(profile) = material_profile(resin, printer, source) else {
+            continue;
+        };
+        save_material_profile_to_library(library, &profile).map_err(|e| e.to_string())?;
+        let name = format!("{} {}", profile.identity.brand, profile.identity.name);
+        if !resin.not_imported.is_empty() {
+            report
+                .not_imported
+                .push((name.clone(), resin.not_imported.clone()));
+        }
+        report.imported.push((name, ours.to_owned()));
+    }
+    Ok(())
+}
+
+/// The printer a Lychee resin export (#618) is for: the one its file name
+/// names ("Elegoo Mars 5 Ultra Resin.lyr"), else `in_use`.
+fn resins_printer(
+    path: &Path,
+    catalog: &ProfileCatalog,
+    in_use: Option<&PrinterId>,
+) -> Option<PrinterId> {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    printer_named_in(
+        stem,
+        catalog
+            .printers()
+            .iter()
+            .map(|e| (&e.id, e.manufacturer.as_str(), e.name.as_str())),
+    )
+    .or_else(|| in_use.cloned())
+}
+
+/// Imports the file at `path` into the library at `library`. A resin
+/// export holds no printer: its resins go to the printer its name names,
+/// else to `in_use`.
 pub(crate) fn import_file(
     path: &Path,
     catalog: &ProfileCatalog,
     library: &Path,
+    in_use: Option<&PrinterId>,
 ) -> Result<ImportReport, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let extension = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or_default();
+    if extension.eq_ignore_ascii_case("lyr") {
+        let resins = read_lychee_resins(&bytes).map_err(|e| e.to_string())?;
+        let Some(printer) = resins_printer(path, catalog, in_use) else {
+            return Err(ctr!(
+                "PrinterSettingsImport",
+                "a resin file says no printer: pick your printer first, then import it again"
+            )
+            .to_string());
+        };
+        let ours = catalog
+            .printers()
+            .iter()
+            .find(|e| e.id == printer)
+            .map_or_else(
+                || printer.as_str().to_owned(),
+                |e| format!("{} {}", e.manufacturer, e.name),
+            );
+        let mut report = ImportReport::default();
+        save_resins(&resins, &printer, &ours, "lychee", library, &mut report)?;
+        return Ok(report);
+    }
     let source = if extension.eq_ignore_ascii_case("lyp") {
         "lychee"
+    } else if extension.eq_ignore_ascii_case("cfgx") {
+        "chitubox"
     } else {
         "workshop"
     };
@@ -79,19 +155,7 @@ pub(crate) fn import_file(
             .iter()
             .find(|p| p.identity.id == id)
             .map_or_else(|| id.as_str().to_owned(), |p| p.identity.name.to_string());
-        for resin in &printer.resins {
-            let Some(profile) = material_profile(resin, &id, source) else {
-                continue;
-            };
-            save_material_profile_to_library(library, &profile).map_err(|e| e.to_string())?;
-            let name = format!("{} {}", profile.identity.brand, profile.identity.name);
-            if !resin.not_imported.is_empty() {
-                report
-                    .not_imported
-                    .push((name.clone(), resin.not_imported.clone()));
-            }
-            report.imported.push((name, ours.clone()));
-        }
+        save_resins(&printer.resins, &id, &ours, source, library, &mut report)?;
     }
     Ok(report)
 }
@@ -147,8 +211,12 @@ pub(crate) fn wire(
         let dialog = crate::error_dialog::file_dialog_over(ui.window())
             .set_title(ctr!("FileDialog", "Import printer settings").to_string())
             .add_filter(
-                ctr!("FileDialog", "Lychee or Photon Workshop printer settings").to_string(),
-                &["lyp", "pwsp"],
+                ctr!(
+                    "FileDialog",
+                    "Lychee, Photon Workshop or CHITUBOX printer settings"
+                )
+                .to_string(),
+                &["lyp", "lyr", "pwsp", "cfgx"],
             );
         let (catalog, prefs, dialogs) = (catalog.clone(), prefs.clone(), dialogs.clone());
         if let Err(err) = slint::spawn_local(async move {
@@ -162,7 +230,8 @@ pub(crate) fn wire(
                 return;
             };
             let current = catalog.borrow().clone();
-            match import_file(picked.path(), &current, &library) {
+            let in_use = prefs.snapshot().default_printer;
+            match import_file(picked.path(), &current, &library, in_use.as_ref()) {
                 Ok(report) => {
                     refresh_catalog(&catalog);
                     prefs.update(|_| PreferencesChange::Profiles);
@@ -211,7 +280,7 @@ mod tests {
         .unwrap();
         let library = dir.path().join("library");
         let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::platform_default());
-        let report = import_file(&file, &catalog, &library).expect("it imports");
+        let report = import_file(&file, &catalog, &library, None).expect("it imports");
         assert_eq!(report.imported.len(), 1, "{report:?}");
         assert!(report.unmatched.is_empty());
         assert_eq!(report.not_imported[0].1, vec!["transition_layercount"]);
@@ -226,12 +295,78 @@ mod tests {
         assert!(text.contains("lift_speed_mm_min = 120.0"), "{text}");
     }
 
+    /// A CHITUBOX export for the M7 Pro lands as a resin of the user's
+    /// library set for our M7 Pro.
+    #[test]
+    fn a_chitubox_export_lands_as_a_resin_for_our_printer() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("m7.cfgx");
+        std::fs::write(
+            &file,
+            r#"{"printerinfo": {
+                "machinename": {"currentvalue": "Anycubic Photon Mono M7 Pro"},
+                "resolutionx": {"currentvalue": 13312}, "resolutiony": {"currentvalue": 5120},
+                "machinewidth": {"currentvalue": 223.642}, "machinedepth": {"currentvalue": 126.48}},
+              "material": [{"name": "Default", "slice": [{"name": "Fast Resin_Fast",
+                "print": {"layerheight": {"currentvalue": 0.1},
+                          "normalexposuretime": {"currentvalue": 1.4},
+                          "bottomlayercount": {"currentvalue": 3},
+                          "normallayerliftheight": {"currentvalue": 2.0},
+                          "normallayerliftspeed": {"currentvalue": 360.0},
+                          "normallayerdropspeed": {"currentvalue": 900.0}}}]}]}"#,
+        )
+        .unwrap();
+        let library = dir.path().join("library");
+        let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::platform_default());
+        let report = import_file(&file, &catalog, &library, None).expect("it imports");
+        assert_eq!(report.imported.len(), 1, "{report:?}");
+        let saved = library
+            .join("materials")
+            .join("chitubox-chitubox-fast-resin-fast.toml");
+        let text = std::fs::read_to_string(saved).expect("the resin is saved");
+        assert!(
+            text.contains("[per_printer.anycubic-photon-mono-m7-pro]"),
+            "{text}"
+        );
+        assert!(text.contains("normal_exposure_sec = 1.4"), "{text}");
+    }
+
+    /// #618: a Lychee resin file goes to the printer its name names, else
+    /// to the printer in use.
+    #[test]
+    fn a_lychee_resin_file_goes_to_the_printer_it_names() {
+        let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::platform_default());
+        let m7 = PrinterId::new("anycubic-photon-mono-m7-pro").unwrap();
+        let named = Path::new("C:/x/Elegoo Mars 5 Ultra Resin.lyr");
+        assert_eq!(
+            resins_printer(named, &catalog, Some(&m7)).map(|p| p.as_str().to_owned()),
+            Some("elegoo-mars-5-ultra".to_owned())
+        );
+        let plain = Path::new("C:/x/my resins.lyr");
+        assert_eq!(resins_printer(plain, &catalog, Some(&m7)), Some(m7));
+        assert_eq!(resins_printer(plain, &catalog, None), None);
+    }
+
+    /// The tester's own file, by hand: `IMPORT_LYR` is its path.
+    #[test]
+    #[ignore = "reads a person's own export"]
+    fn a_real_lychee_resin_file_imports() {
+        let Ok(path) = std::env::var("IMPORT_LYR") else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::platform_default());
+        let report = import_file(Path::new(&path), &catalog, dir.path(), None).expect("it imports");
+        println!("{report:?}");
+        assert!(!report.imported.is_empty());
+    }
+
     #[test]
     fn a_file_of_another_kind_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("x.lyp");
         std::fs::write(&file, b"nothing").unwrap();
         let catalog = ProfileCatalog::from_entries(Vec::new(), Vec::new());
-        assert!(import_file(&file, &catalog, dir.path()).is_err());
+        assert!(import_file(&file, &catalog, dir.path(), None).is_err());
     }
 }

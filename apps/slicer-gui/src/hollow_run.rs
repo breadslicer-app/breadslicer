@@ -476,6 +476,10 @@ pub(crate) struct HollowRun {
     /// The hollow (by identity) whose settings the tab took last: selecting
     /// another hollow puts its own settings in the tab.
     adopted: Cell<Option<usize>>,
+    /// The drain picked to edit (#450), by its place in the model's list,
+    /// and whether the next click moves it there.
+    picked_drain: Cell<Option<usize>>,
+    moving_drain: Cell<bool>,
     /// The last voxel session, reused when the next job matches it (a
     /// moved or rotated model, a new drain).
     prepared: RefCell<Option<Arc<PreparedHollow>>>,
@@ -663,6 +667,8 @@ struct ShownKey {
     tool: HollowOptions,
     /// Bits of the depth the drain under the cursor is drawn to.
     hover_depth: u32,
+    /// The drain picked to edit (#450), drawn apart.
+    picked: Option<usize>,
 }
 
 impl HollowRun {
@@ -703,6 +709,8 @@ impl HollowRun {
                 hollowed: document.hollows(),
                 options: RefCell::new(HollowOptions::default()),
                 adopted: Cell::new(None),
+                picked_drain: Cell::new(None),
+                moving_drain: Cell::new(false),
                 prepared: RefCell::new(None),
                 _scene_events: scene_events,
                 ctrl,
@@ -759,7 +767,19 @@ impl HollowRun {
         }
         {
             let run = run.clone();
-            ui.on_hollow_option_changed(move |code, value| run.on_option(code, value));
+            ui.on_hollow_drain_step(move |by| run.step_drain(by));
+        }
+        {
+            let run = run.clone();
+            ui.on_hollow_drain_remove(move || run.remove_picked_drain());
+        }
+        {
+            let run = run.clone();
+            ui.on_hollow_drain_move(move || run.move_picked_drain());
+        }
+        {
+            let run = run.clone();
+            ui.on_hollow_option_changed(move |code, value| run.on_option_changed(code, value));
         }
         {
             let run = run.clone();
@@ -1053,6 +1073,12 @@ impl HollowRun {
             .map_or(0, |(_, mesh, _)| self.solids_for(&mesh).len());
         ui.set_hollow_model_state(state);
         ui.set_hollow_drain_count(drains as i32);
+        if self.picked_drain.get().is_some_and(|i| i >= drains) {
+            self.picked_drain.set(None);
+            self.moving_drain.set(false);
+        }
+        ui.set_hollow_drain_picked(self.picked_drain.get().map_or(-1, |i| i as i32));
+        ui.set_hollow_drain_moving(self.moving_drain.get());
         ui.set_hollow_solid_count(solids as i32);
         if state == 2 {
             ui.set_hollow_drain_tool(false);
@@ -1130,6 +1156,15 @@ impl HollowRun {
         self.tick_preview();
     }
 
+    /// An option change from the tab (see [`Self::on_option`]); a drain's
+    /// shape changes the picked drain too (#450).
+    fn on_option_changed(self: &Rc<Self>, code: i32, value: f32) {
+        self.on_option(code, value);
+        if (6..=12).contains(&code) {
+            self.reshape_picked_drain();
+        }
+    }
+
     fn on_apply(self: &Rc<Self>) {
         let Some((leaf, mesh, world)) = self.selected() else {
             return;
@@ -1190,19 +1225,182 @@ impl HollowRun {
             return;
         }
         let options = *self.options.borrow();
+        let (_, mut drains) = self.source_for(&mesh);
+        // The picked drain goes where the click is, as it is (#450).
+        if self.moving_drain.replace(false)
+            && let Some(i) = self.picked_drain.get()
+            && let Some(old) = drains.get(i).copied()
+        {
+            let Some(moved) = LocalDrain::at(point, normal, old.radius_mm, &world) else {
+                return;
+            };
+            drains[i] = LocalDrain {
+                center: moved.center,
+                direction: moved.direction,
+                ..old
+            };
+            self.set_drains(leaf, mesh, &world, drains, "drain moved");
+            return;
+        }
+        // A click on a drain picks it to edit (#450).
+        if let Some(i) = self.drain_near(&drains, &world, point) {
+            self.pick_drain(Some(i), &drains);
+            return;
+        }
         let Some(drain) = LocalDrain::at(point, normal, options.drain_radius_mm, &world)
             .map(|d| d.shaped(&options))
         else {
             return;
         };
-        let (original, mut drains) = self.source_for(&mesh);
         drains.push(drain);
-        if self.entry_for(&mesh).is_some() {
-            self.launch(leaf, mesh, original, drains, &world);
+        self.picked_drain.set(None);
+        self.set_drains(leaf, mesh, &world, drains, "drain mark");
+    }
+
+    /// The drain of `drains` whose mouth `point` (world) is on: within its
+    /// radius and a millimetre.
+    fn drain_near(
+        &self,
+        drains: &[LocalDrain],
+        world: &Transform3D,
+        point: [f32; 3],
+    ) -> Option<usize> {
+        drains
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let w = d.to_world(world);
+                let gap = (0..3)
+                    .map(|k| (w.center[k] - point[k]).powi(2))
+                    .sum::<f32>()
+                    .sqrt();
+                (i, gap, w.radius_mm)
+            })
+            .filter(|&(_, gap, radius)| gap <= radius + 1.0)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, ..)| i)
+    }
+
+    /// Picks drain `index` of `drains` to edit (#450): the tab's drain fields
+    /// show its shape and change it.
+    fn pick_drain(&self, index: Option<usize>, drains: &[LocalDrain]) {
+        self.picked_drain.set(index);
+        self.moving_drain.set(false);
+        if let Some(d) = index.and_then(|i| drains.get(i)) {
+            let mut o = self.options.borrow_mut();
+            o.drain_radius_mm = d.radius_mm;
+            o.drain_depth_set = d.depth_mm.is_some();
+            if let Some(depth) = d.depth_mm {
+                o.drain_depth_mm = depth;
+            }
+            o.drain_cone = d.inner_radius_mm.is_some();
+            if let Some(inner) = d.inner_radius_mm {
+                o.drain_inner_radius_mm = inner;
+            }
+            o.drain_plug = d.plug_clearance_mm.is_some();
+            if let Some(clearance) = d.plug_clearance_mm {
+                o.plug_clearance_mm = clearance;
+            }
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            self.push_options(&ui);
+        }
+        self.refresh_ui();
+        self.tick_preview();
+    }
+
+    /// Puts `drains` on the model: a hollow is hollowed again with them, a
+    /// solid model keeps them as marks; one step of history either way.
+    fn set_drains(
+        self: &Rc<Self>,
+        leaf: NodeId,
+        mesh: Arc<IndexedMesh>,
+        world: &Transform3D,
+        drains: Vec<LocalDrain>,
+        label: &'static str,
+    ) {
+        if let Some((original, _)) = self.entry_for(&mesh) {
+            self.launch(leaf, mesh, original, drains, world);
         } else {
             let solids = self.solids_for(&mesh);
-            self.change_marks(&mesh, (drains, solids), "drain mark");
+            self.change_marks(&mesh, (drains, solids), label);
         }
+    }
+
+    /// The next (`by` 1) or previous (-1) drain, to edit (#450).
+    fn step_drain(&self, by: i32) {
+        let Some((_, mesh, _)) = self.selected() else {
+            return;
+        };
+        let drains = self.source_for(&mesh).1;
+        if drains.is_empty() {
+            return;
+        }
+        let n = drains.len() as i32;
+        let next = match self.picked_drain.get() {
+            Some(i) => (i as i32 + by).rem_euclid(n),
+            None if by < 0 => n - 1,
+            None => 0,
+        };
+        self.pick_drain(Some(next as usize), &drains);
+    }
+
+    /// Takes the picked drain away (#450), its plug with it.
+    fn remove_picked_drain(self: &Rc<Self>) {
+        let (Some(i), Some((leaf, mesh, world))) = (self.picked_drain.get(), self.selected())
+        else {
+            return;
+        };
+        if self.job.borrow().is_some() {
+            return;
+        }
+        let mut drains = self.source_for(&mesh).1;
+        if i >= drains.len() {
+            return;
+        }
+        drains.remove(i);
+        self.picked_drain.set(None);
+        self.set_drains(leaf, mesh, &world, drains, "drain removed");
+    }
+
+    /// The next click on the model moves the picked drain there (#450).
+    fn move_picked_drain(&self) {
+        if self.picked_drain.get().is_none() {
+            return;
+        }
+        self.moving_drain.set(!self.moving_drain.get());
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_hollow_drain_tool(true);
+        }
+        self.refresh_ui();
+    }
+
+    /// The picked drain takes the tab's drain shape (#450), when one is
+    /// picked; `true` when it did.
+    fn reshape_picked_drain(self: &Rc<Self>) -> bool {
+        let (Some(i), Some((leaf, mesh, world))) = (self.picked_drain.get(), self.selected())
+        else {
+            return false;
+        };
+        let options = *self.options.borrow();
+        let mut drains = self.source_for(&mesh).1;
+        let Some(d) = drains.get(i).copied() else {
+            return false;
+        };
+        let reshaped = LocalDrain {
+            radius_mm: options.drain_radius_mm,
+            ..d
+        }
+        .shaped(&options);
+        if reshaped == d {
+            return true;
+        }
+        drains[i] = reshaped;
+        if self.job.borrow().is_some() {
+            return true;
+        }
+        self.set_drains(leaf, mesh, &world, drains, "drain changed");
+        true
     }
 
     /// Of the leaves `wanted` takes, the one with its underside nearest below
@@ -2017,6 +2215,7 @@ impl HollowRun {
             world: matrix,
             tool: options,
             hover_depth: hover_depth.to_bits(),
+            picked: self.picked_drain.get(),
         };
         if let Some((k, shown)) = &preview.shown
             && *k == shown_key
@@ -2027,6 +2226,27 @@ impl HollowRun {
         let mut pieces: Vec<Arc<OverlayMesh>> = Vec::new();
         pieces.extend(cavity_piece);
         pieces.extend(drains_piece);
+        // The drain picked to edit shows green over the others (#450).
+        if let Some((drain, &depth)) = self
+            .picked_drain
+            .get()
+            .and_then(|i| drains.get(i).zip(depths.get(i)))
+        {
+            let w = drain.to_world(&world);
+            let mut mesh = (Vec::new(), Vec::new());
+            drain_solid(
+                w.center,
+                w.direction,
+                [w.radius_mm * 1.05, drain.end_radius_mm() * 1.05],
+                depth,
+                &mut mesh,
+            );
+            pieces.push(Arc::new(OverlayMesh {
+                positions: mesh.0,
+                indices: mesh.1,
+                tint: OverlayTint::Valid,
+            }));
+        }
         if let Some((hover, reach)) = hover {
             // Straight from the surface under the cursor, where the click
             // would drill: no search, the viewport's hit says it.
@@ -3429,6 +3649,72 @@ mod tests {
     /// history: Undo and Redo walk them back and forth one by one, undoing
     /// the hollow brings them back, and none of them makes the document
     /// unsaved.
+    /// #450: a click on a drain picks it; the drain fields change it, Move
+    /// puts it where the next click is, Remove takes it away; each one step
+    /// that Undo takes back.
+    #[test]
+    fn a_drain_is_picked_changed_moved_and_removed_one_by_one() {
+        use crate::selection::{LeafId, Selection};
+        use crate::test_support::slint_thread::on_fresh_slint_thread;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut cube = sc_mesh_fixtures::unit_cube_mesh();
+            for v in &mut cube.vertices {
+                *v = Vertex::new(v.as_array().map(|c| c * 30.0));
+            }
+            let world =
+                Transform3D::Affine(AffineTransform3D::from_translation([50.0, 50.0, 15.0]));
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(None, world, LeafPayload::Mesh(Arc::new(cube)))
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, std::path::PathBuf::from("cube.stl"));
+            document.set_selection(Selection::One(LeafId(leaf)));
+            window.set_workspace_section(WorkspaceSection::Hollow);
+            let run = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let drains = || {
+                let (_, mesh, _) = run.selected().unwrap();
+                run.source_for(&mesh).1
+            };
+
+            run.on_drain_click([50.0, 50.0, 30.0], [0.0, 0.0, 1.0]);
+            run.on_drain_click([42.0, 42.0, 30.0], [0.0, 0.0, 1.0]);
+            assert_eq!(drains().len(), 2);
+            let before = drains()[0];
+
+            // A click on the first drain picks it, adds none.
+            run.on_drain_click([50.5, 50.0, 30.0], [0.0, 0.0, 1.0]);
+            assert_eq!(drains().len(), 2);
+            assert_eq!(window.get_hollow_drain_picked(), 0);
+
+            // Its radius, and Undo.
+            run.on_option_changed(6, 3.0);
+            assert_eq!(drains()[0].radius_mm, 3.0);
+            assert_eq!(drains()[1].radius_mm, before.radius_mm, "the other stays");
+            assert!(document.undo().unwrap());
+            assert_eq!(drains()[0].radius_mm, before.radius_mm);
+            assert!(document.redo().unwrap());
+
+            // Moved by the next click.
+            run.move_picked_drain();
+            assert!(window.get_hollow_drain_moving());
+            run.on_drain_click([58.0, 58.0, 30.0], [0.0, 0.0, 1.0]);
+            assert_eq!(drains().len(), 2);
+            assert!((drains()[0].center[0] - before.center[0] - 8.0).abs() < 1e-3);
+            assert_eq!(drains()[0].radius_mm, 3.0, "it keeps its shape");
+
+            // Removed.
+            run.remove_picked_drain();
+            assert_eq!(drains().len(), 1);
+            assert_eq!(window.get_hollow_drain_picked(), -1);
+            assert!(document.undo().unwrap());
+            assert_eq!(drains().len(), 2);
+        });
+    }
+
     #[test]
     fn the_marks_placed_before_hollowing_are_undone_one_by_one() {
         use crate::selection::{LeafId, Selection};

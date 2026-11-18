@@ -27,6 +27,12 @@ export component AppearancePreferences inherits PreferencesPage {
     in-out property <bool> smooth-models: false;
     callback smooth-models-changed(bool);
 
+    // The mouse of the 3D view, as another 3D program has it (#609).
+    in property <[string]> controls-options;
+    in-out property <int> current-controls-index: 0;
+    in property <string> controls-summary;
+    callback controls-selected(int);
+
     // The gizmo style (#274) and size (#276). The combo orders must match
     // `GizmoStyle::combo_index` (Outline, Focused) and `GIZMO_SIZES` in
     // `gizmo/look.rs`.
@@ -150,6 +156,31 @@ export component AppearancePreferences inherits PreferencesPage {
             root.show-start-dialog = self.checked;
             root.show-start-dialog-changed(self.checked);
         }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("AppearancePreferences" => "Mouse controls");
+            vertical-alignment: center;
+        }
+        ComboBox {
+            model: root.controls-options;
+            current-index <=> root.current-controls-index;
+            accessible-label: @tr("AppearancePreferences" => "Mouse controls");
+            selected(_value) => {
+                root.controls-selected(self.current-index);
+            }
+        }
+    }
+
+    Text {
+        text: root.controls-summary;
+        wrap: word-wrap;
+        font-size: 11px;
+        opacity: 0.7;
     }
 
     CheckBox {

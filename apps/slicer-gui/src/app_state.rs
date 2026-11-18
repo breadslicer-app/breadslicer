@@ -272,6 +272,8 @@ struct WindowDrivers {
 /// strong-reference cycle.
 pub(crate) struct AppState {
     about_window: RefCell<Option<WiredAboutWindow>>,
+    /// Printer & resin (#151), and the first run (#608).
+    setup_window: RefCell<Option<crate::setup_window::WiredSetupWindow>>,
     preferences_window: RefCell<Option<WiredPreferencesWindow>>,
     main_windows: RefCell<HashMap<u64, WiredMainWindow>>,
     next_window_id: Cell<u64>,
@@ -373,6 +375,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_lift_models_on_plate(snap.lift_models_on_plate);
     settings.set_overhang_map(snap.overhang_map);
     settings.set_fix_all_repeat(snap.fix_all_repeat);
+    settings.set_controls_layout(snap.controls_layout);
     settings.set_hide_rafts_under_plate(snap.hide_rafts_under_plate);
     settings.set_support_lines_under_plate(snap.support_lines_under_plate);
     settings.set_silenced_messages(snap.silenced_messages.clone());
@@ -475,6 +478,15 @@ fn subscribe_window_preferences(
         if let Some(w) = window.upgrade() {
             w.apply_preferences(snap);
         }
+        // One printer and one resin in use (#623): a scene's own choice,
+        // kept from an older project, gives way to the one just picked, so
+        // the plate and the print setup show the same printer.
+        if matches!(change, PreferencesChange::DefaultPrinter) {
+            controller.document().set_selected_printer(None);
+        }
+        if matches!(change, PreferencesChange::DefaultResin) {
+            controller.document().set_selected_resin(None);
+        }
         if matches!(
             change,
             PreferencesChange::DefaultPrinter | PreferencesChange::Profiles
@@ -532,6 +544,7 @@ impl AppState {
             lift_models_on_plate: settings.lift_models_on_plate(),
             overhang_map: settings.overhang_map(),
             fix_all_repeat: settings.fix_all_repeat(),
+            controls_layout: settings.controls_layout(),
             hide_rafts_under_plate: settings.hide_rafts_under_plate(),
             support_lines_under_plate: settings.support_lines_under_plate(),
             // Never stored: the log runs until the app closes and every launch
@@ -588,6 +601,7 @@ impl AppState {
 
         let app = Rc::new(Self {
             about_window: RefCell::new(None),
+            setup_window: RefCell::new(None),
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
@@ -1349,7 +1363,52 @@ impl AppState {
         if let Some(autosaver) = &window.autosaver {
             autosaver.close();
         }
+        if self.main_windows.borrow().is_empty() {
+            self.hide_tool_windows();
+        }
         Some(window)
+    }
+
+    /// Hides the app-wide windows (Preferences, About) once the last main
+    /// window has gone (#617): left open, they would keep the app running
+    /// with nothing to come back to.
+    fn hide_tool_windows(&self) {
+        if let Some(prefs) = self.preferences_window.borrow().as_ref() {
+            let _ = prefs.window.hide();
+        }
+        if let Some(about) = self.about_window.borrow().as_ref() {
+            let _ = about.window.hide();
+        }
+        // Their own dialogs (add a printer, extend a profile) have no main
+        // window to return to either: the app ends, as it does when the last
+        // window closes on its own.
+        #[cfg(not(test))]
+        let _ = slint::quit_event_loop();
+    }
+
+    /// The first run (#608): with no printer chosen yet, the window that asks
+    /// for the printer, the resin and the mouse, once the app takes input.
+    fn offer_welcome(self: &Rc<Self>) {
+        if self.prefs.snapshot().default_printer.is_some()
+            || self.catalog.borrow().printers().is_empty()
+        {
+            return;
+        }
+        let app = Rc::downgrade(self);
+        crate::startup_timing::when_interactive(move || {
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            let first = app
+                .main_windows
+                .borrow()
+                .values()
+                .next()
+                .map(|w| (w.window.clone_strong(), Rc::downgrade(&w.controller)));
+            if let Some((window, _)) = first {
+                app.show_setup(&window, true);
+            }
+        });
     }
 
     /// At start-up: offers back what earlier runs left unsaved (#18), then,
@@ -1357,6 +1416,7 @@ impl AppState {
     /// dialog (#381) in window `free`. Without `free` the launch opened files,
     /// and there is no start dialog.
     pub(crate) fn greet(self: &Rc<Self>, free: Option<u64>) {
+        self.offer_welcome();
         let app = Rc::downgrade(self);
         self.offer_recovery(free, move |recovery| {
             if let Some(app) = app.upgrade() {
@@ -1727,6 +1787,15 @@ impl AppState {
         {
             let app = Rc::downgrade(self);
             let ui_weak = ui.as_weak();
+            ui.on_printer_chip_clicked(move || {
+                if let (Some(app), Some(ui)) = (app.upgrade(), ui_weak.upgrade()) {
+                    app.show_setup(&ui, false);
+                }
+            });
+        }
+        {
+            let app = Rc::downgrade(self);
+            let ui_weak = ui.as_weak();
             let viewport = Rc::downgrade(ctrl);
             ui.on_show_preferences_requested(move || {
                 if let (Some(app), Some(ui)) = (app.upgrade(), ui_weak.upgrade()) {
@@ -1909,6 +1978,35 @@ impl AppState {
             }
             Err(err) => eprintln!("Failed to create About window: {err}"),
         }
+    }
+
+    /// Shows Printer & resin over `over` (#151), a card in the window like
+    /// the start dialog; with `welcome`, as the first run's three steps
+    /// (#608). Made again each time, so it opens on the printer in use.
+    fn show_setup(self: &Rc<Self>, over: &MainWindow, welcome: bool) {
+        let import: Rc<dyn Fn()> = {
+            let over = over.as_weak();
+            Rc::new(move || {
+                if let Some(over) = over.upgrade() {
+                    over.invoke_import_printer_settings_requested();
+                }
+            })
+        };
+        // One card at a time: one open over another window closes.
+        if let Some(old) = self.setup_window.borrow_mut().take() {
+            drop(old);
+        }
+        for window in self.main_windows.borrow().values() {
+            window.window.global::<crate::Picker>().set_open(false);
+        }
+        let wired = crate::setup_window::open_setup(
+            over,
+            &self.prefs,
+            self.catalog.clone(),
+            welcome,
+            import,
+        );
+        *self.setup_window.borrow_mut() = Some(wired);
     }
 
     /// Shows the app-wide Preferences window centred over `over`, the window
@@ -2667,6 +2765,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::LiftModelsOnPlate,
             PreferencesChange::OverhangMap,
             PreferencesChange::FixAllRepeat,
+            PreferencesChange::Controls,
             PreferencesChange::HideRaftsUnderPlate,
             PreferencesChange::SupportLinesUnderPlate,
             PreferencesChange::DiagnosticLog,
@@ -2737,10 +2836,10 @@ mod subscribe_window_preferences_tests {
             ))));
             let prefs = build_preferences_window(&subscribed.bus, catalog)
                 .expect("the headless platform creates the Preferences window");
-            prefs
-                .window
-                .window()
-                .set_size(slint::PhysicalSize::new(520, 360));
+            prefs.window.window().set_size(slint::PhysicalSize::new(
+                520,
+                if crate::window_chrome::ON { 394 } else { 360 },
+            ));
             prefs.window.show().expect("the headless platform shows it");
             prefs.window.invoke_diagnostic_log_changed(true);
             crate::test_support::message_cards::card_around_primary_button(prefs.window.window())
@@ -2864,6 +2963,7 @@ mod window_wiring_tests {
         let default_envelope = DefaultEnvelope::new(&prefs, catalog.clone());
         Rc::new(AppState {
             about_window: RefCell::new(None),
+            setup_window: RefCell::new(None),
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
@@ -3351,7 +3451,8 @@ mod window_wiring_tests {
     }
 
     /// Once the scene stands still, its footprints are drawn in the
-    /// background and kept for the next Arrange (#560).
+    /// background and kept for the next Arrange (#560), and so are the
+    /// supports a model with none yet will get (#555).
     #[test]
     fn a_still_scene_has_its_footprints_drawn_ahead() {
         let kept = on_fresh_slint_thread(|| {
@@ -3373,9 +3474,12 @@ mod window_wiring_tests {
                 settle();
                 thread::sleep(std::time::Duration::from_millis(50));
             }
-            sc_arrange::kept_parts_of(&mesh)
+            (
+                sc_arrange::kept_parts_of(&mesh),
+                crate::support_forecast::is_kept_for(&mesh),
+            )
         });
-        assert_eq!(kept, 1);
+        assert_eq!(kept, (1, true));
     }
 
     #[test]
@@ -3927,6 +4031,29 @@ mod window_wiring_tests {
         assert!(emptied, "the last object deleted brings it back");
         assert!(!undone, "the undo hides it");
         assert!(objects_back, "the undo brings the object back");
+    }
+
+    /// Closing the last main window hides Preferences too (#617): left open,
+    /// it kept the app running with no window to come back to.
+    #[test]
+    fn closing_the_last_window_hides_preferences() {
+        let (shown, hidden) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            app.show_preferences(&window, Weak::new());
+            let prefs = || {
+                app.preferences_window
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|p| p.window.window().is_visible())
+            };
+            let shown = prefs();
+            drop(app.remove_window(id));
+            (shown, prefs())
+        });
+        assert!(shown, "Preferences opened");
+        assert!(!hidden, "and went with the last window");
     }
 
     /// File > Clear Scene leaves the window empty, with no start dialog;
@@ -4678,8 +4805,17 @@ mod window_wiring_tests {
                     b[depth].to_bits(),
                     "{how}, drag {drag:?}: {b:?} went to {a:?}"
                 );
-                let moved: f64 = (0..3).map(|k| (a[k] - b[k]).powi(2)).sum();
-                assert!(moved > 1e-6, "{how}, drag {drag:?}: it moved");
+                // G without an axis slides on the plate (#620): never in Z.
+                assert_eq!(
+                    a[2].to_bits(),
+                    b[2].to_bits(),
+                    "{how}, drag {drag:?}: {b:?} went up or down to {a:?}"
+                );
+                // Seen from a side, only the way across the screen moves it.
+                if depth == 2 || drag.0 != 0.0 {
+                    let moved: f64 = (0..3).map(|k| (a[k] - b[k]).powi(2)).sum();
+                    assert!(moved > 1e-6, "{how}, drag {drag:?}: it moved");
+                }
             }
             if depth == 2 {
                 let moved = [0, 1, 2].map(|k| after[0][k] - before[0][k]);
@@ -4696,7 +4832,11 @@ mod window_wiring_tests {
                     "{how}: a drag of {drag:?} took the cube {went:?} on screen"
                 );
             }
-            shown.undo();
+            // A drag up the screen from a side moves nothing, and leaves no
+            // step to undo.
+            if after != before {
+                shown.undo();
+            }
             assert_eq!(shown.places(), before, "{how}: one Undo takes it back");
         }
     }
@@ -4773,8 +4913,8 @@ mod window_wiring_tests {
         });
     }
 
-    /// #424: a free view keeps today's G, in the plane of the camera, and
-    /// today's R, about the line of sight.
+    /// #424, #620: from a free view G slides on the plate (never in Z) and R
+    /// turns about the line of sight.
     #[test]
     fn g_and_r_from_a_free_view_follow_the_camera_plane() {
         on_fresh_slint_thread(|| {
@@ -4786,9 +4926,10 @@ mod window_wiring_tests {
             let before = shown.places();
             shown.gesture("g", (0.0, -150.0));
             let after = shown.places();
-            for k in 0..3 {
+            for k in 0..2 {
                 assert!((after[0][k] - before[0][k]).abs() > 0.01, "{after:?}");
             }
+            assert_eq!(after[0][2].to_bits(), before[0][2].to_bits(), "{after:?}");
             shown.undo();
             shown.gesture("r", (60.0, 40.0));
             let turned = shown.rotations();

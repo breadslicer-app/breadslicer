@@ -27,6 +27,21 @@ export struct PointerModifiers {
     meta: bool,
 }
 
+// What a drag of each button, with each modifier, does to the camera
+// (#609): 0 nothing, 1 orbit, 2 pan, 3 zoom. The left button alone always
+// selects and moves models.
+export struct NavMap {
+    middle: int,
+    middle-shift: int,
+    middle-ctrl: int,
+    middle-alt: int,
+    right: int,
+    right-shift: int,
+    right-ctrl: int,
+    right-alt: int,
+    left-alt: int,
+}
+
 export component MeshViewer inherits Rectangle {
     property <bool> view-wheel-open: false;
     property <bool> view-wheel-key-held: false;
@@ -120,6 +135,25 @@ export component MeshViewer inherits Rectangle {
     // A plain letter the active workspace tab may claim for its own tools
     // (A / X support tools, L layer view); returns whether it did.
     callback tab-tool-key(string) -> bool;
+    // The camera's buttons, as the chosen control layout has them (#609).
+    in property <NavMap> nav-map: { middle: 1, middle-shift: 2, middle-ctrl: 3, right: 1, right-shift: 2 };
+    pure function nav-gesture(button: PointerEventButton, shift: bool, ctrl: bool, alt: bool) -> int {
+        if (button == PointerEventButton.middle) {
+            return alt ? root.nav-map.middle-alt : ctrl ? root.nav-map.middle-ctrl
+                : shift ? root.nav-map.middle-shift : root.nav-map.middle;
+        }
+        if (button == PointerEventButton.right) {
+            return alt ? root.nav-map.right-alt : ctrl ? root.nav-map.right-ctrl
+                : shift ? root.nav-map.right-shift : root.nav-map.right;
+        }
+        if (button == PointerEventButton.left && alt) {
+            return root.nav-map.left-alt;
+        }
+        return 0;
+    }
+    // Selection and duplicate keys (#612, #613): "select-all", "deselect",
+    // "invert", "duplicate", "duplicate-move", with the cursor.
+    callback edit-key(string, length, length);
     // Escape for the open tab tool (the Orient tool, #182): true when it
     // took the key, before Escape clears the selection.
     callback tool-escape() -> bool;
@@ -300,10 +334,21 @@ export component MeshViewer inherits Rectangle {
                 root.frame-view-requested();
                 return accept;
             }
+            if (!root.modal-transform-active && !event.repeat) {
+                let ctrl = event.modifiers.control || event.modifiers.meta;
+                let a = event.text == "a" || event.text == "A";
+                let d = event.text == "d" || event.text == "D";
+                if (a && ctrl && !event.modifiers.alt) { root.edit-key("select-all", ta.mouse-x, ta.mouse-y); return accept; }
+                if (a && event.modifiers.alt && !ctrl) { root.edit-key("deselect", ta.mouse-x, ta.mouse-y); return accept; }
+                if ((event.text == "i" || event.text == "I") && ctrl) { root.edit-key("invert", ta.mouse-x, ta.mouse-y); return accept; }
+                if (d && (ctrl || event.modifiers.alt)) { root.edit-key("duplicate", ta.mouse-x, ta.mouse-y); return accept; }
+                if (d && event.modifiers.shift && !ctrl && !event.modifiers.alt) { root.edit-key("duplicate-move", ta.mouse-x, ta.mouse-y); return accept; }
+            }
             // Plain keys only: never steal Save, reload, or modified shortcuts.
             if (!event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt) {
                 if (event.text == "g" || event.text == "G") {
-                    root.modal-transform-start(0, ta.mouse-x, ta.mouse-y);
+                    // G again confirms (#620): a held key must not.
+                    if (!event.repeat) { root.modal-transform-start(0, ta.mouse-x, ta.mouse-y); }
                     return accept;
                 }
                 // A held key repeats: R R and S S switch the pivot of several
@@ -554,6 +599,11 @@ export component MeshViewer inherits Rectangle {
                         root.modal-click-pending = true;
                         if (event.button == PointerEventButton.left) { root.modal-transform-finish(true); }
                         else if (event.button == PointerEventButton.right) { root.modal-transform-finish(false); }
+                    } else if (event.button == PointerEventButton.left
+                        && root.nav-gesture(event.button, event.modifiers.shift, event.modifiers.control, event.modifiers.alt) != 0) {
+                        // A camera chord on the left button (Alt+left, #609).
+                        root.active-gesture = root.nav-gesture(event.button, event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
+                        if (root.active-gesture == 1) { root.orbit-begin(ta.mouse-x, ta.mouse-y); }
                     } else if (event.button == PointerEventButton.left) {
                         root.left-pressed = true;
                         root.box-x0 = ta.mouse-x;
@@ -565,15 +615,19 @@ export component MeshViewer inherits Rectangle {
                             meta: event.modifiers.meta,
                         });
                     } else if (event.button == PointerEventButton.right) {
-                        root.active-gesture = event.modifiers.shift ? 2 : 1;
+                        root.active-gesture = root.nav-gesture(event.button, event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
                         if (root.active-gesture == 1) { root.orbit-begin(ta.mouse-x, ta.mouse-y); }
                         root.viewport-right-pointer-down(ta.mouse-x, ta.mouse-y);
                     } else if (event.button == PointerEventButton.middle) {
-                        root.active-gesture = event.modifiers.shift ? 2 : 1;
+                        root.active-gesture = root.nav-gesture(event.button, event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
                         if (root.active-gesture == 1) { root.orbit-begin(ta.mouse-x, ta.mouse-y); }
                     }
                 } else if (event.kind == PointerEventKind.up) {
                     if (root.modal-click-pending) { root.modal-click-pending = false; }
+                    else if (event.button == PointerEventButton.left && root.active-gesture != 0) {
+                        if (root.active-gesture == 1) { root.orbit-end(); }
+                        root.active-gesture = 0;
+                    }
                     else if (event.button == PointerEventButton.left) {
                         root.left-pressed = false;
                         root.viewport-pointer-up(ta.mouse-x, ta.mouse-y, {
@@ -621,6 +675,11 @@ export component MeshViewer inherits Rectangle {
                     root.pan-drag(ta.mouse-x - root.last-x, ta.mouse-y - root.last-y);
                     root.last-x = ta.mouse-x;
                     root.last-y = ta.mouse-y;
+                } else if (root.active-gesture == 3) {
+                    // A zoom drag (#609): up zooms in, toward the middle.
+                    root.zoom-at((root.last-y - ta.mouse-y) * 4, root.width / 2, root.height / 2);
+                    root.last-x = ta.mouse-x;
+                    root.last-y = ta.mouse-y;
                 }
             }
 
@@ -650,6 +709,13 @@ export component MeshViewer inherits Rectangle {
                     title: @tr("MeshViewer" => "Copy");
                     activated => {
                         root.context-copy-pressed();
+                    }
+                }
+                // A copy next to it, with its hollow and supports (#613).
+                if (root.context-can-copy): MenuItem {
+                    title: @tr("MeshViewer" => "Duplicate");
+                    activated => {
+                        root.edit-key("duplicate", root.context-anchor-x, root.context-anchor-y);
                     }
                 }
                 if (root.context-can-delete): MenuItem {

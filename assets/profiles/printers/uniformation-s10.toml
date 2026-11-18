@@ -1,0 +1,38 @@
+[identity]
+id = "uniformation-s10"
+manufacturer = "UniFormation"
+family = "S10"
+name = "S10"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 223.0272
+y_mm = 125.895
+z_mm = 200.0
+
+[hardware.pixel_resolution]
+x = 15360
+y = 6540
+
+[hardware.pixel_size_microns]
+x = 14.52
+y = 19.25
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5enc"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

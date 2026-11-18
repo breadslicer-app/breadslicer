@@ -154,6 +154,7 @@ fn build_profile_editor(
         ordered_calibration_targets(&profile, catalog.printers(), default_printer.as_ref());
 
     let dialog = ProfileViewDialog::new()?;
+    crate::window_chrome::wire_framed!(&dialog);
     dialog.apply_preferences(&snapshot);
     dialog.set_editable(true);
     dialog.set_defaults_editable(kind == EditedProfileKind::Full);

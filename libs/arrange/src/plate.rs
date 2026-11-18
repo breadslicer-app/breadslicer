@@ -84,6 +84,80 @@ impl Occupancy {
     }
 }
 
+impl Occupancy {
+    /// The plate with every `group` bands in one, which holds what any of
+    /// them holds (#555).
+    pub(crate) fn grouped(&self, group: usize) -> Occupancy {
+        let group = group.max(1);
+        let mut bands: Vec<Option<BitGrid>> = vec![None; self.bands.len().div_ceil(group)];
+        for (b, grid) in self.bands.iter().enumerate() {
+            let Some(grid) = grid else {
+                continue;
+            };
+            let into =
+                bands[b / group].get_or_insert_with(|| BitGrid::new(self.width, self.height));
+            for y in 0..grid.height {
+                for (d, &w) in into.row_mut(y).iter_mut().zip(grid.row(y)) {
+                    *d |= w;
+                }
+            }
+        }
+        Occupancy {
+            width: self.width,
+            height: self.height,
+            bands,
+        }
+    }
+
+    /// How many cells `shape` with its frame's corner at `at` shares with
+    /// what is placed, over every band, counted up to `cap` (#555).
+    pub(crate) fn overlap(&self, shape: &Shape, at: [i32; 2], cap: u32) -> u32 {
+        let mut n = 0u32;
+        for mask in &shape.bands {
+            let Some(Some(grid)) = self.bands.get(mask.band) else {
+                continue;
+            };
+            n += shared(grid, mask, at, cap - n);
+            if n >= cap {
+                return n;
+            }
+        }
+        n
+    }
+}
+
+/// How many cells `mask` with its body's frame at `at` shares with `grid`,
+/// counted up to `cap`.
+pub(crate) fn shared(grid: &BitGrid, mask: &BandMask, at: [i32; 2], cap: u32) -> u32 {
+    let (q, s) = word_shift(at[0] + mask.x0);
+    let y = at[1] + mask.y0;
+    let mut n = 0u32;
+    for &r in &mask.rows {
+        let py = y + r as i32;
+        if py < 0 || py as usize >= grid.height {
+            continue;
+        }
+        let plate = grid.row(py as usize);
+        let len = plate.len() as isize;
+        for (k, &w) in mask.grid.row(r as usize).iter().enumerate() {
+            if w == 0 {
+                continue;
+            }
+            let i = q + k as isize;
+            if (0..len).contains(&i) {
+                n += (plate[i as usize] & (w << s)).count_ones();
+            }
+            if s > 0 && (0..len).contains(&(i + 1)) {
+                n += (plate[(i + 1) as usize] & (w >> (64 - s))).count_ones();
+            }
+        }
+        if n >= cap {
+            return n;
+        }
+    }
+    n
+}
+
 /// The plate word a mask's first word lands on, which may be before the
 /// first, and how many bits into it.
 fn word_shift(x: i32) -> (isize, u32) {

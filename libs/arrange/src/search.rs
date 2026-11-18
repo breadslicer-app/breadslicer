@@ -77,15 +77,15 @@ pub(crate) struct Layout {
 /// A small, seedable generator (xorshift64*): the passes are the same for
 /// the same scene.
 #[derive(Debug)]
-struct Rng(u64);
+pub(crate) struct Rng(u64);
 
 impl Rng {
-    fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         Self(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
     }
 
     /// Uniform in [0, 1).
-    fn next(&mut self) -> f64 {
+    pub(crate) fn next(&mut self) -> f64 {
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;
         self.0 ^= self.0 >> 27;
@@ -505,22 +505,7 @@ pub(crate) fn fill(
     // lattice its shape keeps clear on, at each angle, as Arrange all's do
     // (#556): as close as they can stand on every side.
     let lattices: Vec<(usize, Vec<[i32; 2]>)> = if problem.tight && bodies == 1 {
-        (0..problem.footprints[0].shapes.len())
-            .into_par_iter()
-            .filter_map(|a| {
-                let shape = &problem.footprints[0].shapes[a];
-                if shape.hi[0] - shape.lo[0] > problem.plate.width as i32
-                    || shape.hi[1] - shape.lo[1] > problem.plate.height as i32
-                {
-                    return None;
-                }
-                let spots = dense_lattices(shape, problem.cell)
-                    .into_iter()
-                    .map(|(u, v)| lattice_spots(&problem.plate, shape, u, v, problem.cell))
-                    .max_by_key(Vec::len)?;
-                (!spots.is_empty()).then_some((a, spots))
-            })
-            .collect()
+        densest_lattices(problem, 0)
     } else {
         Vec::new()
     };
@@ -612,6 +597,41 @@ pub(crate) fn turned_alike(like: &Footprint, a: usize, fp: &Footprint) -> Option
         let d = (fp.turn + fp.angles[k] - goal).rem_euclid(std::f64::consts::TAU);
         d.min(std::f64::consts::TAU - d) < 1e-4f64.to_radians() * 100.0
     })
+}
+
+/// Per angle of body `body`, the spots of the densest lattice it keeps
+/// clear on that holds most on the plate, front row first. Its shapes and
+/// the plate are weighed in a few slices of height, each covering its
+/// bands (#555): what keeps clear in those does in the bands, and it is
+/// many times quicker.
+fn densest_lattices(problem: &Problem<'_>, body: usize) -> Vec<(usize, Vec<[i32; 2]>)> {
+    let fp = &problem.footprints[body];
+    let top = fp
+        .shapes
+        .iter()
+        .flat_map(|s| s.bands.iter().map(|m| m.band + 1))
+        .max()
+        .unwrap_or(1);
+    let group = top.div_ceil(crate::separate::GROUPS);
+    let plate = problem.plate.grouped(group);
+    (0..fp.shapes.len())
+        .into_par_iter()
+        .filter_map(|a| {
+            let shape = &fp.shapes[a];
+            if shape.hi[0] - shape.lo[0] > problem.plate.width as i32
+                || shape.hi[1] - shape.lo[1] > problem.plate.height as i32
+            {
+                return None;
+            }
+            let shape = crate::separate::grouped(shape, group);
+            // The lattice that holds most on this plate.
+            let spots = dense_lattices(&shape, problem.cell)
+                .into_iter()
+                .map(|(u, v)| lattice_spots(&plate, &shape, u, v, problem.cell))
+                .max_by_key(Vec::len)?;
+            (!spots.is_empty()).then_some((a, spots))
+        })
+        .collect()
 }
 
 /// Steps tried between copies across a row and from row to row (mm).
@@ -802,23 +822,7 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
     // free spot leaves holes between them.
     let largest = (0..sizes.len()).max_by_key(|&i| (sizes[i], std::cmp::Reverse(i)));
     let lattices: Vec<(usize, Vec<[i32; 2]>)> = match largest {
-        Some(big) if problem.tight => (0..problem.footprints[big].shapes.len())
-            .into_par_iter()
-            .filter_map(|a| {
-                let shape = &problem.footprints[big].shapes[a];
-                if shape.hi[0] - shape.lo[0] > problem.plate.width as i32
-                    || shape.hi[1] - shape.lo[1] > problem.plate.height as i32
-                {
-                    return None;
-                }
-                // The lattice that holds most on this plate.
-                let spots = dense_lattices(shape, problem.cell)
-                    .into_iter()
-                    .map(|(u, v)| lattice_spots(&problem.plate, shape, u, v, problem.cell))
-                    .max_by_key(Vec::len)?;
-                (!spots.is_empty()).then_some((a, spots))
-            })
-            .collect(),
+        Some(big) if problem.tight => densest_lattices(problem, big),
         _ => Vec::new(),
     };
     let set = shaken + kinds.len() as u32;
@@ -930,6 +934,64 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
         }
     }
     pick(layouts.into_iter().map(|(_, l)| l).collect())
+}
+
+/// `layout` with the bodies it left off squeezed in, the bodies placed
+/// moving to make room (#555): the smallest first, until one does not fit,
+/// for a larger one hardly would. The pile is then balanced again. `None`
+/// when cancelled.
+pub(crate) fn squeezed(
+    problem: &Problem<'_>,
+    layout: Layout,
+    cancel: &AtomicBool,
+) -> Option<Layout> {
+    let size = |b: usize| problem.footprints[b].shapes.first().map_or(0, Shape::area);
+    let mut left: Vec<usize> = (0..layout.placed.len())
+        .filter(|&b| layout.placed[b].is_none())
+        .collect();
+    if left.is_empty() || layout.count == 0 {
+        return Some(layout);
+    }
+    left.sort_by_key(|&b| (size(b), b));
+    let placed: Vec<(usize, crate::separate::Spot)> = layout
+        .placed
+        .iter()
+        .enumerate()
+        .filter_map(|(b, p)| p.map(|s| (b, s)))
+        .collect();
+    let before = placed.len();
+    let placed = crate::separate::squeeze_in(
+        problem.footprints,
+        &problem.plate,
+        placed,
+        left,
+        |_| true,
+        cancel,
+    )?;
+    let added = placed.len() > before;
+    if !added {
+        return Some(layout);
+    }
+    let mut spots = vec![None; layout.placed.len()];
+    let mut pile: Option<([i32; 2], [i32; 2])> = None;
+    for (b, (angle, at)) in placed {
+        spots[b] = Some((angle, at));
+        let shape = &problem.footprints[b].shapes[angle];
+        let (lo, hi) = (
+            [at[0] + shape.lo[0], at[1] + shape.lo[1]],
+            [at[0] + shape.hi[0], at[1] + shape.hi[1]],
+        );
+        pile = Some(pile.map_or((lo, hi), |(l, h)| {
+            (
+                [l[0].min(lo[0]), l[1].min(lo[1])],
+                [h[0].max(hi[0]), h[1].max(hi[1])],
+            )
+        }));
+    }
+    let metric = Metric {
+        size: [problem.plate.width as i64, problem.plate.height as i64],
+    };
+    Some(finish(problem, metric, spots, pile, layout.pass))
 }
 
 /// The winner: most bodies placed, then the pile that needs the least

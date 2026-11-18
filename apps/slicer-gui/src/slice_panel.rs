@@ -251,22 +251,37 @@ impl SlicePanelBridge {
         *self.selected_format.borrow()
     }
 
+    /// One printer in use everywhere (#623): the one picked here is the
+    /// app's, so the plate, Preferences and this panel never disagree.
     fn on_printer_picked(&self, index: i32) {
         let Some(id) = resolve(&self.printer_ids.borrow(), index) else {
             return;
         };
-        if self.document.set_selected_printer(Some(id)) {
+        self.document.set_selected_printer(None);
+        if self.bus.snapshot().default_printer.as_ref() == Some(&id) {
             self.refresh();
+            return;
         }
+        self.bus.update(move |snapshot| {
+            snapshot.default_printer = Some(id);
+            PreferencesChange::DefaultPrinter
+        });
     }
 
+    /// One resin in use everywhere, as the printer (#623).
     fn on_resin_picked(&self, index: i32) {
         let Some(id) = resolve(&self.resin_ids.borrow(), index) else {
             return;
         };
-        if self.document.set_selected_resin(Some(id)) {
+        self.document.set_selected_resin(None);
+        if self.bus.snapshot().default_resin.as_ref() == Some(&id) {
             self.refresh();
+            return;
         }
+        self.bus.update(move |snapshot| {
+            snapshot.default_resin = Some(id);
+            PreferencesChange::DefaultResin
+        });
     }
 
     /// Records the picked printer file on the document, so it travels into the
@@ -413,6 +428,7 @@ impl PanelUpdate {
             | PreferencesChange::LiftModelsOnPlate
             | PreferencesChange::OverhangMap
             | PreferencesChange::FixAllRepeat
+            | PreferencesChange::Controls
             | PreferencesChange::HideRaftsUnderPlate
             | PreferencesChange::SupportLinesUnderPlate
             | PreferencesChange::DiagnosticLog
@@ -485,6 +501,7 @@ mod panel_update_tests {
             (PreferencesChange::LiftModelsOnPlate, None),
             (PreferencesChange::OverhangMap, None),
             (PreferencesChange::FixAllRepeat, None),
+            (PreferencesChange::Controls, None),
             (PreferencesChange::HideRaftsUnderPlate, None),
             (PreferencesChange::SupportLinesUnderPlate, None),
             (PreferencesChange::DiagnosticLog, None),

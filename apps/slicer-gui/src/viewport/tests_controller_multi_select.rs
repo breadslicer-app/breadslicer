@@ -231,13 +231,24 @@ fn a_box_only_has_to_touch_an_object() {
     assert_eq!(selected(&ctrl), vec![0]);
 }
 
+/// A drag from empty space without Shift draws a box too (#622), and what
+/// it touches becomes the selection.
 #[test]
-fn a_drag_without_shift_draws_no_box() {
+fn a_drag_from_empty_space_without_shift_boxes_and_replaces() {
     let ctrl = models(3, WorkspaceSection::Transform);
+    select_rows(&ctrl, &[2]);
     drag(
         &ctrl,
         [-9.0, 3.0, 0.0],
-        [9.0, -3.0, 0.0],
+        [-3.0, -1.5, 0.0],
+        PointerModifiers::default(),
+    );
+    assert_eq!(selected(&ctrl), vec![0], "the right one went");
+    // Over empty plate it clears the selection.
+    drag(
+        &ctrl,
+        [-4.0, 4.0, 0.0],
+        [-2.0, 2.0, 0.0],
         PointerModifiers::default(),
     );
     assert!(selected(&ctrl).is_empty());

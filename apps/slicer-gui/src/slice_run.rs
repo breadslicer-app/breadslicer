@@ -122,6 +122,8 @@ struct CompletedSlice {
     review: ReviewOutcome,
     /// The values the run's profiles resolved to (#280).
     layers: Option<LayerValues>,
+    /// The leaves sliced from a repaired copy of their mesh (#610).
+    repaired: Vec<NodeId>,
 }
 
 /// The worker's finished payload, past the engine's raw per-leaf output: a
@@ -837,6 +839,32 @@ impl SliceRun {
     /// Drains the deposited result on the UI thread: closes the modal, and
     /// either reports a completed slice, silently discards a cancelled one, or
     /// surfaces the failure.
+    /// Says which models were sliced from a repaired copy of their mesh
+    /// (#610): the plate printed anyway, and the model keeps its errors until
+    /// repaired in Prepare.
+    fn tell_repaired_for_slice(&self, leaves: &[NodeId]) {
+        if leaves.is_empty() {
+            return;
+        }
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let names = self
+            .document
+            .with_scene(|spatial| object_names_by_leaf(spatial.graph()))
+            .unwrap_or_default();
+        let list: Vec<String> = leaves
+            .iter()
+            .map(|leaf| names.get(leaf).cloned().unwrap_or_else(|| "?".to_owned()))
+            .collect();
+        crate::breadcrumbs::note(&format!("slice: {} repaired for slicing", list.len()));
+        ui.set_status_notice(ctr!(
+            "Workspace",
+            "Sliced although {} has mesh errors: a repaired copy was sliced. Repair it in Prepare to keep the fix.",
+            list.join(", ")
+        ));
+    }
+
     fn finish(self: &Rc<Self>) {
         let taken = self
             .slot
@@ -897,6 +925,7 @@ impl SliceRun {
                     self.review.fills_landed(fill_ids);
                     self.review.support_islands_once_shown(islands_after);
                     self.review.show(completed.review);
+                    self.tell_repaired_for_slice(&completed.repaired);
                     self.tell_landed(true);
                 } else {
                     self.tell_landed(false);
@@ -1197,6 +1226,12 @@ fn run_slice(
                 _ => None,
             };
             let scale = plate.scale_compensation();
+            let repaired: Vec<NodeId> = plate
+                .leaves()
+                .iter()
+                .filter(|slices| slices.was_repaired())
+                .map(|slices| slices.leaf())
+                .collect();
             let contours = plate
                 .merge_with(filled.into_iter().chain(erased))
                 .map_err(|_| SliceFailure::SliceMerge)?;
@@ -1211,6 +1246,10 @@ fn run_slice(
                 return Ok(SliceRunOutcome::Cancelled);
             }
             capture(scene, contours, scale, review, layers)
+                .map(|completed| CompletedSlice {
+                    repaired,
+                    ..completed
+                })
                 .map(|completed| SliceRunOutcome::Completed(Box::new(completed)))
         }
     }
@@ -1246,6 +1285,7 @@ fn capture(
         token,
         review,
         layers,
+        repaired: Vec::new(),
     })
 }
 

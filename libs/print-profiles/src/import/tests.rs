@@ -299,6 +299,66 @@ fn an_imported_printer_is_found_in_our_catalog_by_panel_and_plate() {
     assert_eq!(matching_printer(&other, [&m7]), None);
 }
 
+/// A `.lyr` is a list of resins with no printer (#618); two of one name
+/// are told apart by their layer height.
+#[test]
+fn a_lychee_resin_export_gives_its_resins_apart() {
+    let resin = |height: f64, exposure: f64| {
+        map(&[
+            ("brand", Value::Str("Elegoo".to_owned())),
+            ("name", Value::Str("Rapid / Standard".to_owned())),
+            ("normalLayerExposureTime", with_unit(exposure, "s")),
+            ("burnLayerExposureTime", with_unit(25.0, "s")),
+            ("normalLayerHeight", with_unit(height, "um")),
+        ])
+    };
+    let mut bytes = Vec::new();
+    encode(
+        &Value::Array(vec![
+            resin(30.0, 1.2),
+            resin(50.0, 2.5),
+            map(&[("comment", Value::Nil)]),
+        ]),
+        &mut bytes,
+    );
+    let resins = read_lychee_resins(&lychee::raised(&bytes)).expect("read");
+    assert_eq!(resins.len(), 2, "the entry with no exposure is not a resin");
+    assert_eq!(resins[0].name, "Rapid / Standard (30 µm)");
+    assert_eq!(resins[1].name, "Rapid / Standard (50 µm)");
+    assert_eq!(resins[1].layer_height_mm, Some(0.05));
+    assert!(matches!(
+        read_lychee_resins(b"not a file"),
+        Err(ImportError::Unreadable(_))
+    ));
+}
+
+/// The printer a file name names: the longest name found in it (#618).
+#[test]
+fn a_file_name_names_the_longest_printer_in_it() {
+    let ids: Vec<PrinterId> = [
+        "elegoo-mars-5",
+        "elegoo-mars-5-ultra",
+        "anycubic-photon-mono-m7",
+    ]
+    .iter()
+    .map(|id| PrinterId::new(id).unwrap())
+    .collect();
+    let printers = [
+        (&ids[0], "ELEGOO", "Mars 5"),
+        (&ids[1], "ELEGOO", "Mars 5 Ultra"),
+        (&ids[2], "Anycubic", "Photon Mono M7"),
+    ];
+    assert_eq!(
+        printer_named_in("Elegoo Mars 5 Ultra Resin.lyr", printers),
+        Some(ids[1].clone())
+    );
+    assert_eq!(
+        printer_named_in("mars5 resins.lyr", printers),
+        Some(ids[0].clone())
+    );
+    assert_eq!(printer_named_in("My resins.lyr", printers), None);
+}
+
 /// Real exports, read by hand: `IMPORT_SETTINGS` holds paths split by `|`.
 #[test]
 #[ignore = "reads exported files of a person's own"]
@@ -309,6 +369,20 @@ fn real_exports() {
     for path in paths.split('|') {
         let ext = path.rsplit('.').next().unwrap_or_default();
         let bytes = std::fs::read(path).unwrap();
+        if ext.eq_ignore_ascii_case("lyr") {
+            match read_lychee_resins(&bytes) {
+                Ok(resins) => {
+                    for r in resins {
+                        println!(
+                            "{path}: {} / {}: {:?} mm, {:?}, not imported {:?}",
+                            r.brand, r.name, r.layer_height_mm, r.settings, r.not_imported
+                        );
+                    }
+                }
+                Err(e) => println!("{path}: {e}"),
+            }
+            continue;
+        }
         match read_printer_settings(ext, &bytes) {
             Ok(printers) => {
                 for p in printers {
@@ -324,4 +398,83 @@ fn real_exports() {
             Err(e) => println!("{path}: {e}"),
         }
     }
+}
+
+/// A CHITUBOX export (#565): the printer, and the resin's settings, the
+/// 2-stage lift and its slow approach to the film in the first stage.
+#[test]
+fn a_chitubox_export_gives_its_printer_and_resin() {
+    let file = br#"{
+        "printerinfo": {
+            "machinename": {"currentvalue": "Anycubic Photon Mono M7 Pro"},
+            "resolutionx": {"currentvalue": 13312},
+            "resolutiony": {"currentvalue": 5120},
+            "machinewidth": {"currentvalue": 223.64199829101562},
+            "machinedepth": {"currentvalue": 126.4800033569336}
+        },
+        "material": [{"name": "Default", "slice": [{"name": "Fast Resin_Fast",
+            "print": {
+                "layerheight": {"currentvalue": 0.10000000149011612},
+                "bottomlayercount": {"currentvalue": 3},
+                "normalexposuretime": {"currentvalue": 1.399999976158142},
+                "bottomlayerexposuretime": {"currentvalue": 15.0},
+                "transitionlayercount": {"currentvalue": 15},
+                "printwaitmode": {"currentvalue": 1},
+                "normalresttimeafterretract": {"currentvalue": 0.5},
+                "normalresttimebeforelift": {"currentvalue": 0.0},
+                "normalresttimeafterlift": {"currentvalue": 0.0},
+                "normallayerliftheight": {"currentvalue": 2.0},
+                "normallayerliftheight2": {"currentvalue": 4.0},
+                "normallayerliftspeed": {"currentvalue": 360.0},
+                "normallayerliftspeed2": {"currentvalue": 900.0},
+                "normallayerdropspeed": {"currentvalue": 900.0},
+                "normallayerdropspeed2": {"currentvalue": 360.0},
+                "normallayerdropheight2": {"currentvalue": 4.0},
+                "bottomlayerliftheight": {"currentvalue": 5.0},
+                "bottomlayerliftspeed": {"currentvalue": 120.0},
+                "bottomlayerdropspeed": {"currentvalue": 240.0}
+            },
+            "advanced": {
+                "normallightintensitypwm": {"currentvalue": 255},
+                "bottomlightintensitypwm": {"currentvalue": 200},
+                "enable_scale_compensation": {"currentvalue": true},
+                "compensation_x": {"currentvalue": 101.0},
+                "compensation_y": {"currentvalue": 101.0},
+                "compensation_z": {"currentvalue": 100.0}
+            }}]}]
+    }"#;
+    let printers = read_printer_settings("cfgx", file).unwrap();
+    assert_eq!(printers.len(), 1);
+    let p = &printers[0];
+    assert_eq!(p.name, "Anycubic Photon Mono M7 Pro");
+    assert_eq!(p.resolution, (13312, 5120));
+    let r = &p.resins[0];
+    assert_eq!(r.name, "Fast Resin_Fast");
+    assert_eq!(r.brand, "CHITUBOX");
+    assert_eq!(r.layer_height_mm, Some(0.1));
+    let s = &r.settings;
+    assert_eq!(s.normal_exposure_sec.map(|v| v.value()), Some(1.4));
+    assert_eq!(s.bottom_exposure_sec.map(|v| v.value()), Some(15.0));
+    assert_eq!(s.bottom_layer_count, Some(3));
+    assert_eq!(s.wait_before_cure_sec.map(|v| v.value()), Some(0.5));
+    assert_eq!(s.lift_distance_mm.map(|v| v.value()), Some(2.0));
+    assert_eq!(s.lift_speed_mm_min.map(|v| v.value()), Some(360.0));
+    // The slow approach to the film is the first stage's retract.
+    assert_eq!(s.retract_speed_mm_min.map(|v| v.value()), Some(360.0));
+    let second = s.second_travel.expect("2 stages");
+    assert_eq!(second.lift_distance_mm.value(), 4.0);
+    assert_eq!(second.lift_speed_mm_min.value(), 900.0);
+    assert_eq!(second.retract_speed_mm_min.value(), 900.0);
+    assert_eq!(
+        s.bottom_retract_speed_mm_min.map(|v| v.value()),
+        Some(240.0)
+    );
+    assert!(s.bottom_second_travel.is_none());
+    assert_eq!(s.light_pwm.map(|v| v.percent()), Some(100.0), "255 of 255");
+    assert!(
+        s.bottom_light_pwm
+            .is_some_and(|v| (v.percent() - 78.43).abs() < 0.01)
+    );
+    assert!(r.scale.is_some());
+    assert_eq!(r.not_imported, vec!["transitionlayercount".to_owned()]);
 }

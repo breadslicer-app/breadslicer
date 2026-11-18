@@ -187,10 +187,12 @@ impl ModalGesture {
                     };
                     unit * modifiers.distance(distance * self.world_per_pixel)
                 } else {
-                    ((self.right * dx - self.up * dy) * self.world_per_pixel)
-                        .to_array()
-                        .map(|c| modifiers.distance(c))
-                        .into()
+                    let [x, y, _] = on_plate(
+                        (self.right * dx - self.up * dy) * self.world_per_pixel,
+                        self.view_axis,
+                    )
+                    .to_array();
+                    Vec3::new(modifiers.distance(x), modifiers.distance(y), 0.0)
                 };
                 self.world_translation(self.original, delta)
             }
@@ -241,6 +243,21 @@ impl ModalGesture {
         }
     }
 }
+/// A G without an axis slides on the plate (#620): lifting a model is rare
+/// in resin and has its own field, and a move in the camera's plane drifted
+/// in Z from any slanted view. `moved`, a move in the camera's plane, is
+/// carried along the view onto the plate's plane, so the model stays under
+/// the cursor; seen almost edge-on (within ~11° of the plate) it would race
+/// away, so there it only loses its height.
+pub(super) fn on_plate(moved: Vec3, view: Vec3) -> Vec3 {
+    let along = if view.z.abs() >= 0.2 {
+        moved - view * (moved.z / view.z)
+    } else {
+        moved
+    };
+    Vec3::new(along.x, along.y, 0.0)
+}
+
 /// The view direction a modal R without an axis turns about: snapped onto
 /// the world axis it is within `VIEW_AXIS_SNAP_COS` of, so an R from an
 /// axis-aligned view (the Top preset looks a hair off vertical, its pitch
@@ -355,6 +372,31 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn g_without_an_axis_slides_on_the_plate_from_any_view() {
+        // From above: as it was.
+        let mut g = gesture(ModalOp::Move);
+        let p = point(g.propose([130.0, 20.0], NO_KEYS).unwrap(), [0.0; 3]);
+        assert_eq!(p, [30.0, -20.0, 0.0]);
+        // From a slanted view the cursor's way up the screen goes back on
+        // the plate, never up in Z.
+        let tilt = 50f32.to_radians();
+        g.up = Vec3::new(0.0, tilt.sin(), tilt.cos());
+        g.view_axis = Vec3::new(0.0, -tilt.cos(), tilt.sin());
+        let p = point(g.propose([100.0, -20.0], NO_KEYS).unwrap(), [0.0; 3]);
+        assert_eq!(p[2], 0.0, "{p:?}");
+        assert!(p[1] > 20.0, "farther back than on screen: {p:?}");
+        // Edge-on: across only, still no height.
+        g.up = Vec3::Z;
+        g.view_axis = -Vec3::Y;
+        let p = point(g.propose([130.0, -20.0], NO_KEYS).unwrap(), [0.0; 3]);
+        assert_eq!(p, [30.0, 0.0, 0.0]);
+        // G then Z still lifts.
+        g.axis = Some(2);
+        let p = point(g.propose([100.0, -20.0], NO_KEYS).unwrap(), [0.0; 3]);
+        assert!(p[2] > 0.0, "{p:?}");
+    }
+
     #[test]
     fn uniform_and_axis_scale() {
         let mut g = gesture(ModalOp::Scale);

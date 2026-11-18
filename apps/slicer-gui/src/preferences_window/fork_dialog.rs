@@ -98,6 +98,7 @@ fn build_fork_dialog(
         ordered_calibration_targets(&source, catalog.printers(), default_printer.as_ref());
 
     let dialog = ForkDialog::new()?;
+    crate::window_chrome::wire_framed!(&dialog);
     dialog.apply_preferences(&snapshot);
     dialog.set_source_name(profile_display_name(&source.identity).into());
     dialog.set_fork_name(ctr!(

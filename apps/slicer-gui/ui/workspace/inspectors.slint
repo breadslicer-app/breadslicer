@@ -1567,6 +1567,13 @@ export component HollowInspector inherits VerticalLayout {
     // What the selected model is: 0 solid, 1 hollow, 2 the support mesh.
     in property <int> model-state;
     in property <int> drain-count;
+    // The drain picked to edit (#450), -1 none; and whether the next click
+    // moves it.
+    in property <int> drain-picked: -1;
+    in property <bool> drain-moving;
+    callback drain-step(int);
+    callback drain-remove();
+    callback drain-move();
     in property <bool> drain-tool-on;
     // The lasso (#179): how many regions the model keeps solid.
     in property <int> solid-count;
@@ -1814,6 +1821,56 @@ export component HollowInspector inherits VerticalLayout {
                 root.drain-tool-toggled();
             }
         }
+        // Pick a drain to change, move or take away (#450): with the
+        // arrows, or a click on it with the drain tool.
+        if root.drain-count > 0: HorizontalLayout {
+            spacing: 6px;
+            ScButton {
+                text: "◀";
+                width: 30px;
+                enabled: !root.running;
+                clicked => {
+                    root.drain-step(-1);
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: root.drain-picked >= 0
+                    ? @tr("Inspector" => "Drain {} of {}", root.drain-picked + 1, root.drain-count)
+                    : @tr("Inspector" => "New drains");
+                font-size: Theme.font;
+                color: root.drain-picked >= 0 ? Theme.text : Theme.text-muted;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+            ScButton {
+                text: "▶";
+                width: 30px;
+                enabled: !root.running;
+                clicked => {
+                    root.drain-step(1);
+                }
+            }
+        }
+        if root.drain-picked >= 0: HorizontalLayout {
+            spacing: 6px;
+            ScButton {
+                horizontal-stretch: 1;
+                text: root.drain-moving ? @tr("Inspector" => "Click where it goes…") : @tr("Inspector" => "Move it");
+                enabled: !root.running;
+                clicked => {
+                    root.drain-move();
+                }
+            }
+            ScButton {
+                horizontal-stretch: 1;
+                text: @tr("Inspector" => "Remove it");
+                enabled: !root.running;
+                clicked => {
+                    root.drain-remove();
+                }
+            }
+        }
         NumberField {
             label: root.drain-cone ? @tr("Inspector" => "Radius at the surface") : @tr("Inspector" => "Drain radius");
             unit: "mm";
@@ -1876,7 +1933,9 @@ export component HollowInspector inherits VerticalLayout {
             }
         }
         Note {
-            text: @tr("Inspector" => "Each drain keeps the shape it was placed with. A plug is a separate part on the plate, as long as the hole and narrower by the clearance: print it with the model and close the hole with it after cleaning.");
+            text: root.drain-picked >= 0
+                ? @tr("Inspector" => "These fields change the drain picked, and its plug. Click a drain with the drain tool to pick it, or empty surface to place a new one.")
+                : @tr("Inspector" => "Each drain keeps the shape it was placed with. A plug is a separate part on the plate, as long as the hole and narrower by the clearance: print it with the model and close the hole with it after cleaning.");
         }
         if root.drain-count > 0: ScButton {
             text: @tr("Inspector" => "Remove all drains");

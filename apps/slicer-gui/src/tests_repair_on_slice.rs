@@ -198,97 +198,28 @@ fn mini_and_cube(broken: IndexedMesh) -> Scene {
     graph
 }
 
-/// Pins the whole way: the refused slice's card offers Repair; Repair moves
-/// to the Transform tab and repairs only the refused object, as 1 undo step,
-/// with its report; then it goes back to the Slice tab and slices, without
-/// asking to overwrite, and the slice lands.
+/// A model with mesh errors does not stop the plate (#610): it slices from
+/// a repaired copy at once, with no card, the scene's mesh untouched, and
+/// the status bar names it.
 #[test]
-fn repair_from_the_card_repairs_the_refused_object_and_slices_again() {
+fn a_broken_model_slices_from_a_repaired_copy_without_a_card() {
     on_fresh_slint_thread(|| {
-        // Faces turned the wrong way at random, as on Damian's mini.
-        let w = window_with(mini_and_cube(corpus_mesh("s08-flipped-scattered-5pct")));
-        let before = w.meshes();
-
-        w.press_slice();
-        assert!(w.document.slice_params().is_none(), "nothing sliced yet");
-        let card = w.card();
-        assert_eq!(card.kind, MessageKind::Error);
-        assert_eq!(card.heading, "Can't slice “Mini”");
-        assert_eq!(
-            card.text,
-            "“Mini” is not a closed mesh: it has holes, cracks or faces that don't line up. Press Repair to fix it and slice again."
-        );
-        assert!(
-            card.details.contains("InconsistentWindingOrder"),
-            "{}",
-            card.details
-        );
-        assert_eq!(card.action, "Repair");
-
-        w.window.invoke_message_answered(MessageAnswer::Confirm);
-        assert_eq!(
-            w.window.get_workspace_section(),
-            WorkspaceSection::Transform
-        );
-        assert!(w.window.get_repairing_in_progress());
-        w.finish_repair();
-
-        // Only the refused object changed, as 1 undo step.
-        let after = w.meshes();
-        assert_eq!(after.len(), before.len());
-        assert!(
-            !Arc::ptr_eq(&after[0].1, &before[0].1),
-            "the mini is repaired"
-        );
-        assert!(
-            Arc::ptr_eq(&after[1].1, &before[1].1),
-            "the cube is untouched"
-        );
-        assert!(after[0].1.is_sliceable());
-
-        // Back in the Slice tab, slicing again on its own, with the report.
-        assert_eq!(w.window.get_workspace_section(), WorkspaceSection::Slice);
-        assert!(w.window.get_slicing_in_progress(), "the slice starts again");
-        assert_eq!(w.dialogs.info_headings_for_test(), ["Mesh repair"]);
-        w.finish_slice();
-        assert!(w.document.slice_params().is_some(), "the slice landed");
-        assert!(w.window.get_slice_layer_count() > 1);
-        assert!(w.dialogs.error_headings_for_test().is_empty());
-
-        assert!(w.document.can_undo());
-        w.document.undo().expect("undo");
-        assert!(!w.document.can_undo(), "the repair is 1 undo step");
-        assert!(Arc::ptr_eq(&w.meshes()[0].1, &before[0].1));
-    });
-}
-
-/// Pins Cancel: the repair card's Cancel stops the run, the scene keeps every
-/// mesh it had, nothing reaches the history, and nothing slices, even when
-/// the cancelled worker wakes the window later.
-#[test]
-fn cancelling_the_repair_leaves_the_scene_and_slices_nothing() {
-    on_fresh_slint_thread(|| {
-        let w = window_with(mini_and_cube(corpus_mesh("s12-fin-on-edge")));
-        let before = w.meshes();
-        w.press_slice();
-        assert_eq!(w.card().action, "Repair");
-        w.window.invoke_message_answered(MessageAnswer::Confirm);
-        assert!(w.window.get_repairing_in_progress());
-
-        w.window.invoke_repair_cancel();
-        assert!(!w.window.get_repairing_in_progress());
-        // The late wake-up of the cancelled worker.
-        std::thread::sleep(Duration::from_millis(200));
-        w.window.invoke_repair_finished();
-
-        let after = w.meshes();
-        for ((_, a), (_, b)) in after.iter().zip(&before) {
-            assert!(Arc::ptr_eq(a, b), "a cancelled repair changed a mesh");
+        for broken in ["s08-flipped-scattered-5pct", "s12-fin-on-edge"] {
+            let w = window_with(mini_and_cube(corpus_mesh(broken)));
+            let before = w.meshes();
+            w.press_slice();
+            assert!(w.document.slice_params().is_some(), "{broken}: sliced");
+            assert!(!w.window.get_message_open(), "{broken}: no card");
+            let after = w.meshes();
+            for ((_, a), (_, b)) in after.iter().zip(&before) {
+                assert!(Arc::ptr_eq(a, b), "{broken}: the scene is as it was");
+            }
+            assert!(
+                w.window.get_status_notice().contains("Mini"),
+                "{broken}: {}",
+                w.window.get_status_notice()
+            );
         }
-        assert!(!w.document.can_undo());
-        assert!(!w.window.get_slicing_in_progress(), "nothing slices");
-        assert!(w.document.slice_params().is_none());
-        assert!(!w.window.get_message_open(), "no card follows a Cancel");
     });
 }
 
@@ -344,29 +275,6 @@ fn a_silenced_repair_report_still_says_it_cant_slice() {
         w.window.invoke_message_answered(MessageAnswer::Confirm);
         w.finish_repair();
         assert_eq!(w.card().heading, "Still can't slice");
-    });
-}
-
-/// Pins that the card's Close, Escape and a click outside repair nothing.
-#[test]
-fn closing_the_card_repairs_nothing() {
-    on_fresh_slint_thread(|| {
-        let w = window_with(mini_and_cube(corpus_mesh("s12-fin-on-edge")));
-        for answer in [MessageAnswer::Close, MessageAnswer::Cancel] {
-            w.press_slice();
-            assert_eq!(w.card().action, "Repair");
-            w.window.invoke_message_answered(answer);
-            assert!(!w.window.get_repairing_in_progress());
-            assert!(!w.window.get_message_open());
-        }
-        w.press_slice();
-        w.window.invoke_message_outside_clicked();
-        assert!(
-            w.window.get_message_open(),
-            "an error is answered, not clicked away"
-        );
-        assert_eq!(w.window.get_workspace_section(), WorkspaceSection::Slice);
-        assert!(!w.document.can_undo());
     });
 }
 

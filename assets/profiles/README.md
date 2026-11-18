@@ -59,6 +59,21 @@ each is the one profile we ship for it.
 The Jupiter SE, Mars 3 Pro and Saturn 2 14K are not in UVtools' catalog
 and keep that dataset's figures.
 
+22 machines come from a list of printer specifications a tester shared
+(panel in pixels, pixel size, build height and the file each prints), none of
+them in UVtools' catalog: the Photon (mono screen) and Photon S Upgrade; the
+Halot Mage S, Play, R6, X1 Max and X1 Neo; the Mars (RGB screen V2), Mars
+(mono screen), Mars Pro and Mars Pro FHD; the Sonic Mega 8K S and V2, Mighty
+12K Upgrade, Mighty Revo 16K and 16K Max, and Sonic XL 4K 2022; the GK3, GK3
+Pro, GK3 Ultra, GKtwo 12K Upgrade and S10. Their plate is the panel's pixels
+times the pixel size. The list says nothing of the mirror: each takes its
+family's, as the catalog has it (Halot X1 machines none, the other Halot
+CXDLP v4 machines X, the Sonic XL none, every other one X). Their files are
+named the way the catalog names those of the machines they share a file
+with: the list's encrypted CTB is CTB v5, encrypted, its CTB CTB v3. 2
+machines of the list were left out: the Halot Sky 2022 is the Halot Sky Plus,
+and the Sonic XL 4K's plate and panel disagree.
+
 4 things in the ELEGOO profiles are not that dataset's. The Mars 5 builds
 150 mm tall, which is the figure ELEGOO publishes (and UVtools states). The
 11 machines ELEGOO publishes a 2 stage platform move for declare that they

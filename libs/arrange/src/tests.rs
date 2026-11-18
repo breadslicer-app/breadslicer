@@ -4,7 +4,7 @@
  */
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::AffineTransform3D;
@@ -297,7 +297,7 @@ fn fill_now(
     settings: &Settings,
     limit: Option<usize>,
 ) -> crate::Filled {
-    let placed = std::sync::atomic::AtomicUsize::new(0);
+    let placed = AtomicUsize::new(0);
     let filled = crate::fill(
         bodies,
         sources,
@@ -431,7 +431,7 @@ fn a_cancelled_fill_says_so() {
         &plate(40.0, 40.0),
         &Settings::default(),
         None,
-        &std::sync::atomic::AtomicUsize::new(0),
+        &AtomicUsize::new(0),
         &AtomicBool::new(true),
     );
     assert_eq!(out, Err(crate::Cancelled));
@@ -788,6 +788,140 @@ fn kept_footprints_on_a_real_model() {
     );
 }
 
+/// How many copies of a real model Fill bed and Arrange all put on an M7 Pro
+/// plate, as the app asks (#555). `ARRANGE_BENCH_STL` names the model,
+/// `ARRANGE_BENCH_COPIES` how many copies Arrange all gets (40),
+/// `ARRANGE_BENCH_TIGHT=1` packs as under one raft for all.
+#[test]
+#[ignore = "a measurement on a real model"]
+fn copies_of_a_real_model_on_a_plate() {
+    let Some(path) = std::env::var_os("ARRANGE_BENCH_STL") else {
+        return;
+    };
+    let copies: usize = std::env::var("ARRANGE_BENCH_COPIES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40);
+    let tight = std::env::var("ARRANGE_BENCH_TIGHT").is_ok_and(|v| v == "1");
+    let loaded = sc_mesh_formats::load_mesh_from_path(std::path::Path::new(&path), None, None)
+        .expect("loads");
+    let mesh = Arc::new(loaded.graph.merge_meshes().expect("merge").expect("a mesh"));
+    let floor = mesh
+        .vertices()
+        .iter()
+        .map(|v| f64::from(v.coords()[2]))
+        .fold(f64::INFINITY, f64::min);
+    let at = |x: f64, y: f64| Part {
+        mesh: mesh.clone(),
+        world: AffineTransform3D::from_translation([x, y, -floor]),
+    };
+    let s = Settings {
+        margin: 2.0,
+        tight,
+        ..Settings::default()
+    };
+    let (w, h) = (223.642, 126.976);
+    let one = plate(w, h);
+    let cancel = AtomicBool::new(false);
+    let placed = AtomicUsize::new(0);
+    let started = std::time::Instant::now();
+    let filled = crate::fill(
+        &[body(vec![at(w / 2.0, h / 2.0)])],
+        &[0],
+        &one,
+        &s,
+        None,
+        &placed,
+        &cancel,
+    )
+    .unwrap();
+    if let Some(dump) = std::env::var_os("ARRANGE_BENCH_DUMP") {
+        let mut out = format!(
+            "{} {} {}
+",
+            w / 2.0,
+            h / 2.0,
+            -floor
+        );
+        let moved = filled.moved.first().map(|m| m.placement);
+        for p in moved
+            .iter()
+            .chain(filled.copies.iter().map(|c| &c.placement))
+        {
+            out += &format!(
+                "{} {} {}
+",
+                p.angle, p.translation[0], p.translation[1]
+            );
+        }
+        std::fs::write(dump, out).unwrap();
+    }
+    println!(
+        "fill: 1 + {} copies in {:.2} s (footprints {:.2} s)",
+        filled.copies.len(),
+        started.elapsed().as_secs_f64(),
+        filled.timings.footprints.as_secs_f64(),
+    );
+    let bodies: Vec<Body> = (0..copies)
+        .map(|k| body(vec![at(400.0 + 60.0 * k as f64, 0.0)]))
+        .collect();
+    // Or a mix of models, `ARRANGE_BENCH_LIST` naming one per line, each
+    // `ARRANGE_BENCH_COPIES` times.
+    let bodies: Vec<Body> = match std::env::var_os("ARRANGE_BENCH_LIST") {
+        None => bodies,
+        Some(list) => std::fs::read_to_string(list)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .flat_map(|l| {
+                let loaded = sc_mesh_formats::load_mesh_from_path(
+                    std::path::Path::new(l.trim()),
+                    None,
+                    None,
+                )
+                .expect("loads");
+                let mesh = Arc::new(loaded.graph.merge_meshes().expect("merge").expect("a mesh"));
+                let floor = mesh
+                    .vertices()
+                    .iter()
+                    .map(|v| f64::from(v.coords()[2]))
+                    .fold(f64::INFINITY, f64::min);
+                (0..copies).map(move |_| {
+                    body(vec![Part {
+                        mesh: mesh.clone(),
+                        world: AffineTransform3D::from_translation([-500.0, 0.0, -floor]),
+                    }])
+                })
+            })
+            .collect(),
+    };
+    let copies = bodies.len();
+    let plates = plates_in_a_row(copies, w, h);
+    let started = std::time::Instant::now();
+    let across = crate::arrange_across(&bodies, &vec![None; copies], &plates, &s, &cancel).unwrap();
+    let off = Settings {
+        squeeze: false,
+        ..s
+    };
+    let alone =
+        crate::arrange_across(&bodies, &vec![None; copies], &plates, &off, &cancel).unwrap();
+    let mut was = vec![0usize; alone.plates_used];
+    for p in alone.placements.iter().flatten() {
+        was[p.0] += 1;
+    }
+    println!("without squeezing: {} plates {was:?}", alone.plates_used);
+    let mut per = vec![0usize; across.plates_used];
+    for p in across.placements.iter().flatten() {
+        per[p.0] += 1;
+    }
+    println!(
+        "arrange all {copies}: {} plates {per:?} in {:.2} s (footprints {:.2} s)",
+        across.plates_used,
+        started.elapsed().as_secs_f64(),
+        across.timings.footprints.as_secs_f64(),
+    );
+}
+
 /// The spread an arrangement reports is the spread of its bodies once they
 /// stand where it put them (#560), so the two can be weighed; scattered
 /// bodies are more spread out than arranged.
@@ -927,4 +1061,33 @@ fn copies_standing_turned_apart_are_turned_alike_by_their_turn() {
         None,
         "no angle stands that way"
     );
+}
+
+/// The bodies a pass leaves off are squeezed in (#555): Ls in rows leave
+/// holes no L fits in, which the Ls around them close when they move. The
+/// gap and the margin hold.
+#[test]
+fn the_bodies_left_off_are_squeezed_in_and_keep_the_gap() {
+    let mesh = cube();
+    let bodies: Vec<Body> = (0..30)
+        .map(|k| l_body(&mesh, 0.0, [200.0 + 20.0 * f64::from(k), 0.0]))
+        .collect();
+    let plate = plate(50.0, 40.0);
+    let squeezing = Settings {
+        margin: 1.0,
+        ..quarter_turns()
+    };
+    let passes_alone = Settings {
+        squeeze: false,
+        ..squeezing
+    };
+    let cancel = AtomicBool::new(false);
+    let on = |o: &crate::Outcome| o.placements.iter().flatten().filter(|p| p.on_plate).count();
+    let before = arrange(&bodies, &plate, &passes_alone, &cancel).unwrap();
+    let after = arrange(&bodies, &plate, &squeezing, &cancel).unwrap();
+    assert!(on(&after) > on(&before), "{} {}", on(&after), on(&before));
+    assert_kept_apart(&bodies, &after.placements, &plate, &squeezing);
+    // And again: the same scene, the same plate.
+    let again = arrange(&bodies, &plate, &squeezing, &cancel).unwrap();
+    assert_eq!(again.placements, after.placements);
 }

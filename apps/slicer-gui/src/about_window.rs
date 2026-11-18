@@ -24,6 +24,7 @@ pub(crate) fn build_about_window(
     bus: &Rc<PreferencesBus>,
 ) -> Result<WiredAboutWindow, slint::PlatformError> {
     let about = AboutWindow::new()?;
+    crate::window_chrome::wire_framed!(&about);
     about.set_app_version(env!("CARGO_PKG_VERSION").into());
     about.apply_preferences(&bus.snapshot());
 

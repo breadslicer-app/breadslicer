@@ -107,6 +107,7 @@ fn build_extend_dialog(
     let sources = copy_sources(&material, catalog.printers());
 
     let dialog = ExtendDialog::new()?;
+    crate::window_chrome::wire_framed!(&dialog);
     dialog.apply_preferences(&snapshot);
     dialog.set_source_name(profile_display_name(&base.identity).into());
     dialog.set_target_labels(ModelRc::new(VecModel::from(

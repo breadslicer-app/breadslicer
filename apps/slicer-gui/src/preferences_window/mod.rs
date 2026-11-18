@@ -160,6 +160,7 @@ pub(crate) fn build_preferences_window(
     catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>,
 ) -> Result<WiredPreferencesWindow, slint::PlatformError> {
     let prefs = PreferencesWindow::new()?;
+    crate::window_chrome::wire_framed!(&prefs);
     let catalog = catalog_handle.borrow().clone();
 
     // The gallery tiles and the manufacturer tab bar are derived from the
@@ -380,6 +381,17 @@ pub(crate) fn build_preferences_window(
             bus.update(move |snap| {
                 snap.show_start_dialog = on;
                 PreferencesChange::StartDialog
+            });
+        }
+    });
+
+    prefs.on_controls_selected({
+        let bus = bus.clone();
+        move |index| {
+            bus.update(move |snap| {
+                snap.controls_layout =
+                    crate::controls_layout::ControlsLayout::from_combo_index(index);
+                PreferencesChange::Controls
             });
         }
     });

@@ -125,26 +125,49 @@ pub fn fill(
     );
     let (stayed, moved) = (stayed.ok_or(Cancelled)?, moved.ok_or(Cancelled)?);
     let all_placed = (0..n).all(|k| moved.iter().any(|&(c, _, _)| c == k));
+    let moving_wins = all_placed && moved.len() - n > stayed.len();
+    // Then more copies squeezed in, the copies placed making room (#555).
+    let (stayed, moved) = if moving_wins {
+        let more = squeezed(
+            &moving,
+            moved,
+            limit.map(|l| l + n),
+            settings.squeeze,
+            cancel,
+        )
+        .ok_or(Cancelled)?;
+        (stayed, more)
+    } else {
+        let more = squeezed(&staying, stayed, limit, settings.squeeze, cancel).ok_or(Cancelled)?;
+        (more, moved)
+    };
+    placed.fetch_max(
+        if moving_wins {
+            moved.len() - n
+        } else {
+            stayed.len()
+        },
+        Ordering::Relaxed,
+    );
     let to_fill = |(k, angle, at): search::Copied| FillCopy {
         source: sources[k],
         placement: frame.placement(&copied[k], angle, at, [0.0, 0.0]),
     };
-    let (copies, moved): (Vec<FillCopy>, Vec<FillCopy>) =
-        if all_placed && moved.len() - n > stayed.len() {
-            let mut own = vec![false; n];
-            let (mut copies, mut originals) = (Vec::new(), Vec::new());
-            for found in moved {
-                if own[found.0] {
-                    copies.push(to_fill(found));
-                } else {
-                    own[found.0] = true;
-                    originals.push(to_fill(found));
-                }
+    let (copies, moved): (Vec<FillCopy>, Vec<FillCopy>) = if moving_wins {
+        let mut own = vec![false; n];
+        let (mut copies, mut originals) = (Vec::new(), Vec::new());
+        for found in moved {
+            if own[found.0] {
+                copies.push(to_fill(found));
+            } else {
+                own[found.0] = true;
+                originals.push(to_fill(found));
             }
-            (copies, originals)
-        } else {
-            (stayed.into_iter().map(to_fill).collect(), Vec::new())
-        };
+        }
+        (copies, originals)
+    } else {
+        (stayed.into_iter().map(to_fill).collect(), Vec::new())
+    };
     Ok(Filled {
         copies,
         moved,
@@ -153,4 +176,31 @@ pub fn fill(
             search: footprinted.elapsed(),
         },
     })
+}
+
+/// `copies` of `problem`'s footprints with more squeezed in, the next
+/// copy of each in turn, up to `limit` (#555). `None` when cancelled.
+fn squeezed(
+    problem: &Problem<'_>,
+    copies: Vec<search::Copied>,
+    limit: Option<usize>,
+    on: bool,
+    cancel: &AtomicBool,
+) -> Option<Vec<search::Copied>> {
+    let n = problem.footprints.len();
+    if !on || n == 0 || copies.is_empty() {
+        return Some(copies);
+    }
+    let start = copies.len();
+    let placed = copies.into_iter().map(|(k, a, at)| (k, (a, at))).collect();
+    let next = (start..).map(|c| c % n);
+    let out = crate::separate::squeeze_in(
+        problem.footprints,
+        &problem.plate,
+        placed,
+        next,
+        |count| limit.is_none_or(|l| count < l),
+        cancel,
+    )?;
+    Some(out.into_iter().map(|(k, (a, at))| (k, a, at)).collect())
 }

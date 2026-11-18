@@ -4,7 +4,8 @@
  */
 
 //! Printer and resin settings a person exports from another slicer and
-//! brings in (#565): Lychee's `.lyp` and Photon Workshop's `.pwsp`. Only
+//! brings in (#565): Lychee's `.lyp`, Photon Workshop's `.pwsp` and
+//! CHITUBOX's `.cfgx`. Only
 //! the files the person chooses are read, and their layout was worked out
 //! from such exported files alone, for interoperability. Nothing of either
 //! program ships here.
@@ -30,13 +31,15 @@ use crate::{
 
 pub mod msgpack;
 
+mod chitubox;
 mod lychee;
 mod workshop;
 
 #[cfg(test)]
 mod tests;
 
-pub use lychee::read_lychee;
+pub use chitubox::read_chitubox;
+pub use lychee::{read_lychee, read_lychee_resins};
 pub use workshop::read_photon_workshop;
 
 /// A printer of an imported file, with the resins set for it.
@@ -84,7 +87,7 @@ impl std::fmt::Display for ImportError {
 
 impl std::error::Error for ImportError {}
 
-/// Reads `bytes`, a file named with `extension` (`lyp` or `pwsp`).
+/// Reads `bytes`, a file named with `extension` (`lyp`, `pwsp` or `cfgx`).
 pub fn read_printer_settings(
     extension: &str,
     bytes: &[u8],
@@ -92,10 +95,44 @@ pub fn read_printer_settings(
     match extension.to_ascii_lowercase().as_str() {
         "lyp" => read_lychee(bytes),
         "pwsp" => read_photon_workshop(bytes),
+        "cfgx" => read_chitubox(bytes),
         other => Err(ImportError::Unreadable(format!(
             "files ending in .{other} are not printer settings"
         ))),
     }
+}
+
+/// The printer of `catalog` that `text` (a file name, say) names: the
+/// longest printer name, with or without its maker, found in it, letters and
+/// digits alone, so "Elegoo Mars 5 Ultra Resin.lyr" is the Mars 5 Ultra and
+/// not the Mars 5 (#618).
+pub fn printer_named_in<'a>(
+    text: &str,
+    printers: impl IntoIterator<Item = (&'a PrinterId, &'a str, &'a str)>,
+) -> Option<PrinterId> {
+    let letters = |text: &str| -> String {
+        text.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .flat_map(|c| c.to_lowercase())
+            .collect()
+    };
+    let named = letters(text);
+    printers
+        .into_iter()
+        .filter_map(|(id, maker, name)| {
+            let name = letters(name);
+            let full = format!("{}{name}", letters(maker));
+            let found = if named.contains(&full) {
+                full.len()
+            } else if !name.is_empty() && named.contains(&name) {
+                name.len()
+            } else {
+                return None;
+            };
+            Some((found, id))
+        })
+        .max_by_key(|(found, _)| *found)
+        .map(|(_, id)| id.clone())
 }
 
 /// How far a plate may measure from ours, as a share of it, and still be

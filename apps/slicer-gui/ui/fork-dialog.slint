@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import { FramedWindow } from "kit/framed-window.slint";
 import { Theme } from "kit/theme.slint";
 import { Palette, ScrollView } from "std-widgets.slint";
 import { ScButton as Button, ScCheckBox as CheckBox, ScLineEdit as LineEdit } from "kit/controls.slint";
@@ -19,7 +20,8 @@ export struct ForkBlock {
 // carries over (intent, defaults, and any of the source's own calibration
 // blocks; every part starts selected). This component only reports the choices;
 // the fork itself is assembled in Rust.
-export component ForkDialog inherits Window {
+export component ForkDialog inherits FramedWindow {
+    maximizable: false;
     // The app's own surface, not the platform style's (#507).
     background: Theme.panel;
     title: @tr("ForkDialog" => "Fork resin profile");

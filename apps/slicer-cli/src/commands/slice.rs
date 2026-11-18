@@ -111,6 +111,13 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         &printer.hardware.build_volume(),
         &mut std::io::stderr(),
     );
+    // A model with mesh errors slices from a repaired copy (#610); say which.
+    for slices in plate.leaves().iter().filter(|s| s.was_repaired()) {
+        eprintln!(
+            "warning: {} has mesh errors; a repaired copy was sliced (run `fix` or --repair to keep the fix)",
+            slices.leaf_name().unwrap_or("a model")
+        );
+    }
     let model_count = plate.leaves().len();
     // Every stack shares the schedule's layer grid, and merging only
     // concatenates polygons per layer, so the totals are the same whichever

@@ -229,7 +229,8 @@ impl InputDispatch {
     /// transitions the FSM into `Drag` capturing the original
     /// transform and the world-space anchor. Shift held at press
     /// starts the drag fine. A Shift press that grabs no handle starts
-    /// a selection box instead (#13); returns whether it did, so the
+    /// a selection box instead (#13), and so does a plain press on empty
+    /// space with `empty_boxes` (#622); returns whether it did, so the
     /// viewport draws it. A plain press on a model that grabs no handle may
     /// become a move of the model once the cursor leaves the click threshold
     /// (#209); the model is the one a click there selects
@@ -244,6 +245,7 @@ impl InputDispatch {
         modifiers: PointerModifiers,
         allow_transforms: bool,
         supports_selectable: bool,
+        empty_boxes: bool,
     ) -> bool {
         self.input_state.set_pressed(cursor);
         self.box_from.set(None);
@@ -267,14 +269,24 @@ impl InputDispatch {
             self.gizmo_fsm.try_start_drag(ctx);
         }
         // Alt on the Move gizmo moves a copy of the selection (#552): made in
-        // place, and the same handle grabbed on it.
+        // place, and the same handle grabbed on it. Only on the plate: a copy
+        // lifted in Z floated on a tower of new supports (#614), so the Z
+        // arrow and the planes that hold Z just move.
         if allow_transforms
             && modifiers.alt
             && matches!(
                 self.gizmo_fsm.current(),
                 GizmoState::Drag {
-                    op: super::gizmo_drag::DragOp::Translate { .. }
-                        | super::gizmo_drag::DragOp::Plane { .. },
+                    op: super::gizmo_drag::DragOp::Translate { axis, .. },
+                    ..
+                } if axis != crate::gizmo::axis::Axis::Z
+            ) | matches!(
+                self.gizmo_fsm.current(),
+                GizmoState::Drag {
+                    op: super::gizmo_drag::DragOp::Plane {
+                        normal: crate::gizmo::axis::Axis::Z,
+                        ..
+                    },
                     ..
                 }
             )
@@ -298,7 +310,14 @@ impl InputDispatch {
             }
         }
         let grabbed = matches!(self.gizmo_fsm.current(), GizmoState::Drag { .. });
-        let boxing = shift && !grabbed;
+        // A press on empty space draws a box too, as in other slicers (#622).
+        let boxing = !grabbed
+            && (shift
+                || (empty_boxes
+                    && matches!(
+                        self.pick_at(document, camera, viewport, cursor, supports_selectable),
+                        Some(None)
+                    )));
         if boxing {
             self.box_from.set(Some(cursor));
         }

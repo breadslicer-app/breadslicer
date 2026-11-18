@@ -378,6 +378,18 @@ fn is_default_fix_all_repeat(on: &bool) -> bool {
     *on
 }
 
+fn is_default_controls(layout: &crate::controls_layout::ControlsLayout) -> bool {
+    *layout == crate::controls_layout::ControlsLayout::default()
+}
+
+fn default_lift_models_on_plate() -> bool {
+    true
+}
+
+fn is_default_lift_models_on_plate(on: &bool) -> bool {
+    *on
+}
+
 fn default_hide_rafts_under_plate() -> bool {
     true
 }
@@ -494,8 +506,11 @@ pub(crate) struct AppSettings {
     orthographic_view: bool,
     /// Whether generating supports for a model that rests on the build plate
     /// lifts it to the support lift first, in the same undo step (#389).
-    /// Omitted in TOML while off (the default).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    /// On by default (#615), as in other slicers; omitted in TOML while on.
+    #[serde(
+        default = "default_lift_models_on_plate",
+        skip_serializing_if = "is_default_lift_models_on_plate"
+    )]
     lift_models_on_plate: bool,
     /// Whether the Transform tab paints the models by overhang (#91). Omitted
     /// in TOML while off (the default).
@@ -509,6 +524,10 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_fix_all_repeat"
     )]
     fix_all_repeat: bool,
+    /// The mouse of the 3D view, as another 3D program has it (#609).
+    /// Omitted in TOML while Breadslicer's own.
+    #[serde(default, skip_serializing_if = "is_default_controls")]
+    controls_layout: crate::controls_layout::ControlsLayout,
     /// Whether the rafts fade out with the plate when the camera goes under
     /// it (#481, #492), the Supports tab's box. Omitted in TOML while on (the
     /// default).
@@ -573,9 +592,10 @@ impl Default for AppSettings {
             gizmo_style: GizmoStyle::default(),
             gizmo_size: DEFAULT_GIZMO_SIZE,
             orthographic_view: false,
-            lift_models_on_plate: false,
+            lift_models_on_plate: default_lift_models_on_plate(),
             overhang_map: false,
             fix_all_repeat: default_fix_all_repeat(),
+            controls_layout: crate::controls_layout::ControlsLayout::default(),
             hide_rafts_under_plate: default_hide_rafts_under_plate(),
             support_lines_under_plate: false,
             silenced_messages: BTreeSet::new(),
@@ -747,6 +767,14 @@ impl AppSettings {
 
     pub(crate) fn set_overhang_map(&mut self, on: bool) {
         self.overhang_map = on;
+    }
+
+    pub(crate) fn controls_layout(&self) -> crate::controls_layout::ControlsLayout {
+        self.controls_layout
+    }
+
+    pub(crate) fn set_controls_layout(&mut self, layout: crate::controls_layout::ControlsLayout) {
+        self.controls_layout = layout;
     }
 
     pub(crate) fn fix_all_repeat(&self) -> bool {
