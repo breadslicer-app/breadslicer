@@ -2990,6 +2990,20 @@ export component SliceInspector inherits VerticalLayout {
     callback export-printer-file();
     // With several plates (#549): each plate sliced in turn, a file each.
     callback export-every-plate();
+    // Send to printer (#630), for a printer that takes a print over the
+    // network: Send leaves the file on it, Send and start prints it.
+    in property <bool> send-shown;
+    in property <[string]> send-printers;
+    in-out property <int> send-index: -1;
+    in property <bool> send-searching;
+    in property <bool> send-busy;
+    in property <float> send-progress;
+    in property <string> send-status;
+    in property <bool> send-status-bad;
+    callback send-search(bool);
+    callback send-address(string);
+    callback send(bool);
+    callback send-cancel();
     // PRINT SETUP open or folded: kept by the window, so it stays as left
     // when the tab is left and come back to.
     in-out property <bool> setup-open: true;
@@ -3197,6 +3211,103 @@ export component SliceInspector inherits VerticalLayout {
         }
         if root.every-plate-note != "": Note {
             text: root.every-plate-note;
+        }
+    }
+
+    if root.send-shown: Card {
+        title: @tr("Inspector" => "SEND TO PRINTER");
+        vertical-stretch: 0;
+        note: root.send-searching ? @tr("SlicePanel" => "Searching…") : "";
+        // Showing, it looks for the printers on the network, unless it
+        // looked a moment ago.
+        init => {
+            root.send-search(false);
+        }
+
+        Field {
+            label: @tr("SlicePanel" => "Printer on the network");
+            HorizontalLayout {
+                spacing: 6px;
+                send-combo := ComboBox {
+                    horizontal-stretch: 1;
+                    model: root.send-printers;
+                    current-index <=> root.send-index;
+                    enabled: root.send-printers.length > 0 && !root.send-busy;
+                }
+                ScButton {
+                    text: @tr("SlicePanel" => "Search");
+                    enabled: !root.send-searching && !root.send-busy;
+                    clicked => {
+                        root.send-search(true);
+                    }
+                }
+            }
+        }
+        Field {
+            label: @tr("SlicePanel" => "Or its IP address");
+            HorizontalLayout {
+                spacing: 6px;
+                address-input := LineEdit {
+                    horizontal-stretch: 1;
+                    placeholder-text: "192.168.1.50";
+                    enabled: !root.send-busy;
+                    accepted(t) => {
+                        root.send-address(t);
+                    }
+                }
+                ScButton {
+                    text: @tr("SlicePanel" => "Add");
+                    enabled: address-input.text != "" && !root.send-busy;
+                    clicked => {
+                        root.send-address(address-input.text);
+                    }
+                }
+            }
+        }
+        if !root.send-busy: HorizontalLayout {
+            spacing: 8px;
+            ScButton {
+                horizontal-stretch: 1;
+                text: @tr("SlicePanel" => "Send to printer");
+                icon: Icons.file;
+                button-height: 34px;
+                enabled: root.send-index >= 0 && root.export-enabled && !root.slicing && !root.exporting && !root.review-fixing;
+                clicked => {
+                    root.send(false);
+                }
+            }
+            ScButton {
+                horizontal-stretch: 1;
+                text: @tr("SlicePanel" => "Send and start");
+                icon: Icons.slice;
+                button-height: 34px;
+                enabled: root.send-index >= 0 && root.export-enabled && !root.slicing && !root.exporting && !root.review-fixing;
+                clicked => {
+                    root.send(true);
+                }
+            }
+        }
+        if root.send-busy: HorizontalLayout {
+            spacing: 8px;
+            ProgressIndicator {
+                horizontal-stretch: 1;
+                progress: root.send-progress;
+            }
+            ScButton {
+                text: @tr("SlicePanel" => "Cancel");
+                clicked => {
+                    root.send-cancel();
+                }
+            }
+        }
+        if root.send-status != "" && root.send-status-bad: WarningNote {
+            text: root.send-status;
+        }
+        if root.send-status != "" && !root.send-status-bad: Note {
+            text: root.send-status;
+        }
+        if root.send-status == "" && !root.export-enabled: Note {
+            text: @tr("SlicePanel" => "Slice first: what is sent is the file Export writes.");
         }
     }
 

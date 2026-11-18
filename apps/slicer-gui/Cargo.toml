@@ -29,6 +29,8 @@ sc-mesh-formats = { workspace = true }
 sc-mesh-spatial = { workspace = true }
 sc-print-glue = { workspace = true }
 sc-print-primitives = { workspace = true, features = ["serde"] }
+sc-printer-link.workspace = true
+serde_json.workspace = true
 sc-print-profiles = { workspace = true }
 sc-project-formats = { workspace = true }
 sc-review = { workspace = true }
@@ -101,8 +103,6 @@ sc-print-primitives = { workspace = true }
 sc-scene-fixtures = { workspace = true }
 
 float-cmp = { workspace = true }
-# The support test plate (#464) edits a support document as JSON.
-serde_json = { workspace = true }
 # Slint's element queries (positions and sizes of laid-out elements) for
 # layout tests; the same version as `slint`.
 i-slint-backend-testing = "=1.18.1"

@@ -28,6 +28,7 @@ pub(crate) fn printer_entry(
         }),
         image_path: None,
         source: ProfileSource::Bundled,
+        network: None,
     }
 }
 

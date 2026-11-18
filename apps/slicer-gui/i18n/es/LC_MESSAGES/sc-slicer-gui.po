@@ -8932,3 +8932,164 @@ msgstr "No hay lugar para ahuecar este modelo"
 msgctxt "HollowRun"
 msgid "The wall takes up the whole model: there is no room left for a cavity, so nothing was changed. Try a thinner wall, or leave this model solid."
 msgstr "La pared ocupa todo el modelo: no queda lugar para una cavidad, así que no se cambió nada. Probá con una pared más fina, o dejá este modelo macizo."
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "No printer answered on the network. Check that it is on and on the same network, or type its IP address."
+msgstr "Ninguna impresora respondió en la red. Fijate que esté prendida y en la misma red, o escribí su dirección IP."
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "That is not an IP address (like 192.168.1.50)."
+msgstr "Eso no es una dirección IP (como 192.168.1.50)."
+
+#: src/send_to_printer.rs
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "Asking {}…"
+msgstr "Preguntando a {}…"
+
+#: src/send_to_printer.rs
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "No printer answered at {}."
+msgstr "Ninguna impresora respondió en {}."
+
+#: src/send_to_printer.rs
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "Sending {} to {}…"
+msgstr "Enviando {} a {}…"
+
+#: src/send_to_printer.rs
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "Printing {} on {}."
+msgstr "Imprimiendo {} en {}."
+
+#: src/send_to_printer.rs
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "Sent to {}: {} is on the printer, ready to print from its screen."
+msgstr "Enviado a {}: {} está en la impresora, listo para imprimir desde su pantalla."
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "Sending stopped."
+msgstr "Envío cancelado."
+
+#: src/send_to_printer.rs
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "{} could not be reached: {}"
+msgstr "No se pudo llegar a {}: {}"
+
+#: src/send_to_printer.rs
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "{} did not answer in time."
+msgstr "{} no respondió a tiempo."
+
+#: src/send_to_printer.rs
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "{} refused the file (HTTP {}): {}"
+msgstr "{} rechazó el archivo (HTTP {}): {}"
+
+#: src/send_to_printer.rs
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "{} answered something unexpected: {}"
+msgstr "{} respondió algo inesperado: {}"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "it is busy printing"
+msgstr "está ocupada imprimiendo"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "it does not find the file"
+msgstr "no encuentra el archivo"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "the file came damaged"
+msgstr "el archivo llegó dañado"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "it could not read the file"
+msgstr "no pudo leer el archivo"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "the file is for another screen resolution"
+msgstr "el archivo es para otra resolución de pantalla"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "it does not know the file's format"
+msgstr "no conoce el formato del archivo"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "the file is for another printer model"
+msgstr "el archivo es para otro modelo de impresora"
+
+#: src/send_to_printer.rs
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "code {}"
+msgstr "código {}"
+
+#: src/send_to_printer.rs
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "{} is on {}, but it did not start: {}."
+msgstr "{} está en {}, pero no arrancó: {}."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "SEND TO PRINTER"
+msgstr "ENVIAR A LA IMPRESORA"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Searching…"
+msgstr "Buscando…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Printer on the network"
+msgstr "Impresora en la red"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Search"
+msgstr "Buscar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Or its IP address"
+msgstr "O su dirección IP"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Add"
+msgstr "Agregar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Send to printer"
+msgstr "Enviar a la impresora"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Send and start"
+msgstr "Enviar e imprimir"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Slice first: what is sent is the file Export writes."
+msgstr "Primero laminá: lo que se envía es el archivo que escribe Exportar."

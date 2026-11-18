@@ -47,6 +47,8 @@ pub struct PrinterCatalogEntry {
     /// carries no image or the referenced file is missing.
     pub image_path: Option<PathBuf>,
     pub source: ProfileSource,
+    /// How the printer takes a print over the network, when it does (#630).
+    pub network: Option<sc_print_primitives::NetworkProtocol>,
 }
 
 /// A material profile reduced to the fields that the GUI reads.
@@ -443,6 +445,7 @@ fn printer_entry(
 ) -> PrinterCatalogEntry {
     let build_volume = profile.hardware.build_volume();
     let output_formats = profile.capabilities.output_formats;
+    let network = profile.capabilities.network_protocol;
     let identity = profile.identity;
     // Keep the image path only when the file exists.
     let image_path = identity.image_asset_path.as_ref().and_then(|reference| {
@@ -458,6 +461,7 @@ fn printer_entry(
         output_formats,
         image_path,
         source,
+        network,
     }
 }
 

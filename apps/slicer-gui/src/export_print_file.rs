@@ -319,6 +319,27 @@ async fn run_export_flow(
     else {
         return;
     };
+    write_and_log(
+        &dialogs,
+        &export_progress,
+        job,
+        target,
+        format,
+        previews_for,
+    )
+    .await;
+}
+
+/// Writes `job` to `target` with what the machine shows for it, notes it in
+/// the print log (#45), and shows what went wrong. Whether it was written.
+async fn write_and_log(
+    dialogs: &Rc<DialogManager>,
+    export_progress: &Rc<ExportProgressPanel>,
+    job: ExportJob,
+    target: PathBuf,
+    format: PrinterFileFormat,
+    previews_for: impl FnOnce(PrinterFileFormat) -> Option<PrintPreviews>,
+) -> bool {
     let previews = previews_for(format);
     // What the print log keeps of it (#45), once written.
     let printed = {
@@ -341,7 +362,7 @@ async fn run_export_flow(
             estimate_sec,
         }
     };
-    let outcome = write_job(&export_progress, job, target.clone(), format, previews).await;
+    let outcome = write_job(export_progress, job, target.clone(), format, previews).await;
     if matches!(outcome, Ok(Ok(())))
         && let Some(path) = crate::print_log::log_path()
         && let Err(err) = crate::print_log::record_to(&path, printed)
@@ -355,12 +376,60 @@ async fn run_export_flow(
     };
     crate::breadcrumbs::finished("export", &ended);
     match outcome {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => show_export_failure(&dialogs, Some(&target), err),
+        Ok(Ok(())) => true,
+        Ok(Err(err)) => {
+            show_export_failure(dialogs, Some(&target), err);
+            false
+        }
         // The sender dropped without sending (event loop gone at shutdown):
         // there is nothing left to report to.
-        Err(_canceled) => {}
+        Err(_canceled) => false,
     }
+}
+
+/// Writes the held slice's printer file for sending it to a printer (#630):
+/// as Export writes it, to a folder of the app's own instead of one asked
+/// for. The file and the name it goes onto the printer by, once written.
+pub(crate) async fn write_for_sending(
+    ctrl: Rc<ViewportController>,
+    format: PrinterFileFormat,
+) -> Option<(PathBuf, String)> {
+    let document = ctrl.document();
+    let dialogs = ctrl.dialogs();
+    let scene = document
+        .slice_params()
+        .and_then(|params| ctrl.scene_of_plate(params.plate))
+        .map(|(scene, _)| scene);
+    let job = match prepare_export_of(&document, scene) {
+        Ok(job) => job,
+        Err(err) => {
+            show_export_failure(&dialogs, None, err);
+            return None;
+        }
+    };
+    let stem = scene_export::default_export_stem(&document).unwrap_or_else(|| "print".to_owned());
+    let name = sc_printer_link::sdcp::printer_file_name(&format!("{stem}.{}", format.extension()));
+    let folder = std::env::temp_dir().join("breadslicer-send");
+    if let Err(err) = std::fs::create_dir_all(&folder) {
+        show_export_failure(
+            &dialogs,
+            Some(&folder),
+            ExportFailure::Write(WriterError::Io(err)),
+        );
+        return None;
+    }
+    let target = folder.join(&name);
+    let previews_from = ctrl.clone();
+    let written = write_and_log(
+        &dialogs,
+        &ctrl.export_progress(),
+        job,
+        target.clone(),
+        format,
+        move |format| previews_from.print_file_previews(format),
+    )
+    .await;
+    written.then_some((target, name))
 }
 
 /// Writes `job` to `target` on a worker thread, the panel showing it, and

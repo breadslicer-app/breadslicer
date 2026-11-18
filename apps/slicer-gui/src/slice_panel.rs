@@ -163,6 +163,12 @@ impl SlicePanelBridge {
         let formats = view.print_format();
 
         let shown_printer = printer.selected_option().map(|option| option.id.clone());
+        // A printer that takes a print over the network shows Send (#630).
+        let network = shown_printer
+            .as_ref()
+            .and_then(|id| catalog.printers().iter().find(|entry| &entry.id == id))
+            .and_then(|entry| entry.network.clone());
+        ui.set_slice_send_shown(network == Some(sc_print_primitives::NetworkProtocol::Sdcp));
         let format_labels: Vec<SharedString> = formats
             .options
             .iter()
@@ -592,6 +598,44 @@ mod bridge_tests {
     use crate::test_support::language_pick::pick_language;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
     use crate::ui_language::UiLanguage;
+
+    /// Send to printer (#630) shows for a printer that takes a print over the
+    /// network, and for no other.
+    #[test]
+    fn send_to_printer_shows_for_a_network_printer_alone() {
+        let shown = on_fresh_slint_thread(|| {
+            let sdcp = PrinterId::new("network-printer").expect("valid printer id");
+            let plain = PrinterId::new("plain-printer").expect("valid printer id");
+            let bus = PreferencesBus::new(PreferencesSnapshot {
+                default_printer: Some(sdcp.clone()),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let catalog = ProfileCatalog::from_entries(
+                vec![
+                    crate::profile_catalog::PrinterCatalogEntry {
+                        network: Some(sc_print_primitives::NetworkProtocol::Sdcp),
+                        ..printer_entry(sdcp, "Elegoo", [120.0, 68.0, 150.0])
+                    },
+                    printer_entry(plain.clone(), "Other", [120.0, 68.0, 150.0]),
+                ],
+                Vec::new(),
+            );
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let _bridge = SlicePanelBridge::install(
+                &window,
+                Rc::new(RefCell::new(Rc::new(catalog))),
+                bus.clone(),
+                SceneDocument::new(),
+            );
+            let with_network = window.get_slice_send_shown();
+            bus.update(move |snapshot| {
+                snapshot.default_printer = Some(plain);
+                PreferencesChange::DefaultPrinter
+            });
+            (with_network, window.get_slice_send_shown())
+        });
+        assert_eq!(shown, (true, false));
+    }
 
     #[test]
     fn a_language_change_pushes_the_format_labels_again() {
