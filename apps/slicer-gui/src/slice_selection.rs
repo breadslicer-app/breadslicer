@@ -87,13 +87,24 @@ pub(crate) fn slice_panel_view(
         favourite_printers,
         selection.printer(),
     );
-    let resin = picker_model(
-        &resin_candidates(catalog.materials()),
-        favourite_resins,
-        selection.resin(),
-    );
-
     let shown_printer = printer.selected_option().map(|option| &option.id);
+    // Only the resins set for the printer shown (#626).
+    let resin_choices: Vec<(MaterialId, String)> = catalog
+        .materials()
+        .iter()
+        .filter(|entry| {
+            shown_printer.is_none_or(|printer| {
+                crate::profile_catalog::has_active_matcher(
+                    entry,
+                    catalog.extension_for(&entry.id),
+                    Some(printer),
+                )
+            })
+        })
+        .map(|entry| (entry.id.clone(), resin_label(&entry.brand, &entry.name)))
+        .collect();
+    let resin = picker_model(&resin_choices, favourite_resins, selection.resin());
+
     let declared = shown_printer
         .and_then(|id| catalog.printer_index(id))
         .map(|index| &catalog.printers()[index].output_formats);
@@ -188,15 +199,6 @@ fn printer_candidates(entries: &[PrinterCatalogEntry]) -> Vec<(PrinterId, String
                 printer_label(&entry.manufacturer, &entry.name),
             )
         })
-        .collect()
-}
-
-/// Returns the resin candidates for [`picker_model`]: 1 `(id, label)` per
-/// catalog entry.
-fn resin_candidates(entries: &[MaterialCatalogEntry]) -> Vec<(MaterialId, String)> {
-    entries
-        .iter()
-        .map(|entry| (entry.id.clone(), resin_label(&entry.brand, &entry.name)))
         .collect()
 }
 
@@ -640,6 +642,49 @@ mod slice_panel_view_tests {
     fn selected_binding(model: &PrintFormatModel) -> Option<&OutputFormatBinding> {
         let index = usize::try_from(model.selected).ok()?;
         model.options.get(index).map(|option| &option.binding)
+    }
+
+    /// The resins offered are only the ones set for the printer shown (#626).
+    #[test]
+    fn the_resins_offered_are_the_ones_set_for_the_printer() {
+        let catalog = ProfileCatalog::from_libraries(
+            &sc_print_profiles::ProfileLibraries::platform_default(),
+        );
+        // Red Clay 50 µm has settings for the Mars 5, none for the Mars 5 Ultra.
+        let red_clay = MaterialId::new("elegoo-8k-abs-like-resin-3-0-red-clay-50um").unwrap();
+        let every: BTreeSet<MaterialId> =
+            catalog.materials().iter().map(|m| m.id.clone()).collect();
+        let offered = |printer: &str| {
+            let view = slice_panel_view(
+                &PrintSelection::default(),
+                &PrintDefaults {
+                    printer: Some(PrinterId::new(printer).unwrap()),
+                    resin: None,
+                },
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+                &every,
+                &catalog,
+            );
+            view.resin()
+                .options
+                .iter()
+                .map(|o| o.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(offered("elegoo-mars-5").contains(&red_clay));
+        let ultra = offered("elegoo-mars-5-ultra");
+        assert!(!ultra.contains(&red_clay));
+        assert!(!ultra.is_empty());
+        let ultra_id = PrinterId::new("elegoo-mars-5-ultra").unwrap();
+        for id in &ultra {
+            let entry = catalog.materials().iter().find(|m| &m.id == id).unwrap();
+            assert!(crate::profile_catalog::has_active_matcher(
+                entry,
+                catalog.extension_for(id),
+                Some(&ultra_id)
+            ));
+        }
     }
 
     #[test]

@@ -54,7 +54,7 @@ fn two_plates() -> Window {
     let window = MainWindow::new().expect("the headless platform creates a main window");
     let bus = PreferencesBus::new(PreferencesSnapshot {
         default_printer: Some(PrinterId::new("elegoo-saturn-4-ultra").expect("valid id")),
-        default_resin: Some(MaterialId::new("standard-405").expect("valid id")),
+        default_resin: Some(MaterialId::new("siraya-tech-blu-easy-grey").expect("valid id")),
         ..PreferencesSnapshot::for_tests()
     });
     let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));

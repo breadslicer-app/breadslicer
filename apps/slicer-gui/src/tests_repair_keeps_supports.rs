@@ -75,7 +75,7 @@ fn window_with_prefs(graph: Scene, lift: bool) -> Window {
     let window = MainWindow::new().expect("the headless platform creates a main window");
     let bus = PreferencesBus::new(PreferencesSnapshot {
         default_printer: Some(PrinterId::new("elegoo-saturn-4-ultra").expect("valid id")),
-        default_resin: Some(MaterialId::new("standard-405").expect("valid id")),
+        default_resin: Some(MaterialId::new("siraya-tech-blu-easy-grey").expect("valid id")),
         lift_models_on_plate: lift,
         ..PreferencesSnapshot::for_tests()
     });
