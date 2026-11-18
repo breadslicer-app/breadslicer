@@ -289,3 +289,84 @@ fn back_on_a_plate_its_slice_comes_back() {
         );
     });
 }
+
+/// A plate whose model sticks out of it is not sliced (tester,
+/// 2026-11-18): the card names it and offers Arrange all; back on the
+/// plate, it slices.
+#[test]
+fn a_model_past_the_plate_is_not_sliced() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        w.document.set_active_plate(0);
+        let heading = "Models past the plate";
+        let told = || {
+            w.ctrl
+                .dialogs()
+                .error_headings_for_test()
+                .iter()
+                .filter(|h| h.as_str() == heading)
+                .count()
+        };
+        let nudge = |dx: f32| {
+            let edit = crate::plate_layout::moved_by(
+                &w.document,
+                w.cubes[0],
+                glam::Vec3::new(dx, 0.0, 0.0),
+            )
+            .expect("a move");
+            w.document.apply_edit(edit.clone()).expect("applies");
+            w.document.push_edit(edit);
+        };
+        // The 10 mm cube 50 mm left of the centre, moved 58 mm more: 3.56 mm
+        // past the plate's left edge.
+        nudge(-58.0);
+        w.window.invoke_slice_requested();
+        assert!(!w.window.get_slicing_in_progress(), "nothing sliced");
+        assert_eq!(told(), 1);
+        nudge(58.0);
+        w.press_slice();
+        assert_eq!(told(), 1, "back on the plate, it slices");
+    });
+}
+
+/// With `BREADSLICER_UI_SHOTS` naming a folder, the Slice tab of a short
+/// window after a slice (tester, 2026-11-18): the tab scrolls as a whole,
+/// so the review keeps its room; scrolled to the top and to the bottom.
+#[test]
+fn the_slice_tab_of_a_short_window_is_pictured_when_asked() {
+    let Some(dir) = std::env::var_os("BREADSLICER_UI_SHOTS").map(PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("the folder is made");
+    on_fresh_slint_thread(move || {
+        let w = two_plates();
+        w.window.show().expect("the window shows");
+        w.window
+            .window()
+            .set_size(slint::LogicalSize::new(1280.0, 720.0));
+        w.window.set_has_scene(true);
+        w.document.set_active_plate(0);
+        w.press_slice();
+        let shot = |name: &str| {
+            crate::test_support::slint_thread::render_frames();
+            let picture = w.window.window().take_snapshot().expect("a snapshot");
+            image::RgbaImage::from_raw(
+                picture.width(),
+                picture.height(),
+                picture.as_bytes().to_vec(),
+            )
+            .expect("RGBA")
+            .save(dir.join(format!("slice-short-{name}.png")))
+            .expect("written");
+        };
+        shot("top");
+        w.window
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(1150.0, 400.0),
+                delta_x: 0.0,
+                delta_y: -2000.0,
+            });
+        shot("bottom");
+    });
+}

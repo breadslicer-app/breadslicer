@@ -6878,6 +6878,7 @@ impl DfSupportRun {
                     &volume,
                     plates,
                     &|leaf| model_of(&self.sessions, leaf),
+                    crate::support_persist::raft_top_mm(spatial, &self.sessions),
                 );
                 let names = crate::repair_report::object_names_by_leaf(spatial.graph());
                 past.iter()
@@ -10569,8 +10570,12 @@ mod hand_edit_tests {
             let edge = f64::from(ctrl.build_volume().width_mm()) / 2.0;
             let heading = "Supports past the plate edge";
             // A 10 mm cube whose supports spread about 3 mm past it: centred, then
-            // with the cube inside the plate 0.5 mm from its edge.
-            for (x, past) in [(0.0, false), (edge - 5.5, true)] {
+            // with the cube inside the plate 0.5 mm from its edge; and where its
+            // raft alone reaches about 0.04 mm past (a raft's edge is cut and
+            // the print comes out the same).
+            let mut expected = 0;
+            for (x, past) in [(0.0, false), (edge - 5.5, true), (edge - 7.42, false)] {
+                expected += usize::from(past);
                 let mut graph = Scene::new();
                 let cube = sc_mesh_fixtures::unit_cube_mesh();
                 let leaf = graph
@@ -10595,7 +10600,7 @@ mod hand_edit_tests {
                     .iter()
                     .filter(|h| h.as_str() == heading)
                     .count();
-                assert_eq!(told, usize::from(past), "a model at x = {x} mm");
+                assert_eq!(told, expected, "a model at x = {x} mm");
             }
         });
     }

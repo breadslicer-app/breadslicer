@@ -8761,3 +8761,15 @@ msgstr "Los soportes de {} modelo(s) se salen de la cama y no se imprimirían. T
 msgctxt "DfSupportDialog"
 msgid "Arrange all"
 msgstr "Acomodar todo"
+
+msgctxt "SliceDialog"
+msgid "Models past the plate"
+msgstr "Modelos fuera de la cama"
+
+msgctxt "SliceDialog"
+msgid "{} model(s) or their supports reach past the plate and would not print whole. Press Arrange all to put everything on the plate, then slice."
+msgstr "{} modelo(s) o sus soportes se salen de la cama y no se imprimirían enteros. Tocá Acomodar todo para dejar todo dentro de la cama y después laminá."
+
+msgctxt "SliceDialog"
+msgid "Arrange all"
+msgstr "Acomodar todo"

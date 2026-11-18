@@ -2282,121 +2282,129 @@ export component MainWindow inherits Window {
                         background: Theme.border;
                     }
 
-                    // The Slice tab does not scroll as a whole: its setup, Slice
-                    // button and result stay put, and only the review list
-                    // scrolls inside it.
-                    if root.workspace-section == WorkspaceSection.Slice: VerticalLayout {
+                    // The Slice tab fills the column: its setup, Slice button and
+                    // result stay put, and the review list scrolls inside it. In
+                    // a window too short for all of it with room for the review,
+                    // the tab scrolls as a whole instead (tester, 2026-11-18).
+                    if root.workspace-section == WorkspaceSection.Slice: slice-scroll := ScrollView {
                         x: 1px;
                         width: parent.width - 1px;
-                        padding: 12px;
+                        viewport-width: self.visible-width;
+                        viewport-height: max(self.visible-height, slice-column.min-height);
 
-                        SliceInspector {
-                            plate-options: root.plate-names;
-                            plate-current-index: root.active-plate;
-                            plate-picked(i) => {
-                                root.plate-picked(i);
-                            }
-                            slice-every-plate => {
-                                root.slice-every-plate-requested();
-                            }
-                            format-options: root.slice-print-format-options;
-                            format-current-index <=> root.slice-print-format-current-index;
-                            format-note: root.slice-print-format-note;
-                            export-enabled: root.slice-export-enabled;
-                            exporting: root.saving-in-progress || root.loading;
-                            format-picked(i) => {
-                                root.slice-print-format-picked(i);
-                            }
-                            export-printer-file => {
-                                root.slice-export-requested();
-                            }
-                            export-every-plate => {
-                                root.slice-export-every-plate-requested();
-                            }
-                            setup-open <=> root.slice-setup-open;
-                            overhang-map-on <=> root.overhang-map-on;
-                            overhang-map-limit: root.overhang-map-limit;
-                            overhang-map-toggled(on) => {
-                                root.overhang-map-toggled(on);
-                            }
-                            printer-options: root.slice-printer-options;
-                            printer-current-index <=> root.slice-printer-current-index;
-                            resin-options: root.slice-resin-options;
-                            resin-current-index <=> root.slice-resin-current-index;
-                            first-layer-height-text <=> root.slice-first-layer-height-text;
-                            slicing: root.slicing-in-progress;
-                            up-to-date: root.slice-up-to-date;
-                            every-plate-note: root.slice-every-plate-note;
-                            layer-count: root.slice-layer-count;
-                            selected-layer: root.selected-layer-index;
-                            layer-image: root.slice-view-image;
-                            estimate-valid: root.slice-estimate-valid;
-                            estimate-time: root.slice-estimate-time;
-                            estimate-volume: root.slice-estimate-volume;
-                            estimate-mass: root.slice-estimate-mass;
-                            estimate-note: root.slice-estimate-note;
-                            review-state: root.review-state;
-                            review-summary: root.review-summary;
-                            review-worst: root.review-worst;
-                            review-rows: root.review-rows;
-                            review-stale: root.review-stale;
-                            review-message: root.review-message;
-                            review-selected <=> root.review-selected;
-                            review-notes: root.review-notes;
-                            review-notes-open: root.review-notes-open;
-                            review-fill-small: root.review-fill-small;
-                            review-fills-note: root.review-fills-note;
-                            review-fills-clearable: root.review-fills-clearable;
-                            review-fills-clear-label: root.review-fills-clear-label;
-                            review-fix-all: root.review-fix-all;
-                            review-fixing: root.review-fixing;
-                            review-fix-progress: root.review-fix-progress;
-                            review-fix-phase: root.review-fix-phase;
-                            review-fix-repeat: root.review-fix-repeat;
-                            review-fix-repeat-toggled(on) => {
-                                root.review-fix-repeat-toggled(on);
-                            }
-                            review-fix-all-requested => {
-                                root.review-fix-all-requested();
-                            }
-                            review-fix-all-cancel => {
-                                root.review-fix-all-cancel();
-                            }
-                            review-fill-toggled(id) => {
-                                root.review-fill-toggled(id);
-                            }
-                            review-leave-requested(id) => {
-                                root.review-leave-requested(id);
-                            }
-                            review-fill-small-requested => {
-                                root.review-fill-small-requested();
-                            }
-                            review-fills-cleared => {
-                                root.review-fills-cleared();
-                            }
-                            review-notes-toggled => {
-                                root.review-notes-toggled();
-                            }
-                            review-finding-clicked(id) => {
-                                root.review-finding-clicked(id);
-                            }
-                            review-fix-requested(id) => {
-                                root.review-fix-requested(id);
-                            }
-                            review-raft-off-requested(id) => {
-                                root.review-raft-off-requested(id);
-                            }
-                            printer-picked(i) => {
-                                root.slice-printer-picked(i);
-                            }
-                            resin-picked(i) => {
-                                root.slice-resin-picked(i);
-                            }
-                            first-layer-height-edited(t) => {
-                                root.slice-first-layer-height-edited(t);
-                            }
-                            slice-requested => {
-                                root.slice-requested();
+                        slice-column := VerticalLayout {
+                            width: slice-scroll.visible-width;
+                            height: max(slice-scroll.visible-height, self.min-height);
+                            padding: 12px;
+
+                            SliceInspector {
+                                plate-options: root.plate-names;
+                                plate-current-index: root.active-plate;
+                                plate-picked(i) => {
+                                    root.plate-picked(i);
+                                }
+                                slice-every-plate => {
+                                    root.slice-every-plate-requested();
+                                }
+                                format-options: root.slice-print-format-options;
+                                format-current-index <=> root.slice-print-format-current-index;
+                                format-note: root.slice-print-format-note;
+                                export-enabled: root.slice-export-enabled;
+                                exporting: root.saving-in-progress || root.loading;
+                                format-picked(i) => {
+                                    root.slice-print-format-picked(i);
+                                }
+                                export-printer-file => {
+                                    root.slice-export-requested();
+                                }
+                                export-every-plate => {
+                                    root.slice-export-every-plate-requested();
+                                }
+                                setup-open <=> root.slice-setup-open;
+                                overhang-map-on <=> root.overhang-map-on;
+                                overhang-map-limit: root.overhang-map-limit;
+                                overhang-map-toggled(on) => {
+                                    root.overhang-map-toggled(on);
+                                }
+                                printer-options: root.slice-printer-options;
+                                printer-current-index <=> root.slice-printer-current-index;
+                                resin-options: root.slice-resin-options;
+                                resin-current-index <=> root.slice-resin-current-index;
+                                first-layer-height-text <=> root.slice-first-layer-height-text;
+                                slicing: root.slicing-in-progress;
+                                up-to-date: root.slice-up-to-date;
+                                every-plate-note: root.slice-every-plate-note;
+                                layer-count: root.slice-layer-count;
+                                selected-layer: root.selected-layer-index;
+                                layer-image: root.slice-view-image;
+                                estimate-valid: root.slice-estimate-valid;
+                                estimate-time: root.slice-estimate-time;
+                                estimate-volume: root.slice-estimate-volume;
+                                estimate-mass: root.slice-estimate-mass;
+                                estimate-note: root.slice-estimate-note;
+                                review-state: root.review-state;
+                                review-summary: root.review-summary;
+                                review-worst: root.review-worst;
+                                review-rows: root.review-rows;
+                                review-stale: root.review-stale;
+                                review-message: root.review-message;
+                                review-selected <=> root.review-selected;
+                                review-notes: root.review-notes;
+                                review-notes-open: root.review-notes-open;
+                                review-fill-small: root.review-fill-small;
+                                review-fills-note: root.review-fills-note;
+                                review-fills-clearable: root.review-fills-clearable;
+                                review-fills-clear-label: root.review-fills-clear-label;
+                                review-fix-all: root.review-fix-all;
+                                review-fixing: root.review-fixing;
+                                review-fix-progress: root.review-fix-progress;
+                                review-fix-phase: root.review-fix-phase;
+                                review-fix-repeat: root.review-fix-repeat;
+                                review-fix-repeat-toggled(on) => {
+                                    root.review-fix-repeat-toggled(on);
+                                }
+                                review-fix-all-requested => {
+                                    root.review-fix-all-requested();
+                                }
+                                review-fix-all-cancel => {
+                                    root.review-fix-all-cancel();
+                                }
+                                review-fill-toggled(id) => {
+                                    root.review-fill-toggled(id);
+                                }
+                                review-leave-requested(id) => {
+                                    root.review-leave-requested(id);
+                                }
+                                review-fill-small-requested => {
+                                    root.review-fill-small-requested();
+                                }
+                                review-fills-cleared => {
+                                    root.review-fills-cleared();
+                                }
+                                review-notes-toggled => {
+                                    root.review-notes-toggled();
+                                }
+                                review-finding-clicked(id) => {
+                                    root.review-finding-clicked(id);
+                                }
+                                review-fix-requested(id) => {
+                                    root.review-fix-requested(id);
+                                }
+                                review-raft-off-requested(id) => {
+                                    root.review-raft-off-requested(id);
+                                }
+                                printer-picked(i) => {
+                                    root.slice-printer-picked(i);
+                                }
+                                resin-picked(i) => {
+                                    root.slice-resin-picked(i);
+                                }
+                                first-layer-height-edited(t) => {
+                                    root.slice-first-layer-height-edited(t);
+                                }
+                                slice-requested => {
+                                    root.slice-requested();
+                                }
                             }
                         }
                     }
