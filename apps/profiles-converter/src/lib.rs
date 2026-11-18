@@ -26,6 +26,7 @@ pub mod material_fold;
 pub mod phrozen_api;
 pub mod printer_library;
 pub mod profile;
+pub mod prusa_sla;
 pub mod reader;
 pub mod request;
 pub mod run;

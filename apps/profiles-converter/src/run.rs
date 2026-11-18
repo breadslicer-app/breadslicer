@@ -25,6 +25,7 @@ use crate::material_fold::{FoldError, fold};
 use crate::phrozen_api::{PhrozenApiError, PhrozenApiReader};
 use crate::printer_library::{PrinterLibrary, PrinterLibraryError};
 use crate::profile::ConvertedProfile;
+use crate::prusa_sla::{PrusaSlaError, PrusaSlaReader};
 use crate::reader::ProfileReader;
 use crate::request::ConversionRequest;
 use crate::source_note::SourceNote;
@@ -41,6 +42,7 @@ pub enum RunError {
     CrealityBlog(CrealityBlogError),
     CrealityWiki(CrealityWikiError),
     PhrozenApi(PhrozenApiError),
+    PrusaSla(PrusaSlaError),
     UvtoolsCatalog(UvtoolsCatalogError),
     PrinterLibrary(PrinterLibraryError),
     MaterialCuration(MaterialCurationError),
@@ -57,6 +59,7 @@ impl fmt::Display for RunError {
             Self::CrealityBlog(err) => write!(f, "{err}"),
             Self::CrealityWiki(err) => write!(f, "{err}"),
             Self::PhrozenApi(err) => write!(f, "{err}"),
+            Self::PrusaSla(err) => write!(f, "{err}"),
             Self::UvtoolsCatalog(err) => write!(f, "{err}"),
             Self::PrinterLibrary(err) => write!(f, "{err}"),
             Self::MaterialCuration(err) => write!(f, "{err}"),
@@ -75,6 +78,7 @@ impl std::error::Error for RunError {
             Self::CrealityBlog(err) => Some(err),
             Self::CrealityWiki(err) => Some(err),
             Self::PhrozenApi(err) => Some(err),
+            Self::PrusaSla(err) => Some(err),
             Self::UvtoolsCatalog(err) => Some(err),
             Self::PrinterLibrary(err) => Some(err),
             Self::MaterialCuration(err) => Some(err),
@@ -129,6 +133,7 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
         SourceFormat::PhrozenApi => PhrozenApiReader
             .read(&paths)
             .map_err(RunError::PhrozenApi)?,
+        SourceFormat::PrusaSla => PrusaSlaReader.read(&paths).map_err(RunError::PrusaSla)?,
         SourceFormat::UvtoolsCatalog => {
             let reader = match printers {
                 Some(printers) => UvtoolsCatalogReader::consulting(printers),

@@ -103,6 +103,9 @@ pub enum SourceNote {
     RowsStatingNoTravel { model: String, rows: usize },
     /// The source states a value this converter cannot read.
     RowsWeCannotRead { model: String, rows: usize },
+    /// The source states settings no profile of ours has a place for,
+    /// so they are left out.
+    SettingsWithNoPlace { settings: String, rows: usize },
     /// The source states one machine's calibration for one resin twice,
     /// with different values, so the profile carries neither.
     RowsDisagree {
@@ -274,6 +277,10 @@ impl fmt::Display for SourceNote {
             Self::RowsWeCannotRead { model, rows } => write!(
                 f,
                 "{rows} row(s) for {model:?} state a value this converter cannot read",
+            ),
+            Self::SettingsWithNoPlace { settings, rows } => write!(
+                f,
+                "{rows} row(s) state {settings}, which no profile of ours has a place for",
             ),
             Self::RowsDisagree { material, printer } => write!(
                 f,

@@ -30,6 +30,8 @@ pub enum SourceFormat {
     /// Phrozen's resin settings service, its answers saved as JSON per
     /// machine (#172).
     PhrozenApi,
+    /// Prusa's SLA vendor bundle for PrusaSlicer, an INI file (#174).
+    PrusaSla,
     /// UVtools' printer catalog: the PrusaSlicer printer profiles it
     /// bundles.
     UvtoolsCatalog,
@@ -45,6 +47,7 @@ impl SourceFormat {
             Self::CrealityBlogPost => "creality-blog",
             Self::CrealityWikiPages => "creality-wiki",
             Self::PhrozenApi => "phrozen-api",
+            Self::PrusaSla => "prusa-sla",
             Self::UvtoolsCatalog => "uvtools",
         }
     }
@@ -67,7 +70,7 @@ impl fmt::Display for UnknownSourceFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "unknown source format \"{}\"; supported: dragonfruit, elegoo-settings, anycubic-wiki, creality-blog, creality-wiki, phrozen-api, uvtools",
+            "unknown source format \"{}\"; supported: dragonfruit, elegoo-settings, anycubic-wiki, creality-blog, creality-wiki, phrozen-api, prusa-sla, uvtools",
             self.got,
         )
     }
@@ -86,6 +89,7 @@ impl FromStr for SourceFormat {
             "creality-blog" => Ok(Self::CrealityBlogPost),
             "creality-wiki" => Ok(Self::CrealityWikiPages),
             "phrozen-api" => Ok(Self::PhrozenApi),
+            "prusa-sla" => Ok(Self::PrusaSla),
             "uvtools" => Ok(Self::UvtoolsCatalog),
             other => Err(UnknownSourceFormat {
                 got: other.to_owned(),
@@ -135,6 +139,7 @@ mod tests {
             SourceFormat::CrealityBlogPost,
             SourceFormat::CrealityWikiPages,
             SourceFormat::PhrozenApi,
+            SourceFormat::PrusaSla,
             SourceFormat::UvtoolsCatalog,
         ] {
             assert_eq!(format.as_str().parse(), Ok(format));
