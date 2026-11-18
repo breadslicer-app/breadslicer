@@ -41,15 +41,36 @@ const PAGES: &[(&str, &str)] = &[
     ("3d-printing-parameters-elegoo-mars-3", "elegoo-mars-3"),
     ("3d-printing-parameters-elegoo-mars-4", "elegoo-mars-4"),
     ("anycubic-photon-m3-parameters", "anycubic-photon-m3"),
-    ("anycubic-photon-m3-plus-resin", "anycubic-photon-mono-x-6k-m3-plus"),
-    ("anycubic-photon-m3-premium-resin", "anycubic-photon-m3-premium"),
-    ("anycubic-photon-mono4k-settings-resin", "anycubic-photon-mono-4k"),
-    ("anycubic-photon-p1-max-resin-settings", "anycubic-photon-p1-max"),
+    (
+        "anycubic-photon-m3-plus-resin",
+        "anycubic-photon-mono-x-6k-m3-plus",
+    ),
+    (
+        "anycubic-photon-m3-premium-resin",
+        "anycubic-photon-m3-premium",
+    ),
+    (
+        "anycubic-photon-mono4k-settings-resin",
+        "anycubic-photon-mono-4k",
+    ),
+    (
+        "anycubic-photon-p1-max-resin-settings",
+        "anycubic-photon-p1-max",
+    ),
     ("anycubic-photon-p1-resin", "anycubic-photon-p1"),
-    ("anycubic-photon-ultra-d2-settings-resin", "anycubic-photon-d2"),
-    ("anycubic-photon-ultra-dlp-settings", "anycubic-photon-ultra"),
+    (
+        "anycubic-photon-ultra-d2-settings-resin",
+        "anycubic-photon-d2",
+    ),
+    (
+        "anycubic-photon-ultra-dlp-settings",
+        "anycubic-photon-ultra",
+    ),
     ("creality-halot-mage-8k-resin", "creality-halot-mage"),
-    ("creality-halot-mage-pro-8k-resin", "creality-halot-mage-pro"),
+    (
+        "creality-halot-mage-pro-8k-resin",
+        "creality-halot-mage-pro",
+    ),
     ("creality-halot-mage-s-14k", "creality-halot-mage-s"),
     ("creality-halot-play-resin", "creality-halot-play"),
     ("creality-halot-r6-resin", "creality-halot-r6"),
@@ -60,66 +81,132 @@ const PAGES: &[(&str, &str)] = &[
     ("elegoo-mars5-ultra-resin-3dprinting", "elegoo-mars-5-ultra"),
     ("elegoo-saturn-8k-resin-parameters", "elegoo-saturn-8k"),
     ("elegoo-saturn4-ultra-resin", "elegoo-saturn-4-ultra"),
-    ("elegoo-saturn4-ultra-resin-16k", "elegoo-saturn-4-ultra-16k"),
+    (
+        "elegoo-saturn4-ultra-resin-16k",
+        "elegoo-saturn-4-ultra-16k",
+    ),
     ("mars-4-ultra-9k-lcd-resin-settings", "elegoo-mars-4-ultra"),
     ("mars4-dlp-resin-settings", "elegoo-mars-4-dlp"),
     ("nova3d-bene6-resin", "nova3d-bene6"),
     ("orange-longer-4k-settings", "longer-orange-4k"),
     ("parameters-phrozen-sonic-mega-8k", "phrozen-sonic-mega-8k"),
-    ("parameters-phrozen-sonic-mega-8ks", "phrozen-sonic-mega-8k-s"),
-    ("parameters-resin-anycubic-monosq", "anycubic-photon-mono-sq"),
+    (
+        "parameters-phrozen-sonic-mega-8ks",
+        "phrozen-sonic-mega-8k-s",
+    ),
+    (
+        "parameters-resin-anycubic-monosq",
+        "anycubic-photon-mono-sq",
+    ),
     ("parameters-resin-anycubic-photon", "anycubic-photon"),
-    ("parameters-resin-elegoo-saturn3-12k-ultra", "elegoo-saturn-3-ultra"),
+    (
+        "parameters-resin-elegoo-saturn3-12k-ultra",
+        "elegoo-saturn-3-ultra",
+    ),
     ("photon-mono2-resin-settings-4k", "anycubic-photon-mono-2"),
     ("phrozen-shuffle-2018-resin-settings", "phrozen-shuffle"),
     ("phrozen-shuffle-xl-resin", "phrozen-shuffle-xl"),
-    ("phrozen-sonic-mighty-revo-14k-resin", "phrozen-sonic-mighty-revo"),
-    ("phrozen-sonic-mighty-revo-16k-resin", "phrozen-sonic-mighty-revo-16k"),
-    ("phrozen-sonic-mini-8ks-resin-3dprinter", "phrozen-sonic-mini-8k-s"),
+    (
+        "phrozen-sonic-mighty-revo-14k-resin",
+        "phrozen-sonic-mighty-revo",
+    ),
+    (
+        "phrozen-sonic-mighty-revo-16k-resin",
+        "phrozen-sonic-mighty-revo-16k",
+    ),
+    (
+        "phrozen-sonic-mini-8ks-resin-3dprinter",
+        "phrozen-sonic-mini-8k-s",
+    ),
     ("phrozen-transform-resin-settings", "phrozen-transform"),
     ("prusa-sl1s-speed-resin-settings", "prusa-sl1s-speed"),
-    ("resin-3d-printing-settings-creality-halot-max", "creality-halot-max"),
-    ("resin-anycubic-mono-m5s-pro-14k", "anycubic-photon-mono-m5s-pro"),
+    (
+        "resin-3d-printing-settings-creality-halot-max",
+        "creality-halot-max",
+    ),
+    (
+        "resin-anycubic-mono-m5s-pro-14k",
+        "anycubic-photon-mono-m5s-pro",
+    ),
     ("resin-anycubic-mono-m7-14k", "anycubic-photon-mono-m7"),
     ("resin-anycubic-mono-m7-max", "anycubic-photon-mono-m7-max"),
     ("resin-anycubic-photon-mono4", "anycubic-photon-mono-4"),
-    ("resin-anycubic-photon-mono4-ultra", "anycubic-photon-mono-4-ultra"),
+    (
+        "resin-anycubic-photon-mono4-ultra",
+        "anycubic-photon-mono-4-ultra",
+    ),
     ("resin-compatible-creality-ld002h", "creality-ld-002h"),
     ("resin-elegoo-mars4-max", "elegoo-mars-4-max"),
-    ("resin-parameters-anycubic-photon-mono", "anycubic-photon-mono"),
-    ("resin-parameters-anycubic-photon-mono-se", "anycubic-photon-mono-se"),
+    (
+        "resin-parameters-anycubic-photon-mono",
+        "anycubic-photon-mono",
+    ),
+    (
+        "resin-parameters-anycubic-photon-mono-se",
+        "anycubic-photon-mono-se",
+    ),
     ("resin-parameters-elegoo-jupiter-se", "elegoo-jupiter-se"),
     ("resin-parameters-elegoo-saturn-s", "elegoo-saturn-s"),
-    ("resin-parameters-phrozen-sonic-mini8k", "phrozen-sonic-mini-8k"),
-    ("resin-parameters-uniformation-gk3-pro", "uniformation-gk3-pro"),
+    (
+        "resin-parameters-phrozen-sonic-mini8k",
+        "phrozen-sonic-mini-8k",
+    ),
+    (
+        "resin-parameters-uniformation-gk3-pro",
+        "uniformation-gk3-pro",
+    ),
     ("resin-phrozen-sonic-mega-8k-v2", "phrozen-sonic-mega-8k-v2"),
     ("resin-phrozen-sonic-xl-4k-2022", "phrozen-sonic-xl-4k-2022"),
     ("resin-settings-creality-halot-one", "creality-halot-one"),
-    ("resin-settings-creality-halot-one-pro", "creality-halot-one-pro"),
+    (
+        "resin-settings-creality-halot-one-pro",
+        "creality-halot-one-pro",
+    ),
     ("resin-settings-creality-halot-sky", "creality-halot-sky"),
     ("resin-settings-elegoo-mars2-pro", "elegoo-mars-2-pro"),
     ("resin-settings-elegoo-saturn", "elegoo-saturn"),
     ("resin-settings-epax-x1k-e6", "epax-x1k-2k-mono"),
     ("resin-settings-epax-x10", "epax-x10"),
     ("resin-settings-epax-x10-e10-mono", "epax-e10-mono"),
-    ("resin-settings-flashforge-foto13-4k-mono", "flashforge-foto-13-3"),
+    (
+        "resin-settings-flashforge-foto13-4k-mono",
+        "flashforge-foto-13-3",
+    ),
     ("resin-settings-flashforge-foto6-0", "flashforge-foto-6-0"),
     ("resin-settings-kelant-s400", "kelant-s400"),
     ("resin-settings-peopoly-phenom-noir", "peopoly-phenom-noir"),
     ("resin-settings-peopoly-phenoml", "peopoly-phenom-l"),
-    ("resin-settings-phrozen-sonic-mighty8k", "phrozen-sonic-mighty-8k"),
+    (
+        "resin-settings-phrozen-sonic-mighty8k",
+        "phrozen-sonic-mighty-8k",
+    ),
     ("resin-settings-prusa-sl1-parameters", "prusa-sl1"),
     ("resin-settings-qiditech-ibox-mono4k", "qidi-i-box-mono"),
-    ("resin-settings-uniformation-gk3-ultra", "uniformation-gk3-ultra"),
+    (
+        "resin-settings-uniformation-gk3-ultra",
+        "uniformation-gk3-ultra",
+    ),
     ("resin-settings-wanhao-duplicator-d7", "wanhao-d7"),
     ("resin-settings-zortrax-inkspire", "zortrax-inkspire"),
     ("resin-wanhao-cgr", "wanhao-cgr-mono"),
     ("resin-wanhao-duplicator-d8", "wanhao-d8"),
-    ("settings-resin-anycubic-mono-m7-pro", "anycubic-photon-mono-m7-pro"),
+    (
+        "settings-resin-anycubic-mono-m7-pro",
+        "anycubic-photon-mono-m7-pro",
+    ),
     ("settings-resin-anycubic-mono-x2", "anycubic-photon-mono-x2"),
-    ("settings-resin-anycubic-photon-monox", "anycubic-photon-mono-x"),
-    ("settings-resin-anycubic-photon-monox6ks", "anycubic-photon-mono-x-6ks"),
-    ("settings-resin-anycubic-photon-zero", "anycubic-photon-zero"),
+    (
+        "settings-resin-anycubic-photon-monox",
+        "anycubic-photon-mono-x",
+    ),
+    (
+        "settings-resin-anycubic-photon-monox6ks",
+        "anycubic-photon-mono-x-6ks",
+    ),
+    (
+        "settings-resin-anycubic-photon-zero",
+        "anycubic-photon-zero",
+    ),
     ("settings-resin-ceres-8-9-4k", "voxelab-ceres-8-9"),
     ("settings-resin-creality-ld002r", "creality-ld-002r"),
     ("settings-resin-elegoo-saturn3-12k", "elegoo-saturn-3"),
@@ -201,11 +288,15 @@ fn plain(cell: &str) -> String {
         if open > mid {
             break;
         }
-        text = format!("{}{}{}", &text[..open], &text[open + 1..mid], &text[close + 1..]);
+        text = format!(
+            "{}{}{}",
+            &text[..open],
+            &text[open + 1..mid],
+            &text[close + 1..]
+        );
     }
     text.replace("\\*", "")
-        .replace('*', "")
-        .replace('\\', "")
+        .replace(['*', '\\'], "")
         .trim()
         .to_owned()
 }
@@ -221,7 +312,11 @@ fn number(cell: &str) -> Option<f64> {
 fn thickness_um(cell: &str) -> Option<f64> {
     let value = number(cell).filter(|v| *v > 0.0)?;
     let mm = plain(cell).to_lowercase().contains("mm");
-    Some(if mm || value < 1.0 { value * 1000.0 } else { value })
+    Some(if mm || value < 1.0 {
+        value * 1000.0
+    } else {
+        value
+    })
 }
 
 /// `90 / 120` as its 2 numbers.
@@ -244,7 +339,10 @@ fn tables(text: &str) -> Vec<Vec<Vec<String>>> {
             let inner = line.strip_prefix('|').unwrap_or(line);
             let inner = inner.strip_suffix('|').unwrap_or(inner);
             let cells: Vec<String> = inner.split('|').map(|c| c.to_owned()).collect();
-            if cells.iter().all(|c| c.trim().chars().all(|ch| ch == '-' || ch == ':')) {
+            if cells
+                .iter()
+                .all(|c| c.trim().chars().all(|ch| ch == '-' || ch == ':'))
+            {
                 continue;
             }
             current.push(cells);
@@ -303,7 +401,10 @@ fn column_of(heading: &str) -> Column {
 
 /// One table's resins: `(resin, layer µm, block)` for each row that gives
 /// an exposure and a bottom exposure, and how many rows did not.
-fn rows_of(table: &[Vec<String>]) -> Option<(Vec<(String, u32, MaterialPerPrinter)>, usize)> {
+/// One resin's block read off a row: resin name, layer height in µm, settings.
+type ResinRow = (String, u32, MaterialPerPrinter);
+
+fn rows_of(table: &[Vec<String>]) -> Option<(Vec<ResinRow>, usize)> {
     let head = table.iter().position(|row| {
         row.iter()
             .any(|c| plain(c).to_lowercase().contains("layer thickness"))
@@ -338,9 +439,13 @@ fn rows_of(table: &[Vec<String>]) -> Option<(Vec<(String, u32, MaterialPerPrinte
         if resin.is_empty() {
             continue;
         }
-        let layer = cell(Column::Layer).and_then(thickness_um).filter(|v| *v >= 1.0);
+        let layer = cell(Column::Layer)
+            .and_then(thickness_um)
+            .filter(|v| *v >= 1.0);
         let exposure = cell(Column::Exposure).and_then(number).filter(|v| *v > 0.0);
-        let bottom = cell(Column::BottomExposure).and_then(number).filter(|v| *v > 0.0);
+        let bottom = cell(Column::BottomExposure)
+            .and_then(number)
+            .filter(|v| *v > 0.0);
         let (Some(layer), Some(exposure), Some(bottom)) = (layer, exposure, bottom) else {
             unread += 1;
             continue;
@@ -437,7 +542,11 @@ fn family_of(resin: &str) -> &'static str {
         "castable"
     } else if r.contains("bio-med") || r.contains("dental") || r.contains("gum") {
         "biocompatible"
-    } else if r.contains("tough") || r.contains("strong") || r.contains("impact") || r.contains("hazard") {
+    } else if r.contains("tough")
+        || r.contains("strong")
+        || r.contains("impact")
+        || r.contains("hazard")
+    {
         "engineering"
     } else {
         "standard"
@@ -497,12 +606,11 @@ impl ProfileReader for LiqcreateReader {
                 }
                 for (resin, layer_um, block) in rows {
                     let id_text = format!("liqcreate-{}-{layer_um}um", slug(&resin));
-                    let id = MaterialId::new(&id_text).map_err(|source| {
-                        LiqcreateError::InvalidId {
+                    let id =
+                        MaterialId::new(&id_text).map_err(|source| LiqcreateError::InvalidId {
                             resin: resin.clone(),
                             source,
-                        }
-                    })?;
+                        })?;
                     let height = PositiveFiniteMm::new(f64::from(layer_um) / 1000.0).ok();
                     let profile = resins.entry(id.clone()).or_insert_with(|| MaterialProfile {
                         extension: false,
@@ -583,7 +691,11 @@ More text.
                 _ => None,
             })
             .collect();
-        assert_eq!(materials.len(), 3, "Deep Blue at 100 and 50 µm, Bio-Med Clear at 50");
+        assert_eq!(
+            materials.len(),
+            3,
+            "Deep Blue at 100 and 50 µm, Bio-Med Clear at 50"
+        );
         let fifty = materials
             .iter()
             .find(|m| m.identity.id.as_str() == "liqcreate-deep-blue-50um")
@@ -659,14 +771,16 @@ More text.
         let printer = PrinterId::new("anycubic-photon-mono-x-6k-m3-plus").unwrap();
         let block = m.per_printer[&CalibrationTarget::from_printer(&printer)];
         assert_eq!(block.wait_before_cure_sec.map(|s| s.value()), Some(1.0));
-        assert_eq!(block.bottom_wait_before_cure_sec.map(|s| s.value()), Some(3.0));
+        assert_eq!(
+            block.bottom_wait_before_cure_sec.map(|s| s.value()),
+            Some(3.0)
+        );
         assert_eq!(block.light_pwm.map(|p| p.percent()), Some(40.0));
     }
 
     #[test]
     fn every_page_names_a_printer_we_ship() {
-        let ours = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../assets/profiles/printers");
+        let ours = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/profiles/printers");
         for (_, printer) in PAGES {
             assert!(
                 ours.join(format!("{printer}.toml")).is_file(),

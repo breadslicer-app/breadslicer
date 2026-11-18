@@ -1044,7 +1044,7 @@ impl Form {
         };
         let travel = |distance: &str, speed: &str| match (num(distance), num(speed)) {
             (Some(d), Some(v)) if v > 0.0 => Some(d / v * 60.0),
-            (Some(d), _) if d == 0.0 => Some(0.0),
+            (Some(0.0), _) => Some(0.0),
             (None, _) => Some(0.0),
             _ => None,
         };
