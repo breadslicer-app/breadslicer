@@ -272,6 +272,8 @@ struct WindowDrivers {
 /// strong-reference cycle.
 pub(crate) struct AppState {
     about_window: RefCell<Option<WiredAboutWindow>>,
+    /// Printer & resin (#151), and the first run (#608).
+    setup_window: RefCell<Option<crate::setup_window::WiredSetupWindow>>,
     preferences_window: RefCell<Option<WiredPreferencesWindow>>,
     main_windows: RefCell<HashMap<u64, WiredMainWindow>>,
     next_window_id: Cell<u64>,
@@ -599,6 +601,7 @@ impl AppState {
 
         let app = Rc::new(Self {
             about_window: RefCell::new(None),
+            setup_window: RefCell::new(None),
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
@@ -1376,6 +1379,9 @@ impl AppState {
         if let Some(about) = self.about_window.borrow().as_ref() {
             let _ = about.window.hide();
         }
+        if let Some(setup) = self.setup_window.borrow().as_ref() {
+            let _ = setup.window.hide();
+        }
         // Their own dialogs (add a printer, extend a profile) have no main
         // window to return to either: the app ends, as it does when the last
         // window closes on its own.
@@ -1383,11 +1389,37 @@ impl AppState {
         let _ = slint::quit_event_loop();
     }
 
+    /// The first run (#608): with no printer chosen yet, the window that asks
+    /// for the printer, the resin and the mouse, once the app takes input.
+    fn offer_welcome(self: &Rc<Self>) {
+        if self.prefs.snapshot().default_printer.is_some()
+            || self.catalog.borrow().printers().is_empty()
+        {
+            return;
+        }
+        let app = Rc::downgrade(self);
+        crate::startup_timing::when_interactive(move || {
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            let first = app
+                .main_windows
+                .borrow()
+                .values()
+                .next()
+                .map(|w| (w.window.clone_strong(), Rc::downgrade(&w.controller)));
+            if let Some((window, viewport)) = first {
+                app.show_setup(&window, viewport, true);
+            }
+        });
+    }
+
     /// At start-up: offers back what earlier runs left unsaved (#18), then,
     /// once that is answered or when there was nothing to ask, the start
     /// dialog (#381) in window `free`. Without `free` the launch opened files,
     /// and there is no start dialog.
     pub(crate) fn greet(self: &Rc<Self>, free: Option<u64>) {
+        self.offer_welcome();
         let app = Rc::downgrade(self);
         self.offer_recovery(free, move |recovery| {
             if let Some(app) = app.upgrade() {
@@ -1759,6 +1791,16 @@ impl AppState {
             let app = Rc::downgrade(self);
             let ui_weak = ui.as_weak();
             let viewport = Rc::downgrade(ctrl);
+            ui.on_printer_chip_clicked(move || {
+                if let (Some(app), Some(ui)) = (app.upgrade(), ui_weak.upgrade()) {
+                    app.show_setup(&ui, viewport.clone(), false);
+                }
+            });
+        }
+        {
+            let app = Rc::downgrade(self);
+            let ui_weak = ui.as_weak();
+            let viewport = Rc::downgrade(ctrl);
             ui.on_show_preferences_requested(move || {
                 if let (Some(app), Some(ui)) = (app.upgrade(), ui_weak.upgrade()) {
                     app.show_preferences(&ui, viewport.clone());
@@ -1939,6 +1981,53 @@ impl AppState {
                 *slot = Some(wired);
             }
             Err(err) => eprintln!("Failed to create About window: {err}"),
+        }
+    }
+
+    /// Shows Printer & resin over `over` (#151); with `welcome`, as the first
+    /// run's three steps (#608). One window, made again each time so it opens
+    /// on the printer in use.
+    fn show_setup(self: &Rc<Self>, over: &MainWindow, viewport: Weak<ViewportController>, welcome: bool) {
+        let add_printer: Rc<dyn Fn()> = {
+            let app = Rc::downgrade(self);
+            let over = over.as_weak();
+            let viewport = viewport.clone();
+            Rc::new(move || {
+                if let (Some(app), Some(over)) = (app.upgrade(), over.upgrade()) {
+                    app.show_preferences(&over, viewport.clone());
+                    if let Some(prefs) = app.preferences_window.borrow().as_ref() {
+                        prefs.window.invoke_add_printer_requested();
+                    }
+                }
+            })
+        };
+        let import: Rc<dyn Fn()> = {
+            let over = over.as_weak();
+            Rc::new(move || {
+                if let Some(over) = over.upgrade() {
+                    over.invoke_import_printer_settings_requested();
+                }
+            })
+        };
+        if let Some(old) = self.setup_window.borrow_mut().take() {
+            let _ = old.window.hide();
+        }
+        match crate::setup_window::build_setup_window(
+            &self.prefs,
+            self.catalog.clone(),
+            welcome,
+            add_printer,
+            import,
+        ) {
+            Ok(wired) => {
+                if let Err(err) = wired.window.show() {
+                    eprintln!("Failed to show the printer window: {err}");
+                    return;
+                }
+                crate::window_placement::centre_over(&wired.window, over);
+                *self.setup_window.borrow_mut() = Some(wired);
+            }
+            Err(err) => eprintln!("Failed to create the printer window: {err}"),
         }
     }
 
@@ -2896,6 +2985,7 @@ mod window_wiring_tests {
         let default_envelope = DefaultEnvelope::new(&prefs, catalog.clone());
         Rc::new(AppState {
             about_window: RefCell::new(None),
+            setup_window: RefCell::new(None),
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),

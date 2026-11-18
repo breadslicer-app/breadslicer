@@ -17,6 +17,7 @@ mod app_settings;
 mod app_state;
 mod arrange_run;
 mod controls_layout;
+mod setup_window;
 mod autosave;
 mod autosave_store;
 mod clipboard;

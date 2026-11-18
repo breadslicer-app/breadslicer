@@ -31,6 +31,8 @@ import { ProfileViewDialog } from "profile-view-dialog.slint";
 // thread the first time any text is laid out (e.g. opening a menu).
 import "../assets/fonts/NotoSans-Variable.ttf";
 
+import { SetupWindow, PickPrinter, PickNav, PickResin, PickLayout } from "setup-window.slint";
+export { SetupWindow, PickPrinter, PickNav, PickResin, PickLayout }
 export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, PrinterDialog, ProfileViewDialog, RecentFileRow, StartOpen, Theme, ThemePreference }
 
 // Load-pipeline phase shown by the floating progress panel. Values
@@ -801,6 +803,8 @@ export component MainWindow inherits Window {
     // The camera's buttons, as the chosen control layout has them (#609).
     in property <NavMap> nav-map: { middle: 1, middle-shift: 2, middle-ctrl: 3, right: 1, right-shift: 2 };
     callback object-list-range(int);
+    // The printer in the top bar: opens Printer & resin (#151).
+    callback printer-chip-clicked();
     callback viewport-pointer-down(length, length, PointerModifiers);
     callback viewport-pointer-move(length, length, PointerModifiers);
     callback viewport-pointer-up(length, length, PointerModifiers);
@@ -1492,15 +1496,40 @@ export component MainWindow inherits Window {
                             }
                         }
                         Rectangle { width: 8px; }
-                        Text {
-                            text: root.slice-printer-current-index >= 0
-                                ? root.slice-printer-options[root.slice-printer-current-index]
-                                : @tr("Workspace" => "No printer");
-                            color: Theme.text-muted;
-                            font-size: Theme.font-sm;
-                            vertical-alignment: center;
-                            overflow: elide;
-                            max-width: 200px;
+                        // What you print on, one click from Printer & resin
+                        // (#151).
+                        printer-chip := Rectangle {
+                            y: (parent.height - self.height) / 2;
+                            height: 26px;
+                            width: min(240px, chip-text.preferred-width + 22px);
+                            border-radius: Theme.radius;
+                            border-width: 1px;
+                            border-color: root.slice-printer-current-index >= 0
+                                ? (chip-touch.has-hover ? Theme.border-strong : Theme.border)
+                                : #e9c85a77;
+                            background: chip-touch.has-hover ? Theme.raised : transparent;
+                            accessible-role: button;
+                            accessible-label: @tr("Workspace" => "Printer & resin");
+                            accessible-action-default => {
+                                root.printer-chip-clicked();
+                            }
+                            chip-text := Text {
+                                x: 11px;
+                                width: parent.width - 22px;
+                                text: root.slice-printer-current-index >= 0
+                                    ? root.slice-printer-options[root.slice-printer-current-index] + "  ▾"
+                                    : @tr("Workspace" => "Pick a printer and resin  ▾");
+                                color: root.slice-printer-current-index >= 0 ? Theme.text-soft : Theme.warning;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            chip-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.printer-chip-clicked();
+                                }
+                            }
                         }
                         ToolButton {
                             icon: Icons.undo;

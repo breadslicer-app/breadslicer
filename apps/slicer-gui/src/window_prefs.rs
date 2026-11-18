@@ -102,6 +102,12 @@ impl WindowPreferences for ForkDialog {
     }
 }
 
+impl WindowPreferences for crate::slint_ui::SetupWindow {
+    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
+        self.set_theme(prefs.theme);
+    }
+}
+
 impl WindowPreferences for PrinterDialog {
     fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
         self.set_theme(prefs.theme);

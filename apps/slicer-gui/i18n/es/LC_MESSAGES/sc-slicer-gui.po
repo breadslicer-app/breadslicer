@@ -8183,3 +8183,165 @@ msgstr "un archivo de resinas no dice la impresora: elegí tu impresora primero 
 msgctxt "Workspace"
 msgid "Sliced although {} has mesh errors: a repaired copy was sliced. Repair it in Prepare to keep the fix."
 msgstr "Laminado aunque {} tiene errores de malla: se laminó una copia reparada. Reparalo en Preparar para quedarte con el arreglo."
+
+msgctxt "PrinterPicker"
+msgid "Popular"
+msgstr "Populares"
+
+msgctxt "PrinterPicker"
+msgid "My printers"
+msgstr "Mis impresoras"
+
+msgctxt "PrinterPicker"
+msgid "All printers"
+msgstr "Todas las impresoras"
+
+msgctxt "PrinterPicker"
+msgid "POPULAR · the printers most people use"
+msgstr "POPULARES · las impresoras que más se usan"
+
+msgctxt "PrinterPicker"
+msgid "MY PRINTERS"
+msgstr "MIS IMPRESORAS"
+
+msgctxt "PrinterPicker"
+msgid "ALL PRINTERS"
+msgstr "TODAS LAS IMPRESORAS"
+
+msgctxt "PrinterPicker"
+msgid "No resin is set for this printer yet. Import the resins you use, or set one up in Preferences."
+msgstr "Todavía no hay resinas ajustadas para esta impresora. Importá las que usás o armá una en Preferencias."
+
+msgctxt "PrinterPicker"
+msgid "NO PICTURE YET"
+msgstr "SIN FOTO TODAVÍA"
+
+msgctxt "PrinterPicker"
+msgid "IN USE"
+msgstr "EN USO"
+
+msgctxt "PrinterPicker"
+msgid "CAN'T EXPORT YET"
+msgstr "NO EXPORTA TODAVÍA"
+
+msgctxt "PrinterPicker"
+msgid "MINE"
+msgstr "MÍA"
+
+msgctxt "PrinterPicker"
+msgid "Welcome to Breadslicer"
+msgstr "Bienvenido a Breadslicer"
+
+msgctxt "PrinterPicker"
+msgid "Printer & resin"
+msgstr "Impresora y resina"
+
+msgctxt "PrinterPicker"
+msgid "1  Printer"
+msgstr "1  Impresora"
+
+msgctxt "PrinterPicker"
+msgid "2  Resin"
+msgstr "2  Resina"
+
+msgctxt "PrinterPicker"
+msgid "3  Controls"
+msgstr "3  Controles"
+
+msgctxt "PrinterPicker"
+msgid "How do you like to move around?"
+msgstr "¿Cómo te gusta moverte por la escena?"
+
+msgctxt "PrinterPicker"
+msgid "Pick the mouse you already know. Change it later in Preferences."
+msgstr "Elegí el mouse que ya conocés. Lo cambiás cuando quieras en Preferencias."
+
+msgctxt "PrinterPicker"
+msgid "Search printers"
+msgstr "Buscar impresoras"
+
+msgctxt "PrinterPicker"
+msgid "What do you print on?"
+msgstr "¿En qué imprimís?"
+
+msgctxt "PrinterPicker"
+msgid "Which resin?"
+msgstr "¿Qué resina?"
+
+msgctxt "PrinterPicker"
+msgid "Pick your printer so the plate, the pixels and the file are right from the first print. You can change it any time."
+msgstr "Elegí tu impresora para que la cama, los píxeles y el archivo estén bien desde la primera impresión. La podés cambiar cuando quieras."
+
+msgctxt "PrinterPicker"
+msgid "The resins on the right are set for your printer. Pick the one in the vat."
+msgstr "Las resinas de la derecha están ajustadas para tu impresora. Elegí la que tenés en la cuba."
+
+msgctxt "PrinterPicker"
+msgid "Pick a printer"
+msgstr "Elegí una impresora"
+
+msgctxt "PrinterPicker"
+msgid "This build cannot write this printer's file yet: you can prepare a project, not export it."
+msgstr "Esta versión todavía no escribe el archivo de esta impresora: podés preparar el proyecto, pero no exportarlo."
+
+msgctxt "PrinterPicker"
+msgid "RESIN"
+msgstr "RESINA"
+
+msgctxt "PrinterPicker"
+msgid "Import my resins…"
+msgstr "Importar mis resinas…"
+
+msgctxt "PrinterPicker"
+msgid "Add a printer…"
+msgstr "Agregar una impresora…"
+
+msgctxt "PrinterPicker"
+msgid "← Back"
+msgstr "← Atrás"
+
+msgctxt "PrinterPicker"
+msgid "Skip for now"
+msgstr "Omitir por ahora"
+
+msgctxt "PrinterPicker"
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgctxt "PrinterPicker"
+msgid "Use these"
+msgstr "Usar estas"
+
+msgctxt "PrinterPicker"
+msgid "Next: resin →"
+msgstr "Siguiente: resina →"
+
+msgctxt "PrinterPicker"
+msgid "Next: controls →"
+msgstr "Siguiente: controles →"
+
+msgctxt "PrinterPicker"
+msgid "Start printing"
+msgstr "Empezar"
+
+msgctxt "Workspace"
+msgid "Printer & resin"
+msgstr "Impresora y resina"
+
+msgctxt "Workspace"
+msgid "Pick a printer and resin  ▾"
+msgstr "Elegí impresora y resina  ▾"
+
+#, rust-format
+msgctxt "PrinterPicker"
+msgid "Results for “{}”: one printer"
+msgid_plural "Results for “{}”: {n} printers"
+msgstr[0] "Resultados para “{}”: una impresora"
+msgstr[1] "Resultados para “{}”: {n} impresoras"
+
+#, rust-format
+msgctxt "PrinterPicker"
+msgid "One resin is set for this printer."
+msgid_plural "{n} resins are set for this printer."
+msgstr[0] "Una resina ajustada para esta impresora."
+msgstr[1] "{n} resinas ajustadas para esta impresora."
