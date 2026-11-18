@@ -3,12 +3,15 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import { FramedWindow } from "kit/framed-window.slint";
 import { Theme } from "kit/theme.slint";
 import { Palette } from "std-widgets.slint";
 import { ScButton as Button } from "kit/controls.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 
-export component AboutWindow inherits Window {
+export component AboutWindow inherits FramedWindow {
+    maximizable: false;
+    resizable: false;
     // The app's own surface, not the platform style's (#507).
     background: Theme.panel;
     title: @tr("About Breadslicer");
@@ -33,11 +36,11 @@ export component AboutWindow inherits Window {
     property <length> font-footnote: 0.85rem;
 
     min-width: 420px;
-    min-height: 400px;
+    min-height: root.custom-chrome ? 434px : 400px;
     max-width: 420px;
-    max-height: 400px;
+    max-height: root.custom-chrome ? 434px : 400px;
     preferred-width: 420px;
-    preferred-height: 400px;
+    preferred-height: root.custom-chrome ? 434px : 400px;
 
     callback close-requested();
 

@@ -160,6 +160,7 @@ pub(crate) fn build_preferences_window(
     catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>,
 ) -> Result<WiredPreferencesWindow, slint::PlatformError> {
     let prefs = PreferencesWindow::new()?;
+    crate::window_chrome::wire_framed!(&prefs);
     let catalog = catalog_handle.borrow().clone();
 
     // The gallery tiles and the manufacturer tab bar are derived from the
@@ -650,6 +651,7 @@ pub(crate) fn build_preferences_window(
                     &refresh_view,
                     &printer_dialog,
                     edit,
+                    None,
                 );
             }
         };
@@ -836,6 +838,85 @@ fn centre_over_preferences(dialog: &(impl ComponentHandle + 'static)) {
     if let Some(prefs) = PREFERENCES_WINDOW.with(|w| w.borrow().upgrade()) {
         crate::window_placement::centre_over(dialog, &prefs);
     }
+}
+
+/// The editors opened from outside Preferences (#151), held while open.
+#[derive(Default)]
+struct OutsideEditors {
+    printer: Rc<RefCell<Option<crate::slint_ui::PrinterDialog>>>,
+    profile: Rc<RefCell<Option<ProfileViewDialog>>>,
+    fork: Rc<RefCell<Option<ForkDialog>>>,
+}
+
+thread_local! {
+    static OUTSIDE_EDITORS: OutsideEditors = OutsideEditors::default();
+}
+
+/// Edits printer `id` from outside Preferences (#151): the form on it when
+/// the user added it, otherwise on a copy of it. `saved` runs once a save
+/// lands.
+pub(crate) fn edit_printer(
+    bus: &Rc<PreferencesBus>,
+    catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
+    id: &PrinterId,
+    saved: Rc<dyn Fn()>,
+) {
+    let slot = OUTSIDE_EDITORS.with(|e| e.printer.clone());
+    open_printer_dialog(
+        &slint::Weak::default(),
+        bus,
+        catalog_handle,
+        &saved,
+        &slot,
+        true,
+        Some(id),
+    );
+}
+
+/// Edits the resin at catalog index `index` from outside Preferences
+/// (#151): the editor on it when the user made it, otherwise a copy of it
+/// first, which then opens in the editor. `saved` runs once a save lands.
+pub(crate) fn edit_resin(
+    bus: &Rc<PreferencesBus>,
+    catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
+    index: usize,
+    saved: Rc<dyn Fn()>,
+) {
+    let mine = catalog_handle
+        .borrow()
+        .materials()
+        .get(index)
+        .is_some_and(|m| m.source == ProfileSource::User);
+    let (profile, fork) = OUTSIDE_EDITORS.with(|e| (e.profile.clone(), e.fork.clone()));
+    if mine {
+        open_profile_editor(
+            bus,
+            catalog_handle,
+            &saved,
+            &profile,
+            index as i32,
+            false,
+            None,
+        );
+    } else {
+        open_fork_dialog(bus, catalog_handle, &saved, &fork, &profile, index as i32);
+    }
+}
+
+/// What the editors opened from outside Preferences hold: the printer form,
+/// whether it edits, the name it starts with, and whether a fork dialog is
+/// open. For tests.
+#[cfg(test)]
+pub(crate) fn outside_editors_for_test() -> (Option<(bool, String)>, bool) {
+    OUTSIDE_EDITORS.with(|e| {
+        (
+            e.printer
+                .borrow()
+                .as_ref()
+                .map(|d| (d.get_editing(), d.get_model_name().to_string())),
+            e.fork.borrow().is_some(),
+        )
+    })
 }
 
 /// A native file dialog over the Preferences window, so the platform centres it

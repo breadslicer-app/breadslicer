@@ -8369,3 +8369,11 @@ msgstr "Quitarlo"
 msgctxt "Inspector"
 msgid "These fields change the drain picked, and its plug. Click a drain with the drain tool to pick it, or empty surface to place a new one."
 msgstr "Estos campos cambian el drenaje elegido y su tapón. Con la herramienta de drenajes, hacé clic en un drenaje para elegirlo o en la superficie libre para poner uno nuevo."
+
+msgctxt "PrinterPicker"
+msgid "Edit printer…"
+msgstr "Editar impresora…"
+
+msgctxt "PrinterPicker"
+msgid "Edit resin…"
+msgstr "Editar resina…"

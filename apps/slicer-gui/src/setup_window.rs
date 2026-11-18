@@ -397,6 +397,7 @@ pub(crate) fn build_setup_window(
     import: Rc<dyn Fn()>,
 ) -> Result<WiredSetupWindow, slint::PlatformError> {
     let window = SetupWindow::new()?;
+    crate::window_chrome::wire_framed!(&window);
     window.apply_preferences(&bus.snapshot());
     window.set_welcome(welcome);
     let current = catalog.borrow().clone();
@@ -490,6 +491,55 @@ pub(crate) fn build_setup_window(
         }
     });
     window.on_add_printer_pressed(move || add_printer());
+    // What an edit saved shows at once: the list again, on the printer in
+    // use after it (a printer saved is put in use).
+    let saved: Rc<dyn Fn()> = {
+        let state = Rc::downgrade(&state);
+        Rc::new(move || {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
+            let catalog = state.catalog();
+            let (group_list, nav) = groups(&catalog);
+            *state.groups.borrow_mut() = group_list;
+            if let Some(window) = state.window.upgrade() {
+                window.set_nav(ModelRc::new(VecModel::from(nav)));
+            }
+            if let Some(i) = catalog
+                .effective_default_printer(state.bus.snapshot().default_printer.as_ref())
+                .and_then(|id| catalog.printer_index(&id))
+            {
+                state.printer.set(Some(i));
+            }
+            state.refresh();
+        })
+    };
+    window.on_edit_printer_pressed({
+        let state = state.clone();
+        let saved = saved.clone();
+        move || {
+            let id = state
+                .printer
+                .get()
+                .and_then(|i| state.catalog().printers().get(i).map(|p| p.id.clone()));
+            if let Some(id) = id {
+                crate::preferences_window::edit_printer(
+                    &state.bus,
+                    &state.catalog,
+                    &id,
+                    saved.clone(),
+                );
+            }
+        }
+    });
+    window.on_edit_resin_pressed({
+        let state = state.clone();
+        move || {
+            if let Some(i) = state.resin.get() {
+                crate::preferences_window::edit_resin(&state.bus, &state.catalog, i, saved.clone());
+            }
+        }
+    });
     window.on_import_pressed(move || import());
 
     // A printer added or resins imported while open show at once.
@@ -561,6 +611,41 @@ mod tests {
                 .copied()
                 .unwrap()
         );
+    }
+
+    /// Edit printer… on a printer that ships opens the form on a copy of it,
+    /// and Edit resin… on a resin that ships opens the copy of it first
+    /// (#151).
+    #[test]
+    fn the_printer_and_resin_chosen_are_edited_from_the_window() {
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let bus = Rc::new(PreferencesBus::new(
+                crate::preferences_bus::PreferencesSnapshot::for_tests(),
+            ));
+            let catalog = Rc::new(RefCell::new(Rc::new(catalog())));
+            let wired =
+                build_setup_window(&bus, catalog.clone(), false, Rc::new(|| {}), Rc::new(|| {}))
+                    .expect("the window");
+            let window = &wired.window;
+            window.invoke_search_edited("m7 pro".into());
+            let m7 = slint::Model::iter(&window.get_printers())
+                .find(|p| p.name == "Photon Mono M7 Pro")
+                .expect("found by search");
+            window.invoke_printer_picked(m7.index);
+            window.invoke_edit_printer_pressed();
+            let (printer, _) = crate::preferences_window::outside_editors_for_test();
+            let (editing, name) = printer.expect("the printer form is open");
+            assert!(!editing, "a printer that ships is copied, not edited");
+            assert!(name.contains("Photon Mono M7 Pro"), "{name}");
+
+            let resin = slint::Model::iter(&window.get_resins())
+                .next()
+                .expect("resins set for the M7 Pro");
+            window.invoke_resin_picked(resin.index);
+            window.invoke_edit_resin_pressed();
+            let (_, fork) = crate::preferences_window::outside_editors_for_test();
+            assert!(fork, "a resin that ships is copied first");
+        });
     }
 
     /// Picking a printer and a resin and pressing Use these makes them the

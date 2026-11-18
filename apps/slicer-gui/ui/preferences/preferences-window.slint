@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import { FramedWindow } from "../kit/framed-window.slint";
 import { Theme } from "../kit/theme.slint";
 import { Palette } from "std-widgets.slint";
 import { SideBar } from "../sidebar.slint";
@@ -13,14 +14,15 @@ import { ResinPreferences, ResinRow } from "./resin.slint";
 import { SlicingPreferences } from "./slicing.slint";
 import { PrivacyPreferences } from "./privacy.slint";
 
-export component PreferencesWindow inherits Window {
+export component PreferencesWindow inherits FramedWindow {
     // The app's own surface, not the platform style's (#507).
     background: Theme.panel;
     title: @tr("Preferences");
     default-font-family: "Noto Sans";
 
     min-width: 520px;
-    min-height: 360px;
+    // With the app's own title bar, as much more as the bar takes.
+    min-height: root.custom-chrome ? 394px : 360px;
     preferred-width: 680px;
     preferred-height: 540px;
 

@@ -1,0 +1,142 @@
+// SPDX-FileCopyrightText: 2026 SynrgStudio
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// A window with the app's own title bar (#507): every window of the app
+// looks the same, none with the system's frame. Without `custom-chrome` (off
+// Windows) the system's frame stays and nothing changes.
+
+import { Theme } from "theme.slint";
+import { CaptionButton, CaptionKind } from "controls.slint";
+
+// What Rust sets and hears of a window's own title bar: each window has
+// its own (`window_chrome::wire_framed`).
+export global FrameState {
+    in property <bool> custom-chrome: false;
+    in-out property <bool> maximized: false;
+    callback drag();
+    callback minimize();
+    callback maximize-toggle();
+    callback close();
+    callback resize(int);
+}
+
+export component FramedWindow inherits Window {
+    // Whether the window is resized from its edges, and whether it may be
+    // minimised and maximised: a dialog only closes.
+    in property <bool> resizable: true;
+    in property <bool> maximizable: true;
+    out property <bool> custom-chrome: FrameState.custom-chrome;
+    property <bool> window-maximized: FrameState.maximized;
+    property <length> bar-height: 34px;
+
+    no-frame: root.custom-chrome;
+    icon: @image-url("../../assets/images/breadslicer.png");
+
+    // Below the bar, what the window holds.
+    Rectangle {
+        x: 0px;
+        y: root.custom-chrome ? root.bar-height : 0px;
+        width: root.width;
+        height: root.height - self.y;
+        @children
+    }
+
+    if root.custom-chrome: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.bar-height;
+        background: Theme.chrome;
+
+        // What holds no control drags the window; a double click
+        // maximises it.
+        TouchArea {
+            pointer-event(event) => {
+                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    FrameState.drag();
+                }
+            }
+            double-clicked => {
+                if root.maximizable {
+                    FrameState.maximize-toggle();
+                }
+            }
+        }
+
+        HorizontalLayout {
+            padding-left: 12px;
+            spacing: 10px;
+
+            Image {
+                source: root.icon;
+                width: 18px;
+                height: 18px;
+                y: (parent.height - self.height) / 2;
+            }
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-weight: 600;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            if root.maximizable: CaptionButton {
+                kind: CaptionKind.minimize;
+                label: @tr("Workspace" => "Minimize");
+                clicked => {
+                    FrameState.minimize();
+                }
+            }
+            if root.maximizable: CaptionButton {
+                kind: root.window-maximized ? CaptionKind.restore : CaptionKind.maximize;
+                label: root.window-maximized ? @tr("Workspace" => "Restore") : @tr("Workspace" => "Maximize");
+                clicked => {
+                    FrameState.maximize-toggle();
+                }
+            }
+            CaptionButton {
+                kind: CaptionKind.close;
+                label: @tr("Workspace" => "Close");
+                clicked => {
+                    FrameState.close();
+                }
+            }
+        }
+
+        Rectangle {
+            y: parent.height - 1px;
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+
+    // The edges and corners the window is resized from, while it is not
+    // maximised.
+    if root.custom-chrome && root.resizable && !root.window-maximized: frame := Rectangle {
+        property <length> edge: 5px;
+        property <length> corner: 10px;
+
+        for side[i] in [
+            { x: frame.corner, y: 0px, w: root.width - 2 * frame.corner, h: frame.edge, d: 0, c: MouseCursor.ns-resize },
+            { x: frame.corner, y: root.height - frame.edge, w: root.width - 2 * frame.corner, h: frame.edge, d: 1, c: MouseCursor.ns-resize },
+            { x: root.width - frame.edge, y: frame.corner, w: frame.edge, h: root.height - 2 * frame.corner, d: 2, c: MouseCursor.ew-resize },
+            { x: 0px, y: frame.corner, w: frame.edge, h: root.height - 2 * frame.corner, d: 3, c: MouseCursor.ew-resize },
+            { x: root.width - frame.corner, y: 0px, w: frame.corner, h: frame.corner, d: 4, c: MouseCursor.nesw-resize },
+            { x: 0px, y: 0px, w: frame.corner, h: frame.corner, d: 5, c: MouseCursor.nwse-resize },
+            { x: root.width - frame.corner, y: root.height - frame.corner, w: frame.corner, h: frame.corner, d: 6, c: MouseCursor.nwse-resize },
+            { x: 0px, y: root.height - frame.corner, w: frame.corner, h: frame.corner, d: 7, c: MouseCursor.nesw-resize },
+        ]: TouchArea {
+            x: side.x;
+            y: side.y;
+            width: side.w;
+            height: side.h;
+            mouse-cursor: side.c;
+            pointer-event(event) => {
+                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    FrameState.resize(side.d);
+                }
+            }
+        }
+    }
+}

@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import { FramedWindow } from "kit/framed-window.slint";
 import { Theme } from "kit/theme.slint";
 import { Palette } from "std-widgets.slint";
 import { ScButton as Button, ScComboBox as ComboBox } from "kit/controls.slint";
@@ -13,7 +14,8 @@ import { ThemePreference } from "preferences/appearance.slint";
 // file. The target picker lists only the targets the resin does not
 // cover yet (derived on the Rust side); the value fields appear once a
 // target is picked, and partial values are allowed.
-export component ExtendDialog inherits Window {
+export component ExtendDialog inherits FramedWindow {
+    maximizable: false;
     // The app's own surface, not the platform style's (#507).
     background: Theme.panel;
     title: @tr("ExtendDialog" => "Extend resin profile");

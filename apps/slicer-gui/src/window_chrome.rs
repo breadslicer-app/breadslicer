@@ -68,6 +68,82 @@ pub(crate) fn wire(ui: &MainWindow) {
     });
 }
 
+/// Turns the app's title bar on for a window built on the kit's
+/// `FramedWindow` (every window but the main one) and wires its buttons,
+/// before it is shown; its shadow comes once it is.
+macro_rules! wire_framed {
+    ($ui:expr) => {{
+        use slint::ComponentHandle as _;
+        use slint::winit_030::WinitWindowAccessor as _;
+        let ui = $ui;
+        if $crate::window_chrome::ON {
+            let frame = ui.global::<$crate::FrameState>();
+            frame.set_custom_chrome(true);
+            let weak = ui.as_weak();
+            frame.on_drag(move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.window().with_winit_window(|w| {
+                        let _ = w.drag_window();
+                    });
+                }
+            });
+            let weak = ui.as_weak();
+            frame.on_minimize(move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.window().set_minimized(true);
+                }
+            });
+            let weak = ui.as_weak();
+            frame.on_maximize_toggle(move || {
+                if let Some(ui) = weak.upgrade() {
+                    let maximized = !ui.window().is_maximized();
+                    ui.window().set_maximized(maximized);
+                    ui.global::<$crate::FrameState>().set_maximized(maximized);
+                }
+            });
+            let weak = ui.as_weak();
+            frame.on_close(move || {
+                if let Some(ui) = weak.upgrade() {
+                    // As the system's close button: the window's own close
+                    // handler runs.
+                    ui.window()
+                        .dispatch_event(slint::platform::WindowEvent::CloseRequested);
+                }
+            });
+            let weak = ui.as_weak();
+            frame.on_resize(move |side| {
+                let Some(direction) = $crate::window_chrome::direction(side) else {
+                    return;
+                };
+                if let Some(ui) = weak.upgrade() {
+                    ui.window().with_winit_window(|w| {
+                        let _ = w.drag_resize_window(direction);
+                    });
+                }
+            });
+            // The shadow a framed window has, once it is shown.
+            let weak = ui.as_weak();
+            slint::Timer::single_shot(std::time::Duration::from_millis(1), move || {
+                if let Some(ui) = weak.upgrade() {
+                    $crate::window_chrome::shadow(ui.window());
+                }
+            });
+        }
+    }};
+}
+pub(crate) use wire_framed;
+
+/// The shadow a framed window has, once `window` is shown.
+pub(crate) fn shadow(window: &slint::Window) {
+    #[cfg(target_os = "windows")]
+    window.with_winit_window(|w| {
+        use slint::winit_030::winit::platform::windows::WindowExtWindows;
+        w.set_undecorated_shadow(true);
+    });
+    #[cfg(not(target_os = "windows"))]
+    let _ = window;
+}
+
 /// After the window is shown: the shadow a framed window has.
 pub(crate) fn after_show(ui: &MainWindow) {
     if !ON {
@@ -90,7 +166,7 @@ pub(crate) fn note_size(ui: &MainWindow) {
 }
 
 /// The edge `side` names, as the window's resize callback numbers them.
-fn direction(side: i32) -> Option<ResizeDirection> {
+pub(crate) fn direction(side: i32) -> Option<ResizeDirection> {
     Some(match side {
         0 => ResizeDirection::North,
         1 => ResizeDirection::South,

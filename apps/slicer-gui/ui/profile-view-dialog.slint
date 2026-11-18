@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import { FramedWindow } from "kit/framed-window.slint";
 import { Theme } from "kit/theme.slint";
 import { Palette, ScrollView } from "std-widgets.slint";
 import { Card, ScButton as Button, ScComboBox as ComboBox, ScLineEdit as LineEdit } from "kit/controls.slint";
@@ -58,7 +59,7 @@ export component EditField inherits HorizontalLayout {
 // unset ones. Bundled profiles are shown read-only; custom profiles
 // additionally get the edit mode, where the defaults are editable and
 // one calibration pair per session can be picked and edited.
-export component ProfileViewDialog inherits Window {
+export component ProfileViewDialog inherits FramedWindow {
     // The app's own surface, not the platform style's (#507).
     background: Theme.panel;
     title: @tr("ProfileViewDialog" => "Resin profile");

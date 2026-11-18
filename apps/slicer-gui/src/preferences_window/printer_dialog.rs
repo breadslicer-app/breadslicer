@@ -40,8 +40,8 @@ enum Purpose {
     Edit(PrinterProfile),
 }
 
-/// Opens the form. With `edit`, it opens on the selected printer when the user
-/// added it; otherwise it adds a new printer, starting from the selected one.
+/// Opens the form. With `edit`, it opens on `printer`, or the selected one,
+/// when the user added it; otherwise it adds a new printer, starting from it.
 pub(super) fn open_printer_dialog(
     owner: &slint::Weak<PreferencesWindow>,
     bus: &Rc<PreferencesBus>,
@@ -49,11 +49,13 @@ pub(super) fn open_printer_dialog(
     refresh_view: &Rc<dyn Fn()>,
     slot: &Rc<RefCell<Option<PrinterDialog>>>,
     edit: bool,
+    printer: Option<&PrinterId>,
 ) {
     let catalog = catalog_handle.borrow().clone();
     let libraries = ProfileLibraries::platform_default();
-    let selected = catalog
-        .effective_default_printer(bus.snapshot().default_printer.as_ref())
+    let selected = printer
+        .cloned()
+        .or_else(|| catalog.effective_default_printer(bus.snapshot().default_printer.as_ref()))
         .and_then(|id| catalog.printer_index(&id).map(|i| (id, i)));
     let purpose = match (edit, &selected) {
         (true, Some((id, index))) if catalog.printers()[*index].source == ProfileSource::User => {
@@ -75,6 +77,7 @@ pub(super) fn open_printer_dialog(
             return;
         }
     };
+    crate::window_chrome::wire_framed!(&dialog);
     dialog.apply_preferences(&bus.snapshot());
 
     let formats = writable_formats();

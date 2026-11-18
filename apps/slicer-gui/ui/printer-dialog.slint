@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import { FramedWindow } from "kit/framed-window.slint";
 import { Theme } from "kit/theme.slint";
 import { Palette, ScrollView } from "std-widgets.slint";
 import {
@@ -21,7 +22,8 @@ component FieldLabel inherits Text {
 // The form that adds a printer by hand, or edits one the user added (#600).
 // It only holds what is typed; Rust reads it into a profile, checks it and
 // saves it.
-export component PrinterDialog inherits Window {
+export component PrinterDialog inherits FramedWindow {
+    maximizable: false;
     background: Theme.panel;
     title: root.editing
         ? @tr("PrinterDialog" => "Edit printer")

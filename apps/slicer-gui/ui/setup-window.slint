@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import { FramedWindow } from "kit/framed-window.slint";
 import { Theme } from "kit/theme.slint";
 import { Palette, ScrollView } from "std-widgets.slint";
 import { ScButton as Button, ScLineEdit as LineEdit } from "kit/controls.slint";
@@ -275,7 +276,7 @@ component LayoutCard inherits Rectangle {
 
 // Printer & resin, in one window (#151), and the first run (#608): what you
 // print on, the resin, and in the first run the controls (#609).
-export component SetupWindow inherits Window {
+export component SetupWindow inherits FramedWindow {
     background: Theme.panel;
     title: root.welcome ? @tr("PrinterPicker" => "Welcome to Breadslicer") : @tr("PrinterPicker" => "Printer & resin");
     icon: @image-url("../assets/images/breadslicer.png");
@@ -319,6 +320,10 @@ export component SetupWindow inherits Window {
     callback use-pressed();
     callback add-printer-pressed();
     callback import-pressed();
+    // Edit the printer chosen, or the resin chosen: their own form when
+    // the user made them, otherwise a copy of them (#151).
+    callback edit-printer-pressed();
+    callback edit-resin-pressed();
     callback skip-pressed();
 
     FocusScope {
@@ -529,6 +534,12 @@ export component SetupWindow inherits Window {
                             color: Theme.warning;
                             wrap: word-wrap;
                         }
+                        if root.chosen.index >= 0: Button {
+                            text: @tr("PrinterPicker" => "Edit printer…");
+                            clicked => {
+                                root.edit-printer-pressed();
+                            }
+                        }
                         Rectangle {
                             height: 1px;
                             background: Theme.border;
@@ -560,10 +571,20 @@ export component SetupWindow inherits Window {
                                 }
                             }
                         }
-                        Button {
-                            text: @tr("PrinterPicker" => "Import my resins…");
-                            clicked => {
-                                root.import-pressed();
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Button {
+                                text: @tr("PrinterPicker" => "Edit resin…");
+                                enabled: root.chosen-resin >= 0;
+                                clicked => {
+                                    root.edit-resin-pressed();
+                                }
+                            }
+                            Button {
+                                text: @tr("PrinterPicker" => "Import my resins…");
+                                clicked => {
+                                    root.import-pressed();
+                                }
                             }
                         }
                     }
