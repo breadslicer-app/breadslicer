@@ -828,25 +828,27 @@ fn arrange_all_pressed_again_is_one_step() {
 /// must not stay in the status bar until a plate is added and hovered.
 #[test]
 fn a_plate_tool_hint_does_not_outlive_its_click() {
-    let ui = MainWindow::new().expect("the headless platform creates a main window");
-    let ctrl = ViewportController::new_for_test_with_ui(&ui);
-    ctrl.set_build_volume(volume());
-    let mut g = Scene::new();
-    let root = g.add_group(None, Transform3D::Identity);
-    g.add_root(root).expect("group root");
-    ctrl.install_graph_for_test(g);
-    ctrl.set_section(WorkspaceSection::Transform);
-    ctrl.add_plate();
-    let document = ctrl.document();
-    document.set_active_plate(1);
-    assert_eq!(document.plates().count(), 2);
-    // As the hover leaves it over the trash button.
-    ctrl.plate_tool_hovered.set(Some(2));
-    ui.set_status_notice("Remove this plate (Shift: with its models)".into());
-    ctrl.run_plate_tool(2, false);
-    assert_eq!(document.plates().count(), 1, "the plate went");
-    assert_eq!(ui.get_status_notice(), "", "and so did its hint");
-    assert_eq!(ctrl.plate_tool_hovered.get(), None);
+    crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+        let ui = MainWindow::new().expect("the headless platform creates a main window");
+        let ctrl = ViewportController::new_for_test_with_ui(&ui);
+        ctrl.set_build_volume(volume());
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        ctrl.install_graph_for_test(g);
+        ctrl.set_section(WorkspaceSection::Transform);
+        ctrl.add_plate();
+        let document = ctrl.document();
+        document.set_active_plate(1);
+        assert_eq!(document.plates().count(), 2);
+        // As the hover leaves it over the trash button.
+        ctrl.plate_tool_hovered.set(Some(2));
+        ui.set_status_notice("Remove this plate (Shift: with its models)".into());
+        ctrl.run_plate_tool(2, false);
+        assert_eq!(document.plates().count(), 1, "the plate went");
+        assert_eq!(ui.get_status_notice(), "", "and so did its hint");
+        assert_eq!(ctrl.plate_tool_hovered.get(), None);
+    });
 }
 
 /// Ctrl+A takes every model of the active plate, Ctrl+I the rest, and
@@ -904,28 +906,33 @@ fn shift_click_in_the_object_list_takes_a_range() {
 /// up to the top of the scene, parked at the top, where it cuts nothing.
 #[test]
 fn the_tabs_before_slice_have_a_layer_slider_to_the_top_of_the_scene() {
-    let ui = MainWindow::new().expect("the headless platform creates a main window");
-    let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&ui));
-    ctrl.register_document_listener();
-    ctrl.set_build_volume(volume());
-    let mut g = Scene::new();
-    let at = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
-        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-        [0.0, 0.0, 0.0],
-    ));
-    let leaf = g
-        .add_leaf(None, at, LeafPayload::Mesh(Arc::new(box_mesh())))
-        .expect("leaf");
-    g.add_root(leaf).expect("root");
-    ctrl.install_graph_for_test(g);
-    let top = ctrl
-        .document()
-        .with_scene(|s| {
-            let q = s.leaf(leaf).unwrap();
-            q.transformed_aabb(q.world_transform()).unwrap().max().coords()[2]
-        })
-        .unwrap();
-    let count = ui.get_prep_layer_count();
-    assert_eq!(count, (f64::from(top) / 0.05).ceil() as i32);
-    assert_eq!(ui.get_prep_layer_index(), (count - 1) as f32, "at the top");
+    crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+        let ui = MainWindow::new().expect("the headless platform creates a main window");
+        let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&ui));
+        ctrl.register_document_listener();
+        ctrl.set_build_volume(volume());
+        let mut g = Scene::new();
+        let at = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 0.0, 0.0],
+        ));
+        let leaf = g
+            .add_leaf(None, at, LeafPayload::Mesh(Arc::new(box_mesh())))
+            .expect("leaf");
+        g.add_root(leaf).expect("root");
+        ctrl.install_graph_for_test(g);
+        let top = ctrl
+            .document()
+            .with_scene(|s| {
+                let q = s.leaf(leaf).unwrap();
+                q.transformed_aabb(q.world_transform())
+                    .unwrap()
+                    .max()
+                    .coords()[2]
+            })
+            .unwrap();
+        let count = ui.get_prep_layer_count();
+        assert_eq!(count, (f64::from(top) / 0.05).ceil() as i32);
+        assert_eq!(ui.get_prep_layer_index(), (count - 1) as f32, "at the top");
+    });
 }

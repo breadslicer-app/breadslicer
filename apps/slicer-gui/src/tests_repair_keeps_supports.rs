@@ -187,9 +187,15 @@ impl Window {
     /// Slice, refused; the card's Repair; the second slice.
     fn slice_and_repair_from_the_card(&self, cards: &mut Vec<String>) {
         self.press_slice();
+        // A model with mesh errors slices from a repaired copy (#610): the
+        // person repairs it from the Repair button, and slices again.
+        if !self.window.get_message_open() || self.window.get_message().action != "Repair" {
+            cards.extend(self.close_cards());
+            self.press_repair();
+            return;
+        }
         let card = self.window.get_message();
         cards.push(card.heading.to_string());
-        assert_eq!(card.action, "Repair", "the slice is refused with Repair");
         self.window.invoke_message_answered(MessageAnswer::Confirm);
         self.finish_repair();
         if self.window.get_slicing_in_progress() {
@@ -354,15 +360,12 @@ fn every_order(defect: Defect, rows: &mut Vec<(String, Outcome)>) {
         w.save_and_reopen(Vec::new()),
     );
 
-    // Never repaired: the slice is refused and the card closed.
+    // Never repaired: the plate slices from a repaired copy (#610).
     let w = window_with(one(broken()));
     w.generate();
     w.press_slice();
     let cards = w.close_cards();
-    row(
-        "supports, slice refused, no repair",
-        w.save_and_reopen(cards),
-    );
+    row("supports, slice, no repair", w.save_and_reopen(cards));
 
     // Two copies sharing the mesh, both supported, repaired at the slice.
     let w = window_with(two_sharing(broken()));
@@ -429,9 +432,10 @@ fn every_order_of_repair_and_supports() {
                 !o.cards.iter().any(|c| c == "Supports out of date"),
                 "{flow}: every tip still touches"
             );
-            // The Undo flows never press Slice.
-            let unrepaired = flow.contains("no repair") || flow.contains("Undo");
-            assert_eq!(o.sliced, !unrepaired, "{flow}: sliced");
+            // The Undo flows never press Slice; with no repair the plate
+            // slices from a repaired copy (#610).
+            let unsliced = flow.contains("Undo");
+            assert_eq!(o.sliced, !unsliced, "{flow}: sliced");
         }
     });
 }
@@ -512,10 +516,9 @@ fn a_real_model_keeps_its_supports_through_the_cards_repair() {
     });
 }
 
-/// Analyze islands on a model the slicer refuses (#526): Repair runs on its
-/// own and the analysis goes on, with no card to answer and no question at
-/// its end; the supports stay editable on the repaired model, so a hand
-/// edit goes through at once.
+/// Analyze islands on a model the slicer's gate refuses (#526, #610): it is
+/// cut from a repaired copy, with no card to answer and no question at its
+/// end; the supports stay editable.
 #[test]
 fn analyzing_islands_repairs_on_its_own_and_keeps_the_supports() {
     on_fresh_slint_thread(|| {
@@ -529,16 +532,12 @@ fn analyzing_islands_repairs_on_its_own_and_keeps_the_supports() {
                 !w.window.get_message_open(),
                 "{defect:?}: no card to answer"
             );
+            // The slicer cuts a repaired copy of its own (#610): no repair
+            // of the scene runs, and the analysis lands at once.
             assert!(
-                w.window.get_repairing_in_progress(),
-                "{defect:?}: Repair runs on its own"
+                !w.window.get_repairing_in_progress(),
+                "{defect:?}: no repair of the model"
             );
-            w.finish_repair();
-            assert!(
-                w.window.get_slicing_in_progress(),
-                "{defect:?}: the analysis goes on"
-            );
-            w.finish_slice();
             let cards = w.close_cards();
             assert!(
                 cards
@@ -587,14 +586,12 @@ fn generate_analyzes_the_islands_on_its_own() {
                 "{defect:?}: with no modal over the window"
             );
             w.finish_slice();
-            if defect.is_some() {
-                assert!(
-                    w.window.get_repairing_in_progress(),
-                    "{defect:?}: Repair runs on its own"
-                );
-                w.finish_repair();
-                w.finish_slice();
-            }
+            // A model the slicer's gate refuses is cut from a repaired copy
+            // (#610): no repair of the scene runs.
+            assert!(
+                !w.window.get_repairing_in_progress(),
+                "{defect:?}: no repair of the model"
+            );
             let cards = w.close_cards();
             assert!(
                 cards.iter().all(|c| !c.contains("have no support")),

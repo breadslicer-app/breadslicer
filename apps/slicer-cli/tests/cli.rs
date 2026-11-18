@@ -2055,8 +2055,10 @@ mod slice_repair_tests {
         write_stla_to(path, &flipped_winding_tetrahedron_mesh());
     }
 
+    /// A model with mesh errors slices from a repaired copy, with a warning
+    /// (#610).
     #[test]
-    fn slice_without_repair_on_flipped_winding_fixture_fails_validation() {
+    fn slice_without_repair_on_flipped_winding_fixture_slices_a_repaired_copy() {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("flipped.stla");
         let output = tmp.path().join("layers");
@@ -2064,8 +2066,8 @@ mod slice_repair_tests {
         write_flipped_winding_tetrahedron(&source);
 
         run_slice(&source, &output, &[])
-            .failure()
-            .stderr(predicate::str::contains("InconsistentWindingOrder"));
+            .success()
+            .stderr(predicate::str::contains("a repaired copy was sliced"));
     }
 
     #[test]
@@ -2108,9 +2110,10 @@ mod slice_repair_tests {
             .stderr(no_panic_in_stderr().not());
     }
 
-    /// Pins that an edge with 3 faces is still rejected, with the same report.
+    /// Pins that an edge with 3 faces slices from a repaired copy, with a
+    /// warning (#610).
     #[test]
-    fn slice_without_repair_on_a_fin_on_an_edge_fails_validation() {
+    fn slice_without_repair_on_a_fin_on_an_edge_slices_a_repaired_copy() {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("fin.stla");
         let output = tmp.path().join("layers");
@@ -2118,9 +2121,8 @@ mod slice_repair_tests {
         write_repair_fixture(&source, "s12-fin-on-edge");
 
         run_slice(&source, &output, &[])
-            .failure()
-            .stderr(predicate::str::contains("mesh manifold validation failed"))
-            .stderr(predicate::str::contains("1x NonManifoldEdge"));
+            .success()
+            .stderr(predicate::str::contains("a repaired copy was sliced"));
     }
 
     /// Pins that a mesh Repair cannot close does not abort the slice: it

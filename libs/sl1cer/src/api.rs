@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rayon::prelude::*;
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::indexed_mesh::{MeshTopology, ValidatedEdgeManifoldMesh};
+use sc_mesh_core::indexed_mesh::{MeshTopology, RepairPasses, ValidatedEdgeManifoldMesh};
 use sc_scene::bake::bake_leaf_to_world;
 use sc_scene::node::{NodeId, NodeKind};
 use sc_scene::{CsgPolicy, ReferencePolicy, Scene, SceneError};
@@ -91,6 +91,9 @@ pub struct LeafSlices {
     leaf: NodeId,
     leaf_name: Option<String>,
     stack: ContourStack,
+    /// The leaf's mesh did not pass the slicer's gate, and was sliced from a
+    /// repaired copy of the slicer's own (#610); the scene's mesh is as it was.
+    repaired: bool,
 }
 
 impl LeafSlices {
@@ -109,6 +112,12 @@ impl LeafSlices {
     #[inline]
     pub fn stack(&self) -> &ContourStack {
         &self.stack
+    }
+
+    /// Whether the leaf was sliced from a repaired copy of its mesh (#610).
+    #[inline]
+    pub fn was_repaired(&self) -> bool {
+        self.repaired
     }
 
     /// Consumes the record and keeps only the contour stack.
@@ -297,6 +306,22 @@ where
                 leaf_name: leaf_name.clone(),
                 error: SliceError::BakeFailed(err),
             })?;
+        // A model with mesh errors does not stop the plate (#610): it is
+        // sliced from a repaired copy of the slicer's own, and the outcome says
+        // so. Only one that even the repair leaves unsliceable is refused.
+        let mut repaired = false;
+        if let Err(geometry) = validate_baked(&mut baked).map(|_| ()) {
+            baked.repair(RepairPasses::default_repair());
+            if validate_baked(&mut baked).is_err() {
+                failures.push(LeafValidationFailure {
+                    leaf,
+                    leaf_name,
+                    geometry,
+                });
+                continue;
+            }
+            repaired = true;
+        }
         let mesh = match validate_baked(&mut baked) {
             Ok(mesh) => mesh,
             Err(geometry) => {
@@ -331,6 +356,7 @@ where
                     leaf,
                     leaf_name,
                     stack,
+                    repaired,
                 }),
                 None => return Ok(SliceOutcome::Cancelled),
             }

@@ -977,8 +977,9 @@ mod touching_solid_tests {
     }
 
     #[test]
-    fn an_edge_with_3_faces_is_rejected_with_the_errors_of_the_mesh() {
-        // A single face glued to an edge of a cube.
+    fn an_edge_with_3_faces_is_sliced_from_a_repaired_copy() {
+        // A single face glued to an edge of a cube: the slicer's gate refuses
+        // it, so the plate is sliced from a repaired copy, and says so (#610).
         let mut fin = unit_cube_mesh();
         let [a, b] = [0usize, 1].map(|k| fin.faces[0].vertices[k].get());
         fin.vertices.push(Vertex::new([0.0, 0.0, 3.0]));
@@ -986,8 +987,7 @@ mod touching_solid_tests {
         fin.faces
             .push(IndexedTriangle::from_raw_indices([a, b, apex]));
         let lifted = Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 0.5]));
-        let expected = fin
-            .validated_faces()
+        fin.validated_faces()
             .expect("valid faces")
             .validate_edge_manifold()
             .expect_err("a 3-face edge");
@@ -997,16 +997,16 @@ mod touching_solid_tests {
             .add_leaf(None, lifted, LeafPayload::Mesh(Arc::new(fin)))
             .expect("inline-mesh leaf");
         scene.add_root(leaf).expect("fresh leaf becomes a root");
-        let err = slice_scene(&scene, &four_layer_profile()).unwrap_err();
-        let SliceSceneError::LeavesValidationFailed(failures) = err else {
-            panic!("expected LeavesValidationFailed, got {err:?}");
-        };
-        let InvalidLeafGeometry::Manifold(errors) = &failures[0].geometry else {
-            panic!(
-                "expected a manifold failure, got {:?}",
-                failures[0].geometry
-            );
-        };
-        assert_eq!(*errors, expected);
+        let slices = slice_scene(&scene, &four_layer_profile()).expect("sliced anyway");
+        assert_eq!(slices.len(), 1);
+        assert!(slices[0].was_repaired(), "from a repaired copy");
+        assert!(
+            slices[0]
+                .stack()
+                .layers()
+                .iter()
+                .any(|l| !l.polygons().is_empty()),
+            "the cube prints"
+        );
     }
 }

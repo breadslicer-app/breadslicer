@@ -8178,3 +8178,8 @@ msgstr "Orbitar: Alt + arrastrar con el izquierdo · Desplazar: Alt + medio (o m
 msgctxt "PrinterSettingsImport"
 msgid "a resin file says no printer: pick your printer first, then import it again"
 msgstr "un archivo de resinas no dice la impresora: elegí tu impresora primero y volvé a importarlo"
+
+#, rust-format
+msgctxt "Workspace"
+msgid "Sliced although {} has mesh errors: a repaired copy was sliced. Repair it in Prepare to keep the fix."
+msgstr "Laminado aunque {} tiene errores de malla: se laminó una copia reparada. Reparalo en Preparar para quedarte con el arreglo."
