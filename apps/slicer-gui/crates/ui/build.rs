@@ -39,10 +39,18 @@ fn set_translation_domain() {
 }
 
 fn run_build() {
-    // Development builds (tests among them) carry the element ids and type
-    // names Slint's element queries need, so layout tests can measure what is
-    // drawn. Release builds do not.
-    let debug_info = env::var("PROFILE").as_deref() == Ok("debug");
+    // Development and quick-release builds (tests among them) carry the
+    // element ids and type names Slint's element queries need, so layout tests
+    // can measure what is drawn. Only the full release, the one published, goes
+    // without. Cargo says `release` for every profile built on it, so the
+    // quick-release profile is told by its output folder.
+    let quick = env::var("OUT_DIR").is_ok_and(|dir| {
+        std::path::Path::new(&dir)
+            .components()
+            .any(|c| c.as_os_str() == "quick-release")
+    });
+    let debug_info = env::var("PROFILE").as_deref() == Ok("debug") || quick;
+    println!("cargo:rerun-if-env-changed=PROFILE");
     let config = CompilerConfiguration::new()
         .with_bundled_translations(I18N_DIR)
         .with_debug_info(debug_info);
