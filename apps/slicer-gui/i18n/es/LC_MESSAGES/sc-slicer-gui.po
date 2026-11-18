@@ -8329,8 +8329,8 @@ msgid "Printer & resin"
 msgstr "Impresora y resina"
 
 msgctxt "Workspace"
-msgid "Pick a printer and resin  ▾"
-msgstr "Elegí impresora y resina  ▾"
+msgid "Pick a printer and resin"
+msgstr "Elegí impresora y resina"
 
 #, rust-format
 msgctxt "PrinterPicker"
@@ -8773,3 +8773,63 @@ msgstr "{} modelo(s) o sus soportes se salen de la cama y no se imprimirían ent
 msgctxt "SliceDialog"
 msgid "Arrange all"
 msgstr "Acomodar todo"
+
+msgctxt "Inspector"
+msgid "COST"
+msgstr "COSTO"
+
+msgctxt "Inspector"
+msgid "this print"
+msgstr "esta impresión"
+
+msgctxt "Inspector"
+msgid "Bottle price"
+msgstr "Precio de la botella"
+
+msgctxt "Inspector"
+msgid "What a bottle of this resin costs"
+msgstr "Lo que cuesta una botella de esta resina"
+
+msgctxt "Inspector"
+msgid "Currency"
+msgstr "Moneda"
+
+msgctxt "Inspector"
+msgid "Bottle holds"
+msgstr "La botella trae"
+
+msgctxt "Inspector"
+msgid "In"
+msgstr "En"
+
+msgctxt "Inspector"
+msgid "Losses (%)"
+msgstr "Pérdidas (%)"
+
+msgctxt "Inspector"
+msgid "Weighed used (g)"
+msgstr "Gastó, pesado (g)"
+
+msgctxt "Inspector"
+msgid "What the bottle lost to this print, weighed, in grams"
+msgstr "Lo que perdió la botella con esta impresión, pesado, en gramos"
+
+msgctxt "Inspector"
+msgid "Your price stays on this computer. Weigh the bottle before and after a print: what it lost sets the losses."
+msgstr "Tu precio queda en esta compu. Pesá la botella antes y después de imprimir: lo que perdió fija las pérdidas."
+
+msgctxt "Inspector"
+msgid "Write what a bottle costs and holds to see what this print costs."
+msgstr "Escribí cuánto cuesta y cuánto trae una botella para ver cuánto cuesta esta impresión."
+
+msgctxt "Inspector"
+msgid "This resin gives no density: price its bottle in ml."
+msgstr "Esta resina no trae densidad: poné el precio de la botella en ml."
+
+msgctxt "Inspector"
+msgid "The resin it cures, plus {} % lost, at your price."
+msgstr "La resina que cura, más {} % de pérdidas, a tu precio."
+
+msgctxt "Inspector"
+msgid "The resin it cures, at your price."
+msgstr "La resina que cura, a tu precio."

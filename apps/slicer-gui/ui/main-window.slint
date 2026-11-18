@@ -10,7 +10,7 @@ import { AboutWindow } from "about-window.slint";
 import { AxisView, MeshViewer, NavMap, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
-import { CaptionButton, CaptionKind, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
+import { CaptionButton, CaptionKind, DisclosureChevron, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
 import { CutCard, HollowInspector, OrientCard, OrientOption, OverhangCard, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { ScenePanel, SceneRow } from "./workspace/scene-panel.slint";
 import { Card, Note, ScCheckBox } from "./kit/controls.slint";
@@ -525,6 +525,19 @@ export component MainWindow inherits Window {
     in property <string> slice-estimate-volume;
     in property <string> slice-estimate-mass;
     in property <string> slice-estimate-note;
+    // What the print costs in resin (#101), and the price of its resin.
+    in property <string> slice-cost;
+    in property <string> slice-cost-note;
+    in property <[string]> slice-cost-rows;
+    in-out property <bool> slice-cost-open: true;
+    in-out property <string> slice-price-text;
+    in-out property <string> slice-price-currency;
+    in-out property <string> slice-price-amount;
+    in-out property <string> slice-price-losses;
+    in-out property <string> slice-price-weighed;
+    in-out property <int> slice-price-unit;
+    callback slice-price-edited(int, string);
+    callback slice-price-unit-picked(int);
     // The Review card of the Slice tab (#90), driven by Rust
     // (`review_panel`): see `SliceInspector` for the meaning of each.
     in property <int> review-state: 0;
@@ -1509,7 +1522,7 @@ export component MainWindow inherits Window {
                         printer-chip := Rectangle {
                             y: (parent.height - self.height) / 2;
                             height: 26px;
-                            width: min(240px, chip-text.preferred-width + 22px);
+                            width: min(240px, chip-text.preferred-width + 39px);
                             border-radius: Theme.radius;
                             border-width: 1px;
                             border-color: root.slice-printer-current-index >= 0
@@ -1521,16 +1534,29 @@ export component MainWindow inherits Window {
                             accessible-action-default => {
                                 root.printer-chip-clicked();
                             }
+                            // The text and its chevron, drawn: the font has no "▾"
+                            // (a tester saw a box), and the text stands in the
+                            // middle of the chip.
                             chip-text := Text {
                                 x: 11px;
-                                width: parent.width - 22px;
+                                y: 0;
+                                width: parent.width - 39px;
+                                height: parent.height;
                                 text: root.slice-printer-current-index >= 0
-                                    ? root.slice-printer-options[root.slice-printer-current-index] + "  ▾"
-                                    : @tr("Workspace" => "Pick a printer and resin  ▾");
+                                    ? root.slice-printer-options[root.slice-printer-current-index]
+                                    : @tr("Workspace" => "Pick a printer and resin");
                                 color: root.slice-printer-current-index >= 0 ? Theme.text-soft : Theme.warning;
                                 font-size: Theme.font-sm;
+                                horizontal-alignment: center;
                                 vertical-alignment: center;
                                 overflow: elide;
+                            }
+                            DisclosureChevron {
+                                x: parent.width - 11px - self.width;
+                                y: (parent.height - self.height) / 2;
+                                open: true;
+                                size: 8px;
+                                color: root.slice-printer-current-index >= 0 ? Theme.text-soft : Theme.warning;
                             }
                             chip-touch := TouchArea {
                                 mouse-cursor: pointer;
@@ -2342,6 +2368,22 @@ export component MainWindow inherits Window {
                                 estimate-volume: root.slice-estimate-volume;
                                 estimate-mass: root.slice-estimate-mass;
                                 estimate-note: root.slice-estimate-note;
+                                cost: root.slice-cost;
+                                cost-note: root.slice-cost-note;
+                                cost-rows: root.slice-cost-rows;
+                                cost-open <=> root.slice-cost-open;
+                                price-text <=> root.slice-price-text;
+                                price-currency <=> root.slice-price-currency;
+                                price-amount <=> root.slice-price-amount;
+                                price-losses <=> root.slice-price-losses;
+                                price-weighed <=> root.slice-price-weighed;
+                                price-unit <=> root.slice-price-unit;
+                                price-edited(field, text) => {
+                                    root.slice-price-edited(field, text);
+                                }
+                                price-unit-picked(at) => {
+                                    root.slice-price-unit-picked(at);
+                                }
                                 review-state: root.review-state;
                                 review-summary: root.review-summary;
                                 review-worst: root.review-worst;

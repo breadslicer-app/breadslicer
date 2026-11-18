@@ -153,6 +153,8 @@ pub(crate) struct PreferencesSnapshot {
     pub show_start_dialog: bool,
     /// The files last opened or saved, newest first (`recent_files`).
     pub recent_files: Vec<RecentFile>,
+    /// What the user pays for each resin (#101).
+    pub resin_prices: BTreeMap<MaterialId, crate::resin_cost::ResinPrice>,
 }
 
 impl From<&PreferencesSnapshot> for PrintDefaults {
@@ -218,6 +220,7 @@ impl PreferencesSnapshot {
             last_open_dir: None,
             show_start_dialog: true,
             recent_files: Vec::new(),
+            resin_prices: BTreeMap::new(),
         }
     }
 }
@@ -261,6 +264,8 @@ pub(crate) enum PreferencesChange {
     StartDialog,
     /// A file was opened or saved, or taken off the recent list (#381).
     RecentFiles,
+    /// A resin's price (#101).
+    ResinPrices,
     /// A profile was saved, imported or deleted in a library. The snapshot is
     /// unchanged; what the profiles resolve to may not be.
     Profiles,

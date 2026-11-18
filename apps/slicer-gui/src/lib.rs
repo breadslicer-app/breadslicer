@@ -93,6 +93,7 @@ mod single_instance;
 mod slice_panel;
 mod slice_projection;
 mod slice_result;
+mod resin_cost;
 mod slice_run;
 mod slice_selection;
 mod split_bodies;

@@ -31,6 +31,7 @@ struct Window {
     ctrl: Rc<ViewportController>,
     document: Rc<SceneDocument>,
     slice: Rc<SliceRun>,
+    cost: Rc<crate::resin_cost::ResinCostPanel>,
     /// The cube on the first plate and the one on the second.
     cubes: [NodeId; 2],
 }
@@ -86,6 +87,12 @@ fn two_plates() -> Window {
         supports,
         hollow,
     );
+    let cost = crate::resin_cost::ResinCostPanel::install(
+        &window,
+        bus.clone(),
+        document.clone(),
+        ctrl.clone(),
+    );
     let slice = SliceRun::install(
         &window,
         bus,
@@ -101,6 +108,7 @@ fn two_plates() -> Window {
         ctrl,
         document,
         slice,
+        cost,
         cubes: [first, other],
     }
 }
@@ -345,8 +353,12 @@ fn the_slice_tab_of_a_short_window_is_pictured_when_asked() {
             .window()
             .set_size(slint::LogicalSize::new(1280.0, 720.0));
         w.window.set_has_scene(true);
+        w.ctrl.register_document_listener();
         w.document.set_active_plate(0);
         w.press_slice();
+        w.window.invoke_slice_price_edited(0, "30".into());
+        w.window.invoke_slice_price_edited(1, "$".into());
+        w.window.invoke_slice_price_edited(2, "1000".into());
         let shot = |name: &str| {
             crate::test_support::slint_thread::render_frames();
             let picture = w.window.window().take_snapshot().expect("a snapshot");
@@ -369,4 +381,59 @@ fn the_slice_tab_of_a_short_window_is_pictured_when_asked() {
             });
         shot("bottom");
     });
+}
+
+/// The resin's price makes the cost of the print (#101): the resin it
+/// cures at the bottle's price per ml, with the losses on top; weighing what
+/// the bottle lost sets the losses.
+#[test]
+fn a_priced_resin_tells_what_the_print_costs() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        // The estimate is worked out as the window's controller hears of the
+        // slice.
+        w.ctrl.register_document_listener();
+        w.document.set_active_plate(1);
+        w.press_slice();
+        let estimate = w.ctrl.last_estimate().unwrap_or_else(|| {
+            panic!(
+                "an estimate: {} ({})",
+                w.window.get_slice_estimate_note(),
+                w.window.get_slice_estimate_valid()
+            )
+        });
+        assert_eq!(w.window.get_slice_cost(), "", "no price yet");
+        assert!(!w.window.get_slice_cost_note().is_empty());
+        w.window.invoke_slice_price_edited(1, "$".into());
+        w.window.invoke_slice_price_edited(0, "30".into());
+        w.window.invoke_slice_price_edited(2, "1000".into());
+        let cost = estimate.volume_ml * 30.0 / 1000.0;
+        assert_eq!(
+            w.window.get_slice_cost().as_str(),
+            crate::resin_cost::money("$", cost)
+        );
+        // Weighed: 10 % more than the slice cures.
+        let liquid = estimate.liquid_g.expect("the resin gives a density");
+        w.window
+            .invoke_slice_price_edited(4, format!("{:.4}", liquid * 1.1).into());
+        assert_eq!(w.window.get_slice_price_losses().as_str(), "10.0");
+        assert_eq!(
+            w.window.get_slice_cost().as_str(),
+            crate::resin_cost::money("$", cost * 1.1)
+        );
+        // Kept for the resin, and an emptied price takes it away.
+        let snapshot = w.cost_bus_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        w.window.invoke_slice_price_edited(0, "".into());
+        assert_eq!(w.window.get_slice_cost(), "");
+        assert!(w.cost_bus_snapshot().is_empty());
+    });
+}
+
+impl Window {
+    fn cost_bus_snapshot(
+        &self,
+    ) -> std::collections::BTreeMap<MaterialId, crate::resin_cost::ResinPrice> {
+        self.cost.prices_for_test()
+    }
 }

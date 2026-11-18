@@ -267,6 +267,19 @@ component FindingRow inherits VerticalLayout {
 }
 
 // A labelled field stacked over its control.
+// A line edit showing a value pushed from Rust: the text binding breaks
+// the first time the user types, so each new value is written in
+// explicitly.
+component PushedEdit inherits LineEdit {
+    in property <string> pushed;
+    text: root.pushed;
+    changed pushed => {
+        if (self.text != self.pushed) {
+            self.text = self.pushed;
+        }
+    }
+}
+
 component Field inherits VerticalLayout {
     in property <string> label;
     spacing: 4px;
@@ -2973,6 +2986,22 @@ export component SliceInspector inherits VerticalLayout {
     in property <string> estimate-volume;
     in property <string> estimate-mass;
     in property <string> estimate-note;
+    // What the print costs in resin (#101): the cost, why there is none,
+    // each model's share with several, and the price of the slice's resin
+    // as typed (0 price, 1 currency, 2 bottle content, 3 losses %, 4 grams
+    // a print was weighed to take); the content in ml (0) or g (1).
+    in property <string> cost;
+    in property <string> cost-note;
+    in property <[string]> cost-rows;
+    in-out property <bool> cost-open: true;
+    in-out property <string> price-text;
+    in-out property <string> price-currency;
+    in-out property <string> price-amount;
+    in-out property <string> price-losses;
+    in-out property <string> price-weighed;
+    in-out property <int> price-unit;
+    callback price-edited(int, string);
+    callback price-unit-picked(int);
     // The review of the held slice (#90): 0 no slice, 1 reviewed, 2 failed,
     // 3 a slice not reviewed here (a reopened project's).
     in property <int> review-state;
@@ -3202,6 +3231,112 @@ export component SliceInspector inherits VerticalLayout {
                 source: root.layer-image;
                 image-fit: contain;
             }
+        }
+    }
+
+    // COST (#101): the resin the print takes, at the user's price.
+    if root.layer-count > 0 && root.estimate-valid: Card {
+        title: @tr("Inspector" => "COST");
+        vertical-stretch: 0;
+        collapsible: true;
+        expanded <=> root.cost-open;
+        // Folded, the cost beside the title.
+        note: root.cost-open ? "" : root.cost;
+        note-color: Theme.text;
+
+        if root.cost != "": HorizontalLayout {
+            spacing: 8px;
+
+            StatTile {
+                value: root.cost;
+                caption: @tr("Inspector" => "this print");
+            }
+        }
+        for row in root.cost-rows: Text {
+            text: row;
+            font-size: Theme.font-sm;
+            color: Theme.text-soft;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+
+            Field {
+                label: @tr("Inspector" => "Bottle price");
+                price-input := PushedEdit {
+                    pushed: root.price-text;
+                    accessible-label: @tr("Inspector" => "What a bottle of this resin costs");
+                    edited(t) => {
+                        root.price-edited(0, t);
+                    }
+                }
+            }
+            Field {
+                label: @tr("Inspector" => "Currency");
+                width: 76px;
+                currency-input := PushedEdit {
+                    pushed: root.price-currency;
+                    placeholder-text: "$";
+                    edited(t) => {
+                        root.price-edited(1, t);
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+
+            Field {
+                label: @tr("Inspector" => "Bottle holds");
+                amount-input := PushedEdit {
+                    pushed: root.price-amount;
+                    placeholder-text: "1000";
+                    edited(t) => {
+                        root.price-edited(2, t);
+                    }
+                }
+            }
+            Field {
+                label: @tr("Inspector" => "In");
+                width: 76px;
+                unit-combo := ComboBox {
+                    model: ["ml", "g"];
+                    current-index <=> root.price-unit;
+                    selected => {
+                        root.price-unit-picked(unit-combo.current-index);
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+
+            Field {
+                label: @tr("Inspector" => "Losses (%)");
+                losses-input := PushedEdit {
+                    pushed: root.price-losses;
+                    placeholder-text: "0";
+                    edited(t) => {
+                        root.price-edited(3, t);
+                    }
+                }
+            }
+            Field {
+                label: @tr("Inspector" => "Weighed used (g)");
+                weighed-input := PushedEdit {
+                    pushed: root.price-weighed;
+                    accessible-label: @tr("Inspector" => "What the bottle lost to this print, weighed, in grams");
+                    edited(t) => {
+                        root.price-edited(4, t);
+                    }
+                }
+            }
+        }
+        if root.cost-note != "": Note {
+            text: root.cost-note;
+        }
+        Note {
+            text: @tr("Inspector" => "Your price stays on this computer. Weigh the bottle before and after a print: what it lost sets the losses.");
         }
     }
 

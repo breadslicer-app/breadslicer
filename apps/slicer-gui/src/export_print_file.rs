@@ -139,6 +139,9 @@ pub(crate) struct PrintEstimate {
     pub time_sec: f64,
     pub volume_ml: f64,
     pub mass_g: f64,
+    /// What that volume weighs liquid, out of the bottle (#101): `None`
+    /// when the resin gives no liquid density.
+    pub liquid_g: Option<f64>,
 }
 
 /// The estimate of the held slice, or why there is none (no slice, a stale
@@ -151,10 +154,17 @@ pub(crate) fn estimate_held_slice(
 ) -> Result<PrintEstimate, String> {
     let job = prepare_export_of(document, scene).map_err(|err| err.to_string())?;
     let program = job.program();
+    let volume_ml = program.volume_mm3.value() / 1000.0;
+    let liquid_g = document
+        .held_slice()
+        .and_then(|held| load_selected_profiles(&held.params.printer, &held.params.resin).ok())
+        .and_then(|(_, material)| material.physical().liquid_density_g_per_cm3)
+        .map(|density| density.value() * volume_ml);
     Ok(PrintEstimate {
         time_sec: program.print_time_sec.value(),
-        volume_ml: program.volume_mm3.value() / 1000.0,
+        volume_ml,
         mass_g: program.mass_g.value(),
+        liquid_g,
     })
 }
 

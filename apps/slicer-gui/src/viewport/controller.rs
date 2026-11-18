@@ -102,6 +102,9 @@ pub(crate) struct NameBeingEdited {
     pub(crate) anchor: usize,
 }
 
+/// Told each time the held slice's estimate is worked out again.
+type EstimateListener = Rc<dyn Fn()>;
+
 pub(crate) struct ViewportController {
     ui: slint::Weak<MainWindow>,
     session: SessionState,
@@ -122,6 +125,10 @@ pub(crate) struct ViewportController {
     /// The selection the Slice tab put aside (#140): nothing is selected
     /// there, and leaving it brings back what is still in the scene.
     kept_out_of_slice: RefCell<Selection>,
+    /// The held slice's estimate as last shown, and who is told each time it
+    /// is worked out again (the resin's cost, #101).
+    last_estimate: Cell<Option<crate::export_print_file::PrintEstimate>>,
+    estimate_listener: RefCell<Option<EstimateListener>>,
     /// The name of the printer whose plate the viewport shows, drawn under
     /// the word on the plate's front tab; `None` for the placeholder plate.
     plate_printer_name: RefCell<Option<String>>,
@@ -296,6 +303,8 @@ impl ViewportController {
             hint_marks: RefCell::new(None),
             repair_marks: Default::default(),
             overhang_map_on: Cell::new(false),
+            last_estimate: Cell::new(None),
+            estimate_listener: RefCell::new(None),
             hide_rafts_under_plate: Cell::new(true),
             support_lines_on: Cell::new(false),
             support_lines: Default::default(),
@@ -367,6 +376,8 @@ impl ViewportController {
             hint_marks: RefCell::new(None),
             repair_marks: Default::default(),
             overhang_map_on: Cell::new(false),
+            last_estimate: Cell::new(None),
+            estimate_listener: RefCell::new(None),
             hide_rafts_under_plate: Cell::new(true),
             support_lines_on: Cell::new(false),
             support_lines: Default::default(),
@@ -760,6 +771,25 @@ impl ViewportController {
         }
     }
 
+    /// The held slice's estimate as last worked out: `None` without a slice
+    /// or without an estimate.
+    pub(crate) fn last_estimate(&self) -> Option<crate::export_print_file::PrintEstimate> {
+        self.last_estimate.get()
+    }
+
+    /// Calls `listener` each time the held slice's estimate is worked out
+    /// again (one listener; a later call replaces it).
+    pub(crate) fn on_estimate(&self, listener: impl Fn() + 'static) {
+        *self.estimate_listener.borrow_mut() = Some(Rc::new(listener));
+    }
+
+    fn tell_estimate(&self) {
+        let listener = self.estimate_listener.borrow().clone();
+        if let Some(listener) = listener {
+            listener();
+        }
+    }
+
     /// Pushes the held slice's print time, resin and weight to the Slice tab,
     /// or why there is no estimate.
     fn mirror_slice_estimate_to_ui(&self) {
@@ -768,6 +798,8 @@ impl ViewportController {
         };
         let document = self.session.document();
         if document.slice_layer_count().is_none() {
+            self.last_estimate.set(None);
+            self.tell_estimate();
             ui.set_slice_estimate_valid(false);
             ui.set_slice_estimate_note(slint::SharedString::default());
             return;
@@ -777,7 +809,10 @@ impl ViewportController {
             .slice_params()
             .and_then(|params| self.scene_of_plate(params.plate))
             .map(|(scene, _)| scene);
-        match crate::export_print_file::estimate_held_slice(document, scene) {
+        let estimate = crate::export_print_file::estimate_held_slice(document, scene);
+        self.last_estimate.set(estimate.as_ref().ok().copied());
+        self.tell_estimate();
+        match estimate {
             Ok(e) => {
                 ui.set_slice_estimate_valid(true);
                 ui.set_slice_estimate_time(
