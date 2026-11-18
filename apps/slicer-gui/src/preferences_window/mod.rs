@@ -1469,13 +1469,7 @@ mod derive_resin_view_tests {
             material("blu", "Siraya Tech", "Blu", &["saturn-4"]),
             material("build", "Siraya Tech", "Build", &["saturn-4"]),
         ];
-        let rows = derive_resin_view(
-            &materials,
-            &[],
-            &[],
-            None,
-            &BTreeSet::new(),
-        );
+        let rows = derive_resin_view(&materials, &[], &[], None, &BTreeSet::new());
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
         assert_eq!(ids, vec![2, 3, 0, 1]);
     }
@@ -1489,13 +1483,7 @@ mod derive_resin_view_tests {
             material("empty", "Zeta", "Empty", &[]),
         ];
         let extensions = vec![extension("empty", &["printer-b"])];
-        let rows = derive_resin_view(
-            &materials,
-            &extensions,
-            &[],
-            None,
-            &BTreeSet::new(),
-        );
+        let rows = derive_resin_view(&materials, &extensions, &[], None, &BTreeSet::new());
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
         // "empty" (+ its extension row) leads despite sorting after "bare" by
         // brand.
@@ -1608,13 +1596,7 @@ mod derive_resin_view_tests {
     #[test]
     fn a_pill_falls_back_to_the_id_when_the_printer_is_unknown() {
         let materials = vec![material("a-resin", "Alpha", "A", &["gone-printer"])];
-        let rows = derive_resin_view(
-            &materials,
-            &[],
-            &[],
-            None,
-            &BTreeSet::new(),
-        );
+        let rows = derive_resin_view(&materials, &[], &[], None, &BTreeSet::new());
         assert_eq!(
             row_pills(&rows[0]),
             vec![("gone-printer".to_owned(), PillKind::Other)]
@@ -1624,13 +1606,7 @@ mod derive_resin_view_tests {
     #[test]
     fn zero_block_materials_get_the_no_data_pill() {
         let materials = vec![material("a-resin", "Alpha", "A", &[])];
-        let rows = derive_resin_view(
-            &materials,
-            &[],
-            &[],
-            None,
-            &BTreeSet::new(),
-        );
+        let rows = derive_resin_view(&materials, &[], &[], None, &BTreeSet::new());
         let pills = row_pills(&rows[0]);
         assert_eq!(pills.len(), 1);
         // With no printer chosen every pill is dim; with one, a resin with no
@@ -1643,13 +1619,7 @@ mod derive_resin_view_tests {
     fn a_covering_extension_suppresses_the_parents_no_data_pill() {
         let materials = vec![material("a-resin", "Alpha", "A", &[])];
         let extensions = vec![extension("a-resin", &["printer-b"])];
-        let rows = derive_resin_view(
-            &materials,
-            &extensions,
-            &[],
-            None,
-            &BTreeSet::new(),
-        );
+        let rows = derive_resin_view(&materials, &extensions, &[], None, &BTreeSet::new());
         // The resin has data (in the extension row); the parent row shows
         // neither pills nor the red marker.
         assert!(row_pills(&rows[0]).is_empty());
