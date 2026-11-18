@@ -8122,16 +8122,6 @@ msgctxt "PrinterDialog"
 msgid "{} is {} mm, but the pixels make {} mm. Leave one of the two empty."
 msgstr "{} dice {} mm, pero los píxeles dan {} mm. Dejá uno de los dos vacío."
 
-#: src/df_support_run.rs
-msgctxt "Inspector"
-msgid "Skeleton + islands"
-msgstr "Esqueleto + islas"
-
-#: src/df_support_run.rs
-msgctxt "Inspector"
-msgid "Skeleton"
-msgstr "Esqueleto"
-
 #, rust-format
 msgctxt "MeshViewer"
 msgid "X Y Z lock an axis · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels"
