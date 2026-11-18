@@ -31,8 +31,8 @@ import { ProfileViewDialog } from "profile-view-dialog.slint";
 // thread the first time any text is laid out (e.g. opening a menu).
 import "../assets/fonts/NotoSans-Variable.ttf";
 
-import { SetupWindow, PickPrinter, PickNav, PickResin, PickLayout } from "setup-window.slint";
-export { SetupWindow, PickPrinter, PickNav, PickResin, PickLayout }
+import { SetupLayer, Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout } from "setup-layer.slint";
+export { Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout }
 export { FrameState } from "kit/framed-window.slint";
 export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, PrinterDialog, ProfileViewDialog, RecentFileRow, StartOpen, Theme, ThemePreference }
 
@@ -3493,6 +3493,13 @@ export component MainWindow inherits Window {
         dont-show-changed(on) => {
             root.start-dont-show-changed(on);
         }
+    }
+
+    // Printer & resin and the first run (#151, #608), over the start
+    // dialog; a message that opens while it shows sits over it.
+    SetupLayer {
+        width: 100%;
+        height: 100%;
     }
 
     // A scene in the window, however it came, ends the start dialog.

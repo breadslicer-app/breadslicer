@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Printer & resin in one window (#151), and the first run (#608): the
+//! Printer & resin over the main window (#151), and the first run (#608): the
 //! printer to print on, its resin and, the first time, the mouse layout
 //! (#609). The printers are searched across maker and model, the popular
 //! ones first; the resins shown are the ones set for the printer chosen.
@@ -23,8 +23,8 @@ use crate::controls_layout::ControlsLayout;
 use crate::i18n::ctr;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::profile_catalog::{PrinterCatalogEntry, ProfileCatalog, ProfileSource};
-use crate::window_prefs::WindowPreferences;
-use crate::{PickLayout, PickNav, PickPrinter, PickResin, SetupWindow};
+use crate::setup_forms::{Form, Saved};
+use crate::{MainWindow, PickLayout, PickNav, PickPrinter, PickResin, Picker};
 
 /// The printers most people print on, first in the list (from a tester who
 /// prints for a living, and our own).
@@ -53,14 +53,13 @@ enum Group {
 }
 
 pub(crate) struct WiredSetupWindow {
-    pub(crate) window: SetupWindow,
     _state: Rc<State>,
     _subscription: Subscription,
     _thumbnails: Rc<Timer>,
 }
 
 struct State {
-    window: slint::Weak<SetupWindow>,
+    window: slint::Weak<MainWindow>,
     catalog: Rc<RefCell<Rc<ProfileCatalog>>>,
     bus: Rc<PreferencesBus>,
     groups: RefCell<Vec<Group>>,
@@ -70,6 +69,8 @@ struct State {
     resin: Cell<Option<usize>>,
     images: RefCell<HashMap<usize, Image>>,
     layout: Cell<ControlsLayout>,
+    /// The printer or resin form open, if one is.
+    form: RefCell<Option<Form>>,
 }
 
 /// The file a printer's profile writes, as a person reads it (".pwsz").
@@ -215,9 +216,10 @@ impl State {
 
     /// Pushes the list, the chosen printer and its resins to the window.
     fn refresh(&self) {
-        let Some(window) = self.window.upgrade() else {
+        let Some(ui) = self.window.upgrade() else {
             return;
         };
+        let window = ui.global::<Picker>();
         let catalog = self.catalog();
         let search = self.search.borrow().clone();
         let list = shown(&catalog, &self.group.borrow(), &search);
@@ -252,7 +254,7 @@ impl State {
         self.refresh_resins(&window, &catalog);
     }
 
-    fn refresh_resins(&self, window: &SetupWindow, catalog: &ProfileCatalog) {
+    fn refresh_resins(&self, window: &Picker<'_>, catalog: &ProfileCatalog) {
         let Some(index) = self.printer.get() else {
             window.set_resins(ModelRc::default());
             window.set_resins_note(SharedString::default());
@@ -386,23 +388,25 @@ fn load_pictures(state: &Rc<State>, timer: &Rc<Timer>) {
     });
 }
 
-/// Builds the window. `welcome` makes it the first run's three steps;
-/// `add_printer` opens the form for a printer by hand, `import` the
-/// import of printer settings.
-pub(crate) fn build_setup_window(
+/// Opens Printer & resin over `ui`: the card in the window, as the start
+/// dialog is. `welcome` makes it the first run's three steps; `import`
+/// imports printer settings. The card lives while what this returns does.
+pub(crate) fn open_setup(
+    ui: &MainWindow,
     bus: &Rc<PreferencesBus>,
     catalog: Rc<RefCell<Rc<ProfileCatalog>>>,
     welcome: bool,
-    add_printer: Rc<dyn Fn()>,
     import: Rc<dyn Fn()>,
-) -> Result<WiredSetupWindow, slint::PlatformError> {
-    let window = SetupWindow::new()?;
-    crate::window_chrome::wire_framed!(&window);
-    window.apply_preferences(&bus.snapshot());
-    window.set_welcome(welcome);
+) -> WiredSetupWindow {
+    let picker = ui.global::<Picker>();
+    picker.set_welcome(welcome);
+    picker.set_step(0);
+    picker.set_page(0);
+    picker.set_search(SharedString::default());
+    picker.set_current_nav(0);
     let current = catalog.borrow().clone();
     let (group_list, nav) = groups(&current);
-    window.set_nav(ModelRc::new(VecModel::from(nav)));
+    picker.set_nav(ModelRc::new(VecModel::from(nav)));
     let in_use = current.effective_default_printer(bus.snapshot().default_printer.as_ref());
     let printer = in_use.as_ref().and_then(|id| current.printer_index(id));
     let resin = bus
@@ -412,7 +416,7 @@ pub(crate) fn build_setup_window(
         .and_then(|id| current.material_index(id));
     let layout = bus.snapshot().controls_layout;
     let state = Rc::new(State {
-        window: window.as_weak(),
+        window: ui.as_weak(),
         catalog,
         bus: bus.clone(),
         groups: RefCell::new(group_list),
@@ -422,33 +426,28 @@ pub(crate) fn build_setup_window(
         resin: Cell::new(resin),
         images: RefCell::new(HashMap::new()),
         layout: Cell::new(layout),
+        form: RefCell::new(None),
     });
-    window.set_layouts(ModelRc::new(VecModel::from(
+    picker.set_layouts(ModelRc::new(VecModel::from(
         ControlsLayout::ALL
             .iter()
             .map(|l| PickLayout {
                 name: l.label().into(),
-                summary: l
-                    .summary()
-                    .replace(
-                        " · ", "
-",
-                    )
-                    .into(),
+                summary: l.summary().replace(" · ", "\n").into(),
             })
             .collect::<Vec<_>>(),
     )));
-    window.set_chosen_layout(layout.combo_index());
+    picker.set_chosen_layout(layout.combo_index());
     state.refresh();
 
-    window.on_search_edited({
+    picker.on_search_edited({
         let state = state.clone();
         move |text| {
             *state.search.borrow_mut() = text.to_string();
             state.refresh();
         }
     });
-    window.on_nav_picked({
+    picker.on_nav_picked({
         let state = state.clone();
         move |i| {
             let group = state.groups.borrow().get(i as usize).cloned();
@@ -458,117 +457,252 @@ pub(crate) fn build_setup_window(
             }
         }
     });
-    window.on_printer_picked({
+    picker.on_printer_picked({
         let state = state.clone();
         move |i| {
             state.printer.set(usize::try_from(i).ok());
             state.refresh();
         }
     });
-    window.on_resin_picked({
+    picker.on_resin_picked({
         let state = state.clone();
         move |i| state.resin.set(usize::try_from(i).ok())
     });
-    window.on_layout_picked({
+    picker.on_layout_picked({
         let state = state.clone();
         move |i| state.layout.set(ControlsLayout::from_combo_index(i))
     });
-    window.on_use_pressed({
+    picker.on_use_pressed({
         let state = state.clone();
         move || {
             state.use_them(welcome);
-            if let Some(window) = state.window.upgrade() {
-                let _ = window.hide();
-            }
+            state.close();
         }
     });
-    window.on_skip_pressed({
-        let weak = window.as_weak();
-        move || {
-            if let Some(window) = weak.upgrade() {
-                let _ = window.hide();
-            }
-        }
-    });
-    window.on_add_printer_pressed(move || add_printer());
-    // What an edit saved shows at once: the list again, on the printer in
-    // use after it (a printer saved is put in use).
-    let saved: Rc<dyn Fn()> = {
-        let state = Rc::downgrade(&state);
-        Rc::new(move || {
-            let Some(state) = state.upgrade() else {
-                return;
-            };
-            let catalog = state.catalog();
-            let (group_list, nav) = groups(&catalog);
-            *state.groups.borrow_mut() = group_list;
-            if let Some(window) = state.window.upgrade() {
-                window.set_nav(ModelRc::new(VecModel::from(nav)));
-            }
-            if let Some(i) = catalog
-                .effective_default_printer(state.bus.snapshot().default_printer.as_ref())
-                .and_then(|id| catalog.printer_index(&id))
-            {
-                state.printer.set(Some(i));
-            }
-            state.refresh();
-        })
-    };
-    window.on_edit_printer_pressed({
+    picker.on_skip_pressed({
         let state = state.clone();
-        let saved = saved.clone();
-        move || {
-            let id = state
-                .printer
-                .get()
-                .and_then(|i| state.catalog().printers().get(i).map(|p| p.id.clone()));
-            if let Some(id) = id {
-                crate::preferences_window::edit_printer(
-                    &state.bus,
-                    &state.catalog,
-                    &id,
-                    saved.clone(),
-                );
-            }
-        }
+        move || state.close()
     });
-    window.on_edit_resin_pressed({
+    // A printer by hand: the form on a copy of the printer chosen, or empty.
+    picker.on_add_printer_pressed({
         let state = state.clone();
-        move || {
-            if let Some(i) = state.resin.get() {
-                crate::preferences_window::edit_resin(&state.bus, &state.catalog, i, saved.clone());
+        move || state.open_printer_form(true)
+    });
+    picker.on_edit_printer_pressed({
+        let state = state.clone();
+        move || state.open_printer_form(false)
+    });
+    picker.on_edit_resin_pressed({
+        let state = state.clone();
+        move || state.open_resin_form()
+    });
+    picker.on_import_pressed(move || import());
+    picker.on_form_edited({
+        let state = state.clone();
+        move |key, text| {
+            if let Some(form) = state.form.borrow_mut().as_mut() {
+                form.edited(&key, &text);
+            }
+            state.show_summary();
+        }
+    });
+    picker.on_form_toggled({
+        let state = state.clone();
+        move |key, on| {
+            if let Some(form) = state.form.borrow_mut().as_mut() {
+                form.toggled(&key, on);
             }
         }
     });
-    window.on_import_pressed(move || import());
+    picker.on_form_picked({
+        let state = state.clone();
+        move |key, at| {
+            if let Some(form) = state.form.borrow_mut().as_mut() {
+                form.picked(&key, usize::try_from(at).unwrap_or(0));
+            }
+        }
+    });
+    picker.on_form_chip_picked({
+        let state = state.clone();
+        move |at| {
+            if let Some(form) = state.form.borrow_mut().as_mut() {
+                form.chip(usize::try_from(at).unwrap_or(0));
+            }
+            state.show_form();
+        }
+    });
+    picker.on_form_back({
+        let state = state.clone();
+        move || state.close_form()
+    });
+    picker.on_form_save({
+        let state = state.clone();
+        move || state.save_form()
+    });
 
     // A printer added or resins imported while open show at once.
     let subscription = bus.subscribe({
         let state = Rc::downgrade(&state);
-        move |snap, change| {
-            if let Some(state) = state.upgrade() {
-                if let Some(window) = state.window.upgrade() {
-                    window.apply_preferences(snap);
-                }
-                if matches!(change, PreferencesChange::Profiles) {
-                    let (group_list, nav) = groups(&state.catalog());
-                    *state.groups.borrow_mut() = group_list;
-                    if let Some(window) = state.window.upgrade() {
-                        window.set_nav(ModelRc::new(VecModel::from(nav)));
-                    }
-                    state.refresh();
-                }
+        move |_snap, change| {
+            if let Some(state) = state.upgrade()
+                && matches!(change, PreferencesChange::Profiles)
+            {
+                state.regroup();
+                state.refresh();
             }
         }
     });
     let thumbnails = Rc::new(Timer::default());
     load_pictures(&state, &thumbnails);
-    Ok(WiredSetupWindow {
-        window,
+    picker.set_open(true);
+    WiredSetupWindow {
         _state: state,
         _subscription: subscription,
         _thumbnails: thumbnails,
-    })
+    }
+}
+
+impl State {
+    fn picker_do(&self, act: impl FnOnce(Picker<'_>)) {
+        if let Some(window) = self.window.upgrade() {
+            act(window.global::<Picker>());
+        }
+    }
+
+    fn close(&self) {
+        self.picker_do(|p| p.set_open(false));
+        *self.form.borrow_mut() = None;
+    }
+
+    fn regroup(&self) {
+        let (group_list, nav) = groups(&self.catalog());
+        *self.groups.borrow_mut() = group_list;
+        self.picker_do(|p| p.set_nav(ModelRc::new(VecModel::from(nav))));
+    }
+
+    /// The printer form: on the printer chosen (the user's own, or a copy
+    /// of one that ships), or with `by_hand` a new printer starting from it.
+    fn open_printer_form(&self, by_hand: bool) {
+        let catalog = self.catalog();
+        let entry = self.printer.get().and_then(|i| catalog.printers().get(i));
+        let profile = entry.and_then(|e| {
+            sc_print_profiles::ProfileLibraries::platform_default()
+                .load_printer_by_id(&e.id)
+                .ok()
+        });
+        let mine = !by_hand && entry.is_some_and(|e| e.source == ProfileSource::User);
+        *self.form.borrow_mut() = Some(Form::printer(profile, mine));
+        self.picker_do(|p| {
+            p.set_form_error(SharedString::default());
+            p.set_form_chip(0);
+            p.set_page(1);
+        });
+        self.show_form();
+    }
+
+    /// The resin form, on the resin chosen, its block for the printer
+    /// chosen first.
+    fn open_resin_form(&self) {
+        let catalog = self.catalog();
+        let Some(entry) = self.resin.get().and_then(|i| catalog.materials().get(i)) else {
+            return;
+        };
+        let Ok(profile) =
+            sc_print_profiles::ProfileLibraries::platform_default().load_material_by_id(&entry.id)
+        else {
+            return;
+        };
+        let chosen = self
+            .printer
+            .get()
+            .and_then(|i| catalog.printers().get(i))
+            .map(|e| e.id.clone());
+        let name = |id: &PrinterId| {
+            catalog
+                .printer_index(id)
+                .map(|i| {
+                    let e = &catalog.printers()[i];
+                    format!("{} {}", e.manufacturer, e.name)
+                })
+                .unwrap_or_else(|| id.as_str().to_owned())
+        };
+        let mine = entry.source == ProfileSource::User;
+        *self.form.borrow_mut() = Some(Form::resin(profile, mine, chosen.as_ref(), name));
+        self.picker_do(|p| {
+            p.set_form_error(SharedString::default());
+            p.set_form_chip(0);
+            p.set_page(2);
+        });
+        self.show_form();
+    }
+
+    fn close_form(&self) {
+        *self.form.borrow_mut() = None;
+        self.picker_do(|p| p.set_page(0));
+    }
+
+    /// Pushes the form to the card.
+    fn show_form(&self) {
+        let Some(shown) = self.form.borrow().as_ref().map(Form::shown) else {
+            return;
+        };
+        self.picker_do(|p| {
+            p.set_form_title(shown.title.into());
+            p.set_form_subtitle(shown.subtitle.into());
+            p.set_form_chips(ModelRc::new(VecModel::from(
+                shown
+                    .chips
+                    .into_iter()
+                    .map(SharedString::from)
+                    .collect::<Vec<_>>(),
+            )));
+            p.set_form_chip(shown.chip as i32);
+            p.set_form_left(ModelRc::new(VecModel::from(shown.left)));
+            p.set_form_right(ModelRc::new(VecModel::from(shown.right)));
+            p.set_form_summary(shown.summary.into());
+            p.set_form_note(shown.note.into());
+            p.set_form_save_label(shown.save_label.into());
+        });
+    }
+
+    /// The line on what the screen's numbers make, as they are typed.
+    fn show_summary(&self) {
+        let Some(summary) = self.form.borrow().as_ref().map(|f| f.shown().summary) else {
+            return;
+        };
+        self.picker_do(|p| p.set_form_summary(summary.into()));
+    }
+
+    fn save_form(&self) {
+        let Ok(library) = sc_print_profiles::user_library_dir() else {
+            return;
+        };
+        let catalog = self.catalog();
+        let printers: std::collections::BTreeSet<PrinterId> =
+            catalog.printers().iter().map(|e| e.id.clone()).collect();
+        let materials: std::collections::BTreeSet<sc_print_primitives::MaterialId> =
+            catalog.materials().iter().map(|e| e.id.clone()).collect();
+        let saved = self
+            .form
+            .borrow_mut()
+            .as_mut()
+            .map(|form| form.save(&library, &printers, &materials));
+        match saved {
+            None => {}
+            Some(Err(message)) => self.picker_do(|p| p.set_form_error(message.into())),
+            Some(Ok(saved)) => {
+                crate::profile_catalog::refresh_catalog(&self.catalog);
+                let catalog = self.catalog();
+                match saved {
+                    Saved::Printer(id) => self.printer.set(catalog.printer_index(&id)),
+                    Saved::Resin(id) => self.resin.set(catalog.material_index(&id)),
+                }
+                self.close_form();
+                // Every other view of the profiles reads them again.
+                self.bus.update(|_| PreferencesChange::Profiles);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -613,38 +747,99 @@ mod tests {
         );
     }
 
-    /// Edit printer… on a printer that ships opens the form on a copy of it,
-    /// and Edit resin… on a resin that ships opens the copy of it first
-    /// (#151).
-    #[test]
-    fn the_printer_and_resin_chosen_are_edited_from_the_window() {
-        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
-            let bus = Rc::new(PreferencesBus::new(
-                crate::preferences_bus::PreferencesSnapshot::for_tests(),
-            ));
-            let catalog = Rc::new(RefCell::new(Rc::new(catalog())));
-            let wired =
-                build_setup_window(&bus, catalog.clone(), false, Rc::new(|| {}), Rc::new(|| {}))
-                    .expect("the window");
-            let window = &wired.window;
-            window.invoke_search_edited("m7 pro".into());
-            let m7 = slint::Model::iter(&window.get_printers())
-                .find(|p| p.name == "Photon Mono M7 Pro")
-                .expect("found by search");
-            window.invoke_printer_picked(m7.index);
-            window.invoke_edit_printer_pressed();
-            let (printer, _) = crate::preferences_window::outside_editors_for_test();
-            let (editing, name) = printer.expect("the printer form is open");
-            assert!(!editing, "a printer that ships is copied, not edited");
-            assert!(name.contains("Photon Mono M7 Pro"), "{name}");
+    /// The card over a main window, with the M7 Pro chosen.
+    fn opened(
+        welcome: bool,
+    ) -> (
+        MainWindow,
+        Rc<PreferencesBus>,
+        Rc<RefCell<Rc<ProfileCatalog>>>,
+        WiredSetupWindow,
+    ) {
+        let ui = MainWindow::new().expect("a main window");
+        let bus = PreferencesBus::new(crate::preferences_bus::PreferencesSnapshot::for_tests());
+        let catalog = Rc::new(RefCell::new(Rc::new(catalog())));
+        let wired = open_setup(&ui, &bus, catalog.clone(), welcome, Rc::new(|| {}));
+        let picker = ui.global::<Picker>();
+        assert!(picker.get_open(), "the card shows");
+        picker.invoke_search_edited("m7 pro".into());
+        let m7 = slint::Model::iter(&picker.get_printers())
+            .find(|p| p.name == "Photon Mono M7 Pro")
+            .expect("found by search");
+        picker.invoke_printer_picked(m7.index);
+        (ui, bus, catalog, wired)
+    }
 
-            let resin = slint::Model::iter(&window.get_resins())
+    fn keys(sections: ModelRc<crate::FormSection>) -> Vec<String> {
+        slint::Model::iter(&sections)
+            .flat_map(|s| {
+                slint::Model::iter(&s.fields)
+                    .map(|f| f.key.to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// Edit printer… on a printer that ships opens its every setting, on a
+    /// copy of it; Edit resin… opens the resin's, the chosen printer's
+    /// block first; Cancel goes back to the picker (#151).
+    #[test]
+    fn the_printer_and_resin_chosen_are_edited_in_the_card() {
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let (ui, _bus, _catalog, _wired) = opened(false);
+            let picker = ui.global::<Picker>();
+            picker.invoke_edit_printer_pressed();
+            assert_eq!(picker.get_page(), 1);
+            assert!(picker.get_form_title().contains("Photon Mono M7 Pro"));
+            let fields = keys(picker.get_form_left())
+                .into_iter()
+                .chain(keys(picker.get_form_right()))
+                .collect::<Vec<_>>();
+            for key in [
+                "maker",
+                "res_x",
+                "format",
+                "two_stage",
+                "transition",
+                "z_step",
+                "time_layer",
+            ] {
+                assert!(fields.iter().any(|k| k == key), "{key} in {fields:?}");
+            }
+            picker.invoke_form_back();
+            assert_eq!(picker.get_page(), 0);
+
+            let resin = slint::Model::iter(&picker.get_resins())
                 .next()
                 .expect("resins set for the M7 Pro");
-            window.invoke_resin_picked(resin.index);
-            window.invoke_edit_resin_pressed();
-            let (_, fork) = crate::preferences_window::outside_editors_for_test();
-            assert!(fork, "a resin that ships is copied first");
+            picker.invoke_resin_picked(resin.index);
+            picker.invoke_edit_resin_pressed();
+            assert_eq!(picker.get_page(), 2);
+            let chips: Vec<String> = slint::Model::iter(&picker.get_form_chips())
+                .map(|c| c.to_string())
+                .collect();
+            assert_eq!(
+                chips.first().map(String::as_str),
+                Some("Anycubic Photon Mono M7 Pro")
+            );
+            let fields = keys(picker.get_form_left())
+                .into_iter()
+                .chain(keys(picker.get_form_right()))
+                .collect::<Vec<_>>();
+            for key in [
+                "normal_exposure_sec",
+                "bottom_exposure_sec",
+                "lift_speed_mm_min",
+                "second_lift_distance_mm",
+                "bottom_wait_after_lift_sec",
+                "d_scale_x",
+                "liquid_density",
+            ] {
+                assert!(fields.iter().any(|k| k == key), "{key} in {fields:?}");
+            }
+            picker.invoke_form_back();
+            picker.invoke_skip_pressed();
+            assert!(!picker.get_open(), "Cancel closes the card");
         });
     }
 
@@ -653,27 +848,15 @@ mod tests {
     #[test]
     fn use_these_puts_the_printer_and_resin_in_use() {
         crate::test_support::slint_thread::on_fresh_slint_thread(|| {
-            let bus = Rc::new(PreferencesBus::new(
-                crate::preferences_bus::PreferencesSnapshot::for_tests(),
-            ));
-            let catalog = Rc::new(RefCell::new(Rc::new(catalog())));
-            let wired =
-                build_setup_window(&bus, catalog.clone(), true, Rc::new(|| {}), Rc::new(|| {}))
-                    .expect("the window");
-            let window = &wired.window;
-            window.invoke_search_edited("m7 pro".into());
-            let found: Vec<PickPrinter> = slint::Model::iter(&window.get_printers()).collect();
-            let m7 = found
-                .iter()
-                .find(|p| p.name == "Photon Mono M7 Pro")
-                .expect("found by search");
-            window.invoke_printer_picked(m7.index);
-            assert_eq!(window.get_chosen().index, m7.index);
-            let resins: Vec<PickResin> = slint::Model::iter(&window.get_resins()).collect();
+            let (ui, bus, catalog, _wired) = opened(true);
+            let picker = ui.global::<Picker>();
+            assert_eq!(picker.get_chosen().name, "Photon Mono M7 Pro");
+            let resins: Vec<PickResin> = slint::Model::iter(&picker.get_resins()).collect();
             assert!(!resins.is_empty(), "resins set for the M7 Pro");
-            window.invoke_resin_picked(resins[0].index);
-            window.invoke_layout_picked(1);
-            window.invoke_use_pressed();
+            picker.invoke_resin_picked(resins[0].index);
+            picker.invoke_layout_picked(1);
+            picker.invoke_use_pressed();
+            assert!(!picker.get_open());
             let snap = bus.snapshot();
             assert_eq!(
                 snap.default_printer.as_ref().map(PrinterId::as_str),
@@ -687,74 +870,46 @@ mod tests {
         });
     }
 
-    /// Pictures of the window for a person to judge, with
+    /// Pictures of the card for a person to judge, with
     /// `BREADSLICER_UI_SHOTS` naming a folder.
     #[test]
-    fn the_pictures_of_the_window_are_written_when_asked() {
+    fn the_pictures_of_the_card_are_written_when_asked() {
         let Some(dir) = std::env::var_os("BREADSLICER_UI_SHOTS").map(std::path::PathBuf::from)
         else {
             return;
         };
         std::fs::create_dir_all(&dir).expect("the folder");
-        for (name, welcome, step) in [
-            ("picker", false, 0),
-            ("welcome-1", true, 0),
-            ("welcome-3", true, 2),
+        for (name, welcome, step, page) in [
+            ("picker", false, 0, 0),
+            ("welcome-1", true, 0, 0),
+            ("welcome-3", true, 2, 0),
+            ("printer-form", false, 0, 1),
+            ("resin-form", false, 0, 2),
         ] {
             let dir = dir.clone();
             crate::test_support::slint_thread::on_fresh_slint_thread(move || {
-                let bus = Rc::new(PreferencesBus::new(
-                    crate::preferences_bus::PreferencesSnapshot::for_tests(),
-                ));
-                let catalog = Rc::new(RefCell::new(Rc::new(catalog())));
-                let wired =
-                    build_setup_window(&bus, catalog, welcome, Rc::new(|| {}), Rc::new(|| {}))
-                        .expect("the window");
-                let window = &wired.window;
+                let (ui, _bus, _catalog, _wired) = opened(welcome);
                 slint::select_bundled_translation("es").expect("es");
-                window.show().expect("shows");
-                window
-                    .window()
-                    .set_size(slint::LogicalSize::new(1120.0, 700.0));
-                window.invoke_search_edited("".into());
-                let first: Option<PickPrinter> = slint::Model::row_data(&window.get_printers(), 2);
-                if let Some(p) = first {
-                    window.invoke_printer_picked(p.index);
+                let picker = ui.global::<Picker>();
+                ui.show().expect("shows");
+                ui.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+                picker.set_step(step);
+                if page == 1 {
+                    picker.invoke_edit_printer_pressed();
                 }
-                window.set_step(step);
-                // The pictures land from their worker.
-                for _ in 0..60 {
-                    std::thread::sleep(Duration::from_millis(25));
-                    crate::test_support::slint_thread::render_frames();
+                if page == 2 {
+                    if let Some(r) = slint::Model::row_data(&picker.get_resins(), 0) {
+                        picker.invoke_resin_picked(r.index);
+                    }
+                    picker.invoke_edit_resin_pressed();
                 }
-                let shot = window.window().take_snapshot().expect("a snapshot");
+                crate::test_support::slint_thread::render_frames();
+                let shot = ui.window().take_snapshot().expect("a snapshot");
                 image::RgbaImage::from_raw(shot.width(), shot.height(), shot.as_bytes().to_vec())
-                    .expect("rgba")
+                    .expect("an image")
                     .save(dir.join(format!("setup-{name}.png")))
-                    .expect("written");
+                    .expect("saved");
             });
         }
-    }
-
-    #[test]
-    fn the_groups_count_their_printers() {
-        let catalog = catalog();
-        let (groups, nav) = groups(&catalog);
-        assert_eq!(groups.len(), nav.len());
-        assert_eq!(nav[2].count as usize, catalog.printers().len());
-        let makers: i32 = nav[3..].iter().map(|n| n.count).sum();
-        assert_eq!(makers as usize, catalog.printers().len());
-    }
-
-    #[test]
-    fn a_file_label_is_the_extension_the_printer_writes() {
-        let catalog = catalog();
-        let m7 = catalog
-            .printers()
-            .iter()
-            .find(|e| e.id.as_str() == "anycubic-photon-mono-m7-pro")
-            .unwrap();
-        assert_eq!(file_label(m7), ".pwsz");
-        assert!(exports(m7));
     }
 }

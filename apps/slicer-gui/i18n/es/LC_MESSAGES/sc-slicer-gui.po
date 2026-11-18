@@ -8377,3 +8377,371 @@ msgstr "Editar impresora…"
 msgctxt "PrinterPicker"
 msgid "Edit resin…"
 msgstr "Editar resina…"
+
+msgctxt "PrinterPicker"
+msgid "2nd stage distance"
+msgstr "Distancia del 2.º tramo"
+
+msgctxt "PrinterPicker"
+msgid "2nd stage lift speed"
+msgstr "Subida del 2.º tramo"
+
+msgctxt "PrinterPicker"
+msgid "2nd stage retract speed"
+msgstr "Bajada del 2.º tramo"
+
+msgctxt "PrinterPicker"
+msgid "A printer by hand"
+msgstr "Una impresora a mano"
+
+msgctxt "PrinterPicker"
+msgid "After cure"
+msgstr "Después de curar"
+
+msgctxt "PrinterPicker"
+msgid "After lift"
+msgstr "Después de subir"
+
+msgctxt "PrinterPicker"
+msgid "Any printer"
+msgstr "Cualquier impresora"
+
+msgctxt "PrinterPicker"
+msgid "BOTTOM LAYERS"
+msgstr "CAPAS DE BASE"
+
+msgctxt "PrinterPicker"
+msgid "Before cure"
+msgstr "Antes de curar"
+
+msgctxt "PrinterPicker"
+msgid "Bottom layers"
+msgstr "Capas de base"
+
+msgctxt "PrinterPicker"
+msgid "Bottom light power"
+msgstr "Potencia de luz de base"
+
+msgctxt "PrinterPicker"
+msgid "Brand"
+msgstr "Marca"
+
+msgctxt "PrinterPicker"
+msgid "Build height"
+msgstr "Altura de impresión"
+
+msgctxt "PrinterPicker"
+msgid "Count"
+msgstr "Cantidad"
+
+msgctxt "PrinterPicker"
+msgid "Density, cured"
+msgstr "Densidad curada"
+
+msgctxt "PrinterPicker"
+msgid "Density, liquid"
+msgstr "Densidad líquida"
+
+msgctxt "PrinterPicker"
+msgid "Energy"
+msgstr "Energía"
+
+msgctxt "PrinterPicker"
+msgid "Every setting of the printer"
+msgstr "Todos los ajustes de la impresora"
+
+msgctxt "PrinterPicker"
+msgid "Exposure"
+msgstr "Exposición"
+
+msgctxt "PrinterPicker"
+msgid "FILE"
+msgstr "ARCHIVO"
+
+msgctxt "PrinterPicker"
+msgid "Family"
+msgstr "Familia"
+
+msgctxt "PrinterPicker"
+msgid "Fastest lift"
+msgstr "Subida más rápida"
+
+msgctxt "PrinterPicker"
+msgid "Fastest retract"
+msgstr "Bajada más rápida"
+
+msgctxt "PrinterPicker"
+msgid "File format"
+msgstr "Formato del archivo"
+
+msgctxt "PrinterPicker"
+msgid "Grey levels (anti-aliasing)"
+msgstr "Niveles de gris (antialiasing)"
+
+msgctxt "PrinterPicker"
+msgid "Highest lift"
+msgstr "Subida más alta"
+
+msgctxt "PrinterPicker"
+msgid "Image turned a quarter"
+msgstr "Imagen girada un cuarto"
+
+msgctxt "PrinterPicker"
+msgid "LAYERS"
+msgstr "CAPAS"
+
+msgctxt "PrinterPicker"
+msgid "LIFT & RETRACT"
+msgstr "SUBIDA Y BAJADA"
+
+msgctxt "PrinterPicker"
+msgid "LIMITS"
+msgstr "LÍMITES"
+
+msgctxt "PrinterPicker"
+msgid "Layer height"
+msgstr "Altura de capa"
+
+msgctxt "PrinterPicker"
+msgid "Layer thickness"
+msgstr "Grosor de capa"
+
+msgctxt "PrinterPicker"
+msgid "Lift distance"
+msgstr "Distancia de subida"
+
+msgctxt "PrinterPicker"
+msgid "Lift speed"
+msgstr "Velocidad de subida"
+
+msgctxt "PrinterPicker"
+msgid "Lifts in 2 stages"
+msgstr "Sube en 2 tramos"
+
+msgctxt "PrinterPicker"
+msgid "Light intensity"
+msgstr "Intensidad de luz"
+
+msgctxt "PrinterPicker"
+msgid "Light power"
+msgstr "Potencia de luz"
+
+msgctxt "PrinterPicker"
+msgid "MOVES"
+msgstr "MOVIMIENTOS"
+
+msgctxt "PrinterPicker"
+msgid "Maker"
+msgstr "Fabricante"
+
+msgctxt "PrinterPicker"
+msgid "Mirror the image in X"
+msgstr "Espejar la imagen en X"
+
+msgctxt "PrinterPicker"
+msgid "Mirror the image in Y"
+msgstr "Espejar la imagen en Y"
+
+msgctxt "PrinterPicker"
+msgid "Model"
+msgstr "Modelo"
+
+msgctxt "PrinterPicker"
+msgid "Name"
+msgstr "Nombre"
+
+msgctxt "PrinterPicker"
+msgid "ON EVERY PRINTER"
+msgstr "EN TODAS LAS IMPRESORAS"
+
+msgctxt "PrinterPicker"
+msgid "PRINT TIME"
+msgstr "TIEMPO DE IMPRESIÓN"
+
+msgctxt "PrinterPicker"
+msgid "PRINTER"
+msgstr "IMPRESORA"
+
+msgctxt "PrinterPicker"
+msgid "Pixel size X"
+msgstr "Tamaño de píxel X"
+
+msgctxt "PrinterPicker"
+msgid "Pixel size Y"
+msgstr "Tamaño de píxel Y"
+
+msgctxt "PrinterPicker"
+msgid "Pixels across (X)"
+msgstr "Píxeles a lo ancho (X)"
+
+msgctxt "PrinterPicker"
+msgid "Pixels deep (Y)"
+msgstr "Píxeles a lo hondo (Y)"
+
+msgctxt "PrinterPicker"
+msgid "Plate X"
+msgstr "Cama X"
+
+msgctxt "PrinterPicker"
+msgid "Plate Y"
+msgstr "Cama Y"
+
+msgctxt "PrinterPicker"
+msgid "Retract speed"
+msgstr "Velocidad de bajada"
+
+msgctxt "PrinterPicker"
+msgid "SCREEN"
+msgstr "PANTALLA"
+
+msgctxt "PrinterPicker"
+msgid "Save as my printer"
+msgstr "Guardar como mía"
+
+msgctxt "PrinterPicker"
+msgid "Save as my resin"
+msgstr "Guardar como mía"
+
+msgctxt "PrinterPicker"
+msgid "Save"
+msgstr "Guardar"
+
+msgctxt "PrinterPicker"
+msgid "Scale X"
+msgstr "Escala X"
+
+msgctxt "PrinterPicker"
+msgid "Scale Y"
+msgstr "Escala Y"
+
+msgctxt "PrinterPicker"
+msgid "Scale Z"
+msgstr "Escala Z"
+
+msgctxt "PrinterPicker"
+msgid "Settings for {}"
+msgstr "Ajustes para {}"
+
+msgctxt "PrinterPicker"
+msgid "Settings for"
+msgstr "Ajustes para"
+
+msgctxt "PrinterPicker"
+msgid "Slowest lift"
+msgstr "Subida más lenta"
+
+msgctxt "PrinterPicker"
+msgid "Slowest retract"
+msgstr "Bajada más lenta"
+
+msgctxt "PrinterPicker"
+msgid "The limits do not hold: {}"
+msgstr "Los límites no cierran: {}"
+
+msgctxt "PrinterPicker"
+msgid "The print time does not hold: {}"
+msgstr "El tiempo de impresión no cierra: {}"
+
+msgctxt "PrinterPicker"
+msgid "The resin does not hold: {}"
+msgstr "La resina no cierra: {}"
+
+msgctxt "PrinterPicker"
+msgid "The resin needs a brand."
+msgstr "La resina necesita una marca."
+
+msgctxt "PrinterPicker"
+msgid "The resin needs a name."
+msgstr "La resina necesita un nombre."
+
+msgctxt "PrinterPicker"
+msgid "Thickest layer"
+msgstr "Capa más gruesa"
+
+msgctxt "PrinterPicker"
+msgid "Thinnest layer"
+msgstr "Capa más fina"
+
+msgctxt "PrinterPicker"
+msgid "Time multiplier"
+msgstr "Multiplicador de tiempo"
+
+msgctxt "PrinterPicker"
+msgid "Time per layer"
+msgstr "Tiempo por capa"
+
+msgctxt "PrinterPicker"
+msgid "Time per print"
+msgstr "Tiempo por impresión"
+
+msgctxt "PrinterPicker"
+msgid "Transition layers"
+msgstr "Capas de transición"
+
+msgctxt "PrinterPicker"
+msgid "WAITS"
+msgstr "ESPERAS"
+
+msgctxt "PrinterPicker"
+msgid "WHERE A PRINTER HAS NONE"
+msgstr "DONDE UNA IMPRESORA NO TIENE"
+
+msgctxt "PrinterPicker"
+msgid "Wait after cure"
+msgstr "Espera después de curar"
+
+msgctxt "PrinterPicker"
+msgid "Wait after lift"
+msgstr "Espera después de subir"
+
+msgctxt "PrinterPicker"
+msgid "Wait before cure"
+msgstr "Espera antes de curar"
+
+msgctxt "PrinterPicker"
+msgid "Z step"
+msgstr "Paso en Z"
+
+msgctxt "PrinterPicker"
+msgid "{} (mine)"
+msgstr "{} (mía)"
+
+msgctxt "PrinterPicker"
+msgid "{} is not a number."
+msgstr "{} no es un número."
+
+msgctxt "PrinterPicker"
+msgid "{} is not a whole number."
+msgstr "{} no es un número entero."
+
+msgctxt "PrinterPicker"
+msgid "{} takes both ends, or neither."
+msgstr "{} lleva los dos extremos, o ninguno."
+
+msgctxt "PrinterPicker"
+msgid "Close"
+msgstr "Cerrar"
+
+msgctxt "PrinterPicker"
+msgid "What this project prints on"
+msgstr "En qué imprime este proyecto"
+
+msgctxt "PrinterPicker"
+msgid "What you print on, in three steps"
+msgstr "En qué imprimís, en tres pasos"
+
+msgctxt "PrinterPicker"
+msgid "A printer of your own from {} {}"
+msgstr "Una impresora tuya a partir de {} {}"
+
+msgctxt "PrinterPicker"
+msgid "Give the pixel size or the plate size: the other one follows. Saving makes it a printer of your own; the one that ships stays as it is."
+msgstr "Poné el tamaño de píxel o el de la cama: el otro sale solo. Al guardar queda como impresora tuya; la que viene con la app no cambia."
+
+msgctxt "PrinterPicker"
+msgid "Every slot is always there; an empty one shows “—”. The printer above picks whose settings show."
+msgstr "Cada ajuste tiene su casillero; uno vacío muestra “—”. Arriba elegís de qué impresora son los ajustes."
+
+msgctxt "PrinterPicker"
+msgid "From the maker's published settings. Saving makes it a resin of your own; the one that ships stays as it is."
+msgstr "Son los ajustes que publica el fabricante. Al guardar queda como resina tuya; la que viene con la app no cambia."
