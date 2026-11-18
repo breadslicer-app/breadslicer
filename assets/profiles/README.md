@@ -189,6 +189,18 @@ machines tilt the vat instead of lifting the platform, so a profile has no
 travel to give them, and the `.sl1` file is not written yet. The bundle's
 tilt, tower and delay settings have no place in our profiles either.
 
+Liqcreate's resins come from its support pages of resin settings, one per
+printer (`liqcreate.com/supportarticles/<page>/`), each with a table of a
+row per resin and layer thickness. The site refuses plain downloads, so the
+pages are saved as Markdown, named after the page, and read by
+`profiles-converter --format liqcreate`; the reader knows which of our
+printers each page is for. A page whose printer we only nearly ship (another
+variant or screen), a table that gives a curing time or a profile file
+instead of settings, and a row without the lift and its speeds (a speed mode
+named instead) are left out. Eleven pages could not be saved yet. Sunlu
+publishes only ranges per resin, and eSun, Monocure 3D and Jamg He no table
+of their own, so none of them are here.
+
 `creality-halot-one-printer-profile-50um` is not a resin calibration: the
 Halot One exposes with the profile stored on the printer, not the file's
 values, so this profile only writes what known-good Lychee files for it

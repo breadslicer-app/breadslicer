@@ -20,6 +20,7 @@ use crate::creality_wiki::{CrealityWikiError, CrealityWikiReader};
 use crate::dragonfruit::{DragonFruitError, DragonFruitReader};
 use crate::elegoo_settings::{ElegooSettingsError, ElegooSettingsReader};
 use crate::format::SourceFormat;
+use crate::liqcreate::{LiqcreateError, LiqcreateReader};
 use crate::material_curation::{MaterialCuration, MaterialCurationError};
 use crate::material_fold::{FoldError, fold};
 use crate::phrozen_api::{PhrozenApiError, PhrozenApiReader};
@@ -42,6 +43,7 @@ pub enum RunError {
     CrealityBlog(CrealityBlogError),
     CrealityWiki(CrealityWikiError),
     PhrozenApi(PhrozenApiError),
+    Liqcreate(LiqcreateError),
     PrusaSla(PrusaSlaError),
     UvtoolsCatalog(UvtoolsCatalogError),
     PrinterLibrary(PrinterLibraryError),
@@ -59,6 +61,7 @@ impl fmt::Display for RunError {
             Self::CrealityBlog(err) => write!(f, "{err}"),
             Self::CrealityWiki(err) => write!(f, "{err}"),
             Self::PhrozenApi(err) => write!(f, "{err}"),
+            Self::Liqcreate(err) => write!(f, "{err}"),
             Self::PrusaSla(err) => write!(f, "{err}"),
             Self::UvtoolsCatalog(err) => write!(f, "{err}"),
             Self::PrinterLibrary(err) => write!(f, "{err}"),
@@ -78,6 +81,7 @@ impl std::error::Error for RunError {
             Self::CrealityBlog(err) => Some(err),
             Self::CrealityWiki(err) => Some(err),
             Self::PhrozenApi(err) => Some(err),
+            Self::Liqcreate(err) => Some(err),
             Self::PrusaSla(err) => Some(err),
             Self::UvtoolsCatalog(err) => Some(err),
             Self::PrinterLibrary(err) => Some(err),
@@ -133,6 +137,9 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
         SourceFormat::PhrozenApi => PhrozenApiReader
             .read(&paths)
             .map_err(RunError::PhrozenApi)?,
+        SourceFormat::LiqcreatePages => LiqcreateReader
+            .read(&paths)
+            .map_err(RunError::Liqcreate)?,
         SourceFormat::PrusaSla => PrusaSlaReader.read(&paths).map_err(RunError::PrusaSla)?,
         SourceFormat::UvtoolsCatalog => {
             let reader = match printers {

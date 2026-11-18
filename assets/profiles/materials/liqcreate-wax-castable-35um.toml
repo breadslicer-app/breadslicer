@@ -1,0 +1,51 @@
+[identity]
+id = "liqcreate-wax-castable-35um"
+brand = "Liqcreate"
+family = "castable"
+name = "Wax Castable (35 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.035
+
+[defaults]
+
+[physical]
+
+[per_printer.anycubic-photon-mono-4k]
+normal_exposure_sec = 4.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 6
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 90.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 90.0
+light_pwm = 60.0
+bottom_light_pwm = 60.0
+
+[per_printer.anycubic-photon-mono-x-6k-m3-plus]
+normal_exposure_sec = 3.5
+bottom_exposure_sec = 25.0
+bottom_layer_count = 2
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 150.0
+light_pwm = 50.0
+bottom_light_pwm = 50.0

@@ -36,7 +36,7 @@ pub struct RawCliArgs {
 pub fn cli_parser() -> OptionParser<RawCliArgs> {
     let format = short('f')
         .long("format")
-        .help("Source format to read. Supported: dragonfruit, elegoo-settings, anycubic-wiki, creality-blog, creality-wiki, phrozen-api, prusa-sla, uvtools.")
+        .help("Source format to read. Supported: dragonfruit, elegoo-settings, anycubic-wiki, creality-blog, creality-wiki, phrozen-api, prusa-sla, liqcreate, uvtools.")
         .argument::<SourceFormat>("FORMAT");
     let inputs = short('i')
         .long("input")

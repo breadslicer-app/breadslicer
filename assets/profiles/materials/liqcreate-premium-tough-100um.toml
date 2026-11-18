@@ -1,0 +1,299 @@
+[identity]
+id = "liqcreate-premium-tough-100um"
+brand = "Liqcreate"
+family = "engineering"
+name = "Premium Tough (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.anycubic-photon-d2]
+normal_exposure_sec = 8.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 2
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 120.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 120.0
+
+[per_printer.anycubic-photon-m3]
+normal_exposure_sec = 8.0
+bottom_exposure_sec = 20.0
+bottom_layer_count = 2
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 150.0
+light_pwm = 30.0
+bottom_light_pwm = 30.0
+
+[per_printer.anycubic-photon-mono]
+normal_exposure_sec = 6.7
+bottom_exposure_sec = 50.0
+bottom_layer_count = 1
+wait_before_cure_sec = 1.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 240.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 240.0
+
+[per_printer.anycubic-photon-mono-4-ultra]
+normal_exposure_sec = 6.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 2
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 5.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 5.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.anycubic-photon-mono-m7-max]
+normal_exposure_sec = 5.5
+bottom_exposure_sec = 40.0
+bottom_layer_count = 2
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 120.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 120.0
+
+[per_printer.anycubic-photon-mono-m7-pro]
+normal_exposure_sec = 5.0
+bottom_exposure_sec = 40.0
+bottom_layer_count = 2
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 120.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 120.0
+
+[per_printer.anycubic-photon-mono-se]
+normal_exposure_sec = 5.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 2
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 240.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 240.0
+
+[per_printer.anycubic-photon-mono-x]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 50.0
+bottom_layer_count = 2
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 240.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 240.0
+light_pwm = 65.0
+bottom_light_pwm = 65.0
+
+[per_printer.anycubic-photon-mono-x-6k-m3-plus]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 25.0
+bottom_layer_count = 2
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 150.0
+light_pwm = 30.0
+bottom_light_pwm = 30.0
+
+[per_printer.anycubic-photon-mono-x2]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 50.0
+bottom_layer_count = 2
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.elegoo-mars-2-pro]
+normal_exposure_sec = 5.5
+bottom_exposure_sec = 80.0
+bottom_layer_count = 5
+wait_before_cure_sec = 2.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 120.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 120.0
+
+[per_printer.elegoo-mars-3]
+normal_exposure_sec = 5.0
+bottom_exposure_sec = 25.0
+bottom_layer_count = 2
+wait_before_cure_sec = 3.0
+wait_after_cure_sec = 3.0
+wait_after_lift_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
+bottom_wait_after_cure_sec = 3.0
+bottom_wait_after_lift_sec = 3.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 240.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 240.0
+
+[per_printer.elegoo-mars-4]
+normal_exposure_sec = 5.5
+bottom_exposure_sec = 40.0
+bottom_layer_count = 2
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 120.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 120.0
+
+[per_printer.elegoo-mars-5]
+normal_exposure_sec = 6.5
+bottom_exposure_sec = 50.0
+bottom_layer_count = 2
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 120.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 120.0
+
+[per_printer.elegoo-saturn]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 1
+wait_before_cure_sec = 5.0
+bottom_wait_before_cure_sec = 5.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 120.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 120.0
+
+[per_printer.elegoo-saturn-3]
+normal_exposure_sec = 8.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 1
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mighty-revo]
+normal_exposure_sec = 7.0
+bottom_exposure_sec = 60.0
+bottom_layer_count = 2
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 5.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 120.0
+bottom_lift_distance_mm = 5.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 120.0
+
+[per_printer.phrozen-sonic-mini-8k-s]
+normal_exposure_sec = 8.0
+bottom_exposure_sec = 20.0
+bottom_layer_count = 2
+wait_before_cure_sec = 2.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+bottom_wait_after_cure_sec = 2.0
+bottom_wait_after_lift_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 120.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 90.0
+bottom_retract_speed_mm_min = 120.0
+
+[per_printer.uniformation-gktwo]
+normal_exposure_sec = 8.5
+bottom_exposure_sec = 40.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 90.0
+bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 90.0

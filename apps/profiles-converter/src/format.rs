@@ -32,6 +32,9 @@ pub enum SourceFormat {
     PhrozenApi,
     /// Prusa's SLA vendor bundle for PrusaSlicer, an INI file (#174).
     PrusaSla,
+    /// Liqcreate's support pages of resin settings, one per printer,
+    /// saved as Markdown (#176).
+    LiqcreatePages,
     /// UVtools' printer catalog: the PrusaSlicer printer profiles it
     /// bundles.
     UvtoolsCatalog,
@@ -48,6 +51,7 @@ impl SourceFormat {
             Self::CrealityWikiPages => "creality-wiki",
             Self::PhrozenApi => "phrozen-api",
             Self::PrusaSla => "prusa-sla",
+            Self::LiqcreatePages => "liqcreate",
             Self::UvtoolsCatalog => "uvtools",
         }
     }
@@ -70,7 +74,7 @@ impl fmt::Display for UnknownSourceFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "unknown source format \"{}\"; supported: dragonfruit, elegoo-settings, anycubic-wiki, creality-blog, creality-wiki, phrozen-api, prusa-sla, uvtools",
+            "unknown source format \"{}\"; supported: dragonfruit, elegoo-settings, anycubic-wiki, creality-blog, creality-wiki, phrozen-api, prusa-sla, liqcreate, uvtools",
             self.got,
         )
     }
@@ -90,6 +94,7 @@ impl FromStr for SourceFormat {
             "creality-wiki" => Ok(Self::CrealityWikiPages),
             "phrozen-api" => Ok(Self::PhrozenApi),
             "prusa-sla" => Ok(Self::PrusaSla),
+            "liqcreate" => Ok(Self::LiqcreatePages),
             "uvtools" => Ok(Self::UvtoolsCatalog),
             other => Err(UnknownSourceFormat {
                 got: other.to_owned(),
@@ -140,6 +145,7 @@ mod tests {
             SourceFormat::CrealityWikiPages,
             SourceFormat::PhrozenApi,
             SourceFormat::PrusaSla,
+            SourceFormat::LiqcreatePages,
             SourceFormat::UvtoolsCatalog,
         ] {
             assert_eq!(format.as_str().parse(), Ok(format));
