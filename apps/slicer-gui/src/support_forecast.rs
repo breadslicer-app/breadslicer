@@ -121,6 +121,14 @@ fn kept(key: &Key, mesh: &Arc<IndexedMesh>) -> Option<Arc<Forecast>> {
         .map(|(_, _, f)| f.clone())
 }
 
+/// Whether a forecast for `mesh` is kept: for tests.
+#[cfg(test)]
+pub(crate) fn is_kept_for(mesh: &Arc<IndexedMesh>) -> bool {
+    let kept = FORECASTS.lock().unwrap_or_else(PoisonError::into_inner);
+    kept.iter()
+        .any(|(_, m, _)| m.upgrade().is_some_and(|m| Arc::ptr_eq(&m, mesh)))
+}
+
 fn keep(key: Key, mesh: &Arc<IndexedMesh>, forecast: Arc<Forecast>) {
     let mut kept = FORECASTS.lock().unwrap_or_else(PoisonError::into_inner);
     kept.retain(|(k, m, _)| m.strong_count() > 0 && *k != key);

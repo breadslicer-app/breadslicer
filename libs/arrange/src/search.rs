@@ -505,22 +505,7 @@ pub(crate) fn fill(
     // lattice its shape keeps clear on, at each angle, as Arrange all's do
     // (#556): as close as they can stand on every side.
     let lattices: Vec<(usize, Vec<[i32; 2]>)> = if problem.tight && bodies == 1 {
-        (0..problem.footprints[0].shapes.len())
-            .into_par_iter()
-            .filter_map(|a| {
-                let shape = &problem.footprints[0].shapes[a];
-                if shape.hi[0] - shape.lo[0] > problem.plate.width as i32
-                    || shape.hi[1] - shape.lo[1] > problem.plate.height as i32
-                {
-                    return None;
-                }
-                let spots = dense_lattices(shape, problem.cell)
-                    .into_iter()
-                    .map(|(u, v)| lattice_spots(&problem.plate, shape, u, v, problem.cell))
-                    .max_by_key(Vec::len)?;
-                (!spots.is_empty()).then_some((a, spots))
-            })
-            .collect()
+        densest_lattices(problem, 0)
     } else {
         Vec::new()
     };
@@ -612,6 +597,41 @@ pub(crate) fn turned_alike(like: &Footprint, a: usize, fp: &Footprint) -> Option
         let d = (fp.turn + fp.angles[k] - goal).rem_euclid(std::f64::consts::TAU);
         d.min(std::f64::consts::TAU - d) < 1e-4f64.to_radians() * 100.0
     })
+}
+
+/// Per angle of body `body`, the spots of the densest lattice it keeps
+/// clear on that holds most on the plate, front row first. Its shapes and
+/// the plate are weighed in a few slices of height, each covering its
+/// bands (#555): what keeps clear in those does in the bands, and it is
+/// many times quicker.
+fn densest_lattices(problem: &Problem<'_>, body: usize) -> Vec<(usize, Vec<[i32; 2]>)> {
+    let fp = &problem.footprints[body];
+    let top = fp
+        .shapes
+        .iter()
+        .flat_map(|s| s.bands.iter().map(|m| m.band + 1))
+        .max()
+        .unwrap_or(1);
+    let group = top.div_ceil(crate::separate::GROUPS);
+    let plate = problem.plate.grouped(group);
+    (0..fp.shapes.len())
+        .into_par_iter()
+        .filter_map(|a| {
+            let shape = &fp.shapes[a];
+            if shape.hi[0] - shape.lo[0] > problem.plate.width as i32
+                || shape.hi[1] - shape.lo[1] > problem.plate.height as i32
+            {
+                return None;
+            }
+            let shape = crate::separate::grouped(shape, group);
+            // The lattice that holds most on this plate.
+            let spots = dense_lattices(&shape, problem.cell)
+                .into_iter()
+                .map(|(u, v)| lattice_spots(&plate, &shape, u, v, problem.cell))
+                .max_by_key(Vec::len)?;
+            (!spots.is_empty()).then_some((a, spots))
+        })
+        .collect()
 }
 
 /// Steps tried between copies across a row and from row to row (mm).
@@ -802,23 +822,7 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
     // free spot leaves holes between them.
     let largest = (0..sizes.len()).max_by_key(|&i| (sizes[i], std::cmp::Reverse(i)));
     let lattices: Vec<(usize, Vec<[i32; 2]>)> = match largest {
-        Some(big) if problem.tight => (0..problem.footprints[big].shapes.len())
-            .into_par_iter()
-            .filter_map(|a| {
-                let shape = &problem.footprints[big].shapes[a];
-                if shape.hi[0] - shape.lo[0] > problem.plate.width as i32
-                    || shape.hi[1] - shape.lo[1] > problem.plate.height as i32
-                {
-                    return None;
-                }
-                // The lattice that holds most on this plate.
-                let spots = dense_lattices(shape, problem.cell)
-                    .into_iter()
-                    .map(|(u, v)| lattice_spots(&problem.plate, shape, u, v, problem.cell))
-                    .max_by_key(Vec::len)?;
-                (!spots.is_empty()).then_some((a, spots))
-            })
-            .collect(),
+        Some(big) if problem.tight => densest_lattices(problem, big),
         _ => Vec::new(),
     };
     let set = shaken + kinds.len() as u32;

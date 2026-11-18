@@ -36,7 +36,7 @@ const ROUNDS: usize = 30;
 /// How many slices of height the search weighs the bodies in: each
 /// takes the bands in it as one, covering as much, so a body is weighed in
 /// a few masks however tall it stands.
-const GROUPS: usize = 4;
+pub(crate) const GROUPS: usize = 4;
 
 /// How many tries run side by side for each body added.
 const TRIES: u64 = 16;
@@ -83,7 +83,7 @@ impl<'a> Item<'a> {
 
 /// `shape` with every `group` bands in one, which covers what any of them
 /// covers: where the grouped shapes keep clear, the shapes do.
-fn grouped(shape: &Shape, group: usize) -> Shape {
+pub(crate) fn grouped(shape: &Shape, group: usize) -> Shape {
     let group = group.max(1);
     let mut joined: Vec<(usize, Vec<&BandMask>)> = Vec::new();
     for mask in &shape.bands {

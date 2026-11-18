@@ -338,17 +338,25 @@ impl ArrangeRun {
             return;
         }
         self.ahead.drawn.set(Some(now));
-        let Some(gathered) = gather_all(&self.document, false) else {
+        let Some(mut gathered) = gather_all(&self.document, false) else {
             return;
         };
         let plate = plate_of(&self.ctrl.build_volume());
         let settings = now.1.settings();
+        // The supports models with none yet will get are worked out ahead
+        // too (#555): a press finds them kept.
+        let forecast = self.forecast_now();
         let (running, cancel) = (self.ahead.running.clone(), self.ahead.cancel.clone());
         cancel.store(false, Ordering::Relaxed);
         running.store(true, Ordering::Relaxed);
         std::thread::spawn(move || {
             let started = Instant::now();
             let drawn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(ctx) = &forecast
+                    && with_forecasts(&mut gathered.bodies, &gathered.bare, ctx, &cancel).is_none()
+                {
+                    return 0;
+                }
                 sc_arrange::warm(&gathered.bodies, &plate, &settings, &cancel)
             }));
             if let Ok(drawn) = drawn

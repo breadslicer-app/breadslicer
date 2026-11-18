@@ -1987,7 +1987,12 @@ impl AppState {
     /// Shows Printer & resin over `over` (#151); with `welcome`, as the first
     /// run's three steps (#608). One window, made again each time so it opens
     /// on the printer in use.
-    fn show_setup(self: &Rc<Self>, over: &MainWindow, viewport: Weak<ViewportController>, welcome: bool) {
+    fn show_setup(
+        self: &Rc<Self>,
+        over: &MainWindow,
+        viewport: Weak<ViewportController>,
+        welcome: bool,
+    ) {
         let add_printer: Rc<dyn Fn()> = {
             let app = Rc::downgrade(self);
             let over = over.as_weak();
@@ -3473,7 +3478,8 @@ mod window_wiring_tests {
     }
 
     /// Once the scene stands still, its footprints are drawn in the
-    /// background and kept for the next Arrange (#560).
+    /// background and kept for the next Arrange (#560), and so are the
+    /// supports a model with none yet will get (#555).
     #[test]
     fn a_still_scene_has_its_footprints_drawn_ahead() {
         let kept = on_fresh_slint_thread(|| {
@@ -3495,9 +3501,12 @@ mod window_wiring_tests {
                 settle();
                 thread::sleep(std::time::Duration::from_millis(50));
             }
-            sc_arrange::kept_parts_of(&mesh)
+            (
+                sc_arrange::kept_parts_of(&mesh),
+                crate::support_forecast::is_kept_for(&mesh),
+            )
         });
-        assert_eq!(kept, 1);
+        assert_eq!(kept, (1, true));
     }
 
     #[test]

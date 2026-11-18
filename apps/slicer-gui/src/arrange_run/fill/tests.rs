@@ -319,3 +319,151 @@ fn a_cancelled_or_stale_fill_adds_nothing() {
     assert_eq!(land(&document, &pending, made), Landed::Stale);
     assert_eq!(models(&document).len(), 1, "nothing added");
 }
+
+/// Fill bed on a real project, its first model alone (#555):
+/// `BREADSLICER_FILL_BREAD` names it. Prints copies and time with and
+/// without squeezing; `BREADSLICER_FILL_DUMP` writes the placements.
+#[test]
+#[ignore = "a measurement on a real project"]
+fn fill_bed_on_a_real_model() {
+    let Some(path) = std::env::var_os("BREADSLICER_FILL_BREAD") else {
+        return;
+    };
+    let path = PathBuf::from(path);
+    let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("it opens");
+    let sc_project_formats::LoadedContent::Project(project) = loaded.content else {
+        panic!("a .bread is a project")
+    };
+    let document = SceneDocument::new();
+    document.install_graph(project.scene, path);
+    let (mesh, world) = document
+        .with_scene(|spatial| {
+            let leaf = spatial.leaf_id_at_index(0)?;
+            let q = spatial.leaf(leaf)?;
+            Some((
+                spatial.graph().leaf_mesh_arc(leaf)?.clone(),
+                super::affine(&q.world_transform()),
+            ))
+        })
+        .flatten()
+        .expect("a model");
+    let (w, h) = (223.642, 126.976);
+    let plate = Plate {
+        min: [-w / 2.0, -h / 2.0],
+        max: [w / 2.0, h / 2.0],
+        floor: 0.0,
+    };
+    // In the plate's middle, as it stands.
+    let t = world.translation();
+    let world = AffineTransform3D::from_linear_and_translation(*world.linear(), [0.0, 0.0, t[2]]);
+    let mut bodies = vec![sc_arrange::Body {
+        parts: vec![sc_arrange::Part { mesh, world }],
+        fixed: false,
+    }];
+    // Measured with the supports it will get, as the window does (#556):
+    // the Miniatures preset on an M7 Pro, lifted as Generate lifts it.
+    // `BREADSLICER_FILL_ONE_RAFT=1`: under one raft for all (#556).
+    let one_raft = std::env::var_os("BREADSLICER_FILL_ONE_RAFT").is_some();
+    let options = sc_geom::df_supports::DfSupportOptions {
+        zones: Some(sc_geom::df_supports::zone_presets::minis_30()),
+        one_raft,
+        ..Default::default()
+    };
+    let request = sc_geom::df_supports::DfSupportRequest {
+        layer_height_mm: 0.05,
+        pixel_pitch_mm: Some([0.016_8, 0.016_8]),
+        options: options.clone(),
+        ..Default::default()
+    };
+    let ctx = crate::support_forecast::ForecastCtx {
+        lift_to_mm: Some(crate::raft_clash::support_lift_mm(&options, 0.05)),
+        request,
+        raft_top_mm: if one_raft {
+            options.raft_top_mm().unwrap_or(0.0)
+        } else {
+            0.0
+        },
+    };
+    let t = std::time::Instant::now();
+    crate::support_forecast::with_forecasts(&mut bodies, &[true], &ctx, &AtomicBool::new(false))
+        .expect("a forecast");
+    println!(
+        "forecast: {:.2} s, {} parts",
+        t.elapsed().as_secs_f64(),
+        bodies[0].parts.len()
+    );
+    for squeeze in [false, true] {
+        let s = sc_arrange::Settings {
+            squeeze,
+            ..ArrangeOptions {
+                one_raft,
+                raft_top_mm: ctx.raft_top_mm as f32,
+                ..ArrangeOptions::default()
+            }
+            .settings()
+        };
+        let started = std::time::Instant::now();
+        let filled = sc_arrange::fill(
+            &bodies,
+            &[0],
+            &plate,
+            &s,
+            None,
+            &std::sync::atomic::AtomicUsize::new(0),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        if let Some(dir) = std::env::var_os("BREADSLICER_FILL_DUMP") {
+            // The body's triangles in the world, as a binary STL, and each
+            // copy's move: `angle x y` per line.
+            let dir = PathBuf::from(dir);
+            let mut stl = vec![0u8; 80];
+            let mut tris: Vec<[[f32; 3]; 3]> = Vec::new();
+            for part in &bodies[0].parts {
+                let (l, t) = (part.world.linear(), part.world.translation());
+                let v = part.mesh.vertices();
+                for f in part.mesh.faces() {
+                    tris.push(std::array::from_fn(|k| {
+                        let c = v[f.vertices[k].get() as usize].coords();
+                        std::array::from_fn(|r| {
+                            (l[r][0] * f64::from(c[0])
+                                + l[r][1] * f64::from(c[1])
+                                + l[r][2] * f64::from(c[2])
+                                + t[r]) as f32
+                        })
+                    }));
+                }
+            }
+            stl.extend((tris.len() as u32).to_le_bytes());
+            for t in &tris {
+                stl.extend([0u8; 12]);
+                for p in t {
+                    for c in p {
+                        stl.extend(c.to_le_bytes());
+                    }
+                }
+                stl.extend([0u8; 2]);
+            }
+            std::fs::write(dir.join("body.stl"), stl).unwrap();
+            let mut out = String::from(
+                "0 0 0
+",
+            );
+            for c in &filled.copies {
+                let p = c.placement;
+                out += &format!(
+                    "{} {} {}
+",
+                    p.angle, p.translation[0], p.translation[1]
+                );
+            }
+            std::fs::write(dir.join(format!("copies-{squeeze}.txt")), out).unwrap();
+        }
+        println!(
+            "squeeze {squeeze}: 1 + {} copies ({} moved) in {:.2} s",
+            filled.copies.len(),
+            filled.moved.len(),
+            started.elapsed().as_secs_f64()
+        );
+    }
+}
