@@ -205,6 +205,9 @@ pub(crate) struct ViewportController {
     focus_cache: FocusCache,
     /// The active plate's tool under the pointer (#545).
     plate_tool_hovered: Cell<Option<u32>>,
+    /// The row of the object list a Shift+click range starts from (#619): the
+    /// last row clicked or Ctrl+clicked.
+    list_anchor: Cell<Option<usize>>,
     /// A plate's name being edited (#545): the plate, the text so far and
     /// the byte its caret stands at.
     plate_name_edit: RefCell<Option<NameBeingEdited>>,
@@ -318,6 +321,7 @@ impl ViewportController {
             cut_press: Cell::new(None),
             focus_cache: RefCell::new(None),
             plate_tool_hovered: Cell::new(None),
+            list_anchor: Cell::new(None),
             plate_name_edit: RefCell::new(None),
             plate_name_click: Cell::new(None),
         }
@@ -388,6 +392,7 @@ impl ViewportController {
             cut_press: Cell::new(None),
             focus_cache: RefCell::new(None),
             plate_tool_hovered: Cell::new(None),
+            list_anchor: Cell::new(None),
             plate_name_edit: RefCell::new(None),
             plate_name_click: Cell::new(None),
         };
@@ -2267,6 +2272,7 @@ impl ViewportController {
             return;
         }
         self.on_modal_transform_finish(false);
+        self.list_anchor.set(Some(idx));
         let supports_selectable = self.supports_selectable();
         let document = self.session.document();
         // `leaf_id_at_index` returns `None` past the last reachable leaf.
@@ -2307,10 +2313,43 @@ impl ViewportController {
                 (supports_selectable || !shows_supports(spatial, id)).then_some(id)
             })
             .flatten();
+        self.list_anchor.set(Some(idx));
         match leaf {
             Some(id) => self.toggle_selected(id),
             None => self.mirror_selection_to_ui(),
         }
+    }
+
+    /// Handles Shift+click on a row of the object list (#619): every row from
+    /// the last one clicked to this one, as in a file manager. Rows the tab
+    /// cannot select (supports outside Supports) are left out.
+    pub(crate) fn on_range_by_index(&self, idx: usize) {
+        if !self.selectable() {
+            self.mirror_selection_to_ui();
+            return;
+        }
+        self.on_modal_transform_finish(false);
+        let document = self.session.document();
+        let anchor = self.list_anchor.get().or_else(|| {
+            let primary = document.selection_primary_node_id()?;
+            document.with_scene(|s| s.leaf_index_of(primary)).flatten()
+        });
+        let Some(anchor) = anchor else {
+            self.on_select_by_index(idx);
+            return;
+        };
+        let supports_selectable = self.supports_selectable();
+        let (from, to) = (anchor.min(idx), anchor.max(idx));
+        let leaves: Vec<sc_scene::NodeId> = document
+            .with_scene(|spatial| {
+                (from..=to)
+                    .filter_map(|i| spatial.leaf_id_at_index(i))
+                    .filter(|&id| supports_selectable || !shows_supports(spatial, id))
+                    .collect()
+            })
+            .unwrap_or_default();
+        document.set_selection(Selection::of(leaves.into_iter().map(LeafId)));
+        self.mirror_selection_to_ui();
     }
 
     /// Adds `id` to the selection, or takes it out when it is in it.
@@ -2533,10 +2572,22 @@ impl ViewportController {
                 .map(|g| {
                     let axis = g.axis.map(|i| ["X", "Y", "Z"][i]).unwrap_or(match g.op {
                         ModalOp::Scale => "Uniform",
-                        _ => "View",
+                        // G without an axis slides on the plate (#620).
+                        ModalOp::Move => "XY",
+                        ModalOp::Rotate => "View",
                     });
                     if !several || g.op == ModalOp::Move {
-                        return format!("{} | {}", g.op.key(), axis);
+                        // The keys in plain sight (#620).
+                        return format!(
+                            "{} | {} | {}",
+                            g.op.key(),
+                            axis,
+                            ctr!(
+                                "MeshViewer",
+                                "X Y Z lock an axis · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels",
+                                g.op.key()
+                            )
+                        );
                     }
                     // Several objects: which pivot they turn or scale about,
                     // and that the key again switches it (#218).
@@ -2580,6 +2631,10 @@ impl ViewportController {
                 self.input.modal.set(Some(gesture));
                 self.mirror_modal_to_ui();
                 self.update_modal(ScreenPoint::new(x, y), gesture.modifiers);
+            } else {
+                // G G (and R R, S S on one object) confirms, like a click
+                // (#620).
+                self.on_modal_transform_finish(true);
             }
             return;
         }
@@ -2958,6 +3013,12 @@ impl ViewportController {
         if !self.selectable() {
             modifiers.shift = false;
         }
+        // A plain press on empty space boxes (#622), unless a tool owns the
+        // press or the plate's tools are under it.
+        let empty_boxes = self.selectable()
+            && drag.is_none()
+            && !self.add_support_armed()
+            && self.plate_tool_hovered.get().is_none();
         let boxing = self.input.on_pointer_down(
             self.session.document(),
             self.camera.camera_cell(),
@@ -2966,6 +3027,7 @@ impl ViewportController {
             modifiers,
             self.allows_transform_gizmo() && !self.cut_on(),
             self.supports_selectable(),
+            empty_boxes,
         );
         if let Some(ui) = self.ui.upgrade() {
             ui.set_box_select_armed(boxing);
@@ -3044,7 +3106,9 @@ impl ViewportController {
                     self.run_pick_at(cursor);
                 }
             }
-            PointerUpOutcome::BoxSelect { from, to } => self.select_in_box(from, to),
+            PointerUpOutcome::BoxSelect { from, to } => {
+                self.select_in_box(from, to, modifiers.shift)
+            }
             PointerUpOutcome::Nothing => (),
         }
     }
@@ -3068,9 +3132,11 @@ impl ViewportController {
     }
 
     /// Adds every object the box from `from` to `to` touches on screen to
-    /// the selection (see [`super::box_select`]). Outside the Supports tab,
-    /// supports in the box bring their model instead (#120).
-    fn select_in_box(&self, from: ScreenPoint, to: ScreenPoint) {
+    /// the selection (see [`super::box_select`]), with `add` (Shift); without
+    /// it, they become the selection, nothing when the box is empty (#622).
+    /// Outside the Supports tab, supports in the box bring their model
+    /// instead (#120).
+    fn select_in_box(&self, from: ScreenPoint, to: ScreenPoint, add: bool) {
         if !self.selectable() {
             return;
         }
@@ -3103,6 +3169,10 @@ impl ViewportController {
             .flatten()
             .unwrap_or_default();
         crate::breadcrumbs::note(&format!("box select: {} object(s)", touched.len()));
+        if !add {
+            document.set_selection(Selection::of(touched.into_iter().map(LeafId)));
+            return;
+        }
         if touched.is_empty() {
             return;
         }
@@ -4126,6 +4196,21 @@ impl ViewportController {
     /// Runs the active plate's tool `tool` (#545); `shift` makes Remove take
     /// the plate's models with it.
     fn run_plate_tool(&self, tool: u32, shift: bool) {
+        // The tools move with the active plate (or go with it), so the hint
+        // of the one that was under the pointer must not outlive the click
+        // (#616): it goes, unless the tool put a message of its own there.
+        let hint = self.ui.upgrade().map(|ui| ui.get_status_notice());
+        self.plate_tool_hovered.set(None);
+        self.run_plate_tool_now(tool, shift);
+        if let (Some(ui), Some(hint)) = (self.ui.upgrade(), hint)
+            && !hint.is_empty()
+            && ui.get_status_notice() == hint
+        {
+            ui.set_status_notice(slint::SharedString::default());
+        }
+    }
+
+    fn run_plate_tool_now(&self, tool: u32, shift: bool) {
         match tool {
             0 if shift => self.duplicate_active_plate(),
             0 => self.add_plate(),
@@ -4197,6 +4282,131 @@ impl ViewportController {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// The selection and duplicate keys over the view (#612, #613), `key`
+    /// as the view names it, with the cursor at `(x, y)`.
+    pub(crate) fn on_edit_key(&self, key: &str, x: f32, y: f32) {
+        match key {
+            "select-all" => self.select_all_on_plate(),
+            "deselect" => {
+                self.session.document().set_selection(Selection::None);
+                self.mark_dirty();
+            }
+            "invert" => self.invert_selection_on_plate(),
+            "duplicate" => self.duplicate_selection(None),
+            "duplicate-move" => self.duplicate_selection(Some(ScreenPoint::new(x, y))),
+            _ => {}
+        }
+    }
+
+    /// The models of the active plate, and in the Supports tab their
+    /// supports too: what Ctrl+A selects (#612).
+    fn selectable_on_plate(&self) -> Vec<sc_scene::NodeId> {
+        let document = self.session.document();
+        let active = document.plates().active();
+        let models: Vec<sc_scene::NodeId> = self
+            .models_on_plates()
+            .into_iter()
+            .filter(|&(_, plate)| plate == active)
+            .map(|(id, _)| id)
+            .collect();
+        if self.session.section() == WorkspaceSection::Supports {
+            document.with_their_supports(models)
+        } else {
+            models
+        }
+    }
+
+    /// Ctrl+A (#612): everything on the active plate.
+    pub(crate) fn select_all_on_plate(&self) {
+        if !self.session.document().is_loaded() || !self.selectable() {
+            return;
+        }
+        let all = self.selectable_on_plate();
+        self.session
+            .document()
+            .set_selection(Selection::of(all.into_iter().map(LeafId)));
+        self.mark_dirty();
+    }
+
+    /// Ctrl+I (#612): what is on the active plate and was not selected.
+    pub(crate) fn invert_selection_on_plate(&self) {
+        let document = self.session.document();
+        if !document.is_loaded() || !self.selectable() {
+            return;
+        }
+        let rest: Vec<sc_scene::NodeId> = self
+            .selectable_on_plate()
+            .into_iter()
+            .filter(|&id| !document.is_selected(id))
+            .collect();
+        document.set_selection(Selection::of(rest.into_iter().map(LeafId)));
+        self.mark_dirty();
+    }
+
+    /// Ctrl+D / Alt+D (#613): a copy of each selected model, with its hollow
+    /// and supports, in a free spot by it (on another plate when this one is
+    /// full), in one undo step, the copies selected. With `then_move` (Shift+D)
+    /// G starts on them at that cursor.
+    pub(crate) fn duplicate_selection(&self, then_move: Option<ScreenPoint>) {
+        if !self.allows_layout_tools() || self.gesture_active() {
+            return;
+        }
+        let document = self.session.document();
+        let models: std::collections::HashSet<sc_scene::NodeId> = self
+            .models_on_plates()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let chosen: Vec<sc_scene::NodeId> = document
+            .selection_node_ids()
+            .into_iter()
+            .filter(|id| models.contains(id))
+            .collect();
+        if chosen.is_empty() {
+            return;
+        }
+        let volume = self.build_volume();
+        let before = document.undo_len();
+        let mut copies = Vec::new();
+        for id in chosen {
+            let Some(centre) = document
+                .with_scene(|spatial| {
+                    let query = spatial.leaf(id)?;
+                    let aabb = query.transformed_aabb(query.world_transform())?;
+                    let (min, max) = (aabb.min().coords(), aabb.max().coords());
+                    Some([
+                        f64::from(min[0] + max[0]) / 2.0,
+                        f64::from(min[1] + max[1]) / 2.0,
+                    ])
+                })
+                .flatten()
+            else {
+                continue;
+            };
+            document.set_selection(Selection::One(LeafId(id)));
+            let Some(board) = clipboard::clipboard_from_document_selection(document) else {
+                continue;
+            };
+            match clipboard::paste(document, &board, centre, &volume) {
+                Ok(Some(copy)) => copies.push(copy),
+                Ok(None) => {}
+                Err(error) => {
+                    self.show_edit_rejected(error);
+                    break;
+                }
+            }
+        }
+        let steps = document.undo_len().saturating_sub(before);
+        if steps > 1 {
+            document.join_last_steps(steps);
+        }
+        document.set_selection(Selection::of(copies.iter().copied().map(LeafId)));
+        self.mark_dirty();
+        if let (Some(at), false) = (then_move, copies.is_empty()) {
+            self.on_modal_transform_start(0, at.x, at.y);
+        }
     }
 
     /// Adds a plate after the last (#545), as one step of history; the
@@ -4718,6 +4928,56 @@ impl ViewportController {
     /// Drop to plate with several objects selected: each one's lowest point
     /// to the plate, in one undo step (#516). Supports selected with them
     /// are not dropped on their own: they follow their model.
+    /// Drops to the plate every model that floats above it with no supports
+    /// to stand on (#621), as one step of history; only those of plate
+    /// `plate`, or the selected ones with `selected`. Arrange packs parts at
+    /// every height, so a part left in the air shared a spot in plan with
+    /// another one, and printed in the air. Returns whether any moved.
+    pub(crate) fn drop_floating_models(&self, plate: Option<u32>, selected: bool) -> bool {
+        let document = self.session.document();
+        let on_plate: Option<std::collections::HashSet<sc_scene::NodeId>> = plate.map(|plate| {
+            self.models_on_plates()
+                .into_iter()
+                .filter(|&(_, p)| p == plate)
+                .map(|(id, _)| id)
+                .collect()
+        });
+        let edits: Vec<SceneEdit> = document
+            .with_scene(|spatial| {
+                crate::raft_clash::model_bottoms(spatial)
+                    .into_iter()
+                    .filter(|&(_, bottom)| bottom > 0.01)
+                    .map(|(id, _)| id)
+                    .filter(|id| on_plate.as_ref().is_none_or(|on| on.contains(id)))
+                    .filter(|&id| !selected || document.is_selected(id))
+                    // A model on supports stands where they hold it.
+                    .filter(|&id| document.with_their_supports(vec![id]).len() == 1)
+                    .filter_map(|id| {
+                        let query = spatial.leaf(id)?;
+                        let before = query.local_transform();
+                        let after =
+                            super::numeric_transform::apply(&query, NumericEdit::DropToPlate)?;
+                        (after != before).then_some(SceneEdit::SetLocalTransform {
+                            node_id: id,
+                            before,
+                            after,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if edits.is_empty() {
+            return false;
+        }
+        let edit = SceneEdit::Compound(edits);
+        if document.apply_edit(edit.clone()).is_err() {
+            return false;
+        }
+        document.push_edit(edit);
+        self.mark_dirty();
+        true
+    }
+
     fn drop_each_to_plate(&self) {
         let document = self.session.document();
         let edits: Vec<SceneEdit> = document

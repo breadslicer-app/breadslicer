@@ -7,7 +7,7 @@ import { Palette, ScrollView } from "std-widgets.slint";
 import { ScButton as Button } from "kit/controls.slint";
 import { ScProgress as ProgressIndicator } from "./kit/controls.slint";
 import { AboutWindow } from "about-window.slint";
-import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
+import { AxisView, MeshViewer, NavMap, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
 import { CaptionButton, CaptionKind, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
@@ -793,6 +793,10 @@ export component MainWindow inherits Window {
     callback object-list-selection-changed(int);
     // Shift+click or Ctrl+click on a row: it joins the selection or leaves it.
     callback object-list-toggle(int);
+    // Shift+click on a row of the object list: a range (#619).
+    // The camera's buttons, as the chosen control layout has them (#609).
+    in property <NavMap> nav-map: { middle: 1, middle-shift: 2, middle-ctrl: 3, right: 1, right-shift: 2 };
+    callback object-list-range(int);
     callback viewport-pointer-down(length, length, PointerModifiers);
     callback viewport-pointer-move(length, length, PointerModifiers);
     callback viewport-pointer-up(length, length, PointerModifiers);
@@ -969,6 +973,8 @@ export component MainWindow inherits Window {
     // `Ctrl+C` / `Ctrl+V` handler. The Rust wiring layer routes
     // these to the app-wide clipboard so a copy in one window is
     // pasteable in any other.
+    // Ctrl+A, Alt+A, Ctrl+I, Ctrl/Alt+D, Shift+D over the view (#612, #613).
+    callback edit-key(string, length, length);
     callback copy-pressed();
     callback paste-pressed();
     // Cursor left the viewport rectangle. The Rust paste path
@@ -1731,6 +1737,10 @@ export component MainWindow inherits Window {
                         root.object-list-toggle(i);
                         mv.focus-viewport();
                     }
+                    object-ranged(i) => {
+                        root.object-list-range(i);
+                        mv.focus-viewport();
+                    }
                     plate-picked(i) => {
                         root.plate-picked(i);
                     }
@@ -1752,6 +1762,7 @@ export component MainWindow inherits Window {
 
                     HorizontalLayout {
                     mv := MeshViewer {
+                        nav-map: root.nav-map;
                         horizontal-stretch: 1;
                         rendering: root.mesh-rendering;
                         box-select-armed: root.box-select-armed;
@@ -1865,6 +1876,7 @@ export component MainWindow inherits Window {
                             }
                             return false;
                         }
+                        edit-key(key, x, y) => { root.edit-key(key, x, y); }
                         modal-transform-axis(axis,x,y) => { root.modal-transform-axis(axis,x,y); }
                         modal-transform-finish(confirm) => { root.modal-transform-finish(confirm); }
                         gizmo-keyboard-focus-active: root.gizmo-keyboard-focus-active;

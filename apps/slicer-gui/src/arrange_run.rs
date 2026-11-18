@@ -160,6 +160,8 @@ struct Pending {
     leaves: Vec<Vec<Vec<NodeId>>>,
     names: Vec<Vec<String>>,
     started: Instant,
+    /// Floating models were dropped to the plate first (#621).
+    dropped: bool,
 }
 
 /// Which plates an Arrange press works on (#545).
@@ -188,6 +190,9 @@ struct AcrossPending {
     again: bool,
     /// The card's settings it works with.
     options: ArrangeOptions,
+    /// Floating models were dropped to the plate first (#621): that step and
+    /// the arrangement are one.
+    dropped: bool,
 }
 
 pub(crate) struct ArrangeRun {
@@ -443,6 +448,7 @@ impl ArrangeRun {
             self.ask_then_arrange(scope);
             return;
         }
+        let dropped = self.ctrl.drop_floating_models(None, true);
         let jobs = jobs_on_plates(&self.document, &self.ctrl.build_volume(), selection, scope);
         if jobs.is_empty() {
             return;
@@ -462,6 +468,7 @@ impl ArrangeRun {
             leaves,
             names,
             started: Instant::now(),
+            dropped,
         });
         self.cancel.store(false, Ordering::Relaxed);
         self.stop_ahead();
@@ -531,7 +538,7 @@ impl ArrangeRun {
         }
         // Nothing changed since the last: as a slice still up to date, it
         // stands (#560).
-        let revision = self.document.scene_revision();
+        let mut revision = self.document.scene_revision();
         let last = self.arranged.get();
         let options = self.options_now();
         if last == Some((revision, options, scope)) {
@@ -540,6 +547,15 @@ impl ArrangeRun {
                 "Already arranged: nothing changed since the last Arrange."
             ));
             return;
+        }
+        // Parts left in the air go down first (#621).
+        let active = self.document.plates().active();
+        let dropped = self.ctrl.drop_floating_models(
+            (scope == ArrangeScope::ActivePlate).then_some(active),
+            false,
+        );
+        if dropped {
+            revision = self.document.scene_revision();
         }
         let Some(job) = across::job(
             &self.document,
@@ -567,8 +583,9 @@ impl ArrangeRun {
             revision: self.document.scene_revision(),
             job,
             started: Instant::now(),
-            again,
+            again: again && !dropped,
             options,
+            dropped,
         });
         self.cancel.store(false, Ordering::Relaxed);
         self.stop_ahead();
@@ -658,7 +675,12 @@ impl ArrangeRun {
             sc_arrange::kept_bytes() as f64 / 1e6,
         ));
         let applied = match outcome {
-            Ok(Some(applied)) => applied,
+            Ok(Some(applied)) => {
+                if pending.dropped {
+                    self.document.join_last_steps(2);
+                }
+                applied
+            }
             Ok(None) => {
                 self.arranged.set(Some((
                     self.document.scene_revision(),
@@ -775,7 +797,12 @@ impl ArrangeRun {
             _ => SceneEdit::Compound(edits),
         };
         match self.document.apply_edit(edit.clone()) {
-            Ok(()) => self.document.push_edit(edit),
+            Ok(()) => {
+                self.document.push_edit(edit);
+                if pending.dropped {
+                    self.document.join_last_steps(2);
+                }
+            }
             Err(EditNotApplied::Rejected(error)) => {
                 self.dialogs.show_error(move || ErrorTexts {
                     heading: ctr!("ArrangeDialog", "Arrange failed"),
@@ -1568,6 +1595,73 @@ mod again_tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         run.finish();
+    }
+
+    /// #621: parts of a kit come in at different heights; Arrange all puts
+    /// them all on the plate, apart in plan and inside its walls, in one
+    /// step that one Undo takes back.
+    #[test]
+    fn arrange_all_brings_floating_parts_down_to_the_plate() {
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("a main window");
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            ctrl.set_build_volume(crate::build_volume::BuildVolume::new(100.0, 60.0, 80.0));
+            let mut g = Scene::new();
+            let mesh = Arc::new(sc_mesh_fixtures::unit_cube_mesh());
+            for k in 0..6 {
+                let at = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+                    [[14.0, 0.0, 0.0], [0.0, 14.0, 0.0], [0.0, 0.0, 6.0]],
+                    // Stacked in plan, each higher than the last.
+                    [0.0, 0.0, 10.0 + 9.0 * k as f64],
+                ));
+                let leaf = g
+                    .add_leaf(None, at, LeafPayload::Mesh(mesh.clone()))
+                    .unwrap();
+                g.add_root(leaf).unwrap();
+            }
+            ctrl.install_graph_for_test(g);
+            let run = ArrangeRun::install(&window, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+            let document = ctrl.document();
+            let steps = document.undo_len();
+            press(&run);
+            assert_eq!(document.undo_len(), steps + 1, "one step");
+            let boxes: Vec<([f32; 3], [f32; 3])> = document
+                .with_scene(|spatial| {
+                    (0..)
+                        .map_while(|i| spatial.leaf_id_at_index(i))
+                        .map(|id| {
+                            let q = spatial.leaf(id).unwrap();
+                            let b = q.transformed_aabb(q.world_transform()).unwrap();
+                            (b.min().coords(), b.max().coords())
+                        })
+                        .collect()
+                })
+                .unwrap();
+            for (i, (lo, hi)) in boxes.iter().enumerate() {
+                assert!(lo[2].abs() < 1e-3, "part {i} on the plate: {lo:?}");
+                assert!(
+                    lo[0] >= -50.0 && hi[0] <= 50.0 && lo[1] >= -30.0 && hi[1] <= 30.0
+                        || document.plates().count() > 1,
+                    "part {i} inside the walls: {lo:?} {hi:?}"
+                );
+                for (j, (lo2, hi2)) in boxes.iter().enumerate().skip(i + 1) {
+                    let apart = hi[0] <= lo2[0] + 1e-3
+                        || hi2[0] <= lo[0] + 1e-3
+                        || hi[1] <= lo2[1] + 1e-3
+                        || hi2[1] <= lo[1] + 1e-3;
+                    assert!(apart, "parts {i} and {j} overlap in plan");
+                }
+            }
+            assert!(document.undo().unwrap());
+            assert_eq!(document.undo_len(), steps);
+            let lifted = document
+                .with_scene(|spatial| crate::raft_clash::model_bottoms(spatial))
+                .unwrap();
+            assert!(
+                lifted.iter().all(|&(_, z)| z > 5.0),
+                "back in the air: {lifted:?}"
+            );
+        });
     }
 
     /// #560: Arrange all pressed again with nothing changed answers at once

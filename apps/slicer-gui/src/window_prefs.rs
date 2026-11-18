@@ -37,6 +37,7 @@ impl WindowPreferences for MainWindow {
             prefs.menu_layout
         };
         self.set_menu_layout(menu_layout);
+        self.set_nav_map(prefs.controls_layout.nav_map());
         // Language: `@tr` bindings throughout the Slint tree re-evaluate
         // automatically after `select_bundled_translation` flips the active
         // locale. The viewport controller and the slice panel push the texts
@@ -55,6 +56,14 @@ impl WindowPreferences for PreferencesWindow {
         self.set_current_aa_index(aa_combo_index(prefs.aa_level));
         self.set_prescan_supports(prefs.prescan_supports);
         self.set_smooth_models(prefs.smooth_models);
+        self.set_controls_options(slint::ModelRc::new(slint::VecModel::from(
+            crate::controls_layout::ControlsLayout::ALL
+                .iter()
+                .map(|l| slint::SharedString::from(l.label()))
+                .collect::<Vec<_>>(),
+        )));
+        self.set_current_controls_index(prefs.controls_layout.combo_index());
+        self.set_controls_summary(prefs.controls_layout.summary().into());
         self.set_show_start_dialog(prefs.show_start_dialog);
         self.set_current_frame_rate_index(prefs.frame_rate.combo_index());
         self.set_current_gizmo_style_index(prefs.gizmo_style.combo_index());

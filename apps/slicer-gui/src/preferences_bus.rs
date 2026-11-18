@@ -78,6 +78,8 @@ pub(crate) struct PreferencesSnapshot {
     /// Whether a Fix All press repeats until the review is clean (#163), the
     /// Review card's box. Shared by every open window.
     pub fix_all_repeat: bool,
+    /// The mouse of the 3D view, as another 3D program has it (#609).
+    pub controls_layout: crate::controls_layout::ControlsLayout,
     /// Whether the rafts fade out with the plate when the camera goes under
     /// it (#481, #492), the Supports tab's box. Shared by every open window.
     pub hide_rafts_under_plate: bool,
@@ -186,6 +188,7 @@ impl PreferencesSnapshot {
             lift_models_on_plate: false,
             overhang_map: false,
             fix_all_repeat: true,
+            controls_layout: crate::controls_layout::ControlsLayout::Breadslicer,
             hide_rafts_under_plate: true,
             support_lines_under_plate: false,
             diagnostic_log: false,
@@ -242,6 +245,8 @@ pub(crate) enum PreferencesChange {
     OverhangMap,
     /// The Review card's "Repeat until clean" (#163).
     FixAllRepeat,
+    /// The mouse layout (#609).
+    Controls,
     /// The Supports tab's "Hide the raft from under the plate" (#492).
     HideRaftsUnderPlate,
     /// The Supports tab's "Supports as dotted lines" (#493).

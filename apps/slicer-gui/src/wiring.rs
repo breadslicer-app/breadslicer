@@ -280,6 +280,14 @@ pub(crate) fn wire_viewport_input(
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_object_list_range(move |idx| {
+            if idx >= 0 {
+                ctrl.on_range_by_index(idx as usize);
+            }
+        });
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_viewport_pointer_down(move |x, y, m| ctrl.on_pointer_down(ScreenPoint::new(x, y), m));
     }
     {
@@ -329,6 +337,10 @@ pub(crate) fn wire_viewport_input(
     {
         let ctrl = ctrl.clone();
         ui.on_modal_transform_start(move |code, x, y| ctrl.on_modal_transform_start(code, x, y));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_edit_key(move |key, x, y| ctrl.on_edit_key(&key, x, y));
     }
     {
         let ctrl = ctrl.clone();

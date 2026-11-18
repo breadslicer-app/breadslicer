@@ -299,6 +299,66 @@ fn an_imported_printer_is_found_in_our_catalog_by_panel_and_plate() {
     assert_eq!(matching_printer(&other, [&m7]), None);
 }
 
+/// A `.lyr` is a list of resins with no printer (#618); two of one name
+/// are told apart by their layer height.
+#[test]
+fn a_lychee_resin_export_gives_its_resins_apart() {
+    let resin = |height: f64, exposure: f64| {
+        map(&[
+            ("brand", Value::Str("Elegoo".to_owned())),
+            ("name", Value::Str("Rapid / Standard".to_owned())),
+            ("normalLayerExposureTime", with_unit(exposure, "s")),
+            ("burnLayerExposureTime", with_unit(25.0, "s")),
+            ("normalLayerHeight", with_unit(height, "um")),
+        ])
+    };
+    let mut bytes = Vec::new();
+    encode(
+        &Value::Array(vec![
+            resin(30.0, 1.2),
+            resin(50.0, 2.5),
+            map(&[("comment", Value::Nil)]),
+        ]),
+        &mut bytes,
+    );
+    let resins = read_lychee_resins(&lychee::raised(&bytes)).expect("read");
+    assert_eq!(resins.len(), 2, "the entry with no exposure is not a resin");
+    assert_eq!(resins[0].name, "Rapid / Standard (30 µm)");
+    assert_eq!(resins[1].name, "Rapid / Standard (50 µm)");
+    assert_eq!(resins[1].layer_height_mm, Some(0.05));
+    assert!(matches!(
+        read_lychee_resins(b"not a file"),
+        Err(ImportError::Unreadable(_))
+    ));
+}
+
+/// The printer a file name names: the longest name found in it (#618).
+#[test]
+fn a_file_name_names_the_longest_printer_in_it() {
+    let ids: Vec<PrinterId> = [
+        "elegoo-mars-5",
+        "elegoo-mars-5-ultra",
+        "anycubic-photon-mono-m7",
+    ]
+    .iter()
+    .map(|id| PrinterId::new(id).unwrap())
+    .collect();
+    let printers = [
+        (&ids[0], "ELEGOO", "Mars 5"),
+        (&ids[1], "ELEGOO", "Mars 5 Ultra"),
+        (&ids[2], "Anycubic", "Photon Mono M7"),
+    ];
+    assert_eq!(
+        printer_named_in("Elegoo Mars 5 Ultra Resin.lyr", printers),
+        Some(ids[1].clone())
+    );
+    assert_eq!(
+        printer_named_in("mars5 resins.lyr", printers),
+        Some(ids[0].clone())
+    );
+    assert_eq!(printer_named_in("My resins.lyr", printers), None);
+}
+
 /// Real exports, read by hand: `IMPORT_SETTINGS` holds paths split by `|`.
 #[test]
 #[ignore = "reads exported files of a person's own"]
@@ -309,6 +369,20 @@ fn real_exports() {
     for path in paths.split('|') {
         let ext = path.rsplit('.').next().unwrap_or_default();
         let bytes = std::fs::read(path).unwrap();
+        if ext.eq_ignore_ascii_case("lyr") {
+            match read_lychee_resins(&bytes) {
+                Ok(resins) => {
+                    for r in resins {
+                        println!(
+                            "{path}: {} / {}: {:?} mm, {:?}, not imported {:?}",
+                            r.brand, r.name, r.layer_height_mm, r.settings, r.not_imported
+                        );
+                    }
+                }
+                Err(e) => println!("{path}: {e}"),
+            }
+            continue;
+        }
         match read_printer_settings(ext, &bytes) {
             Ok(printers) => {
                 for p in printers {

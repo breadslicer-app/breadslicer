@@ -8131,3 +8131,50 @@ msgstr "Esqueleto + islas"
 msgctxt "Inspector"
 msgid "Skeleton"
 msgstr "Esqueleto"
+
+#, rust-format
+msgctxt "MeshViewer"
+msgid "X Y Z lock an axis · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels"
+msgstr "X Y Z fijan un eje · Ctrl imanta · Shift fino · {} o Enter confirma · Esc cancela"
+
+#: ui/mesh-viewer.slint
+msgctxt "MeshViewer"
+msgid "Duplicate"
+msgstr "Duplicar"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Mouse controls"
+msgstr "Controles del mouse"
+
+msgctxt "Controls"
+msgid "Breadslicer (as Blender)"
+msgstr "Breadslicer (como Blender)"
+
+msgctxt "Controls"
+msgid "Classic resin slicer"
+msgstr "Slicer de resina clásico"
+
+msgctxt "Controls"
+msgid "Orbit: middle or right drag · Pan: Shift + middle or right · Zoom: wheel or Ctrl + middle"
+msgstr "Orbitar: arrastrar con el medio o el derecho · Desplazar: Shift + medio o derecho · Zoom: rueda o Ctrl + medio"
+
+msgctxt "Controls"
+msgid "Orbit: right drag (or Shift + middle) · Pan: middle drag · Zoom: wheel or Ctrl + middle"
+msgstr "Orbitar: arrastrar con el derecho (o Shift + medio) · Desplazar: arrastrar con el medio · Zoom: rueda o Ctrl + medio"
+
+msgctxt "Controls"
+msgid "Orbit: Shift + middle drag · Pan: middle drag · Zoom: wheel"
+msgstr "Orbitar: Shift + arrastrar con el medio · Desplazar: arrastrar con el medio · Zoom: rueda"
+
+msgctxt "Controls"
+msgid "Orbit: middle drag · Pan: Ctrl + middle · Zoom: wheel or Shift + middle"
+msgstr "Orbitar: arrastrar con el medio · Desplazar: Ctrl + medio · Zoom: rueda o Shift + medio"
+
+msgctxt "Controls"
+msgid "Orbit: Alt + left drag · Pan: Alt + middle (or middle) · Zoom: Alt + right or wheel"
+msgstr "Orbitar: Alt + arrastrar con el izquierdo · Desplazar: Alt + medio (o medio) · Zoom: Alt + derecho o rueda"
+
+msgctxt "PrinterSettingsImport"
+msgid "a resin file says no printer: pick your printer first, then import it again"
+msgstr "un archivo de resinas no dice la impresora: elegí tu impresora primero y volvé a importarlo"

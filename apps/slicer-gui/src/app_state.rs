@@ -373,6 +373,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_lift_models_on_plate(snap.lift_models_on_plate);
     settings.set_overhang_map(snap.overhang_map);
     settings.set_fix_all_repeat(snap.fix_all_repeat);
+    settings.set_controls_layout(snap.controls_layout);
     settings.set_hide_rafts_under_plate(snap.hide_rafts_under_plate);
     settings.set_support_lines_under_plate(snap.support_lines_under_plate);
     settings.set_silenced_messages(snap.silenced_messages.clone());
@@ -475,6 +476,15 @@ fn subscribe_window_preferences(
         if let Some(w) = window.upgrade() {
             w.apply_preferences(snap);
         }
+        // One printer and one resin in use (#623): a scene's own choice,
+        // kept from an older project, gives way to the one just picked, so
+        // the plate and the print setup show the same printer.
+        if matches!(change, PreferencesChange::DefaultPrinter) {
+            controller.document().set_selected_printer(None);
+        }
+        if matches!(change, PreferencesChange::DefaultResin) {
+            controller.document().set_selected_resin(None);
+        }
         if matches!(
             change,
             PreferencesChange::DefaultPrinter | PreferencesChange::Profiles
@@ -532,6 +542,7 @@ impl AppState {
             lift_models_on_plate: settings.lift_models_on_plate(),
             overhang_map: settings.overhang_map(),
             fix_all_repeat: settings.fix_all_repeat(),
+            controls_layout: settings.controls_layout(),
             hide_rafts_under_plate: settings.hide_rafts_under_plate(),
             support_lines_under_plate: settings.support_lines_under_plate(),
             // Never stored: the log runs until the app closes and every launch
@@ -1349,7 +1360,27 @@ impl AppState {
         if let Some(autosaver) = &window.autosaver {
             autosaver.close();
         }
+        if self.main_windows.borrow().is_empty() {
+            self.hide_tool_windows();
+        }
         Some(window)
+    }
+
+    /// Hides the app-wide windows (Preferences, About) once the last main
+    /// window has gone (#617): left open, they would keep the app running
+    /// with nothing to come back to.
+    fn hide_tool_windows(&self) {
+        if let Some(prefs) = self.preferences_window.borrow().as_ref() {
+            let _ = prefs.window.hide();
+        }
+        if let Some(about) = self.about_window.borrow().as_ref() {
+            let _ = about.window.hide();
+        }
+        // Their own dialogs (add a printer, extend a profile) have no main
+        // window to return to either: the app ends, as it does when the last
+        // window closes on its own.
+        #[cfg(not(test))]
+        let _ = slint::quit_event_loop();
     }
 
     /// At start-up: offers back what earlier runs left unsaved (#18), then,
@@ -2667,6 +2698,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::LiftModelsOnPlate,
             PreferencesChange::OverhangMap,
             PreferencesChange::FixAllRepeat,
+            PreferencesChange::Controls,
             PreferencesChange::HideRaftsUnderPlate,
             PreferencesChange::SupportLinesUnderPlate,
             PreferencesChange::DiagnosticLog,
@@ -3929,6 +3961,29 @@ mod window_wiring_tests {
         assert!(objects_back, "the undo brings the object back");
     }
 
+    /// Closing the last main window hides Preferences too (#617): left open,
+    /// it kept the app running with no window to come back to.
+    #[test]
+    fn closing_the_last_window_hides_preferences() {
+        let (shown, hidden) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            app.show_preferences(&window, Weak::new());
+            let prefs = || {
+                app.preferences_window
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|p| p.window.window().is_visible())
+            };
+            let shown = prefs();
+            drop(app.remove_window(id));
+            (shown, prefs())
+        });
+        assert!(shown, "Preferences opened");
+        assert!(!hidden, "and went with the last window");
+    }
+
     /// File > Clear Scene leaves the window empty, with no start dialog;
     /// File > Close brings the start dialog back.
     #[test]
@@ -4678,8 +4733,17 @@ mod window_wiring_tests {
                     b[depth].to_bits(),
                     "{how}, drag {drag:?}: {b:?} went to {a:?}"
                 );
-                let moved: f64 = (0..3).map(|k| (a[k] - b[k]).powi(2)).sum();
-                assert!(moved > 1e-6, "{how}, drag {drag:?}: it moved");
+                // G without an axis slides on the plate (#620): never in Z.
+                assert_eq!(
+                    a[2].to_bits(),
+                    b[2].to_bits(),
+                    "{how}, drag {drag:?}: {b:?} went up or down to {a:?}"
+                );
+                // Seen from a side, only the way across the screen moves it.
+                if depth == 2 || drag.0 != 0.0 {
+                    let moved: f64 = (0..3).map(|k| (a[k] - b[k]).powi(2)).sum();
+                    assert!(moved > 1e-6, "{how}, drag {drag:?}: it moved");
+                }
             }
             if depth == 2 {
                 let moved = [0, 1, 2].map(|k| after[0][k] - before[0][k]);
@@ -4696,7 +4760,11 @@ mod window_wiring_tests {
                     "{how}: a drag of {drag:?} took the cube {went:?} on screen"
                 );
             }
-            shown.undo();
+            // A drag up the screen from a side moves nothing, and leaves no
+            // step to undo.
+            if after != before {
+                shown.undo();
+            }
             assert_eq!(shown.places(), before, "{how}: one Undo takes it back");
         }
     }
@@ -4773,8 +4841,8 @@ mod window_wiring_tests {
         });
     }
 
-    /// #424: a free view keeps today's G, in the plane of the camera, and
-    /// today's R, about the line of sight.
+    /// #424, #620: from a free view G slides on the plate (never in Z) and R
+    /// turns about the line of sight.
     #[test]
     fn g_and_r_from_a_free_view_follow_the_camera_plane() {
         on_fresh_slint_thread(|| {
@@ -4786,9 +4854,10 @@ mod window_wiring_tests {
             let before = shown.places();
             shown.gesture("g", (0.0, -150.0));
             let after = shown.places();
-            for k in 0..3 {
+            for k in 0..2 {
                 assert!((after[0][k] - before[0][k]).abs() > 0.01, "{after:?}");
             }
+            assert_eq!(after[0][2].to_bits(), before[0][2].to_bits(), "{after:?}");
             shown.undo();
             shown.gesture("r", (60.0, 40.0));
             let turned = shown.rotations();

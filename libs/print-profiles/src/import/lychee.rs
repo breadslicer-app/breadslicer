@@ -136,6 +136,48 @@ fn resin(value: &Value) -> ImportedResin {
     }
 }
 
+/// Resins that share a brand and a name (one per layer height, say) are
+/// told apart by their layer height: they would be one profile otherwise,
+/// the last overwriting the others (#618).
+fn named_apart(mut resins: Vec<ImportedResin>) -> Vec<ImportedResin> {
+    let twice = |resins: &[ImportedResin], r: &ImportedResin| {
+        resins
+            .iter()
+            .filter(|o| o.brand == r.brand && o.name == r.name)
+            .count()
+            > 1
+    };
+    let shared: Vec<bool> = resins.iter().map(|r| twice(&resins, r)).collect();
+    for (resin, shared) in resins.iter_mut().zip(shared) {
+        if let (true, Some(h)) = (shared, resin.layer_height_mm) {
+            resin.name = format!("{} ({} µm)", resin.name, (h * 1000.0).round());
+        }
+    }
+    resins
+}
+
+/// The resins of a `.lyr` file, Lychee's resin export (#618): the same
+/// encoding as a `.lyp`, a list of resins with no printer. Which printer
+/// they are for is the importer's to say.
+pub fn read_lychee_resins(bytes: &[u8]) -> Result<Vec<ImportedResin>, ImportError> {
+    let value = msgpack::decode(&lowered(bytes))
+        .map_err(|e| ImportError::Unreadable(format!("not a Lychee resin export ({})", e.0)))?;
+    let Value::Array(entries) = value else {
+        return Err(ImportError::Unreadable(
+            "not a Lychee resin export".to_owned(),
+        ));
+    };
+    let resins: Vec<ImportedResin> = entries
+        .iter()
+        .filter(|entry| entry.get("normalLayerExposureTime").is_some())
+        .map(resin)
+        .collect();
+    if resins.is_empty() {
+        return Err(ImportError::Empty);
+    }
+    Ok(named_apart(resins))
+}
+
 /// The printers and resins of a `.lyp` file.
 pub fn read_lychee(bytes: &[u8]) -> Result<Vec<ImportedPrinter>, ImportError> {
     let value = msgpack::decode(&lowered(bytes))
@@ -158,7 +200,7 @@ pub fn read_lychee(bytes: &[u8]) -> Result<Vec<ImportedPrinter>, ImportError> {
                 number(printer, "printableY").or_else(|| number(printer, "y"))?,
             );
             let resins = match entry.get("resins") {
-                Some(Value::Array(resins)) => resins.iter().map(resin).collect(),
+                Some(Value::Array(resins)) => named_apart(resins.iter().map(resin).collect()),
                 _ => Vec::new(),
             };
             Some(ImportedPrinter {

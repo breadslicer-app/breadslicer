@@ -999,25 +999,37 @@ gizmo_size = 400
     }
 
     #[test]
-    fn the_lift_of_models_on_the_plate_round_trips_and_is_omitted_while_off() {
+    fn the_lift_of_models_on_the_plate_round_trips_and_is_omitted_while_on() {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);
         let mut s = AppSettings::default();
         file.save(&s).unwrap();
         let written = fs::read_to_string(&file.path).unwrap();
-        assert!(!written.contains("lift_models_on_plate"), "got:\n{written}");
-        assert!(!written.contains("overhang_map"), "got:\n{written}");
-        assert!(!file.load().settings().lift_models_on_plate());
+        assert!(
+            !written.contains("lift_models_on_plate"),
+            "got:
+{written}"
+        );
+        assert!(
+            !written.contains("overhang_map"),
+            "got:
+{written}"
+        );
+        assert!(
+            file.load().settings().lift_models_on_plate(),
+            "on by default (#615)"
+        );
 
-        s.set_lift_models_on_plate(true);
+        s.set_lift_models_on_plate(false);
         s.set_overhang_map(true);
         file.save(&s).unwrap();
         let written = fs::read_to_string(&file.path).unwrap();
         assert!(
-            written.contains("lift_models_on_plate = true"),
-            "got:\n{written}"
+            written.contains("lift_models_on_plate = false"),
+            "got:
+{written}"
         );
-        assert!(file.load().settings().lift_models_on_plate());
+        assert!(!file.load().settings().lift_models_on_plate());
         assert!(file.load().settings().overhang_map());
     }
 

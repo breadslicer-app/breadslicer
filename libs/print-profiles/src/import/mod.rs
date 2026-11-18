@@ -36,7 +36,7 @@ mod workshop;
 #[cfg(test)]
 mod tests;
 
-pub use lychee::read_lychee;
+pub use lychee::{read_lychee, read_lychee_resins};
 pub use workshop::read_photon_workshop;
 
 /// A printer of an imported file, with the resins set for it.
@@ -96,6 +96,39 @@ pub fn read_printer_settings(
             "files ending in .{other} are not printer settings"
         ))),
     }
+}
+
+/// The printer of `catalog` that `text` (a file name, say) names: the
+/// longest printer name, with or without its maker, found in it, letters and
+/// digits alone, so "Elegoo Mars 5 Ultra Resin.lyr" is the Mars 5 Ultra and
+/// not the Mars 5 (#618).
+pub fn printer_named_in<'a>(
+    text: &str,
+    printers: impl IntoIterator<Item = (&'a PrinterId, &'a str, &'a str)>,
+) -> Option<PrinterId> {
+    let letters = |text: &str| -> String {
+        text.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .flat_map(|c| c.to_lowercase())
+            .collect()
+    };
+    let named = letters(text);
+    printers
+        .into_iter()
+        .filter_map(|(id, maker, name)| {
+            let name = letters(name);
+            let full = format!("{}{name}", letters(maker));
+            let found = if named.contains(&full) {
+                full.len()
+            } else if !name.is_empty() && named.contains(&name) {
+                name.len()
+            } else {
+                return None;
+            };
+            Some((found, id))
+        })
+        .max_by_key(|(found, _)| *found)
+        .map(|(_, id)| id.clone())
 }
 
 /// How far a plate may measure from ours, as a share of it, and still be

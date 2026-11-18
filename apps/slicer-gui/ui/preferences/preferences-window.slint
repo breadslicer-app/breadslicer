@@ -35,6 +35,9 @@ export component PreferencesWindow inherits Window {
     in-out property <int> current-aa-index: 0;
     in-out property <bool> prescan-supports: false;
     in-out property <bool> smooth-models: false;
+    in property <[string]> controls-options;
+    in-out property <int> current-controls-index: 0;
+    in property <string> controls-summary;
     in-out property <bool> show-start-dialog: true;
     in-out property <int> current-frame-rate-index: 0;
     in-out property <int> current-gizmo-style-index: 0;
@@ -76,6 +79,7 @@ export component PreferencesWindow inherits Window {
     callback aa-level-changed(int);
     callback prescan-supports-changed(bool);
     callback smooth-models-changed(bool);
+    callback controls-selected(int);
     callback show-start-dialog-changed(bool);
     callback frame-rate-changed(int);
     callback gizmo-style-changed(int);
@@ -139,9 +143,15 @@ export component PreferencesWindow inherits Window {
                 language-options: root.language-options;
                 current-language-index: root.current-language-index;
                 smooth-models <=> root.smooth-models;
+                controls-options: root.controls-options;
+                current-controls-index <=> root.current-controls-index;
+                controls-summary: root.controls-summary;
                 silenced-message-count: root.silenced-message-count;
                 show-all-messages-again => {
                     root.show-all-messages-again();
+                }
+                controls-selected(index) => {
+                    root.controls-selected(index);
                 }
                 smooth-models-changed(on) => {
                     root.smooth-models-changed(on);

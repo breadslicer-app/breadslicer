@@ -384,6 +384,17 @@ pub(crate) fn build_preferences_window(
         }
     });
 
+    prefs.on_controls_selected({
+        let bus = bus.clone();
+        move |index| {
+            bus.update(move |snap| {
+                snap.controls_layout =
+                    crate::controls_layout::ControlsLayout::from_combo_index(index);
+                PreferencesChange::Controls
+            });
+        }
+    });
+
     prefs.on_smooth_models_changed({
         let bus = bus.clone();
         move |on| {

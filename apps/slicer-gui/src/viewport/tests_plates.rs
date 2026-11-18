@@ -822,3 +822,80 @@ fn arrange_all_pressed_again_is_one_step() {
         assert!(near(centre_of(&ctrl, l), start[k]), "back where it started");
     }
 }
+
+/// The hint of the plate tool under the pointer goes with the click
+/// (#616): removing the plate takes its trash button away, and its text
+/// must not stay in the status bar until a plate is added and hovered.
+#[test]
+fn a_plate_tool_hint_does_not_outlive_its_click() {
+    let ui = MainWindow::new().expect("the headless platform creates a main window");
+    let ctrl = ViewportController::new_for_test_with_ui(&ui);
+    ctrl.set_build_volume(volume());
+    let mut g = Scene::new();
+    let root = g.add_group(None, Transform3D::Identity);
+    g.add_root(root).expect("group root");
+    ctrl.install_graph_for_test(g);
+    ctrl.set_section(WorkspaceSection::Transform);
+    ctrl.add_plate();
+    let document = ctrl.document();
+    document.set_active_plate(1);
+    assert_eq!(document.plates().count(), 2);
+    // As the hover leaves it over the trash button.
+    ctrl.plate_tool_hovered.set(Some(2));
+    ui.set_status_notice("Remove this plate (Shift: with its models)".into());
+    ctrl.run_plate_tool(2, false);
+    assert_eq!(document.plates().count(), 1, "the plate went");
+    assert_eq!(ui.get_status_notice(), "", "and so did its hint");
+    assert_eq!(ctrl.plate_tool_hovered.get(), None);
+}
+
+/// Ctrl+A takes every model of the active plate, Ctrl+I the rest, and
+/// Ctrl+D copies the selection next to it in one undo step, the copy
+/// selected (#612, #613).
+#[test]
+fn select_all_invert_and_duplicate_with_the_keyboard() {
+    let (ctrl, leaves) = window(&[Vec3::new(-30.0, 0.0, 0.0), Vec3::new(30.0, 0.0, 0.0)]);
+    ctrl.set_section(WorkspaceSection::Transform);
+    let document = ctrl.document();
+    ctrl.on_edit_key("select-all", 0.0, 0.0);
+    assert_eq!(document.selection_len(), 2);
+    ctrl.on_edit_key("deselect", 0.0, 0.0);
+    assert_eq!(document.selection_len(), 0);
+    document.set_selection(Selection::One(LeafId(leaves[0])));
+    ctrl.on_edit_key("invert", 0.0, 0.0);
+    assert_eq!(document.selection_node_ids(), vec![leaves[1]]);
+    let before = document.undo_len();
+    ctrl.on_edit_key("duplicate", 0.0, 0.0);
+    assert_eq!(ctrl.models_on_plates().len(), 3, "a copy");
+    assert_eq!(document.undo_len(), before + 1, "in one step");
+    let copy = document.selection_node_ids();
+    assert_eq!(copy.len(), 1);
+    assert!(!leaves.contains(&copy[0]), "the copy is selected");
+    let at = centre_of(&ctrl, copy[0]);
+    assert!(at.z.abs() < 1e-3, "on the plate: {at:?}");
+    assert!(document.undo().unwrap_or(false));
+    assert_eq!(ctrl.models_on_plates().len(), 2);
+}
+
+/// Shift+click on a row of the object list takes every row from the last
+/// one clicked; Ctrl+click still takes one (#619).
+#[test]
+fn shift_click_in_the_object_list_takes_a_range() {
+    let places: Vec<Vec3> = (0..5)
+        .map(|i| Vec3::new(-40.0 + 20.0 * i as f32, 0.0, 0.0))
+        .collect();
+    let (ctrl, leaves) = window(&places);
+    ctrl.set_section(WorkspaceSection::Transform);
+    let document = ctrl.document();
+    ctrl.on_select_by_index(1);
+    ctrl.on_range_by_index(3);
+    assert_eq!(document.selection_node_ids(), leaves[1..=3].to_vec());
+    // Backwards from the same anchor.
+    ctrl.on_range_by_index(0);
+    assert_eq!(document.selection_node_ids(), leaves[0..=1].to_vec());
+    // Ctrl+click adds one and moves the anchor.
+    ctrl.on_toggle_by_index(4);
+    assert_eq!(document.selection_len(), 3);
+    ctrl.on_range_by_index(2);
+    assert_eq!(document.selection_node_ids(), leaves[2..=4].to_vec());
+}
