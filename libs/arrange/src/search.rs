@@ -77,15 +77,15 @@ pub(crate) struct Layout {
 /// A small, seedable generator (xorshift64*): the passes are the same for
 /// the same scene.
 #[derive(Debug)]
-struct Rng(u64);
+pub(crate) struct Rng(u64);
 
 impl Rng {
-    fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         Self(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
     }
 
     /// Uniform in [0, 1).
-    fn next(&mut self) -> f64 {
+    pub(crate) fn next(&mut self) -> f64 {
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;
         self.0 ^= self.0 >> 27;
@@ -930,6 +930,64 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
         }
     }
     pick(layouts.into_iter().map(|(_, l)| l).collect())
+}
+
+/// `layout` with the bodies it left off squeezed in, the bodies placed
+/// moving to make room (#555): the smallest first, until one does not fit,
+/// for a larger one hardly would. The pile is then balanced again. `None`
+/// when cancelled.
+pub(crate) fn squeezed(
+    problem: &Problem<'_>,
+    layout: Layout,
+    cancel: &AtomicBool,
+) -> Option<Layout> {
+    let size = |b: usize| problem.footprints[b].shapes.first().map_or(0, Shape::area);
+    let mut left: Vec<usize> = (0..layout.placed.len())
+        .filter(|&b| layout.placed[b].is_none())
+        .collect();
+    if left.is_empty() || layout.count == 0 {
+        return Some(layout);
+    }
+    left.sort_by_key(|&b| (size(b), b));
+    let placed: Vec<(usize, crate::separate::Spot)> = layout
+        .placed
+        .iter()
+        .enumerate()
+        .filter_map(|(b, p)| p.map(|s| (b, s)))
+        .collect();
+    let before = placed.len();
+    let placed = crate::separate::squeeze_in(
+        problem.footprints,
+        &problem.plate,
+        placed,
+        left,
+        |_| true,
+        cancel,
+    )?;
+    let added = placed.len() > before;
+    if !added {
+        return Some(layout);
+    }
+    let mut spots = vec![None; layout.placed.len()];
+    let mut pile: Option<([i32; 2], [i32; 2])> = None;
+    for (b, (angle, at)) in placed {
+        spots[b] = Some((angle, at));
+        let shape = &problem.footprints[b].shapes[angle];
+        let (lo, hi) = (
+            [at[0] + shape.lo[0], at[1] + shape.lo[1]],
+            [at[0] + shape.hi[0], at[1] + shape.hi[1]],
+        );
+        pile = Some(pile.map_or((lo, hi), |(l, h)| {
+            (
+                [l[0].min(lo[0]), l[1].min(lo[1])],
+                [h[0].max(hi[0]), h[1].max(hi[1])],
+            )
+        }));
+    }
+    let metric = Metric {
+        size: [problem.plate.width as i64, problem.plate.height as i64],
+    };
+    Some(finish(problem, metric, spots, pile, layout.pass))
 }
 
 /// The winner: most bodies placed, then the pile that needs the least

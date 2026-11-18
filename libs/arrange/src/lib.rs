@@ -37,6 +37,7 @@ mod footprint;
 mod grid;
 mod plate;
 mod search;
+mod separate;
 
 pub use cache::{kept_bytes, kept_parts, kept_parts_of};
 pub use fill::{FillCopy, Filled, fill};
@@ -108,6 +109,10 @@ pub struct Settings {
     /// in rows, and on the densest lattice the largest one keeps clear on;
     /// a fill of one body tries that lattice too.
     pub tight: bool,
+    /// Once placed, squeezes in the bodies left off (#555): each is put in
+    /// anyway and the bodies around it move until none overlaps. Costs
+    /// about a second a plate; never places fewer.
+    pub squeeze: bool,
 }
 
 impl Default for Settings {
@@ -123,6 +128,7 @@ impl Default for Settings {
             time_limit: Duration::from_secs(2),
             free_below: 0.0,
             tight: false,
+            squeeze: true,
         }
     }
 }
@@ -458,6 +464,11 @@ pub fn arrange(
         tight: settings.tight,
     };
     let layout = search::search(&problem, cancel).ok_or(Cancelled)?;
+    let layout = if settings.squeeze {
+        search::squeezed(&problem, layout, cancel).ok_or(Cancelled)?
+    } else {
+        layout
+    };
     let mut placements: Vec<Option<Placement>> = vec![None; bodies.len()];
     let mut parking = Parking::new(plate, frame.geo.gap);
     for (k, &body) in movable.iter().enumerate() {
@@ -695,6 +706,11 @@ pub fn arrange_across(
             tight: settings.tight,
         };
         let layout = search::search(&problem, cancel).ok_or(Cancelled)?;
+        let layout = if settings.squeeze {
+            search::squeezed(&problem, layout, cancel).ok_or(Cancelled)?
+        } else {
+            layout
+        };
         let mut still = Vec::new();
         for (k, &body) in left.iter().enumerate() {
             match layout.placed[k] {
