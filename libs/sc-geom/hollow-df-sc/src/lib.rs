@@ -688,5 +688,221 @@ fn run_hollow(
     })
 }
 
+/// A mesh posed by a world transform, ready to measure drains drilled into
+/// it as it is (#447): [`hollow_df::DrillTarget`] in the leaf's physical
+/// frame. Building it walks the mesh once (a ray tree): do it off the UI
+/// thread.
+#[derive(Debug)]
+pub struct DrillProbe {
+    target: hollow_df::DrillTarget,
+    stretch: [i64; 9],
+}
+
+/// Where the face is laid out for [`DrillProbe::drain_map`]: one sample a
+/// cell of this side.
+const DRAIN_MAP_CELL_MM: f32 = 2.0;
+/// Rays a sample of the map looks around the air behind the wall with.
+const DRAIN_MAP_RAYS: usize = 12;
+
+impl DrillProbe {
+    pub fn new(mesh: &IndexedMesh, world: &Transform3D) -> Result<Self, SceneError> {
+        let frame = LeafFrame::of(world)?;
+        Ok(Self {
+            target: hollow_df::DrillTarget::new(engine_mesh(mesh, &frame)),
+            stretch: frame.stretch_key(),
+        })
+    }
+
+    /// How many cavities are closed all round (#130).
+    pub fn sealed_cavities(&self) -> usize {
+        self.target.sealed_cavities()
+    }
+
+    /// Where on the model a drain would work best (#455), at the pose
+    /// `world`: the faces of the outside (by index) where the wall behind is
+    /// thin, at most `thin_factor` times the thinnest found, and that are
+    /// low on the model (its bottom quarter, by height), as the resin runs
+    /// out of a hole near the plate; none within `clear_mm` of `drains`
+    /// (world points), which already drain there, nor those `avoid` marks.
+    /// `None` when `world` scales the model otherwise than the probe was
+    /// made for. A guide only: it places nothing.
+    pub fn drain_map(
+        &self,
+        world: &Transform3D,
+        thin_factor: f32,
+        drains: &[[f32; 3]],
+        clear_mm: f32,
+        avoid: &dyn Fn(usize) -> bool,
+    ) -> Option<Vec<u32>> {
+        use std::collections::HashMap;
+        let frame = LeafFrame::of(world).ok()?;
+        if frame.stretch_key() != self.stretch {
+            return None;
+        }
+        let mesh = self.target.mesh();
+        let to_world = |p: hollow_df::Vec3| {
+            let q = apply(&frame.rotation, [p.x, p.y, p.z].map(f64::from));
+            [0, 1, 2].map(|k| (q[k] + frame.translation[k]) as f32)
+        };
+        let (mut low, mut high) = (f32::INFINITY, f32::NEG_INFINITY);
+        for p in &mesh.positions {
+            let z = to_world(*p)[2];
+            low = low.min(z);
+            high = high.max(z);
+        }
+        let cutoff = low + 0.25 * (high - low);
+        // One sample a cell, as (its depth, whether it is low enough), and
+        // which cell each face of the outside is in.
+        let mut samples: HashMap<[i32; 3], Option<f32>> = HashMap::new();
+        let mut cells: Vec<Option<[i32; 3]>> = vec![None; mesh.triangles.len()];
+        for (f, tri) in mesh.triangles.iter().enumerate() {
+            if !self.target.faces_out(f) || avoid(f) {
+                continue;
+            }
+            let [a, b, c] = tri.map(|v| mesh.positions[v as usize]);
+            let centre = a.add(b).add(c).scale(1.0 / 3.0);
+            let w = to_world(centre);
+            if w[2] > cutoff
+                || drains.iter().any(|d| {
+                    (0..3).map(|k| (d[k] - w[k]).powi(2)).sum::<f32>() < clear_mm * clear_mm
+                })
+            {
+                continue;
+            }
+            let cell =
+                [centre.x, centre.y, centre.z].map(|v| (v / DRAIN_MAP_CELL_MM).floor() as i32);
+            cells[f] = Some(cell);
+            samples.entry(cell).or_insert_with(|| {
+                let normal = b.sub(a).cross(c.sub(a));
+                let inward = [-normal.x, -normal.y, -normal.z];
+                self.target
+                    .wall_depth(centre.to_array(), inward, DRAIN_MAP_RAYS)
+            });
+        }
+        let thinnest = samples
+            .values()
+            .flatten()
+            .copied()
+            .fold(f32::INFINITY, f32::min);
+        if !thinnest.is_finite() {
+            return Some(Vec::new());
+        }
+        let limit = thinnest * thin_factor.max(1.0);
+        Some(
+            cells
+                .iter()
+                .enumerate()
+                .filter_map(|(f, cell)| {
+                    let depth = (*samples.get(cell.as_ref()?)?)?;
+                    (depth <= limit).then_some(f as u32)
+                })
+                .collect(),
+        )
+    }
+
+    /// Whether the mesh is closed, as drilling it needs.
+    pub fn is_closed(&self) -> bool {
+        self.target.is_closed()
+    }
+
+    /// What `drain` (world, at the pose `world`) would do drilled into the
+    /// mesh; `None` when `world` scales the model otherwise than the probe
+    /// was made for.
+    pub fn report(&self, world: &Transform3D, drain: &WorldDrain) -> Option<DrainReport> {
+        let frame = LeafFrame::of(world).ok()?;
+        (frame.stretch_key() == self.stretch).then(|| self.target.report(&drain.in_frame(&frame)))
+    }
+}
+
+/// How many cavities of `mesh` are closed all round (#130): each traps the
+/// resin in it until a drain opens it.
+pub fn sealed_cavities(mesh: &IndexedMesh) -> usize {
+    hollow_df::sealed_cavities(&engine_mesh(
+        mesh,
+        &LeafFrame::of(&Transform3D::Identity).unwrap_or_else(|_| unreachable!()),
+    ))
+}
+
+/// What a drill job hands back.
+#[derive(Debug, Clone)]
+pub struct DrillOutcome {
+    /// The mesh with the drains cut, in the leaf's local frame, carrying
+    /// the original's metadata; the very mesh when none was cut.
+    pub mesh: IndexedMesh,
+    /// One per drain asked for, in order.
+    pub drains: Vec<DrainReport>,
+    /// One per drain cut that asked for a plug, in drain order.
+    pub plugs: Vec<HollowPlug>,
+}
+
+/// Starts drilling `drains` (world, at the pose `world`) into `mesh` as it
+/// is, on its own thread (#447): no cavity is computed, so a hollow from a
+/// file takes drains too. A mesh that is not closed fails; a drain whose
+/// axis does not reach a closed cavity is reported and left uncut.
+///
+/// `probe`, when it is of this very mesh at this stretch, is used as it is:
+/// the ray tree and the air map are not built again.
+pub fn start_drill_mesh(
+    mesh: Arc<IndexedMesh>,
+    world: &Transform3D,
+    drains: Vec<WorldDrain>,
+    probe: Option<Arc<DrillProbe>>,
+) -> Result<JobHandle<DrillOutcome>, SceneError> {
+    let frame = LeafFrame::of(world)?;
+    let probe = probe.filter(|p| p.stretch == frame.stretch_key());
+    Ok(JobHandle::spawn(move |worker: &JobWorker<DrillOutcome>| {
+        let total = 3;
+        let report = |completed: u32, stage: Stage| {
+            worker.report_progress(JobProgress {
+                phase: stage.label().to_owned(),
+                completed,
+                total,
+            });
+        };
+        let step = AtomicU32::new(1);
+        let progress =
+            |stage: Stage| report(step.fetch_add(1, Ordering::Relaxed).min(total), stage);
+        let cancelled = || worker.is_cancelled();
+        let ctl = Control::with_check(&cancelled, Some(&progress));
+        report(0, Stage::Stabilize);
+        let built;
+        let target = match &probe {
+            Some(probe) => &probe.target,
+            None => {
+                built = hollow_df::DrillTarget::new(engine_mesh(&mesh, &frame));
+                &built
+            }
+        };
+        let holes: Vec<DrainHole> = drains.iter().map(|d| d.in_frame(&frame)).collect();
+        let drilled = target.drill(&holes, ctl).map_err(|e| match e {
+            HollowError::Cancelled => JobError::Cancelled,
+            other => JobError::Failed(other.to_string()),
+        })?;
+        let plugs = drilled
+            .plugs
+            .iter()
+            .map(|plug| HollowPlug {
+                drain: plug.drain,
+                mesh: plug
+                    .mesh
+                    .as_ref()
+                    .map(|m| standing_plug(m, &holes[plug.drain], &frame)),
+            })
+            .collect();
+        let cut = drilled.drains.iter().any(|d| d.reaches_cavity);
+        let out = if cut {
+            leaf_mesh(&drilled.mesh, &frame, mesh.meta().clone())
+        } else {
+            (*mesh).clone()
+        };
+        report(total, Stage::Validate);
+        Ok(DrillOutcome {
+            mesh: out,
+            drains: drilled.drains,
+            plugs,
+        })
+    }))
+}
+
 #[cfg(test)]
 mod tests;

@@ -300,19 +300,19 @@ pub const DRAIN_PAST_WALL_MM: f32 = 0.2;
 /// never reaches into the opposite wall (#264).
 const DRAIN_FAR_SIDE_CLEARANCE_MM: f32 = 0.1;
 /// DragonFruit's `HOLE_PUNCH_AUTO_DEPTH_RAY_START_OFFSET_MM`.
-const DRAIN_RAY_START_MM: f32 = 0.3;
+pub(crate) const DRAIN_RAY_START_MM: f32 = 0.3;
 /// Where across the hole its rim is measured, as a fraction of its radius:
 /// just inside the prism's corners.
-const DRAIN_RIM_SAMPLE: f32 = 0.99;
+pub(crate) const DRAIN_RIM_SAMPLE: f32 = 0.99;
 /// How much deeper than the axis, per millimetre of radius, a ray across
 /// the hole may meet the cavity wall and still be the same wall, sloping
 /// (up to about 63°): one deeper is beside the cavity, behind solid.
-const DRAIN_RIM_SLOPE: f32 = 2.0;
+pub(crate) const DRAIN_RIM_SLOPE: f32 = 2.0;
 /// DragonFruit's cap on any punch depth.
 const DRAIN_MAX_DEPTH_MM: f32 = 120.0;
 /// Hits along a drain axis closer than this are one surface (DragonFruit's
 /// tolerance for a ray through a shared edge or vertex).
-const DRAIN_SAME_SURFACE_MM: f32 = 0.05;
+pub(crate) const DRAIN_SAME_SURFACE_MM: f32 = 0.05;
 
 /// What one drain did.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1105,7 +1105,7 @@ impl Session {
 /// member and has no vertex in the wall (`wall` is the cavity surface, so a
 /// vertex outside it is in the wall) nor crosses a member that holds. The
 /// rest stays as it is, in place.
-fn clear_channels(
+pub(crate) fn clear_channels(
     infill: &IndexedMesh,
     cutters: &[(usize, ConvexCutter)],
     wall: (&IndexedMesh, &Bvh),
@@ -1151,7 +1151,7 @@ fn clear_channels(
 
 /// A drain's axis, normalized (straight down when it has no direction), and
 /// its center.
-fn drain_axis(hole: &DrainHole) -> (Vec3, Vec3) {
+pub(crate) fn drain_axis(hole: &DrainHole) -> (Vec3, Vec3) {
     let axis = vec3_normalize(Vec3::new(
         hole.direction[0],
         hole.direction[1],
@@ -1173,10 +1173,26 @@ fn drain_report_on(
     source: (&IndexedMesh, &Bvh),
     cavity: (&IndexedMesh, &Bvh),
 ) -> DrainReport {
+    let segments = drain_segments(hole);
+    let opening = drain_opening(source, cavity, hole, segments);
+    report_of_opening(hole, wall_thickness_mm, opening, segments)
+}
+
+/// How many sides the prism a drain is cut as has.
+pub(crate) fn drain_segments(hole: &DrainHole) -> usize {
     let (radius_x, radius_y) = drain_radii(hole);
     let widest = radius_x.max(radius_y) * drain_taper(hole).max(1.0);
-    let segments = ((std::f32::consts::TAU * widest / 0.7).ceil() as usize).clamp(16, 80);
-    let opening = drain_opening(source, cavity, hole, segments);
+    ((std::f32::consts::TAU * widest / 0.7).ceil() as usize).clamp(16, 80)
+}
+
+/// What a drain does, given where it opens into the cavity (`None`: it does
+/// not); `wall_thickness_mm` is the depth reported for one that does not.
+pub(crate) fn report_of_opening(
+    hole: &DrainHole,
+    wall_thickness_mm: f32,
+    opening: Option<DrainOpening>,
+    segments: usize,
+) -> DrainReport {
     let mut depth_capped = false;
     let (depth_mm, auto_depth) = match hole.depth {
         DrainDepth::Mm(mm) => {
@@ -1211,7 +1227,7 @@ fn drain_report_on(
 }
 
 /// A drain's radii at the surface.
-fn drain_radii(hole: &DrainHole) -> (f32, f32) {
+pub(crate) fn drain_radii(hole: &DrainHole) -> (f32, f32) {
     (
         hole.radius_mm.max(0.02),
         hole.radius_y_mm.unwrap_or(hole.radius_mm).max(0.02),
@@ -1220,7 +1236,7 @@ fn drain_radii(hole: &DrainHole) -> (f32, f32) {
 
 /// A drain's radius at its end over its radius at the surface: 1 for a
 /// cylinder (#317).
-fn drain_taper(hole: &DrainHole) -> f32 {
+pub(crate) fn drain_taper(hole: &DrainHole) -> f32 {
     hole.inner_radius_mm
         .map_or(1.0, |inner| inner.max(0.02) / hole.radius_mm.max(0.02))
 }
@@ -1277,7 +1293,7 @@ pub const DRAIN_INFILL_CLEARANCE_MM: f32 = 0.5;
 /// cavity by the hole's width, so the drain opens into empty space. A cone
 /// narrowing inward keeps its end's width past the end. Every member of the
 /// infill it reaches into goes, whole.
-fn infill_cutter(hole: &DrainHole, report: &DrainReport) -> ConvexCutter {
+pub(crate) fn infill_cutter(hole: &DrainHole, report: &DrainReport) -> ConvexCutter {
     let depth = report.depth_mm;
     let outside = outside_mm(hole, depth);
     let end = radii_at(hole, depth, depth, 0.0);
@@ -1299,7 +1315,7 @@ fn infill_cutter(hole: &DrainHole, report: &DrainReport) -> ConvexCutter {
 
 /// The prism (or frustum, #317) `hole` cuts, as `report` measured it: from
 /// outside the surface to the drain's end.
-fn drain_cutter(hole: &DrainHole, report: &DrainReport) -> ConvexCutter {
+pub(crate) fn drain_cutter(hole: &DrainHole, report: &DrainReport) -> ConvexCutter {
     let depth = report.depth_mm;
     let outside = outside_mm(hole, depth);
     drain_frustum(
@@ -1312,7 +1328,7 @@ fn drain_cutter(hole: &DrainHole, report: &DrainReport) -> ConvexCutter {
 
 /// A drain's plug's cutter (#318): the drain's own, narrower by half of
 /// `clearance` all round.
-fn plug_cutter(hole: &DrainHole, report: &DrainReport, clearance: f32) -> ConvexCutter {
+pub(crate) fn plug_cutter(hole: &DrainHole, report: &DrainReport, clearance: f32) -> ConvexCutter {
     let depth = report.depth_mm;
     let outside = outside_mm(hole, depth);
     let shrink = -0.5 * clearance.max(0.0);
@@ -1327,17 +1343,17 @@ fn plug_cutter(hole: &DrainHole, report: &DrainReport, clearance: f32) -> Convex
 /// Where a drain opens into the cavity, in mm from the drain's center
 /// along its axis.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct DrainOpening {
+pub(crate) struct DrainOpening {
     /// The cavity wall, on the axis.
-    cavity_mm: f32,
+    pub(crate) cavity_mm: f32,
     /// The far side of the cavity, on the axis.
-    cavity_end_mm: f32,
+    pub(crate) cavity_end_mm: f32,
     /// The cavity wall where the drain meets it last: past this the whole
     /// cross-section of the hole opens into the cavity.
-    open_mm: f32,
+    pub(crate) open_mm: f32,
     /// The far side of the cavity where the drain meets it first: a drain
     /// this deep would reach into the opposite wall.
-    far_mm: f32,
+    pub(crate) far_mm: f32,
 }
 
 impl DrainOpening {
@@ -1427,6 +1443,26 @@ fn drain_opening(
         return None;
     }
 
+    Some(opening_across(
+        hole,
+        axis,
+        segments,
+        (to_cavity, cavity_end),
+        span,
+    ))
+}
+
+/// The opening of a drain whose axis enters the cavity `to_cavity` and
+/// leaves it `cavity_end` past the start plane, measured across the hole
+/// too: `span` gives where a ray from an offset across the axis enters and
+/// leaves the cavity.
+pub(crate) fn opening_across(
+    hole: &DrainHole,
+    axis: Vec3,
+    segments: usize,
+    (to_cavity, cavity_end): (f32, f32),
+    span: impl Fn(Vec3) -> Option<(f32, f32)>,
+) -> DrainOpening {
     // Across the drain where it opens: at its end's width, which a cone's
     // is (#317), a few tenths of a millimetre past the wall.
     let (radius_x, radius_y) = drain_radii(hole);
@@ -1457,12 +1493,12 @@ fn drain_opening(
             far = far.min(leave);
         }
     }
-    Some(DrainOpening {
+    DrainOpening {
         cavity_mm: to_cavity - DRAIN_RAY_START_MM,
         cavity_end_mm: cavity_end - DRAIN_RAY_START_MM,
         open_mm: open - DRAIN_RAY_START_MM,
         far_mm: far - DRAIN_RAY_START_MM,
-    })
+    }
 }
 
 #[cfg(test)]

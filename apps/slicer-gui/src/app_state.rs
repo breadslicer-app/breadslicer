@@ -819,6 +819,7 @@ impl AppState {
         );
         let cut_run = CutRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let hollow_run = HollowRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+        hollow_run.set_repair(repair_run.clone());
         // The Review card applies its fixes through the support and hollow
         // drivers, and the Slice driver hands it each slice's findings.
         let review_panel = ReviewPanel::install(

@@ -1009,3 +1009,261 @@ fn narrowest_cavity_on_real_models() {
         }
     }
 }
+
+/// A hollow as a file brings it (#447): a sphere and its cavity, facing in,
+/// with nothing recorded of how it was made.
+fn imported_hollow_leaf_mesh() -> IndexedMesh {
+    let outer = hollow_df::shapes::icosphere(15.0, 3);
+    let mut inner = hollow_df::shapes::icosphere(13.0, 3);
+    for tri in &mut inner.triangles {
+        tri.swap(1, 2);
+    }
+    let both = hollow_df::shapes::merged(&[outer, inner]);
+    IndexedMesh::new(
+        None,
+        both.positions
+            .iter()
+            .map(|p| Vertex::new(p.to_array()))
+            .collect(),
+        both.triangles
+            .iter()
+            .map(|&t| IndexedTriangle::from_raw_indices(t))
+            .collect(),
+    )
+}
+
+#[test]
+fn a_drain_is_drilled_into_an_imported_hollow_under_a_stretch() {
+    let mesh = Arc::new(imported_hollow_leaf_mesh());
+    // Stretched along x, turned, standing on the plate at (50, 50).
+    let world = affine(
+        [[0.0, -1.0, 0.0], [1.5, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        [50.0, 50.0, 15.0],
+    );
+    let drain = WorldDrain::new([50.2, 50.1, 0.0], [0.0, 0.0, 1.0], 1.5);
+    let probe = DrillProbe::new(&mesh, &world).unwrap();
+    assert!(probe.is_closed());
+    let report = probe.report(&world, &drain).unwrap();
+    assert!(report.reaches_cavity, "{report:?}");
+    let out = start_drill_mesh(mesh.clone(), &world, vec![drain], None)
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(out.drains, vec![report]);
+    assert!(hollow_df::topology::is_edge_manifold(&as_engine(&out.mesh)));
+    let (scene, leaf) = scene_with(out.mesh.clone(), world.clone());
+    let baked = bake_mesh_to_world_of(&scene, leaf, &out.mesh);
+    let floor = {
+        let (polygons, holes) = holes_at_mid_height(baked, 0.4);
+        (polygons, holes)
+    };
+    assert_eq!(floor, (1, 1), "the floor has the drain's hole");
+    // A drain that starts in the air beside the model: nothing is cut.
+    let miss = WorldDrain::new([90.0, 50.0, 15.0], [-1.0, 0.0, 0.0], 1.5);
+    let none = start_drill_mesh(mesh.clone(), &world, vec![miss], Some(Arc::new(probe)))
+        .unwrap()
+        .join()
+        .unwrap();
+    assert!(!none.drains[0].reaches_cavity);
+    assert_eq!(none.mesh, *mesh);
+}
+
+#[test]
+fn the_drain_map_shows_the_low_thin_outside_and_counts_the_cavity() {
+    let mesh = imported_hollow_leaf_mesh();
+    assert_eq!(sealed_cavities(&mesh), 1);
+    let world = affine(IDENTITY, [0.0, 0.0, 15.0]);
+    let probe = DrillProbe::new(&mesh, &world).unwrap();
+    assert_eq!(probe.sealed_cavities(), 1);
+    let faces = probe.drain_map(&world, 1.5, &[], 0.0, &|_| false).unwrap();
+    assert!(!faces.is_empty());
+    // All on the outside, in the bottom quarter.
+    for &f in &faces {
+        let face = mesh.faces()[f as usize].vertices.map(u32::from);
+        let z = face
+            .iter()
+            .map(|&v| mesh.vertices()[v as usize].as_array()[2] + 15.0)
+            .fold(f32::MIN, f32::max);
+        assert!(z <= 0.25 * 30.0 + 2.0, "{z}");
+        assert!(f < mesh.faces().len() as u32 / 2, "on the outer sphere");
+    }
+    // A drain at the bottom clears the faces around it.
+    let near = probe
+        .drain_map(&world, 1.5, &[[0.0, 0.0, 0.0]], 50.0, &|_| false)
+        .unwrap();
+    assert!(near.is_empty());
+}
+
+/// #447 measured by hand: one more drain on a real hollow, drilled into the
+/// hollow as it is against hollowing the original again with it (the voxel
+/// session and the cavity reused, as the tab did). `HOLLOW_DRILL_STL`: a
+/// binary STL; the drain goes up into the underside at its lowest point.
+#[test]
+#[ignore = "measured by hand on a real model"]
+fn drilling_a_real_hollow_against_hollowing_it_again() {
+    let Ok(path) = std::env::var("HOLLOW_DRILL_STL") else {
+        return;
+    };
+    let mut mesh = read_binary_stl(&path);
+    if let Some(found) = sc_mesh_core::presupported::find_supports(&mesh) {
+        mesh = found.model;
+    }
+    let mesh = Arc::new(mesh);
+    let world = Transform3D::Identity;
+    // Under the middle of the model: the lowest vertex near its centre.
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in mesh.vertices() {
+        for k in 0..3 {
+            lo[k] = lo[k].min(v.as_array()[k]);
+            hi[k] = hi[k].max(v.as_array()[k]);
+        }
+    }
+    let mid = [0.5 * (lo[0] + hi[0]), 0.5 * (lo[1] + hi[1])];
+    let low = mesh
+        .vertices()
+        .iter()
+        .map(|v| *v.as_array())
+        .filter(|p| (p[0] - mid[0]).hypot(p[1] - mid[1]) < 4.0)
+        .min_by(|a, b| a[2].total_cmp(&b[2]))
+        .unwrap();
+    println!("drain at {low:?}, model {lo:?} to {hi:?}");
+    let drain = WorldDrain::new(low, [0.0, 0.0, 1.0], 1.5);
+    let apply = |drains: Vec<WorldDrain>, prepared: Option<Arc<PreparedHollow>>| {
+        start_hollow_mesh(
+            mesh.clone(),
+            &world,
+            HollowRequest {
+                kind: HollowKind::Apply,
+                drains,
+                prepared,
+                ..HollowRequest::default()
+            },
+        )
+        .unwrap()
+        .join()
+        .unwrap()
+    };
+    let plain = apply(Vec::new(), None);
+    let HollowResult::Apply { mesh: hollow, .. } = &plain.result else {
+        panic!("apply");
+    };
+    let hollow = Arc::new(hollow.clone());
+    let settings = HollowSettings::default();
+    println!(
+        "engine on its cavity: {:?}",
+        plain.prepared.drain_report(&world, &settings, &drain)
+    );
+    let probe = Arc::new(DrillProbe::new(&hollow, &world).unwrap());
+    println!("drill on the hollow: {:?}", probe.report(&world, &drain));
+    {
+        let target =
+            hollow_df::DrillTarget::new(engine_mesh(&hollow, &LeafFrame::of(&world).unwrap()));
+        let started = std::time::Instant::now();
+        let _ = hollow_df::DrillTarget::new(target.mesh().clone());
+        println!("target {:.0} ms", started.elapsed().as_secs_f64() * 1e3);
+        let hole = drain.in_frame(&LeafFrame::of(&world).unwrap());
+        let started = std::time::Instant::now();
+        let d = target.drill(&[hole], Control::none()).unwrap();
+        println!(
+            "drill alone {:.0} ms, {} faces",
+            started.elapsed().as_secs_f64() * 1e3,
+            d.mesh.triangles.len()
+        );
+        println!(
+            "shells {}",
+            hollow_df::topology::edge_components(target.mesh()).1
+        );
+        let start = hollow_df::Vec3::new(low[0], low[1], low[2] - 0.3);
+        let up = hollow_df::Vec3::new(0.0, 0.0, 1.0);
+        let source = as_engine(&mesh);
+        let hits = |m: &hollow_df::IndexedMesh| {
+            hollow_df::bvh::Bvh::build(m)
+                .ray_hit_distances_closed(m, start, up)
+                .iter()
+                .map(|t| (t * 100.0).round() / 100.0)
+                .collect::<Vec<_>>()
+        };
+        println!("source hits {:?}", hits(&source));
+        println!("hollow hits {:?}", hits(target.mesh()));
+        if let HollowResult::Apply { .. } = &plain.result {}
+        let preview = start_hollow_mesh(
+            mesh.clone(),
+            &world,
+            HollowRequest {
+                prepared: Some(plain.prepared.clone()),
+                ..HollowRequest::default()
+            },
+        )
+        .unwrap()
+        .join()
+        .unwrap();
+        if let HollowResult::Preview { cavity, .. } = &preview.result {
+            println!("cavity hits {:?}", hits(&as_engine(cavity)));
+        }
+    }
+    // Both checks over the surface: a drain at every 2000th face, into it.
+    let (mut agree, mut engine_only, mut drill_only) = (0, 0, 0);
+    let mut opening = None;
+    for f in mesh.faces().iter().step_by(2000) {
+        let [a, b, c] = f
+            .vertices
+            .map(|v| *mesh.vertices()[u32::from(v) as usize].as_array());
+        let centre = [0, 1, 2].map(|k| (a[k] + b[k] + c[k]) / 3.0);
+        let (u, v) = (
+            [0, 1, 2].map(|k| b[k] - a[k]),
+            [0, 1, 2].map(|k| c[k] - a[k]),
+        );
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if len < 1e-9 {
+            continue;
+        }
+        let hole = WorldDrain::new(centre, n.map(|c| -c / len), 1.5);
+        let e = plain
+            .prepared
+            .drain_report(&world, &settings, &hole)
+            .is_some_and(|r| r.reaches_cavity);
+        let d = probe
+            .report(&world, &hole)
+            .is_some_and(|r| r.reaches_cavity);
+        match (e, d) {
+            (true, true) => {
+                agree += 1;
+                opening.get_or_insert(hole);
+            }
+            (false, false) => agree += 1,
+            (true, false) => engine_only += 1,
+            (false, true) => drill_only += 1,
+        }
+    }
+    println!(
+        "over the surface: {agree} agree, {engine_only} only the engine opens, {drill_only} only the drill opens"
+    );
+    let drain = opening.unwrap_or(drain);
+    for round in 0..3 {
+        let started = std::time::Instant::now();
+        let again = apply(vec![drain], Some(plain.prepared.clone()));
+        let rehollow = started.elapsed();
+        let started = std::time::Instant::now();
+        let drilled = start_drill_mesh(hollow.clone(), &world, vec![drain], Some(probe.clone()))
+            .unwrap()
+            .join()
+            .unwrap();
+        let drill = started.elapsed();
+        let HollowResult::Apply { drains, .. } = &again.result else {
+            panic!("apply");
+        };
+        println!(
+            "round {round}: hollow again {:.0} ms (reaches {}), drill {:.0} ms (reaches {}), {:.1}x",
+            rehollow.as_secs_f64() * 1e3,
+            drains[0].reaches_cavity,
+            drill.as_secs_f64() * 1e3,
+            drilled.drains[0].reaches_cavity,
+            rehollow.as_secs_f64() / drill.as_secs_f64(),
+        );
+    }
+}

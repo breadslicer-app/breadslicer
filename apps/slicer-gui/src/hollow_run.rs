@@ -44,8 +44,18 @@
 //! comes and goes with its hollow in the same undo step: hollowing again
 //! replaces the plugs (one left where the person moved it stays there),
 //! making the model solid again takes them away.
+//!
+//! A model that came hollow (from a file, with no record of how it was
+//! made) is not hollowed again: a drain is drilled into its mesh as it is
+//! (#447), only where the air behind the wall is a cavity's, and the rest
+//! of the mesh is left as it was. Its sealed cavities show in the tab
+//! (#130), and with the drain tool the faces where a drain works best are
+//! tinted (#455). A drain click made while a job runs waits for it, a mesh
+//! the slicer refuses offers Repair, and a wall that leaves no room for a
+//! cavity changes nothing (#448).
 
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,20 +66,23 @@ use sc_geom::df_hollow::hollow_df::{
     DrainDepth, GridRequest, HollowFill, HollowSettings, InfillMode, ResolutionBound, Stage,
 };
 use sc_geom::df_hollow::{
-    HOLLOW_ENGINE_VERSION, HollowKind, HollowOutcome, HollowPlug, HollowRequest, HollowResult,
-    LeafFrame, PreparedHollow, WorldDrain, WorldSolidArea, start_hollow_mesh,
+    DrillOutcome, DrillProbe, HOLLOW_ENGINE_VERSION, HollowKind, HollowOutcome, HollowPlug,
+    HollowRequest, HollowResult, LeafFrame, PreparedHollow, WorldDrain, WorldSolidArea,
+    start_drill_mesh, start_hollow_mesh,
 };
-use sc_geom::{JobError, JobHandle};
+use sc_geom::{JobError, JobHandle, JobProgress, JobWorker};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, Vertex};
-use sc_scene::NodeId;
+use sc_mesh_spatial::PrimedMesh;
 use sc_scene::node::{LeafAttachment, LeafPayload, SceneMetadata};
+use sc_scene::{NodeId, PaintKind};
 use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::i18n::ctr;
 use crate::mesh_render::{Overlay, OverlayMesh, OverlayTint};
+use crate::repair_run::RepairRun;
 use crate::scene_document::{
     MarksStep, SceneDocument, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
 };
@@ -447,11 +460,116 @@ pub(crate) struct Hollowed {
     /// The model's stretch when it was hollowed ([`LeafFrame::stretch_rows`]):
     /// its scale, which the cavity was made at. `None` as `engine`.
     pub(crate) stretch: Option<[f64; 9]>,
+    /// The model came hollow (from a file): no cavity was made here, the
+    /// drains were drilled into it as it was (#447), and `original` is the
+    /// model before them. Its drains are drilled again into `original` when
+    /// one goes; nothing hollows it again.
+    pub(crate) drilled: bool,
+}
+
+/// What a job runs. Each lands with the mesh it made ready for picking
+/// (#448), built on the job's thread.
+enum Work {
+    /// Hollowing the original again.
+    Hollow(JobHandle<Primed<HollowOutcome>>),
+    /// Drilling drains into a mesh as it is (#447).
+    Drill(JobHandle<Primed<DrillOutcome>>),
+}
+
+/// A finished job.
+enum Landed {
+    Hollow(Result<Primed<HollowOutcome>, JobError>),
+    Drill(Result<Primed<DrillOutcome>, JobError>),
+}
+
+impl Work {
+    fn progress(&self) -> JobProgress {
+        match self {
+            Work::Hollow(h) => h.progress(),
+            Work::Drill(h) => h.progress(),
+        }
+    }
+
+    fn cancel(&self) {
+        match self {
+            Work::Hollow(h) => h.cancel(),
+            Work::Drill(h) => h.cancel(),
+        }
+    }
+
+    fn try_poll(&self) -> Option<Landed> {
+        match self {
+            Work::Hollow(h) => h.try_poll().map(Landed::Hollow),
+            Work::Drill(h) => h.try_poll().map(Landed::Drill),
+        }
+    }
+}
+
+/// A job's outcome, with the mesh it made taken out of it, shared, and the
+/// caches a first pick on it builds, built (#448).
+struct Primed<T> {
+    out: T,
+    mesh: Option<Arc<IndexedMesh>>,
+    primed: Vec<PrimedMesh>,
+}
+
+/// Runs `inner` and, on its thread's time, takes the mesh it made out of
+/// its outcome (`take`) and builds that mesh's picking caches, so the first
+/// click on a new hollow does not build them on the interface thread.
+fn primed_job<T: Send + 'static>(
+    inner: JobHandle<T>,
+    take: fn(&mut T) -> Option<IndexedMesh>,
+) -> JobHandle<Primed<T>> {
+    JobHandle::spawn(move |worker: &JobWorker<Primed<T>>| {
+        let mut out = loop {
+            if worker.is_cancelled() {
+                inner.cancel();
+            }
+            worker.report_progress(inner.progress());
+            if let Some(out) = inner.try_poll() {
+                break out?;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let mesh = take(&mut out).map(Arc::new);
+        let primed = mesh.iter().map(|m| PrimedMesh::new(m.clone())).collect();
+        Ok(Primed { out, mesh, primed })
+    })
+}
+
+/// An empty mesh, to take a job's out of it.
+fn no_mesh() -> IndexedMesh {
+    IndexedMesh::new(None, Vec::new(), Vec::new())
+}
+
+/// The mesh an apply made, taken out of its outcome.
+fn take_hollow(out: &mut HollowOutcome) -> Option<IndexedMesh> {
+    match &mut out.result {
+        HollowResult::Apply { mesh, .. } => Some(std::mem::replace(mesh, no_mesh())),
+        HollowResult::Preview { .. } => None,
+    }
+}
+
+/// The mesh a drill made, taken out of its outcome, when it cut a drain.
+fn take_drilled(out: &mut DrillOutcome) -> Option<IndexedMesh> {
+    out.drains
+        .iter()
+        .any(|d| d.reaches_cavity)
+        .then(|| std::mem::replace(&mut out.mesh, no_mesh()))
+}
+
+/// The drains a drill onto a hollow's current mesh keeps (#447): those it
+/// already has, with their plugs.
+struct Onto {
+    drains: Vec<LocalDrain>,
+    plugs: Vec<PlugLink>,
 }
 
 /// The job in flight and what it needs to land.
 struct Job {
-    handle: JobHandle<HollowOutcome>,
+    work: Work,
+    /// A drill onto the mesh as it is: the drains and plugs it had.
+    onto: Option<Onto>,
     leaf: NodeId,
     started_on: SceneRevision,
     /// The leaf's mesh when the job started: the edit's `before`.
@@ -498,6 +616,35 @@ pub(crate) struct HollowRun {
     /// The local bounding box of the last mesh asked about, by identity, for
     /// the recommended wall (a scan of every vertex once per mesh).
     bounds: RefCell<Option<MeshBounds>>,
+    /// Drain clicks made while a job ran (#448): each is made once it ends,
+    /// on the model it was made on.
+    queued: RefCell<VecDeque<(NodeId, [f32; 3], [f32; 3])>>,
+    /// The Repair run, for a mesh Hollow cannot use (#448).
+    repair: RefCell<Option<Rc<RepairRun>>>,
+    /// The selected model read for drilling into it as it is (#447): its
+    /// sealed cavities (#130), the drains it takes, its drain map (#455).
+    probe: RefCell<ProbeSlot>,
+    /// Whether the drain tool shows where a drain works best (#455).
+    drain_map_on: Cell<bool>,
+}
+
+/// What a probe is of: a mesh (by identity) and the stretch of its pose.
+type ProbeKey = (usize, [i64; 9]);
+
+/// What a drain map is of: the mesh, the pose, the drains, the detail.
+type MapKey = (usize, [[f64; 4]; 4], u64, u64);
+
+/// The selected model's [`DrillProbe`], built off the interface thread.
+#[derive(Default)]
+struct ProbeSlot {
+    key: Option<ProbeKey>,
+    building: Option<std::sync::mpsc::Receiver<Option<Arc<DrillProbe>>>>,
+    ready: Option<Arc<DrillProbe>>,
+    /// Built since the tab last looked: the model's state may have changed.
+    fresh: bool,
+    /// The drain map shown (#455), and what it was made for.
+    map: Option<(MapKey, Vec<Arc<OverlayMesh>>)>,
+    map_job: Option<(MapKey, std::sync::mpsc::Receiver<Vec<Arc<OverlayMesh>>>)>,
 }
 
 /// A mesh (by identity) and its local bounding box.
@@ -659,6 +806,8 @@ type DepthsKey = (Vec<LocalDrain>, [[f64; 4]; 4], usize, PreviewKey);
 /// Everything the overlay is drawn from.
 #[derive(Debug, Clone, PartialEq)]
 struct ShownKey {
+    /// The drain map (#455).
+    map: Option<usize>,
     cavity: Option<usize>,
     drains: Option<usize>,
     hover: Option<(DrainHover, DrainReach)>,
@@ -720,6 +869,10 @@ impl HollowRun {
                 pending: RefCell::new(Vec::new()),
                 pending_solids: RefCell::new(Vec::new()),
                 bounds: RefCell::new(None),
+                queued: RefCell::new(VecDeque::new()),
+                repair: RefCell::new(None),
+                probe: RefCell::new(ProbeSlot::default()),
+                drain_map_on: Cell::new(true),
             }
         });
         run.push_options(ui);
@@ -752,8 +905,9 @@ impl HollowRun {
         {
             let run = run.clone();
             ui.on_hollow_cancel(move || {
+                run.queued.borrow_mut().clear();
                 if let Some(job) = run.job.borrow().as_ref() {
-                    job.handle.cancel();
+                    job.work.cancel();
                 }
             });
         }
@@ -807,7 +961,20 @@ impl HollowRun {
             let run = run.clone();
             ui.on_hollow_clear_solids(move || run.edit_solids(Vec::clear));
         }
+        {
+            let run = run.clone();
+            ui.on_hollow_drain_map_toggled(move |on| {
+                run.drain_map_on.set(on);
+                run.tick_preview();
+            });
+        }
+        ui.set_hollow_drain_map(true);
         run
+    }
+
+    /// The Repair run that a mesh Hollow cannot use is sent to (#448).
+    pub(crate) fn set_repair(&self, repair: Rc<RepairRun>) {
+        *self.repair.borrow_mut() = Some(repair);
     }
 
     /// The areas a model keeps solid (#179), in its local frame: a hollow's
@@ -891,15 +1058,93 @@ impl HollowRun {
             .flatten()
     }
 
-    /// 0 a solid model, 1 a hollow this driver made, 2 the support mesh.
+    /// 0 a solid model, 1 a hollow this driver made, 2 the support mesh, 3
+    /// a model that came hollow (from a file, sealed cavities in it, or one
+    /// drilled here as it was): drains are drilled into it as it is (#447),
+    /// and nothing hollows it again.
     fn model_state(&self, mesh: &Arc<IndexedMesh>) -> i32 {
         if sc_geom::df_supports::is_any_support_mesh(mesh) {
-            2
-        } else if self.entry_for(mesh).is_some() {
-            1
-        } else {
-            0
+            return 2;
         }
+        let drilled = self
+            .hollowed
+            .borrow()
+            .iter()
+            .find(|h| Arc::ptr_eq(&h.hollow, mesh))
+            .map(|h| h.drilled);
+        match drilled {
+            Some(true) => 3,
+            Some(false) => 1,
+            None if self
+                .probe_of(mesh)
+                .is_some_and(|probe| probe.sealed_cavities() > 0) =>
+            {
+                3
+            }
+            None => 0,
+        }
+    }
+
+    /// The record of the hollow `mesh` (by identity), made or drilled here.
+    fn record_of(&self, mesh: &Arc<IndexedMesh>) -> Option<Hollowed> {
+        self.hollowed
+            .borrow()
+            .iter()
+            .find(|h| Arc::ptr_eq(&h.hollow, mesh))
+            .cloned()
+    }
+
+    /// The probe of `mesh` posed by `world` (#447), once built; starts
+    /// building it off this thread when it is not.
+    fn probe_for(&self, mesh: &Arc<IndexedMesh>, world: &Transform3D) -> Option<Arc<DrillProbe>> {
+        let key = (
+            Arc::as_ptr(mesh) as usize,
+            LeafFrame::of(world).ok()?.stretch_key(),
+        );
+        let mut slot = self.probe.borrow_mut();
+        if slot.key != Some(key) {
+            *slot = ProbeSlot {
+                key: Some(key),
+                ..ProbeSlot::default()
+            };
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (mesh, world) = (mesh.clone(), world.clone());
+            let _ = std::thread::Builder::new()
+                .name("hollow-drill-probe".to_owned())
+                .spawn(move || {
+                    let _ = tx.send(DrillProbe::new(&mesh, &world).ok().map(Arc::new));
+                });
+            slot.building = Some(rx);
+        }
+        let got = slot.building.as_ref().and_then(|rx| rx.try_recv().ok());
+        if let Some(probe) = got {
+            slot.ready = probe;
+            slot.building = None;
+            slot.fresh = true;
+        }
+        slot.ready.clone()
+    }
+
+    /// [`Self::probe_for`], waited for: a click needs the answer now.
+    fn probe_now(&self, mesh: &Arc<IndexedMesh>, world: &Transform3D) -> Option<Arc<DrillProbe>> {
+        if let Some(probe) = self.probe_for(mesh, world) {
+            return Some(probe);
+        }
+        let building = self.probe.borrow_mut().building.take();
+        let probe = building.and_then(|rx| rx.recv().ok()).flatten();
+        let mut slot = self.probe.borrow_mut();
+        slot.ready = probe.clone();
+        slot.fresh = true;
+        probe
+    }
+
+    /// The built probe of `mesh` (by identity), at any pose.
+    fn probe_of(&self, mesh: &Arc<IndexedMesh>) -> Option<Arc<DrillProbe>> {
+        let slot = self.probe.borrow();
+        let ptr = Arc::as_ptr(mesh) as usize;
+        slot.ready
+            .clone()
+            .filter(|_| slot.key.is_some_and(|(p, _)| p == ptr))
     }
 
     /// The entry of a hollow mesh, by identity.
@@ -1004,11 +1249,12 @@ impl HollowRun {
             if self.job.borrow().is_none() {
                 return;
             }
-            let outcome = self.job.borrow().as_ref().and_then(|j| j.handle.try_poll());
-            if let Some(outcome) = outcome {
+            let landed = self.job.borrow().as_ref().and_then(|j| j.work.try_poll());
+            if let Some(landed) = landed {
                 let job = self.job.borrow_mut().take().expect("the job");
-                self.finish(job, outcome);
-                return;
+                self.land(job, landed);
+                self.next_queued();
+                continue;
             }
             assert!(
                 waited.elapsed() < Duration::from_secs(120),
@@ -1073,6 +1319,13 @@ impl HollowRun {
             .map_or(0, |(_, mesh, _)| self.solids_for(&mesh).len());
         ui.set_hollow_model_state(state);
         ui.set_hollow_drain_count(drains as i32);
+        // The cavities still closed all round (#130): -1 while not counted.
+        let sealed = self
+            .selected()
+            .filter(|_| matches!(state, 1 | 3))
+            .and_then(|(_, mesh, _)| self.probe_of(&mesh))
+            .map_or(-1, |probe| probe.sealed_cavities() as i32);
+        ui.set_hollow_sealed_count(sealed);
         if self.picked_drain.get().is_some_and(|i| i >= drains) {
             self.picked_drain.set(None);
             self.moving_drain.set(false);
@@ -1169,30 +1422,103 @@ impl HollowRun {
         let Some((leaf, mesh, world)) = self.selected() else {
             return;
         };
-        if self.model_state(&mesh) == 2 {
+        // A model that came hollow is not hollowed again (#447).
+        if matches!(self.model_state(&mesh), 2 | 3) {
             return;
         }
         // Hollowing a hollow again starts from its original, keeping drains;
         // a solid model takes the drains placed on it.
         let (original, drains) = self.source_for(&mesh);
+        // What the slicer refuses, Hollow cannot use either (#448).
+        if !original.is_sliceable() {
+            self.offer_repair(leaf, &original);
+            return;
+        }
         self.launch(leaf, mesh, original, drains, &world);
+    }
+
+    /// Says the model's mesh is not one closed solid, so it cannot be
+    /// hollowed or drilled, with a Repair button that mends it and then
+    /// hollows it (#448).
+    fn offer_repair(self: &Rc<Self>, leaf: NodeId, mesh: &Arc<IndexedMesh>) {
+        let old = Arc::as_ptr(mesh) as usize;
+        let weak = Rc::downgrade(self);
+        self.dialogs.show_error_with_action(
+            || ErrorTexts {
+                heading: ctr!("HollowRun", "This model can't be hollowed as it is"),
+                context: None,
+                message: ctr!(
+                    "HollowRun",
+                    "Its mesh is not one closed solid: it has holes, or faces that cross or overlap, and the slicer would refuse it too. Repair mends it, and it is hollowed right after."
+                ),
+                details: Default::default(),
+            },
+            || ctr!("ErrorDialog", "Repair"),
+            move || {
+                if let Some(run) = weak.upgrade() {
+                    run.repair_and_hollow(leaf, old);
+                }
+            },
+        );
+    }
+
+    /// Repairs `leaf` and hollows it once it is mended (#448); the marks
+    /// placed on its mesh before (by identity, `old`) go with it.
+    fn repair_and_hollow(self: &Rc<Self>, leaf: NodeId, old: usize) {
+        let Some(repair) = self.repair.borrow().clone() else {
+            return;
+        };
+        let weak = Rc::downgrade(self);
+        repair.repair_for_slice(&[leaf], move || {
+            let Some(run) = weak.upgrade() else {
+                return;
+            };
+            if let Some((selected, mesh, _)) = run.selected()
+                && selected == leaf
+            {
+                run.move_marks(old, &mesh);
+                run.on_apply();
+            }
+        });
+    }
+
+    /// The marks placed on the mesh `old` (by identity) move to `mesh`.
+    fn move_marks(&self, old: usize, mesh: &Arc<IndexedMesh>) {
+        let new = Arc::as_ptr(mesh) as usize;
+        for (m, _) in self.pending.borrow_mut().iter_mut() {
+            if *m == old {
+                *m = new;
+            }
+        }
+        for (m, _) in self.pending_solids.borrow_mut().iter_mut() {
+            if *m == old {
+                *m = new;
+            }
+        }
     }
 
     fn on_restore(&self) {
         let Some((leaf, mesh, _)) = self.selected() else {
             return;
         };
+        self.back_to_original(
+            leaf,
+            mesh,
+            ctr!("HollowRun", "Solid again. Undo brings the hollow back."),
+        );
+    }
+
+    /// Puts the model the hollow `mesh` was made or drilled from back on
+    /// `leaf`, its plugs taken away, saying `done`.
+    fn back_to_original(&self, leaf: NodeId, mesh: Arc<IndexedMesh>, done: slint::SharedString) {
         let Some((original, _)) = self.entry_for(&mesh) else {
             return;
         };
         // The plugs go with the hollow.
         let old = self.plugs_of(&mesh);
-        self.swap_mesh_and_plugs(leaf, mesh, original, &old, Vec::new());
+        self.swap_mesh_and_plugs(leaf, mesh, original, &old, Vec::new(), &[]);
         if let Some(ui) = self.ui.upgrade() {
-            ui.set_hollow_last_run(ctr!(
-                "HollowRun",
-                "Solid again. Undo brings the hollow back."
-            ));
+            ui.set_hollow_last_run(done);
         }
     }
 
@@ -1200,13 +1526,13 @@ impl HollowRun {
         let Some((leaf, mesh, world)) = self.selected() else {
             return;
         };
-        let Some((original, drains)) = self.entry_for(&mesh) else {
+        let Some((_, drains)) = self.entry_for(&mesh) else {
             let solids = self.solids_for(&mesh);
             self.change_marks(&mesh, (Vec::new(), solids), "drain marks cleared");
             return;
         };
         if !drains.is_empty() {
-            self.launch(leaf, mesh, original, Vec::new(), &world);
+            self.set_drains(leaf, mesh, &world, Vec::new(), "drains cleared");
         }
     }
 
@@ -1215,7 +1541,12 @@ impl HollowRun {
     /// hollow is hollowed again with the new drain; a solid model keeps it
     /// for when it is hollowed.
     fn on_drain_click(self: &Rc<Self>, point: [f32; 3], normal: [f32; 3]) {
+        // A click while a job runs waits for it (#448): two quick clicks
+        // make two drains.
         if self.job.borrow().is_some() {
+            if let Some((leaf, ..)) = self.selected() {
+                self.queued.borrow_mut().push_back((leaf, point, normal));
+            }
             return;
         }
         let Some((leaf, mesh, world)) = self.selected() else {
@@ -1252,9 +1583,69 @@ impl HollowRun {
         else {
             return;
         };
-        drains.push(drain);
         self.picked_drain.set(None);
-        self.set_drains(leaf, mesh, &world, drains, "drain mark");
+        self.add_drain(leaf, mesh, &world, drain, drains);
+    }
+
+    /// Puts a new `drain` on the model, with `drains` (those it has so far):
+    /// a hollow made here is hollowed again with it (the engine knows its
+    /// cavity, and with its session kept that is the quicker way: 0.2 s
+    /// against 1.5 s on a 91 mm figure); a model that came hollow takes it
+    /// drilled into its mesh as it is (#447); a solid model keeps it for
+    /// when it is hollowed.
+    fn add_drain(
+        self: &Rc<Self>,
+        leaf: NodeId,
+        mesh: Arc<IndexedMesh>,
+        world: &Transform3D,
+        drain: LocalDrain,
+        mut drains: Vec<LocalDrain>,
+    ) {
+        match self.record_of(&mesh) {
+            Some(h) if h.drilled => {
+                let onto = Onto {
+                    drains: h.drains.clone(),
+                    plugs: h.plugs.clone(),
+                };
+                let original = h.original.clone();
+                self.drill(leaf, mesh, original, vec![drain], world, Some(onto));
+                return;
+            }
+            Some(h) => {
+                drains.push(drain);
+                self.launch(leaf, mesh, h.original.clone(), drains, world);
+                return;
+            }
+            None => {}
+        }
+        let opens = self
+            .probe_now(&mesh, world)
+            .and_then(|probe| probe.report(world, &drain.to_world(world)))
+            .is_some_and(|report| report.reaches_cavity);
+        if opens {
+            self.drill(leaf, mesh.clone(), mesh, vec![drain], world, None);
+        } else {
+            drains.push(drain);
+            let solids = self.solids_for(&mesh);
+            self.change_marks(&mesh, (drains, solids), "drain mark");
+        }
+    }
+
+    /// The clicks made while the last job ran, one by one, while no job runs
+    /// (#448); a click made on another model than the one selected now is
+    /// dropped.
+    fn next_queued(self: &Rc<Self>) {
+        while self.job.borrow().is_none() {
+            let Some((leaf, point, normal)) = self.queued.borrow_mut().pop_front() else {
+                return;
+            };
+            if self
+                .selected()
+                .is_some_and(|(selected, ..)| selected == leaf)
+            {
+                self.on_drain_click(point, normal);
+            }
+        }
     }
 
     /// The drain of `drains` whose mouth `point` (world) is on: within its
@@ -1319,11 +1710,87 @@ impl HollowRun {
         drains: Vec<LocalDrain>,
         label: &'static str,
     ) {
-        if let Some((original, _)) = self.entry_for(&mesh) {
-            self.launch(leaf, mesh, original, drains, world);
+        match self.record_of(&mesh) {
+            // Drilled as it came (#447): its drains again, into the model
+            // before them; none left gives that model back.
+            Some(h) if h.drilled => {
+                if drains.is_empty() {
+                    self.back_to_original(
+                        leaf,
+                        mesh,
+                        ctr!("HollowRun", "The drains are out. Undo puts them back."),
+                    );
+                } else {
+                    self.drill(leaf, mesh, h.original.clone(), drains, world, None);
+                }
+            }
+            Some(h) => self.launch(leaf, mesh, h.original.clone(), drains, world),
+            None => {
+                let solids = self.solids_for(&mesh);
+                self.change_marks(&mesh, (drains, solids), label);
+            }
+        }
+    }
+
+    /// Drills `drains` into a mesh as it is (#447), no cavity computed: with
+    /// `onto` (the drains it has), into the leaf's `before`; without, into
+    /// `original` afresh (the model as it came, before any drain).
+    fn drill(
+        self: &Rc<Self>,
+        leaf: NodeId,
+        before: Arc<IndexedMesh>,
+        original: Arc<IndexedMesh>,
+        drains: Vec<LocalDrain>,
+        world: &Transform3D,
+        onto: Option<Onto>,
+    ) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if self.job.borrow().is_some() || ui.get_loading() {
+            return;
+        }
+        let Ok(frame) = LeafFrame::of(world) else {
+            return;
+        };
+        let input = if onto.is_some() {
+            before.clone()
         } else {
-            let solids = self.solids_for(&mesh);
-            self.change_marks(&mesh, (drains, solids), label);
+            original.clone()
+        };
+        let world_drains = drains.iter().map(|d| d.to_world(world)).collect();
+        // The model as the tab read it, when that is this mesh.
+        let probe = self.probe_of(&input);
+        match start_drill_mesh(input, world, world_drains, probe) {
+            Ok(handle) => {
+                let solids = self.solids_for(&before);
+                *self.job.borrow_mut() = Some(Job {
+                    work: Work::Drill(primed_job(handle, take_drilled)),
+                    onto,
+                    leaf,
+                    started_on: self.document.scene_revision(),
+                    before,
+                    original,
+                    drains,
+                    solids,
+                    options: *self.options.borrow(),
+                    stretch: frame.stretch_rows(),
+                });
+                ui.set_hollow_running(true);
+                crate::breadcrumbs::started("drill");
+                ui.set_hollow_progress(0.0);
+                ui.set_hollow_phase(slint::SharedString::default());
+                self.start_poll();
+            }
+            Err(err) => {
+                let message = err.to_string();
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("HollowRun", "Drilling failed"),
+                    context: None,
+                    message: message.as_str().into(),
+                    details: Default::default(),
+                });
+            }
         }
     }
 
@@ -1535,7 +2002,8 @@ impl HollowRun {
         match start_hollow_mesh(original.clone(), world, request) {
             Ok(handle) => {
                 *self.job.borrow_mut() = Some(Job {
-                    handle,
+                    work: Work::Hollow(primed_job(handle, take_hollow)),
+                    onto: None,
                     leaf,
                     started_on: self.document.scene_revision(),
                     before,
@@ -1585,46 +2053,35 @@ impl HollowRun {
                         stop();
                         return;
                     };
-                    let progress = job.handle.progress();
+                    let progress = job.work.progress();
                     ui.set_hollow_progress(progress.fraction());
                     ui.set_hollow_phase(phase_text(&progress.phase));
-                    job.handle.try_poll()
+                    job.work.try_poll()
                 };
-                if let Some(outcome) = finished {
+                if let Some(landed) = finished {
                     stop();
                     let job = run.job.borrow_mut().take();
                     ui.set_hollow_running(false);
                     if let Some(job) = job {
-                        run.finish(job, outcome);
+                        run.land(job, landed);
                     }
+                    run.next_queued();
                 }
             },
         );
     }
 
-    fn finish(&self, job: Job, outcome: Result<HollowOutcome, JobError>) {
-        let ended = match &outcome {
-            Ok(_) => "ok".to_owned(),
-            Err(JobError::Cancelled) => "cancelled".to_owned(),
-            Err(err) => format!("failed: {err}"),
-        };
-        crate::breadcrumbs::finished("hollow", &ended);
-        let outcome = match outcome {
-            Ok(outcome) => outcome,
-            Err(JobError::Cancelled) => return,
-            Err(err) => {
-                let message = err.to_string();
-                self.dialogs.show_error(move || ErrorTexts {
-                    heading: ctr!("HollowRun", "Hollowing failed"),
-                    context: None,
-                    message: message.as_str().into(),
-                    details: Default::default(),
-                });
-                return;
-            }
-        };
-        *self.prepared.borrow_mut() = Some(outcome.prepared.clone());
-        let joined_parts = outcome.prepared.session().joined_parts();
+    /// Lands a finished job.
+    fn land(self: &Rc<Self>, job: Job, landed: Landed) {
+        match landed {
+            Landed::Hollow(outcome) => self.finish(job, outcome),
+            Landed::Drill(outcome) => self.finish_drill(job, outcome),
+        }
+    }
+
+    /// Whether the leaf still shows the mesh the job started from, on a
+    /// scene not changed since; says it was discarded when not.
+    fn still_on(&self, job: &Job) -> bool {
         let still_there = self
             .document
             .with_scene(|spatial| {
@@ -1643,14 +2100,271 @@ impl HollowRun {
                 ),
                 details: Default::default(),
             });
+            return false;
+        }
+        true
+    }
+
+    /// Says `missed` drains were left out: they do not reach the cavity.
+    fn tell_missed(&self, missed: usize) {
+        if missed == 0 {
             return;
         }
-        let HollowResult::Apply {
-            mesh,
-            drains,
-            plugs,
-        } = outcome.result
-        else {
+        self.dialogs.show_info(move || InfoTexts {
+            heading: ctr!(
+                "HollowRun",
+                "Drain not drilled",
+                "{n} drains not drilled",
+                missed
+            ),
+            message: ctr!(
+                "HollowRun",
+                "This drain does not reach the cavity, so it was left out: drilled, it would only bore into the model, or through it. Place it where the cavity preview shows behind the wall.",
+                "These drains do not reach the cavity, so they were left out: drilled, they would only bore into the model, or through it. Place them where the cavity preview shows behind the wall.",
+                missed
+            ),
+            details: Default::default(),
+        });
+    }
+
+    /// Says `failed` plugs were not made.
+    fn tell_plug_failures(&self, failed: usize) {
+        if failed == 0 {
+            return;
+        }
+        self.dialogs.show_info(move || InfoTexts {
+            heading: ctr!(
+                "HollowRun",
+                "Plug not made",
+                "{n} plugs not made",
+                failed
+            ),
+            message: ctr!(
+                "HollowRun",
+                "The drain was drilled, but its plug did not come out as a closed solid, so it was left out.",
+                "The drains were drilled, but their plugs did not come out as closed solids, so they were left out.",
+                failed
+            ),
+            details: Default::default(),
+        });
+    }
+
+    /// What the drains drilled did, for the tab: `kept` drilled, `missed`
+    /// left out, `capped` drilled shorter than set, `plugs` made.
+    fn drains_summary(kept: usize, missed: usize, capped: usize, plugs: usize) -> String {
+        let mut summary = ctr!(
+            "HollowRun",
+            "One drain drilled.",
+            "{n} drains drilled.",
+            kept
+        )
+        .to_string();
+        if missed > 0 {
+            summary.push(' ');
+            summary.push_str(&ctr!(
+                "HollowRun",
+                "One left out: it does not reach the cavity.",
+                "{n} left out: they do not reach the cavity.",
+                missed
+            ));
+        }
+        if capped > 0 {
+            summary.push(' ');
+            summary.push_str(&ctr!(
+                "HollowRun",
+                "One drilled shorter than set: deeper, it would reach the far side of the cavity.",
+                "{n} drilled shorter than set: deeper, they would reach the far side of the cavity.",
+                capped
+            ));
+        }
+        if plugs > 0 {
+            summary.push(' ');
+            summary.push_str(&ctr!(
+                "HollowRun",
+                "One plug placed beside the model.",
+                "{n} plugs placed beside the model.",
+                plugs
+            ));
+        }
+        summary
+    }
+
+    /// Lands drains drilled into a mesh as it is (#447).
+    fn finish_drill(self: &Rc<Self>, job: Job, outcome: Result<Primed<DrillOutcome>, JobError>) {
+        let ended = match &outcome {
+            Ok(_) => "ok".to_owned(),
+            Err(JobError::Cancelled) => "cancelled".to_owned(),
+            Err(err) => format!("failed: {err}"),
+        };
+        crate::breadcrumbs::finished("drill", &ended);
+        let input = if job.onto.is_some() {
+            job.before.clone()
+        } else {
+            job.original.clone()
+        };
+        let landed = match outcome {
+            Ok(landed) => landed,
+            Err(JobError::Cancelled) => return,
+            Err(err) => {
+                if !input.is_sliceable() {
+                    self.offer_repair(job.leaf, &input);
+                    return;
+                }
+                let message = err.to_string();
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("HollowRun", "Drilling failed"),
+                    context: None,
+                    message: message.as_str().into(),
+                    details: Default::default(),
+                });
+                return;
+            }
+        };
+        if !self.still_on(&job) {
+            return;
+        }
+        let Primed {
+            out,
+            mesh: made,
+            primed,
+        } = landed;
+        let kept: Vec<LocalDrain> = job
+            .drains
+            .iter()
+            .zip(&out.drains)
+            .filter(|(_, report)| report.reaches_cavity)
+            .map(|(drain, _)| *drain)
+            .collect();
+        let missed = job.drains.len() - kept.len();
+        self.tell_missed(missed);
+        let Some(made) = made.filter(|_| !kept.is_empty()) else {
+            self.refresh_ui();
+            self.tick_preview();
+            return;
+        };
+        let (base_drains, base_links, old_plugs) = match &job.onto {
+            Some(onto) => (onto.drains.clone(), onto.plugs.clone(), Vec::new()),
+            None => (Vec::new(), Vec::new(), self.plugs_of(&job.before)),
+        };
+        let kept_index = |drain: usize| {
+            out.drains[..drain]
+                .iter()
+                .filter(|report| report.reaches_cavity)
+                .count()
+        };
+        let capped = out
+            .drains
+            .iter()
+            .filter(|r| r.reaches_cavity && r.depth_capped)
+            .count();
+        let plug_failures = out.plugs.iter().filter(|p| p.mesh.is_none()).count();
+        let new_plugs: Vec<NewPlug> = out
+            .plugs
+            .into_iter()
+            .filter_map(|HollowPlug { drain, mesh }| {
+                let index = kept_index(drain);
+                Some(NewPlug {
+                    drain: base_drains.len() + index,
+                    shape: kept[index],
+                    mesh: mesh?,
+                })
+            })
+            .collect();
+        let made_plugs = new_plugs.len();
+        let Some(links) = self.swap_mesh_and_plugs(
+            job.leaf,
+            job.before.clone(),
+            made.clone(),
+            &old_plugs,
+            new_plugs,
+            &primed,
+        ) else {
+            return;
+        };
+        self.tell_plug_failures(plug_failures);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_hollow_last_run(
+                Self::drains_summary(kept.len(), missed, capped, made_plugs).into(),
+            );
+        }
+        let mut drains = base_drains;
+        drains.extend(kept);
+        let mut plugs = base_links;
+        plugs.extend(links);
+        let entry = match self.record_of(&job.before) {
+            Some(h) => Hollowed {
+                hollow: made.clone(),
+                drains,
+                plugs,
+                ..h
+            },
+            None => Hollowed {
+                hollow: made.clone(),
+                original: job.original,
+                drains,
+                options: job.options,
+                plugs,
+                solids: Vec::new(),
+                engine: None,
+                stretch: Some(job.stretch),
+                drilled: true,
+            },
+        };
+        self.adopted.set(Some(Arc::as_ptr(&made) as usize));
+        self.hollowed.borrow_mut().push(entry);
+        self.refresh_ui();
+        self.tick_preview();
+    }
+
+    fn finish(self: &Rc<Self>, job: Job, outcome: Result<Primed<HollowOutcome>, JobError>) {
+        let ended = match &outcome {
+            Ok(_) => "ok".to_owned(),
+            Err(JobError::Cancelled) => "cancelled".to_owned(),
+            Err(err) => format!("failed: {err}"),
+        };
+        crate::breadcrumbs::finished("hollow", &ended);
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(JobError::Cancelled) => return,
+            Err(err) => {
+                if !job.original.is_sliceable() {
+                    self.offer_repair(job.leaf, &job.original);
+                    return;
+                }
+                let message = err.to_string();
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("HollowRun", "Hollowing failed"),
+                    context: None,
+                    message: message.as_str().into(),
+                    details: Default::default(),
+                });
+                return;
+            }
+        };
+        let Primed {
+            out: outcome,
+            mesh: made,
+            primed,
+        } = outcome;
+        *self.prepared.borrow_mut() = Some(outcome.prepared.clone());
+        let joined_parts = outcome.prepared.session().joined_parts();
+        if !self.still_on(&job) {
+            return;
+        }
+        // A wall that takes the whole model hollows nothing (#448).
+        if outcome.stats.removed_voxels == 0 {
+            self.dialogs.show_info(|| InfoTexts {
+                heading: ctr!("HollowRun", "No room to hollow this model"),
+                message: ctr!(
+                    "HollowRun",
+                    "The wall takes up the whole model: there is no room left for a cavity, so nothing was changed. Try a thinner wall, or leave this model solid."
+                ),
+                details: Default::default(),
+            });
+            self.refresh_ui();
+            return;
+        }
+        let (HollowResult::Apply { drains, plugs, .. }, Some(made)) = (outcome.result, made) else {
             return;
         };
         // The engine leaves out a drain that does not reach the cavity
@@ -1664,23 +2378,7 @@ impl HollowRun {
             .map(|(drain, _)| *drain)
             .collect();
         let missed = job.drains.len() - kept.len();
-        if missed > 0 {
-            self.dialogs.show_info(move || InfoTexts {
-                heading: ctr!(
-                    "HollowRun",
-                    "Drain not drilled",
-                    "{n} drains not drilled",
-                    missed
-                ),
-                message: ctr!(
-                    "HollowRun",
-                    "This drain does not reach the cavity, so it was left out: drilled, it would only bore into the model, or through it. Place it where the cavity preview shows behind the wall.",
-                    "These drains do not reach the cavity, so they were left out: drilled, they would only bore into the model, or through it. Place them where the cavity preview shows behind the wall.",
-                    missed
-                ),
-                details: Default::default(),
-            });
-        }
+        self.tell_missed(missed);
         // A new drain that was left out changes nothing: no undo step.
         let unchanged = self.hollowed.borrow().iter().any(|h| {
             Arc::ptr_eq(&h.hollow, &job.before)
@@ -1719,10 +2417,15 @@ impl HollowRun {
             .filter(|r| r.reaches_cavity && r.depth_capped)
             .count();
         let old_plugs = self.plugs_of(&job.before);
-        let hollow = Arc::new(mesh);
-        let Some(plug_links) =
-            self.swap_mesh_and_plugs(job.leaf, job.before, hollow.clone(), &old_plugs, new_plugs)
-        else {
+        let hollow = made;
+        let Some(plug_links) = self.swap_mesh_and_plugs(
+            job.leaf,
+            job.before.clone(),
+            hollow.clone(),
+            &old_plugs,
+            new_plugs,
+            &primed,
+        ) else {
             return;
         };
         let stats = &outcome.stats;
@@ -1781,57 +2484,14 @@ impl HollowRun {
         }
         if !drains.is_empty() {
             summary.push(' ');
-            summary.push_str(&ctr!(
-                "HollowRun",
-                "One drain drilled.",
-                "{n} drains drilled.",
-                kept.len()
+            summary.push_str(&Self::drains_summary(
+                kept.len(),
+                missed,
+                capped,
+                made_plugs,
             ));
-            if missed > 0 {
-                summary.push(' ');
-                summary.push_str(&ctr!(
-                    "HollowRun",
-                    "One left out: it does not reach the cavity.",
-                    "{n} left out: they do not reach the cavity.",
-                    missed
-                ));
-            }
-            if capped > 0 {
-                summary.push(' ');
-                summary.push_str(&ctr!(
-                    "HollowRun",
-                    "One drilled shorter than set: deeper, it would reach the far side of the cavity.",
-                    "{n} drilled shorter than set: deeper, they would reach the far side of the cavity.",
-                    capped
-                ));
-            }
-            if made_plugs > 0 {
-                summary.push(' ');
-                summary.push_str(&ctr!(
-                    "HollowRun",
-                    "One plug placed beside the model.",
-                    "{n} plugs placed beside the model.",
-                    made_plugs
-                ));
-            }
         }
-        if plug_failures > 0 {
-            self.dialogs.show_info(move || InfoTexts {
-                heading: ctr!(
-                    "HollowRun",
-                    "Plug not made",
-                    "{n} plugs not made",
-                    plug_failures
-                ),
-                message: ctr!(
-                    "HollowRun",
-                    "The drain was drilled, but its plug did not come out as a closed solid, so it was left out.",
-                    "The drains were drilled, but their plugs did not come out as closed solids, so they were left out.",
-                    plug_failures
-                ),
-                details: Default::default(),
-            });
-        }
+        self.tell_plug_failures(plug_failures);
         if let Some(ui) = self.ui.upgrade() {
             ui.set_hollow_last_run(summary.into());
         }
@@ -1848,6 +2508,7 @@ impl HollowRun {
             solids: job.solids,
             engine: Some(HOLLOW_ENGINE_VERSION),
             stretch: Some(job.stretch),
+            drilled: false,
         });
         self.refresh_ui();
     }
@@ -1881,6 +2542,7 @@ impl HollowRun {
         after: Arc<IndexedMesh>,
         old: &[(PlugLink, LocalDrain)],
         new: Vec<NewPlug>,
+        primed: &[PrimedMesh],
     ) -> Option<Vec<PlugLink>> {
         let bed = {
             let volume = self.ctrl.build_volume();
@@ -2016,7 +2678,7 @@ impl HollowRun {
         } else {
             SceneEdit::Compound(edits)
         };
-        match self.document.apply_edit(edit.clone()) {
+        match self.document.apply_edit_primed(edit.clone(), primed) {
             Ok(_) => {
                 self.document.push_edit(edit);
                 if let Some(note) = lost_paint_note(&self.document.take_paint_report()) {
@@ -2067,6 +2729,10 @@ impl HollowRun {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_hollow_drain_reach(0);
         }
+        // Out of the tab, nothing needs the mesh read: let it go.
+        if self.probe.borrow().key.is_some() {
+            *self.probe.borrow_mut() = ProbeSlot::default();
+        }
         let mut preview = self.preview.borrow_mut();
         if let Some((_, shown)) = preview.shown.take()
             && self.ctrl.preview_overlay_is(&shown)
@@ -2101,6 +2767,15 @@ impl HollowRun {
             self.hide_preview();
             return;
         }
+        // The mesh as it is, read off this thread: its sealed cavities
+        // (#130) and, for a model that came hollow, the drains it takes
+        // (#447).
+        let probe = self.probe_for(&mesh, &world);
+        if std::mem::take(&mut self.probe.borrow_mut().fresh) {
+            self.refresh_ui();
+        }
+        let state = self.model_state(&mesh);
+        let came_hollow = state == 3;
         let (original, drains) = self.source_for(&mesh);
         let solids = self.solids_for(&mesh);
         let options = *self.options.borrow();
@@ -2121,7 +2796,8 @@ impl HollowRun {
             },
             solids: solids_key(&solids),
         };
-        let show_cavity = ui.get_hollow_show_cavity();
+        // A model that came hollow has its cavity: none is computed.
+        let show_cavity = ui.get_hollow_show_cavity() && !came_hollow;
         if show_cavity {
             self.advance_cavity_job(
                 key,
@@ -2147,13 +2823,27 @@ impl HollowRun {
             .get()
             .filter(|_| ui.get_hollow_drain_tool())
             .map(|hover| {
-                let (reach, depth) =
-                    drain_reach(preview.ready.as_ref(), key, hover, &world, &options);
+                let (reach, depth) = if came_hollow {
+                    probe_reach(probe.as_deref(), hover, &world, &options)
+                } else {
+                    drain_reach(preview.ready.as_ref(), key, hover, &world, &options)
+                };
                 hover_depth = depth.unwrap_or(hover_depth);
                 (hover, reach)
             });
         ui.set_hollow_drain_reach(hover.map_or(0, |(_, reach)| reach.code()));
-        let depths = drain_depths(&mut preview, &drains, key, &world, matrix, &options)
+        let probed = came_hollow.then(|| probe.as_ref()).flatten().map(|probe| {
+            drains
+                .iter()
+                .map(|d| {
+                    probe
+                        .report(&world, &d.to_world(&world))
+                        .map_or(fallback_depth, |r| r.depth_mm)
+                })
+                .collect::<Vec<f32>>()
+        });
+        let depths = probed
+            .or_else(|| drain_depths(&mut preview, &drains, key, &world, matrix, &options))
             .unwrap_or_else(|| {
                 drains
                     .iter()
@@ -2208,7 +2898,14 @@ impl HollowRun {
                 }
             }
         });
+        // Where a drain works best (#455), with the drain tool on a hollow.
+        let map = (ui.get_hollow_drain_tool() && self.drain_map_on.get() && matches!(state, 1 | 3))
+            .then_some(probe)
+            .flatten()
+            .map(|probe| self.drain_map(leaf, &mesh, &world, matrix, &drains, probe))
+            .unwrap_or_default();
         let shown_key = ShownKey {
+            map: map.first().map(|p| Arc::as_ptr(p) as usize),
             cavity: cavity_piece.as_ref().map(|p| Arc::as_ptr(p) as usize),
             drains: drains_piece.as_ref().map(|p| Arc::as_ptr(p) as usize),
             hover,
@@ -2224,6 +2921,7 @@ impl HollowRun {
             return;
         }
         let mut pieces: Vec<Arc<OverlayMesh>> = Vec::new();
+        pieces.extend(map);
         pieces.extend(cavity_piece);
         pieces.extend(drains_piece);
         // The drain picked to edit shows green over the others (#450).
@@ -2279,6 +2977,99 @@ impl HollowRun {
         let overlay: Overlay = pieces.into();
         self.ctrl.set_preview_overlay(Some(overlay.clone()));
         preview.shown = Some((shown_key, overlay));
+    }
+
+    /// The drain map of the hollow `mesh` on `leaf` (#455): the faces where
+    /// a drain works best, green, and those painted as detail among them,
+    /// red: a place to avoid. Made off this thread; the last one stays up
+    /// while the next is made.
+    fn drain_map(
+        &self,
+        leaf: NodeId,
+        mesh: &Arc<IndexedMesh>,
+        world: &Transform3D,
+        matrix: [[f64; 4]; 4],
+        drains: &[LocalDrain],
+        probe: Arc<DrillProbe>,
+    ) -> Vec<Arc<OverlayMesh>> {
+        let detail = self
+            .document
+            .with_scene(|spatial| {
+                spatial
+                    .graph()
+                    .surface_tags(leaf, PaintKind::Detail)
+                    .cloned()
+            })
+            .flatten();
+        let key: MapKey = (
+            Arc::as_ptr(mesh) as usize,
+            matrix,
+            drains_key(drains),
+            detail.as_ref().map_or(0, |t| t.revision()),
+        );
+        let mut slot = self.probe.borrow_mut();
+        let got = slot
+            .map_job
+            .as_ref()
+            .and_then(|(k, rx)| rx.try_recv().ok().map(|pieces| (*k, pieces)));
+        if let Some(map) = got {
+            slot.map = Some(map);
+            slot.map_job = None;
+        }
+        let current = slot
+            .map
+            .as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, m)| m.clone());
+        if current.is_none() && slot.map_job.as_ref().is_none_or(|(k, _)| *k != key) {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (mesh, world) = (mesh.clone(), world.clone());
+            let centres: Vec<[f32; 3]> = drains.iter().map(|d| d.to_world(&world).center).collect();
+            let _ = std::thread::Builder::new()
+                .name("hollow-drain-map".to_owned())
+                .spawn(move || {
+                    let faces = probe
+                        .drain_map(
+                            &world,
+                            DRAIN_MAP_THIN,
+                            &centres,
+                            DRAIN_MAP_CLEAR_MM,
+                            &|_| false,
+                        )
+                        .unwrap_or_default();
+                    let painted = |f: u32| {
+                        detail
+                            .as_ref()
+                            .is_some_and(|t| t.values().get(f as usize).is_some_and(|&v| v != 0))
+                    };
+                    let (avoid, good): (Vec<u32>, Vec<u32>) =
+                        faces.into_iter().partition(|&f| painted(f));
+                    let mut pieces = vec![Arc::new(map_overlay(
+                        &mesh,
+                        &world,
+                        &good,
+                        OverlayTint::Hint,
+                    ))];
+                    if !avoid.is_empty() {
+                        pieces.push(Arc::new(map_overlay(
+                            &mesh,
+                            &world,
+                            &avoid,
+                            OverlayTint::Invalid,
+                        )));
+                    }
+                    let _ = tx.send(pieces);
+                });
+            slot.map_job = Some((key, rx));
+        }
+        current
+            .or_else(|| {
+                slot.map
+                    .as_ref()
+                    .filter(|(k, _)| k.0 == key.0)
+                    .map(|(_, m)| m.clone())
+            })
+            .unwrap_or_default()
     }
 
     /// Polls the cavity job, and starts one for `key` when none runs. A job
@@ -2381,6 +3172,73 @@ fn drain_reach(
         Some(report) if report.reaches_cavity => (DrainReach::Opens, Some(report.depth_mm)),
         Some(report) => (DrainReach::Misses, Some(report.depth_mm)),
         None => (DrainReach::Unknown, None),
+    }
+}
+
+/// What a drain at `hover` would do drilled into the model as it is
+/// (#447), on its `probe`, and how deep it goes.
+fn probe_reach(
+    probe: Option<&DrillProbe>,
+    hover: DrainHover,
+    world: &Transform3D,
+    options: &HollowOptions,
+) -> (DrainReach, Option<f32>) {
+    let Some(probe) = probe.filter(|_| hover.on_selected) else {
+        return (DrainReach::Unknown, None);
+    };
+    let Some(drain) = LocalDrain::at(hover.point, hover.normal, options.drain_radius_mm, world)
+        .map(|d| d.shaped(options))
+    else {
+        return (DrainReach::Unknown, None);
+    };
+    match probe.report(world, &drain.to_world(world)) {
+        Some(report) if report.reaches_cavity && report.depth_capped => {
+            (DrainReach::Capped, Some(report.depth_mm))
+        }
+        Some(report) if report.reaches_cavity => (DrainReach::Opens, Some(report.depth_mm)),
+        Some(report) => (DrainReach::Misses, Some(report.depth_mm)),
+        None => (DrainReach::Unknown, None),
+    }
+}
+
+/// How thick the wall behind a face of the drain map may be (#455), as a
+/// multiple of the thinnest: a drain there is about as short as one goes.
+const DRAIN_MAP_THIN: f32 = 1.5;
+/// How far around a drain the map fades (#455): that part already drains.
+const DRAIN_MAP_CLEAR_MM: f32 = 10.0;
+
+/// The faces `faces` of `mesh` posed by `world`, tinted `tint`, lifted a
+/// hair off the surface so they show over it.
+fn map_overlay(
+    mesh: &IndexedMesh,
+    world: &Transform3D,
+    faces: &[u32],
+    tint: OverlayTint,
+) -> OverlayMesh {
+    let mut positions = Vec::with_capacity(faces.len() * 3);
+    let mut indices = Vec::with_capacity(faces.len() * 3);
+    for &f in faces {
+        let Some(face) = mesh.faces().get(f as usize) else {
+            continue;
+        };
+        let p = face.vertices.map(|v| {
+            world
+                .apply_to_vertex(mesh.vertices()[u32::from(v) as usize])
+                .coords()
+        });
+        let n = normalized(cross(
+            [p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]],
+            [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]],
+        ));
+        for q in p {
+            indices.push(positions.len() as u32);
+            positions.push([0, 1, 2].map(|k| q[k] + 0.03 * n[k]));
+        }
+    }
+    OverlayMesh {
+        positions,
+        indices,
+        tint,
     }
 }
 
@@ -2776,11 +3634,15 @@ mod tests {
     fn land_job(run: &Rc<HollowRun>) {
         let waited = std::time::Instant::now();
         loop {
-            let outcome = run.job.borrow().as_ref().and_then(|j| j.handle.try_poll());
-            if let Some(outcome) = outcome {
+            let landed = run.job.borrow().as_ref().and_then(|j| j.work.try_poll());
+            if let Some(landed) = landed {
                 let job = run.job.borrow_mut().take().expect("the job");
-                run.finish(job, outcome);
-                return;
+                run.land(job, landed);
+                run.next_queued();
+                if run.job.borrow().is_none() {
+                    return;
+                }
+                continue;
             }
             assert!(
                 waited.elapsed() < Duration::from_secs(60),
@@ -3788,6 +4650,215 @@ mod tests {
             run.refresh_ui();
             assert_eq!(window.get_hollow_model_state(), 1);
             assert_eq!(counts(), (2, 1));
+        });
+    }
+
+    /// A `side` mm cube around the origin, facing out, or in when `inward`.
+    fn cube_of(side: f32, inward: bool) -> IndexedMesh {
+        let mut cube = sc_mesh_fixtures::unit_cube_mesh();
+        for v in &mut cube.vertices {
+            *v = Vertex::new(v.as_array().map(|c| c * side));
+        }
+        if inward {
+            for f in &mut cube.faces {
+                let [a, b, c] = f.vertices.map(u32::from);
+                *f = sc_mesh_core::IndexedTriangle::from_raw_indices([a, c, b]);
+            }
+        }
+        cube
+    }
+
+    /// A 30 mm cube with a 26 mm cavity, as a file brings a hollow: no
+    /// record of how it was made (#447).
+    fn imported_hollow() -> IndexedMesh {
+        let (outer, inner) = (cube_of(30.0, false), cube_of(26.0, true));
+        let offset = outer.vertices.len() as u32;
+        let vertices = outer
+            .vertices
+            .iter()
+            .chain(&inner.vertices)
+            .copied()
+            .collect();
+        let faces = outer
+            .faces
+            .iter()
+            .copied()
+            .chain(inner.faces.iter().map(|f| {
+                sc_mesh_core::IndexedTriangle::from_raw_indices(
+                    f.vertices.map(|v| u32::from(v) + offset),
+                )
+            }))
+            .collect();
+        IndexedMesh::new(None, vertices, faces)
+    }
+
+    /// A window with `mesh` standing at (50, 50) on the plate, `lift` mm
+    /// up its centre, selected, in the Hollow tab.
+    fn hollow_tab_with(
+        mesh: IndexedMesh,
+        lift: f64,
+    ) -> (MainWindow, Rc<ViewportController>, Rc<HollowRun>, NodeId) {
+        use crate::selection::{LeafId, Selection};
+        let window = MainWindow::new().unwrap();
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        let mut graph = sc_scene::Scene::new();
+        let leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation([50.0, 50.0, lift])),
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
+            .unwrap();
+        graph.add_root(leaf).unwrap();
+        document.install_graph(graph, std::path::PathBuf::from("model.stl"));
+        document.set_selection(Selection::One(LeafId(leaf)));
+        window.set_workspace_section(WorkspaceSection::Hollow);
+        let run = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+        run.on_option(0, 2.0);
+        (window, ctrl, run, leaf)
+    }
+
+    fn mesh_on(ctrl: &ViewportController, leaf: NodeId) -> Arc<IndexedMesh> {
+        ctrl.document()
+            .with_scene(|s| s.graph().leaf_mesh_arc(leaf).cloned())
+            .flatten()
+            .expect("the model's mesh")
+    }
+
+    /// #447: a hollow from a file takes a drain drilled into it as it is,
+    /// with no cavity made: one undo, the rest of it untouched, its sealed
+    /// cavity counted until the drain opens it (#130), and Remove all
+    /// drains gives it back as it came.
+    #[test]
+    fn a_hollow_from_a_file_takes_a_drain_as_it_is() {
+        on_fresh_slint_thread(|| {
+            let (window, ctrl, run, leaf) = hollow_tab_with(imported_hollow(), 15.0);
+            let document = ctrl.document();
+            let came = mesh_on(&ctrl, leaf);
+            run.tick_preview();
+            run.probe_now(
+                &came,
+                &document
+                    .with_scene(|s| s.graph().world_transform_of(leaf).unwrap())
+                    .unwrap(),
+            );
+            run.refresh_ui();
+            assert_eq!(window.get_hollow_model_state(), 3, "it came hollow");
+            assert_eq!(window.get_hollow_sealed_count(), 1);
+            run.on_apply();
+            assert!(run.job.borrow().is_none(), "nothing hollows it again");
+
+            run.on_drain_click([50.4, 50.3, 0.0], [0.0, 0.0, -1.0]);
+            land_job(&run);
+            let drilled = mesh_on(&ctrl, leaf);
+            assert!(!Arc::ptr_eq(&drilled, &came));
+            assert!(drilled.is_sliceable());
+            let record = run.record_of(&drilled).expect("its record");
+            assert!(record.drilled);
+            assert!(Arc::ptr_eq(&record.original, &came));
+            assert_eq!(record.drains.len(), 1);
+            run.tick_preview();
+            run.refresh_ui();
+            assert_eq!(window.get_hollow_model_state(), 3);
+            run.probe_now(
+                &drilled,
+                &document
+                    .with_scene(|s| s.graph().world_transform_of(leaf).unwrap())
+                    .unwrap(),
+            );
+            run.refresh_ui();
+            assert_eq!(window.get_hollow_sealed_count(), 0, "the drain opened it");
+            // The cavity is the one it came with: the same volume, less the hole.
+            let volume = |m: &IndexedMesh| {
+                m.faces()
+                    .iter()
+                    .map(|f| {
+                        let [a, b, c] = f.vertices.map(|v| {
+                            m.vertices()[u32::from(v) as usize]
+                                .as_array()
+                                .map(f64::from)
+                        });
+                        (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                            + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                            / 6.0
+                    })
+                    .sum::<f64>()
+            };
+            let hole = std::f64::consts::PI * 1.5f64.powi(2) * 2.0;
+            let lost = volume(&came) - volume(&drilled);
+            assert!((lost - hole).abs() < 0.15 * hole, "{lost} vs {hole}");
+
+            // One undo puts it back as it came; redo drills it again.
+            assert!(document.undo().unwrap());
+            assert!(Arc::ptr_eq(&mesh_on(&ctrl, leaf), &came));
+            assert!(document.redo().unwrap());
+            run.on_clear_drains();
+            assert!(Arc::ptr_eq(&mesh_on(&ctrl, leaf), &came), "back as it came");
+        });
+    }
+
+    /// #448: two quick clicks with the drain tool make two drains: the
+    /// second waits for the first one's job.
+    #[test]
+    fn two_quick_drain_clicks_make_two_drains() {
+        on_fresh_slint_thread(|| {
+            let (_window, ctrl, run, leaf) = hollow_tab_with(cube_of(30.0, false), 15.0);
+            run.on_apply();
+            land_job(&run);
+            run.on_drain_click([50.0, 50.0, 0.0], [0.0, 0.0, -1.0]);
+            run.on_drain_click([44.0, 44.0, 0.0], [0.0, 0.0, -1.0]);
+            assert_eq!(run.queued.borrow().len(), 1, "the second waits");
+            land_job(&run);
+            let hollow = mesh_on(&ctrl, leaf);
+            let record = run.record_of(&hollow).expect("the hollow's record");
+            assert_eq!(record.drains.len(), 2);
+            assert!(!record.drilled, "hollowed here");
+            assert!(hollow.is_sliceable());
+            assert!(run.queued.borrow().is_empty());
+        });
+    }
+
+    /// #448: a model with no room for a cavity behind its wall is left as it
+    /// is, and the tab says why.
+    #[test]
+    fn a_plate_too_thin_for_a_cavity_is_left_solid() {
+        on_fresh_slint_thread(|| {
+            let mut plate = cube_of(1.0, false);
+            for v in &mut plate.vertices {
+                let [x, y, z] = *v.as_array();
+                *v = Vertex::new([x * 30.0, y * 30.0, z * 3.0]);
+            }
+            let (_window, ctrl, run, leaf) = hollow_tab_with(plate, 1.5);
+            let before = mesh_on(&ctrl, leaf);
+            run.on_apply();
+            land_job(&run);
+            assert!(
+                Arc::ptr_eq(&mesh_on(&ctrl, leaf), &before),
+                "left as it was"
+            );
+            assert!(run.record_of(&before).is_none());
+            assert_eq!(
+                ctrl.dialogs().info_headings_for_test(),
+                vec!["No room to hollow this model".to_owned()]
+            );
+        });
+    }
+
+    /// #448: a mesh the slicer refuses is not hollowed: the tab says so and
+    /// offers Repair.
+    #[test]
+    fn an_open_mesh_offers_repair_instead_of_hollowing() {
+        on_fresh_slint_thread(|| {
+            let mut open = cube_of(30.0, false);
+            open.faces.pop();
+            let (_window, ctrl, run, _) = hollow_tab_with(open, 15.0);
+            run.on_apply();
+            assert!(run.job.borrow().is_none(), "no job runs");
+            assert_eq!(
+                ctrl.dialogs().error_headings_for_test(),
+                vec!["This model can't be hollowed as it is".to_owned()]
+            );
         });
     }
 }

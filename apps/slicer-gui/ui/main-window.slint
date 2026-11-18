@@ -471,6 +471,12 @@ export component MainWindow inherits Window {
     in property <string> hollow-last-run;
     in property <int> hollow-model-state: 0;
     in property <int> hollow-drain-count: 0;
+    // The selected hollow's cavities still closed all round (#130); -1 not
+    // counted yet.
+    in property <int> hollow-sealed-count: -1;
+    // The drain tool shows where a drain works best (#455).
+    in-out property <bool> hollow-drain-map: true;
+    callback hollow-drain-map-toggled(bool);
     // The drain picked to edit (#450), -1 none, and whether the next click
     // moves it.
     in property <int> hollow-drain-picked: -1;
@@ -2668,6 +2674,12 @@ export component MainWindow inherits Window {
                                     last-run: root.hollow-last-run;
                                     model-state: root.hollow-model-state;
                                     drain-count: root.hollow-drain-count;
+                                    sealed-count: root.hollow-sealed-count;
+                                    drain-map: root.hollow-drain-map;
+                                    drain-map-toggled(on) => {
+                                        root.hollow-drain-map = on;
+                                        root.hollow-drain-map-toggled(on);
+                                    }
                                     drain-picked: root.hollow-drain-picked;
                                     drain-moving: root.hollow-drain-moving;
                                     drain-step(by) => {

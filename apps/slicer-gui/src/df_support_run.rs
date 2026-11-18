@@ -13193,6 +13193,7 @@ mod hand_edit_tests {
                 solids: Vec::new(),
                 engine: None,
                 stretch: None,
+                drilled: false,
             });
 
             ctrl.open_models(vec![dragon]);
