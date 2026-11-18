@@ -338,7 +338,7 @@ fn a_model_past_the_plate_is_not_sliced() {
 }
 
 /// With `BREADSLICER_UI_SHOTS` naming a folder, the Slice tab of a short
-/// window after a slice (tester, 2026-11-18): the tab scrolls as a whole,
+/// window after a slice (#628): the tab scrolls as a whole,
 /// so the review keeps its room; scrolled to the top and to the bottom.
 #[test]
 fn the_slice_tab_of_a_short_window_is_pictured_when_asked() {

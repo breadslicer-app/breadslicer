@@ -522,6 +522,7 @@ export component MainWindow inherits Window {
     // there is none.
     in property <bool> slice-estimate-valid: false;
     in property <string> slice-estimate-time;
+    in property <string> slice-estimate-time-caption;
     in property <string> slice-estimate-volume;
     in property <string> slice-estimate-mass;
     in property <string> slice-estimate-note;
@@ -2311,7 +2312,7 @@ export component MainWindow inherits Window {
                     // The Slice tab fills the column: its setup, Slice button and
                     // result stay put, and the review list scrolls inside it. In
                     // a window too short for all of it with room for the review,
-                    // the tab scrolls as a whole instead (tester, 2026-11-18).
+                    // the tab scrolls as a whole instead (#628).
                     if root.workspace-section == WorkspaceSection.Slice: slice-scroll := ScrollView {
                         x: 1px;
                         width: parent.width - 1px;
@@ -2365,6 +2366,7 @@ export component MainWindow inherits Window {
                                 layer-image: root.slice-view-image;
                                 estimate-valid: root.slice-estimate-valid;
                                 estimate-time: root.slice-estimate-time;
+                                estimate-time-caption: root.slice-estimate-time-caption;
                                 estimate-volume: root.slice-estimate-volume;
                                 estimate-mass: root.slice-estimate-mass;
                                 estimate-note: root.slice-estimate-note;

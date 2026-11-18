@@ -88,7 +88,7 @@ pub(crate) fn slice_panel_view(
         selection.printer(),
     );
     let shown_printer = printer.selected_option().map(|option| &option.id);
-    // Only the resins set for the printer shown (#626).
+    // Only the resins set for the printer shown (#627).
     let resin_choices: Vec<(MaterialId, String)> = catalog
         .materials()
         .iter()
@@ -644,7 +644,7 @@ mod slice_panel_view_tests {
         model.options.get(index).map(|option| &option.binding)
     }
 
-    /// The resins offered are only the ones set for the printer shown (#626).
+    /// The resins offered are only the ones set for the printer shown (#627).
     #[test]
     fn the_resins_offered_are_the_ones_set_for_the_printer() {
         let catalog = ProfileCatalog::from_libraries(

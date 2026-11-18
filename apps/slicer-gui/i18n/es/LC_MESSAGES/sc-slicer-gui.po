@@ -8833,3 +8833,27 @@ msgstr "La resina que cura, más {} % de pérdidas, a tu precio."
 msgctxt "Inspector"
 msgid "The resin it cures, at your price."
 msgstr "La resina que cura, a tu precio."
+
+msgctxt "Inspector"
+msgid "print time, uncalibrated"
+msgstr "tiempo, sin calibrar"
+
+msgctxt "PrinterPicker"
+msgid "HOW LONG YOUR PRINTS TOOK"
+msgstr "CUÁNTO TARDARON TUS IMPRESIONES"
+
+msgctxt "PrinterPicker"
+msgid "{} · {} · estimated {}"
+msgstr "{} · {} · estimado {}"
+
+msgctxt "PrinterPicker"
+msgid ", within ± {}"
+msgstr ", con ± {}"
+
+msgctxt "PrinterPicker"
+msgid "From {} of your prints: {} s more a layer and {} more a print{}. Saving keeps it as the print time."
+msgstr "Según {} de tus impresiones: {} s más por capa y {} más por impresión{}. Al guardar queda como el tiempo de impresión."
+
+msgctxt "PrinterPicker"
+msgid "Write how long at least 2 prints of different heights took."
+msgstr "Escribí cuánto tardaron al menos 2 impresiones de alturas distintas."

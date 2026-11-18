@@ -36,6 +36,12 @@ pub struct PrinterTimeCalibration {
     /// alone, which the machine spends exactly as told.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub per_layer_overhead_sec: Option<NonNegativeFiniteSec>,
+    /// How far the real prints the coefficients were fitted from came
+    /// from them, the most: the range an estimate is good to. It does not
+    /// change the duration; absent when nothing was fitted, or from 2
+    /// prints alone, which a fit always meets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub print_time_error_sec: Option<NonNegativeFiniteSec>,
 }
 
 impl PrinterTimeCalibration {

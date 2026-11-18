@@ -142,6 +142,10 @@ pub(crate) struct PrintEstimate {
     /// What that volume weighs liquid, out of the bottle (#101): `None`
     /// when the resin gives no liquid density.
     pub liquid_g: Option<f64>,
+    /// Whether the printer's time is calibrated at all, and how far the
+    /// real prints it was fitted from came from it (#45).
+    pub time_calibrated: bool,
+    pub time_error_sec: Option<f64>,
 }
 
 /// The estimate of the held slice, or why there is none (no slice, a stale
@@ -154,6 +158,7 @@ pub(crate) fn estimate_held_slice(
 ) -> Result<PrintEstimate, String> {
     let job = prepare_export_of(document, scene).map_err(|err| err.to_string())?;
     let program = job.program();
+    let calibration = job.config().printer.time_calibration;
     let volume_ml = program.volume_mm3.value() / 1000.0;
     let liquid_g = document
         .held_slice()
@@ -165,6 +170,8 @@ pub(crate) fn estimate_held_slice(
         volume_ml,
         mass_g: program.mass_g.value(),
         liquid_g,
+        time_calibrated: calibration != sc_print_profiles::PrinterTimeCalibration::default(),
+        time_error_sec: calibration.print_time_error_sec.map(|e| e.value()),
     })
 }
 
@@ -313,7 +320,34 @@ async fn run_export_flow(
         return;
     };
     let previews = previews_for(format);
+    // What the print log keeps of it (#45), once written.
+    let printed = {
+        let program = job.program();
+        let printer = &job.config().printer;
+        let estimate_sec = program.print_time_sec.value();
+        crate::print_log::PrintRecord {
+            printer: printer.identity.id.as_str().to_owned(),
+            file: target
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            at: crate::print_log::now_text(),
+            layers: program.layers.len() as u32,
+            schedule_sec: crate::print_log::schedule_of(
+                &printer.time_calibration,
+                estimate_sec,
+                program.layers.len(),
+            ),
+            estimate_sec,
+        }
+    };
     let outcome = write_job(&export_progress, job, target.clone(), format, previews).await;
+    if matches!(outcome, Ok(Ok(())))
+        && let Some(path) = crate::print_log::log_path()
+        && let Err(err) = crate::print_log::record_to(&path, printed)
+    {
+        eprintln!("The print log was not written: {err}");
+    }
     let ended = match &outcome {
         Ok(Ok(())) => "ok".to_owned(),
         Ok(Err(err)) => format!("failed: {err}"),

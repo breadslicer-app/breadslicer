@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Supports that reach past the edge of their plate (#627): a model placed
+//! Supports that reach past the edge of their plate (#628): a model placed
 //! near the edge by hand can get supports that do not fit on the plate.
 //! Generate says so, and Arrange all, which measures each model with its
 //! supports, puts them back. A slice refuses a plate whose models or

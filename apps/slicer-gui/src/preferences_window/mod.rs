@@ -1268,7 +1268,7 @@ fn derive_resin_view(
             });
         }
     }
-    // With a printer chosen, only the resins set for it show (#626).
+    // With a printer chosen, only the resins set for it show (#627).
     if default_printer.is_some() {
         return matched_rows;
     }
@@ -1453,7 +1453,7 @@ mod derive_resin_view_tests {
             &BTreeSet::new(),
         );
         // Only the resins set for the printer (b: specific, d: generic
-        // fallback), in base order (#626).
+        // fallback), in base order (#627).
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
         assert_eq!(ids, vec![1, 3]);
     }
@@ -1610,7 +1610,7 @@ mod derive_resin_view_tests {
         let pills = row_pills(&rows[0]);
         assert_eq!(pills.len(), 1);
         // With no printer chosen every pill is dim; with one, a resin with no
-        // data does not show at all (#626).
+        // data does not show at all (#627).
         assert_eq!(pills[0].0, "No calibration data");
         assert_eq!(pills[0].1, PillKind::Other);
     }

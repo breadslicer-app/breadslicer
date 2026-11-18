@@ -488,7 +488,7 @@ impl SliceRun {
 
         current.plate = self.document.slice_plate();
         // What sticks out of the plate would not print whole: no slice of it
-        // to export, and Arrange all puts it back (tester, 2026-11-18).
+        // to export, and Arrange all puts it back (#628).
         if matches!(trigger, SliceTrigger::Button | SliceTrigger::EveryPlate)
             && self.tell_parts_past_plate(current.plate)
         {

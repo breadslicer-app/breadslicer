@@ -667,7 +667,7 @@ fn a_real_mini_through_generate_and_its_islands() {
         };
         let started = Instant::now();
         w.supports.press_generate_and_wait(options);
-        // How far the supports reach from the middle in X and Y (#627):
+        // How far the supports reach from the middle in X and Y (#628):
         // after Generate, and after the islands and Fix all it goes on to.
         let reach = |w: &Window| {
             w.document

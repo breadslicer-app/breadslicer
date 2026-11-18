@@ -2983,6 +2983,7 @@ export component SliceInspector inherits VerticalLayout {
     in property <image> layer-image;
     in property <bool> estimate-valid;
     in property <string> estimate-time;
+    in property <string> estimate-time-caption;
     in property <string> estimate-volume;
     in property <string> estimate-mass;
     in property <string> estimate-note;
@@ -3203,7 +3204,7 @@ export component SliceInspector inherits VerticalLayout {
 
             StatTile {
                 value: root.estimate-time;
-                caption: @tr("Inspector" => "print time");
+                caption: root.estimate-time-caption;
             }
             StatTile {
                 value: root.estimate-volume;

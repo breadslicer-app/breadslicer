@@ -303,7 +303,7 @@ pub(crate) struct DfSupportRun {
     // if the step cannot start (#606).
     islands_after_raft: RefCell<Option<String>>,
     /// Generate's supports are looked at against the plate's edge once its
-    /// islands step ends (#627).
+    /// islands step ends (#628).
     edges_after_islands: Cell<bool>,
     /// The raft top of the supports this driver pasted last, `Some(None)`
     /// for supports without a raft.
@@ -6639,7 +6639,7 @@ impl DfSupportRun {
             } else {
                 self.after_generate.borrow().as_ref().is_some_and(|then| then())
             };
-        // Supports past the plate's edge (#627): told once Generate is done,
+        // Supports past the plate's edge (#628): told once Generate is done,
         // after its islands step when one follows.
         if islands_next {
             self.edges_after_islands.set(true);
@@ -6864,7 +6864,7 @@ impl DfSupportRun {
         }
     }
 
-    /// Says which models have supports past the edge of their plate (#627),
+    /// Says which models have supports past the edge of their plate (#628),
     /// with a button to Arrange all: it measures every model with its
     /// supports and keeps them on the plate.
     fn tell_supports_past_plate(&self) {
@@ -10551,7 +10551,7 @@ mod hand_edit_tests {
         });
     }
 
-    /// #627: Generate says when a model's supports reach past the edge of
+    /// #628: Generate says when a model's supports reach past the edge of
     /// the plate, and nothing for a model whose supports fit.
     #[test]
     fn supports_past_the_plate_edge_are_told_after_generate() {

@@ -17,6 +17,7 @@ fn calibration(multiplier: Option<f64>, offset: Option<f64>) -> PrinterTimeCalib
         print_time_multiplier: multiplier.map(|v| TimeMultiplier::new(v).unwrap()),
         print_time_offset_sec: offset.map(|v| TimeOffsetSec::new(v).unwrap()),
         per_layer_overhead_sec: None,
+        print_time_error_sec: None,
     }
 }
 

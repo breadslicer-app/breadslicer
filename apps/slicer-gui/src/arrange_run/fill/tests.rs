@@ -468,7 +468,7 @@ fn fill_bed_on_a_real_model() {
     }
 }
 
-/// A report (#627): fills an M7 Pro plate with copies of an STL measured
+/// A report (#628): fills an M7 Pro plate with copies of an STL measured
 /// with their forecast supports, as the window does, then generates their
 /// supports and tells which reach past the plate's edge.
 ///

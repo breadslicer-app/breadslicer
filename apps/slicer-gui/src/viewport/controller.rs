@@ -815,9 +815,23 @@ impl ViewportController {
         match estimate {
             Ok(e) => {
                 ui.set_slice_estimate_valid(true);
+                let time = crate::export_print_file::format_duration(e.time_sec);
                 ui.set_slice_estimate_time(
-                    crate::export_print_file::format_duration(e.time_sec).into(),
+                    match e.time_error_sec {
+                        Some(error) => format!(
+                            "{time} ± {}",
+                            crate::export_print_file::format_duration(error.max(60.0))
+                        ),
+                        None => time,
+                    }
+                    .into(),
                 );
+                // What the time is made of, said (#45).
+                ui.set_slice_estimate_time_caption(if e.time_calibrated {
+                    crate::i18n::ctr!("Inspector", "print time")
+                } else {
+                    crate::i18n::ctr!("Inspector", "print time, uncalibrated")
+                });
                 ui.set_slice_estimate_volume(format!("{:.1} ml", e.volume_ml).into());
                 ui.set_slice_estimate_mass(format!("{:.1} g", e.mass_g).into());
                 ui.set_slice_estimate_note(slint::SharedString::default());
