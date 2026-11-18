@@ -13,7 +13,7 @@ use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, Pri
 
 use crate::print_format::{PrintFormatModel, print_format_model};
 use crate::print_selection::{OwnOrDefault, PrintDefaults, PrintSelection};
-use crate::profile_catalog::{MaterialCatalogEntry, PrinterCatalogEntry, ProfileCatalog};
+use crate::profile_catalog::{PrinterCatalogEntry, ProfileCatalog};
 
 /// An entry in a picker: the profile id, which the pick callback carries back,
 /// and the label that the dropdown shows.
@@ -475,7 +475,7 @@ mod slice_panel_view_tests {
     use sc_print_primitives::{BuildVolume, FormatKind, NonEmptyString, OutputFormatBindings};
 
     use super::*;
-    use crate::profile_catalog::ProfileSource;
+    use crate::profile_catalog::{MaterialCatalogEntry, ProfileSource};
 
     fn printer_id(id: &str) -> PrinterId {
         PrinterId::new(id).expect("valid printer id")

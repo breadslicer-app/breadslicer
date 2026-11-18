@@ -302,6 +302,9 @@ pub(crate) struct DfSupportRun {
     // under its new supports, with the run's summary for the status bar
     // if the step cannot start (#606).
     islands_after_raft: RefCell<Option<String>>,
+    /// Generate's supports are looked at against the plate's edge once its
+    /// islands step ends (#627).
+    edges_after_islands: Cell<bool>,
     /// The raft top of the supports this driver pasted last, `Some(None)`
     /// for supports without a raft.
     generated_raft_top: Cell<Option<Option<f64>>>,
@@ -1741,6 +1744,7 @@ impl DfSupportRun {
             generated_raft_top: Cell::new(None),
             after_generate: RefCell::new(None),
             islands_after_raft: RefCell::new(None),
+            edges_after_islands: Cell::new(false),
             status_timer: slint::Timer::default(),
             redo: RefCell::new(None),
             regrid: RefCell::new(None),
@@ -6635,6 +6639,14 @@ impl DfSupportRun {
             } else {
                 self.after_generate.borrow().as_ref().is_some_and(|then| then())
             };
+        // Supports past the plate's edge (#627): told once Generate is done,
+        // after its islands step when one follows.
+        if islands_next {
+            self.edges_after_islands.set(true);
+        } else {
+            self.edges_after_islands.set(false);
+            self.tell_supports_past_plate();
+        }
         // Copies given the supports of one standing like them were placed
         // without looking at their neighbours (#561): where they run into
         // one, Generate says so and moves nothing; Arrange all spaces the
@@ -6842,6 +6854,62 @@ impl DfSupportRun {
                 details: details.as_str().into(),
             }
         });
+    }
+
+    /// Generate's islands step is over (#606): its supports are looked at
+    /// against the plate's edge now, when Generate left that for then.
+    pub(crate) fn tell_edges_if_pending(&self) {
+        if self.edges_after_islands.replace(false) {
+            self.tell_supports_past_plate();
+        }
+    }
+
+    /// Says which models have supports past the edge of their plate (#627),
+    /// with a button to Arrange all: it measures every model with its
+    /// supports and keeps them on the plate.
+    fn tell_supports_past_plate(&self) {
+        let volume = self.ctrl.build_volume();
+        let plates = self.document.plates();
+        let past = self
+            .document
+            .with_scene(|spatial| {
+                let past = crate::support_edges::past_the_plate(
+                    spatial,
+                    &volume,
+                    plates,
+                    &|leaf| model_of(&self.sessions, leaf),
+                );
+                let names = crate::repair_report::object_names_by_leaf(spatial.graph());
+                past.iter()
+                    .filter_map(|id| names.get(id).cloned())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
+        if past.is_empty() {
+            return;
+        }
+        crate::breadcrumbs::note(&format!("supports: {} past the plate edge", past.len()));
+        let count = past.len();
+        let details = past.join("\n");
+        let ui = self.ui.clone();
+        self.dialogs.show_error_with_action(
+            move || ErrorTexts {
+                heading: ctr!("DfSupportDialog", "Supports past the plate edge"),
+                context: None,
+                message: ctr!(
+                    "DfSupportDialog",
+                    "The supports of {} model(s) reach past the edge of the plate and would not print. Press Arrange all to place the models with their supports on the plate.",
+                    count
+                ),
+                details: details.as_str().into(),
+            },
+            || ctr!("DfSupportDialog", "Arrange all"),
+            move || {
+                if let Some(ui) = ui.upgrade() {
+                    ui.invoke_arrange_requested(false);
+                }
+            },
+        );
     }
 
     /// Shows `text` in the status bar in place of its hint for a few
@@ -10479,6 +10547,56 @@ mod hand_edit_tests {
                 .map(|tip| tip.pos)
                 .collect();
             assert_eq!(map, contacts, "every end, where its set draws it");
+        });
+    }
+
+    /// #627: Generate says when a model's supports reach past the edge of
+    /// the plate, and nothing for a model whose supports fit.
+    #[test]
+    fn supports_past_the_plate_edge_are_told_after_generate() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let run = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
+            let edge = f64::from(ctrl.build_volume().width_mm()) / 2.0;
+            let heading = "Supports past the plate edge";
+            // A 10 mm cube whose supports spread about 3 mm past it: centred, then
+            // with the cube inside the plate 0.5 mm from its edge.
+            for (x, past) in [(0.0, false), (edge - 5.5, true)] {
+                let mut graph = Scene::new();
+                let cube = sc_mesh_fixtures::unit_cube_mesh();
+                let leaf = graph
+                    .add_leaf(
+                        None,
+                        Transform3D::Affine(
+                            AffineTransform3D::from_translation([x, 0.0, 15.0])
+                                .compose(&AffineTransform3D::from_uniform_scale(10.0)),
+                        ),
+                        LeafPayload::Mesh(Arc::new(cube)),
+                    )
+                    .unwrap();
+                graph.add_root(leaf).unwrap();
+                document.install_graph(graph, PathBuf::from("cube.stl"));
+                run.generate_now(DfSupportOptions {
+                    zones: Some(minis_30()),
+                    ..Default::default()
+                });
+                let told = ctrl
+                    .dialogs()
+                    .error_headings_for_test()
+                    .iter()
+                    .filter(|h| h.as_str() == heading)
+                    .count();
+                assert_eq!(told, usize::from(past), "a model at x = {x} mm");
+            }
         });
     }
 

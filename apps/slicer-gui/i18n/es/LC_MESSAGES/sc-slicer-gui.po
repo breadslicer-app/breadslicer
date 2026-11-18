@@ -8749,3 +8749,15 @@ msgstr "Son los ajustes que publica el fabricante. Al guardar queda como resina 
 msgctxt "FileDialog"
 msgid "Lychee, Photon Workshop or CHITUBOX printer settings"
 msgstr "Ajustes de impresora de Lychee, Photon Workshop o CHITUBOX"
+
+msgctxt "DfSupportDialog"
+msgid "Supports past the plate edge"
+msgstr "Soportes fuera de la cama"
+
+msgctxt "DfSupportDialog"
+msgid "The supports of {} model(s) reach past the edge of the plate and would not print. Press Arrange all to place the models with their supports on the plate."
+msgstr "Los soportes de {} modelo(s) se salen de la cama y no se imprimirían. Tocá Acomodar todo para ubicar los modelos con sus soportes dentro de la cama."
+
+msgctxt "DfSupportDialog"
+msgid "Arrange all"
+msgstr "Acomodar todo"
