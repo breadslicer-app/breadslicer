@@ -8857,3 +8857,31 @@ msgstr "Según {} de tus impresiones: {} s más por capa y {} más por impresió
 msgctxt "PrinterPicker"
 msgid "Write how long at least 2 prints of different heights took."
 msgstr "Escribí cuánto tardaron al menos 2 impresiones de alturas distintas."
+
+msgctxt "PrinterPicker"
+msgid "At 0.05 mm layers, a wall tilted {}° (X) or {}° (Y) from upright moves one pixel a layer."
+msgstr "Con capas de 0,05 mm, una pared inclinada {}° (X) o {}° (Y) desde la vertical avanza un píxel por capa."
+
+msgctxt "PrinterPicker"
+msgid "Between layers the light is off for {} s (rise, return and waits); a layer takes {} s."
+msgstr "Entre capas la luz queda apagada {} s (subida, bajada y esperas); cada capa tarda {} s."
+
+msgctxt "PrinterPicker"
+msgid "Bottom layers: the light is off for {} s; a layer takes {} s."
+msgstr "Capas de base: la luz queda apagada {} s; cada capa tarda {} s."
+
+msgctxt "PrinterPicker"
+msgid "Imported from {} on {}"
+msgstr "Importado de {} el {}"
+
+msgctxt "PrinterPicker"
+msgid "Imported from {}"
+msgstr "Importado de {}"
+
+msgctxt "PrinterPicker"
+msgid "Made from {} on {}"
+msgstr "Hecho a partir de {} el {}"
+
+msgctxt "PrinterPicker"
+msgid "Made from {}"
+msgstr "Hecho a partir de {}"

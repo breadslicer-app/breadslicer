@@ -675,6 +675,27 @@ impl Form {
             .to_string(),
             _ => String::new(),
         };
+        // The tilt at which a wall moves one pixel a layer (#273, #95).
+        let summary = match panel_of(&draft) {
+            (Some(x), Some(y)) if x.pixel_um > 0.0 && y.pixel_um > 0.0 => {
+                let tilt = |pixel_um: f64| (pixel_um / 1000.0 / 0.05).atan().to_degrees();
+                let line = ctr!(
+                    "PrinterPicker",
+                    "At 0.05 mm layers, a wall tilted {}° (X) or {}° (Y) from upright moves one pixel a layer.",
+                    format!("{:.1}", tilt(x.pixel_um)),
+                    format!("{:.1}", tilt(y.pixel_um))
+                );
+                if summary.is_empty() {
+                    line.to_string()
+                } else {
+                    format!(
+                        "{summary}
+{line}"
+                    )
+                }
+            }
+            _ => summary,
+        };
         let fit = self.time_fit_line();
         let summary = match (summary.is_empty(), fit.is_empty()) {
             (_, true) => summary,
@@ -926,7 +947,7 @@ impl Form {
             chip: at,
             left,
             right,
-            summary: String::new(),
+            summary: self.light_off_lines(),
             note: if mine {
                 let slots = ctr!(
                     "PrinterPicker",
@@ -1012,6 +1033,73 @@ impl Form {
                 Ok(Saved::Resin(resin.identity.id))
             }
         }
+    }
+
+    /// What a layer of the block shown spends with the light off (#273,
+    /// #95): the platform's rise and return and the waits, as typed, for
+    /// the layers and the bottom layers.
+    fn light_off_lines(&self) -> String {
+        let num = |key: &str| {
+            crate::resin_cost::parse_number(&self.t(key)).filter(|v| v.is_finite() && *v >= 0.0)
+        };
+        let travel = |distance: &str, speed: &str| match (num(distance), num(speed)) {
+            (Some(d), Some(v)) if v > 0.0 => Some(d / v * 60.0),
+            (Some(d), _) if d == 0.0 => Some(0.0),
+            (None, _) => Some(0.0),
+            _ => None,
+        };
+        let off = |prefix: &str| -> Option<f64> {
+            let key = |k: &str| format!("{prefix}{k}");
+            let lift = travel(&key("lift_distance_mm"), &key("lift_speed_mm_min"))?;
+            let back = travel(&key("lift_distance_mm"), &key("retract_speed_mm_min"))?;
+            let lift2 = travel(
+                &key("second_lift_distance_mm"),
+                &key("second_lift_speed_mm_min"),
+            )?;
+            let back2 = travel(
+                &key("second_lift_distance_mm"),
+                &key("second_retract_speed_mm_min"),
+            )?;
+            let waits: f64 = [
+                "wait_before_cure_sec",
+                "wait_after_cure_sec",
+                "wait_after_lift_sec",
+            ]
+            .iter()
+            .map(|k| num(&key(k)).unwrap_or(0.0))
+            .sum();
+            let light_off = lift + back + lift2 + back2 + waits;
+            (light_off > 0.0).then_some(light_off)
+        };
+        let mut lines = Vec::new();
+        if let Some(light_off) = off("") {
+            let exposure = num("normal_exposure_sec").unwrap_or(0.0);
+            lines.push(
+                ctr!(
+                    "PrinterPicker",
+                    "Between layers the light is off for {} s (rise, return and waits); a layer takes {} s.",
+                    tidy((light_off * 100.0).round() / 100.0),
+                    tidy(((light_off + exposure) * 100.0).round() / 100.0)
+                )
+                .to_string(),
+            );
+        }
+        if let Some(light_off) = off("bottom_") {
+            let exposure = num("bottom_exposure_sec").unwrap_or(0.0);
+            lines.push(
+                ctr!(
+                    "PrinterPicker",
+                    "Bottom layers: the light is off for {} s; a layer takes {} s.",
+                    tidy((light_off * 100.0).round() / 100.0),
+                    tidy(((light_off + exposure) * 100.0).round() / 100.0)
+                )
+                .to_string(),
+            );
+        }
+        lines.join(
+            "
+",
+        )
     }
 
     /// The prints offered to time, as the form holds them.
@@ -1409,6 +1497,39 @@ mod tests {
         assert!((time.per_layer_overhead_sec.unwrap().value() - 1.2).abs() < 1e-3);
         assert!((time.print_time_offset_sec.unwrap().value() - 150.0).abs() < 1e-2);
         assert!(time.print_time_error_sec.unwrap().value() < 1.0);
+    }
+
+    /// The resin form says how long the light is off between layers, as
+    /// typed, and the printer form the tilt that moves a pixel a layer
+    /// (#273, #95), checked against the sums by hand.
+    #[test]
+    fn the_forms_work_out_the_light_off_time_and_the_pixel_tilt() {
+        let base = ProfileLibraries::platform_default()
+            .load_material_by_id(&MaterialId::new("siraya-tech-blu-easy-grey").unwrap())
+            .unwrap();
+        let mut form = Form::resin(base, true, None, |id| id.as_str().to_owned());
+        for (key, value) in [
+            ("normal_exposure_sec", "2"),
+            ("lift_distance_mm", "6"),
+            ("lift_speed_mm_min", "60"),
+            ("retract_speed_mm_min", "180"),
+            ("second_lift_distance_mm", ""),
+            ("wait_before_cure_sec", "0.5"),
+            ("wait_after_cure_sec", "0"),
+            ("wait_after_lift_sec", "0"),
+        ] {
+            form.edited(key, value);
+        }
+        // 6 mm at 1 mm/s up, at 3 mm/s down, and 0.5 s: 8.5 s off, 10.5 s
+        // a layer.
+        let summary = form.shown().summary;
+        assert!(
+            summary.contains("8.5 s") && summary.contains("10.5 s"),
+            "{summary}"
+        );
+        // The M7 Pro's 16.8 µm pixels at 0.05 mm layers: atan(0.336).
+        let printer = Form::printer(Some(m7_pro()), true).shown().summary;
+        assert!(printer.contains("18.6°"), "{printer}");
     }
 
     fn m7_pro() -> PrinterProfile {
