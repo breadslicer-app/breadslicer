@@ -470,6 +470,13 @@ export component MainWindow inherits Window {
     in property <string> hollow-last-run;
     in property <int> hollow-model-state: 0;
     in property <int> hollow-drain-count: 0;
+    // The drain picked to edit (#450), -1 none, and whether the next click
+    // moves it.
+    in property <int> hollow-drain-picked: -1;
+    in property <bool> hollow-drain-moving: false;
+    callback hollow-drain-step(int);
+    callback hollow-drain-remove();
+    callback hollow-drain-move();
     in-out property <bool> hollow-drain-tool: false;
     // The lasso (#179): a stroke drawn over the viewport keeps what lies
     // behind it solid. The regions the selected model keeps, and the stroke
@@ -2608,6 +2615,17 @@ export component MainWindow inherits Window {
                                     last-run: root.hollow-last-run;
                                     model-state: root.hollow-model-state;
                                     drain-count: root.hollow-drain-count;
+                                    drain-picked: root.hollow-drain-picked;
+                                    drain-moving: root.hollow-drain-moving;
+                                    drain-step(by) => {
+                                        root.hollow-drain-step(by);
+                                    }
+                                    drain-remove => {
+                                        root.hollow-drain-remove();
+                                    }
+                                    drain-move => {
+                                        root.hollow-drain-move();
+                                    }
                                     drain-tool-on: root.hollow-drain-tool;
                                     solid-count: root.hollow-solid-count;
                                     lasso-tool-on: root.hollow-lasso-tool;
