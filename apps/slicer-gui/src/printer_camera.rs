@@ -195,11 +195,13 @@ fn failure_text(err: &CameraError, printer: &str) -> String {
             printer,
             err
         ),
+        // The first line; the rest (where, when, what was read) is in the
+        // diagnostic log.
         CameraError::Stream(what) => ctr!(
             "PrinterCamera",
             "The camera stream of {} failed: {}",
             printer,
-            what
+            camera::first_line(what)
         ),
         CameraError::NoVideo(offered) => ctr!(
             "PrinterCamera",
