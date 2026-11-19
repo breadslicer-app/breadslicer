@@ -29,6 +29,8 @@ use crate::support_persist::{shown_drawing, support_leaves};
 /// it, and where the leaf stands.
 pub(crate) struct ShownSet {
     pub(crate) leaf: NodeId,
+    /// The model the supports stand on.
+    pub(crate) model: NodeId,
     pub(crate) session: Arc<DfSupportSession>,
     pub(crate) world: Transform3D,
 }
@@ -91,6 +93,7 @@ pub(crate) fn shown_sets(document: &SceneDocument) -> Vec<ShownSet> {
                     let world = now.compose(&drawn.leaf_world.inverse().ok()?);
                     Some(ShownSet {
                         leaf,
+                        model: drawn.model,
                         session: drawn.session,
                         world,
                     })

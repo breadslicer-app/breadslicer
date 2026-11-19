@@ -9481,3 +9481,33 @@ msgstr "Desagrupados: cada modelo vuelve a estar solo."
 msgctxt "Workspace"
 msgid "No group is picked."
 msgstr "No hay ningún grupo elegido."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Mini supports"
+msgstr "Minisoportes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "A long branch out to an island hangs from the nearest support instead, shorter."
+msgstr "Una rama larga hacia una isla cuelga del soporte más cercano, más corta."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Adaptive base"
+msgstr "Base adaptable"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "A tall support stands on a wider base: from 20 mm up it grows, to one and a half times at 60 mm."
+msgstr "Un soporte alto apoya en una base más ancha: crece desde los 20 mm hasta una vez y media a los 60 mm."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Braces as thick as their trunks"
+msgstr "Refuerzos según el tronco"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "A brace is 0.8 of the thinner trunk it joins, instead of the preset's diameter."
+msgstr "Un refuerzo mide 0,8 del tronco más fino que une, en vez del diámetro del preset."

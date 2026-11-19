@@ -3198,6 +3198,43 @@ mod window_wiring_tests {
         assert_eq!(steps, expected);
     }
 
+    /// A zone preset's mini supports, adaptive base and braces that follow
+    /// their trunks (#471): on from the box, off again, kept by the preset.
+    #[test]
+    fn a_zone_presets_mini_supports_base_and_braces_turn_on_and_off_in_the_tab() {
+        let steps = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            let read = |w: &MainWindow| {
+                (
+                    w.get_support_mini_supports(),
+                    w.get_support_adaptive_base(),
+                    w.get_support_braces_follow(),
+                )
+            };
+            window.invoke_support_preset_picked(0);
+            let mut steps = vec![read(&window)];
+            window.invoke_support_option_changed(19, 0.0);
+            window.invoke_support_option_changed(20, 1.0);
+            window.invoke_support_option_changed(21, 1.0);
+            steps.push(read(&window));
+            window.invoke_support_option_changed(19, 1.0);
+            window.invoke_support_option_changed(20, 0.0);
+            window.invoke_support_option_changed(21, 0.0);
+            steps.push(read(&window));
+            steps
+        });
+        assert_eq!(
+            steps,
+            [
+                (true, false, false),
+                (false, true, true),
+                (true, false, false)
+            ]
+        );
+    }
+
     /// The shape panel (#564): a preset shows its support drawn, its sizes
     /// and their numbers; a number changed makes the preset the person's
     /// own, made from the built-in one, each size with its own numbers and

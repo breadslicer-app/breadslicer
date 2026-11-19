@@ -176,6 +176,9 @@ struct HistoryEntry {
     /// what they are called. Undo and Redo set them back, with the edit's
     /// model moves.
     plates: Option<(Vec<String>, Vec<String>)>,
+    /// The groups of models before the entry and after it (#475): Undo and
+    /// Redo set them back.
+    groups: Option<(Vec<Vec<NodeId>>, Vec<Vec<NodeId>>)>,
 }
 
 impl HistoryEntry {
@@ -1023,7 +1026,7 @@ impl SceneDocument {
         active: u32,
     ) {
         self.put_plates(after.clone(), active);
-        self.push_entry(edit, &[], Some((before, after)));
+        self.push_entry(edit, &[], Some((before, after)), None);
     }
 
     /// Calls plate `index` `name` (#545), as one step of history. Nothing
@@ -1479,9 +1482,7 @@ impl SceneDocument {
             .filter(|g| !g.iter().any(|m| members.contains(m)))
             .collect();
         kept.push(members);
-        *self.groups.borrow_mut() = kept;
-        self.unsaved_project_state.set(true);
-        self.notify(SceneEvent::SelectionChanged);
+        self.push_groups(kept);
         true
     }
 
@@ -1497,11 +1498,47 @@ impl SceneDocument {
             .collect();
         let changed = kept.len() != groups.len();
         if changed {
-            *self.groups.borrow_mut() = kept;
-            self.unsaved_project_state.set(true);
-            self.notify(SceneEvent::SelectionChanged);
+            self.push_groups(kept);
         }
         changed
+    }
+
+    /// Sets the groups to `after`, as one step of history (#475). The
+    /// models that joined or left a group and have supports wait for new
+    /// ones, made with their group as one structure: the run completes this
+    /// step, so Undo takes the groups and the supports back together.
+    fn push_groups(&self, after: Vec<Vec<NodeId>>) {
+        let before = self.groups.borrow().clone();
+        let member = |gs: &[Vec<NodeId>], m: NodeId| gs.iter().position(|g| g.contains(&m));
+        let mut moved: Vec<NodeId> = before.iter().chain(&after).flatten().copied().collect();
+        moved.sort_unstable();
+        moved.dedup();
+        // A member whose group is the same as before keeps its supports.
+        moved.retain(|&m| {
+            let (b, a) = (member(&before, m), member(&after, m));
+            match (b, a) {
+                (Some(b), Some(a)) => before[b] != after[a],
+                _ => true,
+            }
+        });
+        let with_sets: Vec<NodeId> = crate::overhang_tips::shown_sets(self)
+            .iter()
+            .map(|s| s.model)
+            .collect();
+        moved.retain(|m| with_sets.contains(m));
+        self.put_groups(after.clone());
+        self.push_entry(
+            SceneEdit::Compound(Vec::new()),
+            &moved,
+            None,
+            Some((before, after)),
+        );
+    }
+
+    /// Sets the groups to `groups` (#475), as Undo and Redo do.
+    fn put_groups(&self, groups: Vec<Vec<NodeId>>) {
+        *self.groups.borrow_mut() = groups;
+        self.notify(SceneEvent::SelectionChanged);
     }
 
     /// `sel` with every member of a group one of its leaves is in.
@@ -1717,7 +1754,7 @@ impl SceneDocument {
     /// Breadslicer supports removes a model's imported supports in an entry
     /// that its new supports then complete (#259).
     pub(crate) fn push_edit_wanting(&self, edit: SceneEdit, wanting: &[NodeId]) {
-        self.push_entry(edit, wanting, None);
+        self.push_entry(edit, wanting, None, None);
     }
 
     /// [`Self::push_edit_wanting`], with the plates it changes (#545): an
@@ -1727,6 +1764,7 @@ impl SceneDocument {
         edit: SceneEdit,
         wanting: &[NodeId],
         plates: Option<(Vec<String>, Vec<String>)>,
+        groups: Option<(Vec<Vec<NodeId>>, Vec<Vec<NodeId>>)>,
     ) {
         let mut committed = crate::support_follow::commit(self, edit);
         for model in wanting {
@@ -1735,7 +1773,7 @@ impl SceneDocument {
             }
         }
         let (edit, moved) = (committed.edit, committed.moved);
-        if edit.is_noop() && plates.is_none() {
+        if edit.is_noop() && plates.is_none() && groups.is_none() {
             return;
         }
         let edit = self.with_paint_carried(edit);
@@ -1756,7 +1794,9 @@ impl SceneDocument {
             {
                 self.note_evicted(&gone);
             }
-            let paint_only = edit.is_paint_only();
+            // An empty edit that changes the plates or the groups is no
+            // paint stroke: what completes it completes it (#475).
+            let paint_only = edit.is_paint_only() && plates.is_none() && groups.is_none();
             undo.push_back(HistoryEntry {
                 id,
                 edit,
@@ -1764,6 +1804,7 @@ impl SceneDocument {
                 paint_only,
                 marks: None,
                 plates,
+                groups,
             });
         }
         self.redo_stack.borrow_mut().clear();
@@ -1814,6 +1855,7 @@ impl SceneDocument {
                 paint_only: false,
                 marks: Some(step),
                 plates: None,
+                groups: None,
             });
         }
         self.redo_stack.borrow_mut().clear();
@@ -2770,6 +2812,9 @@ impl SceneDocument {
         if let Some((before, _)) = &entry.plates {
             self.put_plates(before.clone(), self.plates.get().active());
         }
+        if let Some((before, _)) = &entry.groups {
+            self.put_groups(before.clone());
+        }
         let mut redo = self.redo_stack.borrow_mut();
         if redo.len() == UNDO_STACK_CAP {
             redo.pop_front();
@@ -2814,6 +2859,9 @@ impl SceneDocument {
         crate::breadcrumbs::note(&format!("edit: redo {}", edit_label(&entry.edit)));
         if let Some((_, after)) = &entry.plates {
             self.put_plates(after.clone(), self.plates.get().active());
+        }
+        if let Some((_, after)) = &entry.groups {
+            self.put_groups(after.clone());
         }
         let mut undo = self.undo_stack.borrow_mut();
         if undo.len() == UNDO_STACK_CAP
@@ -2861,6 +2909,13 @@ impl SceneDocument {
             .iter()
             .rev()
             .find_map(|entry| entry.plates.as_ref().map(|(_, after)| after.clone()));
+        let groups_before = tail
+            .iter()
+            .find_map(|entry| entry.groups.as_ref().map(|(before, _)| before.clone()));
+        let groups_after = tail
+            .iter()
+            .rev()
+            .find_map(|entry| entry.groups.as_ref().map(|(_, after)| after.clone()));
         let mut edits = Vec::with_capacity(tail.len());
         let mut last = None;
         for entry in tail {
@@ -2877,6 +2932,7 @@ impl SceneDocument {
             paint_only: false,
             marks: None,
             plates: before.zip(after),
+            groups: groups_before.zip(groups_after),
         });
         drop(undo);
         self.notify(SceneEvent::UndoStackChanged);

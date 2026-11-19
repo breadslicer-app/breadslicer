@@ -24,9 +24,10 @@ use super::helpers::{
     HostedBranchInput, MAX_FANNING_PASSES, OrphanInfo, OrphanReason, PlanCtx,
     branch_collides_with_sdf, build_hosted_branch, collect_contact_positions,
     collect_fan_shaft_points, collect_fan_shaft_points_near, collect_host_entities,
-    compute_mesh_volume_mm3, count_attachments_on_host, filter_already_supported, host_segment_span,
-    is_host_at_attachment_capacity, member_max_angle_from_vertical_deg, rehost_legacy_knots,
-    resolve_surface_normal, sync_contact_cone_diameters_with, validate_and_cull_orphans,
+    compute_mesh_volume_mm3, count_attachments_on_host, filter_already_supported,
+    host_segment_span, is_host_at_attachment_capacity, member_max_angle_from_vertical_deg,
+    rehost_legacy_knots, resolve_surface_normal, sync_contact_cone_diameters_with,
+    validate_and_cull_orphans,
 };
 use super::place::{PlaceArgs, PlaceOutcome, RejectReason, grid_join_height, place_one_candidate};
 use super::report::{
@@ -1118,7 +1119,14 @@ pub fn compute_auto_support_plan(
     }
 
     ctx.set_zone(None);
-    if live.auto_support.rehang_island_branches {
+    // Mini supports, unless the zone preset turns them off (#471).
+    if live.auto_support.rehang_island_branches
+        && !live
+            .auto_support
+            .zone_rules
+            .as_ref()
+            .is_some_and(|r| r.keep_long_island_branches)
+    {
         rehang_island_branches(
             &mut run,
             model_id,
@@ -1542,7 +1550,9 @@ pub fn compute_auto_support_plan(
             let requeue: Vec<(usize, CandidatePoint)> = orphan_infos
                 .iter()
                 .enumerate()
-                .filter(|(_, o)| matches!(o.reason, OrphanReason::HostCulled | OrphanReason::Blocked))
+                .filter(|(_, o)| {
+                    matches!(o.reason, OrphanReason::HostCulled | OrphanReason::Blocked)
+                })
                 .filter_map(|(i, o)| {
                     replace_candidate(&pre_cull_draft, &run.candidate_of, &o.id).map(|c| (i, c))
                 })

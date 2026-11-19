@@ -382,14 +382,19 @@ fn a_picked_model_takes_a_raft_of_its_own_and_keeps_it() {
     });
 }
 
-/// A group's members stand on one raft (#475): grouped, their sets are drawn
-/// again apart, the plate shows one raft of lines under both; ungrouped,
-/// each is back on the tab's raft.
+/// A group's members are made as one structure (#475): grouped, their
+/// supports are made again, together, in the grouping's undo step: braced
+/// to each other's and standing on one raft of lines; Undo takes the group
+/// and the supports back; ungrouped, each is made again on its own.
 #[test]
-fn a_group_of_models_stands_on_one_raft() {
+fn a_group_of_models_is_braced_as_one_on_one_raft() {
     on_fresh_slint_thread(|| {
         let window = MainWindow::new().expect("the headless platform creates a main window");
-        let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0], [40.0, 20.0, 8.0]]);
+        // Three cubes, a trunk each: alone, none has a neighbour to brace to.
+        let (document, run, leaves) = supported(
+            &window,
+            &[[20.0, 20.0, 25.0], [27.0, 20.0, 25.0], [20.0, 27.0, 25.0]],
+        );
         let apart = |model: NodeId| {
             run.sets_in_force()
                 .into_iter()
@@ -398,24 +403,102 @@ fn a_group_of_models_stands_on_one_raft() {
                 .session
                 .stands_on_one_raft()
         };
-        assert!(!apart(leaves[0]) && !apart(leaves[1]));
+        // Braces from one member's supports to another's: their two ends
+        // nearest two different cubes.
+        let centres = [[20.5, 20.5], [27.5, 20.5], [20.5, 27.5]];
+        let nearest = |x: f64, y: f64| {
+            (0..3)
+                .min_by(|&a, &b| {
+                    let d = |i: usize| (x - centres[i][0]).hypot(y - centres[i][1]);
+                    d(a).total_cmp(&d(b))
+                })
+                .unwrap()
+        };
+        let braces = || -> usize {
+            run.sets_in_force()
+                .iter()
+                .map(|d| {
+                    let c = &d.session.state().collections;
+                    c.braces
+                        .values()
+                        .filter(|b| {
+                            match (c.knots.get(&b.start_knot_id), c.knots.get(&b.end_knot_id)) {
+                                (Some(a), Some(z)) => {
+                                    nearest(a.pos.x, a.pos.y) != nearest(z.pos.x, z.pos.y)
+                                }
+                                _ => false,
+                            }
+                        })
+                        .count()
+                })
+                .sum()
+        };
+        let made_again = || {
+            run.watch_wanted(&window);
+            let handle = run.handle.borrow_mut().take().expect("a run for the group");
+            run.finish(handle.join());
+            assert!(document.supports_wanted().is_none());
+        };
+        assert_eq!(braces(), 0, "alone, nothing braced across");
+        let steps = document.undo_len();
 
         assert!(document.group(&leaves));
-        run.follow_groups();
-        assert!(
-            apart(leaves[0]) && apart(leaves[1]),
-            "both on the group's raft"
+        assert_eq!(document.undo_len(), steps + 1, "grouping is a step");
+        assert!(document.supports_wanted().is_some(), "the members wait");
+        made_again();
+        assert_eq!(
+            document.undo_len(),
+            steps + 1,
+            "made in the grouping's step"
         );
+        assert!(leaves.iter().all(|&m| apart(m)), "on the group's raft");
+        assert!(braces() > 0, "braced across the members");
         settle_rafts(&document, &run);
         assert_eq!(plate_rafts(&document).len(), 1, "one raft under the group");
 
+        // Undo: no group, and the supports as they were.
+        assert!(document.undo().unwrap());
+        assert!(document.groups().is_empty());
+        assert_eq!(braces(), 0);
+        assert!(document.redo().unwrap());
+        assert_eq!(document.groups().len(), 1);
+        assert!(braces() > 0);
+
+        // Ungrouped: each made again on its own.
         assert!(document.ungroup(&leaves[..1]));
-        run.follow_groups();
-        assert!(
-            !apart(leaves[0]) && !apart(leaves[1]),
-            "each on its own again"
-        );
+        made_again();
+        assert!(leaves.iter().all(|&m| !apart(m)), "each on its own again");
+        assert_eq!(braces(), 0);
         settle_rafts(&document, &run);
         assert!(plate_rafts(&document).is_empty());
+    });
+}
+
+/// Two groups on one plate stand on two rafts, and models of no group on
+/// one raft for all stand on the plate's own (#475).
+#[test]
+fn two_groups_on_one_plate_stand_on_two_rafts() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (document, run, leaves) = supported(
+            &window,
+            &[
+                [20.0, 20.0, 25.0],
+                [27.0, 20.0, 25.0],
+                [60.0, 20.0, 25.0],
+                [67.0, 20.0, 25.0],
+            ],
+        );
+        let made_again = || {
+            run.watch_wanted(&window);
+            let handle = run.handle.borrow_mut().take().expect("a run for the group");
+            run.finish(handle.join());
+        };
+        assert!(document.group(&leaves[..2]));
+        made_again();
+        assert!(document.group(&leaves[2..]));
+        made_again();
+        settle_rafts(&document, &run);
+        assert_eq!(plate_rafts(&document).len(), 2, "a raft for each group");
     });
 }

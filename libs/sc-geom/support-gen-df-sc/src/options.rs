@@ -307,6 +307,7 @@ fn apply_zones(zones: &ZonePreset, settings: &mut PipelineSettings, one_raft: bo
         supports.auto_support.max_attachments_per_trunk = f64::MAX;
     }
     zones.bracing.apply(&mut supports.auto_bracing);
+    supports.auto_bracing.follow_trunks = rules.braces_follow_trunks;
     settings.tip_drawing.per_support_penetration = true;
     settings.scan.island_bodies = Some(IslandBodyScan::new(
         &rules.section_heights_mm(),

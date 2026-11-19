@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::helpers::{
     FanShaftPoint, HostedBranchInput, PlanCtx, branch_collides_with_sdf,
     branch_departure_angle_deg, build_hosted_branch, contact_cone_collides, free_knot_id,
-    host_entity_of, is_host_at_attachment_capacity, leaf_path_crosses_supports,
+    host_entity_of, host_shaft, is_host_at_attachment_capacity, leaf_path_crosses_supports,
     member_max_angle_from_vertical_deg,
 };
 use crate::supports::auto_support::constants::{
@@ -163,7 +163,7 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
         if lateral2 > reach * reach && lateral2.sqrt() >= nearest_host_mm {
             continue;
         }
-        if host_entity_of(draft, sp.host_type_id, &sp.host_id).map(|h| h.base.model_id.as_str())
+        if host_shaft(draft, sp.host_type_id, &sp.host_id).map(|(b, _)| b.model_id.as_str())
             != Some(model_id)
         {
             continue;

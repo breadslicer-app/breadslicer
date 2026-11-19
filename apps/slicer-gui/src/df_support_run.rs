@@ -220,9 +220,6 @@ pub(crate) struct DfSupportRun {
     /// The tab shows the picked model's raft (#198): told when the pick
     /// changes.
     selection_events: RefCell<Option<SceneSubscription>>,
-    /// The groups of models last seen (#475): a group made or undone draws
-    /// its members' sets again, on one raft or on their own.
-    seen_groups: RefCell<Vec<Vec<NodeId>>>,
     /// The options the next run uses (the Supports tab), saved across
     /// sessions.
     options: RefCell<DfSupportOptions>,
@@ -1718,7 +1715,6 @@ impl DfSupportRun {
             _scene_events: scene_events,
             own_rafts: RefCell::new(Vec::new()),
             selection_events: RefCell::new(None),
-            seen_groups: RefCell::new(Vec::new()),
             options: RefCell::new(load_saved_options()),
             presets: RefCell::new(Vec::new()),
             shape_view: Cell::new(crate::support_shape::View::default()),
@@ -1803,13 +1799,6 @@ impl DfSupportRun {
                     && let Some(ui) = run.ui.upgrade()
                 {
                     run.push_raft(&ui);
-                    // Drawn after the change is told, not inside it.
-                    let weak = Rc::downgrade(&run);
-                    slint::Timer::single_shot(Duration::ZERO, move || {
-                        if let Some(run) = weak.upgrade() {
-                            run.follow_groups();
-                        }
-                    });
                 }
             });
             *run.selection_events.borrow_mut() = Some(sub);
@@ -2469,9 +2458,18 @@ impl DfSupportRun {
         {
             return;
         }
-        let mut request = self.request_for_printer();
-        request.options = self.options.borrow().clone();
-        request.models = Some(wanted.ids());
+        // As Generate makes them: own rafts, drains and groups too.
+        let mut request = self.request_for_selection();
+        // A member of a group is made with the whole group (#475).
+        let mut models = wanted.ids();
+        for group in &request.together {
+            if group.iter().any(|m| models.contains(m)) {
+                models.extend(group.iter().copied());
+            }
+        }
+        models.sort_unstable();
+        models.dedup();
+        request.models = Some(models);
         crate::breadcrumbs::note(&format!(
             "supports: regenerating {} model(s)",
             wanted.models.len()
@@ -2957,6 +2955,8 @@ impl DfSupportRun {
             .into_iter()
             .map(|model| (model, self.raft_of(model).on(&request.options)))
             .collect();
+        // A group is made as one structure, braced to itself (#475).
+        request.together = self.document.groups();
         request
     }
 
@@ -2978,26 +2978,6 @@ impl DfSupportRun {
             }
         } else {
             own
-        }
-    }
-
-    /// A group made or undone (#475): its members' sets are drawn again, on
-    /// the group's one raft or on their own.
-    fn follow_groups(&self) {
-        let groups = self.document.groups();
-        let changed: Vec<NodeId> = {
-            let seen = self.seen_groups.borrow();
-            let members = |gs: &[Vec<NodeId>]| -> Vec<NodeId> { gs.iter().flatten().copied().collect() };
-            let (now, before) = (members(&groups), members(&seen));
-            now.iter()
-                .filter(|m| !before.contains(m))
-                .chain(before.iter().filter(|m| !now.contains(m)))
-                .copied()
-                .collect()
-        };
-        *self.seen_groups.borrow_mut() = groups;
-        if !changed.is_empty() {
-            self.rafts_follow_for(Some(changed));
         }
     }
 
@@ -3155,6 +3135,9 @@ impl DfSupportRun {
         ui.set_support_zone_summary(zone_summary(&o));
         ui.set_support_grid_on(o.zones.as_ref().is_some_and(|z| z.grid_mm.is_some()));
         ui.set_support_plate_only(o.zones.as_ref().is_some_and(|z| z.rules.plate_only));
+        ui.set_support_mini_supports(o.zones.as_ref().is_none_or(|z| !z.rules.keep_long_island_branches));
+        ui.set_support_adaptive_base(o.zones.as_ref().is_some_and(|z| z.rules.adaptive_base));
+        ui.set_support_braces_follow(o.zones.as_ref().is_some_and(|z| z.rules.braces_follow_trunks));
         ui.set_support_grid_spacing(shown_grid_mm(&o) as f32);
         ui.set_support_grid_hint(grid_hint(&o));
         ui.set_support_lift_on_plate_label(lift_on_plate_label(support_lift_mm(
@@ -4344,6 +4327,18 @@ impl DfSupportRun {
                     return;
                 };
                 zones.rules.plate_only = on;
+            }
+            // Mini supports, an adaptive base, braces that follow their
+            // trunks (#471).
+            19..=21 => {
+                let Some(zones) = o.zones.as_mut() else {
+                    return;
+                };
+                match code {
+                    19 => zones.rules.keep_long_island_branches = !on,
+                    20 => zones.rules.adaptive_base = on,
+                    _ => zones.rules.braces_follow_trunks = on,
+                }
             }
             10 => o.raft_thickness_mm = v,
             11 => o.raft_wall = on,
@@ -7193,6 +7188,9 @@ impl DfSupportRun {
             return;
         }
         let ids = wanted.ids();
+        // The models the run made sets for: the ones waiting, and the rest
+        // of their groups (#475).
+        let made: Vec<NodeId> = outcome.sets.iter().map(|set| set.model).collect();
         let summary = summary_message(&outcome);
         if let Some(ui) = self.ui.upgrade() {
             let seconds = outcome.timings.total.as_secs_f64();
@@ -7224,7 +7222,10 @@ impl DfSupportRun {
             .with_scene(|spatial| {
                 support_leaves(spatial)
                     .map(|(id, _)| id)
-                    .filter(|id| model_of(&self.sessions, *id).is_some_and(|m| ids.contains(&m)))
+                    .filter(|id| {
+                        model_of(&self.sessions, *id)
+                            .is_some_and(|m| ids.contains(&m) || made.contains(&m))
+                    })
                     .collect()
             })
             .unwrap_or_default();

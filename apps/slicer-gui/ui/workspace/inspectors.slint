@@ -2047,6 +2047,11 @@ export component SupportsInspector inherits VerticalLayout {
     in property <bool> grid-on;
     // Every support stands on the plate (#471): none on the model below.
     in property <bool> plate-only;
+    // Mini supports, an adaptive base, braces as thick as their trunks
+    // allow (#471).
+    in property <bool> mini-supports: true;
+    in property <bool> adaptive-base;
+    in property <bool> braces-follow;
     in property <float> grid-spacing: 7;
     in property <string> grid-hint;
     // How many models have supports made on another grid than this one
@@ -2651,6 +2656,36 @@ export component SupportsInspector inherits VerticalLayout {
         }
         if root.plate-only: Note {
             text: @tr("Inspector" => "No support starts on the model: what cannot reach the plate is left out, and Review lists it.");
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Mini supports");
+            checked: root.mini-supports;
+            toggled => {
+                root.option-changed(19, self.checked ? 1 : 0);
+            }
+        }
+        if root.mini-supports: Note {
+            text: @tr("Inspector" => "A long branch out to an island hangs from the nearest support instead, shorter.");
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Adaptive base");
+            checked: root.adaptive-base;
+            toggled => {
+                root.option-changed(20, self.checked ? 1 : 0);
+            }
+        }
+        if root.adaptive-base: Note {
+            text: @tr("Inspector" => "A tall support stands on a wider base: from 20 mm up it grows, to one and a half times at 60 mm.");
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Braces as thick as their trunks");
+            checked: root.braces-follow;
+            toggled => {
+                root.option-changed(21, self.checked ? 1 : 0);
+            }
+        }
+        if root.braces-follow: Note {
+            text: @tr("Inspector" => "A brace is 0.8 of the thinner trunk it joins, instead of the preset's diameter.");
         }
         if root.grid-hint != "" && !root.one-raft: Note {
             text: root.grid-hint;

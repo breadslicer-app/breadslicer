@@ -327,6 +327,11 @@ export component MainWindow inherits Window {
     // spacing its preset recommends in words, empty when none does.
     in property <bool> support-grid-on;
     in property <bool> support-plate-only;
+    // A zone preset's mini supports, adaptive base and braces that follow
+    // their trunks (#471).
+    in property <bool> support-mini-supports: true;
+    in property <bool> support-adaptive-base;
+    in property <bool> support-braces-follow;
     in property <float> support-grid-spacing: 7;
     in property <string> support-grid-hint;
     // Models with supports made on another grid (#576), and the press that
@@ -2982,6 +2987,9 @@ export component MainWindow inherits Window {
                                     zone-summary: root.support-zone-summary;
                                     grid-on: root.support-grid-on;
                                     plate-only: root.support-plate-only;
+                                    mini-supports: root.support-mini-supports;
+                                    adaptive-base: root.support-adaptive-base;
+                                    braces-follow: root.support-braces-follow;
                                     grid-spacing: root.support-grid-spacing;
                                     grid-hint: root.support-grid-hint;
                                     grid-stale: root.support-grid-stale;
