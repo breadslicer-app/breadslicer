@@ -159,6 +159,9 @@ pub struct DfSupportRequest {
     /// new set gets those edits put back where they still fit, and says how
     /// it went ([`DfSupportSet::kept`]).
     pub keep_edits: Vec<(NodeId, DfSupportSession)>,
+    /// Models that stand on a raft of their own (#198): by leaf, the options
+    /// whose raft their new set is drawn on, in place of `options`' raft.
+    pub own_rafts: Vec<(NodeId, DfSupportOptions)>,
 }
 
 impl Default for DfSupportRequest {
@@ -171,6 +174,7 @@ impl Default for DfSupportRequest {
             settings: None,
             models: None,
             keep_edits: Vec::new(),
+            own_rafts: Vec::new(),
         }
     }
 }
@@ -232,6 +236,9 @@ pub struct DfSupportOutcome {
     /// Models whose supports, made for another copy (#561), run into a
     /// neighbouring model: Arrange all spaces them out.
     pub crowded: Vec<NodeId>,
+    /// Models whose raft could not be cut clear of the models around it
+    /// (#467): it was drawn without that clearance, under them.
+    pub rafts_uncleared: Vec<NodeId>,
     /// Where the run spent its time.
     pub timings: PerfFrame,
 }
@@ -730,11 +737,13 @@ fn merged(runs: Vec<DfSupportOutcome>) -> DfSupportOutcome {
             placed: Vec::new(),
             triangles: 0,
             crowded: Vec::new(),
+            rafts_uncleared: Vec::new(),
             timings: PerfFrame::default(),
         };
     };
     for run in runs {
         out.sets.extend(run.sets);
+        out.rafts_uncleared.extend(run.rafts_uncleared);
         out.models += run.models;
         out.islands += run.islands;
         out.triangles += run.triangles;
@@ -1238,6 +1247,7 @@ fn run_df_supports(
     session.warm();
     // Each model's supports and raft are drawn on their own.
     let mut sets = Vec::with_capacity(n);
+    let mut rafts_uncleared = Vec::new();
     for ((model, _), session) in leaves.iter().zip(session.split_by_model()) {
         if worker.is_cancelled() {
             return Err(JobError::Cancelled);
@@ -1256,12 +1266,21 @@ fn run_df_supports(
             }
             None => (session, None),
         };
+        // A model with a raft of its own stands on it (#198).
+        let session = match request.own_rafts.iter().find(|(m, _)| m == model) {
+            Some((_, own)) => session.with_raft_of(own).unwrap_or(session),
+            None => session,
+        };
         let mesh = if session.is_empty() {
             None
         } else {
-            session
-                .mesh()
-                .map_err(|e| JobError::Failed(e.to_string()))?
+            let (mesh, uncleared) = session
+                .drawn()
+                .map_err(|e| JobError::Failed(e.to_string()))?;
+            if uncleared {
+                rafts_uncleared.push(*model);
+            }
+            mesh
         };
         sets.push(DfSupportSet {
             model: *model,
@@ -1292,5 +1311,6 @@ fn run_df_supports(
         islands,
         placed,
         crowded: Vec::new(),
+        rafts_uncleared,
     })
 }

@@ -9393,3 +9393,23 @@ msgstr "Esta cama está laminada para {}; {} está configurada como {}."
 msgctxt "SendToPrinter"
 msgid "Breadslicer slices for {} now; {} is set up as {}."
 msgstr "Breadslicer lamina ahora para {}; {} está configurada como {}."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Raft drawn under the model"
+msgstr "Balsa debajo del modelo"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The raft of {} model(s) could not be cut clear of the models standing on the plate, and runs under them. Check it in the Slice tab before printing, or set the raft to Off or to Lines."
+msgstr "La balsa de {} modelo(s) no se pudo recortar alrededor de los modelos apoyados en la plataforma y pasa por debajo de ellos. Revisala en Laminar antes de imprimir, o poné la balsa en Ninguna o en Líneas."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The raft covers a drain"
+msgstr "La balsa tapa un drenaje"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The raft runs over {} drain hole(s) on the underside of a hollow model: the resin inside cannot get out there. Lift the model, move the drain, or set the raft to Off or to Lines."
+msgstr "La balsa pasa por encima de {} agujero(s) de drenaje en la base de un modelo hueco: la resina de adentro no puede salir por ahí. Levantá el modelo, mové el drenaje o poné la balsa en Ninguna o en Líneas."

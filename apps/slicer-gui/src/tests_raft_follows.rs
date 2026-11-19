@@ -262,7 +262,10 @@ fn the_raft_still_to_be_drawn_is_told_until_it_lands() {
     on_fresh_slint_thread(|| {
         let window = MainWindow::new().expect("the headless platform creates a main window");
         let (document, run) = supported_slab(&window);
-        assert!(!run.rafts_pending(), "a raft of its own: nothing to wait for");
+        assert!(
+            !run.rafts_pending(),
+            "a raft of its own: nothing to wait for"
+        );
         run.on_option(9, 1.0);
         run.on_option(14, 1.0);
         assert!(run.rafts_pending(), "the plate's raft is still to be drawn");
@@ -322,5 +325,59 @@ fn the_raft_of_one_model_alone_moves_with_it_while_it_is_dragged() {
         );
         assert!(document.undo().unwrap());
         assert_eq!(leaf_transform(&document, raft), start, "one step back");
+    });
+}
+
+/// A raft of its own (#198): with one model picked, the raft changed is that
+/// model's alone. The other keeps the tab's raft, the tab shows the picked
+/// model's, and Generate again keeps each model on its own.
+#[test]
+fn a_picked_model_takes_a_raft_of_its_own_and_keeps_it() {
+    use crate::selection::{LeafId, Selection};
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0], [60.0, 20.0, 8.0]]);
+        let raft_of = |model: NodeId| {
+            run.sets_in_force()
+                .into_iter()
+                .find(|d| d.model == model)
+                .expect("its set")
+                .session
+                .options()
+                .expect("its options")
+                .raft
+        };
+        let tab = run.options.borrow().raft;
+        assert_ne!(tab, RaftMode::Off);
+
+        document.set_selection(Selection::One(LeafId(leaves[0])));
+        run.on_option(9, 2.0);
+        assert_eq!(raft_of(leaves[0]), RaftMode::Off, "the picked model's");
+        assert_eq!(raft_of(leaves[1]), tab, "the other keeps the tab's");
+        assert_eq!(
+            run.options.borrow().raft,
+            tab,
+            "the tab's raft is as it was"
+        );
+        assert_eq!(
+            window.get_support_raft_index(),
+            2,
+            "it shows the picked model's"
+        );
+
+        document.set_selection(Selection::One(LeafId(leaves[1])));
+        assert_ne!(window.get_support_raft_index(), 2, "the other's: the tab's");
+
+        // Generate again over both: each stands on its own raft still.
+        document.set_selection(Selection::None);
+        let options = run.options.borrow().clone();
+        run.press_generate_and_wait(options);
+        assert_eq!(raft_of(leaves[0]), RaftMode::Off);
+        assert_eq!(raft_of(leaves[1]), tab);
+
+        // The tab's raft changed with nothing picked is every model's again.
+        run.on_option(9, 1.0);
+        assert_eq!(raft_of(leaves[0]), RaftMode::Lines);
+        assert_eq!(raft_of(leaves[1]), RaftMode::Lines);
     });
 }

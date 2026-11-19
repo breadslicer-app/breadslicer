@@ -42,6 +42,7 @@ mod graphics_status;
 mod hand_placed;
 mod hollow_persist;
 mod hollow_run;
+mod raft_drains;
 mod i18n;
 mod import_notes;
 mod imported_supports;
