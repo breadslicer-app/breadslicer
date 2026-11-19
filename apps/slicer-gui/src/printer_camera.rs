@@ -9,13 +9,21 @@
 //! never queues pictures up. Closing the view, picking it again for another
 //! printer, or closing the app stops the stream and turns the printer's
 //! camera stream off.
+//!
+//! Each stream's session is kept in a file until it is torn down: one the
+//! app could not tear down (it was closed, the network went) holds one of the
+//! printer's two video slots, and the next watch of that printer tears it
+//! down first, so the camera comes back without restarting the printer.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use sc_printer_link::camera::{self, CameraError, Event, Picture};
+use sc_printer_link::camera::{self, CameraError, Event, Lease, Picture};
 use sc_printer_link::sdcp::Printer;
+use serde_json::{Value, json};
 use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer, SharedString};
 
 use crate::MainWindow;
@@ -153,6 +161,20 @@ pub(crate) fn spawn_feed(
                     ));
                     hand(Feed::Live);
                 }
+                Event::Leased(lease) => leases::add(&printer.mainboard_id, lease),
+                Event::Released(lease) => leases::remove(&printer.mainboard_id, &lease),
+                Event::Reclaimed { lease, freed } => {
+                    crate::breadcrumbs::note(&format!(
+                        "printer camera: stale session {} {}",
+                        lease.session,
+                        if freed {
+                            "torn down, its slot freed"
+                        } else {
+                            "already gone"
+                        }
+                    ));
+                    leases::remove(&printer.mainboard_id, &lease);
+                }
                 Event::Picture(picture) => {
                     *latest.lock().unwrap_or_else(|e| e.into_inner()) = Some(picture);
                     if asked.swap(true, Ordering::AcqRel) {
@@ -175,7 +197,8 @@ pub(crate) fn spawn_feed(
                     });
                 }
             };
-            let watched = camera::watch(&printer, &cancel, &mut on_event);
+            let stale = leases::of(&printer.mainboard_id);
+            let watched = camera::watch(&printer, &stale, &cancel, &mut on_event);
             crate::breadcrumbs::finished(
                 "printer camera",
                 &match &watched {
@@ -195,6 +218,110 @@ impl Drop for PrinterCamera {
         if let Some(watching) = self.watching.borrow_mut().take() {
             watching.cancel.store(true, Ordering::Relaxed);
         }
+    }
+}
+
+/// The camera streams each printer may still keep a video slot for, by
+/// mainboard id: those not seen torn down. Kept in a file of the app's own;
+/// in memory alone in tests.
+mod leases {
+    use super::*;
+
+    /// The file the sessions are kept in.
+    const FILE: &str = "camera-sessions.json";
+
+    static LEASES: Mutex<Option<HashMap<String, Vec<Lease>>>> = Mutex::new(None);
+
+    fn file() -> Option<PathBuf> {
+        if cfg!(test) {
+            return None;
+        }
+        Some(sc_app_paths::project_dirs()?.data_local_dir().join(FILE))
+    }
+
+    /// Runs `change` on the sessions kept, read from the file the first
+    /// time, and writes them back when `write`.
+    fn with<R>(write: bool, change: impl FnOnce(&mut HashMap<String, Vec<Lease>>) -> R) -> R {
+        let mut held = LEASES.lock().unwrap_or_else(|e| e.into_inner());
+        let leases = held.get_or_insert_with(|| {
+            file()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .map(|value| from_json(&value))
+                .unwrap_or_default()
+        });
+        let result = change(leases);
+        if write && let Some(path) = file() {
+            if let Some(folder) = path.parent() {
+                let _ = std::fs::create_dir_all(folder);
+            }
+            let _ = std::fs::write(path, to_json(leases).to_string());
+        }
+        result
+    }
+
+    pub(super) fn of(key: &str) -> Vec<Lease> {
+        with(false, |leases| leases.get(key).cloned().unwrap_or_default())
+    }
+
+    pub(super) fn add(key: &str, lease: Lease) {
+        with(true, |leases| {
+            let kept = leases.entry(key.to_owned()).or_default();
+            if !kept.contains(&lease) {
+                kept.push(lease);
+            }
+        });
+    }
+
+    pub(super) fn remove(key: &str, lease: &Lease) {
+        with(true, |leases| {
+            if let Some(kept) = leases.get_mut(key) {
+                kept.retain(|held| held != lease);
+                if kept.is_empty() {
+                    leases.remove(key);
+                }
+            }
+        });
+    }
+
+    pub(super) fn to_json(leases: &HashMap<String, Vec<Lease>>) -> Value {
+        let printers: serde_json::Map<String, Value> = leases
+            .iter()
+            .map(|(key, kept)| {
+                let kept: Vec<Value> = kept
+                    .iter()
+                    .map(|l| json!({ "url": l.url, "session": l.session }))
+                    .collect();
+                (key.clone(), Value::Array(kept))
+            })
+            .collect();
+        json!({ "printers": printers })
+    }
+
+    pub(super) fn from_json(value: &Value) -> HashMap<String, Vec<Lease>> {
+        let mut leases = HashMap::new();
+        for (key, kept) in value
+            .get("printers")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            let kept: Vec<Lease> = kept
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|l| {
+                    Some(Lease {
+                        url: l.get("url")?.as_str()?.to_owned(),
+                        session: l.get("session")?.as_str()?.to_owned(),
+                    })
+                })
+                .collect();
+            if !kept.is_empty() {
+                leases.insert(key.clone(), kept);
+            }
+        }
+        leases
     }
 }
 
@@ -278,6 +405,23 @@ mod tests {
             let text = failure_text(err, "Mars");
             assert!(text.contains("Mars"), "{text}");
         }
+    }
+
+    #[test]
+    fn a_session_is_kept_until_torn_down_and_reads_back_from_its_file() {
+        let lease = Lease {
+            url: "rtsp://192.168.1.52:554/video".into(),
+            session: "1a2b3c".into(),
+        };
+        leases::add("board-1", lease.clone());
+        leases::add("board-1", lease.clone());
+        assert_eq!(leases::of("board-1"), vec![lease.clone()], "kept once");
+        assert!(leases::of("board-2").is_empty());
+        let kept = HashMap::from([("board-1".to_owned(), vec![lease.clone()])]);
+        assert_eq!(leases::from_json(&leases::to_json(&kept)), kept);
+        leases::remove("board-1", &lease);
+        assert!(leases::of("board-1").is_empty());
+        assert!(leases::from_json(&json!({ "printers": { "x": [{ "url": 1 }] } })).is_empty());
     }
 
     #[test]

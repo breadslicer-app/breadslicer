@@ -9082,7 +9082,7 @@ msgstr "Agregar"
 #: ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
 msgid "Send to printer"
-msgstr "Enviar a la impresora"
+msgstr "Enviar"
 
 #: ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
@@ -9298,3 +9298,98 @@ msgstr "Cantidad de capas de transición"
 msgctxt "SlicePanel"
 msgid "This format keeps one exposure for the bottom layers and one for the rest: the transition layers print at the normal exposure."
 msgstr "Este formato guarda una exposición para las capas de base y otra para el resto: las capas de transición se imprimen con la exposición normal."
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Done"
+msgstr "Listo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Edit printer"
+msgstr "Editar impresora"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Its name in Breadslicer"
+msgstr "Su nombre en Breadslicer"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "The printer's name in Breadslicer"
+msgstr "El nombre de la impresora en Breadslicer"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Printer profile"
+msgstr "Perfil de impresora"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Resin it is kept for"
+msgstr "Resina que usa"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Note"
+msgstr "Nota"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Dental only, the one by the window…"
+msgstr "Solo dental, la de la ventana…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Slice for this printer"
+msgstr "Laminar para esta impresora"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Use them"
+msgstr "Usarlos"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Send anyway"
+msgstr "Enviar igual"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "{} · not answering"
+msgstr "{} · no contesta"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "As it reports: {}"
+msgstr "La que dice ser: {}"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "Not set"
+msgstr "Sin elegir"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "No resin of its own"
+msgstr "Sin resina propia"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "Its printer profile is not set"
+msgstr "Sin perfil de impresora elegido"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "The plate is sliced for {}. Using {} means slicing it again."
+msgstr "La cama está laminada para {}. Usar {} obliga a laminarla de nuevo."
+
+#: src/network_profiles.rs
+msgctxt "SendToPrinter"
+msgid "This plate is sliced for {}; {} is set up as {}."
+msgstr "Esta cama está laminada para {}; {} está configurada como {}."
+
+#: src/network_profiles.rs
+msgctxt "SendToPrinter"
+msgid "Breadslicer slices for {} now; {} is set up as {}."
+msgstr "Breadslicer lamina ahora para {}; {} está configurada como {}."

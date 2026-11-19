@@ -1693,6 +1693,13 @@ impl<S: State> Session<S> {
     pub fn tool(&self) -> Option<&Tool> {
         self.0.presentation.tool.as_ref()
     }
+
+    /// Breadslicer: the session id the server gave at `SETUP`, if one was
+    /// issued. A printer that keeps a video slot for a session that was
+    /// dropped without its `TEARDOWN` frees it for a `TEARDOWN` naming this id.
+    pub fn session_id(&self) -> Option<&str> {
+        self.0.session.as_ref().map(|session| &*session.id)
+    }
 }
 
 impl Session<Described> {

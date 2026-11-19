@@ -646,6 +646,21 @@ export component MainWindow inherits Window {
     callback slice-send-name-edited(string);
     callback slice-send(bool, string);
     callback slice-send-cancel();
+    callback slice-send-picked(int);
+    in property <string> slice-send-own-summary;
+    in-out property <bool> slice-send-own-open: false;
+    in-out property <string> slice-send-own-name;
+    in property <string> slice-send-own-reported;
+    in property <[string]> slice-send-own-printers: [];
+    in-out property <int> slice-send-own-printer-index: 0;
+    in property <[string]> slice-send-own-resins: [];
+    in-out property <int> slice-send-own-resin-index: 0;
+    in-out property <string> slice-send-own-note;
+    in property <bool> slice-send-own-can-use: false;
+    in-out property <bool> slice-send-use-asking: false;
+    in property <string> slice-send-use-question;
+    in property <string> slice-send-mismatch;
+    callback slice-send-own-edited(int, string, int);
     // The camera of the printer picked in the card (#633): shown in the card,
     // and over the whole window when enlarged.
     in property <bool> slice-camera-on: false;
@@ -2502,6 +2517,25 @@ export component MainWindow inherits Window {
                                 }
                                 send-cancel => {
                                     root.slice-send-cancel();
+                                }
+                                send-picked(index) => {
+                                    root.slice-send-picked(index);
+                                }
+                                send-own-summary: root.slice-send-own-summary;
+                                send-own-open <=> root.slice-send-own-open;
+                                send-own-name <=> root.slice-send-own-name;
+                                send-own-reported: root.slice-send-own-reported;
+                                send-own-printers: root.slice-send-own-printers;
+                                send-own-printer-index <=> root.slice-send-own-printer-index;
+                                send-own-resins: root.slice-send-own-resins;
+                                send-own-resin-index <=> root.slice-send-own-resin-index;
+                                send-own-note <=> root.slice-send-own-note;
+                                send-own-can-use: root.slice-send-own-can-use;
+                                send-use-asking <=> root.slice-send-use-asking;
+                                send-use-question: root.slice-send-use-question;
+                                send-mismatch: root.slice-send-mismatch;
+                                send-own-edited(field, text, index) => {
+                                    root.slice-send-own-edited(field, text, index);
                                 }
                                 camera-on: root.slice-camera-on;
                                 camera-live: root.slice-camera-live;

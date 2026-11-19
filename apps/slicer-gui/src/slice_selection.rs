@@ -170,7 +170,7 @@ where
 
 /// Returns the label of a printer: `"Manufacturer Name"`, or the name alone
 /// when the manufacturer is blank.
-fn printer_label(manufacturer: &str, name: &str) -> String {
+pub(crate) fn printer_label(manufacturer: &str, name: &str) -> String {
     if manufacturer.is_empty() {
         name.to_string()
     } else {
@@ -180,7 +180,7 @@ fn printer_label(manufacturer: &str, name: &str) -> String {
 
 /// Returns the label of a resin: `"Brand Name"`, or the name alone when the
 /// brand is blank.
-fn resin_label(brand: &str, name: &str) -> String {
+pub(crate) fn resin_label(brand: &str, name: &str) -> String {
     if brand.is_empty() {
         name.to_string()
     } else {

@@ -9,11 +9,12 @@
 //! Nothing starts a print unless that button is pressed.
 //!
 //! The network work runs on worker threads; its progress is read by a timer
-//! on the UI thread. The printers seen, the one used last first, and the
-//! names given to them (#631) are kept in a file of the app's own.
+//! on the UI thread. The printers seen, the one used last first, and what
+//! the user gave each one (#631: a name, the printer profile it is, the
+//! resin it is kept for, a note) are kept in a file of the app's own.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -22,12 +23,17 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use futures_channel::oneshot;
+use sc_print_primitives::{MaterialId, PrinterId};
 use sc_printer_link::sdcp::{self, Printer, Refusal};
 use serde_json::{Value, json};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::MainWindow;
 use crate::i18n::ctr;
+use crate::network_profiles::{
+    OwnSettings, guess_printer, kept_for, mismatch_text, network_printers, printer_name,
+    resin_name, resins_for,
+};
 use crate::printer_camera::PrinterCamera;
 use crate::printer_wall::PrinterWall;
 use crate::slice_panel::SlicePanelBridge;
@@ -54,8 +60,12 @@ pub(crate) struct SendToPrinter {
     /// The printers in the card's list, the one used last first, as they
     /// name themselves.
     printers: RefCell<Vec<Printer>>,
-    /// The names given to them in Breadslicer (#631), by mainboard id.
-    own_names: RefCell<HashMap<String, String>>,
+    /// What the user gave each one (#631), by mainboard id.
+    own: RefCell<HashMap<String, OwnSettings>>,
+    /// The printers that answered the last search, by mainboard id.
+    answered: RefCell<HashSet<String>>,
+    /// The profiles behind the picked printer's two lists, in their order.
+    choices: RefCell<Choices>,
     searched_at: Cell<Option<Instant>>,
     searching: Cell<bool>,
     sending: RefCell<Option<Sending>>,
@@ -78,7 +88,9 @@ impl SendToPrinter {
             ctrl,
             panel,
             printers: RefCell::new(known.printers),
-            own_names: RefCell::new(known.names),
+            own: RefCell::new(known.own),
+            answered: RefCell::new(HashSet::new()),
+            choices: RefCell::new(Choices::default()),
             searched_at: Cell::new(None),
             searching: Cell::new(false),
             sending: RefCell::new(None),
@@ -86,7 +98,32 @@ impl SendToPrinter {
             camera: PrinterCamera::new(ui),
             wall: PrinterWall::new(ui),
         });
+        this.order();
         this.show_printers();
+        {
+            let weak = Rc::downgrade(&this);
+            this.panel.on_refreshed(Rc::new(move || {
+                if let Some(this) = weak.upgrade() {
+                    this.show_own();
+                }
+            }));
+        }
+        {
+            let weak = Rc::downgrade(&this);
+            ui.on_slice_send_picked(move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.show_own();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&this);
+            ui.on_slice_send_own_edited(move |field, text, index| {
+                if let Some(this) = weak.upgrade() {
+                    this.own_edited(field, &text, index);
+                }
+            });
+        }
         {
             let weak = Rc::downgrade(&this);
             ui.on_slice_send_search(move |forced| {
@@ -144,7 +181,7 @@ impl SendToPrinter {
                     // A printer streams to few viewers: the wall's own
                     // stream replaces the card's.
                     this.camera.stop();
-                    this.wall.open(&this.known_printers());
+                    this.wall.open(&this.wall_printers());
                     this.search(false);
                 }
             });
@@ -188,18 +225,53 @@ impl SendToPrinter {
     /// `printer` with the name it was given in Breadslicer, if any.
     fn shown(&self, printer: &Printer) -> Printer {
         let mut shown = printer.clone();
-        if let Some(name) = self.own_names.borrow().get(&printer.mainboard_id) {
-            shown.name = name.clone();
+        if let Some(name) = self.own_of(&printer.mainboard_id).name {
+            shown.name = name;
         }
         shown
     }
 
-    /// The printers known, each by the name it is shown by.
-    pub(crate) fn known_printers(&self) -> Vec<Printer> {
+    /// What the user gave the printer `mainboard_id`.
+    fn own_of(&self, mainboard_id: &str) -> OwnSettings {
+        self.own
+            .borrow()
+            .get(mainboard_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Changes what the user gave the printer `mainboard_id`, and keeps it.
+    fn change_own(&self, mainboard_id: &str, change: impl FnOnce(&mut OwnSettings)) {
+        {
+            let mut own = self.own.borrow_mut();
+            let settings = own.entry(mainboard_id.to_owned()).or_default();
+            change(settings);
+            if !settings.is_saved() {
+                own.remove(mainboard_id);
+            }
+        }
+        self.keep();
+    }
+
+    /// The printer profile `printer` is: the one picked for it, or the one
+    /// its model names.
+    fn profile_of(&self, printer: &Printer) -> Option<PrinterId> {
+        self.own_of(&printer.mainboard_id)
+            .printer
+            .or_else(|| guess_printer(&printer.model, &self.panel.catalog()))
+    }
+
+    /// The printers known for the camera wall: each by the name it is shown
+    /// by, with what it is kept for.
+    pub(crate) fn wall_printers(&self) -> Vec<(Printer, String)> {
+        let catalog = self.panel.catalog();
         self.printers
             .borrow()
             .iter()
-            .map(|p| self.shown(p))
+            .map(|p| {
+                let kept = kept_for(&catalog, &self.own_of(&p.mainboard_id));
+                (self.shown(p), kept)
+            })
             .collect()
     }
 
@@ -207,17 +279,12 @@ impl SendToPrinter {
     /// puts back the name it gives itself.
     pub(crate) fn rename(&self, mainboard_id: &str, name: &str) {
         let name = name.trim();
-        {
-            let mut names = self.own_names.borrow_mut();
-            if name.is_empty() {
-                names.remove(mainboard_id);
-            } else {
-                names.insert(mainboard_id.to_owned(), name.to_owned());
-            }
-        }
-        self.keep();
+        self.change_own(mainboard_id, |own| {
+            own.name = (!name.is_empty()).then(|| name.to_owned());
+        });
+        self.order();
         self.show_printers();
-        self.wall.show(&self.known_printers());
+        self.wall.show(&self.wall_printers());
     }
 
     /// Puts `printer`, just sent to, first in the list for the next run.
@@ -232,28 +299,68 @@ impl SendToPrinter {
                 printers.insert(0, used);
             }
         }
+        let picked = self.picked();
+        self.order();
         self.keep();
+        self.show_printers();
+        self.pick(picked.as_ref());
     }
 
-    /// Keeps the printers known and their names for the next run.
+    /// The saved printers first, each kind in the order it had.
+    fn order(&self) {
+        let own = self.own.borrow();
+        self.printers
+            .borrow_mut()
+            .sort_by_key(|p| !own.get(&p.mainboard_id).is_some_and(OwnSettings::is_saved));
+    }
+
+    /// Picks `printer` in the card again, wherever it is in the list now.
+    fn pick(&self, printer: Option<&Printer>) {
+        if let Some(printer) = printer
+            && let Some(at) = self
+                .printers
+                .borrow()
+                .iter()
+                .position(|p| p.mainboard_id == printer.mainboard_id)
+            && let Some(ui) = self.ui.upgrade()
+        {
+            ui.set_slice_send_index(at as i32);
+        }
+        self.show_own();
+    }
+
+    /// Keeps the printers known and what was given them for the next run.
     fn keep(&self) {
         Known {
             printers: self.printers.borrow().clone(),
-            names: self.own_names.borrow().clone(),
+            own: self.own.borrow().clone(),
         }
         .write();
+    }
+
+    /// The card's list: each printer by the name it is shown by and its
+    /// address, marked when it did not answer the last search.
+    fn labels(&self) -> Vec<SharedString> {
+        let searched = self.searched_at.get().is_some();
+        self.printers
+            .borrow()
+            .iter()
+            .map(|p| {
+                let label = format!("{} · {}", self.shown(p).name, p.ip);
+                if searched && !self.answered.borrow().contains(&p.mainboard_id) {
+                    ctr!("SendToPrinter", "{} · not answering", label)
+                } else {
+                    label.into()
+                }
+            })
+            .collect()
     }
 
     fn show_printers(&self) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        let labels: Vec<SharedString> = self
-            .printers
-            .borrow()
-            .iter()
-            .map(|p| SharedString::from(format!("{} · {}", self.shown(p).name, p.ip)))
-            .collect();
+        let labels = self.labels();
         let count = labels.len() as i32;
         ui.set_slice_send_printers(ModelRc::new(VecModel::from(labels)));
         let at = ui.get_slice_send_index();
@@ -262,6 +369,224 @@ impl SendToPrinter {
         } else if at < 0 || at >= count {
             ui.set_slice_send_index(0);
         }
+        self.show_own();
+    }
+
+    /// Shows what the picked printer is kept for, its two lists, and whether
+    /// its profile is the plate's.
+    fn show_own(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let picked = usize::try_from(ui.get_slice_send_index())
+            .ok()
+            .and_then(|at| self.printers.borrow().get(at).cloned());
+        let Some(printer) = picked else {
+            ui.set_slice_send_mismatch(SharedString::default());
+            ui.set_slice_send_own_can_use(false);
+            ui.set_slice_send_use_asking(false);
+            return;
+        };
+        let catalog = self.panel.catalog();
+        let own = self.own_of(&printer.mainboard_id);
+        let guess = guess_printer(&printer.model, &catalog);
+        let its = own.printer.clone().or_else(|| guess.clone());
+        let name = self.shown(&printer).name;
+
+        // The printer profiles: what its model names first, then the ones
+        // that take a print over the network.
+        let mut printer_ids = vec![None];
+        let mut printer_labels = vec![match &guess {
+            Some(guess) => ctr!(
+                "SendToPrinter",
+                "As it reports: {}",
+                printer_name(&catalog, guess)
+            ),
+            None => ctr!("SendToPrinter", "Not set"),
+        }];
+        for entry in network_printers(&catalog, its.as_ref()) {
+            printer_ids.push(Some(entry.id.clone()));
+            printer_labels.push(printer_name(&catalog, &entry.id).into());
+        }
+        let printer_at = own
+            .printer
+            .as_ref()
+            .and_then(|id| printer_ids.iter().position(|p| p.as_ref() == Some(id)))
+            .unwrap_or(0);
+
+        // The resins with settings for that profile.
+        let mut resin_ids: Vec<Option<MaterialId>> = vec![None];
+        let mut resin_labels = vec![ctr!("SendToPrinter", "No resin of its own")];
+        if let Some(its) = &its {
+            for entry in resins_for(&catalog, its) {
+                resin_ids.push(Some(entry.id.clone()));
+                resin_labels.push(resin_name(&catalog, &entry.id).into());
+            }
+        }
+        if let Some(resin) = &own.resin
+            && !resin_ids.iter().any(|r| r.as_ref() == Some(resin))
+        {
+            resin_ids.push(Some(resin.clone()));
+            resin_labels.push(resin_name(&catalog, resin).into());
+        }
+        let resin_at = own
+            .resin
+            .as_ref()
+            .and_then(|id| resin_ids.iter().position(|r| r.as_ref() == Some(id)))
+            .unwrap_or(0);
+
+        let mut summary = vec![match &its {
+            Some(its) => printer_name(&catalog, its),
+            None => ctr!("SendToPrinter", "Its printer profile is not set").to_string(),
+        }];
+        let kept = kept_for(&catalog, &own);
+        if !kept.is_empty() {
+            summary.push(kept);
+        }
+
+        let (in_printer, in_resin) = self.panel.in_force();
+        let sliced = self.panel.sliced_printer();
+        let can_use = its.as_ref().is_some_and(|its| {
+            Some(its) != in_printer.as_ref()
+                || own
+                    .resin
+                    .as_ref()
+                    .is_some_and(|r| Some(r) != in_resin.as_ref())
+        });
+        let mismatch = its.as_ref().and_then(|its| {
+            let plate = sliced.clone().or(in_printer.clone())?;
+            mismatch_text(&catalog, &name, its, &plate, sliced.is_some())
+        });
+
+        ui.set_slice_send_own_summary(summary.join("  ·  ").into());
+        if ui.get_slice_send_own_name().as_str() != own.name.as_deref().unwrap_or_default() {
+            ui.set_slice_send_own_name(own.name.clone().unwrap_or_default().into());
+        }
+        ui.set_slice_send_own_reported(printer.name.as_str().into());
+        ui.set_slice_send_own_printers(ModelRc::new(VecModel::from(printer_labels)));
+        ui.set_slice_send_own_printer_index(printer_at as i32);
+        ui.set_slice_send_own_resins(ModelRc::new(VecModel::from(resin_labels)));
+        ui.set_slice_send_own_resin_index(resin_at as i32);
+        if ui.get_slice_send_own_note().as_str() != own.note {
+            ui.set_slice_send_own_note(own.note.as_str().into());
+        }
+        ui.set_slice_send_own_can_use(can_use);
+        if !can_use {
+            ui.set_slice_send_use_asking(false);
+        }
+        ui.set_slice_send_mismatch(mismatch.unwrap_or_default().into());
+        *self.choices.borrow_mut() = Choices {
+            printers: printer_ids,
+            resins: resin_ids,
+        };
+    }
+
+    /// One of the picked printer's fields changed: 0 its name (`text`), 1
+    /// its printer profile and 2 its resin (`index` in their lists), 3 its
+    /// note (`text`); 4 puts its profile and resin in use, asking first when
+    /// a slice is made, and 5 puts them in use over it.
+    fn own_edited(&self, field: i32, text: &str, index: i32) {
+        let Some(printer) = self
+            .ui
+            .upgrade()
+            .and_then(|ui| usize::try_from(ui.get_slice_send_index()).ok())
+            .and_then(|at| self.printers.borrow().get(at).cloned())
+        else {
+            return;
+        };
+        let id = printer.mainboard_id.clone();
+        let at = usize::try_from(index).ok();
+        match field {
+            0 => {
+                let name = text.trim().to_owned();
+                self.change_own(&id, |own| own.name = (!name.is_empty()).then_some(name));
+                // The list and the wall name it so; the field keeps its text.
+                self.refresh_names();
+                return;
+            }
+            1 => {
+                let Some(picked) =
+                    at.and_then(|at| self.choices.borrow().printers.get(at).cloned())
+                else {
+                    return;
+                };
+                self.change_own(&id, |own| own.printer = picked);
+            }
+            2 => {
+                let Some(picked) = at.and_then(|at| self.choices.borrow().resins.get(at).cloned())
+                else {
+                    return;
+                };
+                self.change_own(&id, |own| own.resin = picked);
+            }
+            3 => {
+                let note = text.trim().to_owned();
+                self.change_own(&id, |own| own.note = note);
+                self.show_own();
+                self.wall.show(&self.wall_printers());
+                return;
+            }
+            4 | 5 => {
+                let Some(its) = self.profile_of(&printer) else {
+                    return;
+                };
+                let resin = self.own_of(&id).resin;
+                if field == 4
+                    && let Some(question) = self.use_question(&its, resin.as_ref())
+                {
+                    if let Some(ui) = self.ui.upgrade() {
+                        ui.set_slice_send_use_question(question.into());
+                        ui.set_slice_send_use_asking(true);
+                    }
+                    return;
+                }
+                if let Some(ui) = self.ui.upgrade() {
+                    ui.set_slice_send_use_asking(false);
+                }
+                self.panel.use_profiles(&its, resin.as_ref());
+            }
+            _ => return,
+        }
+        // Saved now: it goes up among the saved ones.
+        let picked = self.picked();
+        self.order();
+        self.show_printers();
+        self.pick(picked.as_ref());
+        self.wall.show(&self.wall_printers());
+    }
+
+    /// What to ask before putting `printer` and `resin` in use when a slice
+    /// made with others is held; `None` with nothing to lose.
+    fn use_question(&self, printer: &PrinterId, resin: Option<&MaterialId>) -> Option<String> {
+        let catalog = self.panel.catalog();
+        let sliced = self.panel.sliced_printer()?;
+        let (_, in_resin) = self.panel.in_force();
+        let same_resin = resin.is_none_or(|r| Some(r) == in_resin.as_ref());
+        if &sliced == printer && same_resin {
+            return None;
+        }
+        Some(
+            ctr!(
+                "SendToPrinter",
+                "The plate is sliced for {}. Using {} means slicing it again.",
+                printer_name(&catalog, &sliced),
+                printer_name(&catalog, printer)
+            )
+            .to_string(),
+        )
+    }
+
+    /// The names in the card's list and on the wall brought up to date,
+    /// the picked one kept picked.
+    fn refresh_names(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let labels = self.labels();
+        let at = ui.get_slice_send_index();
+        ui.set_slice_send_printers(ModelRc::new(VecModel::from(labels)));
+        ui.set_slice_send_index(at);
+        self.wall.show(&self.wall_printers());
     }
 
     fn say(&self, text: impl Into<SharedString>, bad: bool) {
@@ -313,6 +638,7 @@ impl SendToPrinter {
                 ui.set_slice_send_searching(false);
             }
             let picked = this.picked();
+            *this.answered.borrow_mut() = found.iter().map(|p| p.mainboard_id.clone()).collect();
             this.merge(found.clone(), picked.as_ref());
             if found.is_empty() {
                 this.say(
@@ -328,8 +654,10 @@ impl SendToPrinter {
         });
     }
 
-    /// The list with `found` in it: the printers that answered, the
-    /// remembered one kept (it may be off), the one picked kept picked.
+    /// The list with `found` in it: the printers that answered, the ones
+    /// known kept (they may be off), the saved ones first, the one picked
+    /// kept picked. A printer is known by its mainboard id: one that moved
+    /// to another address is the same printer, with what it was given.
     fn merge(&self, found: Vec<Printer>, picked: Option<&Printer>) {
         {
             let mut printers = self.printers.borrow_mut();
@@ -341,19 +669,11 @@ impl SendToPrinter {
             }
             *printers = list;
         }
+        self.order();
         self.keep();
         self.show_printers();
-        self.wall.show(&self.known_printers());
-        if let Some(picked) = picked
-            && let Some(at) = self
-                .printers
-                .borrow()
-                .iter()
-                .position(|p| p.mainboard_id == picked.mainboard_id)
-            && let Some(ui) = self.ui.upgrade()
-        {
-            ui.set_slice_send_index(at as i32);
-        }
+        self.wall.show(&self.wall_printers());
+        self.pick(picked);
     }
 
     /// Adds the printer at an address typed by hand, if it answers there.
@@ -375,6 +695,9 @@ impl SendToPrinter {
             match answer {
                 Some(printer) => {
                     let picked = printer.clone();
+                    this.answered
+                        .borrow_mut()
+                        .insert(printer.mainboard_id.clone());
                     this.merge(vec![printer], Some(&picked));
                     this.say("", false);
                 }
@@ -679,12 +1002,20 @@ async fn on_worker<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static)
     rx.await.ok().flatten()
 }
 
-/// The printers seen on the network, the one used last first, and the
-/// names given to them, kept in a file of the app's own.
+/// The profiles behind the picked printer's lists in the card: `None`
+/// first, for its model's profile and for no resin of its own.
+#[derive(Debug, Default)]
+struct Choices {
+    printers: Vec<Option<PrinterId>>,
+    resins: Vec<Option<MaterialId>>,
+}
+
+/// The printers seen on the network, the one used last first, and what was
+/// given them, kept in a file of the app's own.
 #[derive(Debug, Default, PartialEq)]
 struct Known {
     printers: Vec<Printer>,
-    names: HashMap<String, String>,
+    own: HashMap<String, OwnSettings>,
 }
 
 impl Known {
@@ -704,7 +1035,7 @@ impl Known {
             .and_then(|value| printer_from_json(&value));
         Self {
             printers: old.into_iter().collect(),
-            names: HashMap::new(),
+            own: HashMap::new(),
         }
     }
 
@@ -724,8 +1055,8 @@ impl Known {
             .iter()
             .map(|p| {
                 let mut value = printer_to_json(p);
-                if let Some(name) = self.names.get(&p.mainboard_id) {
-                    value["own_name"] = json!(name);
+                if let Some(own) = self.own.get(&p.mainboard_id) {
+                    own.write_into(&mut value);
                 }
                 value
             })
@@ -744,12 +1075,9 @@ impl Known {
             let Some(printer) = printer_from_json(entry) else {
                 continue;
             };
-            if let Some(name) = entry.get("own_name").and_then(Value::as_str)
-                && !name.trim().is_empty()
-            {
-                known
-                    .names
-                    .insert(printer.mainboard_id.clone(), name.to_owned());
+            let own = OwnSettings::read_from(entry);
+            if own.is_saved() {
+                known.own.insert(printer.mainboard_id.clone(), own);
             }
             known.printers.push(printer);
         }
@@ -805,7 +1133,15 @@ mod tests {
         };
         let known = Known {
             printers: vec![printer("a", "Mars 5 Ultra"), printer("b", "Saturn 4 Ultra")],
-            names: HashMap::from([("b".to_owned(), "La grande".to_owned())]),
+            own: HashMap::from([(
+                "b".to_owned(),
+                OwnSettings {
+                    name: Some("La grande".to_owned()),
+                    printer: Some(PrinterId::new("elegoo-saturn-4-ultra").unwrap()),
+                    resin: Some(MaterialId::new("siraya-blu").unwrap()),
+                    note: "Dental".to_owned(),
+                },
+            )]),
         };
         assert_eq!(Known::from_json(&known.to_json()), known);
         assert_eq!(
@@ -882,6 +1218,137 @@ mod tests {
             assert_eq!(ui.get_slice_send_name_preview(), "print.goo");
             ui.invoke_slice_send_name_edited("Dental resina".into());
             assert_eq!(ui.get_slice_send_name_preview(), "Dental_resina.goo");
+        });
+    }
+
+    /// Two printers of the same model saved under names of their own (#631):
+    /// each with its profile and resin, known again at a new address, first
+    /// in the list, warned about when the app slices for another printer,
+    /// and put in use from the card.
+    #[test]
+    fn printers_saved_with_their_profiles_are_known_again_and_warned_about() {
+        use std::cell::RefCell;
+        use std::collections::BTreeSet;
+
+        use sc_print_primitives::NetworkProtocol;
+        use sc_print_profiles::{CalibrationTarget, ProfileSource};
+        use slint::Model;
+
+        use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
+        use crate::profile_catalog::{MaterialCatalogEntry, PrinterCatalogEntry, ProfileCatalog};
+        use crate::test_support::catalog_entries::named_printer_entry;
+
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let mars = PrinterId::new("elegoo-mars-5-ultra").unwrap();
+            let saturn = PrinterId::new("elegoo-saturn-4-ultra").unwrap();
+            let grey = MaterialId::new("siraya-fast-grey").unwrap();
+            let elegoo = |id: &str, name: &str| PrinterCatalogEntry {
+                manufacturer: "ELEGOO".into(),
+                network: Some(NetworkProtocol::Sdcp),
+                ..named_printer_entry(id, name)
+            };
+            let catalog = ProfileCatalog::from_entries(
+                vec![
+                    elegoo("elegoo-mars-5-ultra", "Mars 5 Ultra"),
+                    elegoo("elegoo-saturn-4-ultra", "Saturn 4 Ultra"),
+                ],
+                vec![MaterialCatalogEntry {
+                    id: grey.clone(),
+                    brand: "Siraya".into(),
+                    name: "Fast Grey".into(),
+                    family: String::new(),
+                    calibrated_printers: BTreeSet::from([CalibrationTarget::from_printer(&mars)]),
+                    source: ProfileSource::Bundled,
+                }],
+            );
+            // The app slices for the Saturn.
+            let bus = PreferencesBus::new(PreferencesSnapshot {
+                default_printer: Some(saturn.clone()),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let ui = MainWindow::new().expect("the headless platform creates a main window");
+            let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&ui));
+            let panel = SlicePanelBridge::install(
+                &ui,
+                Rc::new(RefCell::new(Rc::new(catalog))),
+                bus.clone(),
+                ctrl.document(),
+            );
+            let send = SendToPrinter::install(&ui, ctrl, panel);
+            let board = |id: &str, last: u8| Printer {
+                ip: Ipv4Addr::new(192, 168, 1, last),
+                mainboard_id: id.into(),
+                name: "Mars 5 Ultra".into(),
+                model: "ELEGOO Mars 5 Ultra".into(),
+                firmware: "V1.0".into(),
+            };
+            let label = |at: usize| ui.get_slice_send_printers().row_data(at).unwrap();
+            let pick = |at: i32| {
+                ui.set_slice_send_index(at);
+                ui.invoke_slice_send_picked(at);
+            };
+            send.merge(vec![board("a", 10), board("b", 11)], None);
+            pick(1);
+
+            // Its profile is read from its model: not the one the app slices for.
+            assert_eq!(
+                ui.get_slice_send_mismatch(),
+                "Breadslicer slices for ELEGOO Saturn 4 Ultra now; Mars 5 Ultra is set up as ELEGOO Mars 5 Ultra."
+            );
+            assert!(ui.get_slice_send_own_can_use());
+            assert_eq!(
+                ui.get_slice_send_own_printers().row_data(0).unwrap(),
+                "As it reports: ELEGOO Mars 5 Ultra"
+            );
+
+            // Saved: a name, and the resin it is kept for, of those its
+            // profile has settings for.
+            ui.invoke_slice_send_own_edited(0, "Dental".into(), 0);
+            assert_eq!(ui.get_slice_send_own_resins().row_count(), 2);
+            ui.invoke_slice_send_own_edited(2, "".into(), 1);
+            ui.invoke_slice_send_own_edited(3, "Dental only".into(), 0);
+            assert_eq!(ui.get_slice_send_index(), 0, "saved: first, still picked");
+            assert_eq!(label(0), "Dental · 192.168.1.11");
+            assert_eq!(
+                ui.get_slice_send_own_summary(),
+                "ELEGOO Mars 5 Ultra  ·  Siraya Fast Grey  ·  Dental only"
+            );
+            // The other one, of the same model, under a name of its own.
+            pick(1);
+            ui.invoke_slice_send_own_edited(0, "Minis".into(), 0);
+            assert_eq!(label(1), "Minis · 192.168.1.10");
+            assert_eq!(
+                ui.get_slice_send_own_resin_index(),
+                0,
+                "no resin of its own"
+            );
+
+            // Dental at a new address is Dental still.
+            send.merge(vec![board("b", 20)], None);
+            assert_eq!(label(0), "Dental · 192.168.1.20");
+            assert!(
+                label(1).as_str().starts_with("Minis · 192.168.1.10"),
+                "{}",
+                label(1)
+            );
+
+            // Put in use: the app slices for it with its resin, with no
+            // slice to lose, so nothing is asked.
+            pick(0);
+            ui.invoke_slice_send_own_edited(4, "".into(), 0);
+            assert!(!ui.get_slice_send_use_asking());
+            assert_eq!(bus.snapshot().default_printer, Some(mars.clone()));
+            assert_eq!(bus.snapshot().default_resin, Some(grey));
+            assert_eq!(ui.get_slice_send_mismatch(), "");
+            assert!(!ui.get_slice_send_own_can_use());
+
+            // What was given goes to the file with each printer.
+            let known = Known {
+                printers: send.printers.borrow().clone(),
+                own: send.own.borrow().clone(),
+            };
+            assert_eq!(Known::from_json(&known.to_json()), known);
+            assert_eq!(known.own.len(), 2);
         });
     }
 

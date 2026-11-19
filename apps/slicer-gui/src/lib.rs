@@ -31,6 +31,7 @@ mod error_dialog;
 mod export_print_file;
 mod printer_camera;
 mod printer_wall;
+mod network_profiles;
 mod numbers;
 mod send_to_printer;
 mod export_progress;

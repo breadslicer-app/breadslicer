@@ -20,6 +20,12 @@ In `src/codec/h264.rs`:
 - a packet whose NAL header names no NAL type drops its access unit, as a lost
   packet would, instead of ending the stream.
 
+In `src/client/mod.rs`:
+
+- `Session::session_id` gives the session id from `SETUP`, so a session
+  dropped without its `TEARDOWN` can be torn down later from another
+  connection.
+
 In `src/rtsp/parse.rs`:
 
 - a header line may end in a bare LF, and the head may end in one;

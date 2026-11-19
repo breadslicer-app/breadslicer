@@ -54,6 +54,9 @@ pub(crate) struct SlicePanelBridge {
     // bridge unsubscribes both.
     document_sub: RefCell<Option<SceneSubscription>>,
     bus_sub: RefCell<Option<Subscription>>,
+    // Told after each refresh: the Send card follows the printer in use and
+    // the slice held (#631).
+    refreshed: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 impl SlicePanelBridge {
@@ -80,6 +83,7 @@ impl SlicePanelBridge {
             current_layers: RefCell::new(LayerValuesCache::default()),
             document_sub: RefCell::new(None),
             bus_sub: RefCell::new(None),
+            refreshed: RefCell::new(None),
         });
 
         {
@@ -253,6 +257,62 @@ impl SlicePanelBridge {
             layers_changed,
             self.selected_format.borrow().is_some(),
         ));
+        let refreshed = self.refreshed.borrow().clone();
+        if let Some(refreshed) = refreshed {
+            refreshed();
+        }
+    }
+
+    /// Calls `then` after each refresh of the panel.
+    pub(crate) fn on_refreshed(&self, then: Rc<dyn Fn()>) {
+        *self.refreshed.borrow_mut() = Some(then);
+    }
+
+    /// The profiles loaded.
+    pub(crate) fn catalog(&self) -> Rc<ProfileCatalog> {
+        self.catalog.borrow().clone()
+    }
+
+    /// The printer and the resin a slice would run with now.
+    pub(crate) fn in_force(&self) -> (Option<PrinterId>, Option<MaterialId>) {
+        let selection = self
+            .document
+            .print_selection()
+            .in_force(&PrintDefaults::from(&self.bus.snapshot()));
+        (
+            selection.printer().in_force().cloned(),
+            selection.resin().in_force().cloned(),
+        )
+    }
+
+    /// The printer the slice held was made for, if one is held.
+    pub(crate) fn sliced_printer(&self) -> Option<PrinterId> {
+        self.document.slice_params().map(|params| params.printer)
+    }
+
+    /// Puts `printer`, and `resin` when given, in use, as picking them in
+    /// the panel would.
+    pub(crate) fn use_profiles(&self, printer: &PrinterId, resin: Option<&MaterialId>) {
+        let snapshot = self.bus.snapshot();
+        self.document.set_selected_printer(None);
+        if snapshot.default_printer.as_ref() != Some(printer) {
+            let printer = printer.clone();
+            self.bus.update(move |snapshot| {
+                snapshot.default_printer = Some(printer);
+                PreferencesChange::DefaultPrinter
+            });
+        }
+        if let Some(resin) = resin {
+            self.document.set_selected_resin(None);
+            if self.bus.snapshot().default_resin.as_ref() != Some(resin) {
+                let resin = resin.clone();
+                self.bus.update(move |snapshot| {
+                    snapshot.default_resin = Some(resin);
+                    PreferencesChange::DefaultResin
+                });
+            }
+        }
+        self.refresh();
     }
 
     /// Returns the printer file of the selected format row, or `None` while no

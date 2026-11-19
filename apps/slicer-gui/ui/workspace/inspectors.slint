@@ -3029,6 +3029,26 @@ export component SliceInspector inherits VerticalLayout {
     callback send-address(string);
     callback send(bool, string);
     callback send-cancel();
+    callback send-picked(int);
+    // The printer picked, as Breadslicer knows it (#631): its own name, the
+    // printer profile it is, the resin it is kept for and a note.
+    in property <string> send-own-summary;
+    in-out property <bool> send-own-open;
+    in-out property <string> send-own-name;
+    in property <string> send-own-reported;
+    in property <[string]> send-own-printers;
+    in-out property <int> send-own-printer-index;
+    in property <[string]> send-own-resins;
+    in-out property <int> send-own-resin-index;
+    in-out property <string> send-own-note;
+    in property <bool> send-own-can-use;
+    in-out property <bool> send-use-asking;
+    in property <string> send-use-question;
+    // Why sending to it may print wrong; empty when its profile is the plate's.
+    in property <string> send-mismatch;
+    // 0 name, 1 printer profile, 2 resin, 3 note, 4 use them, 5 use them
+    // over the slice made.
+    callback send-own-edited(int, string, int);
     // The picked printer's camera (#633).
     in property <bool> camera-on;
     in property <bool> camera-live;
@@ -3229,6 +3249,9 @@ export component SliceInspector inherits VerticalLayout {
                     model: root.send-printers;
                     current-index <=> root.send-index;
                     enabled: root.send-printers.length > 0 && !root.send-busy;
+                    selected(value) => {
+                        root.send-picked(self.current-index);
+                    }
                 }
                 ScButton {
                     text: @tr("SlicePanel" => "Search");
@@ -3259,6 +3282,109 @@ export component SliceInspector inherits VerticalLayout {
                     }
                 }
             }
+        }
+        // What the picked printer is kept for, folded to one line.
+        if root.send-index >= 0: HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                // One line: a text that wraps under an `if` is measured as
+                // one line, and the card would cut its last row.
+                Text {
+                    text: root.send-own-summary;
+                    color: Theme.text-soft;
+                    font-size: Theme.font-sm;
+                    overflow: elide;
+                }
+            }
+            ScButton {
+                text: root.send-own-open
+                    ? @tr("SlicePanel" => "Done")
+                    : @tr("SlicePanel" => "Edit printer");
+                enabled: !root.send-busy;
+                clicked => {
+                    root.send-own-open = !root.send-own-open;
+                }
+            }
+        }
+        if root.send-index >= 0 && root.send-own-open: VerticalLayout {
+            spacing: 6px;
+            Field {
+                label: @tr("SlicePanel" => "Its name in Breadslicer");
+                LineEdit {
+                    text <=> root.send-own-name;
+                    placeholder-text: root.send-own-reported;
+                    accessible-label: @tr("SlicePanel" => "The printer's name in Breadslicer");
+                    edited(t) => {
+                        root.send-own-edited(0, t, 0);
+                    }
+                }
+            }
+            Field {
+                label: @tr("SlicePanel" => "Printer profile");
+                ComboBox {
+                    model: root.send-own-printers;
+                    current-index <=> root.send-own-printer-index;
+                    selected(value) => {
+                        root.send-own-edited(1, "", self.current-index);
+                    }
+                }
+            }
+            Field {
+                label: @tr("SlicePanel" => "Resin it is kept for");
+                ComboBox {
+                    model: root.send-own-resins;
+                    current-index <=> root.send-own-resin-index;
+                    selected(value) => {
+                        root.send-own-edited(2, "", self.current-index);
+                    }
+                }
+            }
+            Field {
+                label: @tr("SlicePanel" => "Note");
+                LineEdit {
+                    text <=> root.send-own-note;
+                    placeholder-text: @tr("SlicePanel" => "Dental only, the one by the window…");
+                    edited(t) => {
+                        root.send-own-edited(3, t, 0);
+                    }
+                }
+            }
+        }
+        if root.send-index >= 0 && root.send-own-can-use && !root.send-use-asking: ScButton {
+            text: @tr("SlicePanel" => "Slice for this printer");
+            enabled: !root.send-busy && !root.slicing && !root.exporting;
+            clicked => {
+                root.send-own-edited(4, "", 0);
+            }
+        }
+        if root.send-use-asking: VerticalLayout {
+            spacing: 6px;
+            WarningNote {
+                text: root.send-use-question;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                ScButton {
+                    horizontal-stretch: 1;
+                    text: @tr("SlicePanel" => "Use them");
+                    kind: ButtonKind.primary;
+                    clicked => {
+                        root.send-own-edited(5, "", 0);
+                    }
+                }
+                ScButton {
+                    text: @tr("SlicePanel" => "Back");
+                    clicked => {
+                        root.send-use-asking = false;
+                    }
+                }
+            }
+        }
+        // Said again by the send button, which then reads Send anyway.
+        if root.send-index >= 0 && root.send-mismatch != "": WarningNote {
+            text: root.send-mismatch;
         }
         HorizontalLayout {
             spacing: 8px;
@@ -3369,7 +3495,9 @@ export component SliceInspector inherits VerticalLayout {
                 spacing: 8px;
                 ScButton {
                     horizontal-stretch: 1;
-                    text: root.send-naming-start
+                    text: root.send-mismatch != ""
+                        ? @tr("SlicePanel" => "Send anyway")
+                        : root.send-naming-start
                         ? @tr("SlicePanel" => "Send and start")
                         : @tr("SlicePanel" => "Send to printer");
                     icon: root.send-naming-start ? Icons.slice : Icons.file;
