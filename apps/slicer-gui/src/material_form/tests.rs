@@ -434,3 +434,16 @@ fn saving_an_unflagged_profile_as_extension_reports_the_writer_error() {
     let err = save_edited_profile(dir.path(), &profile, EditedProfileKind::Extension).unwrap_err();
     assert!(err.contains("extension flag"), "err: {err}");
 }
+
+/// #48: a calibration typed with decimal commas reads as with points.
+#[test]
+fn decimal_commas_parse_like_points() {
+    let input = CalibrationFormInput {
+        normal_exposure_sec: "2,5".to_owned(),
+        lift_distance_mm: " 6,25 ".to_owned(),
+        ..CalibrationFormInput::default()
+    };
+    let block = parse_calibration_form(&input).unwrap();
+    assert_eq!(block.normal_exposure_sec.map(|v| v.value()), Some(2.5));
+    assert_eq!(block.lift_distance_mm.map(|v| v.value()), Some(6.25));
+}

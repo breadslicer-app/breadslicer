@@ -525,7 +525,7 @@ pub(crate) fn save_edited_profile(
 }
 
 fn fmt_f64(value: f64) -> String {
-    format!("{value}")
+    crate::numbers::shown(&format!("{value}"))
 }
 
 fn fmt_opt_f64(value: Option<f64>) -> String {
@@ -537,7 +537,7 @@ fn fmt_opt_u32(value: Option<u32>) -> String {
 }
 
 fn parse_f64(field: FormField, text: &str) -> Result<f64, InvalidFormValue> {
-    text.trim()
+    crate::numbers::normal(text)
         .parse::<f64>()
         .map_err(|_| InvalidFormValue::NotANumber { field })
 }

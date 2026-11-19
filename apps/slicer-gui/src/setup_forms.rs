@@ -41,17 +41,16 @@ fn tidy(value: f64) -> String {
     if text.is_empty() || text == "-" {
         "0".to_owned()
     } else {
-        text.to_owned()
+        crate::numbers::shown(text)
     }
 }
 
 /// A number typed in a slot, tidied the same way; text that is no number
 /// stays as typed.
 fn tidy_text(text: &str) -> String {
-    text.trim()
-        .parse::<f64>()
+    crate::numbers::parse_number(text)
         .map(tidy)
-        .unwrap_or_else(|_| text.trim().to_owned())
+        .unwrap_or_else(|| text.trim().to_owned())
 }
 
 fn number(key: &str, label: impl Into<SharedString>, unit: &str, value: &str) -> FormField {
@@ -1312,7 +1311,7 @@ impl Form {
         if text.trim().is_empty() {
             return Ok(None);
         }
-        text.trim()
+        crate::numbers::normal(&text)
             .parse::<f64>()
             .map(Some)
             .map_err(|_| ctr!("PrinterPicker", "{} is not a number.", label).to_string())

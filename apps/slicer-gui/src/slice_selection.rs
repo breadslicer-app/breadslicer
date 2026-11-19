@@ -223,7 +223,7 @@ pub(crate) fn parse_first_layer_height(text: &str) -> FirstLayerHeightInput {
     if trimmed.is_empty() {
         return FirstLayerHeightInput::Clear;
     }
-    match trimmed.parse::<f64>() {
+    match crate::numbers::normal(trimmed).parse::<f64>() {
         Ok(value) => match PositiveFiniteMm::new(value) {
             Ok(mm) => FirstLayerHeightInput::Set(mm),
             Err(_) => FirstLayerHeightInput::Invalid,
@@ -235,7 +235,9 @@ pub(crate) fn parse_first_layer_height(text: &str) -> FirstLayerHeightInput {
 /// Formats a first-layer height for the panel field: the bare millimetre
 /// number, or an empty string when no per-print height is set.
 pub(crate) fn format_first_layer_height(height: Option<PositiveFiniteMm>) -> String {
-    height.map_or(String::new(), |mm| mm.value().to_string())
+    height.map_or(String::new(), |mm| {
+        crate::numbers::shown(&mm.value().to_string())
+    })
 }
 
 #[cfg(test)]
@@ -426,6 +428,15 @@ mod first_layer_height_tests {
     fn a_positive_number_is_parsed_ignoring_surrounding_whitespace() {
         assert_eq!(
             parse_first_layer_height("  0.05 "),
+            FirstLayerHeightInput::Set(mm(0.05)),
+        );
+    }
+
+    /// #48: a decimal comma reads as well as a point.
+    #[test]
+    fn a_decimal_comma_reads_as_a_point() {
+        assert_eq!(
+            parse_first_layer_height("0,05"),
             FirstLayerHeightInput::Set(mm(0.05)),
         );
     }
