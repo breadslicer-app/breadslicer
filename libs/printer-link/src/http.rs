@@ -261,10 +261,7 @@ pub fn parse_response(raw: &[u8]) -> io::Result<Response> {
 /// A chunked body put back together; what does not parse ends it.
 fn dechunk(mut rest: &[u8]) -> Vec<u8> {
     let mut body = Vec::new();
-    loop {
-        let Some(eol) = rest.windows(2).position(|w| w == b"\r\n") else {
-            break;
-        };
+    while let Some(eol) = rest.windows(2).position(|w| w == b"\r\n") {
         let size = std::str::from_utf8(&rest[..eol])
             .ok()
             .and_then(|s| usize::from_str_radix(s.split(';').next().unwrap_or("").trim(), 16).ok());

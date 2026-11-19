@@ -115,7 +115,7 @@ fn udp_pair() -> (UdpSocket, u16) {
     for _ in 0..50 {
         let rtp = UdpSocket::bind("127.0.0.1:0").unwrap();
         let port = rtp.local_addr().unwrap().port();
-        if port % 2 != 0 || port == u16::MAX {
+        if !port.is_multiple_of(2) || port == u16::MAX {
             continue;
         }
         if let Ok(rtcp) = UdpSocket::bind(("127.0.0.1", port + 1)) {

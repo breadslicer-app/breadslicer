@@ -476,10 +476,14 @@ enum Work {
     Drill(JobHandle<Primed<DrillOutcome>>),
 }
 
+/// A drain click waiting for a job to end: the model, the point and the
+/// normal it was made at.
+type QueuedDrain = (NodeId, [f32; 3], [f32; 3]);
+
 /// A finished job.
 enum Landed {
-    Hollow(Result<Primed<HollowOutcome>, JobError>),
-    Drill(Result<Primed<DrillOutcome>, JobError>),
+    Hollow(Box<Result<Primed<HollowOutcome>, JobError>>),
+    Drill(Box<Result<Primed<DrillOutcome>, JobError>>),
 }
 
 impl Work {
@@ -499,8 +503,8 @@ impl Work {
 
     fn try_poll(&self) -> Option<Landed> {
         match self {
-            Work::Hollow(h) => h.try_poll().map(Landed::Hollow),
-            Work::Drill(h) => h.try_poll().map(Landed::Drill),
+            Work::Hollow(h) => h.try_poll().map(|landed| Landed::Hollow(Box::new(landed))),
+            Work::Drill(h) => h.try_poll().map(|landed| Landed::Drill(Box::new(landed))),
         }
     }
 }
@@ -618,7 +622,7 @@ pub(crate) struct HollowRun {
     bounds: RefCell<Option<MeshBounds>>,
     /// Drain clicks made while a job ran (#448): each is made once it ends,
     /// on the model it was made on.
-    queued: RefCell<VecDeque<(NodeId, [f32; 3], [f32; 3])>>,
+    queued: RefCell<VecDeque<QueuedDrain>>,
     /// The Repair run, for a mesh Hollow cannot use (#448).
     repair: RefCell<Option<Rc<RepairRun>>>,
     /// The selected model read for drilling into it as it is (#447): its
@@ -1108,7 +1112,7 @@ impl HollowRun {
                 ..ProbeSlot::default()
             };
             let (tx, rx) = std::sync::mpsc::channel();
-            let (mesh, world) = (mesh.clone(), world.clone());
+            let (mesh, world) = (mesh.clone(), *world);
             let _ = std::thread::Builder::new()
                 .name("hollow-drill-probe".to_owned())
                 .spawn(move || {
@@ -2074,8 +2078,8 @@ impl HollowRun {
     /// Lands a finished job.
     fn land(self: &Rc<Self>, job: Job, landed: Landed) {
         match landed {
-            Landed::Hollow(outcome) => self.finish(job, outcome),
-            Landed::Drill(outcome) => self.finish_drill(job, outcome),
+            Landed::Hollow(outcome) => self.finish(job, *outcome),
+            Landed::Drill(outcome) => self.finish_drill(job, *outcome),
         }
     }
 
@@ -2832,16 +2836,19 @@ impl HollowRun {
                 (hover, reach)
             });
         ui.set_hollow_drain_reach(hover.map_or(0, |(_, reach)| reach.code()));
-        let probed = came_hollow.then(|| probe.as_ref()).flatten().map(|probe| {
-            drains
-                .iter()
-                .map(|d| {
-                    probe
-                        .report(&world, &d.to_world(&world))
-                        .map_or(fallback_depth, |r| r.depth_mm)
-                })
-                .collect::<Vec<f32>>()
-        });
+        let probed = came_hollow
+            .then_some(probe.as_ref())
+            .flatten()
+            .map(|probe| {
+                drains
+                    .iter()
+                    .map(|d| {
+                        probe
+                            .report(&world, &d.to_world(&world))
+                            .map_or(fallback_depth, |r| r.depth_mm)
+                    })
+                    .collect::<Vec<f32>>()
+            });
         let depths = probed
             .or_else(|| drain_depths(&mut preview, &drains, key, &world, matrix, &options))
             .unwrap_or_else(|| {
@@ -3023,7 +3030,7 @@ impl HollowRun {
             .map(|(_, m)| m.clone());
         if current.is_none() && slot.map_job.as_ref().is_none_or(|(k, _)| *k != key) {
             let (tx, rx) = std::sync::mpsc::channel();
-            let (mesh, world) = (mesh.clone(), world.clone());
+            let (mesh, world) = (mesh.clone(), *world);
             let centres: Vec<[f32; 3]> = drains.iter().map(|d| d.to_world(&world).center).collect();
             let _ = std::thread::Builder::new()
                 .name("hollow-drain-map".to_owned())
