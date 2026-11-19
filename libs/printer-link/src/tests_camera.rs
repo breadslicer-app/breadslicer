@@ -203,7 +203,7 @@ fn rtsp_connection(
             ),
             "DESCRIBE" => {
                 let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Camera\r\nt=0 0\r\n\
-                           m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n\
+                           m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/9000\r\n\
                            a=fmtp:96 packetization-mode=1\r\na=control:trackID=0\r\n";
                 format!(
                     "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Base: {base}/\r\n\
