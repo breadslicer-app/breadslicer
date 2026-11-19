@@ -959,6 +959,11 @@ export component ScLineEdit inherits Rectangle {
     in property <InputType> input-type <=> input.input-type;
     callback edited(string);
     callback accepted(string);
+    // Takes the keyboard with the whole text selected, so typing replaces it.
+    public function focus-all() {
+        input.focus();
+        input.select-all();
+    }
 
     height: 26px;
     min-width: 60px;

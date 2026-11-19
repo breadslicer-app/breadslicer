@@ -254,6 +254,8 @@ struct WindowDrivers {
     /// Edit > Split into Bodies and Keep Only This Body. Held so its Slint
     /// callbacks and document subscription live as long as the window.
     _split_bodies: Rc<SplitBodies>,
+    /// Send to printer (#630).
+    _send_to_printer: Rc<crate::send_to_printer::SendToPrinter>,
 }
 
 /// Owns the app-wide state:
@@ -778,6 +780,8 @@ impl AppState {
             ctrl.document(),
         );
         crate::export_print_file::wire_export_print_file(ui, ctrl.clone(), slice_panel.clone());
+        let send_to_printer =
+            crate::send_to_printer::SendToPrinter::install(ui, ctrl.clone(), slice_panel.clone());
         crate::printer_settings_import::wire(
             ui,
             self.catalog.clone(),
@@ -865,6 +869,7 @@ impl AppState {
             ctrl.clone(),
         );
         WindowDrivers {
+            _send_to_printer: send_to_printer,
             _layer_pixels: layer_pixels,
             _resin_cost: resin_cost,
             _hollow_run: hollow_run,

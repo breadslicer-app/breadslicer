@@ -1,0 +1,18 @@
+[package]
+name = "sc-printer-link"
+version = "0.1.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors = ["SynrgStudio"]
+description = "Sends a printer file to a resin printer on the local network and starts the print: SDCP v3 (Elegoo)."
+categories = ["network-programming"]
+keywords = ["3d", "slicer", "resin", "printer", "sdcp"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json.workspace = true
+if-addrs = "0.13"
+tungstenite = { version = "0.27", default-features = false, features = ["handshake"] }

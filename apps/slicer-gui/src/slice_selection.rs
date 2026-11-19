@@ -549,6 +549,7 @@ mod slice_panel_view_tests {
                 .expect("test list is non-empty"),
             image_path: None,
             source: ProfileSource::Bundled,
+            network: None,
         }
     }
 

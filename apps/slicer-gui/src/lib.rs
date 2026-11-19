@@ -29,6 +29,7 @@ mod df_support_run;
 mod diagnostics;
 mod error_dialog;
 mod export_print_file;
+mod send_to_printer;
 mod export_progress;
 mod export_progress_panel;
 mod failure_gate;

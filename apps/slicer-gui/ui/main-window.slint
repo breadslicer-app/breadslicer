@@ -612,6 +612,32 @@ export component MainWindow inherits Window {
     in property <string> slice-print-format-note;
     in property <bool> slice-export-enabled: false;
     in-out property <string> slice-first-layer-height-text;
+    // Send to printer (#630): shown for a printer that takes a print over
+    // the network; the printers found, the one picked, a search or a send
+    // on its way, how far it got, and what it last said.
+    in property <bool> slice-send-shown: false;
+    in property <[string]> slice-send-printers: [];
+    in-out property <int> slice-send-index: -1;
+    in property <bool> slice-send-searching: false;
+    in property <bool> slice-send-busy: false;
+    // The printer file being written, before it goes.
+    in property <bool> slice-send-preparing: false;
+    in property <float> slice-send-progress: 0;
+    in property <string> slice-send-status;
+    in property <bool> slice-send-status-bad: false;
+    // The name the file goes onto the printer by, asked before each send:
+    // the field open, for Send and start or Send, what is typed, and how it
+    // will read on the printer.
+    in-out property <bool> slice-send-naming: false;
+    in property <bool> slice-send-naming-start: false;
+    in-out property <string> slice-send-name;
+    in property <string> slice-send-name-preview;
+    callback slice-send-search(bool);
+    callback slice-send-address(string);
+    callback slice-send-name-asked(bool);
+    callback slice-send-name-edited(string);
+    callback slice-send(bool, string);
+    callback slice-send-cancel();
     // Slice run state, driving the Slice button's disabled state and the
     // input-capturing progress modal. `slicing-in-progress` is set by the
     // Rust driver when a slice starts and cleared on every exit path.
@@ -2357,6 +2383,37 @@ export component MainWindow inherits Window {
                                 }
                                 export-every-plate => {
                                     root.slice-export-every-plate-requested();
+                                }
+                                send-shown: root.slice-send-shown;
+                                send-printers: root.slice-send-printers;
+                                send-index <=> root.slice-send-index;
+                                send-searching: root.slice-send-searching;
+                                send-busy: root.slice-send-busy;
+                                send-preparing: root.slice-send-preparing;
+                                send-progress: root.slice-send-progress;
+                                send-status: root.slice-send-status;
+                                send-status-bad: root.slice-send-status-bad;
+                                send-naming <=> root.slice-send-naming;
+                                send-naming-start: root.slice-send-naming-start;
+                                send-name <=> root.slice-send-name;
+                                send-name-preview: root.slice-send-name-preview;
+                                send-name-asked(start) => {
+                                    root.slice-send-name-asked(start);
+                                }
+                                send-name-edited(text) => {
+                                    root.slice-send-name-edited(text);
+                                }
+                                send-search(forced) => {
+                                    root.slice-send-search(forced);
+                                }
+                                send-address(text) => {
+                                    root.slice-send-address(text);
+                                }
+                                send(start, name) => {
+                                    root.slice-send(start, name);
+                                }
+                                send-cancel => {
+                                    root.slice-send-cancel();
                                 }
                                 setup-open <=> root.slice-setup-open;
                                 overhang-map-on <=> root.overhang-map-on;

@@ -21,6 +21,7 @@ members = [
     "libs/print-glue",
     "libs/print-primitives",
     "libs/print-profiles",
+    "libs/printer-link",
     "libs/project-formats",
     "libs/review",
     "libs/scene",
@@ -78,6 +79,7 @@ sc-mesh-spatial = { path = "libs/mesh-spatial", version = "0.2.0" }
 sc-message-catalog = { path = "libs/message-catalog", version = "0.1.0" }
 sc-cut = { path = "libs/cut", version = "0.1.0" }
 sc-orient = { path = "libs/orient", version = "0.1.0" }
+sc-printer-link = { path = "libs/printer-link", version = "0.1.0" }
 sc-print-glue = { path = "libs/print-glue", version = "0.2.0" }
 sc-print-primitives = { path = "libs/print-primitives", version = "0.2.0" }
 sc-print-profiles = { path = "libs/print-profiles", version = "0.3.0" }
