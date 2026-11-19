@@ -51,14 +51,14 @@ fn layer(slab_top_mm: f64, exposure_sec: f64) -> LayerProgram {
         wait_before_cure_sec: NonNegativeFiniteSec::ZERO,
         wait_after_cure_sec: NonNegativeFiniteSec::ZERO,
         wait_after_lift_sec: NonNegativeFiniteSec::ZERO,
-        lift: MotionStage {
+        lift: Some(MotionStage {
             distance_mm: mm(5.0),
             speed_mm_min: PositiveFiniteMmPerMin::new(90.0).unwrap(),
-        },
-        retract: MotionStage {
+        }),
+        retract: Some(MotionStage {
             distance_mm: mm(5.0),
             speed_mm_min: PositiveFiniteMmPerMin::new(150.0).unwrap(),
-        },
+        }),
         second_lift: None,
         second_retract: None,
         light_pwm: LightPwm::FULL,

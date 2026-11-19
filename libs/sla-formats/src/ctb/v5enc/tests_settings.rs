@@ -67,14 +67,14 @@ fn layer(bottom: bool) -> LayerProgram {
         wait_after_cure_sec: NonNegativeFiniteSec::new(0.7).unwrap(),
         wait_after_lift_sec: NonNegativeFiniteSec::new(1.1).unwrap(),
         lift: if bottom {
-            stage(7.25, 63.0)
+            Some(stage(7.25, 63.0))
         } else {
-            stage(5.5, 91.0)
+            Some(stage(5.5, 91.0))
         },
         retract: if bottom {
-            stage(6.0, 151.0)
+            Some(stage(6.0, 151.0))
         } else {
-            stage(6.5, 137.0)
+            Some(stage(6.5, 137.0))
         },
         second_lift: Some(if bottom {
             stage(1.75, 219.0)

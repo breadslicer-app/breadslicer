@@ -65,14 +65,14 @@ fn layer(exposure_sec: f64, waits: [f64; 3], lift_speed: f64, pwm: LightPwm) -> 
         wait_before_cure_sec: wait(waits[0]),
         wait_after_cure_sec: wait(waits[1]),
         wait_after_lift_sec: wait(waits[2]),
-        lift: MotionStage {
+        lift: Some(MotionStage {
             distance_mm: mm(5.0),
             speed_mm_min: speed(lift_speed),
-        },
-        retract: MotionStage {
+        }),
+        retract: Some(MotionStage {
             distance_mm: mm(6.0),
             speed_mm_min: speed(150.0),
-        },
+        }),
         second_lift: None,
         second_retract: None,
         light_pwm: pwm,

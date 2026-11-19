@@ -546,10 +546,10 @@ fn the_counts_describe_the_exposures_the_records_carry() {
 fn the_retract_repeats_the_lift_distance_at_its_own_speed() {
     let program = program(PRINTER_TOML, 20);
     for layer in &program.layers {
-        assert_eq!(layer.lift.distance_mm.value(), 5.0);
-        assert_eq!(layer.lift.speed_mm_min.value(), 120.0);
-        assert_eq!(layer.retract.distance_mm.value(), 5.0);
-        assert_eq!(layer.retract.speed_mm_min.value(), 150.0);
+        assert_eq!(layer.lift.unwrap().distance_mm.value(), 5.0);
+        assert_eq!(layer.lift.unwrap().speed_mm_min.value(), 120.0);
+        assert_eq!(layer.retract.unwrap().distance_mm.value(), 5.0);
+        assert_eq!(layer.retract.unwrap().speed_mm_min.value(), 150.0);
     }
 }
 
@@ -563,16 +563,16 @@ fn the_bottom_motion_stops_where_the_bottom_layers_do() {
     let bottom = BOTTOM_LAYER_COUNT as usize;
 
     for layer in &program.layers[..bottom] {
-        assert_eq!(layer.lift.distance_mm.value(), 8.0);
-        assert_eq!(layer.lift.speed_mm_min.value(), 40.0);
-        assert_eq!(layer.retract.distance_mm.value(), 8.0);
-        assert_eq!(layer.retract.speed_mm_min.value(), 90.0);
+        assert_eq!(layer.lift.unwrap().distance_mm.value(), 8.0);
+        assert_eq!(layer.lift.unwrap().speed_mm_min.value(), 40.0);
+        assert_eq!(layer.retract.unwrap().distance_mm.value(), 8.0);
+        assert_eq!(layer.retract.unwrap().speed_mm_min.value(), 90.0);
     }
     for layer in &program.layers[bottom..] {
-        assert_eq!(layer.lift.distance_mm.value(), 5.0);
-        assert_eq!(layer.lift.speed_mm_min.value(), 120.0);
-        assert_eq!(layer.retract.distance_mm.value(), 5.0);
-        assert_eq!(layer.retract.speed_mm_min.value(), 150.0);
+        assert_eq!(layer.lift.unwrap().distance_mm.value(), 5.0);
+        assert_eq!(layer.lift.unwrap().speed_mm_min.value(), 120.0);
+        assert_eq!(layer.retract.unwrap().distance_mm.value(), 5.0);
+        assert_eq!(layer.retract.unwrap().speed_mm_min.value(), 150.0);
     }
 }
 
@@ -585,13 +585,13 @@ fn a_split_travel_lands_as_the_vendor_files_record_it() {
             .unwrap();
 
     for layer in &program.layers[BOTTOM_LAYER_COUNT as usize..] {
-        assert_eq!(layer.lift.distance_mm.value(), 2.0);
-        assert_eq!(layer.lift.speed_mm_min.value(), 75.0);
+        assert_eq!(layer.lift.unwrap().distance_mm.value(), 2.0);
+        assert_eq!(layer.lift.unwrap().speed_mm_min.value(), 75.0);
         let second_lift = layer.second_lift.expect("the travel splits in two");
         assert_eq!(second_lift.distance_mm.value(), 3.0);
         assert_eq!(second_lift.speed_mm_min.value(), 230.0);
-        assert_eq!(layer.retract.distance_mm.value(), 3.0);
-        assert_eq!(layer.retract.speed_mm_min.value(), 230.0);
+        assert_eq!(layer.retract.unwrap().distance_mm.value(), 3.0);
+        assert_eq!(layer.retract.unwrap().speed_mm_min.value(), 230.0);
         let second_retract = layer.second_retract.expect("the return splits in two");
         assert_eq!(second_retract.distance_mm.value(), 2.0);
         assert_eq!(second_retract.speed_mm_min.value(), 75.0);
@@ -607,9 +607,9 @@ fn a_split_travel_rises_and_returns_the_same_distance() {
             .unwrap();
 
     for layer in &program.layers {
-        let up = layer.lift.distance_mm.value()
+        let up = layer.lift.unwrap().distance_mm.value()
             + layer.second_lift.expect("a split lift").distance_mm.value();
-        let down = layer.retract.distance_mm.value()
+        let down = layer.retract.unwrap().distance_mm.value()
             + layer
                 .second_retract
                 .expect("a split return")
@@ -628,12 +628,12 @@ fn the_bottom_layers_take_their_own_split_travel() {
             .unwrap();
 
     for layer in &program.layers[..BOTTOM_LAYER_COUNT as usize] {
-        assert_eq!(layer.lift.distance_mm.value(), 3.0);
-        assert_eq!(layer.lift.speed_mm_min.value(), 60.0);
+        assert_eq!(layer.lift.unwrap().distance_mm.value(), 3.0);
+        assert_eq!(layer.lift.unwrap().speed_mm_min.value(), 60.0);
         let second_lift = layer.second_lift.expect("the travel splits in two");
         assert_eq!(second_lift.distance_mm.value(), 3.0);
         assert_eq!(second_lift.speed_mm_min.value(), 120.0);
-        assert_eq!(layer.retract.speed_mm_min.value(), 120.0);
+        assert_eq!(layer.retract.unwrap().speed_mm_min.value(), 120.0);
         assert_eq!(
             layer
                 .second_retract
@@ -1031,4 +1031,32 @@ fn the_shipped_m7_pro_estimate_lands_near_a_real_print() {
         (estimate / 60.0 - 47.5).abs() < 0.05,
         "estimate: {estimate}"
     );
+}
+
+#[test]
+fn a_tilting_vat_lifts_its_bottom_layers_alone() {
+    let tilting = PRINTER_TOML.replace("has_camera = false", "has_camera = false\ntilting_vat = true");
+    let program = program(&tilting, 20);
+    let bottom = BOTTOM_LAYER_COUNT as usize;
+
+    for layer in &program.layers[..bottom] {
+        assert!(layer.lift.is_some() && layer.retract.is_some());
+    }
+    for (index, layer) in program.layers.iter().enumerate().skip(bottom) {
+        assert_eq!(layer.lift, None, "layer {index}");
+        assert_eq!(layer.retract, None, "layer {index}");
+        assert_eq!(layer.second_lift, None, "layer {index}");
+        assert_eq!(layer.second_retract, None, "layer {index}");
+    }
+}
+
+#[test]
+fn a_tilting_vat_spends_a_tilt_where_it_lifted() {
+    let lifting = program(PRINTER_TOML, 20);
+    let tilting = program(
+        &PRINTER_TOML.replace("has_camera = false", "has_camera = false\ntilting_vat = true"),
+        20,
+    );
+    assert!(tilting.print_time_sec.value() < lifting.print_time_sec.value());
+    assert!(tilting.print_time_sec.value() > 0.0);
 }

@@ -12,7 +12,7 @@
 
 use sc_print_primitives::LightPwm;
 
-use crate::print_program::LayerProgram;
+use crate::print_program::{LayerProgram, MotionStage};
 
 /// One layer's settings, named as these containers name their slots
 /// and converted to the widths they store. A layer that is absent,
@@ -41,20 +41,11 @@ impl LayerValues {
         let Some(layer) = layer else {
             return Self::default();
         };
-        let (second_lift_distance_mm, second_lift_speed_mm_min) =
-            layer.second_lift.map_or((0.0, 0.0), |stage| {
-                (
-                    stage.distance_mm.value() as f32,
-                    stage.speed_mm_min.value() as f32,
-                )
-            });
+        let (lift_distance_mm, lift_speed_mm_min) = stage_values(layer.lift);
+        let (retract_distance_mm, retract_speed_mm_min) = stage_values(layer.retract);
+        let (second_lift_distance_mm, second_lift_speed_mm_min) = stage_values(layer.second_lift);
         let (second_retract_distance_mm, second_retract_speed_mm_min) =
-            layer.second_retract.map_or((0.0, 0.0), |stage| {
-                (
-                    stage.distance_mm.value() as f32,
-                    stage.speed_mm_min.value() as f32,
-                )
-            });
+            stage_values(layer.second_retract);
 
         Self {
             exposure_sec: layer.exposure_sec.value() as f32,
@@ -63,10 +54,10 @@ impl LayerValues {
             wait_before_lift_sec: layer.wait_after_cure_sec.value() as f32,
             wait_after_lift_sec: layer.wait_after_lift_sec.value() as f32,
             wait_after_retract_sec: layer.wait_before_cure_sec.value() as f32,
-            lift_distance_mm: layer.lift.distance_mm.value() as f32,
-            lift_speed_mm_min: layer.lift.speed_mm_min.value() as f32,
-            retract_distance_mm: layer.retract.distance_mm.value() as f32,
-            retract_speed_mm_min: layer.retract.speed_mm_min.value() as f32,
+            lift_distance_mm,
+            lift_speed_mm_min,
+            retract_distance_mm,
+            retract_speed_mm_min,
             second_lift_distance_mm,
             second_lift_speed_mm_min,
             second_retract_distance_mm,
@@ -74,6 +65,17 @@ impl LayerValues {
             light_pwm: pwm_byte(layer.light_pwm),
         }
     }
+}
+
+/// A stage's distance and speed as stored, or zeros for a stage the layer
+/// does not make.
+fn stage_values(stage: Option<MotionStage>) -> (f32, f32) {
+    stage.map_or((0.0, 0.0), |stage| {
+        (
+            stage.distance_mm.value() as f32,
+            stage.speed_mm_min.value() as f32,
+        )
+    })
 }
 
 /// Convert a duty cycle to the 0..255 scale these containers store.

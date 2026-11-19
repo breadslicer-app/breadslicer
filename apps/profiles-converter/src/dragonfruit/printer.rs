@@ -309,6 +309,7 @@ pub(crate) fn map_printer(raw: RawPrinter) -> Result<MappedPrinter, PrinterMapEr
         two_stage_lift: false,
         transition_layers: None,
         has_camera: raw.has_camera,
+        tilting_vat: false,
         network_protocol: map_network(raw.network_support.as_deref()),
     };
 

@@ -112,7 +112,11 @@ pub(crate) fn project_to_print_program(
                 })
             })?;
             let waits = waits_for(layer_index, material);
-            let motion = motion_for(layer_index, material);
+            let motion = motion_for(
+                layer_index,
+                material,
+                config.printer.capabilities.tilting_vat,
+            );
             Ok(LayerProgram {
                 slab_top_mm,
                 exposure_sec: exposure_for(layer_index, transition_count, material),
@@ -169,8 +173,8 @@ fn schedule_duration_sec(layers: &[LayerProgram]) -> f64 {
 
 fn layer_duration_sec(layer: &LayerProgram) -> f64 {
     let travel: f64 = [
-        Some(layer.lift),
-        Some(layer.retract),
+        layer.lift,
+        layer.retract,
         layer.second_lift,
         layer.second_retract,
     ]
@@ -179,12 +183,26 @@ fn layer_duration_sec(layer: &LayerProgram) -> f64 {
     .map(travel_duration_sec)
     .sum();
 
+    // A layer that does not lift is peeled by the vat tilting, which takes
+    // about as long whatever the layer.
+    let tilt = if layer.lift.is_none() {
+        TILT_CYCLE_SEC
+    } else {
+        0.0
+    };
+
     layer.exposure_sec.value()
         + layer.wait_before_cure_sec.value()
         + layer.wait_after_cure_sec.value()
         + layer.wait_after_lift_sec.value()
         + travel
+        + tilt
 }
+
+/// How long one tilt of the vat takes, out and back. Read from a file written
+/// for a Mars 5 Ultra: its print time less its layers' light, pauses and
+/// bottom travel, over the layers that tilt (0.80 s).
+const TILT_CYCLE_SEC: f64 = 0.8;
 
 /// Compute the time 1 stage of platform travel takes, from the per-minute speed
 /// these files record.
@@ -235,8 +253,8 @@ fn waits_for(layer_index: u32, material: &MaterialResolved) -> LayerWaits {
 /// The platform travel 1 layer's record carries.
 #[derive(Clone, Copy, Debug)]
 struct LayerMotion {
-    lift: MotionStage,
-    retract: MotionStage,
+    lift: Option<MotionStage>,
+    retract: Option<MotionStage>,
     second_lift: Option<MotionStage>,
     second_retract: Option<MotionStage>,
 }
@@ -249,34 +267,47 @@ struct LayerMotion {
 /// move; a split travel returns the 2 parts in reverse order, so the retract
 /// carries the second lift's distance and the second retract carries the first
 /// lift's.
-fn motion_for(layer_index: u32, material: &MaterialResolved) -> LayerMotion {
-    let (distance_mm, lift_speed_mm_min, retract_speed_mm_min, second) =
-        if layer_index < material.bottom_layer_count {
-            (
-                material.bottom_lift_distance_mm,
-                material.bottom_lift_speed_mm_min,
-                material.bottom_retract_speed_mm_min,
-                material.bottom_second_travel,
-            )
-        } else {
-            (
-                material.lift_distance_mm,
-                material.lift_speed_mm_min,
-                material.retract_speed_mm_min,
-                material.second_travel,
-            )
+///
+/// On a printer with a tilting vat only the bottom layers lift: every other
+/// layer is peeled by the tilt, and the platform just steps up by the layer
+/// height, which the layer's own height carries.
+fn motion_for(layer_index: u32, material: &MaterialResolved, tilting_vat: bool) -> LayerMotion {
+    let bottom = layer_index < material.bottom_layer_count;
+    if tilting_vat && !bottom {
+        return LayerMotion {
+            lift: None,
+            retract: None,
+            second_lift: None,
+            second_retract: None,
         };
+    }
+    let (distance_mm, lift_speed_mm_min, retract_speed_mm_min, second) = if bottom {
+        (
+            material.bottom_lift_distance_mm,
+            material.bottom_lift_speed_mm_min,
+            material.bottom_retract_speed_mm_min,
+            material.bottom_second_travel,
+        )
+    } else {
+        (
+            material.lift_distance_mm,
+            material.lift_speed_mm_min,
+            material.retract_speed_mm_min,
+            material.second_travel,
+        )
+    };
     let lift = MotionStage {
         distance_mm,
         speed_mm_min: lift_speed_mm_min,
     };
+    let lift = Some(lift);
     let Some(second) = second else {
         return LayerMotion {
             lift,
-            retract: MotionStage {
+            retract: Some(MotionStage {
                 distance_mm,
                 speed_mm_min: retract_speed_mm_min,
-            },
+            }),
             second_lift: None,
             second_retract: None,
         };
@@ -287,10 +318,10 @@ fn motion_for(layer_index: u32, material: &MaterialResolved) -> LayerMotion {
     // speed; none is derived from a lift speed.
     LayerMotion {
         lift,
-        retract: MotionStage {
+        retract: Some(MotionStage {
             distance_mm: second.lift_distance_mm,
             speed_mm_min: second.retract_speed_mm_min,
-        },
+        }),
         second_lift: Some(MotionStage {
             distance_mm: second.lift_distance_mm,
             speed_mm_min: second.lift_speed_mm_min,
@@ -362,8 +393,8 @@ mod schedule_tests {
             wait_before_cure_sec: NonNegativeFiniteSec::new(0.4).unwrap(),
             wait_after_cure_sec: NonNegativeFiniteSec::new(1.2).unwrap(),
             wait_after_lift_sec: NonNegativeFiniteSec::new(2.5).unwrap(),
-            lift: stage(5.0, 120.0),
-            retract: stage(5.0, 150.0),
+            lift: Some(stage(5.0, 120.0)),
+            retract: Some(stage(5.0, 150.0)),
             second_lift: None,
             second_retract: None,
             light_pwm: LightPwm::FULL,

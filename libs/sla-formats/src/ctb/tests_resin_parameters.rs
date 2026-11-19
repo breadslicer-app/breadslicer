@@ -44,14 +44,14 @@ fn layer() -> LayerProgram {
         wait_before_cure_sec: NonNegativeFiniteSec::ZERO,
         wait_after_cure_sec: NonNegativeFiniteSec::ZERO,
         wait_after_lift_sec: NonNegativeFiniteSec::ZERO,
-        lift: MotionStage {
+        lift: Some(MotionStage {
             distance_mm: mm(5.5),
             speed_mm_min: PositiveFiniteMmPerMin::new(91.0).unwrap(),
-        },
-        retract: MotionStage {
+        }),
+        retract: Some(MotionStage {
             distance_mm: mm(6.5),
             speed_mm_min: PositiveFiniteMmPerMin::new(137.0).unwrap(),
-        },
+        }),
         second_lift: None,
         second_retract: None,
         light_pwm: LightPwm::FULL,

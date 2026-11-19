@@ -745,9 +745,16 @@ fn layers_manifest(program: &PrintProgram) -> LayersControllerManifest {
                 layer_index: index as u32,
                 layer_minheight: Num(round_height(min_height)),
                 layer_thickness: Num(thickness),
-                zup_height: Num(round_away(layer.lift.distance_mm.value() as f32, 2)),
+                zup_height: Num(round_away(
+                    layer
+                        .lift
+                        .map_or(0.0, |lift| lift.distance_mm.value() as f32),
+                    2,
+                )),
                 zup_speed: Num(mm_per_sec(round_away(
-                    layer.lift.speed_mm_min.value() as f32,
+                    layer
+                        .lift
+                        .map_or(0.0, |lift| lift.speed_mm_min.value() as f32),
                     2,
                 ))),
             };

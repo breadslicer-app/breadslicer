@@ -167,6 +167,7 @@ fn programmatic_construction_with_nevec_builds_a_valid_value() {
         two_stage_lift: false,
         transition_layers: None,
         has_camera: true,
+        tilting_vat: true,
         network_protocol: Some(NetworkProtocol::Moonraker),
     };
     let serialised = toml_edit::ser::to_string(&caps).unwrap();

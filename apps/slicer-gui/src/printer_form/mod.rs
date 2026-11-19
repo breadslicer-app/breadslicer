@@ -377,6 +377,7 @@ pub(crate) fn build_printer(
         two_stage_lift: from_base.is_some_and(|b| b.capabilities.two_stage_lift),
         transition_layers: from_base.and_then(|b| b.capabilities.transition_layers),
         has_camera: false,
+        tilting_vat: from_base.is_some_and(|b| b.capabilities.tilting_vat),
         network_protocol: None,
     };
     let family = base

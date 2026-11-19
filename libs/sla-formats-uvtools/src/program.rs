@@ -56,9 +56,15 @@ impl StageSettings {
             wait_before_cure_sec: layer.wait_before_cure_sec.value() as f32,
             wait_after_cure_sec: layer.wait_after_cure_sec.value() as f32,
             wait_after_lift_sec: layer.wait_after_lift_sec.value() as f32,
-            lift_mm: layer.lift.distance_mm.value() as f32,
-            lift_mm_min: layer.lift.speed_mm_min.value() as f32,
-            retract_mm_min: layer.retract.speed_mm_min.value() as f32,
+            lift_mm: layer
+                .lift
+                .map_or(0.0, |stage| stage.distance_mm.value() as f32),
+            lift_mm_min: layer
+                .lift
+                .map_or(0.0, |stage| stage.speed_mm_min.value() as f32),
+            retract_mm_min: layer
+                .retract
+                .map_or(0.0, |stage| stage.speed_mm_min.value() as f32),
             second_stage,
             pwm: pwm_byte(layer.light_pwm),
         }

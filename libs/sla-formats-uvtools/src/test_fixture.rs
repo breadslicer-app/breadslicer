@@ -52,14 +52,14 @@ pub(crate) fn layer(slab_top_mm: f64, exposure_sec: f64, bottom: bool) -> LayerP
         wait_before_cure_sec: sec(if bottom { 3.0 } else { 1.5 }),
         wait_after_cure_sec: sec(if bottom { 1.0 } else { 0.5 }),
         wait_after_lift_sec: sec(0.25),
-        lift: MotionStage {
+        lift: Some(MotionStage {
             distance_mm: mm(if bottom { 7.0 } else { 6.0 }),
             speed_mm_min: speed(if bottom { 60.0 } else { 90.0 }),
-        },
-        retract: MotionStage {
+        }),
+        retract: Some(MotionStage {
             distance_mm: mm(if bottom { 7.0 } else { 6.0 }),
             speed_mm_min: speed(150.0),
-        },
+        }),
         second_lift: None,
         second_retract: None,
         light_pwm: LightPwm::FULL,

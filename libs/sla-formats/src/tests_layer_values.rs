@@ -29,14 +29,14 @@ fn layer() -> LayerProgram {
         wait_before_cure_sec: wait(0.3),
         wait_after_cure_sec: wait(0.7),
         wait_after_lift_sec: wait(1.1),
-        lift: MotionStage {
+        lift: Some(MotionStage {
             distance_mm: mm(5.0),
             speed_mm_min: speed(90.0),
-        },
-        retract: MotionStage {
+        }),
+        retract: Some(MotionStage {
             distance_mm: mm(4.0),
             speed_mm_min: speed(150.0),
-        },
+        }),
         second_lift: None,
         second_retract: None,
         light_pwm: LightPwm::FULL,
@@ -112,4 +112,16 @@ fn a_layer_carries_its_duty_cycle_through() {
     layer.light_pwm = LightPwm::new(40.0).unwrap();
 
     assert_eq!(LayerValues::of(Some(&layer)).light_pwm, 102);
+}
+
+#[test]
+fn a_layer_that_does_not_lift_stores_zeros() {
+    let mut layer = layer();
+    layer.lift = None;
+    layer.retract = None;
+    let values = LayerValues::of(Some(&layer));
+    assert_eq!(values.lift_distance_mm, 0.0);
+    assert_eq!(values.lift_speed_mm_min, 0.0);
+    assert_eq!(values.retract_distance_mm, 0.0);
+    assert_eq!(values.retract_speed_mm_min, 0.0);
 }

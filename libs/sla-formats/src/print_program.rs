@@ -45,8 +45,12 @@ pub struct LayerProgram {
     pub wait_after_cure_sec: NonNegativeFiniteSec,
     /// Pause at the top of the lift.
     pub wait_after_lift_sec: NonNegativeFiniteSec,
-    pub lift: MotionStage,
-    pub retract: MotionStage,
+    /// Absent when the platform stays put after the layer: a printer with a
+    /// tilting vat peels by tilting it, and a lift on top of that would only
+    /// add time.
+    pub lift: Option<MotionStage>,
+    /// Absent along with `lift`.
+    pub retract: Option<MotionStage>,
     /// Present only on machines that split the travel in two.
     pub second_lift: Option<MotionStage>,
     /// Present only on machines that split the travel in two.
