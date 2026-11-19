@@ -322,17 +322,39 @@ impl SendToPrinter {
             return;
         };
         let this = self.clone();
+        // Writing the file takes a while on a big plate: the card says so.
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_slice_send_preparing(true);
+            ui.set_slice_send_busy(true);
+        }
+        self.say(ctr!("SendToPrinter", "Writing the printer file…"), false);
         let _ = slint::spawn_local(async move {
-            let Some(path) =
-                crate::export_print_file::write_for_sending(this.ctrl.clone(), format, &name).await
-            else {
+            let writing = Instant::now();
+            let path =
+                crate::export_print_file::write_for_sending(this.ctrl.clone(), format, &name).await;
+            let written_in = writing.elapsed();
+            if let Some(ui) = this.ui.upgrade() {
+                ui.set_slice_send_preparing(false);
+            }
+            let Some(path) = path else {
+                if let Some(ui) = this.ui.upgrade() {
+                    ui.set_slice_send_busy(false);
+                }
+                this.say("", false);
                 return;
             };
-            this.run(printer, path, name, start).await;
+            this.run(printer, path, name, start, written_in).await;
         });
     }
 
-    async fn run(self: &Rc<Self>, printer: Printer, path: PathBuf, name: String, start: bool) {
+    async fn run(
+        self: &Rc<Self>,
+        printer: Printer,
+        path: PathBuf,
+        name: String,
+        start: bool,
+        written_in: Duration,
+    ) {
         let sending = Sending {
             cancel: Arc::new(AtomicBool::new(false)),
             sent: Arc::new(AtomicU64::new(0)),
@@ -406,17 +428,15 @@ impl SendToPrinter {
             "send to printer",
             &match &outcome {
                 Ok((sent, bytes)) => format!(
-                    "ok: {:.1} MB in {:.1} s over {} connection(s), sending {:.1} s, waiting \
-                     for the printer {:.1} s{}",
+                    "ok: file written in {:.1} s; {:.1} MB sent in {:.1} s, {} chunks over {} \
+                     connection(s), sending {:.1} s, waiting for the printer {:.1} s",
+                    written_in.as_secs_f64(),
                     *bytes as f64 / 1e6,
                     sent.elapsed.as_secs_f64(),
+                    sent.chunks,
                     sent.connections,
                     sent.writing.as_secs_f64(),
                     sent.waiting.as_secs_f64(),
-                    sent.fell_back
-                        .as_ref()
-                        .map(|why| format!(", sent again one chunk at a time after: {why}"))
-                        .unwrap_or_default()
                 ),
                 Err(err) => format!("failed: {err}"),
             },
@@ -425,13 +445,15 @@ impl SendToPrinter {
             Ok((sent, bytes)) => {
                 remember(&printer);
                 let took = took_text(&sent, bytes);
+                let written = seconds_text(written_in);
                 if start {
                     self.say(
                         ctr!(
                             "SendToPrinter",
-                            "Printing {} on {}. Sent in {}.",
+                            "Printing {} on {}. File written in {}, sent in {}.",
                             name,
                             printer.name,
+                            written,
                             took
                         ),
                         false,
@@ -440,10 +462,11 @@ impl SendToPrinter {
                     self.say(
                         ctr!(
                             "SendToPrinter",
-                            "Sent to {} in {}: {} is on the printer, ready to print from its screen.",
+                            "Sent to {}: {} is on the printer, ready to print from its screen. File written in {}, sent in {}.",
                             printer.name,
-                            took,
-                            name
+                            name,
+                            written,
+                            took
                         ),
                         false,
                     );
@@ -468,14 +491,16 @@ fn name_with(text: &str, extension: &str) -> String {
 fn took_text(sent: &sdcp::Sent, bytes: u64) -> String {
     let secs = sent.elapsed.as_secs_f64().max(0.001);
     let speed = bytes as f64 / 1e6 / secs;
-    if secs >= 60.0 {
-        format!(
-            "{}:{:02} min, {speed:.1} MB/s",
-            secs as u64 / 60,
-            secs as u64 % 60
-        )
+    format!("{}, {speed:.2} MB/s", seconds_text(sent.elapsed))
+}
+
+/// A time as "42 s" or "3:25 min".
+fn seconds_text(time: Duration) -> String {
+    let secs = time.as_secs();
+    if secs >= 60 {
+        format!("{}:{:02} min", secs / 60, secs % 60)
     } else {
-        format!("{secs:.0} s, {speed:.1} MB/s")
+        format!("{:.0} s", time.as_secs_f64())
     }
 }
 

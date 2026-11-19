@@ -34,6 +34,8 @@ pub struct Response {
     /// How long the request took to go out, and the answer to come after.
     pub writing: Duration,
     pub waiting: Duration,
+    /// Whether the server said it closes the connection.
+    pub closes: bool,
 }
 
 /// The multipart body of `fields` and `file`, between `boundary` lines.
@@ -62,8 +64,121 @@ pub fn multipart_body(boundary: &str, fields: &[Field<'_>], file: &FilePart<'_>)
     body
 }
 
-/// POSTs a multipart form of `fields` and `file` to `path` on `addr`, and
-/// reads the answer. `timeout` bounds the connection and each read and write.
+/// A connection to a printer's web server, kept open from one request to
+/// the next as HTTP/1.1 keeps it: a new connection for every chunk costs a
+/// handshake and a slow start each time. Opened again when the server
+/// closed it.
+#[derive(Debug)]
+pub struct Connection {
+    addr: SocketAddr,
+    timeout: Duration,
+    stream: Option<TcpStream>,
+    /// How many times it was opened.
+    pub opened: usize,
+}
+
+impl Connection {
+    /// A connection to `addr`, opened on the first request; `timeout` bounds
+    /// opening it and each read and write.
+    pub fn new(addr: SocketAddr, timeout: Duration) -> Self {
+        Self {
+            addr,
+            timeout,
+            stream: None,
+            opened: 0,
+        }
+    }
+
+    fn open(&mut self) -> io::Result<&mut TcpStream> {
+        if self.stream.is_none() {
+            let stream = TcpStream::connect_timeout(&self.addr, self.timeout)?;
+            stream.set_nodelay(true)?;
+            stream.set_read_timeout(Some(self.timeout))?;
+            stream.set_write_timeout(Some(self.timeout))?;
+            self.stream = Some(stream);
+            self.opened += 1;
+        }
+        Ok(self.stream.as_mut().expect("just opened"))
+    }
+
+    /// POSTs a multipart form of `fields` and `file` to `path`, and reads the
+    /// answer. A connection the server closed since the last request is
+    /// opened again, once.
+    pub fn post_multipart(
+        &mut self,
+        path: &str,
+        fields: &[Field<'_>],
+        file: &FilePart<'_>,
+    ) -> io::Result<Response> {
+        let boundary = format!("----breadslicer{:016x}", crate::sdcp::random_u64());
+        let body = multipart_body(&boundary, fields, file);
+        let head = format!(
+            "POST {path} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Breadslicer\r\nAccept: */*\r\n\
+             Content-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {}\r\n\
+             Connection: keep-alive\r\n\r\n",
+            self.addr,
+            body.len()
+        );
+        let mut request = head.into_bytes();
+        request.extend_from_slice(&body);
+        let reused = self.stream.is_some();
+        match self.exchange(&request) {
+            Ok(response) => Ok(response),
+            // The server closed the connection kept from before: once more on
+            // a new one.
+            Err(_) if reused => {
+                self.stream = None;
+                self.exchange(&request)
+            }
+            Err(err) => {
+                self.stream = None;
+                Err(err)
+            }
+        }
+    }
+
+    /// Sends `request` and reads its whole answer.
+    fn exchange(&mut self, request: &[u8]) -> io::Result<Response> {
+        let stream = self.open()?;
+        let start = Instant::now();
+        stream.write_all(request)?;
+        stream.flush()?;
+        let written = Instant::now();
+        // Read until the answer is whole, not until the server closes: a
+        // printer that keeps the connection open would hold every chunk for
+        // the whole timeout.
+        let mut raw = Vec::new();
+        let mut buffer = [0u8; 8192];
+        let mut closed = false;
+        while !answer_is_whole(&raw) {
+            match stream.read(&mut buffer) {
+                Ok(0) => {
+                    closed = true;
+                    break;
+                }
+                Ok(n) => raw.extend_from_slice(&buffer[..n]),
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                Err(err) => return Err(err),
+            }
+        }
+        if raw.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "the printer closed the connection without answering",
+            ));
+        }
+        let mut response = parse_response(&raw)?;
+        response.writing = written - start;
+        response.waiting = written.elapsed();
+        if closed || response.closes {
+            self.stream = None;
+        }
+        Ok(response)
+    }
+}
+
+/// POSTs a multipart form of `fields` and `file` to `path` on `addr` on a
+/// connection of its own, and reads the answer.
 pub fn post_multipart(
     addr: SocketAddr,
     path: &str,
@@ -71,44 +186,7 @@ pub fn post_multipart(
     file: &FilePart<'_>,
     timeout: Duration,
 ) -> io::Result<Response> {
-    let boundary = format!("----breadslicer{:016x}", crate::sdcp::random_u64());
-    let body = multipart_body(&boundary, fields, file);
-    let mut stream = TcpStream::connect_timeout(&addr, timeout)?;
-    stream.set_nodelay(true)?;
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
-    let head = format!(
-        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nUser-Agent: Breadslicer\r\nAccept: */*\r\n\
-         Content-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {}\r\n\
-         Connection: close\r\n\r\n",
-        body.len()
-    );
-    let mut request = head.into_bytes();
-    request.extend_from_slice(&body);
-    let start = Instant::now();
-    stream.write_all(&request)?;
-    stream.flush()?;
-    let written = Instant::now();
-    // Read until the answer is whole, not until the server closes: a
-    // printer that keeps the connection open would hold every chunk for the
-    // whole timeout.
-    let mut raw = Vec::new();
-    let mut buffer = [0u8; 8192];
-    loop {
-        if answer_is_whole(&raw) {
-            break;
-        }
-        match stream.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(n) => raw.extend_from_slice(&buffer[..n]),
-            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
-            Err(err) => return Err(err),
-        }
-    }
-    let mut response = parse_response(&raw)?;
-    response.writing = written - start;
-    response.waiting = written.elapsed();
-    Ok(response)
+    Connection::new(addr, timeout).post_multipart(path, fields, file)
 }
 
 /// Whether `raw` holds a whole HTTP answer: its headers and the body they
@@ -157,6 +235,10 @@ pub fn parse_response(raw: &[u8]) -> io::Result<Response> {
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|code| code.parse::<u16>().ok())
         .ok_or_else(|| bad("the printer's answer has no status"))?;
+    let closes = head.lines().any(|line| {
+        let lower = line.to_ascii_lowercase();
+        lower.starts_with("connection:") && lower.contains("close")
+    });
     let chunked = lines.any(|line| {
         let lower = line.to_ascii_lowercase();
         lower.starts_with("transfer-encoding:") && lower.contains("chunked")
@@ -172,6 +254,7 @@ pub fn parse_response(raw: &[u8]) -> io::Result<Response> {
         body,
         writing: Duration::ZERO,
         waiting: Duration::ZERO,
+        closes,
     })
 }
 

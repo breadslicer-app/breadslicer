@@ -2997,6 +2997,7 @@ export component SliceInspector inherits VerticalLayout {
     in-out property <int> send-index: -1;
     in property <bool> send-searching;
     in property <bool> send-busy;
+    in property <bool> send-preparing;
     in property <float> send-progress;
     in property <string> send-status;
     in property <bool> send-status-bad;
@@ -3345,9 +3346,11 @@ export component SliceInspector inherits VerticalLayout {
             ProgressIndicator {
                 horizontal-stretch: 1;
                 progress: root.send-progress;
+                indeterminate: root.send-preparing;
             }
             ScButton {
                 text: @tr("SlicePanel" => "Cancel");
+                enabled: !root.send-preparing;
                 clicked => {
                     root.send-cancel();
                 }

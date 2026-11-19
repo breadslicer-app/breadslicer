@@ -113,15 +113,24 @@ fn parts(body: &[u8], boundary: &str) -> Chunk {
 
 const OK: &str = r#"{"code":"000000","messages":null,"data":null,"success":true}"#;
 
-/// A printer's web server: each request answered by `answer`, each
-/// connection on a thread of its own and, like a printer's, kept open after
-/// its answer. What it took, in the order the chunks came.
+/// What a printer's web server took: each chunk, in the order it came, and
+/// the connections it came on.
+#[derive(Default)]
+struct Taken {
+    chunks: Vec<Chunk>,
+    connections: usize,
+}
+
+/// A printer's web server: each request answered by `answer`. Like a
+/// printer's, it keeps each connection open for the next request; with
+/// `closes`, it closes it after each answer.
 fn web_server(
+    closes: bool,
     answer: impl Fn(&Chunk) -> (u16, String) + Send + Sync + 'static,
-) -> (SocketAddr, Arc<Mutex<Vec<Chunk>>>) {
+) -> (SocketAddr, Arc<Mutex<Taken>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let got = Arc::new(Mutex::new(Vec::new()));
+    let got = Arc::new(Mutex::new(Taken::default()));
     let seen = got.clone();
     let answer = Arc::new(answer);
     thread::spawn(move || {
@@ -129,46 +138,58 @@ fn web_server(
             let Ok(mut stream) = stream else {
                 continue;
             };
+            seen.lock().unwrap().connections += 1;
             let (seen, answer) = (seen.clone(), answer.clone());
             thread::spawn(move || {
                 let mut raw = Vec::new();
                 let mut buffer = [0u8; 65536];
-                let (head_end, length, boundary) = loop {
-                    let n = stream.read(&mut buffer).unwrap();
-                    raw.extend_from_slice(&buffer[..n]);
-                    if let Some(end) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
-                        let head = String::from_utf8_lossy(&raw[..end]).into_owned();
-                        let length: usize = head
-                            .lines()
-                            .find_map(|l| l.strip_prefix("Content-Length: "))
-                            .unwrap()
-                            .trim()
-                            .parse()
-                            .unwrap();
-                        let boundary = head
-                            .split("boundary=")
-                            .nth(1)
-                            .unwrap()
-                            .lines()
-                            .next()
-                            .unwrap()
-                            .to_owned();
-                        break (end + 4, length, boundary);
+                loop {
+                    let (head_end, length, boundary) = loop {
+                        if let Some(end) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let head = String::from_utf8_lossy(&raw[..end]).into_owned();
+                            let length: usize = head
+                                .lines()
+                                .find_map(|l| l.strip_prefix("Content-Length: "))
+                                .unwrap()
+                                .trim()
+                                .parse()
+                                .unwrap();
+                            let boundary = head
+                                .split("boundary=")
+                                .nth(1)
+                                .unwrap()
+                                .lines()
+                                .next()
+                                .unwrap()
+                                .to_owned();
+                            break (end + 4, length, boundary);
+                        }
+                        match stream.read(&mut buffer) {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => raw.extend_from_slice(&buffer[..n]),
+                        }
+                    };
+                    while raw.len() < head_end + length {
+                        match stream.read(&mut buffer) {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => raw.extend_from_slice(&buffer[..n]),
+                        }
                     }
-                };
-                while raw.len() < head_end + length {
-                    let n = stream.read(&mut buffer).unwrap();
-                    raw.extend_from_slice(&buffer[..n]);
+                    let chunk = parts(&raw[head_end..head_end + length], &boundary);
+                    raw.drain(..head_end + length);
+                    let (status, body) = answer(&chunk);
+                    seen.lock().unwrap().chunks.push(chunk);
+                    let reply = format!(
+                        "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    );
+                    if stream.write_all(reply.as_bytes()).is_err() {
+                        return;
+                    }
+                    if closes {
+                        return;
+                    }
                 }
-                let chunk = parts(&raw[head_end..], &boundary);
-                let (status, body) = answer(&chunk);
-                seen.lock().unwrap().push(chunk);
-                let reply = format!(
-                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-                    body.len()
-                );
-                stream.write_all(reply.as_bytes()).unwrap();
-                thread::sleep(Duration::from_secs(60));
             });
         }
     });
@@ -184,12 +205,11 @@ fn field(c: &Chunk, name: &str) -> String {
 }
 
 #[test]
-fn a_file_goes_in_chunks_at_once_that_add_up_to_it_and_its_md5() {
-    use md5::Digest;
+fn a_file_goes_in_order_on_one_connection_in_chunks_that_add_up_to_it() {
     let data: Vec<u8> = (0..(CHUNK_BYTES * 5 + 1234))
         .map(|i| (i % 251) as u8)
         .collect();
-    let (addr, got) = web_server(|_| (200, OK.to_owned()));
+    let (addr, got) = web_server(false, |_| (200, OK.to_owned()));
     let mut seen = Vec::new();
     let sent = upload(
         addr,
@@ -199,46 +219,41 @@ fn a_file_goes_in_chunks_at_once_that_add_up_to_it_and_its_md5() {
         &AtomicBool::new(false),
     )
     .expect("it takes the file");
-    assert_eq!(sent.connections, CONNECTIONS);
-    assert_eq!(sent.fell_back, None);
+    assert_eq!(sent.chunks, 6);
+    assert_eq!(sent.connections, 1, "one connection for every chunk");
     let total = data.len() as u64;
-    assert_eq!(seen.first(), Some(&(0, total)));
-    assert_eq!(seen.last(), Some(&(total, total)));
-    assert!(seen.windows(2).all(|w| w[0].0 <= w[1].0), "never back");
-    let chunks = got.lock().unwrap().clone();
-    assert_eq!(chunks.len(), 6);
-    // The last chunk comes after all the others.
-    let last_offset = (5 * CHUNK_BYTES).to_string();
-    assert_eq!(field(chunks.last().unwrap(), "Offset"), last_offset);
-    let md5 = format!("{:x}", md5::Md5::digest(&data));
-    let id = field(&chunks[0], "Uuid");
-    let mut by_offset = chunks.clone();
-    by_offset.sort_by_key(|c| field(c, "Offset").parse::<usize>().unwrap());
+    let expected: Vec<(u64, u64)> = std::iter::once(0)
+        .chain((1..=5).map(|k| (k * CHUNK_BYTES) as u64))
+        .chain(std::iter::once(total))
+        .map(|at| (at, total))
+        .collect();
+    assert_eq!(seen, expected);
+    let taken = got.lock().unwrap();
+    assert_eq!(taken.connections, 1);
+    assert_eq!(taken.chunks.len(), 6);
+    let id = field(&taken.chunks[0], "Uuid");
     let mut joined = Vec::new();
-    for (k, chunk) in by_offset.iter().enumerate() {
+    for (k, chunk) in taken.chunks.iter().enumerate() {
         assert_eq!(chunk.file_name, "plate.goo");
         assert_eq!(field(chunk, "Uuid"), id, "one upload");
-        assert_eq!(field(chunk, "Offset"), (k * CHUNK_BYTES).to_string());
+        assert_eq!(
+            field(chunk, "Offset"),
+            (k * CHUNK_BYTES).to_string(),
+            "in order"
+        );
         assert_eq!(field(chunk, "TotalSize"), data.len().to_string());
-        assert_eq!(field(chunk, "Check"), "1");
-        assert_eq!(field(chunk, "S-File-MD5"), md5);
+        assert_eq!(field(chunk, "Check"), "0");
         joined.extend_from_slice(&chunk.data);
     }
     assert_eq!(joined, data);
 }
 
-/// A printer that refuses a checked upload still gets the file: again from
-/// the start, a chunk at a time and unchecked, as every SDCP printer takes it.
+/// A printer that closes the connection after each answer still gets the
+/// whole file: a new connection for the next chunk.
 #[test]
-fn a_printer_that_refuses_the_check_gets_the_file_one_chunk_at_a_time() {
-    let data = vec![3u8; CHUNK_BYTES * 3];
-    let (addr, got) = web_server(|chunk| {
-        if field(chunk, "Check") == "1" {
-            (200, r#"{"code":"111111","success":false}"#.to_owned())
-        } else {
-            (200, OK.to_owned())
-        }
-    });
+fn a_printer_that_closes_after_each_chunk_still_gets_the_file() {
+    let data = vec![5u8; CHUNK_BYTES * 3 + 10];
+    let (addr, got) = web_server(true, |_| (200, OK.to_owned()));
     let sent = upload(
         addr,
         "plate.goo",
@@ -246,18 +261,12 @@ fn a_printer_that_refuses_the_check_gets_the_file_one_chunk_at_a_time() {
         &mut |_, _| {},
         &AtomicBool::new(false),
     )
-    .expect("sent the second time");
-    assert_eq!(sent.connections, 1);
-    assert!(sent.fell_back.is_some());
-    let unchecked: Vec<String> = got
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|c| field(c, "Check") == "0")
-        .map(|c| field(c, "Offset"))
-        .collect();
-    let in_order: Vec<String> = (0..3).map(|k| (k * CHUNK_BYTES).to_string()).collect();
-    assert_eq!(unchecked, in_order, "the whole file again, in order");
+    .expect("sent");
+    assert_eq!(sent.chunks, 4);
+    let taken = got.lock().unwrap();
+    assert_eq!(taken.chunks.len(), 4);
+    let joined: Vec<u8> = taken.chunks.iter().flat_map(|c| c.data.clone()).collect();
+    assert_eq!(joined, data);
 }
 
 /// A printer keeps the connection open after it answers a chunk: the next
@@ -266,7 +275,7 @@ fn a_printer_that_refuses_the_check_gets_the_file_one_chunk_at_a_time() {
 #[test]
 fn a_printer_that_keeps_the_connection_open_does_not_hold_the_upload() {
     let data = vec![7u8; CHUNK_BYTES * 3];
-    let (addr, got) = web_server(|_| (200, OK.to_owned()));
+    let (addr, got) = web_server(false, |_| (200, OK.to_owned()));
     let start = std::time::Instant::now();
     upload(
         addr,
@@ -276,12 +285,44 @@ fn a_printer_that_keeps_the_connection_open_does_not_hold_the_upload() {
         &AtomicBool::new(false),
     )
     .expect("sent");
-    assert_eq!(got.lock().unwrap().len(), 3);
+    assert_eq!(got.lock().unwrap().chunks.len(), 3);
     assert!(
         start.elapsed() < Duration::from_secs(5),
         "{:?}",
         start.elapsed()
     );
+}
+
+#[test]
+fn a_chunk_refused_stops_the_upload_and_says_why() {
+    let (addr, _) = web_server(false, |_| {
+        (
+            200,
+            r#"{"code":"111111","messages":["no space"],"success":false}"#.to_owned(),
+        )
+    });
+    let err = upload(
+        addr,
+        "x.ctb",
+        &[1, 2, 3],
+        &mut |_, _| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&err, Error::Upload(200, said) if said.contains("no space")),
+        "{err:?}"
+    );
+    let (addr, _) = web_server(false, |_| (500, "oops".to_owned()));
+    let err = upload(
+        addr,
+        "x.ctb",
+        &[1, 2, 3],
+        &mut |_, _| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert!(matches!(err, Error::Upload(500, _)), "{err:?}");
 }
 
 #[test]
@@ -302,38 +343,6 @@ fn an_answer_is_whole_by_its_length_or_its_last_chunk() {
     assert!(answer_is_whole(b"HTTP/1.1 204 No Content\r\n\r\n"));
     assert!(!answer_is_whole(b"HTTP/1.1 200 OK\r\n\r\nuntil it closes"));
     assert!(!answer_is_whole(b"HTTP/1.1 200 OK\r\nContent-Le"));
-}
-
-#[test]
-fn a_chunk_refused_stops_the_upload_and_says_why() {
-    let (addr, _) = web_server(|_| {
-        (
-            200,
-            r#"{"code":"111111","messages":["no space"],"success":false}"#.to_owned(),
-        )
-    });
-    let err = upload(
-        addr,
-        "x.ctb",
-        &[1, 2, 3],
-        &mut |_, _| {},
-        &AtomicBool::new(false),
-    )
-    .unwrap_err();
-    assert!(
-        matches!(&err, Error::Upload(200, said) if said.contains("no space")),
-        "{err:?}"
-    );
-    let (addr, _) = web_server(|_| (500, "oops".to_owned()));
-    let err = upload(
-        addr,
-        "x.ctb",
-        &[1, 2, 3],
-        &mut |_, _| {},
-        &AtomicBool::new(false),
-    )
-    .unwrap_err();
-    assert!(matches!(err, Error::Upload(500, _)), "{err:?}");
 }
 
 #[test]

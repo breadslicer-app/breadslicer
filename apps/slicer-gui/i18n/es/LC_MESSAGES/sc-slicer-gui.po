@@ -8964,14 +8964,14 @@ msgstr "Enviando {} a {}…"
 #: src/send_to_printer.rs
 #, rust-format
 msgctxt "SendToPrinter"
-msgid "Printing {} on {}. Sent in {}."
-msgstr "Imprimiendo {} en {}. Enviado en {}."
+msgid "Printing {} on {}. File written in {}, sent in {}."
+msgstr "Imprimiendo {} en {}. Archivo escrito en {}, enviado en {}."
 
 #: src/send_to_printer.rs
 #, rust-format
 msgctxt "SendToPrinter"
-msgid "Sent to {} in {}: {} is on the printer, ready to print from its screen."
-msgstr "Enviado a {} en {}: {} está en la impresora, listo para imprimir desde su pantalla."
+msgid "Sent to {}: {} is on the printer, ready to print from its screen. File written in {}, sent in {}."
+msgstr "Enviado a {}: {} está en la impresora, listo para imprimir desde su pantalla. Archivo escrito en {}, enviado en {}."
 
 #: src/send_to_printer.rs
 msgctxt "SendToPrinter"
@@ -9113,3 +9113,8 @@ msgstr "En la impresora: {}"
 msgctxt "SlicePanel"
 msgid "Back"
 msgstr "Volver"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "Writing the printer file…"
+msgstr "Escribiendo el archivo de impresora…"

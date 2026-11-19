@@ -620,6 +620,8 @@ export component MainWindow inherits Window {
     in-out property <int> slice-send-index: -1;
     in property <bool> slice-send-searching: false;
     in property <bool> slice-send-busy: false;
+    // The printer file being written, before it goes.
+    in property <bool> slice-send-preparing: false;
     in property <float> slice-send-progress: 0;
     in property <string> slice-send-status;
     in property <bool> slice-send-status-bad: false;
@@ -2387,6 +2389,7 @@ export component MainWindow inherits Window {
                                 send-index <=> root.slice-send-index;
                                 send-searching: root.slice-send-searching;
                                 send-busy: root.slice-send-busy;
+                                send-preparing: root.slice-send-preparing;
                                 send-progress: root.slice-send-progress;
                                 send-status: root.slice-send-status;
                                 send-status-bad: root.slice-send-status-bad;
