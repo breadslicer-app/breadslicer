@@ -58,7 +58,7 @@ fn export_to_archive(
 
 fn entry_names(archive: &mut ZipArchive<Cursor<Vec<u8>>>) -> Vec<String> {
     let mut names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_owned())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().into_owned())
         .collect();
     names.sort();
     names

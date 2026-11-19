@@ -319,8 +319,12 @@ fn read_entry<R: Read + Seek>(
     archive: &mut zip::ZipArchive<R>,
     name: &str,
 ) -> Result<Vec<u8>, ReadError> {
+    // Refused when the entry's two headers disagree (#646).
     let mut entry = archive
-        .by_name(name)
+        .by_name_with_options(
+            name,
+            zip::read::ZipReadOptions::new().enforce_header_consistency(true),
+        )
         .map_err(|err| error(format!("no {name} in the archive: {err}")))?;
     let mut bytes = Vec::new();
     entry
@@ -348,8 +352,11 @@ pub fn read_anycubic_zip(reader: impl Read + Seek) -> Result<AnycubicZipFile, Re
     let entries = (0..archive.len())
         .map(|index| {
             archive
-                .by_index(index)
-                .map(|entry| entry.name().to_owned())
+                .by_index_with_options(
+                    index,
+                    zip::read::ZipReadOptions::new().enforce_header_consistency(true),
+                )
+                .and_then(|entry| entry.name().map(std::borrow::Cow::into_owned))
                 .map_err(|err| error(format!("entry {index} is unreadable: {err}")))
         })
         .collect::<Result<Vec<_>, _>>()?;

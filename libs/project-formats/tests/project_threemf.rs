@@ -364,7 +364,7 @@ mod slice_persistence_tests {
         let carries_slices = (0..archive.len()).any(|i| {
             archive
                 .by_index(i)
-                .map(|entry| entry.name().contains("slices"))
+                .map(|entry| entry.name().unwrap().contains("slices"))
                 .unwrap_or(false)
         });
         assert!(

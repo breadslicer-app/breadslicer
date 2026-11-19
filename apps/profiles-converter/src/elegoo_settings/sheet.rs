@@ -136,7 +136,13 @@ impl Sheet {
 
 /// The bytes of one part, if the archive holds it.
 fn part<R: Read + Seek>(archive: &mut zip::ZipArchive<R>, name: &str) -> Option<Vec<u8>> {
-    let mut entry = archive.by_name(name).ok()?;
+    // A part whose two headers disagree is no part (#646).
+    let mut entry = archive
+        .by_name_with_options(
+            name,
+            zip::read::ZipReadOptions::new().enforce_header_consistency(true),
+        )
+        .ok()?;
     let mut bytes = Vec::new();
     entry.read_to_end(&mut bytes).ok()?;
     Some(bytes)

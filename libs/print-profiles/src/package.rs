@@ -474,11 +474,16 @@ pub fn import_package<R: Read + Seek>(
 
     let mut entries: Vec<(Kind, String, usize)> = Vec::new();
     for index in 0..archive.len() {
+        // Refused when an item's two headers disagree (#646).
         let name = archive
-            .by_index(index)
+            .by_index_with_options(
+                index,
+                zip::read::ZipReadOptions::new().enforce_header_consistency(true),
+            )
             .map_err(ImportError::Archive)?
             .name()
-            .to_owned();
+            .map_err(ImportError::Archive)?
+            .into_owned();
         if let Some((kind, id)) = classify_entry(&name) {
             entries.push((kind, id, index));
         }
@@ -497,7 +502,10 @@ pub fn import_package<R: Read + Seek>(
     for (kind, id, index) in &entries {
         let mut bytes = Vec::new();
         archive
-            .by_index(*index)
+            .by_index_with_options(
+                *index,
+                zip::read::ZipReadOptions::new().enforce_header_consistency(true),
+            )
             .map_err(ImportError::Archive)?
             .read_to_end(&mut bytes)
             .map_err(|source| ImportError::ReadEntry {

@@ -595,11 +595,16 @@ impl Package {
         let mut total_bytes: u64 = 0;
         let mut handed_off_bytes: u64 = 0;
         for index in 0..archive.len() {
-            let mut file = archive.by_index(index)?;
+            // An item whose local header says other than the central
+            // directory reads differently in other tools: refused (#646).
+            let mut file = archive.by_index_with_options(
+                index,
+                zip::read::ZipReadOptions::new().enforce_header_consistency(true),
+            )?;
             if file.is_dir() {
                 continue;
             }
-            let raw_name = file.name().to_string();
+            let raw_name = file.name()?.into_owned();
             let name = format!("/{raw_name}");
             // #[gamma::skip(string.lower_to_upper, reason = "upper works too")]
             if let Some(first) =
