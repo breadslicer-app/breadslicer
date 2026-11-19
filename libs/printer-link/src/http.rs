@@ -71,6 +71,7 @@ pub fn post_multipart(
     let boundary = format!("----breadslicer{:016x}", crate::sdcp::random_u64());
     let body = multipart_body(&boundary, fields, file);
     let mut stream = TcpStream::connect_timeout(&addr, timeout)?;
+    stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
     let head = format!(
@@ -79,23 +80,58 @@ pub fn post_multipart(
          Connection: close\r\n\r\n",
         body.len()
     );
-    stream.write_all(head.as_bytes())?;
-    stream.write_all(&body)?;
+    let mut request = head.into_bytes();
+    request.extend_from_slice(&body);
+    stream.write_all(&request)?;
     stream.flush()?;
+    // Read until the answer is whole, not until the server closes: a
+    // printer that keeps the connection open would hold every chunk for the
+    // whole timeout.
     let mut raw = Vec::new();
-    match stream.read_to_end(&mut raw) {
-        Ok(_) => {}
-        // A server that answered and then held the connection open: what came
-        // is the answer.
-        Err(err)
-            if !raw.is_empty()
-                && matches!(
-                    err.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) => {}
-        Err(err) => return Err(err),
+    let mut buffer = [0u8; 8192];
+    loop {
+        if answer_is_whole(&raw) {
+            break;
+        }
+        match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => raw.extend_from_slice(&buffer[..n]),
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err),
+        }
     }
     parse_response(&raw)
+}
+
+/// Whether `raw` holds a whole HTTP answer: its headers and the body they
+/// announce, by its length or its last chunk. An answer that announces
+/// neither ends when the server closes.
+pub fn answer_is_whole(raw: &[u8]) -> bool {
+    let Some(split) = raw.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return false;
+    };
+    let head = String::from_utf8_lossy(&raw[..split]).to_ascii_lowercase();
+    let body = &raw[split + 4..];
+    let length = head.lines().find_map(|line| {
+        line.strip_prefix("content-length:")
+            .and_then(|n| n.trim().parse::<usize>().ok())
+    });
+    if let Some(length) = length {
+        return body.len() >= length;
+    }
+    let chunked = head
+        .lines()
+        .any(|line| line.starts_with("transfer-encoding:") && line.contains("chunked"));
+    if chunked {
+        return body.starts_with(b"0\r\n") || body.windows(5).any(|w| w == b"\r\n0\r\n");
+    }
+    // No length: a status that has no body is whole with its headers.
+    let status = head
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok());
+    matches!(status, Some(100..=199 | 204 | 304))
 }
 
 /// The status and body of a raw HTTP/1.1 answer, its body de-chunked when it

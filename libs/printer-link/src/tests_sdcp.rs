@@ -112,12 +112,14 @@ fn parts(body: &[u8], boundary: &str) -> Chunk {
 }
 
 /// A web server taking `answers.len()` requests, answering each in turn.
+/// Like a printer's, it keeps each connection open after its answer.
 fn web_server(answers: Vec<(u16, &'static str)>) -> (SocketAddr, Arc<Mutex<Vec<Chunk>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let got = Arc::new(Mutex::new(Vec::new()));
     let seen = got.clone();
     thread::spawn(move || {
+        let mut held = Vec::new();
         for (status, body) in answers {
             let (mut stream, _) = listener.accept().unwrap();
             let mut raw = Vec::new();
@@ -157,7 +159,10 @@ fn web_server(answers: Vec<(u16, &'static str)>) -> (SocketAddr, Arc<Mutex<Vec<C
                 body.len()
             );
             stream.write_all(reply.as_bytes()).unwrap();
+            held.push(stream);
         }
+        thread::sleep(Duration::from_secs(60));
+        drop(held);
     });
     (addr, got)
 }
@@ -208,6 +213,51 @@ fn a_file_goes_in_chunks_that_add_up_to_it() {
         joined.extend_from_slice(&chunk.data);
     }
     assert_eq!(joined, data);
+}
+
+/// A printer keeps the connection open after it answers a chunk: the next
+/// chunk goes at once, not when the connection times out (a 33 MB file took
+/// 11 minutes so).
+#[test]
+fn a_printer_that_keeps_the_connection_open_does_not_hold_the_upload() {
+    let data = vec![7u8; CHUNK_BYTES * 3];
+    let ok = r#"{"code":"000000","messages":null,"data":null,"success":true}"#;
+    let (addr, got) = web_server(vec![(200, ok); 3]);
+    let start = std::time::Instant::now();
+    upload(
+        addr,
+        "plate.goo",
+        &data,
+        &mut |_, _| {},
+        &AtomicBool::new(false),
+    )
+    .expect("sent");
+    assert_eq!(got.lock().unwrap().len(), 3);
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        start.elapsed()
+    );
+}
+
+#[test]
+fn an_answer_is_whole_by_its_length_or_its_last_chunk() {
+    use crate::http::answer_is_whole;
+    assert!(!answer_is_whole(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nab"
+    ));
+    assert!(answer_is_whole(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nabcd"
+    ));
+    assert!(!answer_is_whole(
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n"
+    ));
+    assert!(answer_is_whole(
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n0\r\n\r\n"
+    ));
+    assert!(answer_is_whole(b"HTTP/1.1 204 No Content\r\n\r\n"));
+    assert!(!answer_is_whole(b"HTTP/1.1 200 OK\r\n\r\nuntil it closes"));
+    assert!(!answer_is_whole(b"HTTP/1.1 200 OK\r\nContent-Le"));
 }
 
 #[test]
