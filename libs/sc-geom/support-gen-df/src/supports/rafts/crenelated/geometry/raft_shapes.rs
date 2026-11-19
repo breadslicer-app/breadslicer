@@ -5,7 +5,7 @@
 //!   touch) instead of one raft under them all: less to peel off the film.
 //! - **Perforated**: holes through the raft between the supports, where no
 //!   support stands: less area to peel, and the resin drains through.
-//! - **Peel tabs**: tabs off the raft's two ends, to lever it off the plate.
+//! - **Peel tabs**: tabs out of the raft's sharp corners, where peeling starts.
 
 use super::polygon_set_2d::{
     PolygonWithHoles, difference_polygon_sets, ring_to_polygon, union_polygon_sets,
@@ -151,9 +151,20 @@ pub fn perforated(
     difference_polygon_sets(footprint, &holes)
 }
 
-/// `footprint` with a tab off each end of its longer side, where the raft
-/// reaches furthest that way: on a raft wider at one end than the other, the
-/// middle of its box is off the raft, and a tab there stood on its own.
+/// How far along the outline, each way, a corner's turn is read (mm): a
+/// raft's corners are rounded, so one point alone turns little.
+const CORNER_WINDOW_MM: f64 = 5.0;
+/// The least turn, over that window, of a corner that takes a tab: about
+/// 125 degrees inside or sharper.
+const CORNER_MIN_TURN_DEG: f64 = 55.0;
+/// Tabs stand at least this far apart along the outline (mm), and there are
+/// at most so many.
+const CORNER_SPACING_MM: f64 = 15.0;
+const MAX_PEEL_TABS: usize = 4;
+
+/// `footprint` with peel tabs at its sharp corners, pointing out of them:
+/// peeling starts where a corner lets the film in. A raft with no sharp
+/// corner (a round one) gets a tab off each end of its longer side.
 pub fn with_peel_tabs(
     footprint: &[PolygonWithHoles],
 ) -> Result<Vec<PolygonWithHoles>, ClipperError> {
@@ -162,24 +173,111 @@ pub fn with_peel_tabs(
         .flat_map(|p| p.outer.iter().copied())
         .filter(|p| p.x.is_finite() && p.y.is_finite())
         .collect();
-    if points.is_empty() {
+    if points.len() < 3 {
         return Ok(footprint.to_vec());
     }
+    let hull = super::convex_hull_2d::convex_hull_2d(&points);
+    let mut tips = sharp_corners(&hull);
+    if tips.is_empty() {
+        tips = long_ends(&points);
+    }
+    let (w, l) = (PEEL_TAB_WIDTH_MM / 2.0, PEEL_TAB_LENGTH_MM);
+    // Into the raft a tab's length too, so it joins it however round it is.
+    let tabs: Vec<PolygonWithHoles> = tips
+        .into_iter()
+        .map(|(at, out)| {
+            let side = Vector2::new(-out.y * w, out.x * w);
+            let (a, b) = (
+                Vector2::new(at.x - out.x * l, at.y - out.y * l),
+                Vector2::new(at.x + out.x * l, at.y + out.y * l),
+            );
+            ring_to_polygon(vec![
+                Vector2::new(a.x - side.x, a.y - side.y),
+                Vector2::new(b.x - side.x, b.y - side.y),
+                Vector2::new(b.x + side.x, b.y + side.y),
+                Vector2::new(a.x + side.x, a.y + side.y),
+            ])
+        })
+        .collect();
+    let mut all = footprint.to_vec();
+    all.extend(tabs);
+    union_polygon_sets(&all)
+}
+
+/// The sharp corners of `hull` (counter-clockwise): each with the way out of
+/// it, sharpest first, apart from each other.
+fn sharp_corners(hull: &[Vector2]) -> Vec<(Vector2, Vector2)> {
+    let n = hull.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    let mut at = Vec::with_capacity(n + 1);
+    at.push(0.0);
+    for i in 0..n {
+        let (a, b) = (hull[i], hull[(i + 1) % n]);
+        at.push(at[i] + (b.x - a.x).hypot(b.y - a.y));
+    }
+    let perimeter = at[n];
+    if !(perimeter > 0.0) {
+        return Vec::new();
+    }
+    // The point `s` mm along the outline.
+    let point_at = |s: f64| {
+        let s = s.rem_euclid(perimeter);
+        let i = at.partition_point(|&d| d <= s).saturating_sub(1).min(n - 1);
+        let (a, b) = (hull[i], hull[(i + 1) % n]);
+        let len = at[i + 1] - at[i];
+        let t = if len > 0.0 { (s - at[i]) / len } else { 0.0 };
+        Vector2::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+    };
+    let unit = |x: f64, y: f64| {
+        let len = x.hypot(y);
+        (len > 0.0).then(|| Vector2::new(x / len, y / len))
+    };
+    let window = CORNER_WINDOW_MM.min(perimeter / 8.0);
+    let mut corners: Vec<(f64, f64, Vector2, Vector2)> = (0..n)
+        .filter_map(|i| {
+            let (p, back, ahead) = (hull[i], point_at(at[i] - window), point_at(at[i] + window));
+            let into = unit(p.x - back.x, p.y - back.y)?;
+            let onto = unit(ahead.x - p.x, ahead.y - p.y)?;
+            let turn = (into.x * onto.y - into.y * onto.x)
+                .atan2(into.x * onto.x + into.y * onto.y)
+                .to_degrees();
+            let out = unit(into.x - onto.x, into.y - onto.y)?;
+            (turn >= CORNER_MIN_TURN_DEG).then_some((turn, at[i], p, out))
+        })
+        .collect();
+    corners.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut kept: Vec<(f64, Vector2, Vector2)> = Vec::new();
+    for (_, s, p, out) in corners {
+        let apart = |t: f64| {
+            let d = (s - t).abs();
+            d.min(perimeter - d) >= CORNER_SPACING_MM
+        };
+        if kept.len() < MAX_PEEL_TABS && kept.iter().all(|k| apart(k.0)) {
+            kept.push((s, p, out));
+        }
+    }
+    kept.into_iter().map(|(_, p, out)| (p, out)).collect()
+}
+
+/// The two ends of the longer side of `points`, where the outline reaches
+/// furthest that way, each with the way out.
+fn long_ends(points: &[Vector2]) -> Vec<(Vector2, Vector2)> {
     let (mut lo, mut hi) = (
         Vector2::new(f64::INFINITY, f64::INFINITY),
         Vector2::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
     );
-    for p in &points {
+    for p in points {
         lo = Vector2::new(lo.x.min(p.x), lo.y.min(p.y));
         hi = Vector2::new(hi.x.max(p.x), hi.y.max(p.y));
     }
-    let (w, l) = (PEEL_TAB_WIDTH_MM / 2.0, PEEL_TAB_LENGTH_MM);
     let along_x = hi.x - lo.x >= hi.y - lo.y;
-    // Where the outline reaches `edge` along the long side (within half a
-    // millimetre): the middle of that stretch across it.
+    // The middle, across, of where the outline reaches `edge` (within half a
+    // millimetre): on a raft wider at one end, the middle of its box is off it.
     let across_at = |edge: f64| {
         let (mut a, mut b) = (f64::INFINITY, f64::NEG_INFINITY);
-        for p in &points {
+        for p in points {
             let (along, across) = if along_x { (p.x, p.y) } else { (p.y, p.x) };
             if (along - edge).abs() <= 0.5 {
                 a = a.min(across);
@@ -188,35 +286,17 @@ pub fn with_peel_tabs(
         }
         (a + b) / 2.0
     };
-    let (from, to) = if along_x { (lo.x, hi.x) } else { (lo.y, hi.y) };
-    // Into the raft a tab's length too, so it joins it however round it is.
-    let tabs: Vec<PolygonWithHoles> = [
-        (from - l, from + l, across_at(from)),
-        (to - l, to + l, across_at(to)),
-    ]
-    .into_iter()
-    .map(|(a, b, c)| {
-        let ring = if along_x {
-            vec![
-                Vector2::new(a, c - w),
-                Vector2::new(b, c - w),
-                Vector2::new(b, c + w),
-                Vector2::new(a, c + w),
-            ]
-        } else {
-            vec![
-                Vector2::new(c - w, a),
-                Vector2::new(c + w, a),
-                Vector2::new(c + w, b),
-                Vector2::new(c - w, b),
-            ]
-        };
-        ring_to_polygon(ring)
-    })
-    .collect();
-    let mut all = footprint.to_vec();
-    all.extend(tabs);
-    union_polygon_sets(&all)
+    if along_x {
+        vec![
+            (Vector2::new(lo.x, across_at(lo.x)), Vector2::new(-1.0, 0.0)),
+            (Vector2::new(hi.x, across_at(hi.x)), Vector2::new(1.0, 0.0)),
+        ]
+    } else {
+        vec![
+            (Vector2::new(across_at(lo.y), lo.y), Vector2::new(0.0, -1.0)),
+            (Vector2::new(across_at(hi.y), hi.y), Vector2::new(0.0, 1.0)),
+        ]
+    }
 }
 
 #[cfg(test)]
@@ -319,23 +399,45 @@ mod tests {
         assert_eq!(tabbed.len(), 1, "one raft with its tabs");
     }
 
-    #[test]
-    fn peel_tabs_join_a_raft_wider_at_one_end() {
-        // A funnel: wide at the back (y 40), a point at the front (y 0). The
-        // middle of its box (y 20) is off the raft at both ends.
-        let funnel = vec![ring_to_polygon(vec![
-            Vector2::new(50.0, 0.0),
-            Vector2::new(100.0, 40.0),
-            Vector2::new(0.0, 40.0),
-        ])];
-        let tabbed = with_peel_tabs(&funnel).unwrap();
+    /// How many sharp corners of `raft` take a tab, once the tabs joined the
+    /// raft and stick out of it.
+    fn tabs_on(raft: Vec<Vector2>) -> usize {
+        let polys = vec![ring_to_polygon(raft.clone())];
+        let tabbed = with_peel_tabs(&polys).unwrap();
         assert_eq!(tabbed.len(), 1, "the tabs stand on the raft: {tabbed:?}");
-        let reach = tabbed
-            .iter()
-            .flat_map(|q| q.outer.iter())
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
-                (lo.min(v.x), hi.max(v.x))
-            });
-        assert!(reach.0 < -4.0 && reach.1 > 104.0, "{reach:?}");
+        assert!(area(&tabbed) > area(&polys) + PEEL_TAB_LENGTH_MM * PEEL_TAB_WIDTH_MM);
+        let hull = super::super::convex_hull_2d::convex_hull_2d(&raft);
+        sharp_corners(&hull).len()
+    }
+
+    #[test]
+    fn peel_tabs_go_out_of_the_sharp_corners() {
+        // A funnel: wide at the back, a point at the front: three corners.
+        assert_eq!(
+            tabs_on(vec![
+                Vector2::new(50.0, 0.0),
+                Vector2::new(100.0, 40.0),
+                Vector2::new(0.0, 40.0),
+            ]),
+            3
+        );
+        // A rectangle: four.
+        assert_eq!(
+            tabs_on(vec![
+                Vector2::new(0.0, 0.0),
+                Vector2::new(60.0, 0.0),
+                Vector2::new(60.0, 30.0),
+                Vector2::new(0.0, 30.0),
+            ]),
+            4
+        );
+        // A round raft has no corner: it gets a tab off each end instead.
+        let round: Vec<Vector2> = (0..96)
+            .map(|i| {
+                let a = i as f64 / 96.0 * std::f64::consts::TAU;
+                Vector2::new(25.0 * a.cos(), 20.0 * a.sin())
+            })
+            .collect();
+        assert_eq!(tabs_on(round), 0);
     }
 }
