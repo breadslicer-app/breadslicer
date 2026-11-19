@@ -100,15 +100,14 @@ impl PrinterWall {
             key: key.as_str().into(),
             name: printer.name.as_str().into(),
             model: printer.model.as_str().into(),
-            detail: ctr!("PrinterWall", "Asking what it does…").into(),
+            detail: ctr!("PrinterWall", "Asking what it does…"),
             image: Image::default(),
             live: false,
             status: ctr!(
                 "PrinterCamera",
                 "Turning on the camera of {}…",
                 printer.name
-            )
-            .into(),
+            ),
             bad: false,
         });
 
