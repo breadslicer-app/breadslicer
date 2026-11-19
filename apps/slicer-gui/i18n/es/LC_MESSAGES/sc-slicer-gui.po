@@ -9093,3 +9093,23 @@ msgstr "Enviar e imprimir"
 msgctxt "SlicePanel"
 msgid "Slice first: what is sent is the file Export writes."
 msgstr "Primero laminá: lo que se envía es el archivo que escribe Exportar."
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Name on the printer"
+msgstr "Nombre en la impresora"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Name of the file on the printer"
+msgstr "Nombre del archivo en la impresora"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "On the printer: {}"
+msgstr "En la impresora: {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Back"
+msgstr "Volver"

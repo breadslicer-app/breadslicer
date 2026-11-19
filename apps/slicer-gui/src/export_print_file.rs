@@ -389,11 +389,12 @@ async fn write_and_log(
 
 /// Writes the held slice's printer file for sending it to a printer (#630):
 /// as Export writes it, to a folder of the app's own instead of one asked
-/// for. The file and the name it goes onto the printer by, once written.
+/// for, as `name` (the file's name on the printer). The file, once written.
 pub(crate) async fn write_for_sending(
     ctrl: Rc<ViewportController>,
     format: PrinterFileFormat,
-) -> Option<(PathBuf, String)> {
+    name: &str,
+) -> Option<PathBuf> {
     let document = ctrl.document();
     let dialogs = ctrl.dialogs();
     let scene = document
@@ -407,8 +408,6 @@ pub(crate) async fn write_for_sending(
             return None;
         }
     };
-    let stem = scene_export::default_export_stem(&document).unwrap_or_else(|| "print".to_owned());
-    let name = sc_printer_link::sdcp::printer_file_name(&format!("{stem}.{}", format.extension()));
     let folder = std::env::temp_dir().join("breadslicer-send");
     if let Err(err) = std::fs::create_dir_all(&folder) {
         show_export_failure(
@@ -418,7 +417,7 @@ pub(crate) async fn write_for_sending(
         );
         return None;
     }
-    let target = folder.join(&name);
+    let target = folder.join(name);
     let previews_from = ctrl.clone();
     let written = write_and_log(
         &dialogs,
@@ -429,7 +428,7 @@ pub(crate) async fn write_for_sending(
         move |format| previews_from.print_file_previews(format),
     )
     .await;
-    written.then_some((target, name))
+    written.then_some(target)
 }
 
 /// Writes `job` to `target` on a worker thread, the panel showing it, and

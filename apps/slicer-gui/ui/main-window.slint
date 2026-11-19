@@ -623,9 +623,18 @@ export component MainWindow inherits Window {
     in property <float> slice-send-progress: 0;
     in property <string> slice-send-status;
     in property <bool> slice-send-status-bad: false;
+    // The name the file goes onto the printer by, asked before each send:
+    // the field open, for Send and start or Send, what is typed, and how it
+    // will read on the printer.
+    in-out property <bool> slice-send-naming: false;
+    in property <bool> slice-send-naming-start: false;
+    in-out property <string> slice-send-name;
+    in property <string> slice-send-name-preview;
     callback slice-send-search(bool);
     callback slice-send-address(string);
-    callback slice-send(bool);
+    callback slice-send-name-asked(bool);
+    callback slice-send-name-edited(string);
+    callback slice-send(bool, string);
     callback slice-send-cancel();
     // Slice run state, driving the Slice button's disabled state and the
     // input-capturing progress modal. `slicing-in-progress` is set by the
@@ -2381,14 +2390,24 @@ export component MainWindow inherits Window {
                                 send-progress: root.slice-send-progress;
                                 send-status: root.slice-send-status;
                                 send-status-bad: root.slice-send-status-bad;
+                                send-naming <=> root.slice-send-naming;
+                                send-naming-start: root.slice-send-naming-start;
+                                send-name <=> root.slice-send-name;
+                                send-name-preview: root.slice-send-name-preview;
+                                send-name-asked(start) => {
+                                    root.slice-send-name-asked(start);
+                                }
+                                send-name-edited(text) => {
+                                    root.slice-send-name-edited(text);
+                                }
                                 send-search(forced) => {
                                     root.slice-send-search(forced);
                                 }
                                 send-address(text) => {
                                     root.slice-send-address(text);
                                 }
-                                send(start) => {
-                                    root.slice-send(start);
+                                send(start, name) => {
+                                    root.slice-send(start, name);
                                 }
                                 send-cancel => {
                                     root.slice-send-cancel();

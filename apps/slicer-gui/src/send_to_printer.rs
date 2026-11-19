@@ -91,9 +91,25 @@ impl SendToPrinter {
         }
         {
             let weak = Rc::downgrade(&this);
-            ui.on_slice_send(move |start| {
+            ui.on_slice_send_name_asked(move |start| {
                 if let Some(this) = weak.upgrade() {
-                    this.send(start);
+                    this.ask_name(start);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&this);
+            ui.on_slice_send_name_edited(move |text| {
+                if let Some(this) = weak.upgrade() {
+                    this.show_name(&text);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&this);
+            ui.on_slice_send(move |start, text| {
+                if let Some(this) = weak.upgrade() {
+                    this.send(start, &text);
                 }
             });
         }
@@ -257,9 +273,42 @@ impl SendToPrinter {
         });
     }
 
-    /// Writes the printer file and sends it to the printer picked; with
-    /// `start`, starts printing it once it is there.
-    fn send(self: &Rc<Self>, start: bool) {
+    /// The name the file would go onto the printer by, typed as `text`:
+    /// what its firmware takes, with the format's extension.
+    fn name_on_printer(&self, text: &str) -> Option<String> {
+        let format = self.panel.selected_print_format()?;
+        Some(name_with(text, format.extension()))
+    }
+
+    /// Opens the card's name field for Send (`start` false) or Send and
+    /// start, with the project's name in it.
+    fn ask_name(&self, start: bool) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let stem = crate::scene_export::default_export_stem(&self.ctrl.document())
+            .unwrap_or_else(|| "print".to_owned());
+        ui.set_slice_send_naming_start(start);
+        ui.set_slice_send_name(stem.as_str().into());
+        self.show_name(&stem);
+        ui.set_slice_send_naming(true);
+    }
+
+    /// Shows the name as it will be on the printer.
+    fn show_name(&self, text: &str) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let shown = self.name_on_printer(text).unwrap_or_default();
+        ui.set_slice_send_name_preview(shown.into());
+    }
+
+    /// Writes the printer file and sends it to the printer picked, as
+    /// `text` names it; with `start`, starts printing it once it is there.
+    fn send(self: &Rc<Self>, start: bool, text: &str) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_slice_send_naming(false);
+        }
         if self.sending.borrow().is_some() {
             return;
         }
@@ -269,10 +318,13 @@ impl SendToPrinter {
         let Some(format) = self.panel.selected_print_format() else {
             return;
         };
+        let Some(name) = self.name_on_printer(text) else {
+            return;
+        };
         let this = self.clone();
         let _ = slint::spawn_local(async move {
-            let Some((path, name)) =
-                crate::export_print_file::write_for_sending(this.ctrl.clone(), format).await
+            let Some(path) =
+                crate::export_print_file::write_for_sending(this.ctrl.clone(), format, &name).await
             else {
                 return;
             };
@@ -380,6 +432,16 @@ impl SendToPrinter {
             Err(err) => self.say(failure_text(&err, &printer, &name), true),
         }
     }
+}
+
+/// The name `text` gives a file of `extension` on the printer: what its
+/// firmware takes, the extension added unless typed, "print" for nothing.
+fn name_with(text: &str, extension: &str) -> String {
+    let extension = format!(".{extension}");
+    let stem = text.trim();
+    let stem = stem.strip_suffix(extension.as_str()).unwrap_or(stem).trim();
+    let stem = if stem.is_empty() { "print" } else { stem };
+    sdcp::printer_file_name(&format!("{stem}{extension}"))
 }
 
 /// What went wrong, as the card says it.
@@ -515,6 +577,59 @@ mod tests {
             None
         );
         assert_eq!(printer_from_json(&json!({ "ip": "10.0.0.1" })), None);
+    }
+
+    #[test]
+    fn the_name_typed_goes_onto_the_printer_as_its_firmware_takes_it() {
+        assert_eq!(name_with("Dental 3", "goo"), "Dental_3.goo");
+        assert_eq!(
+            name_with("  minis.goo ", "goo"),
+            "minis.goo",
+            "no second extension"
+        );
+        assert_eq!(name_with("Dragón", "ctb"), "Drag_n.ctb");
+        assert_eq!(name_with("   ", "ctb"), "print.ctb");
+    }
+
+    /// Send to printer asks the file's name first: the card opens its
+    /// field with the project's name, and shows it as it will be on the
+    /// printer while it is typed.
+    #[test]
+    fn a_send_asks_the_name_on_the_printer_first() {
+        use std::cell::RefCell;
+
+        use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
+        use crate::profile_catalog::ProfileCatalog;
+        use crate::test_support::catalog_entries::printer_entry;
+        use sc_print_primitives::PrinterId;
+
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let printer = PrinterId::new("network-printer").expect("valid printer id");
+            let bus = PreferencesBus::new(PreferencesSnapshot {
+                default_printer: Some(printer.clone()),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let catalog = ProfileCatalog::from_entries(
+                vec![printer_entry(printer, "Elegoo", [120.0, 68.0, 150.0])],
+                Vec::new(),
+            );
+            let ui = MainWindow::new().expect("the headless platform creates a main window");
+            let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&ui));
+            let panel = SlicePanelBridge::install(
+                &ui,
+                Rc::new(RefCell::new(Rc::new(catalog))),
+                bus,
+                ctrl.document(),
+            );
+            let _send = SendToPrinter::install(&ui, ctrl, panel);
+            ui.invoke_slice_send_name_asked(true);
+            assert!(ui.get_slice_send_naming());
+            assert!(ui.get_slice_send_naming_start(), "for Send and start");
+            assert_eq!(ui.get_slice_send_name(), "print", "no project: print");
+            assert_eq!(ui.get_slice_send_name_preview(), "print.goo");
+            ui.invoke_slice_send_name_edited("Dental resina".into());
+            assert_eq!(ui.get_slice_send_name_preview(), "Dental_resina.goo");
+        });
     }
 
     #[test]

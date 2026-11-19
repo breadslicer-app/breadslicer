@@ -3000,9 +3000,16 @@ export component SliceInspector inherits VerticalLayout {
     in property <float> send-progress;
     in property <string> send-status;
     in property <bool> send-status-bad;
+    // The file's name on the printer, asked before each send.
+    in-out property <bool> send-naming;
+    in property <bool> send-naming-start;
+    in-out property <string> send-name;
+    in property <string> send-name-preview;
+    callback send-name-asked(bool);
+    callback send-name-edited(string);
     callback send-search(bool);
     callback send-address(string);
-    callback send(bool);
+    callback send(bool, string);
     callback send-cancel();
     // PRINT SETUP open or folded: kept by the window, so it stays as left
     // when the tab is left and come back to.
@@ -3264,7 +3271,7 @@ export component SliceInspector inherits VerticalLayout {
                 }
             }
         }
-        if !root.send-busy: HorizontalLayout {
+        if !root.send-busy && !root.send-naming: HorizontalLayout {
             spacing: 8px;
             ScButton {
                 horizontal-stretch: 1;
@@ -3273,7 +3280,7 @@ export component SliceInspector inherits VerticalLayout {
                 button-height: 34px;
                 enabled: root.send-index >= 0 && root.export-enabled && !root.slicing && !root.exporting && !root.review-fixing;
                 clicked => {
-                    root.send(false);
+                    root.send-name-asked(false);
                 }
             }
             ScButton {
@@ -3283,7 +3290,53 @@ export component SliceInspector inherits VerticalLayout {
                 button-height: 34px;
                 enabled: root.send-index >= 0 && root.export-enabled && !root.slicing && !root.exporting && !root.review-fixing;
                 clicked => {
-                    root.send(true);
+                    root.send-name-asked(true);
+                }
+            }
+        }
+        // Before each send, the name the file goes onto the printer by.
+        if !root.send-busy && root.send-naming: VerticalLayout {
+            spacing: 6px;
+            Field {
+                label: @tr("SlicePanel" => "Name on the printer");
+                name-input := LineEdit {
+                    text <=> root.send-name;
+                    accessible-label: @tr("SlicePanel" => "Name of the file on the printer");
+                    init => {
+                        self.focus-all();
+                    }
+                    edited(t) => {
+                        root.send-name-edited(t);
+                    }
+                    accepted(t) => {
+                        root.send(root.send-naming-start, t);
+                    }
+                }
+            }
+            Note {
+                text: @tr("SlicePanel" => "On the printer: {}", root.send-name-preview);
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                ScButton {
+                    horizontal-stretch: 1;
+                    text: root.send-naming-start
+                        ? @tr("SlicePanel" => "Send and start")
+                        : @tr("SlicePanel" => "Send to printer");
+                    icon: root.send-naming-start ? Icons.slice : Icons.file;
+                    kind: ButtonKind.primary;
+                    button-height: 34px;
+                    enabled: root.export-enabled && !root.slicing && !root.exporting;
+                    clicked => {
+                        root.send(root.send-naming-start, root.send-name);
+                    }
+                }
+                ScButton {
+                    text: @tr("SlicePanel" => "Back");
+                    button-height: 34px;
+                    clicked => {
+                        root.send-naming = false;
+                    }
                 }
             }
         }
