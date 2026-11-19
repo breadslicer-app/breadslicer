@@ -353,6 +353,16 @@ impl fmt::Display for UnwritableFamily {
 impl std::error::Error for UnwritableFamily {}
 
 impl PrinterFileFormat {
+    /// Whether the file carries the exposure stepping down over the
+    /// transition layers, as an exposure per layer or as a count the machine
+    /// ramps from. CXDLP keeps one exposure for the bottom layers and one for
+    /// the rest, and the machines that read CTB version 2 take its
+    /// file-wide settings: the transition layers print at the normal
+    /// exposure there (#96).
+    pub fn keeps_exposure_ramp(self) -> bool {
+        !matches!(self, Self::Cxdlp(_) | Self::Ctb(CtbVariant::V2))
+    }
+
     /// Identifies the printer file a profile's declared binding names.
     ///
     /// Both halves are required: revisions within a family produce different

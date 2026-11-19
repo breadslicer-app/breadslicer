@@ -95,6 +95,27 @@ pub(crate) fn program(machine: &str, raster: RasterSetup, layers: usize) -> Prin
     }
 }
 
+/// [`program`] of `layers` layers whose exposure steps down from the bottom
+/// one to the normal one over 3 transition layers, as the slicer ramps it.
+pub(crate) fn ramped_program(machine: &str, raster: RasterSetup, layers: usize) -> PrintProgram {
+    let mut program = program(machine, raster, layers);
+    program.transition_layer_count = 3;
+    for (index, layer) in program.layers.iter_mut().enumerate() {
+        layer.exposure_sec = PositiveFiniteSec::new(ramp_exposure(index)).unwrap();
+    }
+    program
+}
+
+/// The exposure [`ramped_program`] gives layer `index`.
+pub(crate) fn ramp_exposure(index: usize) -> f64 {
+    let (bottom, normal) = (35.0, 2.5);
+    match index {
+        0 | 1 => bottom,
+        2..=4 => bottom + (normal - bottom) * (index - 1) as f64 / 4.0,
+        _ => normal,
+    }
+}
+
 fn ring(points: &[(f64, f64)]) -> ClosedRing {
     ClosedRing::new(points.iter().map(|&(x, y)| Point2D::new(x, y)).collect())
 }

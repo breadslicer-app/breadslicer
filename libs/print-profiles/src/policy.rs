@@ -181,6 +181,7 @@ pub(crate) fn policies_for(
         | ResolvedField::NormalExposureSec
         | ResolvedField::BottomExposureSec
         | ResolvedField::BottomLayerCount
+        | ResolvedField::TransitionLayerCount
         | ResolvedField::WaitBeforeCureSec
         | ResolvedField::WaitAfterCureSec
         | ResolvedField::WaitAfterLiftSec

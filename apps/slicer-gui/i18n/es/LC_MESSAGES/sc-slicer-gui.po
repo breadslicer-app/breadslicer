@@ -9288,3 +9288,13 @@ msgstr "Haciendo su chequeo"
 msgctxt "PrinterWall"
 msgid "Busy"
 msgstr "Ocupada"
+
+#: src/material_form/mod.rs
+msgctxt "MaterialForm"
+msgid "Transition layer count"
+msgstr "Cantidad de capas de transición"
+
+#: src/slice_panel.rs
+msgctxt "SlicePanel"
+msgid "This format keeps one exposure for the bottom layers and one for the rest: the transition layers print at the normal exposure."
+msgstr "Este formato guarda una exposición para las capas de base y otra para el resto: las capas de transición se imprimen con la exposición normal."

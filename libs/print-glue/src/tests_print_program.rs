@@ -70,6 +70,7 @@ mirror = { x = true, y = false }
 output_formats = [{ format = "goo", version = "v3.0" }]
 supports_grayscale = true
 two_stage_lift = true
+transition_layers = 0
 has_camera = false
 
 [constraints]
@@ -518,6 +519,44 @@ fn the_bottom_and_transition_counts_come_from_the_profiles() {
 fn a_printer_declaring_no_transition_layers_carries_a_count_of_zero() {
     let program = program(PRINTER_WITHOUT_TRANSITION_LAYERS_TOML, 20);
     assert_eq!(program.transition_layer_count, 0);
+}
+
+/// #96: a printer that says nothing of them, with a resin that says nothing
+/// either, steps the exposure down over five layers.
+#[test]
+fn a_printer_stating_no_transition_layers_ramps_over_five() {
+    let unstated = PRINTER_TOML.replace("transition_layers = 5
+", "");
+    assert!(!unstated.contains("transition_layers"));
+    let program = program(&unstated, 20);
+    assert_eq!(program.transition_layer_count, 5);
+    let exposures = exposures(&program);
+    let bottom = BOTTOM_LAYER_COUNT as usize;
+    assert!(exposures[bottom] < BOTTOM_EXPOSURE_SEC);
+    assert!(exposures[bottom + 4] > NORMAL_EXPOSURE_SEC);
+    assert_eq!(exposures[bottom + 5], NORMAL_EXPOSURE_SEC);
+}
+
+/// #96: the resin's own count for the printer wins over the printer's.
+#[test]
+fn a_resin_stating_its_transition_layers_wins_over_the_printer() {
+    let material = MATERIAL_TOML.replace(
+        "bottom_layer_count = 8
+",
+        "bottom_layer_count = 8
+transition_layer_count = 2
+",
+    );
+    let config = resolved_config_for(PRINTER_TOML, &material);
+    let profile = slice_profile(&config, 20);
+    let program =
+        project_to_print_program(SCENE_VOLUME_MM3, &config, &profile, created_at(), "0.0.12")
+            .unwrap();
+    assert_eq!(program.transition_layer_count, 2);
+    assert_eq!(
+        exposures(&program)[(BOTTOM_LAYER_COUNT + 2) as usize],
+        NORMAL_EXPOSURE_SEC
+    );
 }
 
 #[test]

@@ -147,10 +147,11 @@ enum Kind {
 }
 
 /// The keys of a calibration block's slots.
-const BLOCK_KEYS: [&str; 23] = [
+const BLOCK_KEYS: [&str; 24] = [
     "normal_exposure_sec",
     "bottom_exposure_sec",
     "bottom_layer_count",
+    "transition_layer_count",
     "wait_before_cure_sec",
     "wait_after_cure_sec",
     "wait_after_lift_sec",
@@ -179,6 +180,7 @@ fn block_texts(input: &CalibrationFormInput) -> HashMap<String, String> {
         &i.normal_exposure_sec,
         &i.bottom_exposure_sec,
         &i.bottom_layer_count,
+        &i.transition_layer_count,
         &i.wait_before_cure_sec,
         &i.wait_after_cure_sec,
         &i.wait_after_lift_sec,
@@ -212,6 +214,7 @@ fn block_input(texts: &HashMap<String, String>) -> CalibrationFormInput {
         normal_exposure_sec: g("normal_exposure_sec"),
         bottom_exposure_sec: g("bottom_exposure_sec"),
         bottom_layer_count: g("bottom_layer_count"),
+        transition_layer_count: g("transition_layer_count"),
         wait_before_cure_sec: g("wait_before_cure_sec"),
         wait_after_cure_sec: g("wait_after_cure_sec"),
         wait_after_lift_sec: g("wait_after_lift_sec"),
@@ -832,6 +835,11 @@ impl Form {
                 ctr!("PrinterPicker", "BOTTOM LAYERS"),
                 vec![
                     n("bottom_layer_count", ctr!("PrinterPicker", "Count"), ""),
+                    n(
+                        "transition_layer_count",
+                        ctr!("PrinterPicker", "Transition layers"),
+                        "",
+                    ),
                     n(
                         "bottom_exposure_sec",
                         ctr!("PrinterPicker", "Exposure"),

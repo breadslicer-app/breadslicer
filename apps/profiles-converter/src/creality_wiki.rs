@@ -39,6 +39,7 @@ fn empty_block() -> MaterialPerPrinter {
         normal_exposure_sec: None,
         bottom_exposure_sec: None,
         bottom_layer_count: None,
+        transition_layer_count: None,
         wait_before_cure_sec: None,
         wait_after_cure_sec: None,
         wait_after_lift_sec: None,

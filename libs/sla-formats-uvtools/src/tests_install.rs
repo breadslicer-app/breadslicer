@@ -10,7 +10,7 @@ use sc_sla_formats::{
 };
 
 use crate::read::{read_anycubic_binary, read_anycubic_zip, read_ctb, read_cxdlp};
-use crate::test_fixture::{program, raster, stack};
+use crate::test_fixture::{program, ramp_exposure, ramped_program, raster, stack};
 
 fn ported() -> Vec<PrinterFileFormat> {
     let mut formats = vec![
@@ -23,6 +23,67 @@ fn ported() -> Vec<PrinterFileFormat> {
     formats.extend(AnycubicZipVariant::ALL.map(PrinterFileFormat::AnycubicZip));
     formats.extend(AnycubicBinaryVariant::ALL.map(PrinterFileFormat::AnycubicBinary));
     formats
+}
+
+/// #96: every format that keeps the transition ramp reads it back as the
+/// slicer made it; the ones that cannot say so.
+#[test]
+fn the_exposure_ramp_reads_back_from_every_format_that_keeps_it() {
+    crate::install();
+    let dir = tempfile::tempdir().unwrap();
+    let layers = 8;
+    let near = |got: f32, want: f64| (f64::from(got) - want).abs() < 0.011;
+    for format in ported() {
+        let machine = match format {
+            PrinterFileFormat::Cxdlp(_) => "Halot One",
+            _ => "Photon Mono M7 Pro",
+        };
+        let program = ramped_program(machine, raster(AaLevel::Off, Mirror::default()), layers);
+        let path = dir.path().join(format!("ramp.{}", format.extension()));
+        write_printer_file(&stack(layers), &path, format, &program, None).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let keeps = format.keeps_exposure_ramp();
+        match format {
+            PrinterFileFormat::Cxdlp(_) => {
+                assert!(!keeps, "{format}");
+                let read = read_cxdlp(&bytes).unwrap();
+                assert_eq!(read.bottom_exposure_sec, 35, "{format}");
+                assert_eq!(read.exposure_tenths, 25, "{format}");
+            }
+            PrinterFileFormat::Ctb(variant) => {
+                assert_eq!(keeps, variant != CtbVariant::V2, "{format}");
+                let read = read_ctb(&bytes).unwrap();
+                for (index, layer) in read.layer_definitions.iter().enumerate() {
+                    assert!(
+                        near(layer.exposure_sec, ramp_exposure(index)),
+                        "{format} layer {index}: {}",
+                        layer.exposure_sec
+                    );
+                }
+            }
+            PrinterFileFormat::AnycubicZip(_) => {
+                assert!(keeps, "{format}");
+                let read = read_anycubic_zip(std::io::Cursor::new(bytes)).unwrap();
+                let text = read.settings.to_string();
+                assert!(
+                    text.contains("\"transition_layercount\":3"),
+                    "{format}: {text}"
+                );
+            }
+            PrinterFileFormat::AnycubicBinary(variant) => {
+                assert!(keeps, "{format}");
+                let read = read_anycubic_binary(&bytes, variant).unwrap();
+                for (index, layer) in read.layer_definitions.iter().enumerate() {
+                    assert!(
+                        near(layer.exposure_sec, ramp_exposure(index)),
+                        "{format} layer {index}: {}",
+                        layer.exposure_sec
+                    );
+                }
+            }
+            other => unreachable!("{other} is not ported"),
+        }
+    }
 }
 
 #[test]

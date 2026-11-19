@@ -350,6 +350,7 @@ fn block_of(
         normal_exposure_sec: Some(sec(span(normal)?.low())?),
         bottom_exposure_sec: Some(sec(span(bottom)?.high())?),
         bottom_layer_count: None,
+        transition_layer_count: None,
         wait_before_cure_sec: span(rest).map(Span::low).and_then(wait),
         wait_after_cure_sec: None,
         wait_after_lift_sec: None,

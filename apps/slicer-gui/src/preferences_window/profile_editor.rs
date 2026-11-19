@@ -312,6 +312,13 @@ fn build_profile_editor(
                     normal_exposure_sec: d.get_normal_exposure_text().to_string(),
                     bottom_exposure_sec: d.get_bottom_exposure_text().to_string(),
                     bottom_layer_count: d.get_block_bottom_count_text().to_string(),
+                    // This dialog has no field for it: the block keeps its own.
+                    transition_layer_count: profile
+                        .per_printer
+                        .get(id)
+                        .and_then(|block| block.transition_layer_count)
+                        .map(|count| count.to_string())
+                        .unwrap_or_default(),
                     wait_before_cure_sec: d.get_wait_before_cure_text().to_string(),
                     wait_after_cure_sec: d.get_wait_after_cure_text().to_string(),
                     wait_after_lift_sec: d.get_wait_after_lift_text().to_string(),

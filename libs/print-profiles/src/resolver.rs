@@ -103,6 +103,7 @@ pub(crate) struct PickedValues {
     pub normal_exposure_sec: Option<PositiveFiniteSec>,
     pub bottom_exposure_sec: Option<PositiveFiniteSec>,
     pub bottom_layer_count: Option<u32>,
+    pub transition_layer_count: Option<u32>,
     pub wait_before_cure_sec: Option<NonNegativeFiniteSec>,
     pub wait_after_cure_sec: Option<NonNegativeFiniteSec>,
     pub wait_after_lift_sec: Option<NonNegativeFiniteSec>,
@@ -183,6 +184,15 @@ fn apply_per_printer(
         picked.bottom_layer_count = Some(value);
         records.push(OverrideRecord {
             field: ResolvedField::BottomLayerCount,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: f64::from(value),
+        });
+    }
+    if let Some(value) = per_printer.transition_layer_count {
+        picked.transition_layer_count = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::TransitionLayerCount,
             source: ValueSource::Calibrated,
             prior_value: None,
             final_value: f64::from(value),
@@ -378,6 +388,10 @@ fn apply_physical(
 /// on it is reported as uncalibrated, because plate adhesion is a
 /// property of the resin and the machine together.
 pub const UNCALIBRATED_BOTTOM_LAYER_COUNT: u32 = 5;
+
+/// The transition layers of a resin and printer that name none: five
+/// layers step the exposure down from the bottom one (#96).
+pub const UNCALIBRATED_TRANSITION_LAYER_COUNT: u32 = 5;
 
 /// Fill what neither the resin nor its defaults stated, from the
 /// machine's own expectation or, failing that, from ours.
@@ -1112,6 +1126,12 @@ fn assemble(
         .wait_after_lift_sec
         .unwrap_or(NonNegativeFiniteSec::ZERO);
 
+    // The resin's own for this printer, else the printer's, else five.
+    let transition_layer_count = picked
+        .transition_layer_count
+        .or(printer.capabilities.transition_layers)
+        .unwrap_or(UNCALIBRATED_TRANSITION_LAYER_COUNT);
+
     Ok(ResolvedPrintConfig {
         printer,
         material_resolved: MaterialResolved {
@@ -1120,6 +1140,7 @@ fn assemble(
             normal_exposure_sec,
             bottom_exposure_sec,
             bottom_layer_count,
+            transition_layer_count,
             wait_before_cure_sec,
             wait_after_cure_sec,
             wait_after_lift_sec,

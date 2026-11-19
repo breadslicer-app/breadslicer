@@ -100,7 +100,7 @@ pub(crate) fn project_to_print_program(
     slicer_version: &'static str,
 ) -> Result<PrintProgram, UnprojectablePrint> {
     let material = &config.material_resolved;
-    let transition_count = config.printer.capabilities.transition_layers.unwrap_or(0);
+    let transition_count = material.transition_layer_count;
 
     let layers = (0u32..)
         .zip(profile.layer_schedule().iter_slab_tops())
