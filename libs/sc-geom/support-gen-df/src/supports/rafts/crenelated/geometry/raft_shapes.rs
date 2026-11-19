@@ -151,51 +151,69 @@ pub fn perforated(
     difference_polygon_sets(footprint, &holes)
 }
 
-/// `footprint` with a tab off each end of its longer side.
+/// `footprint` with a tab off each end of its longer side, where the raft
+/// reaches furthest that way: on a raft wider at one end than the other, the
+/// middle of its box is off the raft, and a tab there stood on its own.
 pub fn with_peel_tabs(
     footprint: &[PolygonWithHoles],
 ) -> Result<Vec<PolygonWithHoles>, ClipperError> {
-    let points = footprint.iter().flat_map(|p| p.outer.iter());
+    let points: Vec<Vector2> = footprint
+        .iter()
+        .flat_map(|p| p.outer.iter().copied())
+        .filter(|p| p.x.is_finite() && p.y.is_finite())
+        .collect();
+    if points.is_empty() {
+        return Ok(footprint.to_vec());
+    }
     let (mut lo, mut hi) = (
         Vector2::new(f64::INFINITY, f64::INFINITY),
         Vector2::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
     );
-    for p in points {
+    for p in &points {
         lo = Vector2::new(lo.x.min(p.x), lo.y.min(p.y));
         hi = Vector2::new(hi.x.max(p.x), hi.y.max(p.y));
     }
-    if !lo.x.is_finite() {
-        return Ok(footprint.to_vec());
-    }
     let (w, l) = (PEEL_TAB_WIDTH_MM / 2.0, PEEL_TAB_LENGTH_MM);
-    // Into the raft a tab's length too, so it joins it however round it is.
-    let tabs: Vec<PolygonWithHoles> = if hi.x - lo.x >= hi.y - lo.y {
-        let cy = (lo.y + hi.y) / 2.0;
-        [(lo.x - l, lo.x + l), (hi.x - l, hi.x + l)]
-            .into_iter()
-            .map(|(a, b)| {
-                ring_to_polygon(vec![
-                    Vector2::new(a, cy - w),
-                    Vector2::new(b, cy - w),
-                    Vector2::new(b, cy + w),
-                    Vector2::new(a, cy + w),
-                ])
-            })
-            .collect()
-    } else {
-        let cx = (lo.x + hi.x) / 2.0;
-        [(lo.y - l, lo.y + l), (hi.y - l, hi.y + l)]
-            .into_iter()
-            .map(|(a, b)| {
-                ring_to_polygon(vec![
-                    Vector2::new(cx - w, a),
-                    Vector2::new(cx + w, a),
-                    Vector2::new(cx + w, b),
-                    Vector2::new(cx - w, b),
-                ])
-            })
-            .collect()
+    let along_x = hi.x - lo.x >= hi.y - lo.y;
+    // Where the outline reaches `edge` along the long side (within half a
+    // millimetre): the middle of that stretch across it.
+    let across_at = |edge: f64| {
+        let (mut a, mut b) = (f64::INFINITY, f64::NEG_INFINITY);
+        for p in &points {
+            let (along, across) = if along_x { (p.x, p.y) } else { (p.y, p.x) };
+            if (along - edge).abs() <= 0.5 {
+                a = a.min(across);
+                b = b.max(across);
+            }
+        }
+        (a + b) / 2.0
     };
+    let (from, to) = if along_x { (lo.x, hi.x) } else { (lo.y, hi.y) };
+    // Into the raft a tab's length too, so it joins it however round it is.
+    let tabs: Vec<PolygonWithHoles> = [
+        (from - l, from + l, across_at(from)),
+        (to - l, to + l, across_at(to)),
+    ]
+    .into_iter()
+    .map(|(a, b, c)| {
+        let ring = if along_x {
+            vec![
+                Vector2::new(a, c - w),
+                Vector2::new(b, c - w),
+                Vector2::new(b, c + w),
+                Vector2::new(a, c + w),
+            ]
+        } else {
+            vec![
+                Vector2::new(c - w, a),
+                Vector2::new(c + w, a),
+                Vector2::new(c + w, b),
+                Vector2::new(c - w, b),
+            ]
+        };
+        ring_to_polygon(ring)
+    })
+    .collect();
     let mut all = footprint.to_vec();
     all.extend(tabs);
     union_polygon_sets(&all)
@@ -299,5 +317,25 @@ mod tests {
         let (a, b) = (reach(&hull), reach(&tabbed));
         assert!(b.0 < a.0 - 4.0 && b.1 > a.1 + 4.0, "{a:?} {b:?}");
         assert_eq!(tabbed.len(), 1, "one raft with its tabs");
+    }
+
+    #[test]
+    fn peel_tabs_join_a_raft_wider_at_one_end() {
+        // A funnel: wide at the back (y 40), a point at the front (y 0). The
+        // middle of its box (y 20) is off the raft at both ends.
+        let funnel = vec![ring_to_polygon(vec![
+            Vector2::new(50.0, 0.0),
+            Vector2::new(100.0, 40.0),
+            Vector2::new(0.0, 40.0),
+        ])];
+        let tabbed = with_peel_tabs(&funnel).unwrap();
+        assert_eq!(tabbed.len(), 1, "the tabs stand on the raft: {tabbed:?}");
+        let reach = tabbed
+            .iter()
+            .flat_map(|q| q.outer.iter())
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+                (lo.min(v.x), hi.max(v.x))
+            });
+        assert!(reach.0 < -4.0 && reach.1 > 104.0, "{reach:?}");
     }
 }
