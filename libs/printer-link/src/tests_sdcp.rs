@@ -111,71 +111,87 @@ fn parts(body: &[u8], boundary: &str) -> Chunk {
     chunk
 }
 
-/// A web server taking `answers.len()` requests, answering each in turn.
-/// Like a printer's, it keeps each connection open after its answer.
-fn web_server(answers: Vec<(u16, &'static str)>) -> (SocketAddr, Arc<Mutex<Vec<Chunk>>>) {
+const OK: &str = r#"{"code":"000000","messages":null,"data":null,"success":true}"#;
+
+/// A printer's web server: each request answered by `answer`, each
+/// connection on a thread of its own and, like a printer's, kept open after
+/// its answer. What it took, in the order the chunks came.
+fn web_server(
+    answer: impl Fn(&Chunk) -> (u16, String) + Send + Sync + 'static,
+) -> (SocketAddr, Arc<Mutex<Vec<Chunk>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let got = Arc::new(Mutex::new(Vec::new()));
     let seen = got.clone();
+    let answer = Arc::new(answer);
     thread::spawn(move || {
-        let mut held = Vec::new();
-        for (status, body) in answers {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut raw = Vec::new();
-            let mut buffer = [0u8; 65536];
-            let (head_end, length, boundary) = loop {
-                let n = stream.read(&mut buffer).unwrap();
-                raw.extend_from_slice(&buffer[..n]);
-                if let Some(end) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
-                    let head = String::from_utf8_lossy(&raw[..end]).into_owned();
-                    let length: usize = head
-                        .lines()
-                        .find_map(|l| l.strip_prefix("Content-Length: "))
-                        .unwrap()
-                        .trim()
-                        .parse()
-                        .unwrap();
-                    let boundary = head
-                        .split("boundary=")
-                        .nth(1)
-                        .unwrap()
-                        .lines()
-                        .next()
-                        .unwrap()
-                        .to_owned();
-                    break (end + 4, length, boundary);
-                }
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else {
+                continue;
             };
-            while raw.len() < head_end + length {
-                let n = stream.read(&mut buffer).unwrap();
-                raw.extend_from_slice(&buffer[..n]);
-            }
-            seen.lock()
-                .unwrap()
-                .push(parts(&raw[head_end..], &boundary));
-            let reply = format!(
-                "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
-            );
-            stream.write_all(reply.as_bytes()).unwrap();
-            held.push(stream);
+            let (seen, answer) = (seen.clone(), answer.clone());
+            thread::spawn(move || {
+                let mut raw = Vec::new();
+                let mut buffer = [0u8; 65536];
+                let (head_end, length, boundary) = loop {
+                    let n = stream.read(&mut buffer).unwrap();
+                    raw.extend_from_slice(&buffer[..n]);
+                    if let Some(end) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&raw[..end]).into_owned();
+                        let length: usize = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("Content-Length: "))
+                            .unwrap()
+                            .trim()
+                            .parse()
+                            .unwrap();
+                        let boundary = head
+                            .split("boundary=")
+                            .nth(1)
+                            .unwrap()
+                            .lines()
+                            .next()
+                            .unwrap()
+                            .to_owned();
+                        break (end + 4, length, boundary);
+                    }
+                };
+                while raw.len() < head_end + length {
+                    let n = stream.read(&mut buffer).unwrap();
+                    raw.extend_from_slice(&buffer[..n]);
+                }
+                let chunk = parts(&raw[head_end..], &boundary);
+                let (status, body) = answer(&chunk);
+                seen.lock().unwrap().push(chunk);
+                let reply = format!(
+                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(reply.as_bytes()).unwrap();
+                thread::sleep(Duration::from_secs(60));
+            });
         }
-        thread::sleep(Duration::from_secs(60));
-        drop(held);
     });
     (addr, got)
 }
 
+fn field(c: &Chunk, name: &str) -> String {
+    c.fields
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, v)| v.clone())
+        .unwrap()
+}
+
 #[test]
-fn a_file_goes_in_chunks_that_add_up_to_it() {
-    let data: Vec<u8> = (0..(CHUNK_BYTES * 2 + 1234))
+fn a_file_goes_in_chunks_at_once_that_add_up_to_it_and_its_md5() {
+    use md5::Digest;
+    let data: Vec<u8> = (0..(CHUNK_BYTES * 5 + 1234))
         .map(|i| (i % 251) as u8)
         .collect();
-    let ok = r#"{"code":"000000","messages":null,"data":null,"success":true}"#;
-    let (addr, got) = web_server(vec![(200, ok); 3]);
+    let (addr, got) = web_server(|_| (200, OK.to_owned()));
     let mut seen = Vec::new();
-    upload(
+    let sent = upload(
         addr,
         "plate.goo",
         &data,
@@ -183,36 +199,65 @@ fn a_file_goes_in_chunks_that_add_up_to_it() {
         &AtomicBool::new(false),
     )
     .expect("it takes the file");
+    assert_eq!(sent.connections, CONNECTIONS);
+    assert_eq!(sent.fell_back, None);
     let total = data.len() as u64;
-    assert_eq!(
-        seen,
-        vec![
-            (0, total),
-            (CHUNK_BYTES as u64, total),
-            (2 * CHUNK_BYTES as u64, total),
-            (total, total)
-        ]
-    );
+    assert_eq!(seen.first(), Some(&(0, total)));
+    assert_eq!(seen.last(), Some(&(total, total)));
+    assert!(seen.windows(2).all(|w| w[0].0 <= w[1].0), "never back");
     let chunks = got.lock().unwrap().clone();
-    assert_eq!(chunks.len(), 3);
-    let field = |c: &Chunk, name: &str| {
-        c.fields
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, v)| v.clone())
-            .unwrap()
-    };
+    assert_eq!(chunks.len(), 6);
+    // The last chunk comes after all the others.
+    let last_offset = (5 * CHUNK_BYTES).to_string();
+    assert_eq!(field(chunks.last().unwrap(), "Offset"), last_offset);
+    let md5 = format!("{:x}", md5::Md5::digest(&data));
     let id = field(&chunks[0], "Uuid");
+    let mut by_offset = chunks.clone();
+    by_offset.sort_by_key(|c| field(c, "Offset").parse::<usize>().unwrap());
     let mut joined = Vec::new();
-    for (k, chunk) in chunks.iter().enumerate() {
+    for (k, chunk) in by_offset.iter().enumerate() {
         assert_eq!(chunk.file_name, "plate.goo");
         assert_eq!(field(chunk, "Uuid"), id, "one upload");
         assert_eq!(field(chunk, "Offset"), (k * CHUNK_BYTES).to_string());
         assert_eq!(field(chunk, "TotalSize"), data.len().to_string());
-        assert_eq!(field(chunk, "Check"), "0");
+        assert_eq!(field(chunk, "Check"), "1");
+        assert_eq!(field(chunk, "S-File-MD5"), md5);
         joined.extend_from_slice(&chunk.data);
     }
     assert_eq!(joined, data);
+}
+
+/// A printer that refuses a checked upload still gets the file: again from
+/// the start, a chunk at a time and unchecked, as every SDCP printer takes it.
+#[test]
+fn a_printer_that_refuses_the_check_gets_the_file_one_chunk_at_a_time() {
+    let data = vec![3u8; CHUNK_BYTES * 3];
+    let (addr, got) = web_server(|chunk| {
+        if field(chunk, "Check") == "1" {
+            (200, r#"{"code":"111111","success":false}"#.to_owned())
+        } else {
+            (200, OK.to_owned())
+        }
+    });
+    let sent = upload(
+        addr,
+        "plate.goo",
+        &data,
+        &mut |_, _| {},
+        &AtomicBool::new(false),
+    )
+    .expect("sent the second time");
+    assert_eq!(sent.connections, 1);
+    assert!(sent.fell_back.is_some());
+    let unchecked: Vec<String> = got
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| field(c, "Check") == "0")
+        .map(|c| field(c, "Offset"))
+        .collect();
+    let in_order: Vec<String> = (0..3).map(|k| (k * CHUNK_BYTES).to_string()).collect();
+    assert_eq!(unchecked, in_order, "the whole file again, in order");
 }
 
 /// A printer keeps the connection open after it answers a chunk: the next
@@ -221,8 +266,7 @@ fn a_file_goes_in_chunks_that_add_up_to_it() {
 #[test]
 fn a_printer_that_keeps_the_connection_open_does_not_hold_the_upload() {
     let data = vec![7u8; CHUNK_BYTES * 3];
-    let ok = r#"{"code":"000000","messages":null,"data":null,"success":true}"#;
-    let (addr, got) = web_server(vec![(200, ok); 3]);
+    let (addr, got) = web_server(|_| (200, OK.to_owned()));
     let start = std::time::Instant::now();
     upload(
         addr,
@@ -262,8 +306,12 @@ fn an_answer_is_whole_by_its_length_or_its_last_chunk() {
 
 #[test]
 fn a_chunk_refused_stops_the_upload_and_says_why() {
-    let refused = r#"{"code":"111111","messages":["no space"],"success":false}"#;
-    let (addr, _) = web_server(vec![(200, refused)]);
+    let (addr, _) = web_server(|_| {
+        (
+            200,
+            r#"{"code":"111111","messages":["no space"],"success":false}"#.to_owned(),
+        )
+    });
     let err = upload(
         addr,
         "x.ctb",
@@ -276,7 +324,7 @@ fn a_chunk_refused_stops_the_upload_and_says_why() {
         matches!(&err, Error::Upload(200, said) if said.contains("no space")),
         "{err:?}"
     );
-    let (addr, _) = web_server(vec![(500, "oops")]);
+    let (addr, _) = web_server(|_| (500, "oops".to_owned()));
     let err = upload(
         addr,
         "x.ctb",

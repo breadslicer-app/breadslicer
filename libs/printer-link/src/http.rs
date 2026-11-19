@@ -9,7 +9,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// A text field of a multipart form.
 #[derive(Debug)]
@@ -31,6 +31,9 @@ pub struct FilePart<'a> {
 pub struct Response {
     pub status: u16,
     pub body: Vec<u8>,
+    /// How long the request took to go out, and the answer to come after.
+    pub writing: Duration,
+    pub waiting: Duration,
 }
 
 /// The multipart body of `fields` and `file`, between `boundary` lines.
@@ -82,8 +85,10 @@ pub fn post_multipart(
     );
     let mut request = head.into_bytes();
     request.extend_from_slice(&body);
+    let start = Instant::now();
     stream.write_all(&request)?;
     stream.flush()?;
+    let written = Instant::now();
     // Read until the answer is whole, not until the server closes: a
     // printer that keeps the connection open would hold every chunk for the
     // whole timeout.
@@ -100,7 +105,10 @@ pub fn post_multipart(
             Err(err) => return Err(err),
         }
     }
-    parse_response(&raw)
+    let mut response = parse_response(&raw)?;
+    response.writing = written - start;
+    response.waiting = written.elapsed();
+    Ok(response)
 }
 
 /// Whether `raw` holds a whole HTTP answer: its headers and the body they
@@ -159,7 +167,12 @@ pub fn parse_response(raw: &[u8]) -> io::Result<Response> {
     } else {
         rest.to_vec()
     };
-    Ok(Response { status, body })
+    Ok(Response {
+        status,
+        body,
+        writing: Duration::ZERO,
+        waiting: Duration::ZERO,
+    })
 }
 
 /// A chunked body put back together; what does not parse ends it.

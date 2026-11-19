@@ -8964,14 +8964,14 @@ msgstr "Enviando {} a {}…"
 #: src/send_to_printer.rs
 #, rust-format
 msgctxt "SendToPrinter"
-msgid "Printing {} on {}."
-msgstr "Imprimiendo {} en {}."
+msgid "Printing {} on {}. Sent in {}."
+msgstr "Imprimiendo {} en {}. Enviado en {}."
 
 #: src/send_to_printer.rs
 #, rust-format
 msgctxt "SendToPrinter"
-msgid "Sent to {}: {} is on the printer, ready to print from its screen."
-msgstr "Enviado a {}: {} está en la impresora, listo para imprimir desde su pantalla."
+msgid "Sent to {} in {}: {} is on the printer, ready to print from its screen."
+msgstr "Enviado a {} en {}: {} está en la impresora, listo para imprimir desde su pantalla."
 
 #: src/send_to_printer.rs
 msgctxt "SendToPrinter"

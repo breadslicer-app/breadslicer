@@ -15,4 +15,5 @@ workspace = true
 [dependencies]
 serde_json.workspace = true
 if-addrs = "0.13"
+md-5 = "0.10"
 tungstenite = { version = "0.27", default-features = false, features = ["handshake"] }

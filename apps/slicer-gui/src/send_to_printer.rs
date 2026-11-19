@@ -377,10 +377,10 @@ impl SendToPrinter {
         }
         let on = printer.clone();
         let file_name = name.clone();
-        let outcome = on_worker(move || -> Result<(), sdcp::Error> {
+        let outcome = on_worker(move || -> Result<(sdcp::Sent, u64), sdcp::Error> {
             let data = std::fs::read(&path).map_err(sdcp::Error::Unreachable)?;
             let _ = std::fs::remove_file(&path);
-            sdcp::upload(
+            let sent = sdcp::upload(
                 on.service(),
                 &file_name,
                 &data,
@@ -393,7 +393,7 @@ impl SendToPrinter {
             if start {
                 sdcp::start_print(on.service(), &on.mainboard_id, &file_name)?;
             }
-            Ok(())
+            Ok((sent, data.len() as u64))
         })
         .await;
         self.progress.stop();
@@ -405,24 +405,44 @@ impl SendToPrinter {
         crate::breadcrumbs::finished(
             "send to printer",
             &match &outcome {
-                Ok(()) => "ok".to_owned(),
+                Ok((sent, bytes)) => format!(
+                    "ok: {:.1} MB in {:.1} s over {} connection(s), sending {:.1} s, waiting \
+                     for the printer {:.1} s{}",
+                    *bytes as f64 / 1e6,
+                    sent.elapsed.as_secs_f64(),
+                    sent.connections,
+                    sent.writing.as_secs_f64(),
+                    sent.waiting.as_secs_f64(),
+                    sent.fell_back
+                        .as_ref()
+                        .map(|why| format!(", sent again one chunk at a time after: {why}"))
+                        .unwrap_or_default()
+                ),
                 Err(err) => format!("failed: {err}"),
             },
         );
         match outcome {
-            Ok(()) => {
+            Ok((sent, bytes)) => {
                 remember(&printer);
+                let took = took_text(&sent, bytes);
                 if start {
                     self.say(
-                        ctr!("SendToPrinter", "Printing {} on {}.", name, printer.name),
+                        ctr!(
+                            "SendToPrinter",
+                            "Printing {} on {}. Sent in {}.",
+                            name,
+                            printer.name,
+                            took
+                        ),
                         false,
                     );
                 } else {
                     self.say(
                         ctr!(
                             "SendToPrinter",
-                            "Sent to {}: {} is on the printer, ready to print from its screen.",
+                            "Sent to {} in {}: {} is on the printer, ready to print from its screen.",
                             printer.name,
+                            took,
                             name
                         ),
                         false,
@@ -442,6 +462,21 @@ fn name_with(text: &str, extension: &str) -> String {
     let stem = stem.strip_suffix(extension.as_str()).unwrap_or(stem).trim();
     let stem = if stem.is_empty() { "print" } else { stem };
     sdcp::printer_file_name(&format!("{stem}{extension}"))
+}
+
+/// How long a send took and how fast it went, as "42 s, 0.8 MB/s".
+fn took_text(sent: &sdcp::Sent, bytes: u64) -> String {
+    let secs = sent.elapsed.as_secs_f64().max(0.001);
+    let speed = bytes as f64 / 1e6 / secs;
+    if secs >= 60.0 {
+        format!(
+            "{}:{:02} min, {speed:.1} MB/s",
+            secs as u64 / 60,
+            secs as u64 % 60
+        )
+    } else {
+        format!("{secs:.0} s, {speed:.1} MB/s")
+    }
 }
 
 /// What went wrong, as the card says it.

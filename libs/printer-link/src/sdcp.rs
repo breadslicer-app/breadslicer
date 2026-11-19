@@ -26,6 +26,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 use tungstenite::Message;
 
+use md5::Digest;
+
 use crate::http::{Field, FilePart, post_multipart};
 
 /// The UDP port a printer listens for `M99999` on.
@@ -306,56 +308,118 @@ pub fn parse_discovery(raw: &[u8], from: Ipv4Addr) -> Option<Printer> {
     })
 }
 
-/// Sends `data` to the printer at `service` as `file_name`, a chunk at a
-/// time, telling `progress` the bytes sent and the total after each.
-/// `cancel` stops it between chunks.
+/// How many chunks go at once. A printer's network stack takes little at a
+/// time on one connection; several connections share the Wi-Fi better.
+pub const CONNECTIONS: usize = 4;
+
+/// How a file went to the printer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sent {
+    /// The connections it went over at once.
+    pub connections: usize,
+    pub elapsed: Duration,
+    /// Of all chunks, the time spent sending and the time waiting for the
+    /// printer's answer.
+    pub writing: Duration,
+    pub waiting: Duration,
+    /// Why it was sent again one chunk at a time, when it was.
+    pub fell_back: Option<String>,
+}
+
+/// Sends `data` to the printer at `service` as `file_name`, telling
+/// `progress` the bytes sent and the total as it goes; `cancel` stops it
+/// between chunks.
+///
+/// First over [`CONNECTIONS`] connections at once, with the file's MD5 for
+/// the printer to check it by, the last chunk going alone after all the
+/// others. Should the printer refuse that, the file goes again from the
+/// start a chunk at a time, unchecked, as every SDCP printer takes it.
 pub fn upload(
     service: SocketAddr,
     file_name: &str,
     data: &[u8],
     progress: &mut dyn FnMut(u64, u64),
     cancel: &AtomicBool,
-) -> Result<(), Error> {
-    let id = upload_id();
-    let total = data.len() as u64;
-    let total_text = total.to_string();
-    let mut offset = 0usize;
-    progress(0, total);
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            return Err(Error::Cancelled);
+) -> Result<Sent, Error> {
+    let start = Instant::now();
+    match upload_with(
+        service,
+        file_name,
+        data,
+        CONNECTIONS,
+        true,
+        progress,
+        cancel,
+    ) {
+        Ok(mut sent) => {
+            sent.elapsed = start.elapsed();
+            Ok(sent)
         }
-        let end = (offset + CHUNK_BYTES).min(data.len());
-        let offset_text = offset.to_string();
+        Err(Error::Cancelled) => Err(Error::Cancelled),
+        Err(first) => {
+            let mut sent = upload_with(service, file_name, data, 1, false, progress, cancel)?;
+            sent.elapsed = start.elapsed();
+            sent.fell_back = Some(first.to_string());
+            Ok(sent)
+        }
+    }
+}
+
+/// One chunk of an upload: where it goes in the file, and its bytes.
+struct Chunk<'a> {
+    offset: usize,
+    data: &'a [u8],
+}
+
+/// What an upload says of the whole file with every chunk.
+struct Upload<'a> {
+    service: SocketAddr,
+    file_name: &'a str,
+    id: String,
+    total: String,
+    md5: String,
+    check: &'static str,
+}
+
+impl Upload<'_> {
+    /// Sends `chunk`; the time it took to go and to be answered.
+    fn send(&self, chunk: &Chunk<'_>) -> Result<(Duration, Duration), Error> {
+        let offset = chunk.offset.to_string();
         let fields = [
             Field {
                 name: "S-File-MD5",
-                value: "",
+                value: &self.md5,
             },
             Field {
                 name: "Check",
-                value: "0",
+                value: self.check,
             },
             Field {
                 name: "Offset",
-                value: &offset_text,
+                value: &offset,
             },
             Field {
                 name: "Uuid",
-                value: &id,
+                value: &self.id,
             },
             Field {
                 name: "TotalSize",
-                value: &total_text,
+                value: &self.total,
             },
         ];
         let file = FilePart {
             field: "File",
-            file_name,
-            data: &data[offset..end],
+            file_name: self.file_name,
+            data: chunk.data,
         };
-        let answer = post_multipart(service, "/uploadFile/upload", &fields, &file, CHUNK_TIMEOUT)
-            .map_err(Error::Unreachable)?;
+        let answer = post_multipart(
+            self.service,
+            "/uploadFile/upload",
+            &fields,
+            &file,
+            CHUNK_TIMEOUT,
+        )
+        .map_err(Error::Unreachable)?;
         let said = String::from_utf8_lossy(&answer.body).into_owned();
         if !(200..300).contains(&answer.status) {
             return Err(Error::Upload(answer.status, said));
@@ -366,12 +430,112 @@ pub fn upload(
         {
             return Err(Error::Upload(answer.status, said));
         }
-        offset = end;
-        progress(offset as u64, total);
-        if offset >= data.len() {
-            return Ok(());
-        }
+        Ok((answer.writing, answer.waiting))
     }
+}
+
+/// [`upload`] over `connections` at once, `checked` by the file's MD5.
+fn upload_with(
+    service: SocketAddr,
+    file_name: &str,
+    data: &[u8],
+    connections: usize,
+    checked: bool,
+    progress: &mut dyn FnMut(u64, u64),
+    cancel: &AtomicBool,
+) -> Result<Sent, Error> {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, AtomicUsize};
+
+    let upload = Upload {
+        service,
+        file_name,
+        id: upload_id(),
+        total: data.len().to_string(),
+        md5: if checked {
+            format!("{:x}", md5::Md5::digest(data))
+        } else {
+            String::new()
+        },
+        check: if checked { "1" } else { "0" },
+    };
+    let chunks: Vec<Chunk<'_>> = (0..data.len().div_ceil(CHUNK_BYTES).max(1))
+        .map(|k| {
+            let offset = k * CHUNK_BYTES;
+            Chunk {
+                offset,
+                data: &data[offset..(offset + CHUNK_BYTES).min(data.len())],
+            }
+        })
+        .collect();
+    let total = data.len() as u64;
+    let start = Instant::now();
+    progress(0, total);
+    // All chunks but the last at once; the last after them, alone, so the
+    // file is whole when the printer sees its end.
+    let (last, rest) = chunks.split_last().expect("one chunk at least");
+    let sent = AtomicU64::new(0);
+    let next = AtomicUsize::new(0);
+    let failed: Mutex<Option<Error>> = Mutex::new(None);
+    let times = Mutex::new((Duration::ZERO, Duration::ZERO));
+    let stop = AtomicBool::new(false);
+    let work = || {
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                return;
+            }
+            if cancel.load(Ordering::Relaxed) {
+                stop.store(true, Ordering::Relaxed);
+                let mut failed = failed.lock().expect("not poisoned");
+                failed.get_or_insert(Error::Cancelled);
+                return;
+            }
+            let k = next.fetch_add(1, Ordering::Relaxed);
+            let Some(chunk) = rest.get(k) else {
+                return;
+            };
+            match upload.send(chunk) {
+                Ok((writing, waiting)) => {
+                    let mut times = times.lock().expect("not poisoned");
+                    times.0 += writing;
+                    times.1 += waiting;
+                    sent.fetch_add(chunk.data.len() as u64, Ordering::Relaxed);
+                }
+                Err(err) => {
+                    stop.store(true, Ordering::Relaxed);
+                    failed.lock().expect("not poisoned").get_or_insert(err);
+                    return;
+                }
+            }
+        }
+    };
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..connections.clamp(1, rest.len().max(1)))
+            .map(|_| scope.spawn(work))
+            .collect();
+        while !workers.iter().all(|w| w.is_finished()) {
+            progress(sent.load(Ordering::Relaxed), total);
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    });
+    if let Some(err) = failed.into_inner().expect("not poisoned") {
+        return Err(err);
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Error::Cancelled);
+    }
+    let (writing, waiting) = upload.send(last)?;
+    let (mut all_writing, mut all_waiting) = times.into_inner().expect("not poisoned");
+    all_writing += writing;
+    all_waiting += waiting;
+    progress(total, total);
+    Ok(Sent {
+        connections: connections.clamp(1, chunks.len()),
+        elapsed: start.elapsed(),
+        writing: all_writing,
+        waiting: all_waiting,
+        fell_back: None,
+    })
 }
 
 /// A command's request, as the printer reads it.
