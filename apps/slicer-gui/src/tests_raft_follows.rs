@@ -253,3 +253,21 @@ fn the_review_reads_the_one_raft_for_all_as_supports() {
         assert_eq!(sets.len(), 2, "the set and the raft");
     });
 }
+
+/// A slice made for Fix All waits for the one raft for all to be drawn
+/// again: the supports changed, the raft follows them in the background,
+/// and a slice made before it lands would be out of date at once.
+#[test]
+fn the_raft_still_to_be_drawn_is_told_until_it_lands() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (document, run) = supported_slab(&window);
+        assert!(!run.rafts_pending(), "a raft of its own: nothing to wait for");
+        run.on_option(9, 1.0);
+        run.on_option(14, 1.0);
+        assert!(run.rafts_pending(), "the plate's raft is still to be drawn");
+        settle_rafts(&document, &run);
+        assert_eq!(plate_rafts(&document).len(), 1);
+        assert!(!run.rafts_pending(), "drawn: a slice can go");
+    });
+}

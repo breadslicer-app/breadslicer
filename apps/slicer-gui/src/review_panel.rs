@@ -150,6 +150,11 @@ const NO_SUPPORT_NOTE_MM2: f64 = 1.0;
 /// each pass slices the plate again.
 pub(crate) const REPEAT_PASSES: usize = 3;
 
+/// How often a slice held back for the rafts looks again, and how long it
+/// waits for them at most.
+const SETTLE_POLL: Duration = Duration::from_millis(100);
+const SETTLE_WAIT: Duration = Duration::from_secs(20);
+
 /// The card's state, as the UI's `review-state` reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]
@@ -271,6 +276,14 @@ pub(crate) struct ReviewPanel {
     /// What the last run replaced, for its Undo (#437).
     before_run: RefCell<Option<BeforeRun>>,
     fix_poll: slint::Timer,
+    /// Holds a slice back until the supports' own follow-ups (the one raft
+    /// for all, redrawn in the background) are in the scene.
+    settle_poll: slint::Timer,
+    /// Whether the run's last slice was made again because the scene went
+    /// on changing after it: once per run.
+    sliced_again: Cell<bool>,
+    /// The panel itself, for the timers.
+    me: RefCell<std::rc::Weak<ReviewPanel>>,
     /// Starts a slice without asking to overwrite the held one, and tells
     /// whether one started: Fix All promises one. Set by the Slice driver.
     reslice: RefCell<Option<Box<dyn Fn() -> bool>>>,
@@ -389,11 +402,15 @@ impl ReviewPanel {
             placing: RefCell::new(None),
             before_run: RefCell::new(None),
             fix_poll: slint::Timer::default(),
+            settle_poll: slint::Timer::default(),
+            sliced_again: Cell::new(false),
+            me: RefCell::new(std::rc::Weak::new()),
             reslice: RefCell::new(None),
             bus,
             repeat_pref: RefCell::new(None),
             scene_events: RefCell::new(None),
         });
+        *panel.me.borrow_mut() = Rc::downgrade(&panel);
         {
             let weak = Rc::downgrade(&panel);
             let sub = panel.document.subscribe(move |event| {
@@ -806,6 +823,7 @@ impl ReviewPanel {
         }
         crate::breadcrumbs::note("review: adding the islands' supports");
         let marks = self.marks.borrow().clone();
+        self.sliced_again.set(false);
         *self.run.borrow_mut() = Some(FixRun::new(RunKind::Islands, 1, marks));
         self.start_pass();
     }
@@ -835,9 +853,12 @@ impl ReviewPanel {
             self.supports.tell_edges_if_pending();
             return;
         }
-        crate::breadcrumbs::note(&format!("review: {kind:?} on its own, up to {REPEAT_PASSES} passes"));
+        crate::breadcrumbs::note(&format!(
+            "review: {kind:?} on its own, up to {REPEAT_PASSES} passes"
+        ));
         self.quiet_run.set(true);
         let marks = self.marks.borrow().clone();
+        self.sliced_again.set(false);
         *self.run.borrow_mut() = Some(FixRun::new(kind, REPEAT_PASSES, marks));
         self.start_pass();
     }
@@ -861,6 +882,7 @@ impl ReviewPanel {
         };
         crate::breadcrumbs::note(&format!("review: fix all, up to {passes} passes"));
         let marks = self.marks.borrow().clone();
+        self.sliced_again.set(false);
         *self.run.borrow_mut() = Some(FixRun::new(RunKind::FixAll, passes, marks));
         self.start_pass();
     }
@@ -949,6 +971,7 @@ impl ReviewPanel {
             return;
         }
         let marks = self.marks.borrow().clone();
+        self.sliced_again.set(false);
         *self.run.borrow_mut() = Some(FixRun::new(RunKind::FixAll, 1, marks));
         let points = plan.support_points();
         let plans = plan.support_plans();
@@ -1290,21 +1313,79 @@ impl ReviewPanel {
             run.slicing = true;
         }
         self.show_pass(pass);
-        let started = self
-            .reslice
-            .borrow()
-            .as_ref()
-            .is_some_and(|reslice| reslice());
-        if !started {
-            // No slice could start (no printer or resin in force): what the
-            // pass did stays, for the next Slice press to show.
-            if let Some(run) = self.run.borrow_mut().as_mut() {
-                run.slicing = false;
+        // The one raft for all is drawn again once the supports changed, and
+        // not while a slice is made: the slice waits for it, or the scene
+        // changes after it and its review is out of date.
+        self.when_settled(move |panel| {
+            if !panel.run.borrow().as_ref().is_some_and(|run| run.slicing) {
+                return;
             }
-            lines.pop();
-            lines.push(ctr!("Review", "Slice to check the result.").to_string());
-            self.stop_run(Some(lines.join(" ").into()));
+            let started = panel
+                .reslice
+                .borrow()
+                .as_ref()
+                .is_some_and(|reslice| reslice());
+            if !started {
+                // No slice could start (no printer or resin in force): what
+                // the pass did stays, for the next Slice press to show.
+                if let Some(run) = panel.run.borrow_mut().as_mut() {
+                    run.slicing = false;
+                }
+                let mut lines = lines.clone();
+                lines.pop();
+                lines.push(ctr!("Review", "Slice to check the result.").to_string());
+                panel.stop_run(Some(lines.join(" ").into()));
+            }
+        });
+    }
+
+    /// Runs `then` once the supports' follow-ups are in the scene: now when
+    /// none is pending, else when they land (or after [`SETTLE_WAIT`]).
+    fn when_settled(&self, then: impl FnOnce(&Rc<Self>) + 'static) {
+        let Some(me) = self.me.borrow().upgrade() else {
+            return;
+        };
+        if !self.supports.rafts_pending() {
+            then(&me);
+            return;
         }
+        crate::breadcrumbs::note("review: waiting for the raft before slicing");
+        let weak = Rc::downgrade(&me);
+        let since = Instant::now();
+        let then = RefCell::new(Some(then));
+        self.settle_poll
+            .start(slint::TimerMode::Repeated, SETTLE_POLL, move || {
+                let Some(panel) = weak.upgrade() else {
+                    return;
+                };
+                if panel.supports.rafts_pending() && since.elapsed() < SETTLE_WAIT {
+                    return;
+                }
+                panel.settle_poll.stop();
+                if let Some(then) = then.borrow_mut().take() {
+                    then(&panel);
+                }
+            });
+    }
+
+    /// Once a run is over: when the scene went on changing after its last
+    /// slice (its raft drawn after it, a follow-up of the supports), it is
+    /// sliced once more, so the review that stays shows the scene.
+    fn slice_again_if_changed(&self) {
+        if self.sliced_again.get() {
+            return;
+        }
+        self.when_settled(|panel| {
+            if panel.fixing() || !panel.is_stale() || panel.sliced_again.replace(true) {
+                return;
+            }
+            crate::breadcrumbs::note(
+                "review: the scene changed after the run's slice; slicing again",
+            );
+            if let Some(reslice) = panel.reslice.borrow().as_ref() {
+                reslice();
+            }
+        });
     }
 
     /// The slice a pass asked for ended without a result: cancelled (Fix
@@ -1496,6 +1577,9 @@ impl ReviewPanel {
         } else {
             0
         };
+        if by_run {
+            self.slice_again_if_changed();
+        }
         self.publish_islands();
         // A run nobody pressed for ends in the status bar (#606).
         if by_run && self.quiet_run.replace(false) {
@@ -1706,10 +1790,7 @@ impl ReviewPanel {
 
     /// Whether the scene changed since the held slice ran.
     fn is_stale(&self) -> bool {
-        self.document
-            .slice_params()
-            .is_some()
-            && self.document.held_slice_changed()
+        self.document.slice_params().is_some() && self.document.held_slice_changed()
     }
 
     /// The scene's models as they stand now.
