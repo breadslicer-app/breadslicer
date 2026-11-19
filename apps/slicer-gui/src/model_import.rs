@@ -448,7 +448,7 @@ fn imported_file(
         LoadedContent::Project(project) => project.scene,
     };
     place_on_plate(&mut scene, build_volume)?;
-    name_lone_model(&mut scene, path);
+    name_models_after_file(&mut scene, path);
     let verdicts = scene_mesh_verdicts(&scene);
     let leaves = leaves_of(&scene);
     Ok(ImportedFile {
@@ -479,36 +479,35 @@ fn leaves_of(scene: &Scene) -> Vec<ImportedLeaf> {
         .collect()
 }
 
-/// Names the model of `scene`, read from the file at `path`, after the
-/// file, when the file holds one model and names nothing: an imported file
-/// and a file a scene opens from alike (#420).
-pub(crate) fn name_lone_model(scene: &mut Scene, path: &Path) {
+/// Names the models of `scene`, read from the file at `path`, after the
+/// file, whatever the file names them (#420, #644): an imported file and a file a
+/// scene opens from alike. Several models of one file are numbered after it.
+/// A name inside the file is most often the program that wrote it ("Exported
+/// from Blender-3.3.1"), not the model.
+pub(crate) fn name_models_after_file(scene: &mut Scene, path: &Path) {
+    let Some(stem) = path.file_stem() else {
+        return;
+    };
+    let stem = stem.to_string_lossy().into_owned();
     let models: Vec<NodeId> = scene
         .reachable_leaves(CsgPolicy::Descend, ReferencePolicy::Skip)
         .unwrap_or_default()
         .into_iter()
         .filter(|&id| scene.leaf_mesh_arc(id).is_some_and(|m| !m.faces.is_empty()))
         .collect();
-    let [id] = models.as_slice() else {
-        return;
-    };
-    let Some(node) = scene.node(*id) else {
-        return;
-    };
-    let named = node.meta.as_ref().is_some_and(|m| m.name.is_some())
-        || scene
-            .leaf_mesh_arc(*id)
-            .and_then(|mesh| mesh.meta().as_ref())
-            .is_some_and(|m| m.name.is_some());
-    if named {
-        return;
+    let numbered = models.len() > 1;
+    for (at, id) in models.into_iter().enumerate() {
+        let Some(node) = scene.node(id) else {
+            continue;
+        };
+        let mut meta = node.meta.clone().unwrap_or_default();
+        meta.name = Some(if numbered {
+            format!("{stem} {}", at + 1)
+        } else {
+            stem.clone()
+        });
+        scene.set_node_meta(id, Some(meta));
     }
-    let Some(stem) = path.file_stem() else {
-        return;
-    };
-    let mut meta = node.meta.clone().unwrap_or_default();
-    meta.name = Some(stem.to_string_lossy().into_owned());
-    scene.set_node_meta(*id, Some(meta));
 }
 
 /// The world transform of the leaf `id` of `scene`.
