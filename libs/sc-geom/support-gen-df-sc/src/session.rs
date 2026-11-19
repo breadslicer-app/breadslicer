@@ -271,7 +271,7 @@ pub struct DfSupportSession {
     state: SupportState,
     /// Per model, its world mesh, built on the first edit and shared by
     /// every copy of the session.
-    bvhs: Arc<[OnceLock<Arc<MeshBvh>>]>,
+    bvhs: Arc<[BvhSlot]>,
     /// Per model, what tells it apart in a document, made on the first save
     /// or comparison (a pass over every vertex) and shared by every copy.
     prints: Arc<[OnceLock<ModelPrint>]>,
@@ -366,6 +366,46 @@ impl RemovalIndex {
             index.names.push(names);
         }
         index
+    }
+}
+
+/// A model's BVH, built on the first edit and put down outside the
+/// Supports tab (#269).
+#[derive(Default)]
+struct BvhSlot(std::sync::Mutex<Option<Arc<MeshBvh>>>);
+
+impl BvhSlot {
+    fn holding(bvh: Arc<MeshBvh>) -> Self {
+        Self(std::sync::Mutex::new(Some(bvh)))
+    }
+
+    fn get(&self) -> Option<Arc<MeshBvh>> {
+        self.0.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    /// The BVH held, or one `build` makes and the slot keeps.
+    fn get_or_build(&self, build: impl FnOnce() -> Arc<MeshBvh>) -> Arc<MeshBvh> {
+        if let Some(bvh) = self.get() {
+            return bvh;
+        }
+        // Built with no lock held: a query on another thread does not wait.
+        let bvh = build();
+        if let Ok(mut slot) = self.0.lock() {
+            return slot.get_or_insert(bvh).clone();
+        }
+        bvh
+    }
+
+    fn put_down(&self) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = None;
+        }
+    }
+}
+
+impl std::fmt::Debug for BvhSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BvhSlot")
     }
 }
 
@@ -956,7 +996,7 @@ impl DfSupportSession {
         hand_edited: bool,
         hand_log: HandLog,
     ) -> Self {
-        let bvhs = (0..models.len()).map(|_| OnceLock::new()).collect();
+        let bvhs = (0..models.len()).map(|_| BvhSlot::default()).collect();
         let prints = (0..models.len()).map(|_| OnceLock::new()).collect();
         let sdfs = (0..models.len()).map(|_| SdfSlot::default()).collect();
         DfSupportSession {
@@ -1207,8 +1247,8 @@ impl DfSupportSession {
             .iter()
             .enumerate()
             .map(|(i, bvh)| match bvh.get() {
-                Some(bvh) if i != index => OnceLock::from(bvh.clone()),
-                _ => OnceLock::new(),
+                Some(bvh) if i != index => BvhSlot::holding(bvh),
+                _ => BvhSlot::default(),
             })
             .collect();
         let prints = self
@@ -1266,7 +1306,7 @@ impl DfSupportSession {
                 let hand_log = self.hand_log.of_model(&model.id);
                 let bvh = self.bvhs[i]
                     .get()
-                    .map_or_else(OnceLock::new, |bvh| OnceLock::from(bvh.clone()));
+                    .map_or_else(BvhSlot::default, BvhSlot::holding);
                 let print = self.prints[i]
                     .get()
                     .map_or_else(OnceLock::new, |print| OnceLock::from(print.clone()));
@@ -1312,6 +1352,29 @@ impl DfSupportSession {
             .filter(|d| *d <= REMOVE_REACH_MM)
     }
 
+    /// Lets go of what only an edit needs: each model's BVH and distance
+    /// field (#269). The next edit, or [`Self::warm`], builds them again; a
+    /// BVH another session still holds is shared back, not built.
+    pub fn put_down(&self) {
+        for slot in self.bvhs.iter() {
+            slot.put_down();
+        }
+        for slot in self.sdfs.iter() {
+            if let Ok(mut field) = slot.0.lock() {
+                *field = None;
+            }
+        }
+    }
+
+    /// Whether the session holds any model's BVH or distance field.
+    pub fn holds_edit_caches(&self) -> bool {
+        self.bvhs.iter().any(|slot| slot.get().is_some())
+            || self
+                .sdfs
+                .iter()
+                .any(|slot| slot.0.lock().is_ok_and(|field| field.is_some()))
+    }
+
     /// Builds every model's BVH now (they are shared by every copy).
     pub fn warm(&self) {
         for i in 0..self.models.len() {
@@ -1333,7 +1396,7 @@ impl DfSupportSession {
         }
         for slot in self.bvhs.iter() {
             if let Some(bvh) = slot.get() {
-                parts.push(("bvh", Arc::as_ptr(bvh) as usize, bvh.heap_bytes()));
+                parts.push(("bvh", Arc::as_ptr(&bvh) as usize, bvh.heap_bytes()));
             }
         }
         parts.push((
@@ -1352,7 +1415,7 @@ impl DfSupportSession {
     /// session's model stands.
     fn bvh(&self, i: usize) -> PlacedBvh {
         let model = &self.models[i];
-        let bvh = self.bvhs[i].get_or_init(|| shared_bvh(model)).clone();
+        let bvh = self.bvhs[i].get_or_build(|| shared_bvh(model));
         let to_world = support_gen_df::pipeline::model_matrix(&model.transform);
         PlacedBvh {
             to_local: to_world.invert(),

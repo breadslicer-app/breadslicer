@@ -1391,10 +1391,26 @@ impl ViewportController {
                 document.set_selection(kept);
             }
         }
+        if (section == WorkspaceSection::Supports) != (before == WorkspaceSection::Supports) {
+            self.follow_support_caches();
+        }
         if let Some(ui) = self.ui.upgrade() {
             ui.set_workspace_section(section);
         }
         self.mark_dirty();
+    }
+
+    /// The support sets hold what editing needs only in the Supports tab
+    /// (#269): their BVHs and distance fields are built again on a thread
+    /// of their own on entering it, and let go of everywhere else.
+    pub(crate) fn follow_support_caches(&self) {
+        let document = self.session.document();
+        let sessions = document.support_sessions();
+        if self.session.section() == WorkspaceSection::Supports {
+            crate::support_persist::warm_in_background(document, &sessions);
+        } else {
+            crate::support_persist::put_down_all(&sessions);
+        }
     }
 
     /// Returns whether the active section permits the layout tools (gizmo,
@@ -2308,6 +2324,7 @@ impl ViewportController {
         // A reopened `.bread`'s rebuilt supports are the editable sets of
         // the fresh scene; any other load leaves no session in force.
         install_sets(self.session.document(), restored_supports.sets);
+        self.follow_support_caches();
         // And the models it remembers hollowing; any other load, none.
         for why in &restored_hollows.failures {
             crate::breadcrumbs::note(&format!("load: hollow not restored: {why}"));

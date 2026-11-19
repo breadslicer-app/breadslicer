@@ -560,6 +560,71 @@ fn drew(session: &DfSupportSession, spatial: &SceneSpatial, shown: &IndexedMesh)
 /// Makes `sets`, a reopened file's rebuilt supports, the editable sessions
 /// of the scene `doc` has just installed, drawn into its baseline. Without
 /// sets, no session is in force.
+/// Counts the times the sets were put down, so a warming begun before
+/// cannot leave them warm after (#269).
+static PUT_DOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Every distinct session the drawings hold.
+fn distinct_sessions(sessions: &RefCell<SupportSessions>) -> Vec<Arc<DfSupportSession>> {
+    let mut seen: Vec<Arc<DfSupportSession>> = Vec::new();
+    for drawn in sessions.borrow().iter() {
+        if !seen.iter().any(|s| Arc::ptr_eq(s, &drawn.session)) {
+            seen.push(drawn.session.clone());
+        }
+    }
+    seen
+}
+
+/// Lets every drawing's session go of its BVHs and distance fields, outside
+/// the Supports tab (#269): editing is all that needs them.
+pub(crate) fn put_down_all(sessions: &RefCell<SupportSessions>) {
+    PUT_DOWN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    for session in distinct_sessions(sessions) {
+        session.put_down();
+    }
+}
+
+/// Builds the BVHs of the sets in force again on a thread of its own, on
+/// entering the Supports tab (#269), so the first hand edit is quick. A put
+/// down while it runs wins.
+pub(crate) fn warm_in_background(doc: &SceneDocument, sessions: &RefCell<SupportSessions>) {
+    let in_force: Vec<Arc<DfSupportSession>> = doc
+        .with_scene(|spatial| {
+            let leaves: Vec<NodeId> = sessions.borrow().iter().map(|d| d.leaf).collect();
+            let mut in_force_now: Vec<Arc<DfSupportSession>> = Vec::new();
+            for leaf in leaves {
+                if let Some(drawn) = in_force(spatial, sessions, leaf)
+                    && !in_force_now.iter().any(|s| Arc::ptr_eq(s, &drawn.session))
+                {
+                    in_force_now.push(drawn.session);
+                }
+            }
+            in_force_now
+        })
+        .unwrap_or_default();
+    if in_force.is_empty() {
+        return;
+    }
+    let epoch = PUT_DOWN.load(std::sync::atomic::Ordering::SeqCst);
+    let started = std::thread::Builder::new()
+        .name("support-warm".into())
+        .spawn(move || {
+            for session in in_force {
+                if PUT_DOWN.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                    return;
+                }
+                session.warm();
+                if PUT_DOWN.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                    session.put_down();
+                    return;
+                }
+            }
+        });
+    if let Err(err) = started {
+        eprintln!("The supports were not made ready for editing: {err}");
+    }
+}
+
 pub(crate) fn install_sets(doc: &SceneDocument, sets: Vec<RestoredSet>) {
     let sessions = doc.support_sessions();
     sessions.borrow_mut().clear();
@@ -628,9 +693,7 @@ fn rebuild(
     }))
     .map_err(|_| "the support engine failed while rebuilding them".to_owned())?
     .map_err(|e| e.to_string())?;
-    // Built here, off the UI thread, so the first hand edit is quick.
-    for set in &sets {
-        set.session.warm();
-    }
+    // Built when the Supports tab opens (#269), not here: outside it the
+    // sets hold no BVH or distance field.
     Ok(sets)
 }

@@ -310,6 +310,32 @@ fn supports_are_added_and_removed_by_hand() {
     assert!(session.preview_add_at([500.0, 500.0, 500.0]).is_err());
 }
 
+/// #269: a session put down holds no BVH or distance field, and the next
+/// edit builds them again and lands as it would have.
+#[test]
+fn a_session_put_down_lets_go_of_its_edit_caches_and_edits_as_before() {
+    let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let outcome = start_df_supports(&scene, DfSupportRequest::default())
+        .unwrap()
+        .join()
+        .unwrap();
+    let kept = outcome.sets.into_iter().next().unwrap().session;
+    let mut warm = kept.clone();
+    warm.add_trunk_at([1.5, 1.5, 8.0]).expect("a way to hold it");
+    assert!(kept.holds_edit_caches(), "the edit built them, for every copy");
+
+    kept.put_down();
+    assert!(!kept.holds_edit_caches());
+    let mut cold = kept.clone();
+    cold.add_trunk_at([1.5, 1.5, 8.0]).expect("a way to hold it");
+    assert!(cold.holds_edit_caches(), "the edit built them again");
+    assert_eq!(
+        cold.mesh().unwrap().unwrap().faces(),
+        warm.mesh().unwrap().unwrap().faces(),
+        "the same support as before letting go"
+    );
+}
+
 /// Measurement, not a gate: on the real fixture scenes, how many clicks on
 /// overhangs a hand edit can hold and how long a preview takes (the hover
 /// budget). `cargo test --release -- --ignored --nocapture manual_edit_on`.
