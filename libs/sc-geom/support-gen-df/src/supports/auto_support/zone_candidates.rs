@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use super::grid_placement::{
     PERIMETER_CONTACT_INSET_MM, SurfaceSampler, build_boundary_points, face_normal_at,
 };
+use super::resting::{RESTING_LAYERS, rests_on_model};
 use super::support_blockers::is_support_blocked_contact;
 use super::types::{AutoSupportMesh, CandidatePoint, CandidateSource, js_compare};
 use super::zone_rules::ZoneRules;
@@ -549,6 +550,12 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
         pending.retain(|p| {
             !is_support_blocked_contact(m.blocked, m.mesh.rays, m.side, p.candidate.tip_pos, None)
         });
+    }
+    // A contact with model material just below it rests on the model
+    // already: nothing hangs there, and a support has no room (#235).
+    if let Some(m) = mesh {
+        let below = RESTING_LAYERS * lh;
+        pending.retain(|p| !rests_on_model(m.mesh.rays, p.candidate.tip_pos, below));
     }
     // Inside a closed cavity, fewer and stiffer (#632).
     if let Some(m) = mesh {
