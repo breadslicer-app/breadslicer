@@ -60,6 +60,7 @@ fn sample_material_resolved() -> MaterialResolved {
         normal_exposure_sec: PositiveFiniteSec::new(2.5).unwrap(),
         bottom_exposure_sec: PositiveFiniteSec::new(30.0).unwrap(),
         bottom_layer_count: 6,
+        transition_layer_count: 5,
         wait_before_cure_sec: NonNegativeFiniteSec::ZERO,
         wait_after_cure_sec: NonNegativeFiniteSec::ZERO,
         wait_after_lift_sec: NonNegativeFiniteSec::ZERO,

@@ -285,7 +285,8 @@ fn several_files_join_together_as_one_undo_step() {
         let now = leaves(&document);
         assert_eq!(now.len(), 4, "the STL and both objects of the 3MF");
         let names: Vec<String> = rows(&document).into_iter().map(|r| r.0).collect();
-        assert_eq!(names, ["Object 1", "goblin", "Knight", "Horse"]);
+        // Named after their files, whatever the files call them.
+        assert_eq!(names, ["Object 1", "goblin", "pair 1", "pair 2"]);
         assert_eq!(
             document.selection(),
             Selection::of(now[1..].iter().copied().map(LeafId)),
@@ -755,5 +756,86 @@ fn the_model_a_scene_opens_from_is_named_after_its_file() {
             names_after(vec![archer, bard]),
             ["Aarakocra Archer", "Aarakocra Bard 2"]
         );
+    });
+}
+
+/// An STL is named after its file, not after the program its `solid` line
+/// names: the tester's models read "Exported from Blender-3.3.1".
+#[test]
+fn an_stl_is_named_after_its_file_not_its_solid_line() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    on_fresh_slint_thread(move || {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("Megabolter body.stl");
+        let stl = box_stl([10.0, 10.0, 10.0]).replacen(
+            "solid
+",
+            "solid Exported from Blender-3.3.1
+",
+            1,
+        );
+        std::fs::write(&path, stl).expect("the STL writes");
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        ctrl.loader()
+            .set_gpu(device.clone(), DeviceToken::next(), queue.clone());
+        ctrl.open_models(vec![path]);
+        finish_loads(&ctrl);
+        let names: Vec<String> = rows(&ctrl.document()).into_iter().map(|r| r.0).collect();
+        assert_eq!(names, ["Megabolter body"]);
+    });
+}
+
+/// A copy of a model keeps its file's name, however it is made: pasted,
+/// duplicated by Alt, or with its plate. The name inside the STL shows
+/// nowhere, the mesh's own name included.
+#[test]
+fn copies_keep_the_name_of_their_file() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    on_fresh_slint_thread(move || {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("Megabolter body.stl");
+        let stl =
+            box_stl([10.0, 10.0, 10.0]).replacen("solid\n", "solid Caliper repaired geometry\n", 1);
+        std::fs::write(&path, stl).expect("the STL writes");
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        ctrl.loader()
+            .set_gpu(device.clone(), DeviceToken::next(), queue.clone());
+        ctrl.open_models(vec![path]);
+        finish_loads(&ctrl);
+        let document = ctrl.document();
+        let model = leaves(&document)[0];
+        let mesh_name = document
+            .with_scene(|spatial| {
+                spatial
+                    .graph()
+                    .leaf_mesh_arc(model)
+                    .and_then(|mesh| mesh.meta().as_ref())
+                    .and_then(|meta| meta.name.clone())
+            })
+            .flatten();
+        assert_eq!(mesh_name.as_deref(), Some("Megabolter body"));
+
+        document.set_selection(Selection::One(LeafId(model)));
+        let clipboard =
+            crate::clipboard::clipboard_from_document_selection(&document).expect("copies");
+        crate::clipboard::paste(&document, &clipboard, [0.0, 0.0], &ctrl.build_volume())
+            .expect("pastes")
+            .expect("a copy");
+        crate::clipboard::duplicate_by(&document, model, [30.0, 0.0, 0.0])
+            .expect("duplicates")
+            .expect("a copy");
+        ctrl.duplicate_active_plate();
+
+        let names: Vec<String> = rows(&document).into_iter().map(|r| r.0).collect();
+        assert!(names.len() >= 5, "{names:?}");
+        for name in &names {
+            assert!(name.starts_with("Megabolter body"), "{names:?}");
+        }
     });
 }

@@ -1,0 +1,54 @@
+{
+  "description": "The cube with paint on its faces: detail on its first two triangles, and supports kept off two triangles at half strength. Each mask names the cube by its fingerprint.",
+  "meta": {
+    "name": "cube scene",
+    "comment": null
+  },
+  "meshes": [
+    {
+      "meta": {
+        "name": "cube mesh",
+        "comment": null
+      },
+      "vertex_count": 8,
+      "triangle_count": 12,
+      "vertices_sha256": "00a243bc525d6c1ddfbb802ecb7d85ef371044606da877d1061e873f4f2bdab3",
+      "triangles_sha256": "c8879e3b5eeb2c47ce8bca379dd5a5a11942d446290fd735efa3ddb2b2714117"
+    }
+  ],
+  "mesh_resources": [],
+  "nodes": [
+    {
+      "kind": "leaf",
+      "meta": {
+        "name": "cube",
+        "comment": null
+      },
+      "transform": null,
+      "mesh": 0
+    }
+  ],
+  "subtrees": [],
+  "roots": [0],
+  "settings": null,
+  "supports": [],
+  "hollows": [],
+  "thumbnail": null,
+  "support_previews": [],
+  "surface": [
+    {
+      "leaf": 0,
+      "kind": 0,
+      "version": 1,
+      "document_size": 66,
+      "document_sha256": "6d2b95df4676ffa48ed8056f65e4507ff31abd7d21027a22f7ab3b8a549332c3"
+    },
+    {
+      "leaf": 0,
+      "kind": 2,
+      "version": 1,
+      "document_size": 71,
+      "document_sha256": "9189c853b22fa210e8fa537e2396b7b63e9c0857f58ade77bc1b79c6778ccf5b"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with its mesh chunk at version 3, which this version of the format does not describe.",
+  "reason": "version",
+  "chunk": "MESH"
+}

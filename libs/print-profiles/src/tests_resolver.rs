@@ -18,7 +18,8 @@ use super::resolve_warning::{FallbackLevel, IntentSource, ResolveWarning, SnapRe
 use super::resolved_field::ResolvedField;
 use super::resolved_print_config::ResolvedPrintConfig;
 use super::resolver::{
-    PickedValues, UNCALIBRATED_BOTTOM_LAYER_COUNT, apply_constraints, apply_scene_overrides,
+    PickedValues, UNCALIBRATED_BOTTOM_LAYER_COUNT, UNCALIBRATED_TRANSITION_LAYER_COUNT,
+    apply_constraints, apply_scene_overrides,
     pick_and_derive_material, resolve, resolve_layer_height, snap_to_z_step,
 };
 use super::scene_overrides::SceneOverrides;
@@ -3061,5 +3062,41 @@ fn a_stated_cured_density_raises_no_warning() {
         )),
         "warnings: {:?}",
         resolved.warnings,
+    );
+}
+
+/// #96: the resin's own transition layers for the printer win, then the
+/// printer's, then five.
+#[test]
+fn the_transition_layers_come_from_the_resin_then_the_printer_then_five() {
+    let resolved = resolve_with_waits("", "");
+    assert_eq!(
+        resolved.material_resolved.transition_layer_count,
+        UNCALIBRATED_TRANSITION_LAYER_COUNT
+    );
+    assert_eq!(UNCALIBRATED_TRANSITION_LAYER_COUNT, 5);
+
+    let mut printer = printer_without_light_intensity();
+    printer.capabilities.transition_layers = Some(6);
+    let from_printer = resolve(
+        &printer,
+        &material_with_waits("", ""),
+        &SceneOverrides::default(),
+    )
+    .unwrap();
+    assert_eq!(from_printer.material_resolved.transition_layer_count, 6);
+
+    let from_resin = resolve(
+        &printer,
+        &material_with_waits("", "transition_layer_count = 2"),
+        &SceneOverrides::default(),
+    )
+    .unwrap();
+    assert_eq!(from_resin.material_resolved.transition_layer_count, 2);
+    assert!(
+        from_resin
+            .overrides_applied
+            .iter()
+            .any(|record| record.field == ResolvedField::TransitionLayerCount)
     );
 }

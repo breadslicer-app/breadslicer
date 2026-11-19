@@ -206,6 +206,8 @@ fn build_extend_dialog(
                 normal_exposure_sec: d.get_normal_exposure_text().to_string(),
                 bottom_exposure_sec: d.get_bottom_exposure_text().to_string(),
                 bottom_layer_count: d.get_bottom_count_text().to_string(),
+                // This dialog has no field for it: the printer's own, or five.
+                transition_layer_count: String::new(),
                 wait_before_cure_sec: d.get_wait_before_cure_text().to_string(),
                 wait_after_cure_sec: d.get_wait_after_cure_text().to_string(),
                 wait_after_lift_sec: d.get_wait_after_lift_text().to_string(),

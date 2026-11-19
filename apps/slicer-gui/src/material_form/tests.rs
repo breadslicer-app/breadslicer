@@ -21,6 +21,7 @@ fn empty_calibration_fields_parse_to_an_all_unset_block() {
             normal_exposure_sec: None,
             bottom_exposure_sec: None,
             bottom_layer_count: None,
+            transition_layer_count: None,
             wait_before_cure_sec: None,
             wait_after_cure_sec: None,
             wait_after_lift_sec: None,
@@ -47,6 +48,7 @@ fn filled_calibration_fields_parse_to_typed_values() {
         normal_exposure_sec: "2.5".to_owned(),
         bottom_exposure_sec: " 30 ".to_owned(),
         bottom_layer_count: "6".to_owned(),
+        transition_layer_count: "4".to_owned(),
         wait_before_cure_sec: "0.5".to_owned(),
         wait_after_cure_sec: " 1.5 ".to_owned(),
         wait_after_lift_sec: "0".to_owned(),
@@ -72,6 +74,7 @@ fn filled_calibration_fields_parse_to_typed_values() {
     assert_eq!(block.normal_exposure_sec.map(|v| v.value()), Some(2.5));
     assert_eq!(block.bottom_exposure_sec.map(|v| v.value()), Some(30.0));
     assert_eq!(block.bottom_layer_count, Some(6));
+    assert_eq!(block.transition_layer_count, Some(4));
     assert_eq!(block.wait_before_cure_sec.map(|v| v.value()), Some(0.5));
     assert_eq!(block.wait_after_cure_sec.map(|v| v.value()), Some(1.5));
     assert_eq!(block.wait_after_lift_sec.map(|v| v.value()), Some(0.0));
@@ -430,4 +433,17 @@ fn saving_an_unflagged_profile_as_extension_reports_the_writer_error() {
     let profile = parse_profile(PROFILE_TOML);
     let err = save_edited_profile(dir.path(), &profile, EditedProfileKind::Extension).unwrap_err();
     assert!(err.contains("extension flag"), "err: {err}");
+}
+
+/// #48: a calibration typed with decimal commas reads as with points.
+#[test]
+fn decimal_commas_parse_like_points() {
+    let input = CalibrationFormInput {
+        normal_exposure_sec: "2,5".to_owned(),
+        lift_distance_mm: " 6,25 ".to_owned(),
+        ..CalibrationFormInput::default()
+    };
+    let block = parse_calibration_form(&input).unwrap();
+    assert_eq!(block.normal_exposure_sec.map(|v| v.value()), Some(2.5));
+    assert_eq!(block.lift_distance_mm.map(|v| v.value()), Some(6.25));
 }

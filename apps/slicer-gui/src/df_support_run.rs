@@ -13250,4 +13250,8 @@ mod hand_edit_tests {
     // Where supports are recommended while placed by hand (#524).
     #[path = "../../tests_support_hints.rs"]
     mod support_hints;
+
+    // What editing needs is held in the Supports tab alone (#269).
+    #[path = "../../tests_support_caches.rs"]
+    mod support_caches;
 }

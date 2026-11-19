@@ -29,6 +29,10 @@ pub struct MaterialPerPrinter {
     pub bottom_exposure_sec: Option<PositiveFiniteSec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bottom_layer_count: Option<u32>,
+    /// How many layers after the bottom ones step the exposure down to
+    /// the normal one; absent means the printer's own count, or five.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition_layer_count: Option<u32>,
     /// Pause after the platform returns, before the light comes on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_before_cure_sec: Option<NonNegativeFiniteSec>,

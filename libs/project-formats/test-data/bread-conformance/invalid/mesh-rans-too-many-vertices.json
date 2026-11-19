@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with its vertices coded with rANS and its vertex count set to 4, more than 3 per triangle: a reader that allowed it could be asked for a large mesh by a small payload.",
+  "reason": "malformed",
+  "chunk": "MESH"
+}

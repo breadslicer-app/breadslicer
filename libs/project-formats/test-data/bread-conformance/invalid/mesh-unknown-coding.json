@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with its mesh chunk naming vertex coding 3, which version 2 does not have.",
+  "reason": "malformed",
+  "chunk": "MESH"
+}

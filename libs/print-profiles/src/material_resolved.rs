@@ -41,6 +41,9 @@ pub struct MaterialResolved {
     pub normal_exposure_sec: PositiveFiniteSec,
     pub bottom_exposure_sec: PositiveFiniteSec,
     pub bottom_layer_count: u32,
+    /// How many layers after the bottom ones step the exposure down to
+    /// the normal one.
+    pub transition_layer_count: u32,
     /// Pause after the platform returns, before the light comes on.
     pub wait_before_cure_sec: NonNegativeFiniteSec,
     /// Pause after the light goes off, before the lift starts.

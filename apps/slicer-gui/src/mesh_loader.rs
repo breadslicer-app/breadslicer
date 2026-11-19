@@ -271,8 +271,8 @@ pub(crate) fn opened_scene(
             // cache priming run on it, so both observe the placed world
             // coordinates.
             place_on_plate(&mut scene, &build_volume)?;
-            // Its model is named after the file, as an import names it.
-            crate::model_import::name_lone_model(&mut scene, path);
+            // Its models are named after the file, as an import names them.
+            crate::model_import::name_models_after_file(&mut scene, path);
             (scene, None, Vec::new(), None)
         }
         LoadedContent::Project(ProjectContent {

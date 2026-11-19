@@ -87,17 +87,17 @@ impl ResinPrice {
 
 /// `3.4`, `3,4` or ` 3.40 ` as a number: `None` for anything else.
 pub(crate) fn parse_number(text: &str) -> Option<f64> {
-    let text = text.trim().replace(',', ".");
-    text.parse::<f64>().ok().filter(|v| v.is_finite())
+    crate::numbers::parse_number(text).filter(|v| v.is_finite())
 }
 
 /// `$ 3.40`, or `3.40` with no currency.
 pub(crate) fn money(currency: &str, value: f64) -> String {
     let currency = currency.trim();
+    let value = crate::numbers::shown(&format!("{value:.2}"));
     if currency.is_empty() {
-        format!("{value:.2}")
+        value
     } else {
-        format!("{currency} {value:.2}")
+        format!("{currency} {value}")
     }
 }
 

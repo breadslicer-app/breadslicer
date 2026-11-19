@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with its vertices coded with rANS and the last byte of the rANS stream cut off.",
+  "reason": "malformed",
+  "chunk": "MESH"
+}

@@ -498,3 +498,64 @@ fn the_pictures_of_the_review_are_written_when_asked() {
         }
     }
 }
+
+/// Pictures of every printer's camera at once (#643), for 1, 3 and 5
+/// printers: live, still turning on, and failed.
+#[test]
+fn the_pictures_of_the_printer_wall_are_written_when_asked() {
+    let Some(dir) = std::env::var_os(SHOTS_ENV).map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("the folder is made");
+    for count in [1usize, 3, 5] {
+        let dir = dir.clone();
+        on_fresh_slint_thread(move || {
+            let window = MainWindow::new().expect("a main window");
+            window.show().expect("the window shows");
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(1600.0, 1000.0));
+            window.set_has_scene(true);
+            window.set_workspace_section(WorkspaceSection::Slice);
+            let picture = {
+                let (w, h) = (640u32, 360u32);
+                let mut buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                for (i, px) in buffer.make_mut_slice().iter_mut().enumerate() {
+                    let (x, y) = (i as u32 % w, i as u32 / w);
+                    *px = slint::Rgba8Pixel::new((x * 255 / w) as u8, (y * 255 / h) as u8, 90, 255);
+                }
+                slint::Image::from_rgba8(buffer)
+            };
+            let names = [
+                "Mars 5 Ultra",
+                "La grande",
+                "Saturn 4 Ultra",
+                "Taller 2",
+                "Oficina",
+            ];
+            let tiles: Vec<crate::PrinterTile> = (0..count)
+                .map(|i| crate::PrinterTile {
+                    key: format!("board-{i}").into(),
+                    name: names[i].into(),
+                    model: "ELEGOO Mars 5 Ultra".into(),
+                    detail: if i == 0 {
+                        "Printing mini.goo · layer 412 of 1463".into()
+                    } else {
+                        "Idle".into()
+                    },
+                    image: if i % 3 == 2 { slint::Image::default() } else { picture.clone() },
+                    live: i % 3 != 2,
+                    status: if i == 2 {
+                        "The camera of Saturn 4 Ultra sent nothing. It may be busy with another app: try again in a moment.".into()
+                    } else {
+                        "Turning on the camera…".into()
+                    },
+                    bad: i == 2,
+                })
+                .collect();
+            window.set_printer_wall_tiles(slint::ModelRc::new(slint::VecModel::from(tiles)));
+            window.set_printer_wall_open(true);
+            write(window.window(), &dir, &format!("printer-wall-{count}"));
+        });
+    }
+}

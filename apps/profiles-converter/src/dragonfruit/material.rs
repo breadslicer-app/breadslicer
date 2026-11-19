@@ -353,6 +353,7 @@ pub(crate) fn map_material(
         normal_exposure_sec: opt_sec(raw.normal_exposure_sec, &raw_id, "normalExposureSec")?,
         bottom_exposure_sec: opt_sec(raw.bottom_exposure_sec, &raw_id, "bottomExposureSec")?,
         bottom_layer_count: raw.bottom_layer_count,
+        transition_layer_count: None,
         wait_before_cure_sec: None,
         wait_after_cure_sec: None,
         wait_after_lift_sec: None,

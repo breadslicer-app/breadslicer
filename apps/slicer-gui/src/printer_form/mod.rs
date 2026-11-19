@@ -183,13 +183,13 @@ pub(crate) fn trim_number(value: f64) -> String {
     if text.is_empty() || text == "-0" {
         "0".to_owned()
     } else {
-        text.to_owned()
+        crate::numbers::shown(text)
     }
 }
 
 /// Reads a number, taking a comma as the decimal mark too.
 fn number(field: PrinterField, text: &str) -> Result<Option<f64>, PrinterFormError> {
-    let text = text.trim().replace(',', ".");
+    let text = crate::numbers::normal(text);
     if text.is_empty() {
         return Ok(None);
     }

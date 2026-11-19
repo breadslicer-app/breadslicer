@@ -1,0 +1,252 @@
+// SPDX-FileCopyrightText: 2026 SynrgStudio
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// The printers' cameras, all at once (#643): a tile for each network printer
+// Breadslicer knows, with the name it was given (#631), what it is doing,
+// and its camera live. Over the whole window; Escape or Close puts it away.
+
+import { Theme } from "../kit/theme.slint";
+import { Icons } from "../kit/icons.slint";
+import { ScButton, ScLineEdit } from "../kit/controls.slint";
+
+export struct PrinterTile {
+    // The printer's mainboard id: what a rename is made for.
+    key: string,
+    name: string,
+    model: string,
+    // What it does: printing a layer of so many, idle, not answering.
+    detail: string,
+    image: image,
+    live: bool,
+    // Why there is no picture yet, or what went wrong.
+    status: string,
+    bad: bool,
+}
+
+component TileView inherits Rectangle {
+    in property <PrinterTile> tile;
+    in property <bool> editing;
+    callback edit();
+    callback renamed(string);
+    callback picture-double-clicked();
+    // The name being typed.
+    property <string> draft;
+
+    background: Theme.card;
+    border-radius: Theme.radius-lg;
+    border-width: 1px;
+    border-color: Theme.border;
+    clip: true;
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 8px;
+            height: 28px;
+            if !root.editing: VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                Text {
+                    text: root.tile.name;
+                    color: Theme.text;
+                    font-size: Theme.font;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+            }
+            if !root.editing: ScButton {
+                text: @tr("PrinterWall" => "Rename");
+                clicked => {
+                    root.edit();
+                }
+            }
+            if root.editing: ScLineEdit {
+                horizontal-stretch: 1;
+                text: root.tile.name;
+                placeholder-text: @tr("PrinterWall" => "Its name in Breadslicer");
+                init => {
+                    root.draft = root.tile.name;
+                    self.focus-all();
+                }
+                edited(text) => {
+                    root.draft = text;
+                }
+                accepted(text) => {
+                    root.renamed(text);
+                }
+            }
+            if root.editing: ScButton {
+                text: @tr("PrinterWall" => "Done");
+                primary: true;
+                clicked => {
+                    root.renamed(root.draft);
+                }
+            }
+        }
+        Text {
+            text: root.tile.model == "" ? root.tile.detail : root.tile.model + "  ·  " + root.tile.detail;
+            color: Theme.text-muted;
+            font-size: Theme.font-sm;
+            overflow: elide;
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            background: #0b0c0d;
+            border-radius: Theme.radius;
+            clip: true;
+            Image {
+                width: 100%;
+                height: 100%;
+                source: root.tile.image;
+                image-fit: contain;
+            }
+            if !root.tile.live: Text {
+                x: 12px;
+                width: parent.width - 24px;
+                height: 100%;
+                text: root.tile.status;
+                color: root.tile.bad ? Theme.warning : Theme.text-muted;
+                font-size: Theme.font-sm;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                double-clicked => {
+                    root.picture-double-clicked();
+                }
+            }
+        }
+    }
+}
+
+export component PrinterWall inherits Rectangle {
+    in property <[PrinterTile]> tiles;
+    in property <bool> searching;
+    callback closed();
+    callback search();
+    callback renamed(string /* key */, string /* name */);
+
+    // The tile shown alone, enlarged; -1 for all of them.
+    property <int> big: -1;
+    // The key of the tile whose name is being edited.
+    property <string> editing: "";
+
+    property <int> count: root.tiles.length;
+    property <int> columns: root.count <= 1 ? 1 : root.count <= 4 ? 2 : 3;
+    property <int> rows: Math.max(1, Math.ceil(root.count / root.columns));
+    property <length> gap: 12px;
+
+    background: Theme.ground;
+
+    // Clicks under the wall go nowhere.
+    TouchArea { }
+
+    FocusScope {
+        init => {
+            self.focus();
+        }
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                if root.editing != "" {
+                    root.editing = "";
+                } else if root.big >= 0 {
+                    root.big = -1;
+                } else {
+                    root.closed();
+                }
+                return accept;
+            }
+            reject
+        }
+    }
+
+    VerticalLayout {
+        x: parent.width * 3%;
+        y: parent.height * 3%;
+        width: parent.width * 94%;
+        height: parent.height * 94%;
+        spacing: 12px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            height: 30px;
+            Text {
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                text: @tr("PrinterWall" => "Printers");
+                color: Theme.text;
+                font-size: Theme.font-lg;
+                font-weight: 600;
+            }
+            ScButton {
+                horizontal-stretch: 0;
+                icon: Icons.search;
+                text: root.searching
+                    ? @tr("PrinterWall" => "Searching…")
+                    : @tr("PrinterWall" => "Search again");
+                enabled: !root.searching;
+                clicked => {
+                    root.search();
+                }
+            }
+            if root.big >= 0: ScButton {
+                horizontal-stretch: 0;
+                text: @tr("PrinterWall" => "All printers");
+                clicked => {
+                    root.big = -1;
+                }
+            }
+            ScButton {
+                horizontal-stretch: 0;
+                icon: Icons.close;
+                text: @tr("PrinterWall" => "Close");
+                clicked => {
+                    root.closed();
+                }
+            }
+        }
+
+        area := Rectangle {
+            vertical-stretch: 1;
+
+            if root.count == 0: Text {
+                width: 100%;
+                height: 100%;
+                text: root.searching
+                    ? @tr("PrinterWall" => "Looking for printers on the network…")
+                    : @tr("PrinterWall" => "No printer found yet. Check that they are on and on the same network, or add one by its IP address in the Send to printer card.");
+                color: Theme.text-muted;
+                font-size: Theme.font;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            for tile[index] in root.tiles: TileView {
+                property <int> at-column: Math.mod(index, root.columns);
+                property <int> at-row: Math.floor(index / root.columns);
+                property <length> cell-width: (area.width - root.gap * (root.columns - 1)) / root.columns;
+                property <length> cell-height: (area.height - root.gap * (root.rows - 1)) / root.rows;
+                visible: root.big < 0 || root.big == index;
+                x: root.big == index ? 0 : self.at-column * (self.cell-width + root.gap);
+                y: root.big == index ? 0 : self.at-row * (self.cell-height + root.gap);
+                width: root.big == index ? area.width : self.cell-width;
+                height: root.big == index ? area.height : self.cell-height;
+                tile: tile;
+                editing: root.editing == tile.key;
+                edit => {
+                    root.editing = tile.key;
+                }
+                renamed(text) => {
+                    root.renamed(tile.key, text);
+                    root.editing = "";
+                }
+                picture-double-clicked => {
+                    root.big = root.big == index ? -1 : index;
+                }
+            }
+        }
+    }
+}

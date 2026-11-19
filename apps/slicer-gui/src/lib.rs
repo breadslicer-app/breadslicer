@@ -30,6 +30,8 @@ mod diagnostics;
 mod error_dialog;
 mod export_print_file;
 mod printer_camera;
+mod printer_wall;
+mod numbers;
 mod send_to_printer;
 mod export_progress;
 mod export_progress_panel;

@@ -305,6 +305,7 @@ fn programmatic_construction_round_trips() {
         normal_exposure_sec: Some(PositiveFiniteSec::new(2.5).unwrap()),
         bottom_exposure_sec: Some(PositiveFiniteSec::new(30.0).unwrap()),
         bottom_layer_count: Some(6),
+        transition_layer_count: None,
         wait_before_cure_sec: Some(NonNegativeFiniteSec::new(0.5).unwrap()),
         wait_after_cure_sec: None,
         wait_after_lift_sec: Some(NonNegativeFiniteSec::ZERO),

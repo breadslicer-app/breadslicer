@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with the raw length of the mesh chunk set to 2^63: a reader that allocates it up front asks for 8 EiB.",
+  "reason": "bad-payload",
+  "chunk": "MESH"
+}

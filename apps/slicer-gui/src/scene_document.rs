@@ -2495,7 +2495,8 @@ impl SceneDocument {
                 attachment: LeafAttachment::Root { position },
                 payload: LeafPayload::MeshResource(target_rid),
                 local_transform: final_xform,
-                meta: None,
+                // The copy keeps its model's name.
+                meta: frag_node.meta.clone(),
             });
             for (leaf, kind, tags) in frag_scene.surface_tags_iter() {
                 if leaf == frag_root {

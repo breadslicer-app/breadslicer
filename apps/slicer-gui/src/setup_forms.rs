@@ -41,17 +41,16 @@ fn tidy(value: f64) -> String {
     if text.is_empty() || text == "-" {
         "0".to_owned()
     } else {
-        text.to_owned()
+        crate::numbers::shown(text)
     }
 }
 
 /// A number typed in a slot, tidied the same way; text that is no number
 /// stays as typed.
 fn tidy_text(text: &str) -> String {
-    text.trim()
-        .parse::<f64>()
+    crate::numbers::parse_number(text)
         .map(tidy)
-        .unwrap_or_else(|_| text.trim().to_owned())
+        .unwrap_or_else(|| text.trim().to_owned())
 }
 
 fn number(key: &str, label: impl Into<SharedString>, unit: &str, value: &str) -> FormField {
@@ -147,10 +146,11 @@ enum Kind {
 }
 
 /// The keys of a calibration block's slots.
-const BLOCK_KEYS: [&str; 23] = [
+const BLOCK_KEYS: [&str; 24] = [
     "normal_exposure_sec",
     "bottom_exposure_sec",
     "bottom_layer_count",
+    "transition_layer_count",
     "wait_before_cure_sec",
     "wait_after_cure_sec",
     "wait_after_lift_sec",
@@ -179,6 +179,7 @@ fn block_texts(input: &CalibrationFormInput) -> HashMap<String, String> {
         &i.normal_exposure_sec,
         &i.bottom_exposure_sec,
         &i.bottom_layer_count,
+        &i.transition_layer_count,
         &i.wait_before_cure_sec,
         &i.wait_after_cure_sec,
         &i.wait_after_lift_sec,
@@ -212,6 +213,7 @@ fn block_input(texts: &HashMap<String, String>) -> CalibrationFormInput {
         normal_exposure_sec: g("normal_exposure_sec"),
         bottom_exposure_sec: g("bottom_exposure_sec"),
         bottom_layer_count: g("bottom_layer_count"),
+        transition_layer_count: g("transition_layer_count"),
         wait_before_cure_sec: g("wait_before_cure_sec"),
         wait_after_cure_sec: g("wait_after_cure_sec"),
         wait_after_lift_sec: g("wait_after_lift_sec"),
@@ -833,6 +835,11 @@ impl Form {
                 vec![
                     n("bottom_layer_count", ctr!("PrinterPicker", "Count"), ""),
                     n(
+                        "transition_layer_count",
+                        ctr!("PrinterPicker", "Transition layers"),
+                        "",
+                    ),
+                    n(
                         "bottom_exposure_sec",
                         ctr!("PrinterPicker", "Exposure"),
                         "s",
@@ -1304,7 +1311,7 @@ impl Form {
         if text.trim().is_empty() {
             return Ok(None);
         }
-        text.trim()
+        crate::numbers::normal(&text)
             .parse::<f64>()
             .map(Some)
             .map_err(|_| ctr!("PrinterPicker", "{} is not a number.", label).to_string())

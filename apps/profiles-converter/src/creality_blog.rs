@@ -317,6 +317,7 @@ fn block_of<'a>(at: impl Fn(Setting) -> &'a str) -> Option<MaterialPerPrinter> {
             PositiveFiniteSec::new(value(Setting::InitialExposure, "s")?).ok()?,
         ),
         bottom_layer_count: None,
+        transition_layer_count: None,
         wait_before_cure_sec: wait,
         wait_after_cure_sec: None,
         wait_after_lift_sec: None,

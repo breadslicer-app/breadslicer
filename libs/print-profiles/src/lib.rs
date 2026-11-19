@@ -107,7 +107,7 @@ pub use resolve_warning::{FallbackLevel, IntentSource, ResolveWarning, SnapReaso
 pub use resolved_field::ResolvedField;
 pub use resolved_print_config::ResolvedPrintConfig;
 pub use resolver::{
-    UNCALIBRATED_BOTTOM_LAYER_COUNT, resolve, resolve_layer_height, resolve_scale_compensation,
+    UNCALIBRATED_BOTTOM_LAYER_COUNT, UNCALIBRATED_TRANSITION_LAYER_COUNT, resolve, resolve_layer_height, resolve_scale_compensation,
     snap_to_z_step,
 };
 pub use scene_overrides::SceneOverrides;

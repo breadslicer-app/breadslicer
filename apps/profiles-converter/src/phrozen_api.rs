@@ -178,6 +178,7 @@ fn block_of(sheet: &BTreeMap<String, serde_json::Value>) -> Option<MaterialPerPr
             .map(|n| n as u32),
         // The rest after the platform comes back is the wait before the
         // next exposure.
+        transition_layer_count: None,
         wait_before_cure_sec: rest,
         wait_after_cure_sec: None,
         wait_after_lift_sec: None,

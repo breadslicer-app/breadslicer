@@ -262,6 +262,7 @@ fn block(normal: PositiveFiniteSec, bottom: PositiveFiniteSec) -> MaterialPerPri
         normal_exposure_sec: Some(normal),
         bottom_exposure_sec: Some(bottom),
         bottom_layer_count: None,
+        transition_layer_count: None,
         wait_before_cure_sec: None,
         wait_after_cure_sec: None,
         wait_after_lift_sec: None,

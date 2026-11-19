@@ -196,20 +196,25 @@ pub(crate) fn fragment_from_document_selection(doc: &SceneDocument) -> Option<Sc
 
 /// [`fragment_from_document_selection`] of the leaf `node_id`.
 fn fragment_of(doc: &SceneDocument, node_id: NodeId) -> Option<SceneFragment> {
-    let (arc, world_xform, paint) = doc
+    let (arc, world_xform, paint, meta) = doc
         .with_scene(|spatial| {
             let graph = spatial.graph();
             let arc = graph.leaf_mesh_arc(node_id).cloned()?;
+            let meta = graph.node(node_id).and_then(|node| node.meta.clone());
             let world = spatial.leaf(node_id).map(|q| q.world_transform())?;
             let paint: Vec<(PaintKind, SurfaceTags)> = graph
                 .surface_tags_iter()
                 .filter(|(leaf, _, _)| *leaf == node_id)
                 .map(|(_, kind, tags)| (kind, tags.clone()))
                 .collect();
-            Some((arc, world, paint))
+            Some((arc, world, paint, meta))
         })
         .flatten()?;
-    Some(SceneFragment::from_leaf_snapshot(arc, drop_translation(world_xform)).with_paint(paint))
+    Some(
+        SceneFragment::from_leaf_snapshot(arc, drop_translation(world_xform))
+            .with_paint(paint)
+            .with_meta(meta),
+    )
 }
 
 /// Returns the world-space AABB of the fragment's single root leaf, after

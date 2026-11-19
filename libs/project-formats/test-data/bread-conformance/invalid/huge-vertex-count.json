@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with the vertex count of its mesh set to 2^32 - 1, far more than its vertex buffer can hold: a reader that allocates for it up front asks for 48 GiB.",
+  "reason": "malformed",
+  "chunk": "MESH"
+}

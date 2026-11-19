@@ -1,0 +1,30 @@
+{
+  "description": "One triangle, shown by one leaf, with no names and no transform.",
+  "meta": null,
+  "meshes": [
+    {
+      "meta": null,
+      "vertex_count": 3,
+      "triangle_count": 1,
+      "vertices_sha256": "75ef72d281ec5cbb6d86239b2f8956db59daac39d371832a721ab8c502aedfe2",
+      "triangles_sha256": "ad5dc1478de06a4c2728ea528bd9361a4b945e92a414bf4d180cedaaeaa5f4cc"
+    }
+  ],
+  "mesh_resources": [],
+  "nodes": [
+    {
+      "kind": "leaf",
+      "meta": null,
+      "transform": null,
+      "mesh": 0
+    }
+  ],
+  "subtrees": [],
+  "roots": [0],
+  "settings": null,
+  "supports": [],
+  "hollows": [],
+  "thumbnail": null,
+  "support_previews": [],
+  "surface": []
+}

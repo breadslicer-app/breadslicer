@@ -1,0 +1,36 @@
+{
+  "description": "The wavy grid, its triangles in their own order (connectivity A), and its vertices predicted and coded with rANS.",
+  "meta": null,
+  "meshes": [
+    {
+      "meta": {
+        "name": "wavy",
+        "comment": null
+      },
+      "vertex_count": 25,
+      "triangle_count": 32,
+      "vertices_sha256": "65b50288b54080cdc4ac07d4b71efdc1161226d4598c0854133dc2def16be918",
+      "triangles_sha256": "33d2c0bbee8e737dffcd5c3123c7b0d66613e6f01e16f17ac84f58e446fcb1cf"
+    }
+  ],
+  "mesh_resources": [],
+  "nodes": [
+    {
+      "kind": "leaf",
+      "meta": {
+        "name": "wavy",
+        "comment": null
+      },
+      "transform": null,
+      "mesh": 0
+    }
+  ],
+  "subtrees": [],
+  "roots": [0],
+  "settings": null,
+  "supports": [],
+  "hollows": [],
+  "thumbnail": null,
+  "support_previews": [],
+  "surface": []
+}

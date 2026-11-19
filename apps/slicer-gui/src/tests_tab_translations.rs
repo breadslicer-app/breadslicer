@@ -837,3 +837,316 @@ fn the_scene_settings_chip_reads_whole_in_spanish() {
     assert!(name <= chip, "the name fits: {name} in {chip}");
     assert!(!view, "no chip is called View any more");
 }
+
+/// Every Slint file with texts: the dialogs, the message cards and the
+/// rest (#48).
+const DIALOG_SLINT: &[(&str, &str)] = &[
+    ("message-layer.slint", MESSAGE_LAYER),
+    ("setup-layer.slint", include_str!("../ui/setup-layer.slint")),
+    (
+        "about-window.slint",
+        include_str!("../ui/about-window.slint"),
+    ),
+    (
+        "printer-dialog.slint",
+        include_str!("../ui/printer-dialog.slint"),
+    ),
+    (
+        "profile-view-dialog.slint",
+        include_str!("../ui/profile-view-dialog.slint"),
+    ),
+    (
+        "extend-dialog.slint",
+        include_str!("../ui/extend-dialog.slint"),
+    ),
+    ("fork-dialog.slint", include_str!("../ui/fork-dialog.slint")),
+    (
+        "framed-window.slint",
+        include_str!("../ui/kit/framed-window.slint"),
+    ),
+    (
+        "printer-wall.slint",
+        include_str!("../ui/workspace/printer-wall.slint"),
+    ),
+    (
+        "preferences-window.slint",
+        include_str!("../ui/preferences/preferences-window.slint"),
+    ),
+    (
+        "appearance.slint",
+        include_str!("../ui/preferences/appearance.slint"),
+    ),
+    (
+        "printer.slint",
+        include_str!("../ui/preferences/printer.slint"),
+    ),
+    ("resin.slint", include_str!("../ui/preferences/resin.slint")),
+    (
+        "slicing.slint",
+        include_str!("../ui/preferences/slicing.slint"),
+    ),
+    (
+        "privacy.slint",
+        include_str!("../ui/preferences/privacy.slint"),
+    ),
+    ("main-window.slint", include_str!("../ui/main-window.slint")),
+    ("mesh-viewer.slint", include_str!("../ui/mesh-viewer.slint")),
+    (
+        "slice-control-panel.slint",
+        include_str!("../ui/slice-control-panel.slint"),
+    ),
+    (
+        "slice-view-panel.slint",
+        include_str!("../ui/slice-view-panel.slint"),
+    ),
+    (
+        "object-list-panel.slint",
+        include_str!("../ui/object-list-panel.slint"),
+    ),
+    (
+        "scene-panel.slint",
+        include_str!("../ui/workspace/scene-panel.slint"),
+    ),
+    (
+        "support-shape.slint",
+        include_str!("../ui/workspace/support-shape.slint"),
+    ),
+    ("inspectors.slint", INSPECTORS),
+    ("start-dialog.slint", START_DIALOG),
+    ("layer-view.slint", LAYER_VIEW),
+];
+
+/// Every Rust file with texts: the dialogs, the messages and the rest (#48).
+const DIALOG_SOURCES: &[(&str, &str)] = &[
+    ("error_dialog.rs", include_str!("error_dialog.rs")),
+    ("about_window.rs", include_str!("about_window.rs")),
+    ("setup_window.rs", include_str!("setup_window.rs")),
+    ("setup_forms.rs", include_str!("setup_forms.rs")),
+    ("send_to_printer.rs", include_str!("send_to_printer.rs")),
+    ("printer_wall.rs", include_str!("printer_wall.rs")),
+    ("printer_camera.rs", include_str!("printer_camera.rs")),
+    ("material_form/mod.rs", include_str!("material_form/mod.rs")),
+    ("printer_form/mod.rs", include_str!("printer_form/mod.rs")),
+    (
+        "preferences_window/mod.rs",
+        include_str!("preferences_window/mod.rs"),
+    ),
+    (
+        "preferences_window/printer_dialog.rs",
+        include_str!("preferences_window/printer_dialog.rs"),
+    ),
+    (
+        "preferences_window/profile_editor.rs",
+        include_str!("preferences_window/profile_editor.rs"),
+    ),
+    (
+        "preferences_window/extend_dialog.rs",
+        include_str!("preferences_window/extend_dialog.rs"),
+    ),
+    (
+        "preferences_window/fork_dialog.rs",
+        include_str!("preferences_window/fork_dialog.rs"),
+    ),
+    (
+        "preferences_window/profile_view_dialog.rs",
+        include_str!("preferences_window/profile_view_dialog.rs"),
+    ),
+    ("diagnostics/mod.rs", include_str!("diagnostics/mod.rs")),
+    ("app_state.rs", include_str!("app_state.rs")),
+    ("arrange_run.rs", include_str!("arrange_run.rs")),
+    ("arrange_run/fill.rs", include_str!("arrange_run/fill.rs")),
+    ("controls_layout.rs", include_str!("controls_layout.rs")),
+    ("cut_run.rs", include_str!("cut_run.rs")),
+    ("df_support_run.rs", include_str!("df_support_run.rs")),
+    ("export_print_file.rs", include_str!("export_print_file.rs")),
+    ("graphics_status.rs", include_str!("graphics_status.rs")),
+    ("hollow_run.rs", include_str!("hollow_run.rs")),
+    ("import_notes.rs", include_str!("import_notes.rs")),
+    ("language.rs", include_str!("language.rs")),
+    ("layer_pixels.rs", include_str!("layer_pixels.rs")),
+    ("lib.rs", include_str!("lib.rs")),
+    ("mesh_check.rs", include_str!("mesh_check.rs")),
+    ("mesh_loader.rs", include_str!("mesh_loader.rs")),
+    ("orient_run.rs", include_str!("orient_run.rs")),
+    (
+        "preferences_filters.rs",
+        include_str!("preferences_filters.rs"),
+    ),
+    (
+        "preferences_window/extend_dialog.rs",
+        include_str!("preferences_window/extend_dialog.rs"),
+    ),
+    (
+        "preferences_window/fork_dialog.rs",
+        include_str!("preferences_window/fork_dialog.rs"),
+    ),
+    (
+        "preferences_window/mod.rs",
+        include_str!("preferences_window/mod.rs"),
+    ),
+    (
+        "preferences_window/printer_dialog.rs",
+        include_str!("preferences_window/printer_dialog.rs"),
+    ),
+    (
+        "preferences_window/profile_editor.rs",
+        include_str!("preferences_window/profile_editor.rs"),
+    ),
+    (
+        "presupported_import.rs",
+        include_str!("presupported_import.rs"),
+    ),
+    ("print_format.rs", include_str!("print_format.rs")),
+    (
+        "printer_settings_import.rs",
+        include_str!("printer_settings_import.rs"),
+    ),
+    (
+        "profile_extending/mod.rs",
+        include_str!("profile_extending/mod.rs"),
+    ),
+    (
+        "profile_forking/mod.rs",
+        include_str!("profile_forking/mod.rs"),
+    ),
+    ("profile_origin.rs", include_str!("profile_origin.rs")),
+    (
+        "profile_transfer/mod.rs",
+        include_str!("profile_transfer/mod.rs"),
+    ),
+    ("profile_view/mod.rs", include_str!("profile_view/mod.rs")),
+    ("recent_files.rs", include_str!("recent_files.rs")),
+    ("repair_report.rs", include_str!("repair_report.rs")),
+    ("repair_run.rs", include_str!("repair_run.rs")),
+    ("resin_cost.rs", include_str!("resin_cost.rs")),
+    ("review_panel.rs", include_str!("review_panel.rs")),
+    ("scene_export.rs", include_str!("scene_export.rs")),
+    ("scene_loader.rs", include_str!("scene_loader.rs")),
+    ("scene_save.rs", include_str!("scene_save.rs")),
+    ("slice_panel.rs", include_str!("slice_panel.rs")),
+    ("slice_projection.rs", include_str!("slice_projection.rs")),
+    ("slice_run.rs", include_str!("slice_run.rs")),
+    ("split_bodies.rs", include_str!("split_bodies.rs")),
+    ("support_gen_run.rs", include_str!("support_gen_run.rs")),
+    ("surface_brush.rs", include_str!("surface_brush.rs")),
+    (
+        "viewport/controller.rs",
+        include_str!("viewport/controller.rs"),
+    ),
+    (
+        "viewport/object_list.rs",
+        include_str!("viewport/object_list.rs"),
+    ),
+    ("wiring.rs", include_str!("wiring.rs")),
+];
+
+/// Every `@tr` in a Slint `source`; one with no context takes the name of
+/// the component it is in, as Slint gives it.
+fn slint_texts_with_default_context(source: &str) -> Vec<SlintText> {
+    let mut texts = Vec::new();
+    let mut at = 0;
+    while let Some(found) = source[at..].find("@tr(") {
+        let start = at + found;
+        let call = &source[start + 4..];
+        let component = source[..start]
+            .rmatch_indices("component ")
+            .find_map(|(i, _)| {
+                let name: String = source[i + 10..]
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                    .collect();
+                (!name.is_empty()).then_some(name)
+            })
+            .unwrap_or_default();
+        let (first, rest) = string_literal(call);
+        let (context, message, rest) = match rest.trim_start().strip_prefix("=>") {
+            Some(rest) => {
+                let (message, rest) = string_literal(rest);
+                (first, message, rest)
+            }
+            None => (component, first, rest),
+        };
+        texts.push(SlintText {
+            context,
+            message,
+            plural: rest.trim_start().starts_with('|'),
+        });
+        at = start + 4;
+    }
+    texts
+}
+
+/// #48: every text of the dialogs, the message cards and the rest of the app
+/// has Spanish.
+#[test]
+fn every_text_of_the_dialogs_and_messages_has_spanish() {
+    let spanish = spanish();
+    let mut untranslated: Vec<String> = Vec::new();
+    let mut found = 0;
+    for (file, source) in DIALOG_SLINT {
+        let texts = slint_texts_with_default_context(source);
+        found += texts.len();
+        untranslated.extend(
+            texts
+                .iter()
+                .filter(|text| !text.has_spanish(&spanish))
+                .map(|text| format!("{file}: {:?} => {:?}", text.context, text.message)),
+        );
+    }
+    for (file, source) in DIALOG_SOURCES {
+        let (missing, count) = untranslated_calls(&spanish, file, source);
+        found += count;
+        untranslated.extend(missing);
+    }
+    // A check that finds nothing checks nothing.
+    assert!(found >= 1500, "{found} texts found");
+    // A file of texts left off the lists would go unchecked.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (folder, listed, mark) in [
+        (
+            "src",
+            DIALOG_SOURCES.iter().map(|(f, _)| *f).collect::<Vec<_>>(),
+            "ctr!(",
+        ),
+        (
+            "ui",
+            DIALOG_SLINT.iter().map(|(f, _)| *f).collect::<Vec<_>>(),
+            "@tr(",
+        ),
+    ] {
+        for file in files_under(&root.join(folder)) {
+            let name = file.strip_prefix(root.join(folder)).unwrap();
+            let name = name.to_string_lossy().replace('\\', "/");
+            let short = name.rsplit('/').next().unwrap_or(&name).to_owned();
+            if name.contains("test") || name == "i18n.rs" {
+                continue;
+            }
+            let text = std::fs::read_to_string(&file).unwrap();
+            if text.contains(mark)
+                && !listed.contains(&name.as_str())
+                && !listed.contains(&short.as_str())
+            {
+                untranslated.push(format!("{name}: not on the list of files checked"));
+            }
+        }
+    }
+    assert!(
+        untranslated.is_empty(),
+        "{} with no Spanish: {untranslated:#?}",
+        untranslated.len()
+    );
+}
+
+/// Every `.rs` and `.slint` file under `folder`.
+fn files_under(folder: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(folder).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(files_under(&path));
+        } else if path.extension().is_some_and(|e| e == "rs" || e == "slint") {
+            files.push(path);
+        }
+    }
+    files
+}

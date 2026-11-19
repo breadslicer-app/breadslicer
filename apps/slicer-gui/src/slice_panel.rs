@@ -188,7 +188,11 @@ impl SlicePanelBridge {
         ui.set_slice_resin_current_index(resin.selected);
         ui.set_slice_print_format_options(ModelRc::new(VecModel::from(format_labels)));
         ui.set_slice_print_format_current_index(formats.selected);
-        ui.set_slice_print_format_note(formats.refusals.join("\n").into());
+        let mut notes = formats.refusals.clone();
+        if let Some(note) = selected_format.and_then(ramp_note) {
+            notes.push(note);
+        }
+        ui.set_slice_print_format_note(notes.join("\n").into());
         ui.set_slice_first_layer_height_text(
             format_first_layer_height(view.first_layer_height()).into(),
         );
@@ -442,6 +446,18 @@ impl PanelUpdate {
             | PreferencesChange::SilencedMessages => None,
         }
     }
+}
+
+/// What a format that cannot keep the exposure stepping down over the
+/// transition layers prints them at (#96), or `None` for one that keeps it.
+fn ramp_note(format: PrinterFileFormat) -> Option<String> {
+    (!format.keeps_exposure_ramp()).then(|| {
+        crate::i18n::ctr!(
+            "SlicePanel",
+            "This format keeps one exposure for the bottom layers and one for the rest: the transition layers print at the normal exposure."
+        )
+        .to_string()
+    })
 }
 
 /// Resolves a picked option index into the id at that position, or `None` when

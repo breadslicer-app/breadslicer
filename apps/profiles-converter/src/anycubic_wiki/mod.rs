@@ -425,6 +425,7 @@ fn block_of(at: impl Fn(Setting, &str, bool) -> Cell) -> Option<MaterialPerPrint
         normal_exposure_sec: Some(sec(value(Setting::Exposure, "s", true)?)?),
         bottom_exposure_sec: Some(sec(value(Setting::BottomExposure, "s", true)?)?),
         bottom_layer_count: Some(count(bottom_layers)?),
+        transition_layer_count: None,
         wait_before_cure_sec: light_off,
         wait_after_cure_sec: None,
         wait_after_lift_sec: None,

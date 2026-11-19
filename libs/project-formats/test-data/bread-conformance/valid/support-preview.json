@@ -1,0 +1,79 @@
+{
+  "description": "A triangle model with supports whose support leaf shows an empty mesh, and a preview of those supports: a reader that shows the preview shows a post under the triangle.",
+  "meta": null,
+  "meshes": [
+    {
+      "meta": null,
+      "vertex_count": 3,
+      "triangle_count": 1,
+      "vertices_sha256": "75ef72d281ec5cbb6d86239b2f8956db59daac39d371832a721ab8c502aedfe2",
+      "triangles_sha256": "ad5dc1478de06a4c2728ea528bd9361a4b945e92a414bf4d180cedaaeaa5f4cc"
+    },
+    {
+      "meta": null,
+      "vertex_count": 0,
+      "triangle_count": 0,
+      "vertices_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "triangles_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "mesh_resources": [],
+  "nodes": [
+    {
+      "kind": "leaf",
+      "meta": {
+        "name": "model",
+        "comment": null
+      },
+      "transform": {
+        "linear": [
+          [1.0, 0.0, 0.0],
+          [0.0, 1.0, 0.0],
+          [0.0, 0.0, 1.0]
+        ],
+        "translation": [0.0, 0.0, 5.0]
+      },
+      "mesh": 0
+    },
+    {
+      "kind": "leaf",
+      "meta": {
+        "name": "supports",
+        "comment": null
+      },
+      "transform": null,
+      "mesh": 1
+    }
+  ],
+  "subtrees": [],
+  "roots": [0, 1],
+  "settings": null,
+  "supports": [
+    {
+      "model": 0,
+      "support": 1,
+      "generator": "example",
+      "version": 1,
+      "document_size": 17,
+      "document_sha256": "8362b07d1bbff5d2e6a08f44315021910a28598a2a2f362e8fab1d2f3514fc4f"
+    }
+  ],
+  "hollows": [],
+  "thumbnail": null,
+  "support_previews": [
+    {
+      "leaf": 1,
+      "mesh": {
+        "meta": {
+          "name": "post",
+          "comment": null
+        },
+        "vertex_count": 6,
+        "triangle_count": 8,
+        "vertices_sha256": "c7d742d7e34e5ed953ed750ef736b5bb1fdba4d41f618056d17d499a8a5fdc21",
+        "triangles_sha256": "bce72d01ff4efacd670463983c69012a469c0bb26dbf523c7cb78eae9991aad4"
+      }
+    }
+  ],
+  "surface": []
+}
