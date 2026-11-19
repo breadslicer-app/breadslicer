@@ -244,8 +244,8 @@ fn a_two_stage_travel_fills_the_extra_table() {
     let mut program = program("Photon Mono X", raster(AaLevel::X4, Mirror::default()), 6);
     for (index, layer) in program.layers.iter_mut().enumerate() {
         let bottom = index < 2;
-        layer.lift = stage(if bottom { 2.0 } else { 3.0 }, 60.0);
-        layer.retract = stage(if bottom { 2.0 } else { 3.0 }, 90.0);
+        layer.lift = Some(stage(if bottom { 2.0 } else { 3.0 }, 60.0));
+        layer.retract = Some(stage(if bottom { 2.0 } else { 3.0 }, 90.0));
         layer.second_lift = Some(stage(if bottom { 4.0 } else { 5.0 }, 180.0));
         layer.second_retract = Some(stage(if bottom { 4.0 } else { 5.0 }, 360.0));
     }

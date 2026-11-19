@@ -42,14 +42,14 @@ fn layer(slab_top_mm: f64, exposure_sec: f64) -> LayerProgram {
         wait_before_cure_sec: sec(0.5),
         wait_after_cure_sec: sec(0.25),
         wait_after_lift_sec: sec(0.125),
-        lift: MotionStage {
+        lift: Some(MotionStage {
             distance_mm: mm(5.5),
             speed_mm_min: PositiveFiniteMmPerMin::new(91.0).unwrap(),
-        },
-        retract: MotionStage {
+        }),
+        retract: Some(MotionStage {
             distance_mm: mm(6.5),
             speed_mm_min: PositiveFiniteMmPerMin::new(137.0).unwrap(),
-        },
+        }),
         second_lift: None,
         second_retract: None,
         light_pwm: LightPwm::FULL,
@@ -102,7 +102,8 @@ fn the_still_time_counts_every_exposure_and_every_wait() {
 fn the_still_time_leaves_the_travel_out() {
     let single = program(vec![layer(0.05, 2.5)]);
     let mut faster = single.clone();
-    faster.layers[0].lift.speed_mm_min = PositiveFiniteMmPerMin::new(1.0).unwrap();
+    faster.layers[0].lift.as_mut().unwrap().speed_mm_min =
+        PositiveFiniteMmPerMin::new(1.0).unwrap();
 
     assert_eq!(still_time_sec(&single), still_time_sec(&faster));
 }

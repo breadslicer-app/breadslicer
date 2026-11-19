@@ -140,9 +140,24 @@ impl Motion {
             wait_before_cure_sec: round_away(layer.wait_before_cure_sec.value() as f32, 2),
             wait_after_cure_sec: round_away(layer.wait_after_cure_sec.value() as f32, 2),
             wait_after_lift_sec: round_away(layer.wait_after_lift_sec.value() as f32, 2),
-            lift_mm: round_away(layer.lift.distance_mm.value() as f32, 2),
-            lift_mm_min: round_away(layer.lift.speed_mm_min.value() as f32, 2),
-            retract_mm_min: round_away(layer.retract.speed_mm_min.value() as f32, 2),
+            lift_mm: round_away(
+                layer
+                    .lift
+                    .map_or(0.0, |stage| stage.distance_mm.value() as f32),
+                2,
+            ),
+            lift_mm_min: round_away(
+                layer
+                    .lift
+                    .map_or(0.0, |stage| stage.speed_mm_min.value() as f32),
+                2,
+            ),
+            retract_mm_min: round_away(
+                layer
+                    .retract
+                    .map_or(0.0, |stage| stage.speed_mm_min.value() as f32),
+                2,
+            ),
             second_lift_mm: round_away(second_lift_mm, 2),
             second_lift_mm_min: round_away(second_lift_mm_min, 2),
             second_retract_mm: round_away(second_retract_mm, 2),

@@ -43,7 +43,9 @@
 
 use std::sync::Arc;
 
-use sc_geom::df_supports::{DfSupportSession, is_any_support_mesh, scene_model_leaves};
+use sc_geom::df_supports::{
+    DfSupportSession, is_any_support_mesh, is_plate_raft, is_support_mesh, scene_model_leaves,
+};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
 
@@ -61,13 +63,51 @@ pub(crate) struct Anchor {
     model_start: Transform3D,
     supports: Option<(NodeId, Transform3D)>,
     imported: Option<(NodeId, Transform3D)>,
+    /// The one raft for all (#556) when it is this set's alone: it rides
+    /// along too, rather than wait to be drawn again once the model lands.
+    raft: Option<(NodeId, Transform3D)>,
 }
 
 impl Anchor {
     /// Each support leaf that rides along, with where it started.
     fn riders(&self) -> impl Iterator<Item = (NodeId, Transform3D)> {
-        self.supports.into_iter().chain(self.imported)
+        self.supports
+            .into_iter()
+            .chain(self.imported)
+            .chain(self.raft)
     }
+}
+
+/// The one raft for all (#556) under the set `set` alone: its leaf and
+/// transform, when the scene has that one set of generated supports and that
+/// one raft, both at the root. With more sets the raft is drawn again from
+/// all their roots once a move lands; with one, it moves as the set does.
+fn lone_raft(doc: &SceneDocument, set: NodeId) -> Option<(NodeId, Transform3D)> {
+    doc.with_scene(|spatial| {
+        let (mut sets, mut rafts) = (Vec::new(), Vec::new());
+        for leaf in (0..).map_while(|i| spatial.leaf_id_at_index(i)) {
+            let Some(query) = spatial.leaf(leaf) else {
+                continue;
+            };
+            if is_plate_raft(query.mesh()) {
+                rafts.push(leaf);
+            } else if is_support_mesh(query.mesh()) {
+                sets.push(leaf);
+            }
+        }
+        let ([only], [raft]) = (&sets[..], &rafts[..]) else {
+            return None;
+        };
+        if *only != set {
+            return None;
+        }
+        let query = spatial.leaf(*raft)?;
+        query
+            .parent_world()
+            .is_identity()
+            .then(|| (*raft, query.local_transform()))
+    })
+    .flatten()
 }
 
 /// The leaf a transform edit moves; `None` for any other edit.
@@ -221,12 +261,14 @@ pub(crate) fn anchor(doc: &SceneDocument, leaf: NodeId) {
     if supports.is_none() && imported.is_none() {
         return;
     }
+    let raft = supports.and_then(|(set, _)| lone_raft(doc, set));
     slot.set(Some(Anchor {
         revision,
         model: leaf,
         model_start,
         supports,
         imported,
+        raft,
     }));
 }
 
@@ -616,11 +658,23 @@ fn follow_commit(
     let local = doc
         .with_scene(|spatial| spatial.leaf(supports).map(|q| q.local_transform()))
         .flatten()?;
-    let carry = SceneEdit::SetLocalTransform {
+    let mut carry = SceneEdit::SetLocalTransform {
         node_id: supports,
         before: local,
         after: Transform3D::Affine(motion.affine().compose(&affine(&local))),
     };
+    // The one raft for all under this set alone moves with it, in the same
+    // step: it does not stay behind until it is drawn again.
+    if let Some((raft, at)) = lone_raft(doc, supports) {
+        carry = SceneEdit::Compound(vec![
+            carry,
+            SceneEdit::SetLocalTransform {
+                node_id: raft,
+                before: at,
+                after: Transform3D::Affine(motion.affine().compose(&affine(&at))),
+            },
+        ]);
+    }
     Some((
         carry,
         MovedSet {

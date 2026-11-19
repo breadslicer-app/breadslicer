@@ -11,7 +11,7 @@ import { AxisView, MeshViewer, NavMap, PointerModifiers } from "./mesh-viewer.sl
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
 import { CaptionButton, CaptionKind, DisclosureChevron, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
-import { CutCard, HollowInspector, OrientCard, OrientOption, OverhangCard, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
+import { CutCard, HollowInspector, OrientCard, OrientOption, OverhangCard, ReviewCard, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { ScenePanel, SceneRow } from "./workspace/scene-panel.slint";
 import { Card, Note, ScCheckBox } from "./kit/controls.slint";
 import { LayerView } from "./workspace/layer-view.slint";
@@ -554,6 +554,13 @@ export component MainWindow inherits Window {
     in property <bool> review-stale: false;
     in property <string> review-message;
     in-out property <int> review-selected: -1;
+    // The REVIEW card over the view unfolded, or folded to its heading.
+    in-out property <bool> review-open: true;
+    // The REVIEW card over the view in the Slice tab, as wide as this; the
+    // two chips under it take the same width together. 0 without it.
+    property <length> review-card-width: root.has-scene && root.workspace-section == WorkspaceSection.Slice
+        && root.slice-layer-count > 0 ? Math.min(340px, mv.width - 140px) : 0px;
+    property <length> projection-chip-width: root.review-card-width > 0 ? (root.review-card-width - 6px) / 2 : 122px;
     in property <int> review-notes;
     in property <bool> review-notes-open;
     in property <int> review-fill-small;
@@ -1876,6 +1883,7 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                     mv := MeshViewer {
                         nav-map: root.nav-map;
+                        projection-chip-width: root.projection-chip-width;
                         horizontal-stretch: 1;
                         rendering: root.mesh-rendering;
                         box-select-armed: root.box-select-armed;
@@ -2260,14 +2268,77 @@ export component MainWindow inherits Window {
                         }
                     }
 
+                    // REVIEW (#90) over the view, low on its left above the
+                    // view's chips: the column beside keeps the setup, the
+                    // result and the cost whole on a 1080p screen.
+                    if root.review-card-width > 0: ReviewCard {
+                        x: 12px;
+                        width: root.review-card-width;
+                        tallest: parent.height - 48px - 46px;
+                        y: parent.height - 46px - self.height;
+                        open <=> root.review-open;
+                        review-state: root.review-state;
+                        review-summary: root.review-summary;
+                        review-worst: root.review-worst;
+                        review-rows: root.review-rows;
+                        review-stale: root.review-stale;
+                        review-message: root.review-message;
+                        review-selected <=> root.review-selected;
+                        review-notes: root.review-notes;
+                        review-notes-open: root.review-notes-open;
+                        review-fill-small: root.review-fill-small;
+                        review-fills-note: root.review-fills-note;
+                        review-fills-clearable: root.review-fills-clearable;
+                        review-fills-clear-label: root.review-fills-clear-label;
+                        review-fix-all: root.review-fix-all;
+                        review-fixing: root.review-fixing;
+                        review-fix-progress: root.review-fix-progress;
+                        review-fix-phase: root.review-fix-phase;
+                        review-fix-repeat: root.review-fix-repeat;
+                        review-fix-repeat-toggled(on) => {
+                            root.review-fix-repeat-toggled(on);
+                        }
+                        review-fix-all-requested => {
+                            root.review-fix-all-requested();
+                        }
+                        review-fix-all-cancel => {
+                            root.review-fix-all-cancel();
+                        }
+                        review-fill-toggled(id) => {
+                            root.review-fill-toggled(id);
+                        }
+                        review-leave-requested(id) => {
+                            root.review-leave-requested(id);
+                        }
+                        review-fill-small-requested => {
+                            root.review-fill-small-requested();
+                        }
+                        review-fills-cleared => {
+                            root.review-fills-cleared();
+                        }
+                        review-notes-toggled => {
+                            root.review-notes-toggled();
+                        }
+                        review-finding-clicked(id) => {
+                            root.review-finding-clicked(id);
+                        }
+                        review-fix-requested(id) => {
+                            root.review-fix-requested(id);
+                        }
+                        review-raft-off-requested(id) => {
+                            root.review-raft-off-requested(id);
+                        }
+                    }
+
                     // What the view draws, for every tab (#578): the overhang
                     // map and what shows from under the plate. Beside the
                     // projection chip of the view. Scene settings, not View,
                     // which is the menu bar's (#581).
                     if root.has-scene: Rectangle {
-                        x: 140px;
+                        x: 12px + root.projection-chip-width + 6px;
                         y: parent.height - 38px;
-                        width: scene-settings-text.preferred-width + 20px;
+                        width: root.review-card-width > 0 ? root.review-card-width - root.projection-chip-width - 6px
+                            : scene-settings-text.preferred-width + 20px;
                         height: 24px;
                         border-radius: 2px;
                         background: #171a1d;
@@ -2435,6 +2506,7 @@ export component MainWindow inherits Window {
                                     root.slice-camera-toggle();
                                 }
                                 setup-open <=> root.slice-setup-open;
+                                review-fixing: root.review-fixing;
                                 overhang-map-on <=> root.overhang-map-on;
                                 overhang-map-limit: root.overhang-map-limit;
                                 overhang-map-toggled(on) => {
@@ -2472,57 +2544,6 @@ export component MainWindow inherits Window {
                                 }
                                 price-unit-picked(at) => {
                                     root.slice-price-unit-picked(at);
-                                }
-                                review-state: root.review-state;
-                                review-summary: root.review-summary;
-                                review-worst: root.review-worst;
-                                review-rows: root.review-rows;
-                                review-stale: root.review-stale;
-                                review-message: root.review-message;
-                                review-selected <=> root.review-selected;
-                                review-notes: root.review-notes;
-                                review-notes-open: root.review-notes-open;
-                                review-fill-small: root.review-fill-small;
-                                review-fills-note: root.review-fills-note;
-                                review-fills-clearable: root.review-fills-clearable;
-                                review-fills-clear-label: root.review-fills-clear-label;
-                                review-fix-all: root.review-fix-all;
-                                review-fixing: root.review-fixing;
-                                review-fix-progress: root.review-fix-progress;
-                                review-fix-phase: root.review-fix-phase;
-                                review-fix-repeat: root.review-fix-repeat;
-                                review-fix-repeat-toggled(on) => {
-                                    root.review-fix-repeat-toggled(on);
-                                }
-                                review-fix-all-requested => {
-                                    root.review-fix-all-requested();
-                                }
-                                review-fix-all-cancel => {
-                                    root.review-fix-all-cancel();
-                                }
-                                review-fill-toggled(id) => {
-                                    root.review-fill-toggled(id);
-                                }
-                                review-leave-requested(id) => {
-                                    root.review-leave-requested(id);
-                                }
-                                review-fill-small-requested => {
-                                    root.review-fill-small-requested();
-                                }
-                                review-fills-cleared => {
-                                    root.review-fills-cleared();
-                                }
-                                review-notes-toggled => {
-                                    root.review-notes-toggled();
-                                }
-                                review-finding-clicked(id) => {
-                                    root.review-finding-clicked(id);
-                                }
-                                review-fix-requested(id) => {
-                                    root.review-fix-requested(id);
-                                }
-                                review-raft-off-requested(id) => {
-                                    root.review-raft-off-requested(id);
                                 }
                                 printer-picked(i) => {
                                     root.slice-printer-picked(i);

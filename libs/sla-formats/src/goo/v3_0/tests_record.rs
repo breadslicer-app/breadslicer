@@ -33,14 +33,14 @@ fn layer() -> LayerProgram {
         wait_before_cure_sec: wait(0.1),
         wait_after_cure_sec: wait(0.2),
         wait_after_lift_sec: wait(0.3),
-        lift: MotionStage {
+        lift: Some(MotionStage {
             distance_mm: mm(5.0),
             speed_mm_min: speed(90.0),
-        },
-        retract: MotionStage {
+        }),
+        retract: Some(MotionStage {
             distance_mm: mm(6.0),
             speed_mm_min: speed(150.0),
-        },
+        }),
         second_lift: None,
         second_retract: None,
         light_pwm: LightPwm::new(50.0).unwrap(),

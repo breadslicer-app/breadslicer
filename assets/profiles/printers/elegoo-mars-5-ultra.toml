@@ -27,6 +27,7 @@ y = false
 supports_grayscale = true
 two_stage_lift = false
 has_camera = true
+tilting_vat = true
 network_protocol = "sdcp"
 
 [[capabilities.output_formats]]

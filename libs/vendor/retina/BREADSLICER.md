@@ -4,7 +4,23 @@ A copy of [retina](https://github.com/scottlamb/retina) 0.4.22 (Scott Lamb and
 contributors; MIT OR Apache-2.0), as published on crates.io, patched into the
 build with `[patch.crates-io]` in the root `Cargo.toml`.
 
-Changed, in `src/rtsp/parse.rs` only (marked "Breadslicer"):
+Changed (marked "Breadslicer"):
+
+In `src/client/parse.rs`:
+
+- an encoding whose payload format allows a single clock rate (H.264, H.265,
+  JPEG: 90000) takes it whatever the SDP's rtpmap says: the same printer
+  declares H.264 at 9000.
+
+In `src/codec/h264.rs`:
+
+- an Annex B start code (`00 00 01` or `00 00 00 01`) in front of an RTP
+  payload is skipped: the same printer sends every NAL behind one, which
+  RFC 6184 leaves out;
+- a packet whose NAL header names no NAL type drops its access unit, as a lost
+  packet would, instead of ending the stream.
+
+In `src/rtsp/parse.rs`:
 
 - a header line may end in a bare LF, and the head may end in one;
 - a header name may have blanks around it;

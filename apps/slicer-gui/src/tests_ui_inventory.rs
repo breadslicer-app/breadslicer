@@ -408,3 +408,93 @@ fn the_pictures_of_the_other_windows_are_written_when_asked() {
         });
     }
 }
+
+/// The review after Fix All, as a tester saw it (#633 round): a finding left
+/// with why, and one picked, on a short window and a tall one.
+#[test]
+fn the_pictures_of_the_review_are_written_when_asked() {
+    let Some(dir) = std::env::var_os(SHOTS_ENV).map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("the folder is made");
+    for (size, (w, h)) in [("short", (1280.0, 720.0)), ("tall", (1600.0, 1000.0))] {
+        for picked in [false, true] {
+            let dir = dir.clone();
+            on_fresh_slint_thread(move || {
+                let window = MainWindow::new().expect("a main window");
+                window.show().expect("the window shows");
+                window.window().set_size(slint::LogicalSize::new(w, h));
+                window.set_has_scene(true);
+                window.set_workspace_section(WorkspaceSection::Slice);
+                window.set_slice_layer_count(961);
+                let names = |list: &[&str]| {
+                    slint::ModelRc::new(slint::VecModel::from(
+                        list.iter()
+                            .map(|name| slint::SharedString::from(*name))
+                            .collect::<Vec<_>>(),
+                    ))
+                };
+                window.set_slice_resin_options(names(&["Standard Resin+"]));
+                window.set_slice_resin_current_index(0);
+                window.set_slice_estimate_valid(true);
+                window.set_slice_estimate_time("2 h 14 m".into());
+                window.set_slice_estimate_volume("48.2 ml".into());
+                window.set_slice_estimate_mass("53 g".into());
+                window.set_slice_cost("US$ 1.45".into());
+                window.set_review_state(1);
+                window.set_review_worst(0);
+                window.set_review_summary("2 errors · 2 notes".into());
+                window.set_review_message(
+                    "Fix All is done, and nothing is left to fix automatically. Each finding left says why it was left."
+                        .into(),
+                );
+                window.set_review_notes(2);
+                let row = |id: i32, header: &str, title: &str, layers: &str| {
+                    crate::ReviewRow {
+                    id,
+                    severity: 0,
+                    header: header.into(),
+                    title: title.into(),
+                    layers: layers.into(),
+                    detail: "The cavity holds about 12.4 ml of liquid resin with no way out; drill drain holes near its lowest point.".into(),
+                    fix: 2,
+                    fixed: false,
+                    fill: 0,
+                    fill_resin: Default::default(),
+                    leave: false,
+                    lift_label: Default::default(),
+                    remains: "Left by Fix All: drain holes are placed by hand, in the Hollow tab.".into(),
+                }
+                };
+                window.set_review_rows(slint::ModelRc::new(slint::VecModel::from(vec![
+                    row(0, "Errors", "Hollow without drain holes", "Layers 186–961"),
+                    row(1, "", "Hollow without drain holes", "Layers 40–512"),
+                ])));
+                if picked {
+                    window.set_review_selected(0);
+                }
+                let which = if picked { "picked" } else { "plain" };
+                write(window.window(), &dir, &format!("review-{size}-{which}"));
+                if !picked {
+                    // Folded to its heading, to see the model.
+                    window.set_review_open(false);
+                    write(window.window(), &dir, &format!("review-{size}-folded"));
+                    window.set_review_open(true);
+                    // More findings than the view holds: the list scrolls.
+                    let many: Vec<crate::ReviewRow> = (0..14)
+                        .map(|i| {
+                            row(
+                                i,
+                                if i == 0 { "Errors" } else { "" },
+                                "Island with nothing under it",
+                                &format!("Layer {}", 100 + i * 37),
+                            )
+                        })
+                        .collect();
+                    window.set_review_rows(slint::ModelRc::new(slint::VecModel::from(many)));
+                    write(window.window(), &dir, &format!("review-{size}-many"));
+                }
+            });
+        }
+    }
+}

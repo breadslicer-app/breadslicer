@@ -1051,7 +1051,7 @@ fn a_drain_is_drilled_into_an_imported_hollow_under_a_stretch() {
         .unwrap();
     assert_eq!(out.drains, vec![report]);
     assert!(hollow_df::topology::is_edge_manifold(&as_engine(&out.mesh)));
-    let (scene, leaf) = scene_with(out.mesh.clone(), world.clone());
+    let (scene, leaf) = scene_with(out.mesh.clone(), world);
     let baked = bake_mesh_to_world_of(&scene, leaf, &out.mesh);
     let floor = {
         let (polygons, holes) = holes_at_mid_height(baked, 0.4);

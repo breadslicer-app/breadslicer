@@ -107,6 +107,9 @@ export component MeshViewer inherits Rectangle {
     callback pan-drag(length, length);
     callback zoom-at(length, length, length);
     in property <bool> orthographic-view: false;
+    // The projection chip's width: wider in the Slice tab, where the chips
+    // line up under the REVIEW card.
+    in property <length> projection-chip-width: 122px;
     callback toggle-projection-requested();
     callback frame-selected-requested();
     callback frame-view-requested();
@@ -810,7 +813,7 @@ export component MeshViewer inherits Rectangle {
     // Small visible projection control, usable without knowing the shortcut.
     Rectangle {
         x: 12px; y: parent.height - 38px;
-        width: 122px; height: 24px;
+        width: root.projection-chip-width; height: 24px;
         border-radius: 2px;
         background: #171a1d;
         border-color: #272d32; border-width: 1px;

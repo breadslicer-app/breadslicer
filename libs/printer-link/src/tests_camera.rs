@@ -115,7 +115,7 @@ fn udp_pair() -> (UdpSocket, u16) {
     for _ in 0..50 {
         let rtp = UdpSocket::bind("127.0.0.1:0").unwrap();
         let port = rtp.local_addr().unwrap().port();
-        if port % 2 != 0 || port == u16::MAX {
+        if !port.is_multiple_of(2) || port == u16::MAX {
             continue;
         }
         if let Ok(rtcp) = UdpSocket::bind(("127.0.0.1", port + 1)) {
@@ -203,7 +203,7 @@ fn rtsp_connection(
             ),
             "DESCRIBE" => {
                 let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Camera\r\nt=0 0\r\n\
-                           m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n\
+                           m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/9000\r\n\
                            a=fmtp:96 packetization-mode=1\r\na=control:trackID=0\r\n";
                 format!(
                     "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Base: {base}/\r\n\
@@ -269,7 +269,9 @@ fn rtsp_connection(
             match udp_to.clone() {
                 Some((socket, client)) => {
                     thread::spawn(move || {
-                        stream_frames(&stop, &frames, |packet| {
+                        // As the printers' boards do: each NAL keeps its
+                        // Annex B start code.
+                        stream_frames(&stop, &frames, true, |packet| {
                             socket.send_to(packet, ("127.0.0.1", client)).is_ok()
                         })
                     });
@@ -277,7 +279,7 @@ fn rtsp_connection(
                 None => {
                     let writer = writer.clone();
                     thread::spawn(move || {
-                        stream_frames(&stop, &frames, |packet| {
+                        stream_frames(&stop, &frames, false, |packet| {
                             let mut framed = vec![b'$', 0];
                             framed.extend_from_slice(&(packet.len() as u16).to_be_bytes());
                             framed.extend_from_slice(packet);
@@ -294,8 +296,14 @@ fn rtsp_connection(
     stop.store(true, Ordering::Relaxed);
 }
 
-/// Sends `frames` as RTP packets through `send` until `stop` or it fails.
-fn stream_frames(stop: &AtomicBool, frames: &[Vec<u8>], mut send: impl FnMut(&[u8]) -> bool) {
+/// Sends `frames` as RTP packets through `send` until `stop` or it fails,
+/// each NAL behind its Annex B start code when `start_codes`.
+fn stream_frames(
+    stop: &AtomicBool,
+    frames: &[Vec<u8>],
+    start_codes: bool,
+    mut send: impl FnMut(&[u8]) -> bool,
+) {
     let mut seq: u16 = 0;
     let mut timestamp: u32 = 0;
     for frame in frames.iter().cycle() {
@@ -309,6 +317,9 @@ fn stream_frames(stop: &AtomicBool, frames: &[Vec<u8>], mut send: impl FnMut(&[u
             packet.extend_from_slice(&seq.to_be_bytes());
             packet.extend_from_slice(&timestamp.to_be_bytes());
             packet.extend_from_slice(&0x0BAD_CAFEu32.to_be_bytes());
+            if start_codes {
+                packet.extend_from_slice(&[0, 0, 0, 1]);
+            }
             packet.extend_from_slice(unit);
             if !send(&packet) {
                 return;

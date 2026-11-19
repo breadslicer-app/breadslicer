@@ -6411,6 +6411,13 @@ impl DfSupportRun {
         }
     }
 
+    /// Whether a plate's one raft for all still has to be drawn for the
+    /// scene as it stands: a slice should wait for it.
+    pub(crate) fn rafts_pending(&self) -> bool {
+        self.plate_rafts
+            .pending(&self.document, &self.ctrl.build_volume())
+    }
+
     /// Sets what Generate goes on to once its new supports are in (#606),
     /// which tells whether it started.
     pub(crate) fn set_after_generate(&self, then: impl Fn() -> bool + 'static) {

@@ -139,7 +139,7 @@ impl DrillTarget {
             // An odd count: the ray starts in the solid (a surface that
             // curves out past the start plane), so its first wall is the
             // one into the air.
-            let first = usize::from(walls.len() % 2 == 0);
+            let first = usize::from(walls.len().is_multiple_of(2));
             let enter = *walls.get(first)?;
             Some((
                 enter,

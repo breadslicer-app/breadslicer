@@ -360,11 +360,18 @@ fn parse_media(
                     u32::from_str_radix(c, 10).map_err(|_| "bad clockrate in rtpmap".to_string())
                 })
                 .transpose()?;
-            clock_rate = match clock_rate_from_rtpmap {
-                Some(c) if c != 0 => c,
-                _ => fixed_clock_rate(&media, &encoding_name.to_ascii_lowercase()).ok_or_else(
-                    || format!("rtpmap has no usable clock rate: {clock_rate_str:?}"),
-                )?,
+            // Breadslicer: an encoding whose payload format allows one rate
+            // takes it, whatever the rtpmap says: a printer's camera (a
+            // Chitu board) declares H.264 at 9000.
+            let fixed = fixed_clock_rate(&media, &encoding_name.to_ascii_lowercase());
+            clock_rate = match (fixed, clock_rate_from_rtpmap) {
+                (Some(fixed), _) => fixed,
+                (None, Some(c)) if c != 0 => c,
+                (None, _) => {
+                    return Err(format!(
+                        "rtpmap has no usable clock rate: {clock_rate_str:?}"
+                    ));
+                }
             };
             channels = channels_str
                 .map(|c| {

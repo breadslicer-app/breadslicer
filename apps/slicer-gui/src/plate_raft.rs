@@ -119,6 +119,13 @@ impl PlateRafts {
         self.job.borrow().is_none() && self.checked.get() == Some(document.scene_revision())
     }
 
+    /// Whether a raft still has to be drawn or land: one is being drawn, or
+    /// a plate's raft does not match its sets. A slice made now would not
+    /// see the raft the scene is about to have.
+    pub(crate) fn pending(&self, document: &SceneDocument, volume: &BuildVolume) -> bool {
+        self.job.borrow().is_some() || !self.work(document, volume).is_empty()
+    }
+
     /// Whether a raft is being drawn.
     #[cfg(test)]
     pub(crate) fn busy(&self) -> bool {

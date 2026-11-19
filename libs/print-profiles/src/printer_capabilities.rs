@@ -25,6 +25,10 @@ pub struct PrinterCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition_layers: Option<u32>,
     pub has_camera: bool,
+    /// The vat tilts to peel each layer off the film, so the platform only
+    /// steps up by the layer height after the bottom layers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tilting_vat: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_protocol: Option<NetworkProtocol>,
 }
