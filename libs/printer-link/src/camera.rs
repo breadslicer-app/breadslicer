@@ -39,8 +39,10 @@ const FIRST_UDP_PICTURE_TIMEOUT: Duration = Duration::from_secs(6);
 const QUIET_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often the stream is looked at for a stop.
 const CANCEL_POLL: Duration = Duration::from_millis(200);
-/// How long a closing stream waits for its TEARDOWN.
-const TEARDOWN_WAIT: Duration = Duration::from_secs(3);
+/// How long a closing stream waits for its TEARDOWN. A printer's board
+/// keeps a video slot (it has two) for a session closed without one, until
+/// it restarts: the TEARDOWN is worth the wait.
+const TEARDOWN_WAIT: Duration = Duration::from_secs(5);
 /// Pictures handed on at most this often (about 15 a second): every one is
 /// decoded, since each H.264 picture builds on the ones before.
 const SHOW_EVERY: Duration = Duration::from_millis(66);
@@ -190,10 +192,17 @@ pub fn watch_stream(
             Err(Attempt::OtherTransport(err)) => match udp_failure.take() {
                 None => udp_failure = Some(err),
                 Some(udp) => {
+                    // Both ways, first lines first; what each said in full
+                    // under them, for the log.
+                    let (tcp, udp) = (stream_text(&err), stream_text(&udp));
                     return Err(CameraError::Stream(format!(
-                        "{} (over UDP: {})",
-                        stream_text(&err),
-                        stream_text(&udp)
+                        "over UDP: {}; over TCP: {}
+
+over UDP: {udp}
+
+over TCP: {tcp}",
+                        first_line(&udp),
+                        first_line(&tcp),
                     )));
                 }
             },
@@ -211,6 +220,12 @@ fn stream_text(err: &CameraError) -> String {
         CameraError::Stream(what) => what.clone(),
         other => other.to_string(),
     }
+}
+
+/// The first line of what an error says: the stream's own errors go on
+/// with where and when, and a dump of what was read.
+pub fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or(text).trim_end()
 }
 
 /// How one way of reading the stream ended badly.
@@ -240,7 +255,9 @@ async fn play(
     let options = SessionOptions::default()
         .user_agent("Breadslicer".to_owned())
         .session_group(group)
-        .teardown(TeardownPolicy::Auto)
+        // Always, over TCP too: a session that failed after SETUP still
+        // holds one of the printer's two video slots until torn down.
+        .teardown(TeardownPolicy::Always)
         .receiver_reports(ReceiverReportPolicy::Always);
     let mut session = tokio::time::timeout(CONNECT_TIMEOUT, Session::describe(url, options))
         .await
