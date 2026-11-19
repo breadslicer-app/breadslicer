@@ -844,3 +844,51 @@ fn alt_on_the_move_gizmo_moves_a_copy() {
     assert!(ctrl.document().undo().unwrap());
     assert!(!ctrl.document().can_undo(), "one step");
 }
+
+/// The layer slider of the tabs before Slice reaches the top of the scene as
+/// it stands once a gesture lands (a tester's model turned with R kept the
+/// height it had before, and the slider at its top cut its head off).
+#[test]
+fn the_layer_slider_reaches_the_top_once_a_gesture_grows_the_model() {
+    crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+        let ui = crate::MainWindow::new().expect("the headless platform creates a main window");
+        let mut scene = Scene::new();
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, HALF])),
+                LeafPayload::Mesh(Arc::new(big_cube())),
+            )
+            .expect("inline-mesh leaf");
+        scene.add_root(leaf).expect("a fresh root");
+        let ctrl = std::rc::Rc::new(ViewportController::new_for_test_with_ui(&ui));
+        ctrl.register_document_listener();
+        ctrl.install_graph_for_test(scene);
+        ctrl.set_viewport_for_test(W, H);
+        ctrl.set_section(WorkspaceSection::Transform);
+        let mut camera = OrbitCamera::new(Vec3::ZERO, 60.0);
+        camera.set_axis_view(AxisView::Top);
+        ctrl.set_camera_for_test(camera);
+        select(&ctrl, &[0]);
+        let before = ui.get_prep_layer_count();
+        assert_eq!(before, (2.0 * HALF / 0.05).ceil() as i32);
+
+        // S, twice the size, kept on the plate: twice as tall.
+        let centre = pixel(&ctrl, Vec3::new(0.0, 0.0, HALF as f32));
+        let start = ScreenPoint::new(centre.x + 50.0, centre.y);
+        ctrl.on_modal_transform_start(2, start.x, start.y);
+        ctrl.on_pointer_move(ScreenPoint::new(centre.x + 100.0, centre.y), none());
+        ctrl.on_modal_transform_finish(true);
+        let top = ctrl
+            .document()
+            .with_scene(|s| {
+                let q = s.leaf(s.leaf_id_at_index(0).unwrap()).unwrap();
+                f64::from(q.transformed_aabb(q.world_transform()).unwrap().max().coords()[2])
+            })
+            .unwrap();
+        assert!((top - 4.0 * HALF).abs() < 1e-2, "{top}");
+        let count = ui.get_prep_layer_count();
+        assert_eq!(count, (top / 0.05).ceil() as i32, "the slider reaches the top");
+        assert_eq!(ui.get_prep_layer_index(), (count - 1) as f32, "and stays there");
+    });
+}

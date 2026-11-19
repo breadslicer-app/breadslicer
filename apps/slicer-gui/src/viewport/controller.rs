@@ -727,6 +727,9 @@ impl ViewportController {
                 // the stack, not as it applies.
                 if !self.gesture_active() {
                     self.mirror_slice_current_to_ui();
+                    // A gesture's edits applied while it ran: the slider of
+                    // the other tabs reaches the top of the scene it left.
+                    self.mirror_prep_layers_to_ui();
                 }
             }
             SceneEvent::DirtyChanged => self.mirror_dirty_state_to_ui(),

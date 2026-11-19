@@ -271,3 +271,56 @@ fn the_raft_still_to_be_drawn_is_told_until_it_lands() {
         assert!(!run.rafts_pending(), "drawn: a slice can go");
     });
 }
+
+/// One model on one raft for all: the raft is that model's set's alone, and
+/// rides along as the model is dragged, then stays where the move took it
+/// (a tester saw it wait behind until the model was let go).
+#[test]
+fn the_raft_of_one_model_alone_moves_with_it_while_it_is_dragged() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+        let model = leaves[0];
+        run.on_option(9, 1.0);
+        run.on_option(14, 1.0);
+        settle_rafts(&document, &run);
+        let (raft, _) = plate_rafts(&document).pop().expect("one raft on the plate");
+        let start = leaf_transform(&document, raft);
+        let (at, there) = ([20.0, 20.0, 8.0], [27.0, 15.0, 8.0]);
+
+        // Live: the raft rides along with the set.
+        move_live(&document, model, at, there);
+        assert_eq!(
+            leaf_transform(&document, raft),
+            translation([7.0, -5.0, 0.0]).compose(&start)
+        );
+        // Let go: it stays there, in the move's step, and is drawn again
+        // where it stands.
+        commit_move(&document, model, at, there);
+        assert_eq!(
+            leaf_transform(&document, raft),
+            translation([7.0, -5.0, 0.0]).compose(&start)
+        );
+        let centre = |document: &SceneDocument| {
+            document
+                .with_scene(|s| {
+                    let leaf = plate_rafts(document)[0].0;
+                    let q = s.leaf(leaf)?;
+                    let b = q.transformed_aabb(q.world_transform())?;
+                    let (lo, hi) = (b.min().coords(), b.max().coords());
+                    Some([(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0])
+                })
+                .flatten()
+                .expect("a raft")
+        };
+        let moved = centre(&document);
+        settle_rafts(&document, &run);
+        let drawn = centre(&document);
+        assert!(
+            (moved[0] - drawn[0]).abs() < 0.05 && (moved[1] - drawn[1]).abs() < 0.05,
+            "carried {moved:?}, drawn again {drawn:?}"
+        );
+        assert!(document.undo().unwrap());
+        assert_eq!(leaf_transform(&document, raft), start, "one step back");
+    });
+}
