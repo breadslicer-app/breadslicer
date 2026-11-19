@@ -69,4 +69,8 @@ pub struct CandidatePoint {
     /// into the rules' sizes); `None` sizes it the usual way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zone_size: Option<usize>,
+    /// SoulCrafted (#632): the contact lies inside a closed cavity of its
+    /// model, and its zone size is the cavity's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub enclosed: bool,
 }

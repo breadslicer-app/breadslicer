@@ -305,6 +305,7 @@ impl RunState {
         ctx: &PlanCtx<'_>,
     ) -> Option<SupportTypeId> {
         ctx.set_zone(candidate.zone_size);
+        ctx.set_enclosed(candidate.enclosed);
         let result: PlaceOutcome = place_one_candidate(
             candidate,
             &mut self.draft,
@@ -316,6 +317,7 @@ impl RunState {
             false,
         );
         ctx.set_zone(None);
+        ctx.set_enclosed(false);
         let placed_a_grid_host = result
             .kind
             .is_some_and(|k| get_support_type_descriptor(k).can_be_grid_host);
@@ -685,6 +687,7 @@ pub fn compute_auto_support_plan(
                 tip_diameter_mm: None,
                 grid_point: None,
                 zone_size: None,
+                enclosed: false,
             });
         }
     }
@@ -709,6 +712,7 @@ pub fn compute_auto_support_plan(
                 tip_diameter_mm: None,
                 grid_point: None,
                 zone_size: None,
+                enclosed: false,
             });
         }
     }
@@ -1070,6 +1074,7 @@ pub fn compute_auto_support_plan(
                 tip_diameter_mm: None,
                 grid_point: None,
                 zone_size: None,
+                enclosed: false,
             };
             let size_scale = live.auto_support.size_scale;
             let s_min = size_parameters(
@@ -1447,6 +1452,7 @@ pub fn compute_auto_support_plan(
                         tip_diameter_mm: None,
                         grid_point: None,
                         zone_size: None,
+                        enclosed: false,
                     };
                     let result = place_one_candidate(
                         &recandidate,

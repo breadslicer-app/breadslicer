@@ -12,6 +12,7 @@
 mod bench_real_model;
 mod builders5_df_tests;
 mod cavity_landing;
+mod hollow_cavity;
 mod js_math;
 mod pipeline;
 mod region_folds;

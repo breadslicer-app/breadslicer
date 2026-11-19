@@ -1539,6 +1539,7 @@ impl DfSupportSession {
                 tip_diameter_mm: None,
                 grid_point: None,
                 zone_size: zone,
+                enclosed: false,
             };
             if how.attach {
                 hang(
