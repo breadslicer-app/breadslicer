@@ -4442,8 +4442,50 @@ impl ViewportController {
             "invert" => self.invert_selection_on_plate(),
             "duplicate" => self.duplicate_selection(None),
             "duplicate-move" => self.duplicate_selection(Some(ScreenPoint::new(x, y))),
+            "group" => self.group_selection(true),
+            "ungroup" => self.group_selection(false),
             _ => {}
         }
+    }
+
+    /// Ctrl+G / Ctrl+Shift+G (#475): the selected models become a group, or
+    /// their groups are undone; the status bar says which.
+    pub(crate) fn group_selection(&self, group: bool) {
+        let document = self.session.document();
+        let models: Vec<sc_scene::NodeId> = document
+            .with_scene(|spatial| {
+                document
+                    .selection()
+                    .leaves()
+                    .iter()
+                    .map(|l| l.node_id())
+                    .filter(|&id| {
+                        spatial
+                            .leaf(id)
+                            .is_some_and(|q| !sc_geom::df_supports::is_any_support_mesh(q.mesh()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let text = if group {
+            if document.group(&models) {
+                document.set_selection(Selection::of(models.into_iter().map(LeafId)));
+                ctr!(
+                    "Workspace",
+                    "Grouped: picked, moved and arranged as one, on one raft of lines. Ctrl+Shift+G undoes it."
+                )
+            } else {
+                ctr!("Workspace", "Pick two models or more to group them.")
+            }
+        } else if document.ungroup(&models) {
+            ctr!("Workspace", "Ungrouped: each model is on its own again.")
+        } else {
+            ctr!("Workspace", "No group is picked.")
+        };
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_status_notice(text);
+        }
+        self.mark_dirty();
     }
 
     /// The models of the active plate, and in the Supports tab their

@@ -381,3 +381,41 @@ fn a_picked_model_takes_a_raft_of_its_own_and_keeps_it() {
         assert_eq!(raft_of(leaves[1]), RaftMode::Lines);
     });
 }
+
+/// A group's members stand on one raft (#475): grouped, their sets are drawn
+/// again apart, the plate shows one raft of lines under both; ungrouped,
+/// each is back on the tab's raft.
+#[test]
+fn a_group_of_models_stands_on_one_raft() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0], [40.0, 20.0, 8.0]]);
+        let apart = |model: NodeId| {
+            run.sets_in_force()
+                .into_iter()
+                .find(|d| d.model == model)
+                .expect("its set")
+                .session
+                .stands_on_one_raft()
+        };
+        assert!(!apart(leaves[0]) && !apart(leaves[1]));
+
+        assert!(document.group(&leaves));
+        run.follow_groups();
+        assert!(
+            apart(leaves[0]) && apart(leaves[1]),
+            "both on the group's raft"
+        );
+        settle_rafts(&document, &run);
+        assert_eq!(plate_rafts(&document).len(), 1, "one raft under the group");
+
+        assert!(document.ungroup(&leaves[..1]));
+        run.follow_groups();
+        assert!(
+            !apart(leaves[0]) && !apart(leaves[1]),
+            "each on its own again"
+        );
+        settle_rafts(&document, &run);
+        assert!(plate_rafts(&document).is_empty());
+    });
+}

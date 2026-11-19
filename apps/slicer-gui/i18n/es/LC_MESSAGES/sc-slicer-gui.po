@@ -9451,3 +9451,33 @@ msgstr "Pestañas para despegar"
 msgctxt "Inspector"
 msgid "Less raft to peel off the film: holes 0 for none. Print one to see how it holds before using it on a plate."
 msgstr "Menos balsa que despegar del film: agujeros 0 para ninguno. Imprimí una para ver cómo agarra antes de usarla en una cama."
+
+#: ui/mesh-viewer.slint
+msgctxt "MeshViewer"
+msgid "Group (Ctrl+G)"
+msgstr "Agrupar (Ctrl+G)"
+
+#: ui/mesh-viewer.slint
+msgctxt "MeshViewer"
+msgid "Ungroup (Ctrl+Shift+G)"
+msgstr "Desagrupar (Ctrl+Shift+G)"
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Grouped: picked, moved and arranged as one, on one raft of lines. Ctrl+Shift+G undoes it."
+msgstr "Agrupados: se eligen, se mueven y se acomodan como uno, sobre una balsa de líneas. Ctrl+Shift+G lo deshace."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Pick two models or more to group them."
+msgstr "Elegí dos modelos o más para agruparlos."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Ungrouped: each model is on its own again."
+msgstr "Desagrupados: cada modelo vuelve a estar solo."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "No group is picked."
+msgstr "No hay ningún grupo elegido."

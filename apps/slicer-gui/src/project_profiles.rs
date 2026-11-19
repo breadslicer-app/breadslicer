@@ -164,6 +164,7 @@ mod project_profiles_tests {
             plates: 0,
             plate_names: Vec::new(),
             hand_placed: Vec::new(),
+            groups: Vec::new(),
         };
         assert_eq!(
             profile_ref_warnings(&payload, &libraries),
@@ -191,6 +192,7 @@ mod project_profiles_tests {
             plates: 0,
             plate_names: Vec::new(),
             hand_placed: Vec::new(),
+            groups: Vec::new(),
         };
         complete_embedded_documents(&mut payload, &libraries);
         assert_eq!(
@@ -216,6 +218,7 @@ mod project_profiles_tests {
             plates: 0,
             plate_names: Vec::new(),
             hand_placed: Vec::new(),
+            groups: Vec::new(),
         };
         complete_embedded_documents(&mut payload, &libraries);
         assert!(payload.embedded.is_empty());
@@ -244,6 +247,7 @@ mod project_profiles_tests {
             plates: 0,
             plate_names: Vec::new(),
             hand_placed: Vec::new(),
+            groups: Vec::new(),
         };
         complete_embedded_documents(&mut payload, &libraries);
         assert_eq!(
@@ -289,6 +293,7 @@ mod project_profiles_tests {
             plates: 0,
             plate_names: Vec::new(),
             hand_placed: Vec::new(),
+            groups: Vec::new(),
         };
         complete_embedded_documents(&mut payload, &libraries);
         assert_eq!(

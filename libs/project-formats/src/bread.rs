@@ -42,6 +42,9 @@ struct SettingsDoc {
     /// Where the models placed by hand stand (#554).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     hand_placed: Vec<[i64; 12]>,
+    /// The groups of models (#475), each by its members' rows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    groups: Vec<Vec<u32>>,
     #[serde(default)]
     profiles: ProfilesSection,
     #[serde(default, skip_serializing_if = "PrintSection::is_empty")]
@@ -110,6 +113,7 @@ pub(crate) fn serialize_settings(
         plates: payload.plates,
         plate_names: payload.plate_names.clone(),
         hand_placed: payload.hand_placed.clone(),
+        groups: payload.groups.clone(),
         profiles: ProfilesSection {
             printer: payload.printer.clone(),
             resin: payload.resin.clone(),
@@ -208,6 +212,7 @@ pub(crate) fn parse_settings(
         plates: doc.plates,
         plate_names: doc.plate_names,
         hand_placed: doc.hand_placed,
+        groups: doc.groups,
     }))
 }
 

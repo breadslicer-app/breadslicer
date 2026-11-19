@@ -27,6 +27,7 @@ fn payload_with_refs() -> ProjectPayload {
         plates: 0,
         plate_names: Vec::new(),
         hand_placed: Vec::new(),
+        groups: Vec::new(),
     }
 }
 

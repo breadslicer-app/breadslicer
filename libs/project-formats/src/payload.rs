@@ -48,6 +48,9 @@ pub struct ProjectPayload {
     /// transform in millionths, the linear part row by row, then the move
     /// (mm). Arrange asks before it moves one of these.
     pub hand_placed: Vec<[i64; 12]>,
+    /// The groups of models (#475): each group's members, by their row in
+    /// the scene's list of leaves.
+    pub groups: Vec<Vec<u32>>,
 }
 
 /// A finding of the review the person chose to ignore, by kind and place, so

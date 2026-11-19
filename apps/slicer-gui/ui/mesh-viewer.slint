@@ -346,6 +346,10 @@ export component MeshViewer inherits Rectangle {
                 if ((event.text == "i" || event.text == "I") && ctrl) { root.edit-key("invert", ta.mouse-x, ta.mouse-y); return accept; }
                 if (d && (ctrl || event.modifiers.alt)) { root.edit-key("duplicate", ta.mouse-x, ta.mouse-y); return accept; }
                 if (d && event.modifiers.shift && !ctrl && !event.modifiers.alt) { root.edit-key("duplicate-move", ta.mouse-x, ta.mouse-y); return accept; }
+                // Groups of models (#475): Ctrl+G groups, Ctrl+Shift+G undoes them.
+                let g = event.text == "g" || event.text == "G";
+                if (g && ctrl && !event.modifiers.shift) { root.edit-key("group", ta.mouse-x, ta.mouse-y); return accept; }
+                if (g && ctrl && event.modifiers.shift) { root.edit-key("ungroup", ta.mouse-x, ta.mouse-y); return accept; }
             }
             // Plain keys only: never steal Save, reload, or modified shortcuts.
             if (!event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt) {
@@ -712,6 +716,19 @@ export component MeshViewer inherits Rectangle {
                     title: @tr("MeshViewer" => "Copy");
                     activated => {
                         root.context-copy-pressed();
+                    }
+                }
+                // Groups of models (#475).
+                if (root.context-can-copy): MenuItem {
+                    title: @tr("MeshViewer" => "Group (Ctrl+G)");
+                    activated => {
+                        root.edit-key("group", root.context-anchor-x, root.context-anchor-y);
+                    }
+                }
+                if (root.context-can-copy): MenuItem {
+                    title: @tr("MeshViewer" => "Ungroup (Ctrl+Shift+G)");
+                    activated => {
+                        root.edit-key("ungroup", root.context-anchor-x, root.context-anchor-y);
                     }
                 }
                 // A copy next to it, with its hollow and supports (#613).

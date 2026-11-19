@@ -220,6 +220,9 @@ pub(crate) struct DfSupportRun {
     /// The tab shows the picked model's raft (#198): told when the pick
     /// changes.
     selection_events: RefCell<Option<SceneSubscription>>,
+    /// The groups of models last seen (#475): a group made or undone draws
+    /// its members' sets again, on one raft or on their own.
+    seen_groups: RefCell<Vec<Vec<NodeId>>>,
     /// The options the next run uses (the Supports tab), saved across
     /// sessions.
     options: RefCell<DfSupportOptions>,
@@ -1715,6 +1718,7 @@ impl DfSupportRun {
             _scene_events: scene_events,
             own_rafts: RefCell::new(Vec::new()),
             selection_events: RefCell::new(None),
+            seen_groups: RefCell::new(Vec::new()),
             options: RefCell::new(load_saved_options()),
             presets: RefCell::new(Vec::new()),
             shape_view: Cell::new(crate::support_shape::View::default()),
@@ -1799,6 +1803,13 @@ impl DfSupportRun {
                     && let Some(ui) = run.ui.upgrade()
                 {
                     run.push_raft(&ui);
+                    // Drawn after the change is told, not inside it.
+                    let weak = Rc::downgrade(&run);
+                    slint::Timer::single_shot(Duration::ZERO, move || {
+                        if let Some(run) = weak.upgrade() {
+                            run.follow_groups();
+                        }
+                    });
                 }
             });
             *run.selection_events.borrow_mut() = Some(sub);
@@ -2936,24 +2947,58 @@ impl DfSupportRun {
         request.models = self.target_models();
         // No tip in a hollow's drain channel (#465).
         request.keep_out = crate::raft_drains::drain_channels(&self.document);
-        // A model on a raft of its own keeps it (#198).
-        request.own_rafts = self
-            .own_rafts
-            .borrow()
-            .iter()
-            .map(|(model, own)| (*model, own.on(&request.options)))
+        // A model on a raft of its own keeps it (#198), a group's members
+        // stand on one raft (#475).
+        let mut own: Vec<NodeId> = self.own_rafts.borrow().iter().map(|(m, _)| *m).collect();
+        own.extend(self.document.groups().into_iter().flatten());
+        own.sort_unstable();
+        own.dedup();
+        request.own_rafts = own
+            .into_iter()
+            .map(|model| (model, self.raft_of(model).on(&request.options)))
             .collect();
         request
     }
 
-    /// The raft `model` stands on: its own (#198), or the tab's.
+    /// The raft `model` stands on: its group's one raft of lines (#475), its
+    /// own (#198), or the tab's.
     fn raft_of(&self, model: NodeId) -> OwnRaft {
-        self.own_rafts
+        let own = self
+            .own_rafts
             .borrow()
             .iter()
             .find(|(m, _)| *m == model)
             .map(|(_, own)| *own)
-            .unwrap_or_else(|| OwnRaft::of(&self.options.borrow()))
+            .unwrap_or_else(|| OwnRaft::of(&self.options.borrow()));
+        if self.document.group_of(model).is_some() {
+            OwnRaft {
+                raft: RaftMode::Lines,
+                apart: true,
+                ..own
+            }
+        } else {
+            own
+        }
+    }
+
+    /// A group made or undone (#475): its members' sets are drawn again, on
+    /// the group's one raft or on their own.
+    fn follow_groups(&self) {
+        let groups = self.document.groups();
+        let changed: Vec<NodeId> = {
+            let seen = self.seen_groups.borrow();
+            let members = |gs: &[Vec<NodeId>]| -> Vec<NodeId> { gs.iter().flatten().copied().collect() };
+            let (now, before) = (members(&groups), members(&seen));
+            now.iter()
+                .filter(|m| !before.contains(m))
+                .chain(before.iter().filter(|m| !now.contains(m)))
+                .copied()
+                .collect()
+        };
+        *self.seen_groups.borrow_mut() = groups;
+        if !changed.is_empty() {
+            self.rafts_follow_for(Some(changed));
+        }
     }
 
     /// Shows the raft of the picked model (#198), or the tab's.
@@ -4334,6 +4379,11 @@ impl DfSupportRun {
     /// supports stay where they are: only the raft and the roots' feet on it
     /// change, so there is nothing to generate again.
     fn rafts_follow(&self) {
+        self.rafts_follow_for(self.target_models());
+    }
+
+    /// [`Self::rafts_follow`] for the sets of `targets`, every set for `None`.
+    fn rafts_follow_for(&self, targets: Option<Vec<NodeId>>) {
         // A run in flight lands with the raft it started with, and a hand
         // edit in flight with its set's: neither is drawn over under them.
         if self.handle.borrow().is_some()
@@ -4343,7 +4393,6 @@ impl DfSupportRun {
             return;
         }
         let options = self.options.borrow().clone();
-        let targets = self.target_models();
         let sets: Vec<DrawnSet> = self
             .document
             .with_scene(|spatial| sets_in_force(spatial, &self.sessions))
@@ -6846,6 +6895,8 @@ struct OwnRaft {
     pads: bool,
     holes_mm: f64,
     tabs: bool,
+    /// Drawn apart, under one raft with others (#475, #556).
+    apart: bool,
 }
 
 impl OwnRaft {
@@ -6857,6 +6908,7 @@ impl OwnRaft {
             pads: options.raft_pads,
             holes_mm: options.raft_holes_mm,
             tabs: options.raft_tabs,
+            apart: options.one_raft,
         }
     }
 
@@ -6869,6 +6921,7 @@ impl OwnRaft {
             raft_pads: self.pads,
             raft_holes_mm: self.holes_mm,
             raft_tabs: self.tabs,
+            one_raft: self.apart,
             ..options.clone()
         }
     }
