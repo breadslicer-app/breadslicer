@@ -46,7 +46,7 @@ use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_spatial::{PrimedMesh, SceneSpatial};
 use sc_print_glue::place_on_plate;
 use sc_project_formats::{LoadedContent, LoadedScene, ReadProjectWarning, load_scene};
-use sc_scene::node::{LeafAttachment, LeafPayload, SceneMetadata};
+use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind, SceneMetadata};
 use sc_scene::{CsgPolicy, MeshResourceId, NodeId, ReferencePolicy, Scene, SceneError};
 use sc_scene_edit::SceneEdit;
 
@@ -500,13 +500,36 @@ pub(crate) fn name_models_after_file(scene: &mut Scene, path: &Path) {
         let Some(node) = scene.node(id) else {
             continue;
         };
-        let mut meta = node.meta.clone().unwrap_or_default();
-        meta.name = Some(if numbered {
+        let name = if numbered {
             format!("{stem} {}", at + 1)
         } else {
             stem.clone()
-        });
+        };
+        let mut meta = node.meta.clone().unwrap_or_default();
+        meta.name = Some(name.clone());
         scene.set_node_meta(id, Some(meta));
+        // The name inside the file goes from the mesh too, so nothing that
+        // falls back to the mesh's name ever shows it. Only a mesh no one else
+        // holds yet is changed, never copied.
+        let rid = match scene.node(id).map(|node| &node.kind) {
+            Some(NodeKind::Leaf(LeafPayload::MeshResource(rid))) => Some(*rid),
+            _ => None,
+        };
+        let unshared = scene
+            .leaf_mesh_arc(id)
+            .is_some_and(|mesh| Arc::strong_count(mesh) == 1);
+        if !unshared {
+            continue;
+        }
+        let mesh = match rid {
+            Some(rid) => scene.mesh_resource_mut(rid),
+            None => scene.inline_mesh_mut(id),
+        };
+        if let Some(mesh) = mesh {
+            let mut mesh_meta = mesh.meta().clone().unwrap_or_default();
+            mesh_meta.name = Some(name);
+            mesh.set_meta(Some(mesh_meta));
+        }
     }
 }
 

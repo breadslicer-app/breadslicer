@@ -66,6 +66,16 @@ impl SceneFragment {
         self
     }
 
+    /// This fragment with `meta` on its first root: a copy keeps the name of
+    /// its model.
+    #[must_use]
+    pub fn with_meta(mut self, meta: Option<sc_scene::SceneMetadata>) -> Self {
+        if let Some(&root) = self.inner.roots().first() {
+            self.inner.set_node_meta(root, meta);
+        }
+        self
+    }
+
     /// Builds a fragment of one root leaf per entry of `leaves`, in order,
     /// each wrapping its mesh as a mesh resource of its own under its local
     /// transform: several objects pasted as one gesture.
