@@ -936,3 +936,75 @@ fn the_tabs_before_slice_have_a_layer_slider_to_the_top_of_the_scene() {
         assert_eq!(ui.get_prep_layer_index(), (count - 1) as f32, "at the top");
     });
 }
+
+/// After slicing, every tab slides through the slice's layers, as Slice
+/// does; once the scene moves off the slice, the tabs go back to their own
+/// 0.05 mm cut.
+#[test]
+fn every_tab_shows_the_slice_s_layers_while_it_is_current() {
+    use sc_print_glue::PlateContours;
+    use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
+    use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
+    use sc_sl1cer::geom2d::Point2D;
+    use sc_sl1cer::profile::LayerSchedule;
+    crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+        let ui = MainWindow::new().expect("the headless platform creates a main window");
+        let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&ui));
+        ctrl.register_document_listener();
+        ctrl.set_build_volume(volume());
+        let mut g = Scene::new();
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::identity()),
+                LeafPayload::Mesh(Arc::new(box_mesh())),
+            )
+            .expect("leaf");
+        g.add_root(leaf).expect("root");
+        ctrl.install_graph_for_test(g);
+        assert!(!ui.get_slice_layers_current(), "nothing sliced");
+
+        let square = Polygon::new(
+            ClosedRing::new(vec![
+                Point2D::new(-1.0, -1.0),
+                Point2D::new(1.0, -1.0),
+                Point2D::new(1.0, 1.0),
+                Point2D::new(-1.0, 1.0),
+            ]),
+            vec![],
+        )
+        .expect("a square");
+        let stack = ContourStack::new(vec![
+            ContourLayer::new(0.05, vec![square.clone()]),
+            ContourLayer::new(0.10, vec![square]),
+        ])
+        .expect("z goes up");
+        let document = ctrl.document();
+        let geometry = document.scene_revision();
+        document.set_slice_result(crate::slice_result::SliceResult {
+            contours: PlateContours::new(stack, LayerSchedule::uniform(0.05, 0.05, 2).unwrap())
+                .expect("a layer each"),
+            token: "every-tab".to_string(),
+            params: crate::slice_result::SliceParams {
+                printer: PrinterId::new("elegoo-saturn-4-ultra").unwrap(),
+                resin: MaterialId::new("standard-405").unwrap(),
+                first_layer_height: None,
+                aa_level: AaLevel::Off,
+                geometry,
+                plate: 0,
+                plate_key: None,
+            },
+            layers: None,
+        });
+        assert!(ui.get_slice_layers_current(), "the slice shows the scene");
+        assert_eq!(ui.get_slice_layer_count(), 2);
+
+        let edit = crate::plate_layout::moved_by(&document, leaf, Vec3::new(5.0, 0.0, 0.0))
+            .expect("a move");
+        document.apply_edit(edit.clone()).expect("applies");
+        document.push_edit(edit);
+        assert!(!ui.get_slice_layers_current(), "moved off the slice");
+        assert!(document.undo().expect("undoes"));
+        assert!(ui.get_slice_layers_current(), "back where it was sliced");
+    });
+}

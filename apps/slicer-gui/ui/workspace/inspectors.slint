@@ -1577,9 +1577,15 @@ export component HollowInspector inherits VerticalLayout {
     in property <string> phase;
     in property <float> progress;
     in property <string> last-run;
-    // What the selected model is: 0 solid, 1 hollow, 2 the support mesh.
+    // What the selected model is: 0 solid, 1 hollow, 2 the support mesh, 3
+    // a model that came hollow (#447): drains are drilled into it as it is.
     in property <int> model-state;
     in property <int> drain-count;
+    // Its cavities still closed all round (#130); -1 not counted yet.
+    in property <int> sealed-count: -1;
+    // Show where a drain works best (#455).
+    in property <bool> drain-map;
+    callback drain-map-toggled(bool);
     // The drain picked to edit (#450), -1 none; and whether the next click
     // moves it.
     in property <int> drain-picked: -1;
@@ -1624,7 +1630,7 @@ export component HollowInspector inherits VerticalLayout {
 
     Card {
         title: @tr("Inspector" => "HOLLOWING");
-        note: root.running ? @tr("Inspector" => "Working") : root.model-state == 1 ? @tr("Inspector" => "Hollow") : "";
+        note: root.running ? @tr("Inspector" => "Working") : root.model-state == 1 || root.model-state == 3 ? @tr("Inspector" => "Hollow") : "";
         note-color: Theme.indicator;
 
         if !root.selection-valid: Note {
@@ -1633,12 +1639,15 @@ export component HollowInspector inherits VerticalLayout {
         if root.selection-valid && root.model-state == 2: Note {
             text: @tr("Inspector" => "That is the support mesh; select a model.");
         }
+        if root.selection-valid && root.model-state == 3: Note {
+            text: @tr("Inspector" => "This model came hollow: drains are drilled into it as it is, and it is not hollowed again.");
+        }
         ScButton {
             text: root.model-state == 1 ? @tr("Inspector" => "Hollow again") : @tr("Inspector" => "Hollow model");
             icon: Icons.hollow;
             kind: ButtonKind.primary;
             button-height: 38px;
-            enabled: root.selection-valid && root.model-state != 2 && !root.running;
+            enabled: root.selection-valid && root.model-state != 2 && root.model-state != 3 && !root.running;
             clicked => {
                 root.apply-requested();
             }
@@ -1794,7 +1803,7 @@ export component HollowInspector inherits VerticalLayout {
             text: root.lasso-tool-on ? @tr("Inspector" => "Drawing solid areas (M)") : @tr("Inspector" => "Keep an area solid (M)");
             icon: Icons.lasso;
             kind: root.lasso-tool-on ? ButtonKind.primary : ButtonKind.normal;
-            enabled: root.selection-valid && root.model-state != 2 && !root.running;
+            enabled: root.selection-valid && root.model-state != 2 && root.model-state != 3 && !root.running;
             clicked => {
                 root.lasso-tool-toggled();
             }
@@ -1950,6 +1959,16 @@ export component HollowInspector inherits VerticalLayout {
                 ? @tr("Inspector" => "These fields change the drain picked, and its plug. Click a drain with the drain tool to pick it, or empty surface to place a new one.")
                 : @tr("Inspector" => "Each drain keeps the shape it was placed with. A plug is a separate part on the plate, as long as the hole and narrower by the clearance: print it with the model and close the hole with it after cleaning.");
         }
+        if root.model-state == 1 || root.model-state == 3: CheckBox {
+            text: @tr("Inspector" => "Show where a drain works best");
+            checked: root.drain-map;
+            toggled => {
+                root.drain-map-toggled(self.checked);
+            }
+        }
+        if (root.model-state == 1 || root.model-state == 3) && root.drain-map: Note {
+            text: @tr("Inspector" => "Green, with the drain tool: low on the model, where the wall is thin, so resin runs out through a short hole. Red: the same, on detail you painted to protect. A guide only: where the hole goes is yours to choose.");
+        }
         if root.drain-count > 0: ScButton {
             text: @tr("Inspector" => "Remove all drains");
             enabled: !root.running;
@@ -1957,8 +1976,8 @@ export component HollowInspector inherits VerticalLayout {
                 root.clear-drains-requested();
             }
         }
-        if root.model-state == 1 && root.drain-count == 0: Note {
-            text: @tr("Inspector" => "Sealed cavity: resin stays trapped inside and the walls act as a suction cup. Add at least one drain near the plate.");
+        if (root.model-state == 1 || root.model-state == 3) && root.sealed-count > 0: WarningNote {
+            text: @tr("Inspector" => "{n} sealed cavity: resin stays trapped inside and the walls act as a suction cup. Drill a drain into it, near the plate." | "{n} sealed cavities: resin stays trapped in each and the walls act as suction cups. Drill a drain into each, near the plate." % root.sealed-count);
         }
         if root.model-state == 0 && root.drain-count == 0: Note {
             text: @tr("Inspector" => "Place drains now or after hollowing: click the model's surface with the drain tool. They are drilled when the model is hollowed.");
@@ -1968,6 +1987,9 @@ export component HollowInspector inherits VerticalLayout {
         }
         if root.model-state == 1: Note {
             text: @tr("Inspector" => "Each new drain hollows the model again with it: one undo per drain.");
+        }
+        if root.model-state == 3: Note {
+            text: @tr("Inspector" => "Each new drain is drilled into the model as it is: one undo per drain.");
         }
     }
 }

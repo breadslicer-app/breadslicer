@@ -819,6 +819,7 @@ impl AppState {
         );
         let cut_run = CutRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let hollow_run = HollowRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+        hollow_run.set_repair(repair_run.clone());
         // The Review card applies its fixes through the support and hollow
         // drivers, and the Slice driver hands it each slice's findings.
         let review_panel = ReviewPanel::install(
@@ -3412,8 +3413,7 @@ mod window_wiring_tests {
             [
                 "Miniatures 20~65 mm",
                 "Figures 65~150 mm",
-                "Statues 150 mm+",
-                "Skeleton + islands"
+                "Statues 150 mm+"
             ]
         );
     }
@@ -5379,6 +5379,85 @@ mod window_wiring_tests {
                         }
                     }
                 });
+            }
+        });
+    }
+
+    /// What a click on each tab costs the window on a real project: the
+    /// click itself and the longest pass of the event loop after it.
+    #[test]
+    #[ignore = "a measurement on a real project"]
+    fn switching_tabs_in_the_whole_window() {
+        use std::time::{Duration, Instant};
+        let Some(path) = std::env::var_os("BREADSLICER_TABS_BREAD") else {
+            return;
+        };
+        let path = PathBuf::from(path);
+        on_fresh_slint_thread(move || {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            window.show().unwrap();
+            let controller = controller_of(&app, id);
+            controller.set_build_volume(BuildVolume::new(223.642, 126.976, 230.0));
+            let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("it opens");
+            let sc_project_formats::LoadedContent::Project(mut project) = loaded.content else {
+                panic!("a .bread is a project")
+            };
+            let restored =
+                crate::support_persist::restore_supports(&mut project.scene, project.supports);
+            let document = controller.document();
+            document.install_graph(project.scene, path.clone());
+            crate::support_persist::install_sets(&document, restored.sets);
+            controller.set_section(WorkspaceSection::Transform);
+            let pump = |secs: f64| {
+                let (start, mut longest, mut busy) = (Instant::now(), 0.0f64, 0.0f64);
+                while start.elapsed().as_secs_f64() < secs {
+                    let t = Instant::now();
+                    crate::test_support::slint_thread::render_frames();
+                    let pass = t.elapsed().as_secs_f64();
+                    longest = longest.max(pass);
+                    busy += pass;
+                    thread::sleep(Duration::from_millis(8));
+                }
+                (longest, busy)
+            };
+            pump(4.0);
+            println!(
+                "leaves {}, sets {}, has scene {}",
+                document
+                    .with_scene(|s| (0..).map_while(|i| s.leaf_id_at_index(i)).count())
+                    .unwrap_or(0),
+                document.support_sessions().borrow().len(),
+                window.get_has_scene()
+            );
+            let tabs = [
+                WorkspaceSection::Hollow,
+                WorkspaceSection::Supports,
+                WorkspaceSection::Slice,
+                WorkspaceSection::Supports,
+                WorkspaceSection::Transform,
+                WorkspaceSection::Slice,
+                WorkspaceSection::Transform,
+            ];
+            for round in 0..2 {
+                for tab in tabs {
+                    let t = Instant::now();
+                    controller.set_section(tab);
+                    let click = t.elapsed().as_secs_f64();
+                    assert_eq!(window.get_workspace_section(), tab);
+                    let t = Instant::now();
+                    crate::test_support::slint_thread::render_frames();
+                    let first = t.elapsed().as_secs_f64();
+                    let (longest, busy) = pump(1.5);
+                    println!(
+                        "round {round} -> {tab:?}: click {:.1} ms, first frame {:.1} ms,                          then longest {:.1} ms, busy {:.0} ms",
+                        click * 1e3,
+                        first * 1e3,
+                        longest * 1e3,
+                        busy * 1e3
+                    );
+                }
             }
         });
     }

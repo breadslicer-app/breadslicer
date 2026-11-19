@@ -80,6 +80,11 @@
 //!
 //! A hollow with a minimum width is written as version 5; without (0, and
 //! every hollow read from an older file, made before it), as before.
+//!
+//! Version 6 marks a model that came hollow (#447): `set` may hold 4, "the
+//! drains were drilled into the model as it came", whose `original` is that
+//! model before them, and the min width is always there (0 for none). Only
+//! such a hollow is written as version 6.
 
 use std::sync::Arc;
 
@@ -98,7 +103,7 @@ use crate::scene_document::SceneDocument;
 pub(crate) const DF_HOLLOWER: &str = "df";
 
 /// The newest document version this build writes and reads.
-pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 5;
+pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 6;
 
 /// The hollows to save with the scene of `spatial`: each hollow made here
 /// that a leaf still shows, once, with the first leaf that shows it. Copies
@@ -188,6 +193,7 @@ fn restore(scene: &Scene, document: &HollowDocument) -> Result<Hollowed, String>
         solids: decoded.solids,
         engine: decoded.engine,
         stretch: decoded.stretch,
+        drilled: decoded.drilled,
     })
 }
 
@@ -266,7 +272,8 @@ fn needs_shapes(hollowed: &Hollowed) -> bool {
 
 /// The document of `hollowed`, and its version.
 fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
-    let width = hollowed.options.min_width_mm > 0.0;
+    let drilled = hollowed.drilled;
+    let width = drilled || hollowed.options.min_width_mm > 0.0;
     let record = width || hollowed.engine.is_some() || hollowed.stretch.is_some();
     let solids = record || !hollowed.solids.is_empty();
     let shapes = solids || needs_shapes(hollowed);
@@ -345,7 +352,11 @@ fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
         }
     }
     if record {
-        out.push(u8::from(hollowed.engine.is_some()) | u8::from(hollowed.stretch.is_some()) << 1);
+        out.push(
+            u8::from(hollowed.engine.is_some())
+                | u8::from(hollowed.stretch.is_some()) << 1
+                | u8::from(drilled) << 2,
+        );
         out.extend_from_slice(&hollowed.engine.unwrap_or(0).to_le_bytes());
         let identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         for v in hollowed.stretch.unwrap_or(identity) {
@@ -355,7 +366,9 @@ fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
     if width {
         out.extend_from_slice(&hollowed.options.min_width_mm.to_le_bytes());
     }
-    let version = if width {
+    let version = if drilled {
+        6
+    } else if width {
         5
     } else if record {
         4
@@ -430,16 +443,17 @@ struct Decoded {
     solids: Vec<LassoRegion>,
     engine: Option<u32>,
     stretch: Option<[f64; 9]>,
+    drilled: bool,
 }
 
-/// Reads a document of `version` (1 to 4).
+/// Reads a document of `version` (1 to 6).
 fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
     let (shapes, solids, record, width) = match version {
         0 | 1 => (false, false, false, false),
         2 => (true, false, false, false),
         3 => (true, true, false, false),
         4 => (true, true, true, false),
-        5 => (true, true, true, true),
+        5 | 6 => (true, true, true, true),
         _ => return None,
     };
     let mut input = Reader(bytes);
@@ -547,11 +561,14 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
     } else {
         Vec::new()
     };
+    let mut drilled = false;
     let (engine, stretch) = if record {
         let set = input.u8()?;
-        if set >> 2 != 0 {
+        // Version 6 may say the model came hollow (#447).
+        if set >> if version >= 6 { 3 } else { 2 } != 0 {
             return None;
         }
+        drilled = set & 4 != 0;
         let engine = input.u32()?;
         let mut stretch = [0.0; 9];
         for v in &mut stretch {
@@ -569,7 +586,9 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
     };
     if width {
         let w = input.f32()?;
-        if !(w.is_finite() && w > 0.0) {
+        // Version 6 writes it always, 0 for none.
+        let none = version >= 6 && w == 0.0;
+        if !(w.is_finite() && (w > 0.0 || none)) {
             return None;
         }
         options.min_width_mm = w;
@@ -581,6 +600,7 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
         solids,
         engine,
         stretch,
+        drilled,
     })
 }
 
@@ -612,6 +632,7 @@ mod hollow_persist_tests {
             solids: Vec::new(),
             engine: None,
             stretch: None,
+            drilled: false,
         }
     }
 
@@ -693,6 +714,28 @@ mod hollow_persist_tests {
         assert_eq!(version, 4);
         assert_eq!(decode(&bytes, version).unwrap().options.min_width_mm, 0.0);
         assert!(HollowOptions::default().min_width_mm > 0.0);
+    }
+
+    /// #447: a model that came hollow, drilled as it was, reads back as
+    /// such, as version 6; no other hollow is written as version 6.
+    #[test]
+    fn a_hollow_drilled_as_it_came_reads_back_as_version_6() {
+        for base in [hollowed(), recorded()] {
+            let h = Hollowed {
+                drilled: true,
+                ..base
+            };
+            let (version, bytes) = encode(&h);
+            assert_eq!(version, 6);
+            let decoded = decode(&bytes, version).expect("it decodes");
+            assert!(decoded.drilled);
+            assert_eq!(decoded.options, h.options);
+            assert_eq!(decoded.drains, h.drains);
+            assert!(decode(&bytes, 5).is_none(), "version 5 has no such mark");
+        }
+        let (version, bytes) = encode(&recorded());
+        assert_eq!(version, 4);
+        assert!(!decode(&bytes, version).unwrap().drilled);
     }
 
     /// `hollowed` with shaped drains (#316, #317, #318), a plug and the

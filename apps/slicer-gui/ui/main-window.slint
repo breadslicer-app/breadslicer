@@ -471,6 +471,12 @@ export component MainWindow inherits Window {
     in property <string> hollow-last-run;
     in property <int> hollow-model-state: 0;
     in property <int> hollow-drain-count: 0;
+    // The selected hollow's cavities still closed all round (#130); -1 not
+    // counted yet.
+    in property <int> hollow-sealed-count: -1;
+    // The drain tool shows where a drain works best (#455).
+    in-out property <bool> hollow-drain-map: true;
+    callback hollow-drain-map-toggled(bool);
     // The drain picked to edit (#450), -1 none, and whether the next click
     // moves it.
     in property <int> hollow-drain-picked: -1;
@@ -675,6 +681,9 @@ export component MainWindow inherits Window {
     // The layer slider of the tabs before Slice (#611): layers of 0.05 mm up
     // to the top of the scene; at the top it cuts nothing.
     in property <int> prep-layer-count: 0;
+    // Whether the held slice still shows the scene: then every tab slides
+    // through its layers, as Slice does, instead of the 0.05 mm cut.
+    in property <bool> slice-layers-current: false;
     in-out property <float> prep-layer-index: 0;
     in-out property <float> selected-layer-index: 0;
     // Floating slice-view panel: shows the selected layer's 2D cross-
@@ -2175,7 +2184,8 @@ export component MainWindow inherits Window {
                     // Per-layer height slider on the viewport's right edge, in
                     // the Slice tab; disabled until a slice exists. Its value is
                     // the selected layer index, the top layer at the top.
-                    if root.has-scene && root.workspace-section == WorkspaceSection.Slice: Rectangle {
+                    if root.has-scene && (root.workspace-section == WorkspaceSection.Slice
+                        || (root.slice-layers-current && root.slice-layer-count > 0)): Rectangle {
                         x: parent.width - self.width - 8px;
                         y: 48px;
                         width: 92px;
@@ -2195,7 +2205,8 @@ export component MainWindow inherits Window {
 
                     // The same slider in the other tabs (#611): it cuts the
                     // view at a height to look inside, slice or no slice.
-                    if root.has-scene && root.workspace-section != WorkspaceSection.Slice: Rectangle {
+                    if root.has-scene && root.workspace-section != WorkspaceSection.Slice
+                        && !(root.slice-layers-current && root.slice-layer-count > 0): Rectangle {
                         x: parent.width - self.width - 8px;
                         y: 48px;
                         width: 92px;
@@ -2668,6 +2679,12 @@ export component MainWindow inherits Window {
                                     last-run: root.hollow-last-run;
                                     model-state: root.hollow-model-state;
                                     drain-count: root.hollow-drain-count;
+                                    sealed-count: root.hollow-sealed-count;
+                                    drain-map: root.hollow-drain-map;
+                                    drain-map-toggled(on) => {
+                                        root.hollow-drain-map = on;
+                                        root.hollow-drain-map-toggled(on);
+                                    }
                                     drain-picked: root.hollow-drain-picked;
                                     drain-moving: root.hollow-drain-moving;
                                     drain-step(by) => {

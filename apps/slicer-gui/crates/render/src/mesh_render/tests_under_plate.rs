@@ -445,6 +445,61 @@ fn the_slice_view_leaves_no_specks_of_what_stands_above_the_layer() {
     assert!(found.iter().all(|f| f.2 == 0), "{found:?}");
 }
 
+/// The middle pixel of `graph` from `camera`, the view cut at `clip_z`.
+fn middle_cut(
+    renderer: &mut Renderer,
+    graph: &Scene,
+    camera: &OrbitCamera,
+    clip_z: Option<f32>,
+) -> [u8; 3] {
+    renderer.upload_scene(graph).expect("upload the scene");
+    renderer.set_raft_top(0.0);
+    let frame = renderer
+        .workspace_pixels_for_test(
+            SceneRender {
+                graph,
+                selection: &[],
+                gizmo: None,
+                clip_z,
+            },
+            BV,
+            camera,
+            SIZE,
+            SIZE,
+        )
+        .expect("the frame is not refused")
+        .expect("a sized frame");
+    let i = ((frame.height / 2 * frame.width + frame.width / 2) * 4) as usize;
+    [frame.rgba[i], frame.rgba[i + 1], frame.rgba[i + 2]]
+}
+
+/// The layer slider outside the slice view cuts a model with no cap quad
+/// over the cut: the model reads closed, its cut drawn as a flat face in
+/// the shade of a top that stood at the cut, not the plate inside it.
+#[test]
+fn a_model_cut_by_the_layer_slider_reads_closed() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let tall = scene_of(vec![closed_box([-10.0, -10.0, 0.0], [10.0, 10.0, 20.0])]);
+    let short = scene_of(vec![closed_box([-10.0, -10.0, 0.0], [10.0, 10.0, 10.0])]);
+    let camera = camera(60.0);
+    let cut = middle_cut(&mut renderer, &tall, &camera, Some(10.0));
+    let top = middle_cut(&mut renderer, &short, &camera, None);
+    let floor = middle_cut(&mut renderer, &scene_of(Vec::new()), &camera, None);
+    let near = |a: [u8; 3], b: [u8; 3]| {
+        a.iter()
+            .zip(b)
+            .all(|(x, y)| (i32::from(*x) - i32::from(y)).abs() <= 24)
+    };
+    assert!(near(cut, top), "the cut {cut:?}, a top at the cut {top:?}");
+    assert!(
+        !near(cut, floor),
+        "the cut {cut:?} shows the plate {floor:?}"
+    );
+}
+
 /// The workspace frame of `graph` from `camera`, `side` pixels square.
 fn frame_of(
     renderer: &mut Renderer,

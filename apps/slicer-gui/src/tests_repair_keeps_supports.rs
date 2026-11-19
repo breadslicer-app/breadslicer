@@ -616,15 +616,13 @@ fn generate_analyzes_the_islands_on_its_own() {
 
 /// Generate on a real mini lifted 5 mm, the islands step included (#606),
 /// and what the review says at the end. `BREADSLICER_CHAIN_MODEL` names the
-/// mesh, `BREADSLICER_CHAIN_PRESET` the preset (`minis`, the default, or
-/// `skeleton`).
+/// mesh; the preset is Miniatures.
 #[test]
 #[ignore = "reads a model named by BREADSLICER_CHAIN_MODEL"]
 fn a_real_mini_through_generate_and_its_islands() {
     let Ok(path) = std::env::var("BREADSLICER_CHAIN_MODEL") else {
         return;
     };
-    let preset = std::env::var("BREADSLICER_CHAIN_PRESET").unwrap_or_default();
     // On the plate, lifted by the box as a press does; else lifted 5 mm.
     let on_plate = std::env::var("BREADSLICER_CHAIN_ON_PLATE").is_ok_and(|v| v == "1");
     let lift = if on_plate { 0.0 } else { 5.0 };
@@ -657,10 +655,7 @@ fn a_real_mini_through_generate_and_its_islands() {
         graph.add_root(leaf).expect("root");
         let w = window_with_prefs(graph, on_plate);
         w.ctrl.set_section(WorkspaceSection::Supports);
-        let zones = match preset.as_str() {
-            "skeleton" => sc_geom::df_supports::zone_presets::skeleton_islands(),
-            _ => sc_geom::df_supports::zone_presets::minis_30(),
-        };
+        let zones = sc_geom::df_supports::zone_presets::minis_30();
         let options = DfSupportOptions {
             zones: Some(zones),
             ..DfSupportOptions::default()

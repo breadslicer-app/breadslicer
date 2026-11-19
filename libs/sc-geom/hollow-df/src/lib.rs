@@ -16,9 +16,11 @@
 //!
 //! See `NOTICE` for origin and licensing.
 
+mod air;
 pub mod bvh;
 pub mod control;
 pub mod drain;
+pub mod drill;
 pub mod engine;
 pub mod hollowing;
 pub mod mesh;
@@ -36,6 +38,7 @@ pub use engine::{
     HollowError, HollowFill, HollowPreview, HollowSettings, HollowStats, ResolutionBound, Session,
     SolidArea,
 };
+pub use drill::{DrillTarget, Drilled, sealed_cavities};
 pub use hollowing::InfillMode;
 pub use mesh::{Aabb, IndexedMesh, Vec3};
 pub use solid::LassoRegion;

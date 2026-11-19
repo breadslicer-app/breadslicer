@@ -447,6 +447,22 @@ fn fs_cap(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(select(lit, lit * OUT_OF_FOCUS, (in.selected & 2u) != 0u), 1.0);
 }
 
+// The layer cut outside the slice view: a model cut by the layer slider
+// shows its inside, so its back faces below the cut are drawn again, where
+// the front faces above the cut were dropped, as the flat face of the cut
+// (lit as facing the camera across it). The solid reads closed.
+@fragment
+fn fs_layer_cut(in: VsOut) -> @location(0) vec4<f32> {
+    if (in.cut_z > u.light_dir.w || fades_under_plate(in.supports, in.cut_z)) {
+        discard;
+    }
+    let up = select(-1.0, 1.0, toward_eye(in.world_pos).z >= 0.0);
+    let n = vec3<f32>(0.0, 0.0, up);
+    let base = select(MODEL_COLOR, SUPPORT_COLOR, in.supports == 1u);
+    let lit = studio(base, n, in.world_pos, 0.4);
+    return vec4<f32>(select(lit, lit * OUT_OF_FOCUS, (in.selected & 2u) != 0u), 1.0);
+}
+
 // Preview overlays (a support before it is placed, a hollow cavity, a drain):
 // drawn over the scene without depth, translucent, so what lies inside or
 // behind the model still shows. Lit like the models so its shape reads.

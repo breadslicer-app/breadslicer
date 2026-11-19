@@ -4675,6 +4675,11 @@ msgctxt "Inspector"
 msgid "Each new drain hollows the model again with it: one undo per drain."
 msgstr "Cada drenaje nuevo vuelve a ahuecar el modelo con él: se deshace de a un drenaje."
 
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Each new drain is drilled into the model as it is: one undo per drain."
+msgstr "Cada drenaje nuevo se perfora en el modelo tal como está: se deshace de a un drenaje."
+
 #: ui/main-window.slint
 msgctxt "Inspector"
 msgid "Drain holes"
@@ -8122,16 +8127,6 @@ msgctxt "PrinterDialog"
 msgid "{} is {} mm, but the pixels make {} mm. Leave one of the two empty."
 msgstr "{} dice {} mm, pero los píxeles dan {} mm. Dejá uno de los dos vacío."
 
-#: src/df_support_run.rs
-msgctxt "Inspector"
-msgid "Skeleton + islands"
-msgstr "Esqueleto + islas"
-
-#: src/df_support_run.rs
-msgctxt "Inspector"
-msgid "Skeleton"
-msgstr "Esqueleto"
-
 #, rust-format
 msgctxt "MeshViewer"
 msgid "X Y Z lock an axis · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels"
@@ -8885,3 +8880,55 @@ msgstr "Hecho a partir de {} el {}"
 msgctxt "PrinterPicker"
 msgid "Made from {}"
 msgstr "Hecho a partir de {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "This model came hollow: drains are drilled into it as it is, and it is not hollowed again."
+msgstr "Este modelo vino hueco: los drenajes se perforan en él tal como está, y no se vuelve a ahuecar."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Show where a drain works best"
+msgstr "Mostrar dónde conviene un drenaje"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Green, with the drain tool: low on the model, where the wall is thin, so resin runs out through a short hole. Red: the same, on detail you painted to protect. A guide only: where the hole goes is yours to choose."
+msgstr "En verde, con la herramienta de drenajes: abajo en el modelo, donde la pared es fina, así la resina sale por un agujero corto. En rojo: lo mismo, sobre detalle que pintaste para proteger. Es solo una guía: dónde va el agujero lo decidís vos."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "{n} sealed cavity: resin stays trapped inside and the walls act as a suction cup. Drill a drain into it, near the plate."
+msgid_plural "{n} sealed cavities: resin stays trapped in each and the walls act as suction cups. Drill a drain into each, near the plate."
+msgstr[0] "{n} cavidad cerrada: la resina queda atrapada adentro y las paredes hacen de sopapa. Perforale un drenaje, cerca de la plataforma."
+msgstr[1] "{n} cavidades cerradas: la resina queda atrapada en cada una y las paredes hacen de sopapa. Perforale un drenaje a cada una, cerca de la plataforma."
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "This model can't be hollowed as it is"
+msgstr "Este modelo no se puede ahuecar así como está"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Its mesh is not one closed solid: it has holes, or faces that cross or overlap, and the slicer would refuse it too. Repair mends it, and it is hollowed right after."
+msgstr "Su malla no es un sólido cerrado: tiene agujeros, o caras que se cruzan o se pisan, y el laminador también lo rechazaría. Reparar la arregla, y se ahueca justo después."
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "The drains are out. Undo puts them back."
+msgstr "Se sacaron los drenajes. Deshacer los vuelve a poner."
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Drilling failed"
+msgstr "No se pudo perforar"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "No room to hollow this model"
+msgstr "No hay lugar para ahuecar este modelo"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "The wall takes up the whole model: there is no room left for a cavity, so nothing was changed. Try a thinner wall, or leave this model solid."
+msgstr "La pared ocupa todo el modelo: no queda lugar para una cavidad, así que no se cambió nada. Probá con una pared más fina, o dejá este modelo macizo."

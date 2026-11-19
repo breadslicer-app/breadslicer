@@ -24,9 +24,10 @@ const ZOOM: i32 = 3;
 pub(crate) enum ControlsLayout {
     /// Breadslicer's own, Blender's: middle orbits, Shift+middle pans,
     /// Ctrl+middle zooms; the right button as the middle one.
-    #[default]
     Breadslicer,
-    /// As most resin slicers: right orbits, middle pans.
+    /// As most resin slicers: right orbits, middle pans. The one a new
+    /// install starts with: most come from another resin slicer.
+    #[default]
     ClassicSlicer,
     /// Middle pans, Shift+middle orbits.
     Fusion,
@@ -182,5 +183,15 @@ mod tests {
         // The tester's ask: the middle button pans in the classic layout.
         assert_eq!(ControlsLayout::ClassicSlicer.nav_map().middle, PAN);
         assert_eq!(ControlsLayout::Breadslicer.nav_map().middle, ORBIT);
+    }
+
+    /// A new install starts with the classic resin slicer's mouse.
+    #[test]
+    fn the_classic_resin_slicer_is_the_layout_a_new_install_starts_with() {
+        assert_eq!(ControlsLayout::default(), ControlsLayout::ClassicSlicer);
+        assert_eq!(
+            crate::app_settings::AppSettings::default().controls_layout(),
+            ControlsLayout::ClassicSlicer
+        );
     }
 }

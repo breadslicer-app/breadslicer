@@ -92,7 +92,7 @@ impl Bvh {
     /// How many triangles the ray from `origin` along `dir` crosses.
     pub fn ray_hit_count(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3) -> u32 {
         let mut count = 0u32;
-        self.traverse(mesh, origin, dir, |_| count += 1);
+        self.traverse(mesh, origin, dir, |_, _| count += 1);
         count
     }
 
@@ -100,7 +100,7 @@ impl Bvh {
     /// the ray crosses, sorted ascending.
     pub fn ray_hit_distances(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3) -> Vec<f32> {
         let mut hits = Vec::new();
-        self.traverse(mesh, origin, dir, |t| hits.push(t));
+        self.traverse(mesh, origin, dir, |t, _| hits.push(t));
         hits.sort_by(f32::total_cmp);
         hits
     }
@@ -116,8 +116,16 @@ impl Bvh {
         dir: Vec3,
     ) -> Vec<f32> {
         let mut hits = Vec::new();
-        self.traverse_with(mesh, origin, dir, ray_tri_closed, |t| hits.push(t));
+        self.traverse_with(mesh, origin, dir, ray_tri_closed, |t, _| hits.push(t));
         hits.sort_by(f32::total_cmp);
+        hits
+    }
+
+    /// [`Bvh::ray_hit_distances_closed`], with the face each hit is on.
+    pub fn ray_hits_closed(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3) -> Vec<(f32, u32)> {
+        let mut hits = Vec::new();
+        self.traverse_with(mesh, origin, dir, ray_tri_closed, |t, f| hits.push((t, f)));
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
         hits
     }
 
@@ -169,7 +177,7 @@ impl Bvh {
         found.then(|| best.sqrt())
     }
 
-    fn traverse(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3, hit: impl FnMut(f32)) {
+    fn traverse(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3, hit: impl FnMut(f32, u32)) {
         self.traverse_with(mesh, origin, dir, ray_tri, hit);
     }
 
@@ -179,7 +187,7 @@ impl Bvh {
         origin: Vec3,
         dir: Vec3,
         test: impl Fn(Vec3, Vec3, Vec3, Vec3, Vec3) -> Option<f32>,
-        mut hit: impl FnMut(f32),
+        mut hit: impl FnMut(f32, u32),
     ) {
         if self.nodes.is_empty() {
             return;
@@ -199,7 +207,7 @@ impl Bvh {
                     let face = self.faces[node.a as usize + k];
                     let [a, b, c] = mesh.tri_positions(face);
                     if let Some(t) = test(origin, dir, a, b, c) {
-                        hit(t);
+                        hit(t, face);
                     }
                 }
             } else {

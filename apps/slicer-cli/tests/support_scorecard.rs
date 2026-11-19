@@ -26,9 +26,9 @@
 //! - `SUPPORT_SCORECARD_ONLY`: comma-separated scene names to measure.
 //! - `SUPPORT_SCORECARD_RUNS`: support runs per scene (default 2). The
 //!   generation time is the fastest run, and the runs must agree.
-//! - `SUPPORT_SCORECARD_PRESET`: `minis`, `figures70`, `figures` or `skeleton` runs the
-//!   zone preset "Miniatures 20~65 mm", "Figures 65~150 mm", "Statues 150 mm+"
-//!   or "Skeleton + islands" (#360, #479, #604) instead of the default options.
+//! - `SUPPORT_SCORECARD_PRESET`: `minis`, `figures70` or `figures` runs the
+//!   zone preset "Miniatures 20~65 mm", "Figures 65~150 mm", or "Statues 150 mm+"
+//!   (#360, #479) instead of the default options.
 //! - `SUPPORT_SCORECARD_GRID`: `off` or a spacing in mm, over the preset's.
 //! - `SUPPORT_SCORECARD_STOP_AFTER_GEN`: ends the process right after the
 //!   support job of the first scene, for whoever measures its memory.
@@ -1770,7 +1770,6 @@ fn run_scene(
         Ok("minis") => request.options.zones = Some(zone_presets::minis_30()),
         Ok("figures70") => request.options.zones = Some(zone_presets::figures_70()),
         Ok("figures") => request.options.zones = Some(zone_presets::figures_150()),
-        Ok("skeleton") => request.options.zones = Some(zone_presets::skeleton_islands()),
         Ok(other) => panic!("SUPPORT_SCORECARD_PRESET: unknown preset {other:?}"),
         Err(_) => {}
     }
