@@ -246,6 +246,14 @@ fn rtsp_connection(
                     }
                 }
             }
+            // Over UDP, PLAY is answered as the tester's printer did: its
+            // RTSP server (ireader/media-server) writes `RTP-Info: %s` with
+            // an empty value, which a strict reader refuses.
+            "PLAY" if serves == Serves::Udp => format!(
+                "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nDate: Thu, 19 Nov 2026 05:24:12 GMT\r\n\
+                 Range: npt=0.000-\r\nRTP-Info: \r\nSession: 12345678;timeout=60\r\n\
+                 Content-Length: 0\r\n\r\n"
+            ),
             "PLAY" => format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n"),
             "TEARDOWN" => {
                 stop.store(true, Ordering::Relaxed);
