@@ -1268,6 +1268,20 @@ pub struct OrphanInfo {
     pub knot_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// SoulCrafted (#63, #236): placed again after the cull, with the final
+    /// sizes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replaced: bool,
+}
+
+impl OrphanInfo {
+    /// Whether the plan placed it again after the cull (#63, #236): `None`
+    /// for one it does not try (its knot or host went missing, or it crosses
+    /// another shaft and was kept).
+    pub fn was_placed_again(&self) -> Option<bool> {
+        matches!(self.reason, OrphanReason::HostCulled | OrphanReason::Blocked)
+            .then_some(self.replaced)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1280,6 +1294,8 @@ pub enum OrphanReason {
     Cross,
     Blocked,
     HostBlocked,
+    /// Its host was culled (SoulCrafted, #63): the member is placed again.
+    HostCulled,
 }
 
 /// A shaft-hosted member as the cull reads it.
@@ -1328,6 +1344,7 @@ pub fn validate_and_cull_orphans(
     draft: &SupportState,
     mesh: Option<&PlanMesh<'_>>,
     cones_clear: bool,
+    crossing: &HashSet<String>,
 ) -> (SupportState, Vec<OrphanInfo>) {
     let mut orphans: Vec<OrphanInfo> = Vec::new();
     const DRIFT_TOL_SQ: f64 = 0.25; // 0.5mm
@@ -1342,8 +1359,12 @@ pub fn validate_and_cull_orphans(
             entity,
         } in collect_host_entities(draft)
         {
-            let mut blocked = false;
+            // Placed again and found through a model (#236).
+            let mut blocked = crossing.contains(host_id);
             for seg in &entity.segments {
+                if blocked {
+                    break;
+                }
                 let (Some(a), Some(b)) = (&seg.bottom_joint, &seg.top_joint) else {
                     continue;
                 };
@@ -1360,13 +1381,13 @@ pub fn validate_and_cull_orphans(
                     break;
                 }
             }
-            let crossing = !blocked
+            let cone_crosses = !blocked
                 && cones_clear
                 && entity
                     .contact_cone
                     .as_ref()
                     .is_some_and(|c| contact_cone_crosses_model(c, mesh));
-            if blocked || crossing {
+            if blocked || cone_crosses {
                 let where_ = entity.contact_cone.as_ref().map_or(String::new(), |c| {
                     format!(
                         " @ ({}, {}, Z{})",
@@ -1378,12 +1399,13 @@ pub fn validate_and_cull_orphans(
                 let type_name = get_support_type_descriptor(host_type_id).singular;
                 culled_host_type_name.insert(host_id.to_owned(), type_name);
                 orphans.push(OrphanInfo {
+                    replaced: false,
                     id: host_id.to_owned(),
                     kind: host_type_id,
                     reason: OrphanReason::HostBlocked,
                     host_id: None,
                     knot_id: None,
-                    detail: Some(if crossing {
+                    detail: Some(if cone_crosses {
                         format!("{type_name} tip cone crosses mesh{where_}")
                     } else {
                         format!("{type_name} shaft pierces mesh{where_}")
@@ -1409,6 +1431,7 @@ pub fn validate_and_cull_orphans(
                     knot: Option<&str>,
                     detail: String| {
             orphans.push(OrphanInfo {
+                    replaced: false,
                 id: member.id.to_owned(),
                 kind,
                 reason,
@@ -1417,6 +1440,16 @@ pub fn validate_and_cull_orphans(
                 detail: Some(detail),
             });
         };
+        if crossing.contains(member.id) {
+            push(
+                orphans,
+                OrphanReason::Blocked,
+                None,
+                Some(member.knot_id),
+                "placed again through the mesh".to_owned(),
+            );
+            return false;
+        }
         if member.knot_id.is_empty() {
             push(
                 orphans,
@@ -1587,9 +1620,10 @@ pub fn validate_and_cull_orphans(
                 .map_or(knot.parent_shaft_id.as_str(), |(_, id, _)| id);
             if let Some(name) = culled_host_type_name.get(culled_host_id) {
                 orphans.push(OrphanInfo {
+                    replaced: false,
                     id: member.id.to_owned(),
                     kind: type_id,
-                    reason: OrphanReason::MissingHost,
+                    reason: OrphanReason::HostCulled,
                     host_id: Some(culled_host_id.to_owned()),
                     knot_id: Some(knot.id.clone()),
                     detail: Some(format!("{name} culled (blocked)")),
@@ -1621,6 +1655,7 @@ pub fn validate_and_cull_orphans(
                 .find(|c| contact_cone_crosses_model(c, mesh));
             if let Some(cone) = crossing {
                 orphans.push(OrphanInfo {
+                    replaced: false,
                     id: id.clone(),
                     kind: SupportTypeId::Stick,
                     reason: OrphanReason::Blocked,
@@ -1634,6 +1669,7 @@ pub fn validate_and_cull_orphans(
         for (id, stump) in &draft.collections.stumps {
             if contact_cone_crosses_model(&stump.contact_cone, mesh) {
                 orphans.push(OrphanInfo {
+                    replaced: false,
                     id: id.clone(),
                     kind: SupportTypeId::Stump,
                     reason: OrphanReason::Blocked,

@@ -65,8 +65,22 @@ pub(crate) fn shut(mouths: &[[f32; 3]], rafts: &[(Vec<[[f32; 2]; 3]>, f64)]) -> 
         .count()
 }
 
-/// The mouths of every drain of the hollows in `document`, in world space.
-pub(crate) fn drain_mouths(document: &SceneDocument) -> Vec<[f32; 3]> {
+/// One drain of a hollow in `document`, in world space: its mouth, the far
+/// end of its channel, and its radius.
+pub(crate) struct WorldDrain {
+    pub(crate) mouth: [f32; 3],
+    pub(crate) end: [f32; 3],
+    pub(crate) radius_mm: f32,
+}
+
+/// How far a drain's channel reaches into the model when its depth is the
+/// wall's own (#316), in walls.
+const CHANNEL_WALLS: f32 = 1.5;
+/// How much wider than the drain no tip may land (#465), mm.
+const CHANNEL_MARGIN_MM: f32 = 0.3;
+
+/// Every drain of the hollows in `document`, in world space.
+pub(crate) fn world_drains(document: &SceneDocument) -> Vec<WorldDrain> {
     let hollows: Vec<Hollowed> = document.hollows().borrow().clone();
     if hollows.iter().all(|h| h.drains.is_empty()) {
         return Vec::new();
@@ -77,7 +91,7 @@ pub(crate) fn drain_mouths(document: &SceneDocument) -> Vec<[f32; 3]> {
             let leaves = scene
                 .reachable_leaves(CsgPolicy::Descend, ReferencePolicy::Skip)
                 .unwrap_or_default();
-            let mut mouths = Vec::new();
+            let mut drains = Vec::new();
             for id in leaves {
                 let Some(mesh) = scene.leaf_mesh_arc(id) else {
                     continue;
@@ -88,15 +102,53 @@ pub(crate) fn drain_mouths(document: &SceneDocument) -> Vec<[f32; 3]> {
                 let Ok(world) = scene.world_transform_of(id) else {
                     continue;
                 };
-                mouths.extend(
-                    h.drains
-                        .iter()
-                        .map(|d| world.apply_to_vertex(Vertex::new(d.center)).coords()),
-                );
+                for d in &h.drains {
+                    let depth = d
+                        .depth_mm
+                        .unwrap_or(h.options.wall_mm * CHANNEL_WALLS + 1.0);
+                    let len =
+                        (d.direction[0].powi(2) + d.direction[1].powi(2) + d.direction[2].powi(2))
+                            .sqrt()
+                            .max(1e-6);
+                    let far = [0, 1, 2].map(|k| d.center[k] + d.direction[k] / len * depth);
+                    let mouth = world.apply_to_vertex(Vertex::new(d.center)).coords();
+                    let end = world.apply_to_vertex(Vertex::new(far)).coords();
+                    // The model's scale along the channel, for its width.
+                    let world_len = ((end[0] - mouth[0]).powi(2)
+                        + (end[1] - mouth[1]).powi(2)
+                        + (end[2] - mouth[2]).powi(2))
+                    .sqrt();
+                    let scale = if depth > 0.0 { world_len / depth } else { 1.0 };
+                    drains.push(WorldDrain {
+                        mouth,
+                        end,
+                        radius_mm: d.radius_mm * scale,
+                    });
+                }
             }
-            mouths
+            drains
         })
         .unwrap_or_default()
+}
+
+/// The mouths of every drain of the hollows in `document`, in world space.
+pub(crate) fn drain_mouths(document: &SceneDocument) -> Vec<[f32; 3]> {
+    world_drains(document).iter().map(|d| d.mouth).collect()
+}
+
+/// Where no tip may land (#465): each drain's channel, a little wider.
+pub(crate) fn drain_channels(document: &SceneDocument) -> Vec<sc_geom::df_supports::KeepOut> {
+    let v = |p: [f32; 3]| p.map(f64::from);
+    world_drains(document)
+        .iter()
+        .map(|d| {
+            sc_geom::df_supports::KeepOut::between(
+                v(d.mouth),
+                v(d.end),
+                f64::from(d.radius_mm + CHANNEL_MARGIN_MM),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

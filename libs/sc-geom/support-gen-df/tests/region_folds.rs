@@ -217,6 +217,7 @@ fn a_region_folded_over_itself_takes_candidates_on_every_fold() {
         steep: &[],
         rules: &rules,
         layer_height_mm: 0.05,
+        keep_out: &[],
         mesh: Some(AutoSupportMesh {
             mesh: ModelMesh {
                 field: &*field,

@@ -2934,6 +2934,8 @@ impl DfSupportRun {
         let mut request = self.request_for_printer();
         request.options = self.options.borrow().clone();
         request.models = self.target_models();
+        // No tip in a hollow's drain channel (#465).
+        request.keep_out = crate::raft_drains::drain_channels(&self.document);
         // A model on a raft of its own keeps it (#198).
         request.own_rafts = self
             .own_rafts
@@ -2969,6 +2971,9 @@ impl DfSupportRun {
         });
         ui.set_support_raft_thickness(own.thickness_mm as f32);
         ui.set_support_raft_wall(own.wall);
+        ui.set_support_raft_pads(own.pads);
+        ui.set_support_raft_holes(own.holes_mm as f32);
+        ui.set_support_raft_tabs(own.tabs);
     }
 
     /// What a model with no supports yet is measured with by Fill bed and
@@ -3104,6 +3109,7 @@ impl DfSupportRun {
         ui.set_arrange_one_raft(full.one_raft);
         ui.set_support_zone_summary(zone_summary(&o));
         ui.set_support_grid_on(o.zones.as_ref().is_some_and(|z| z.grid_mm.is_some()));
+        ui.set_support_plate_only(o.zones.as_ref().is_some_and(|z| z.rules.plate_only));
         ui.set_support_grid_spacing(shown_grid_mm(&o) as f32);
         ui.set_support_grid_hint(grid_hint(&o));
         ui.set_support_lift_on_plate_label(lift_on_plate_label(support_lift_mm(
@@ -4219,7 +4225,7 @@ impl DfSupportRun {
     fn on_option(&self, code: i32, value: f32) {
         // With some models picked, their raft alone changes (#198): it
         // becomes theirs, and the tab's raft stays the other models'.
-        if matches!(code, 9..=11)
+        if matches!(code, 9..=11 | 16..=18)
             && let Some(targets) = self.target_models()
         {
             let mut own = self.raft_of(targets[0]);
@@ -4232,7 +4238,10 @@ impl DfSupportRun {
                     }
                 }
                 10 => own.thickness_mm = f64::from(value),
-                _ => own.wall = value != 0.0,
+                11 => own.wall = value != 0.0,
+                16 => own.pads = value != 0.0,
+                17 => own.holes_mm = f64::from(value).max(0.0),
+                _ => own.tabs = value != 0.0,
             }
             {
                 let mut owns = self.own_rafts.borrow_mut();
@@ -4284,8 +4293,19 @@ impl DfSupportRun {
             // plate under every set; the preset keeps its own raft for when
             // it goes off.
             14 => o.one_raft = on,
+            // Supports only from the plate (#471).
+            15 => {
+                let Some(zones) = o.zones.as_mut() else {
+                    return;
+                };
+                zones.rules.plate_only = on;
+            }
             10 => o.raft_thickness_mm = v,
             11 => o.raft_wall = on,
+            // A solid raft's other shapes (#138, #99).
+            16 => o.raft_pads = on,
+            17 => o.raft_holes_mm = v.max(0.0),
+            18 => o.raft_tabs = on,
             12 | 13 => {
                 let shown = shown_grid_mm(&o);
                 let Some(zones) = o.zones.as_mut() else {
@@ -4300,11 +4320,11 @@ impl DfSupportRun {
             _ => return,
         }
         // The tab's raft is every model's again.
-        if matches!(code, 9..=11 | 14) {
+        if matches!(code, 9..=11 | 14 | 16..=18) {
             self.own_rafts.borrow_mut().clear();
         }
         self.set_options(o);
-        if matches!(code, 9..=11 | 14) {
+        if matches!(code, 9..=11 | 14 | 16..=18) {
             self.rafts_follow();
         }
     }
@@ -6823,6 +6843,9 @@ struct OwnRaft {
     raft: RaftMode,
     thickness_mm: f64,
     wall: bool,
+    pads: bool,
+    holes_mm: f64,
+    tabs: bool,
 }
 
 impl OwnRaft {
@@ -6831,6 +6854,9 @@ impl OwnRaft {
             raft: options.raft,
             thickness_mm: options.raft_thickness_mm,
             wall: options.raft_wall,
+            pads: options.raft_pads,
+            holes_mm: options.raft_holes_mm,
+            tabs: options.raft_tabs,
         }
     }
 
@@ -6840,6 +6866,9 @@ impl OwnRaft {
             raft: self.raft,
             raft_thickness_mm: self.thickness_mm,
             raft_wall: self.wall,
+            raft_pads: self.pads,
+            raft_holes_mm: self.holes_mm,
+            raft_tabs: self.tabs,
             ..options.clone()
         }
     }
@@ -7970,9 +7999,10 @@ fn lost_line(edit: &LostEdit) -> slint::SharedString {
     }
 }
 
-/// One line: models, islands, roots and triangles.
+/// One line: models, islands, roots and triangles, and the supports that
+/// could not be placed again once sized (#236).
 fn summary_message(outcome: &DfSupportOutcome) -> String {
-    ctr!(
+    let mut line = ctr!(
         "Inspector",
         "Models: {}, islands: {}, support roots: {}, triangles: {}.",
         outcome.models,
@@ -7984,6 +8014,22 @@ fn summary_message(outcome: &DfSupportOutcome) -> String {
             .map(|set| set.session.state().collections.roots.len())
             .sum::<usize>(),
         outcome.triangles
+    )
+    .to_string();
+    if outcome.unplaced > 0 {
+        line.push(' ');
+        line.push_str(&unplaced_note(outcome.unplaced));
+    }
+    line
+}
+
+/// Supports the plan took off once sized and could not place again (#236).
+fn unplaced_note(n: usize) -> String {
+    ctr!(
+        "Inspector",
+        "One support did not fit once sized and was left out: Analyze islands shows what it held.",
+        "{n} supports did not fit once sized and were left out: Analyze islands shows what they held.",
+        n
     )
     .to_string()
 }

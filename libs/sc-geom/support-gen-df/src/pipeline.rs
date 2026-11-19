@@ -57,6 +57,7 @@ use crate::supports::types::SupportState;
 use crate::three::buffer_geometry::BufferGeometry;
 use crate::three::{Matrix4, Vec3};
 use crate::supports::auto_support::resting::{RESTING_LAYERS, rests_on_model};
+pub use crate::supports::auto_support::zone_candidates::KeepOut;
 use crate::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
 use crate::volume_analysis::islands::use_islands::{
@@ -136,6 +137,9 @@ pub struct PipelineSettings {
     /// a set's own drawing leaves it out and keeps the feet its roots stand
     /// on it with.
     pub raft_apart: bool,
+    /// Where no tip may land (SoulCrafted, #465): a hollow's drain channels,
+    /// in world space.
+    pub keep_out: Vec<KeepOut>,
 }
 
 impl PipelineSettings {
@@ -154,6 +158,7 @@ impl PipelineSettings {
             shaft_style: ShaftStyle::DragonFruit,
             robust_raft_geometry: false,
             raft_apart: false,
+            keep_out: Vec::new(),
         }
     }
 }
@@ -792,6 +797,7 @@ fn run_pipeline(
                 has_raft,
                 brace_meshes: &brace_meshes,
                 zone: Some(ZonePlanInput {
+                    keep_out: &settings.keep_out,
                     steep: &steep,
                     layer_height_mm: settings.layer_height_mm,
                 }),

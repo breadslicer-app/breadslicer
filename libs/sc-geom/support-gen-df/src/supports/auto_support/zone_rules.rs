@@ -220,6 +220,10 @@ pub struct ZoneRules {
     /// How far a trunk may wander sideways looking for a way down to the
     /// plate, mm.
     pub search_ground_mm: f64,
+    /// SoulCrafted (#471): every support stands on the plate; none starts on
+    /// the model below (no sticks or twigs). What cannot reach the plate is
+    /// left out.
+    pub plate_only: bool,
 }
 
 /// The faces down-facing enough to stabilize: steeper than this from
@@ -329,6 +333,7 @@ impl ZoneRules {
                 ..self.stabilization.clone()
             },
             search_ground_mm: finite_in(self.search_ground_mm, 1.0, 100.0, 30.0),
+            plate_only: self.plate_only,
         }
     }
 

@@ -318,9 +318,10 @@ fn shaft_hosted_members_walk_leaves_before_branches() {
 
 #[test]
 fn derived_lists_follow_registry_order() {
+    // Sticks are braced too (SoulCrafted, #632).
     assert_eq!(
         auto_braceable_shaft_types(),
-        [SupportTypeId::Trunk, SupportTypeId::Branch]
+        [SupportTypeId::Trunk, SupportTypeId::Branch, SupportTypeId::Stick]
     );
     assert_eq!(lateral_stabiliser_types(), [SupportTypeId::Kickstand]);
     assert_eq!(

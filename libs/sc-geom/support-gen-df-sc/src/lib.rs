@@ -51,7 +51,7 @@ pub use session::{
 pub use support_gen_df::native::overhang::{
     is_overhang_normal_z, overhang_and_stability_from_soup, overhang_normal_z_limit,
 };
-pub use support_gen_df::pipeline::ScanCache;
+pub use support_gen_df::pipeline::{KeepOut, ScanCache};
 pub use support_gen_df::supports::auto_bracing::auto_brace::HandBraceRefusal;
 pub use support_gen_df::supports::auto_support::zone_rules::{
     AreaBand, BaseTip, OverhangRule, StabilizationRule, SupportSize, ZoneRules,
@@ -162,6 +162,9 @@ pub struct DfSupportRequest {
     /// Models that stand on a raft of their own (#198): by leaf, the options
     /// whose raft their new set is drawn on, in place of `options`' raft.
     pub own_rafts: Vec<(NodeId, DfSupportOptions)>,
+    /// Where no tip may land (#465): the channels of the hollows' drains,
+    /// in world space.
+    pub keep_out: Vec<KeepOut>,
 }
 
 impl Default for DfSupportRequest {
@@ -175,6 +178,7 @@ impl Default for DfSupportRequest {
             models: None,
             keep_edits: Vec::new(),
             own_rafts: Vec::new(),
+            keep_out: Vec::new(),
         }
     }
 }
@@ -239,6 +243,10 @@ pub struct DfSupportOutcome {
     /// Models whose raft could not be cut clear of the models around it
     /// (#467): it was drawn without that clearance, under them.
     pub rafts_uncleared: Vec<NodeId>,
+    /// Supports the plan took off once sized (they crossed the model or
+    /// another shaft) and could not place again (#236): their contacts are
+    /// left for Fix all.
+    pub unplaced: usize,
     /// Where the run spent its time.
     pub timings: PerfFrame,
 }
@@ -738,10 +746,12 @@ fn merged(runs: Vec<DfSupportOutcome>) -> DfSupportOutcome {
             triangles: 0,
             crowded: Vec::new(),
             rafts_uncleared: Vec::new(),
+            unplaced: 0,
             timings: PerfFrame::default(),
         };
     };
     for run in runs {
+        out.unplaced += run.unplaced;
         out.sets.extend(run.sets);
         out.rafts_uncleared.extend(run.rafts_uncleared);
         out.models += run.models;
@@ -1030,10 +1040,13 @@ pub fn tip_diameter_for(request: &DfSupportRequest) -> f64 {
 /// caller that runs the pipeline itself with the settings a run would use,
 /// as the support scorecard does to read the plan's analytics (#234).
 pub fn settings_for(request: &DfSupportRequest) -> PipelineSettings {
-    match &request.settings {
+    let mut settings = match &request.settings {
         Some(settings) => settings.clone(),
         None => SettingsRecipe::of(request).settings(),
-    }
+    };
+    // No tip in a drain's channel (#465).
+    settings.keep_out.extend(request.keep_out.iter().copied());
+    settings
 }
 
 /// What a request's settings are made from when it gives none explicitly:
@@ -1212,11 +1225,25 @@ fn run_df_supports(
     };
     let mut placed: Vec<(String, u64)> = Vec::new();
     let mut islands = 0;
+    let mut unplaced = 0;
     for (i, m) in out.models.iter().enumerate() {
         // A model stands for its copies too (#561).
         let copies = copies.get(i).copied().unwrap_or(1);
         islands += m.islands.filtered.len() * copies as usize;
         if let Some(plan) = &m.plan {
+            unplaced += plan
+                .result
+                .analytics
+                .as_ref()
+                .and_then(|a| a.forest_report.as_ref())
+                .and_then(|f| f.orphans.as_ref())
+                .map_or(0, |orphans| {
+                    orphans
+                        .iter()
+                        .filter(|o| o.was_placed_again() == Some(false))
+                        .count()
+                })
+                * copies as usize;
             for (&kind, &count) in &plan.result.placed {
                 if count <= 0 {
                     continue;
@@ -1312,5 +1339,6 @@ fn run_df_supports(
         placed,
         crowded: Vec::new(),
         rafts_uncleared,
+        unplaced,
     })
 }

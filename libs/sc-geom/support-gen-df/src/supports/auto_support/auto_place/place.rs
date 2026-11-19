@@ -492,6 +492,18 @@ pub fn place_one_candidate(
                 }),
                 Err(_) => None,
             };
+            // SoulCrafted (#471): supports only from the plate stand on
+            // nothing but the plate: no bridge from the model below.
+            if live
+                .auto_support
+                .zone_rules
+                .as_ref()
+                .is_some_and(|r| r.plate_only)
+            {
+                let mut out = PlaceOutcome::rejected(RejectReason::Trunk(error), preset);
+                out.cavity_fan_refusal = cavity_fan_refusal;
+                return out;
+            }
             // SoulCrafted (#360): a zone preset bridges a cavity with its
             // thinnest size, whatever the zone: a cavity is tight. A support
             // placed by hand keeps the size asked for (#564).

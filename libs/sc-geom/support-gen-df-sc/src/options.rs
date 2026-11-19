@@ -74,6 +74,16 @@ pub struct DfSupportOptions {
     pub raft_thickness_mm: f64,
     /// The crenelated wall around a solid raft.
     pub raft_wall: bool,
+    /// SoulCrafted (#138): holes this wide through a solid raft between the
+    /// supports, mm; 0 for none.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub raft_holes_mm: f64,
+    /// SoulCrafted (#138): a pad under each support instead of one solid raft.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub raft_pads: bool,
+    /// SoulCrafted (#99): tabs off a solid raft's two ends, to lever it off.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub raft_tabs: bool,
     /// One raft for all (#556): a raft of lines under every set standing on
     /// one, drawn once for the plate; a set's own drawing leaves it out.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -105,10 +115,17 @@ impl Default for DfSupportOptions {
             raft: RaftMode::Lines,
             raft_thickness_mm: 0.5,
             raft_wall: true,
+            raft_holes_mm: 0.0,
+            raft_pads: false,
+            raft_tabs: false,
             one_raft: false,
             zones: None,
         }
     }
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 fn clamp(v: f64, lo: f64, hi: f64, fallback: f64) -> f64 {
@@ -141,6 +158,11 @@ impl DfSupportOptions {
             min_island_area_mm2: bound(self.min_island_area_mm2, &c::MIN_ISLAND_AREA_MM2),
             coverage_percent: bound(self.coverage_percent, &c::COVERAGE_TARGET_PERCENT).round(),
             raft_thickness_mm: clamp(self.raft_thickness_mm, 0.1, 3.0, d.raft_thickness_mm),
+            raft_holes_mm: if self.raft_holes_mm > 0.0 {
+                clamp(self.raft_holes_mm, 0.5, 10.0, 0.0)
+            } else {
+                0.0
+            },
             zones: self.zones.as_ref().map(|z| ZonePreset {
                 rules: z.rules.clamped(),
                 auto_lift_mm: clamp(z.auto_lift_mm, 0.0, 50.0, DEFAULT_SUPPORT_LIFT_MM),
@@ -224,12 +246,18 @@ impl DfSupportOptions {
         if g.bottom_mode != mode
             || g.thickness != o.raft_thickness_mm
             || g.wall_enabled != o.raft_wall
+            || g.perforation_mm != o.raft_holes_mm
+            || g.pads != o.raft_pads
+            || g.peel_tabs != o.raft_tabs
         {
             settings.rafts.update_global(
                 |r| {
                     r.bottom_mode = mode;
                     r.thickness = o.raft_thickness_mm;
                     r.wall_enabled = o.raft_wall;
+                    r.perforation_mm = o.raft_holes_mm;
+                    r.pads = o.raft_pads;
+                    r.peel_tabs = o.raft_tabs;
                 },
                 true,
             );

@@ -42,6 +42,8 @@ pub struct ZoneInput<'a> {
     pub rules: &'a ZoneRules,
     pub layer_height_mm: f64,
     pub mesh: Option<AutoSupportMesh<'a>>,
+    /// Where no tip may land (#465).
+    pub keep_out: &'a [KeepOut],
 }
 
 struct Pending {
@@ -305,6 +307,40 @@ fn island_source(island: &DetectedIsland) -> CandidateSource {
     }
 }
 
+/// SoulCrafted (#465): a cylinder no tip may land in, a hollow's drain
+/// channel, in world space: from its mouth along its axis, `radius_mm` wide.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KeepOut {
+    pub from: Vec3,
+    pub to: Vec3,
+    pub radius_mm: f64,
+}
+
+impl KeepOut {
+    /// The cylinder from `from` to `to`, `radius_mm` wide.
+    pub fn between(from: [f64; 3], to: [f64; 3], radius_mm: f64) -> Self {
+        Self {
+            from: Vec3::new(from[0], from[1], from[2]),
+            to: Vec3::new(to[0], to[1], to[2]),
+            radius_mm,
+        }
+    }
+
+    /// Whether `p` lies in the cylinder.
+    pub fn holds(&self, p: Vec3) -> bool {
+        let axis = self.to.sub(self.from);
+        let len2 = axis.length_sq();
+        if len2 <= 1e-12 {
+            return p.distance_to(self.from) <= self.radius_mm;
+        }
+        let t = p.sub(self.from).dot(axis) / len2;
+        if !(0.0..=1.0).contains(&t) {
+            return false;
+        }
+        p.distance_to(self.from.add(axis.multiply_scalar(t))) <= self.radius_mm
+    }
+}
+
 /// Every candidate the rules ask for, thinned and ordered (see the module).
 pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
     let rules = input.rules;
@@ -550,6 +586,10 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
         pending.retain(|p| {
             !is_support_blocked_contact(m.blocked, m.mesh.rays, m.side, p.candidate.tip_pos, None)
         });
+    }
+    // Nothing in a drain's channel (#465): a tip there plugs it.
+    if !input.keep_out.is_empty() {
+        pending.retain(|p| !input.keep_out.iter().any(|k| k.holds(p.candidate.tip_pos)));
     }
     // A contact with model material just below it rests on the model
     // already: nothing hangs there, and a support has no room (#235).

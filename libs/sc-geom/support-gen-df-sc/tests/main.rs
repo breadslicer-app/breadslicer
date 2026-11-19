@@ -13,6 +13,7 @@ mod bench_support_job;
 mod df_support_document;
 mod df_support_follow;
 mod df_supports_scene;
+mod raft_shapes;
 
 /// A file in `tests/` that is not declared above would never be compiled or
 /// run, because `autotests = false`.

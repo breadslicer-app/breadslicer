@@ -2033,6 +2033,10 @@ export component SupportsInspector inherits VerticalLayout {
     in property <int> raft-index;
     in property <float> raft-thickness;
     in property <bool> raft-wall;
+    // A solid raft's other shapes (#138, #99).
+    in property <bool> raft-pads;
+    in property <float> raft-holes;
+    in property <bool> raft-tabs;
     // One raft for all (#556).
     in property <bool> one-raft;
     // A zone preset's summary (#360), empty without one: the preset sizes
@@ -2041,6 +2045,8 @@ export component SupportsInspector inherits VerticalLayout {
     // The zone preset's pillar grid (#464): on or off, its spacing, and the
     // spacing the preset recommends in words, empty when none does.
     in property <bool> grid-on;
+    // Every support stands on the plate (#471): none on the model below.
+    in property <bool> plate-only;
     in property <float> grid-spacing: 7;
     in property <string> grid-hint;
     // How many models have supports made on another grid than this one
@@ -2636,6 +2642,16 @@ export component SupportsInspector inherits VerticalLayout {
         if root.one-raft: Note {
             text: @tr("Inspector" => "With one raft for all the supports drop next to their model, off the grid: the grid comes back with one raft for all off.");
         }
+        CheckBox {
+            text: @tr("Inspector" => "Supports only from the plate");
+            checked: root.plate-only;
+            toggled => {
+                root.option-changed(15, self.checked ? 1 : 0);
+            }
+        }
+        if root.plate-only: Note {
+            text: @tr("Inspector" => "No support starts on the model: what cannot reach the plate is left out, and Review lists it.");
+        }
         if root.grid-hint != "" && !root.one-raft: Note {
             text: root.grid-hint;
         }
@@ -2854,6 +2870,35 @@ export component SupportsInspector inherits VerticalLayout {
             toggled => {
                 root.option-changed(11, self.checked ? 1 : 0);
             }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "A pad under each support");
+            checked: root.raft-pads;
+            enabled: root.raft-index == 0;
+            toggled => {
+                root.option-changed(16, self.checked ? 1 : 0);
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Holes between supports");
+            unit: "mm";
+            decimals: 1;
+            value: root.raft-holes;
+            enabled: root.raft-index == 0;
+            committed(v) => {
+                root.option-changed(17, v);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Peel tabs");
+            checked: root.raft-tabs;
+            enabled: root.raft-index == 0;
+            toggled => {
+                root.option-changed(18, self.checked ? 1 : 0);
+            }
+        }
+        if root.raft-index == 0 && (root.raft-pads || root.raft-holes > 0 || root.raft-tabs): Note {
+            text: @tr("Inspector" => "Less raft to peel off the film: holes 0 for none. Print one to see how it holds before using it on a plate.");
         }
     }
 

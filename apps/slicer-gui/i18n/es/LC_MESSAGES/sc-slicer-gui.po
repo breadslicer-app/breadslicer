@@ -9413,3 +9413,41 @@ msgstr "La balsa tapa un drenaje"
 msgctxt "DfSupportDialog"
 msgid "The raft runs over {} drain hole(s) on the underside of a hollow model: the resin inside cannot get out there. Lift the model, move the drain, or set the raft to Off or to Lines."
 msgstr "La balsa pasa por encima de {} agujero(s) de drenaje en la base de un modelo hueco: la resina de adentro no puede salir por ahí. Levantá el modelo, mové el drenaje o poné la balsa en Ninguna o en Líneas."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "One support did not fit once sized and was left out: Analyze islands shows what it held."
+msgid_plural "{n} supports did not fit once sized and were left out: Analyze islands shows what they held."
+msgstr[0] "Un soporte no entró con su tamaño final y quedó afuera: Analizar islas muestra lo que sostenía."
+msgstr[1] "{n} soportes no entraron con su tamaño final y quedaron afuera: Analizar islas muestra lo que sostenían."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Supports only from the plate"
+msgstr "Soportes solo desde la plataforma"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "No support starts on the model: what cannot reach the plate is left out, and Review lists it."
+msgstr "Ningún soporte arranca sobre el modelo: lo que no llega a la plataforma queda afuera y la Revisión lo lista."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "A pad under each support"
+msgstr "Una almohadilla bajo cada soporte"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Holes between supports"
+msgstr "Agujeros entre soportes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Peel tabs"
+msgstr "Pestañas para despegar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Less raft to peel off the film: holes 0 for none. Print one to see how it holds before using it on a plate."
+msgstr "Menos balsa que despegar del film: agujeros 0 para ninguno. Imprimí una para ver cómo agarra antes de usarla en una cama."

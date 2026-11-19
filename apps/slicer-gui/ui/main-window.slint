@@ -286,6 +286,9 @@ export component MainWindow inherits Window {
     in property <int> support-raft-index: 0;
     in property <float> support-raft-thickness;
     in property <bool> support-raft-wall: true;
+    in property <bool> support-raft-pads;
+    in property <float> support-raft-holes;
+    in property <bool> support-raft-tabs;
     // The zone preset's summary (#360), empty without one.
     in property <string> support-zone-summary;
     // The shape of a support (#564).
@@ -323,6 +326,7 @@ export component MainWindow inherits Window {
     // A zone preset's pillar grid (#464): on or off, its spacing, and the
     // spacing its preset recommends in words, empty when none does.
     in property <bool> support-grid-on;
+    in property <bool> support-plate-only;
     in property <float> support-grid-spacing: 7;
     in property <string> support-grid-hint;
     // Models with supports made on another grid (#576), and the press that
@@ -2971,9 +2975,13 @@ export component MainWindow inherits Window {
                                     raft-index: root.support-raft-index;
                                     raft-thickness: root.support-raft-thickness;
                                     raft-wall: root.support-raft-wall;
+                                    raft-pads: root.support-raft-pads;
+                                    raft-holes: root.support-raft-holes;
+                                    raft-tabs: root.support-raft-tabs;
                                     one-raft: root.arrange-one-raft;
                                     zone-summary: root.support-zone-summary;
                                     grid-on: root.support-grid-on;
+                                    plate-only: root.support-plate-only;
                                     grid-spacing: root.support-grid-spacing;
                                     grid-hint: root.support-grid-hint;
                                     grid-stale: root.support-grid-stale;
