@@ -638,6 +638,16 @@ export component MainWindow inherits Window {
     callback slice-send-name-edited(string);
     callback slice-send(bool, string);
     callback slice-send-cancel();
+    // The camera of the printer picked in the card (#633): shown in the card,
+    // and over the whole window when enlarged.
+    in property <bool> slice-camera-on: false;
+    in property <bool> slice-camera-live: false;
+    in-out property <bool> slice-camera-large: false;
+    in property <image> slice-camera-image;
+    in property <string> slice-camera-title;
+    in property <string> slice-camera-status;
+    in property <bool> slice-camera-status-bad: false;
+    callback slice-camera-toggle();
     // Slice run state, driving the Slice button's disabled state and the
     // input-capturing progress modal. `slicing-in-progress` is set by the
     // Rust driver when a slice starts and cleared on every exit path.
@@ -2415,6 +2425,15 @@ export component MainWindow inherits Window {
                                 send-cancel => {
                                     root.slice-send-cancel();
                                 }
+                                camera-on: root.slice-camera-on;
+                                camera-live: root.slice-camera-live;
+                                camera-large <=> root.slice-camera-large;
+                                camera-image: root.slice-camera-image;
+                                camera-status: root.slice-camera-status;
+                                camera-status-bad: root.slice-camera-status-bad;
+                                camera-toggle => {
+                                    root.slice-camera-toggle();
+                                }
                                 setup-open <=> root.slice-setup-open;
                                 overhang-map-on <=> root.overhang-map-on;
                                 overhang-map-limit: root.overhang-map-limit;
@@ -3586,6 +3605,75 @@ export component MainWindow inherits Window {
                             root.slice-cancel-requested();
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // A printer's camera, enlarged over the whole window (#633). A click
+    // anywhere or Escape puts it back in its card.
+    if root.slice-camera-on && root.slice-camera-large: Rectangle {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        background: #000000d0;
+        TouchArea {
+            clicked => {
+                root.slice-camera-large = false;
+            }
+        }
+        FocusScope {
+            init => {
+                self.focus();
+            }
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.slice-camera-large = false;
+                    return accept;
+                }
+                reject
+            }
+        }
+        VerticalLayout {
+            x: parent.width * 4%;
+            y: parent.height * 4%;
+            width: parent.width * 92%;
+            height: parent.height * 92%;
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    text: root.slice-camera-title;
+                    color: #ffffff;
+                    font-size: 15px;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                Button {
+                    text: @tr("SlicePanel" => "Close");
+                    clicked => {
+                        root.slice-camera-large = false;
+                    }
+                }
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                Image {
+                    width: 100%;
+                    height: 100%;
+                    source: root.slice-camera-image;
+                    image-fit: contain;
+                }
+                if !root.slice-camera-live: Text {
+                    text: root.slice-camera-status;
+                    color: root.slice-camera-status-bad ? Theme.warning : #ffffff;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
                 }
             }
         }

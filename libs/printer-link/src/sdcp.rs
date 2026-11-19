@@ -514,6 +514,60 @@ pub fn start_print(service: SocketAddr, mainboard_id: &str, file_name: &str) -> 
     }
 }
 
+/// The port a printer's camera streams on, over RTSP.
+pub const RTSP_PORT: u16 = 554;
+
+/// What a printer answered when asked to turn its camera stream on or off
+/// (command 386).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VideoAnswer {
+    /// 0 done, 1 too many streams at once, 2 no camera, 3 something else.
+    pub ack: i64,
+    /// Where the stream is, when the printer says.
+    pub url: Option<String>,
+}
+
+impl VideoAnswer {
+    /// Where to read the stream from: what the printer said, or where these
+    /// printers stream.
+    pub fn stream_url(&self, ip: Ipv4Addr) -> String {
+        self.url
+            .clone()
+            .filter(|url| url.starts_with("rtsp://"))
+            .unwrap_or_else(|| format!("rtsp://{ip}:{RTSP_PORT}/video"))
+    }
+}
+
+/// Turns the printer's camera stream on or off.
+pub fn video(service: SocketAddr, mainboard_id: &str, on: bool) -> Result<VideoAnswer, Error> {
+    command(
+        service,
+        mainboard_id,
+        386,
+        json!({ "Enable": i32::from(on) }),
+        COMMAND_TIMEOUT,
+        video_of,
+    )
+}
+
+/// The answer to a camera command, from the frame that answers `request_id`.
+pub fn video_of(frame: &Value, request_id: &str) -> Option<VideoAnswer> {
+    let ack = ack_of(frame, request_id)?;
+    let url = frame
+        .pointer("/Data/Data/VideoUrl")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(|url| {
+            if url.contains("://") {
+                url.to_owned()
+            } else {
+                format!("rtsp://{url}")
+            }
+        });
+    Some(VideoAnswer { ack, url })
+}
+
 /// The printer's status. It sends one on its own topic as it is asked.
 pub fn status(service: SocketAddr, mainboard_id: &str) -> Result<Status, Error> {
     command(

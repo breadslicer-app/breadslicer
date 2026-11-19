@@ -1,0 +1,5922 @@
+// Copyright (C) The Retina Authors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! RTSP client: connect to a server via [`Session`].
+
+use std::convert::TryFrom;
+use std::io;
+use std::mem::MaybeUninit;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::num::NonZeroU32;
+use std::sync::{Arc, Mutex};
+use std::task::Poll;
+use std::time::Instant;
+use std::{fmt::Debug, num::NonZeroU16, pin::Pin};
+
+use self::channel_mapping::*;
+pub use self::timeline::Timeline;
+use crate::inputs::Input;
+use crate::rtsp::msg::{self as msg, OwnedMessage, StatusCode};
+use bytes::Bytes;
+use futures::{Future, SinkExt, Stream as _, StreamExt, ready};
+use log::{debug, trace, warn};
+use pin_project::pin_project;
+use tokio::net::UdpSocket;
+use tokio::sync::Notify;
+use url::Url;
+
+use crate::client::parse::SessionHeader;
+use crate::codec::CodecItem;
+use crate::{
+    Error, ErrorInt, RtspMessageContext, StreamContext, StreamContextInner, TcpStreamContext,
+    UdpStreamContext,
+};
+
+mod channel_mapping;
+mod parse;
+mod receiver_report;
+
+/// Internal API, public for a benchmark only.
+#[doc(hidden)]
+pub mod rtp;
+
+mod teardown;
+mod timeline;
+
+/// Assumed expiration time for stale live555 TCP sessions (case #2 of "Stale
+/// sessions" in [`SessionGroup`]).
+///
+/// This constant is taken from
+/// [here](https://github.com/rgaufman/live555/blob/41a5ec5f65bd626918a43951f743b4c9ffc52289/liveMedia/include/RTSPServer.hh#L35).
+const LIVE555_EXPIRATION_SEC: u64 = 65;
+
+/// A stale RTP session. See explanation at [`SessionGroup`].
+struct StaleSession {
+    seqnum: u64,
+
+    /// If this stale session was created from a dropped [`Session`],
+    /// a watch showing the results of the latest `TEARDOWN` attempt, or `None`
+    /// if one hasn't yet concluded.
+    teardown_rx: Option<tokio::sync::watch::Receiver<Option<Result<(), Error>>>>,
+
+    maybe_playing: bool,
+    has_tcp: bool,
+
+    /// Upper bound of advertised expiration time.
+    expires: tokio::time::Instant,
+}
+
+/// A group of sessions, currently used only to track stale sessions.
+///
+/// Sessions are associated with a group via [`SessionOptions::session_group`].
+///
+/// This is an experimental API which may change in an upcoming Retina version.
+///
+/// ## Stale sessions
+///
+/// Stale sessions are ones which are no longer active on the client side
+/// (no [`Session`] struct exists) but may still be in state `Ready`, `Playing`,
+/// or `Recording` on the server. The client has neither seen a `TEARDOWN`
+/// response nor believes they have reached their expiration time. They are
+/// tracked in two cases:
+///
+/// 1.  Dropped [`Session`]s if the [`TeardownPolicy`] says to do so
+///     and a valid `SETUP` response has been received.
+///
+///     A tokio background task is responsible for attempting a `TEARDOWN` and
+///     cleaning the session after success or expiration.
+///     [`SessionGroup::await_teardown`] can be used to wait out this process.
+///
+///     In general, the tracked expiration time is worst-case. The exception is
+///     if the sender hasn't responded to a keepalive request. In that case
+///     there's theoretically no bound on when the server could see the request
+///     and extend the session. Retina ignores this possibility.
+///
+/// 2.  TCP sessions discovered via unexpected RTSP interleaved data
+///     packets. These are assumed to be due to a live555 bug in which
+///     data continues to be sent on a stale file descriptor after a
+///     connection is closed. The sessions' packets may be sent to unrelated
+///     (even unauthenticated and/or non-RTSP!) connections after the file
+///     descriptor is reused.  These sessions may have been started by a process
+///     unknown to us and their session id is unknown, so in general it is not
+///     possible to send a `TEARDOWN`.
+///
+///     These sessions are assumed to expire 65 seconds after discovery, a
+///     constant taken from old live555 code.
+///
+/// ## Granularity
+///
+/// A `SessionGroup` can be of any granularity, but a typical use is to ensure
+/// there are no stale sessions before starting a fresh session (see
+/// [`SessionGroup::stale_sessions`] and [`SessionGroup::await_stale_sessions`]).
+/// Groups should be sized to match that idea. If connecting to a live555 server
+/// affected by the stale TCP session bug, it might be wise to have one group
+/// per server, so that all such sessions can be drained before initiating new
+/// connections. Otherwise it might be useful to have one group per describe
+/// URL (potentially several per server) and have at most one active session per
+/// URL.
+#[derive(Default)]
+pub struct SessionGroup {
+    name: Option<String>,
+    sessions: Mutex<SessionGroupInner>,
+    notify: Notify,
+}
+
+#[derive(Default)]
+struct SessionGroupInner {
+    next_seqnum: u64,
+
+    /// Stale sessions, unordered.
+    sessions: Vec<StaleSession>,
+}
+
+/// The overall status of stale sessions that may be in state `Playing` and
+/// belong to a particular group.
+pub struct StaleSessionStatus {
+    /// The maximum expire time of any such sessions.
+    pub max_expires: Option<tokio::time::Instant>,
+
+    /// The total number of sessions.
+    pub num_sessions: usize,
+
+    /// The `SessionGroupInner::next_seqnum` value as of when this was created.
+    next_seqnum: u64,
+}
+
+impl SessionGroup {
+    /// Returns this group with an assigned name.
+    ///
+    /// Typically called before placing into an `Arc`, e.g.
+    /// `Arc::new(SessionGroup::default().named("foo"))`.
+    pub fn named(self, name: String) -> Self {
+        SessionGroup {
+            name: Some(name),
+            ..self
+        }
+    }
+
+    /// Returns the name of this session group, if any.
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// An identifier for this session group, for use in log messages.
+    ///
+    /// Currently uses the name if set, a pointer address otherwise.
+    fn debug_id(&self) -> impl Debug + use<> {
+        self.name.clone().unwrap_or_else(|| format!("{:p}", &self))
+    }
+
+    /// Returns the status of stale sessions in this group.
+    ///
+    /// Currently this only returns information about sessions which may be in
+    /// state `Playing`. That is, ones for which Retina has either sent a
+    /// `PLAY` request (regardless of whether it received a response) or
+    /// discovered as described in [`SessionGroup`].
+    ///
+    /// The caller might use this in a loop with `await_stale_sessions` to sleep
+    /// until there are no such sessions, logging updates
+    pub fn stale_sessions(&self) -> StaleSessionStatus {
+        let l = self.sessions.lock().unwrap();
+        let playing = l.sessions.iter().filter(|s| s.maybe_playing);
+        StaleSessionStatus {
+            max_expires: playing.clone().map(|s| s.expires).max(),
+            num_sessions: playing.count(),
+            next_seqnum: l.next_seqnum,
+        }
+    }
+
+    /// Waits for a reasonable attempt at `TEARDOWN` on all stale sessions that
+    /// exist as of when this method is called, returning an error if any
+    /// session's reasonable attempts fail.
+    ///
+    /// This has no timeout other than the sessions' expiration times. The
+    /// caller can wrap the call in `tokio::time::timeout` for an earlier time.
+    ///
+    /// Currently on `Session::drop`, a `TEARDOWN` loop is started in the
+    /// background. This method waits for an attempt on an existing connection
+    /// (if any) and in some cases the first attempt on a fresh connection.
+    /// Retina may continue sending more attempts even after this method
+    /// returns.
+    ///
+    /// Ignores the discovered live555 bug sessions, as it's impossible to send
+    /// a `TEARDOWN` without knowing the session id. If desired, the caller can
+    /// learn of the existence of the sessions through
+    /// [`SessionGroup::stale_sessions`] and sleep until they expire.
+    ///
+    /// ## Panics
+    ///
+    /// If the `TEARDOWN` was initiated from a tokio runtime which has since
+    /// shut down.
+    pub async fn await_teardown(&self) -> Result<(), Error> {
+        let mut watches: Vec<_>;
+        {
+            let l = self.sessions.lock().unwrap();
+            watches = l
+                .sessions
+                .iter()
+                .filter_map(|s| s.teardown_rx.clone())
+                .collect();
+        }
+
+        let mut overall_result = Ok(());
+        for w in &mut watches {
+            let mut r = (*w.borrow_and_update()).clone();
+
+            if r.is_none() {
+                // An attempt hasn't finished yet. Wait for it.
+                w.changed().await.expect(
+                    "teardown Sender shouldn't be dropped; \
+                             ensure the Session's tokio runtime is still alive",
+                );
+                r.clone_from(&*w.borrow())
+            }
+
+            // Now an attempt has finished, success or failure.
+            let r = r.expect("teardown result should be populated after change");
+            overall_result = overall_result.and(r);
+        }
+        overall_result
+    }
+
+    /// Waits for all of the sessions described by `status` to expire or be torn down.
+    pub async fn await_stale_sessions(&self, status: &StaleSessionStatus) {
+        loop {
+            let notified = self.notify.notified();
+            {
+                let l = self.sessions.lock().unwrap();
+                let left = l
+                    .sessions
+                    .iter()
+                    .filter(|s| s.maybe_playing && s.seqnum < status.next_seqnum)
+                    .count();
+                log::trace!(
+                    "Session group {:?} has {} relevant sessions numbered < {}",
+                    self.debug_id(),
+                    left,
+                    status.next_seqnum
+                );
+                if left == 0 {
+                    return;
+                }
+            }
+            notified.await;
+        }
+    }
+
+    /// Removes the session with `seqnum` removing true iff it existed. Notifies waiters.
+    fn try_remove_seqnum(&self, seqnum: u64) -> bool {
+        let mut l = self.sessions.lock().unwrap();
+        let i = l.sessions.iter().position(|s| s.seqnum == seqnum);
+        match i {
+            Some(i) => {
+                l.sessions.swap_remove(i);
+                drop(l);
+                self.notify.notify_waiters();
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Policy for when to send `TEARDOWN` requests.
+///
+/// Specify via [`SessionOptions::teardown`].
+#[derive(Copy, Clone, Debug, Default, derive_more::Display)]
+pub enum TeardownPolicy {
+    /// Automatic.
+    ///
+    /// The current policy is as follows:
+    ///
+    /// *   Like `Always` if `Transport::Udp` is selected or if the server
+    ///     appears to be using a using a [buggy live555
+    ///     version](https://github.com/scottlamb/retina/issues/17) in which data
+    ///     continues to be sent on a stale file descriptor after a connection is
+    ///     closed.
+    /// *   Otherwise (TCP, server not known to be buggy), tries a single `TEARDOWN`
+    ///     on the existing connection. This is just in case; some servers appear
+    ///     to be buggy but don't advertise buggy versions. After the single attempt,
+    ///     closes the TCP connection and considers the session done.
+    #[default]
+    #[display("auto")]
+    Auto,
+
+    /// Always send `TEARDOWN` requests, regardless of transport.
+    ///
+    /// This tries repeatedly to tear down the session until success or expiration;
+    /// [`SessionGroup`] will track it also.
+    #[display("always")]
+    Always,
+
+    /// Never send `TEARDOWN` or track stale sessions.
+    #[display("never")]
+    Never,
+}
+
+impl std::str::FromStr for TeardownPolicy {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "auto" => TeardownPolicy::Auto,
+            "never" => TeardownPolicy::Never,
+            "always" => TeardownPolicy::Always,
+            _ => bail!(ErrorInt::InvalidArgument(format!(
+                "bad TeardownPolicy {s}; expected auto, never, or always"
+            ))),
+        })
+    }
+}
+
+/// Policy for handling the `rtptime` parameter normally seen in the `RTP-Info` header.
+/// This parameter is used to map each stream's RTP timestamp to NPT ("normal play time"),
+/// allowing multiple streams to be played in sync.
+#[derive(Copy, Clone, Debug, Default, derive_more::Display)]
+pub enum InitialTimestampPolicy {
+    /// Default policy: currently `Require` when playing multiple streams,
+    /// `Ignore` otherwise.
+    #[default]
+    #[display("default")]
+    Default,
+
+    /// Require the `rtptime` parameter be present and use it to set NPT. Use
+    /// when accurate multi-stream NPT is important.
+    #[display("require")]
+    Require,
+
+    /// Ignore the `rtptime` parameter and assume the first received packet for
+    /// each stream is at NPT 0. Use with cameras that are known to set
+    /// `rtptime` incorrectly.
+    #[display("ignore")]
+    Ignore,
+
+    /// Use the `rtptime` parameter when playing multiple streams if it's
+    /// specified for all of them; otherwise assume the first received packet
+    /// for each stream is at NPT 0.
+    #[display("permissive")]
+    Permissive,
+}
+
+impl std::str::FromStr for InitialTimestampPolicy {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "default" => InitialTimestampPolicy::Default,
+            "require" => InitialTimestampPolicy::Require,
+            "ignore" => InitialTimestampPolicy::Ignore,
+            "permissive" => InitialTimestampPolicy::Permissive,
+            _ => bail!(ErrorInt::InvalidArgument(format!(
+                "bad InitialTimestampPolicy {s}; \
+                 expected default, require, ignore or permissive"
+            ))),
+        })
+    }
+}
+
+/// Policy for handling the `seq` parameter normally seen in the `RTP-Info` header.
+#[derive(Copy, Clone, Debug, Default, derive_more::Display)]
+#[non_exhaustive]
+pub enum InitialSequenceNumberPolicy {
+    /// Default policy: currently same as `IgnoreSuspiciousValues`.
+    #[default]
+    #[display("default")]
+    Default,
+
+    /// Always respect the value in the header if present.
+    #[display("respect")]
+    Respect,
+
+    /// Ignore `0` and `1` values, which we consider "suspicious".
+    ///
+    /// Some cameras appear to send these fixed values then a completely
+    /// different sequence number in the first RTP packet.
+    ///
+    /// *   The Hikvision DS-2CD2032-I appears to always send `seq=0` on its
+    ///     metadata stream.
+    /// *   The Tapo C320WS appears to always send `seq=1` in all streams.
+    #[display("ignore-suspicious-values")]
+    IgnoreSuspiciousValues,
+
+    /// Always ignore, starting the sequence number from observed RTP packets.
+    #[display("ignore")]
+    Ignore,
+}
+
+impl std::str::FromStr for InitialSequenceNumberPolicy {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "default" => InitialSequenceNumberPolicy::Default,
+            "respect" => InitialSequenceNumberPolicy::Respect,
+            "ignore-suspicious-values" => InitialSequenceNumberPolicy::IgnoreSuspiciousValues,
+            "ignore" => InitialSequenceNumberPolicy::Ignore,
+            _ => bail!(ErrorInt::InvalidArgument(format!(
+                "bad InitialSequenceNumberPolicy {s}; \
+                 expected default, respect, ignore-suspicious-values, or ignore"
+            ))),
+        })
+    }
+}
+
+/// Policy for handling unknown `ssrc` value in RTCP messages.
+#[derive(Copy, Clone, Debug, Default, derive_more::Display)]
+#[non_exhaustive]
+pub enum UnknownRtcpSsrcPolicy {
+    /// Default policy: currently same as `DropPackets`.
+    #[default]
+    #[display("default")]
+    Default,
+
+    /// Abort the session on encountering an unknown `ssrc`.
+    #[display("abort-session")]
+    AbortSession,
+
+    /// Drop RTCP packets with an unknown `ssrc`.
+    #[display("drop-packets")]
+    DropPackets,
+
+    /// Process the packets as if they had the expected `ssrc`.
+    #[display("process-packets")]
+    ProcessPackets,
+}
+
+impl std::str::FromStr for UnknownRtcpSsrcPolicy {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "default" => UnknownRtcpSsrcPolicy::Default,
+            "abort-session" => UnknownRtcpSsrcPolicy::AbortSession,
+            "drop-packets" => UnknownRtcpSsrcPolicy::DropPackets,
+            "process-packets" => UnknownRtcpSsrcPolicy::ProcessPackets,
+            _ => bail!(ErrorInt::InvalidArgument(format!(
+                "bad UnknownRtcpSsrcPolicy {s}; \
+                 expected default, abort-session, drop-packets, or process-packets"
+            ))),
+        })
+    }
+}
+
+/// Returns an appropriate keepalive interval for `session`.
+///
+/// This generally uses half the session timeout. However, it's capped in case
+/// the server offers a generous timeout, messages are rare (e.g. ONVIF metadata
+/// streams), and there's a NAT box between with a shorter timeout.
+fn keepalive_interval(session: &SessionHeader) -> std::time::Duration {
+    std::time::Duration::from_secs(std::cmp::min(u64::from(session.timeout_sec), 60)) / 2
+}
+
+/// Returns the current time for RTCP receiver reports' statistics and schedule.
+///
+/// This reads tokio's clock, as the report timer does, so the two agree even
+/// when tests pause time. Otherwise it's the same as `Instant::now()`.
+fn report_now() -> Instant {
+    tokio::time::Instant::now().into_std()
+}
+
+/// Options which must be known right as a session is created.
+///
+/// Decisions which can be deferred are in [`SetupOptions`] or [`PlayOptions`] instead.
+#[derive(Default)]
+pub struct SessionOptions {
+    creds: Option<Credentials>,
+    user_agent: Option<Box<str>>,
+    session_group: Option<Arc<SessionGroup>>,
+    teardown: TeardownPolicy,
+    unassigned_channel_data: UnassignedChannelDataPolicy,
+    session_id: SessionIdPolicy,
+    max_message_size: Option<usize>,
+    receiver_reports: ReceiverReportPolicy,
+    bind_addr: Option<std::net::IpAddr>,
+    backchannel: bool,
+}
+
+/// Policy for handling data received on unassigned RTSP interleaved channels.
+#[derive(Copy, Clone, Default, derive_more::Display)]
+pub enum UnassignedChannelDataPolicy {
+    /// Automatic (default).
+    ///
+    /// The current policy (which may change) is as follows:
+    ///
+    /// *   if the server has sent a SDP `tool` attribute for which
+    ///     [`Tool::has_live555_tcp_bug`] is true, use `AssumeStaleSession`.
+    /// *   otherwise (prior to receiving the `DESCRIBE` response, if there was
+    ///     no tool attribute, or if it does not match the known pattern),
+    ///     use `Ignore`.
+    #[default]
+    #[display("auto")]
+    Auto,
+
+    /// Assume the data is due to the live555 stale TCP session bug described
+    /// in "Stale sessions" under [`SessionGroup`].
+    ///
+    /// This session will return error, and the `SessionGroup` will track the
+    /// expiration of a stale session.
+    #[display("assume-stale-session")]
+    AssumeStaleSession,
+
+    /// Returns an error.
+    #[display("error")]
+    Error,
+
+    /// Ignores the data.
+    ///
+    /// Some broken IP cameras appear to have some default assignment of streams
+    /// to interleaved channels. If there is no `SETUP` for that stream before
+    /// `PLAY`, they will send data anyway, on this channel. In this mode, such
+    /// data messages are ignored.
+    #[display("ignore")]
+    Ignore,
+}
+
+impl std::str::FromStr for UnassignedChannelDataPolicy {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "auto" => UnassignedChannelDataPolicy::Auto,
+            "assume-stale-session" => UnassignedChannelDataPolicy::AssumeStaleSession,
+            "error" => UnassignedChannelDataPolicy::Error,
+            "ignore" => UnassignedChannelDataPolicy::Ignore,
+            _ => bail!(ErrorInt::InvalidArgument(format!(
+                "bad UnassignedChannelDataPolicy {s}; expected auto, assume-stale-session, error, \
+                 or ignore"
+            ))),
+        })
+    }
+}
+
+/// Policy for handling the session ID returned by the server in response to
+/// `SETUP` requests.
+#[derive(Copy, Clone, Debug, Default, derive_more::Display)]
+pub enum SessionIdPolicy {
+    /// Default policy: currently `RequireMatch`.
+    #[default]
+    #[display("default")]
+    Default,
+
+    /// Requires the server to return the same session ID for all `SETUP`
+    /// requests in the session.
+    #[display("require-match")]
+    RequireMatch,
+
+    /// Uses the session ID returned from the first `SETUP` request and ignores
+    /// any subsequent changes. Required for some broken cameras.
+    #[display("use-first")]
+    UseFirst,
+}
+
+impl std::str::FromStr for SessionIdPolicy {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "default" => SessionIdPolicy::Default,
+            "require-match" => SessionIdPolicy::RequireMatch,
+            "use-first" => SessionIdPolicy::UseFirst,
+            _ => bail!(ErrorInt::InvalidArgument(format!(
+                "bad SessionIdPolicy {s}; \
+                 expected default, require-match or use-first"
+            ))),
+        })
+    }
+}
+
+/// Policy for sending RTCP receiver reports to the server.
+///
+/// Receiver reports, as described in [RFC 3550 section
+/// 6.4.2](https://datatracker.ietf.org/doc/html/rfc3550#section-6.4.2), tell
+/// the server about packet loss and jitter. RFC 3550 section 6 says this
+/// feedback "SHOULD be used in all environments".
+///
+/// Reports cover only streams Retina receives. A backchannel stream (see
+/// [`SessionOptions::backchannel`]) gets none; Retina describes the media it
+/// sends there in RTCP sender reports instead.
+///
+/// Specify via [`SessionOptions::receiver_reports`].
+#[derive(Copy, Clone, Debug, Default, derive_more::Display)]
+#[non_exhaustive]
+pub enum ReceiverReportPolicy {
+    /// Default policy: currently `Never`.
+    #[default]
+    #[display("default")]
+    Default,
+
+    /// Never send receiver reports.
+    #[display("never")]
+    Never,
+
+    /// Send receiver reports while playing, for each stream on its RTCP
+    /// interleaved channel or UDP port, about every 5 seconds.
+    #[display("always")]
+    Always,
+}
+
+impl ReceiverReportPolicy {
+    fn enabled(self) -> bool {
+        match self {
+            ReceiverReportPolicy::Default | ReceiverReportPolicy::Never => false,
+            ReceiverReportPolicy::Always => true,
+        }
+    }
+}
+
+impl std::str::FromStr for ReceiverReportPolicy {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "default" => ReceiverReportPolicy::Default,
+            "never" => ReceiverReportPolicy::Never,
+            "always" => ReceiverReportPolicy::Always,
+            _ => bail!(ErrorInt::InvalidArgument(format!(
+                "bad ReceiverReportPolicy {s}; expected default, never, or always"
+            ))),
+        })
+    }
+}
+
+/// The RTP packet transport to request.
+///
+/// Defaults to `Transport::Tcp`.
+#[derive(Clone, Debug, derive_more::Display)]
+#[non_exhaustive]
+pub enum Transport {
+    /// Sends RTP packets over the RTSP TCP connection via interleaved data.
+    #[display("tcp")]
+    Tcp(TcpTransportOptions),
+
+    /// Sends RTP packets over UDP (experimental).
+    ///
+    /// This support is currently only suitable for a LAN for a couple reasons:
+    /// *   There's no reorder buffer, so out-of-order packets are all dropped.
+    /// *   RTCP RRs (receiver reports) aren't sent by default, so servers won't
+    ///     have the correct information to measure packet loss and pace packets
+    ///     appropriately. See [`SessionOptions::receiver_reports`].
+    #[display("udp")]
+    Udp(UdpTransportOptions),
+}
+
+impl Default for Transport {
+    fn default() -> Self {
+        Transport::Tcp(TcpTransportOptions::default())
+    }
+}
+
+impl std::str::FromStr for Transport {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "tcp" => Transport::Tcp(TcpTransportOptions::default()),
+            "udp" => Transport::Udp(UdpTransportOptions::default()),
+            _ => bail!(ErrorInt::InvalidArgument(format!(
+                "bad Transport {s}; \
+                 expected tcp or udp"
+            ))),
+        })
+    }
+}
+
+/// Per-stream TCP transport options (placeholder for future expansion).
+#[derive(Clone, Default, Debug)]
+#[non_exhaustive]
+pub struct TcpTransportOptions;
+
+/// Per-stream UDP transport options (placeholder for future expansion).
+#[derive(Clone, Default, Debug)]
+#[non_exhaustive]
+pub struct UdpTransportOptions;
+
+impl SessionOptions {
+    /// Uses the given credentials when/if the server requests digest authentication.
+    #[inline]
+    pub fn creds(mut self, creds: Option<Credentials>) -> Self {
+        self.creds = creds;
+        self
+    }
+
+    /// Binds outgoing connections (the RTSP TCP connection, and UDP data sockets when using UDP
+    /// transport) to this local address. Useful when the host has several local addresses and the
+    /// OS would otherwise pick a source address the server has no route back to (e.g. a link-local
+    /// address beside a routable one). The port is chosen by the OS.
+    pub fn bind(mut self, bind_addr: Option<std::net::IpAddr>) -> Self {
+        self.bind_addr = bind_addr;
+        self
+    }
+
+    /// Sends the given user agent string with each request.
+    pub fn user_agent(mut self, user_agent: String) -> Self {
+        self.user_agent = if user_agent.is_empty() {
+            None
+        } else {
+            Some(user_agent.into_boxed_str())
+        };
+        self
+    }
+
+    pub fn session_group(mut self, session_group: Arc<SessionGroup>) -> Self {
+        self.session_group = Some(session_group);
+        self
+    }
+
+    pub fn teardown(mut self, teardown: TeardownPolicy) -> Self {
+        self.teardown = teardown;
+        self
+    }
+
+    pub fn unassigned_channel_data(mut self, policy: UnassignedChannelDataPolicy) -> Self {
+        self.unassigned_channel_data = policy;
+        self
+    }
+
+    pub fn session_id(mut self, policy: SessionIdPolicy) -> Self {
+        self.session_id = policy;
+        self
+    }
+
+    /// Limits the size in bytes (head and body combined) of each RTSP
+    /// response (or request) read from the server.
+    ///
+    /// A larger message fails the session with an RTSP framing error rather
+    /// than being buffered in full. The limit is checked as the head arrives
+    /// and against its `Content-Length` before the body is read. It doesn't
+    /// apply to interleaved data messages, which are inherently limited to a
+    /// 4-byte head and a body under 64 KiB.
+    ///
+    /// There's no limit by default. Real servers' responses are small; a
+    /// `DESCRIBE` response is typically a few KiB.
+    pub fn max_message_size(mut self, max_message_size: usize) -> Self {
+        self.max_message_size = Some(max_message_size);
+        self
+    }
+
+    /// Sets the policy for sending RTCP receiver reports.
+    ///
+    /// See [`ReceiverReportPolicy`].
+    pub fn receiver_reports(mut self, policy: ReceiverReportPolicy) -> Self {
+        self.receiver_reports = policy;
+        self
+    }
+
+    fn get_max_message_size(&self) -> usize {
+        self.max_message_size.unwrap_or(usize::MAX)
+    }
+
+    /// Requests an ONVIF backchannel: media sent from the client to the server,
+    /// such as audio for a camera's speaker. Defaults to false.
+    ///
+    /// When true, the `DESCRIBE` request carries the `Require:
+    /// www.onvif.org/ver20/backchannel` header defined in the [ONVIF Streaming
+    /// Specification](https://www.onvif.org/specs/stream/ONVIF-Streaming-Spec.pdf)
+    /// section 5.3. A server which supports it adds media marked
+    /// `a=sendonly`, such as audio for its speaker; these appear in
+    /// [`Session::streams`] with [`Stream::direction`]
+    /// [`StreamDirection::Sending`]. Set one up with [`Session::setup`] (TCP
+    /// only) alongside the streams to receive, then send packets via the
+    /// [`futures::Sink`] impl on [`Session<Playing>`] or [`Demuxed`]. The
+    /// `SETUP` of a sending stream and the following `PLAY` and `TEARDOWN`
+    /// requests also carry the `Require` header.
+    ///
+    /// A server which doesn't understand the header fails the `DESCRIBE` with
+    /// status `551 Option not supported` (section 5.3.2); the error's
+    /// description then suggests the backchannel as the cause. Retina doesn't
+    /// retry. The spec says the client can try again without the backchannel;
+    /// callers can check [`Error::status_code`] to decide.
+    ///
+    /// A failed `SETUP` of a sending stream, as of any stream, leaves it
+    /// unused and the session usable: the caller may go on to set up others
+    /// and `PLAY` without it.
+    pub fn backchannel(mut self, backchannel: bool) -> Self {
+        self.backchannel = backchannel;
+        self
+    }
+}
+
+/// Per-stream options decided at `SETUP` time.
+#[derive(Default)]
+pub struct SetupOptions {
+    transport: Transport,
+    frame_format: Option<crate::codec::FrameFormat>,
+}
+
+impl SetupOptions {
+    /// Sets the underlying transport to use.
+    #[inline]
+    pub fn transport(mut self, transport: Transport) -> Self {
+        self.transport = transport;
+        self
+    }
+
+    /// Sets the frame format for output assembly.
+    ///
+    /// This controls H.26x NAL framing (length-prefixed vs Annex B) and
+    /// parameter set insertion. See [`crate::codec::FrameFormat`] for details
+    /// and preset constants like [`FrameFormat::MP4`](crate::codec::FrameFormat::MP4).
+    #[inline]
+    pub fn frame_format(mut self, format: crate::codec::FrameFormat) -> Self {
+        self.frame_format = Some(format);
+        self
+    }
+}
+
+/// Options which must be decided at `PLAY` time.
+///
+/// These are mostly adjustments for non-compliant server implementations.
+/// See also [`SessionOptions`] for options which must be decided earlier.
+#[derive(Default)]
+pub struct PlayOptions {
+    initial_timestamp: InitialTimestampPolicy,
+    initial_seq: InitialSequenceNumberPolicy,
+    enforce_timestamps_with_max_jump_secs: Option<NonZeroU32>,
+    unknown_rtcp_ssrc: UnknownRtcpSsrcPolicy,
+}
+
+impl PlayOptions {
+    /// Sets the policy for handling the `rtptime` parameter normally seem in the `RTP-Info` header.
+    pub fn initial_timestamp(self, initial_timestamp: InitialTimestampPolicy) -> Self {
+        Self {
+            initial_timestamp,
+            ..self
+        }
+    }
+
+    pub fn initial_seq(self, initial_seq: InitialSequenceNumberPolicy) -> Self {
+        Self {
+            initial_seq,
+            ..self
+        }
+    }
+
+    pub fn unknown_rtcp_ssrc(self, unknown_rtcp_ssrc: UnknownRtcpSsrcPolicy) -> Self {
+        Self {
+            unknown_rtcp_ssrc,
+            ..self
+        }
+    }
+
+    /// If the `RTP-Time` specifies `seq=0` or `seq=1`, ignore it.
+    ///
+    /// `ignore_zero_seq(true)` is an outdated spelling of
+    /// `initial_seq(InitialSequenceNumberPolicy::IgnoreSuspiciousValues)`,
+    /// which is currently the default anyway.
+    #[deprecated]
+    pub fn ignore_zero_seq(self, ignore_zero_seq: bool) -> Self {
+        Self {
+            initial_seq: match ignore_zero_seq {
+                true => InitialSequenceNumberPolicy::IgnoreSuspiciousValues,
+                false => InitialSequenceNumberPolicy::Respect,
+            },
+            ..self
+        }
+    }
+
+    /// Enforces that timestamps are non-decreasing and jump forward by no more
+    /// than the given number of seconds.
+    ///
+    /// By default, no enforcement is done, and computed [crate::Timestamp]
+    /// values will go backward if subsequent 32-bit RTP timestamps differ by
+    /// more than `i32::MAX`.
+    pub fn enforce_timestamps_with_max_jump_secs(self, secs: NonZeroU32) -> Self {
+        Self {
+            enforce_timestamps_with_max_jump_secs: Some(secs),
+            ..self
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Presentation {
+    pub streams: Box<[Stream]>,
+    base_url: Url,
+    pub control: Url,
+    tool: Option<Tool>,
+}
+
+/// The server's version as declared in the `DESCRIBE` response's `a:tool` SDP attribute.
+#[derive(Eq, PartialEq)]
+pub struct Tool(Box<str>);
+
+impl Tool {
+    pub fn new(raw: &str) -> Self {
+        Self(raw.into())
+    }
+
+    /// Returns if the given tool is known to be a live555 version that causes
+    /// the stale TCP sessions described at [`SessionGroup`].
+    pub fn has_live555_tcp_bug(&self) -> bool {
+        if let Some(version) = self.0.strip_prefix("LIVE555 Streaming Media v") {
+            version > "0000.00.00" && version < "2017.06.04"
+        } else {
+            false
+        }
+    }
+}
+
+impl std::fmt::Debug for Tool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&*self.0, f)
+    }
+}
+
+impl std::ops::Deref for Tool {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// The direction in which a [`Stream`]'s media flows, from the client's point of view.
+///
+/// See [`Stream::direction`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StreamDirection {
+    /// The server sends media; Retina receives it via the [`futures::Stream`]
+    /// impls on [`Session<Playing>`] and [`Demuxed`]. This is the usual case.
+    Receiving,
+
+    /// Retina sends media to the server via the [`futures::Sink`] impls on
+    /// [`Session<Playing>`] and [`Demuxed`].
+    ///
+    /// This is an ONVIF backchannel stream ([ONVIF Streaming
+    /// Specification](https://www.onvif.org/specs/stream/ONVIF-Streaming-Spec.pdf)
+    /// section 5.3). A stream is sending if the backchannel was requested via
+    /// [`SessionOptions::backchannel`] and the server's `DESCRIBE` response
+    /// marks its media description `a=sendonly`, which ONVIF uses for media
+    /// sent from the client to the server (section 5.3.2). A media description
+    /// without a direction attribute has the session's ([RFC 8866 section
+    /// 6.7](https://datatracker.ietf.org/doc/html/rfc8866#section-6.7)).
+    Sending,
+}
+
+/// Information about a stream offered within a presentation.
+///
+/// Currently if multiple formats are offered, this only describes the first.
+pub struct Stream {
+    depacketizer: Result<crate::codec::Depacketizer, String>,
+    state: StreamState,
+
+    // See the matching accessors for descriptions of these fields.
+    media: Box<str>,
+    encoding_name: Box<str>,
+    rtp_payload_type: u8,
+    clock_rate_hz: u32,
+    channels: Option<NonZeroU16>,
+    framerate: Option<f32>,
+    control: Option<Url>,
+    direction: StreamDirection,
+}
+
+impl std::fmt::Debug for Stream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_struct("Stream")
+            .field("media", &self.media)
+            .field("control", &self.control.as_ref().map(Url::as_str))
+            .field("encoding_name", &self.encoding_name)
+            .field("rtp_payload_type", &self.rtp_payload_type)
+            .field("clock_rate", &self.clock_rate_hz)
+            .field("channels", &self.channels)
+            .field("framerate", &self.framerate)
+            .field("direction", &self.direction)
+            .field("depacketizer", &self.depacketizer)
+            .field("state", &self.state)
+            .finish()
+    }
+}
+
+impl Stream {
+    /// Returns the media type, as specified in the [IANA SDP parameters media
+    /// registry](https://www.iana.org/assignments/sdp-parameters/sdp-parameters.xhtml#sdp-parameters-1).
+    #[inline]
+    pub fn media(&self) -> &str {
+        &self.media
+    }
+
+    /// An encoding name, as specified in the [IANA media type
+    /// registry](https://www.iana.org/assignments/media-types/media-types.xhtml), with
+    /// ASCII characters in lowercase.
+    ///
+    /// Commonly used but not specified in that registry: the ONVIF types
+    /// claimed in the
+    /// [ONVIF Streaming Spec](https://www.onvif.org/specs/stream/ONVIF-Streaming-Spec.pdf):
+    /// *   `vnd.onvif.metadata`
+    /// *   `vnd.onvif.metadata+gzip`
+    /// *   `vnd.onvif.metadata.exi.onvif`
+    /// *   `vnd.onvif.metadata.exi.ext`
+    #[inline]
+    pub fn encoding_name(&self) -> &str {
+        &self.encoding_name
+    }
+
+    /// Returns the RTP payload type.
+    ///
+    /// See the [registry](https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml#rtp-parameters-1).
+    /// It's common to use one of the dynamically assigned values, 96–127.
+    #[inline]
+    pub fn rtp_payload_type(&self) -> u8 {
+        self.rtp_payload_type
+    }
+
+    /// Returns the RTP clock rate, in Hz.
+    #[inline]
+    pub fn clock_rate_hz(&self) -> u32 {
+        self.clock_rate_hz
+    }
+
+    /// Returns the number of audio channels, if applicable (`media` is `audio`) and known.
+    #[inline]
+    pub fn channels(&self) -> Option<NonZeroU16> {
+        self.channels
+    }
+
+    /// Returns the video framerate if present in SDP attributes.
+    #[inline]
+    pub fn framerate(&self) -> Option<f32> {
+        self.framerate
+    }
+
+    /// Returns the specified control URL.
+    ///
+    /// This is needed with multiple streams to send `SETUP` requests and
+    /// interpret the `PLAY` response's `RTP-Info` header.
+    /// [RFC 2326 section C.3](https://datatracker.ietf.org/doc/html/rfc2326#appendix-C.3)
+    /// says the server is allowed to omit it when there is only a single stream.
+    #[inline]
+    pub fn control(&self) -> Option<&Url> {
+        self.control.as_ref()
+    }
+
+    /// Returns whether Retina receives or sends this stream's media.
+    ///
+    /// This is [`StreamDirection::Receiving`] unless
+    /// [`SessionOptions::backchannel`] is set and the stream is an ONVIF
+    /// backchannel; see [`StreamDirection::Sending`] for the exact conditions.
+    #[inline]
+    pub fn direction(&self) -> StreamDirection {
+        self.direction
+    }
+}
+
+struct UdpSockets {
+    rtp: UdpSocket,
+    rtcp: UdpSocket,
+    read_buf: crate::buf::MarkBuf,
+}
+
+/// Placeholder `Debug` impl to allow `UdpSockets` to be a field within a `#[derive(Debug)]` struct.
+impl std::fmt::Debug for UdpSockets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UdpSockets").finish()
+    }
+}
+
+impl Stream {
+    /// Returns codec-specified parameters for this stream, if available.
+    ///
+    /// Returns `None` on unknown codecs, bad parameters, or if parameters aren't (yet) known.
+    ///
+    /// This is initially populated from the `DESCRIBE` response's SDP. Not all codecs guarantee
+    /// parameters are provided in the SDP. Notably, H.264 allows parameters to be specified
+    /// "in-band" (with the data packets) instead of or in addition to "out-of-band" (via SDP).
+    /// Thus, it's unspecified whether a `parameters` call immediately after `Session::describe`
+    /// will return `Some` or `None`.
+    ///
+    /// Additionally, parameters obtained before [`Session::setup`](crate::client::Session::setup)
+    /// always use the default framing. After `setup`, parameters reflect the supplied
+    /// [`SetupOptions::frame_format`](crate::client::SetupOptions::frame_format).
+    ///
+    /// # With [`Demuxed`]
+    ///
+    /// When using [`Demuxed`]'s frame-by-frame `futures::Stream` impl, `parameters` reflects
+    /// all parameters as of returned frames that have been returned from from `poll_next` via
+    /// `Poll::Ready`.
+    ///
+    /// It's guaranteed to *not* reflect any parameter changes in the upcoming frame, even after
+    /// a `Poll::Pending` return.
+    ///
+    /// If there is no packet loss, parameters are generally available after the first frame is
+    /// returned. In the case of H.264, [RFC 6184 section
+    /// 8.4](https://datatracker.ietf.org/doc/html/rfc6184#section-8.4) says "when parameter sets
+    /// are added or updated, care SHOULD be taken to ensure that any parameter set is delivered
+    /// prior to its usage."
+    ///
+    /// # Without [`Demuxed`]
+    ///
+    /// When directly using [`Session`]'s packet-by-packet `futures::Stream` impl, codec
+    /// depacketization logic is bypassed. The parameters returned by this function may be out of
+    /// date.
+    pub fn parameters(&self) -> Option<crate::codec::ParametersRef<'_>> {
+        self.depacketizer.as_ref().ok().and_then(|d| d.parameters())
+    }
+
+    /// Returns a context for this stream, if it has been set up.
+    pub fn ctx(&self) -> Option<&StreamContext> {
+        match &self.state {
+            StreamState::Uninit => None,
+            StreamState::Init(init) => Some(&init.ctx),
+            StreamState::Playing { ctx, .. } => Some(ctx),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum StreamState {
+    /// Uninitialized; no `SETUP` has yet been sent.
+    Uninit,
+
+    /// `SETUP` response has been received.
+    Init(StreamStateInit),
+
+    /// `PLAY` response has been received.
+    Playing {
+        timeline: Timeline,
+        rtp_handler: rtp::InorderParser,
+        ctx: StreamContext,
+        udp_sockets: Option<UdpSockets>,
+
+        /// Reception statistics for RTCP receiver reports, iff they're enabled.
+        reception: Option<receiver_report::ReceptionStats>,
+
+        /// For a [`StreamDirection::Sending`] stream, the state of sent RTP and RTCP.
+        sender: Option<Box<rtp::Sender>>,
+    },
+}
+
+#[derive(Debug)]
+struct StreamStateInit {
+    /// The RTP synchronization source (SSRC), as defined in
+    /// [RFC 3550](https://tools.ietf.org/html/rfc3550). This is normally
+    /// supplied in the `SETUP` response's `Transport` header; when it is not,
+    /// it is learned from the first packet. Reolink cameras, and some Dahua
+    /// firmware, also write an `ssrc` in the `PLAY` response's `RTP-Info`
+    /// header, which RTSP/1.0 does not define; that one is ignored.
+    ssrc: Option<u32>,
+
+    /// The initial RTP sequence number, as specified in the `PLAY` response's
+    /// `RTP-Info` header. This field is only used during the `play()` call
+    /// itself; by the time it returns, the stream will be in state `Playing`.
+    initial_seq: Option<u16>,
+
+    /// The initial RTP timestamp, as specified in the `PLAY` response's
+    /// `RTP-Info` header. This field is only used during the `play()` call
+    /// itself; by the time it returns, the stream will be in state `Playing`.
+    initial_rtptime: Option<u32>,
+
+    ctx: StreamContext,
+    udp_sockets: Option<UdpSockets>,
+}
+
+/// Username and password authentication credentials.
+///
+/// The `Debug` impl omits the password, so credentials don't end up in logs.
+#[derive(Clone, Eq, PartialEq)]
+pub struct Credentials {
+    pub username: String,
+    pub password: String,
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials")
+            .field("username", &self.username)
+            .field("password", &format_args!("<redacted>"))
+            .finish()
+    }
+}
+
+/// Marker trait for the state of a [Session].
+/// This doesn't closely match [RFC 2326
+/// A.1](https://tools.ietf.org/html/rfc2326#appendix-A.1). In practice, we've
+/// found that cheap IP cameras are more restrictive than RTSP suggests. Eg, a
+/// `DESCRIBE` changes the connection's state such that another one will fail,
+/// before assigning a session id. Thus [Session] represents something more like
+/// an RTSP connection than an RTSP session.
+#[doc(hidden)]
+pub trait State {}
+
+/// Initial state after a `DESCRIBE`; use via `Session<Described>`.
+#[doc(hidden)]
+pub struct Described {
+    sdp: Bytes,
+}
+impl State for Described {}
+
+enum KeepaliveState {
+    Idle,
+
+    /// The keepalive request has been queued but not completely written.
+    Flushing {
+        cseq: u32,
+        method: KeepaliveMethod,
+
+        /// The connection's [`written`](crate::tokio::Connection::written)
+        /// count at which the request will have been written.
+        ///
+        /// The write buffer is shared with backchannel media queued via the
+        /// `Sink` impl, so it may never be empty for long. The request counts as
+        /// written once this mark is reached, regardless of what's queued
+        /// after it.
+        end: u64,
+    },
+
+    /// The keepalive request has been written; awaiting the response.
+    Waiting {
+        cseq: u32,
+        method: KeepaliveMethod,
+    },
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone, Debug)]
+enum KeepaliveMethod {
+    Options,
+    SetParameter,
+    GetParameter,
+}
+
+impl From<KeepaliveMethod> for msg::Method {
+    fn from(method: KeepaliveMethod) -> Self {
+        match method {
+            KeepaliveMethod::Options => msg::Method::OPTIONS,
+            KeepaliveMethod::SetParameter => msg::Method::SET_PARAMETER,
+            KeepaliveMethod::GetParameter => msg::Method::GET_PARAMETER,
+        }
+    }
+}
+
+/// The state of RTCP receiver reports; only used in state `Playing` when
+/// they're enabled via [`SessionOptions::receiver_reports`].
+struct ReportState {
+    writer: receiver_report::ReportWriter,
+    schedule: receiver_report::ReportSchedule,
+
+    /// Fires at `schedule.next_due()`.
+    timer: Pin<Box<tokio::time::Sleep>>,
+}
+
+/// State after a `PLAY`; use via `Session<Playing>`.
+#[doc(hidden)]
+pub struct Playing(());
+impl State for Playing {}
+
+/// The raw connection, without tracking session state.
+struct RtspConnection {
+    inner: crate::tokio::Connection,
+    channels: ChannelMappings,
+
+    /// The next `CSeq` header value to use when sending an RTSP request.
+    next_cseq: u32,
+
+    /// If Retina has received data on an unassigned RTSP interleaved data channel.
+    seen_unassigned: bool,
+}
+
+/// Mode to use in `RtspConnection::send` when looking for a response.
+enum ResponseMode {
+    /// Anything but the response to this request is an error.
+    Normal,
+
+    /// Silently discard data messages on assigned channels.
+    ///
+    /// This is a workaround for recent Reolink cameras which appear to send
+    /// RTCP sender reports immediately *before* the `PLAY` response when
+    /// using interleaved data. It's simplest to discard them rather than
+    /// attempt to interpret them before having `RTP-Info`.
+    Play,
+
+    /// Discard data messages and unrelated responses while awaiting the
+    /// response to this request.
+    Teardown,
+}
+
+/// An RTSP session.
+///
+/// The expected lifecycle is as follows:
+///
+/// 1. Create a session via [`Session::describe`].
+/// 2. Examine the session's available streams via [`Session::streams`] and set
+///    up one or more via [`Session::setup`].
+/// 3. Start playing via [`Session::play`].
+/// 4. Get packets via the [`futures::stream::Stream`] impl on `Session<Playing>`,
+///    or frames via the [`futures::stream::Stream`] impl returned by [`Session<Playing>::demuxed`].
+///    If a [`StreamDirection::Sending`] stream (ONVIF backchannel) was set up,
+///    send packets on it via the [`futures::sink::Sink`] impl on `Session<Playing>`.
+/// 5. Drop the session. Retina may issue a `TEARDOWN` in the background, depending on the
+///    [`SessionOptions::teardown`] parameter.
+/// 6. Possibly wait for `TEARDOWN` to complete; see
+///    [`SessionOptions::session_group`] and [`SessionGroup::await_teardown`].
+///
+/// ## tokio runtime
+///
+/// All `Session` operations are currently expected to be performed from
+/// "within" a tokio runtime with both time and I/O resource drivers enabled.
+/// Operations may panic or fail otherwise.
+pub struct Session<S: State>(Pin<Box<SessionInner>>, S);
+
+#[pin_project(PinnedDrop)]
+struct SessionInner {
+    /// The connection. Currently there's expected to always be a RTSP
+    /// connection, even while playing a RTP/AVP/UDP session. The only
+    /// exception is during drop.
+    conn: Option<RtspConnection>,
+
+    options: SessionOptions,
+    requested_auth: Option<http_auth::PasswordClient>,
+    presentation: Presentation,
+
+    /// This will be set iff one or more `SETUP` calls have been issued.
+    /// This is sometimes true in state `Described` and always true in state
+    /// `Playing`.
+    session: Option<parse::SessionHeader>,
+
+    // Keep some information about the DESCRIBE response. If a depacketizer
+    // couldn't be constructed correctly for one or more streams, this will be
+    // used to create a RtspResponseError on `State<Playing>::demuxed()`.
+    // We defer such errors from DESCRIBE time until then because they only
+    // matter if the stream is setup and the caller wants depacketization.
+    describe_ctx: RtspMessageContext,
+    describe_cseq: u32,
+    describe_status: StatusCode,
+
+    /// The state of the keepalive request; only used in state `Playing`.
+    keepalive_state: KeepaliveState,
+
+    keepalive_timer: Option<Pin<Box<tokio::time::Sleep>>>,
+
+    /// The state of RTCP receiver reports, iff they're enabled; only used in
+    /// state `Playing`.
+    reports: Option<ReportState>,
+
+    /// Bitmask of [`SessionFlag`]s.
+    flags: u8,
+
+    /// The index within `presentation.streams` to start the next poll at.
+    /// Round-robining between them rather than always starting at 0 should
+    /// prevent one stream from starving the others.
+    udp_next_poll_i: usize,
+}
+
+#[derive(Copy, Clone)]
+#[repr(u8)]
+enum SessionFlag {
+    /// Set if the server may be in state Playing: we have sent a `PLAY`
+    /// request, regardless of if the response has been received.
+    MaybePlaying = 0x1,
+
+    /// Set if one or more streams are configured to use TCP.
+    TcpStreams = 0x2,
+
+    /// Set if one or more streams are configured to use UDP.
+    UdpStreams = 0x4,
+
+    /// Set if an `OPTIONS` request has completed and advertised supported for
+    /// `SET_PARAMETER`.
+    SetParameterSupported = 0x8,
+
+    /// Set if an `OPTIONS` request has completed and advertised supported for
+    /// `GET_PARAMETER`.
+    GetParameterSupported = 0x10,
+
+    /// Set if a [`StreamDirection::Sending`] stream has been set up, so the
+    /// session uses the ONVIF backchannel.
+    Backchannel = 0x20,
+
+    /// Set while a keepalive is being retried at once with a fresh authentication
+    /// challenge, so a server that keeps refusing is not retried every second.
+    KeepaliveAuthRetry = 0x40,
+}
+
+/// The `Require` header value for the ONVIF backchannel, as defined in the
+/// [ONVIF Streaming Specification](https://www.onvif.org/specs/stream/ONVIF-Streaming-Spec.pdf)
+/// section 5.3.1.
+const BACKCHANNEL_REQUIRE: &str = "www.onvif.org/ver20/backchannel";
+const _: () = assert!(crate::rtsp::table::is_valid_header_value(
+    BACKCHANNEL_REQUIRE.as_bytes()
+));
+
+/// Returns [`BACKCHANNEL_REQUIRE`] as a header value.
+fn backchannel_require() -> msg::HeaderValue {
+    msg::HeaderValue::try_from(BACKCHANNEL_REQUIRE)
+        .expect("BACKCHANNEL_REQUIRE is checked to be a valid header value at compile time")
+}
+
+impl RtspConnection {
+    async fn connect(url: &Url, options: &SessionOptions) -> Result<Self, Error> {
+        let host =
+            RtspConnection::validate_url(url).map_err(|e| wrap!(ErrorInt::InvalidArgument(e)))?;
+        let port = url.port().unwrap_or(554);
+        let inner = crate::tokio::Connection::connect(
+            host,
+            port,
+            options.get_max_message_size(),
+            options.bind_addr,
+        )
+        .await
+        .map_err(|e| wrap!(ErrorInt::ConnectError(e)))?;
+        Ok(Self {
+            inner,
+            channels: ChannelMappings::default(),
+            next_cseq: 1,
+            seen_unassigned: false,
+        })
+    }
+
+    fn validate_url(url: &Url) -> Result<url::Host<&str>, String> {
+        if url.scheme() != "rtsp" {
+            return Err(format!(
+                "Bad URL {}; only scheme rtsp supported",
+                url.as_str()
+            ));
+        }
+        if url.username() != "" || url.password().is_some() {
+            // Url apparently doesn't even have a way to clear the credentials,
+            // so this has to be an error.
+            // TODO: that's not true; revisit this.
+            return Err("URL must not contain credentials".to_owned());
+        }
+        url.host()
+            .ok_or_else(|| format!("Must specify host in rtsp url {}", url))
+    }
+
+    /// Sends a request and expects an upcoming message from the peer to be its response.
+    /// Takes care of authorization and `CSeq`. Returns `Error` if not successful.
+    async fn send(
+        &mut self,
+        mode: ResponseMode,
+        options: &SessionOptions,
+        tool: Option<&Tool>,
+        requested_auth: &mut Option<http_auth::PasswordClient>,
+        req: &mut OwnedMessage,
+    ) -> Result<(RtspMessageContext, u32, msg::Response, Bytes), Error> {
+        loop {
+            let cseq = self.fill_req(options, requested_auth, req)?;
+            self.inner.send(req.clone()).await.map_err(|e| wrap!(e))?;
+            let method: &str = req.method_str();
+            let (resp, resp_body, msg_ctx) = loop {
+                let msg = self.inner.next().await.unwrap_or_else(|| {
+                    bail!(ErrorInt::RtspReadError {
+                        conn_ctx: *self.inner.ctx(),
+                        msg_ctx: self.inner.eof_ctx(),
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            format!("EOF while expecting response to {method} CSeq {cseq}"),
+                        ),
+                    })
+                })?;
+                let msg_ctx = msg.ctx;
+                let description = match msg.msg {
+                    msg::Message::Response(r) => {
+                        if let Some(response_cseq) = parse::get_cseq(&r) {
+                            if response_cseq == cseq {
+                                let body = self.inner.body_bytes(msg.body_pos, msg.body_len);
+                                break (r, body, msg_ctx);
+                            }
+                            if matches!(mode, ResponseMode::Teardown) {
+                                debug!("ignoring unrelated response during TEARDOWN");
+                                continue;
+                            }
+                            format!("{} response with CSeq {}", r.reason_phrase, response_cseq)
+                        } else {
+                            format!("{} response with no/unparseable cseq", r.reason_phrase)
+                        }
+                    }
+                    msg::Message::Data(d) => {
+                        if matches!(mode, ResponseMode::Teardown) {
+                            debug!("ignoring RTSP interleaved data during TEARDOWN");
+                            continue;
+                        } else if let (ResponseMode::Play, Some(m)) =
+                            (&mode, self.channels.lookup(d.channel_id))
+                        {
+                            debug!(
+                                "ignoring interleaved data message on {:?} channel {} while \
+                                     waiting for response to {} CSeq {}",
+                                m.channel_type, d.channel_id, method, cseq
+                            );
+                            continue;
+                        }
+                        let body = self.inner.body_bytes(msg.body_pos, msg.body_len);
+                        self.handle_unassigned_data(msg_ctx, options, tool, d.channel_id, body)?;
+                        continue;
+                    }
+                    msg::Message::Request(r) => format!("{:?} request", r.method),
+                };
+                bail!(ErrorInt::RtspFramingError {
+                    conn_ctx: *self.inner.ctx(),
+                    msg_ctx,
+                    description: format!(
+                        "Expected response to {method} CSeq {cseq}, got {description}",
+                    ),
+                });
+            };
+            if resp.status_code == StatusCode::UNAUTHORIZED {
+                if requested_auth.is_some() {
+                    // TODO: the WWW-Authenticate might indicate a new domain or nonce.
+                    // In that case, we should retry rather than returning error.
+                    bail!(ErrorInt::RtspResponseError {
+                        conn_ctx: *self.inner.ctx(),
+                        msg_ctx,
+                        method: req.method().clone(),
+                        cseq,
+                        status: resp.status_code,
+                        description: "Received Unauthorized after trying digest auth".into(),
+                    })
+                }
+                let www_authenticate = match resp.headers.get("WWW-Authenticate") {
+                    None => bail!(ErrorInt::RtspResponseError {
+                        conn_ctx: *self.inner.ctx(),
+                        msg_ctx,
+                        method: req.method().clone(),
+                        cseq,
+                        status: resp.status_code,
+                        description: "Unauthorized without WWW-Authenticate header".into(),
+                    }),
+                    Some(h) => h,
+                };
+                if options.creds.is_none() {
+                    bail!(ErrorInt::RtspResponseError {
+                        conn_ctx: *self.inner.ctx(),
+                        msg_ctx,
+                        method: req.method().clone(),
+                        cseq,
+                        status: resp.status_code,
+                        description: "Authentication requested and no credentials supplied"
+                            .to_owned(),
+                    })
+                }
+                let www_authenticate: &str = www_authenticate;
+                *requested_auth = match http_auth::PasswordClient::try_from(www_authenticate) {
+                    Ok(c) => Some(c),
+                    Err(e) => bail!(ErrorInt::RtspResponseError {
+                        conn_ctx: *self.inner.ctx(),
+                        msg_ctx,
+                        method: req.method().clone(),
+                        cseq,
+                        status: resp.status_code,
+                        description: format!("Can't understand WWW-Authenticate header: {e}"),
+                    }),
+                };
+                continue;
+            } else if !resp.status_code.is_success() {
+                bail!(ErrorInt::RtspResponseError {
+                    conn_ctx: *self.inner.ctx(),
+                    msg_ctx,
+                    method: req.method().clone(),
+                    cseq,
+                    status: resp.status_code,
+                    description: "Unexpected RTSP response status".into(),
+                });
+            }
+            return Ok((msg_ctx, cseq, resp, resp_body));
+        }
+    }
+
+    /// Handles data on an unassigned RTSP channel.
+    fn handle_unassigned_data(
+        &mut self,
+        msg_ctx: RtspMessageContext,
+        options: &SessionOptions,
+        tool: Option<&Tool>,
+        channel_id: u8,
+        data: Bytes,
+    ) -> Result<(), Error> {
+        let live555 = match options.unassigned_channel_data {
+            UnassignedChannelDataPolicy::Auto
+                if tool.map(Tool::has_live555_tcp_bug).unwrap_or(false) =>
+            {
+                true
+            }
+            UnassignedChannelDataPolicy::AssumeStaleSession => true,
+            UnassignedChannelDataPolicy::Error => false,
+            UnassignedChannelDataPolicy::Ignore | UnassignedChannelDataPolicy::Auto => {
+                if !self.seen_unassigned {
+                    log::warn!(
+                        "Ignoring data on unassigned RTSP interleaved data channel {}. \
+                         This is the first such message. Following messages will be logged \
+                         at trace priority only.\n\n\
+                         conn: {}\nmsg: {}\ndata: {:#?}",
+                        channel_id,
+                        self.inner.ctx(),
+                        msg_ctx,
+                        crate::hex::LimitedHex::new(&data, 128),
+                    );
+                    self.seen_unassigned = true;
+                } else {
+                    log::trace!(
+                        "Ignoring data on unassigned RTSP interleaved data channel {}.\n\n\
+                         conn: {}\nmsg: {}\ndata: {:#?}",
+                        channel_id,
+                        self.inner.ctx(),
+                        msg_ctx,
+                        crate::hex::LimitedHex::new(&data, 128),
+                    );
+                }
+                return Ok(());
+            }
+        };
+
+        if live555 {
+            note_stale_live555_data(tool, options, self.inner.ctx(), channel_id, &msg_ctx);
+        }
+
+        bail!(ErrorInt::RtspUnassignedChannelError {
+            conn_ctx: *self.inner.ctx(),
+            msg_ctx,
+            channel_id,
+            data,
+        });
+    }
+
+    /// Fills out `req` with authorization and `CSeq` headers.
+    fn fill_req(
+        &mut self,
+        options: &SessionOptions,
+        requested_auth: &mut Option<http_auth::PasswordClient>,
+        req: &mut OwnedMessage,
+    ) -> Result<u32, Error> {
+        let cseq = self.next_cseq;
+        self.next_cseq += 1;
+        if let Some(auth) = requested_auth {
+            let creds = options
+                .creds
+                .as_ref()
+                .expect("creds were checked when filling request_auth");
+            let authorization = auth
+                .respond(&http_auth::PasswordParams {
+                    username: &creds.username,
+                    password: &creds.password,
+                    uri: req.request_uri_str(),
+                    method: req.method_str(),
+                    body: Some(&[]),
+                })
+                .map_err(|e| wrap!(ErrorInt::Internal(e.into())))?;
+            let headers = req.headers_mut();
+            headers.insert(
+                msg::HeaderName::AUTHORIZATION,
+                msg::HeaderValue::try_from(authorization).unwrap(),
+            );
+        }
+        let headers = req.headers_mut();
+        headers.insert(
+            msg::HeaderName::CSEQ,
+            msg::HeaderValue::try_from(cseq.to_string()).unwrap(),
+        );
+
+        let user_agent = if let Some(ref u) = options.user_agent {
+            u
+        } else {
+            DEFAULT_USER_AGENT
+        };
+        headers.insert(
+            msg::HeaderName::USER_AGENT,
+            msg::HeaderValue::try_from(user_agent.to_string()).unwrap(),
+        );
+
+        Ok(cseq)
+    }
+}
+
+const DEFAULT_USER_AGENT: &str = concat!("retina_", env!("CARGO_PKG_VERSION"));
+
+impl<S: State> Session<S> {
+    /// Returns the available streams as described by the server.
+    pub fn streams(&self) -> &[Stream] {
+        &self.0.presentation.streams
+    }
+
+    /// Returns the server's version as declared in the `DESCRIBE` response's `a:tool` SDP
+    /// attribute.
+    pub fn tool(&self) -> Option<&Tool> {
+        self.0.presentation.tool.as_ref()
+    }
+}
+
+impl Session<Described> {
+    /// Creates a new session from a `DESCRIBE` request on the given URL.
+    ///
+    /// This method is permissive; it will return success even if there are
+    /// errors in the SDP that would prevent one or more streams from being
+    /// depacketized correctly. If those streams are setup via
+    /// `Session<Described>::setup`, the erorrs in question will be ultimately
+    /// returned from `Stream<Playing>::demuxed`.
+    ///
+    /// Expects to be called from a tokio runtime.
+    pub async fn describe(url: Url, options: SessionOptions) -> Result<Self, Error> {
+        let conn = RtspConnection::connect(&url, &options).await?;
+        Self::describe_with_conn(conn, options, url).await
+    }
+
+    async fn describe_with_conn(
+        mut conn: RtspConnection,
+        options: SessionOptions,
+        url: Url,
+    ) -> Result<Self, Error> {
+        let mut headers: msg::Headers = [(
+            msg::HeaderName::ACCEPT,
+            msg::HeaderValue::try_from("application/sdp").unwrap(),
+        )]
+        .into();
+        if options.backchannel {
+            // ONVIF Streaming Specification section 5.3.2: "A client shall
+            // include the feature tag in its DESCRIBE request to indicate that a
+            // bidirectional data connection shall be established."
+            headers.insert(msg::HeaderName::REQUIRE, backchannel_require());
+        }
+        let mut req = OwnedMessage::Request {
+            head: msg::Request {
+                method: msg::Method::DESCRIBE,
+                request_uri: Some(url.clone()),
+                headers,
+            },
+            body: Bytes::new(),
+        };
+        let mut requested_auth = None;
+        let (msg_ctx, cseq, response, resp_body) = conn
+            .send(
+                ResponseMode::Normal,
+                &options,
+                None, // tool isn't known until after the DESCRIBE response is parsed below.
+                &mut requested_auth,
+                &mut req,
+            )
+            .await
+            .map_err(|e| match &*e.0 {
+                // Point out the likely cause. ONVIF Streaming Specification
+                // section 5.3.2: "An RTSP server that does not understand the
+                // backchannel feature tag or does not support bidirectional
+                // data connections shall respond with an error code 551
+                // Option not supported".
+                ErrorInt::RtspResponseError {
+                    conn_ctx,
+                    msg_ctx,
+                    method,
+                    cseq,
+                    status,
+                    description,
+                } if options.backchannel && *status == StatusCode::OPTION_NOT_SUPPORTED => {
+                    wrap!(ErrorInt::RtspResponseError {
+                        conn_ctx: *conn_ctx,
+                        msg_ctx: *msg_ctx,
+                        method: method.clone(),
+                        cseq: *cseq,
+                        status: *status,
+                        description: format!(
+                            "{description}; the server may not support the ONVIF backchannel \
+                             requested via SessionOptions::backchannel"
+                        ),
+                    })
+                }
+                _ => e,
+            })?;
+        let presentation = parse::parse_describe(url, &response, &resp_body, options.backchannel)
+            .map_err(|description| {
+            wrap!(ErrorInt::RtspResponseError {
+                conn_ctx: *conn.inner.ctx(),
+                msg_ctx,
+                method: msg::Method::DESCRIBE,
+                cseq,
+                status: response.status_code,
+                description,
+            })
+        })?;
+        let describe_status = response.status_code;
+        let sdp = resp_body;
+        Ok(Session(
+            Box::pin(SessionInner {
+                conn: Some(conn),
+                options,
+                requested_auth,
+                presentation,
+                session: None,
+                describe_ctx: msg_ctx,
+                describe_cseq: cseq,
+                describe_status,
+                keepalive_state: KeepaliveState::Idle,
+                keepalive_timer: None,
+                reports: None,
+                flags: 0,
+                udp_next_poll_i: 0,
+            }),
+            Described { sdp },
+        ))
+    }
+
+    /// Returns the raw SDP (Session Description Protocol) session description of this URL.
+    ///
+    /// Retina interprets the SDP automatically, but the raw bytes may be useful for debugging.
+    /// They're accessibled in the `Session<Described>` state. Currently, they're discarded on
+    /// `play` to reduce memory usage.
+    pub fn sdp(&self) -> &[u8] {
+        &self.1.sdp
+    }
+
+    /// Sends a `SETUP` request for a stream.
+    ///
+    /// Note these can't reasonably be pipelined because subsequent requests
+    /// are expected to adopt the previous response's `Session`. Likewise,
+    /// the server may override the preferred interleaved channel id and it
+    /// seems like a bad idea to try to assign more interleaved channels without
+    /// inspect that first.
+    ///
+    /// A [`StreamDirection::Sending`] stream (ONVIF backchannel) can currently
+    /// only be set up with [`Transport::Tcp`]; `SETUP` with
+    /// [`Transport::Udp`] fails without sending a request.
+    ///
+    /// Panics if `stream_i >= self.streams().len()`.
+    pub async fn setup(&mut self, stream_i: usize, options: SetupOptions) -> Result<(), Error> {
+        let inner = &mut self.0.as_mut().project();
+        let conn = inner
+            .conn
+            .as_mut()
+            .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?;
+        let stream = &mut inner.presentation.streams[stream_i];
+        if !matches!(stream.state, StreamState::Uninit) {
+            bail!(ErrorInt::FailedPrecondition("stream already set up".into()));
+        }
+        let sending = stream.direction == StreamDirection::Sending;
+        if sending && matches!(options.transport, Transport::Udp(_)) {
+            bail!(ErrorInt::Unsupported(format!(
+                "stream {stream_i} is an ONVIF backchannel (a=sendonly), which Retina can only send \
+                 over Transport::Tcp"
+            )));
+        }
+        let url = stream
+            .control
+            .as_ref()
+            .unwrap_or(&inner.presentation.control)
+            .clone();
+        let mut headers = msg::Headers::default();
+        if sending {
+            // ONVIF Streaming Specification section 5.3.1: the `Require`
+            // header "shall be included in any request where the server is
+            // required to understand that feature to correctly perform the
+            // request". Section 5.3.2.2's example sends it on the
+            // backchannel's `SETUP` and not on the others.
+            headers.insert(msg::HeaderName::REQUIRE, backchannel_require());
+        }
+        let udp = match options.transport {
+            Transport::Tcp(_) => {
+                let proposed_channel_id = conn.channels.next_unassigned().ok_or_else(|| {
+                    wrap!(ErrorInt::FailedPrecondition(
+                        "no unassigned channels".into()
+                    ))
+                })?;
+                headers.insert(
+                    msg::HeaderName::TRANSPORT,
+                    msg::HeaderValue::try_from(format!(
+                        "RTP/AVP/TCP;unicast;interleaved={}-{}",
+                        proposed_channel_id,
+                        proposed_channel_id + 1
+                    ))
+                    .unwrap(),
+                );
+                *inner.flags |= SessionFlag::TcpStreams as u8;
+                None
+            }
+            Transport::Udp(_) => {
+                // Bind an ephemeral UDP port on the same local address used to connect
+                // to the RTSP server.
+                let local_ip = conn.inner.ctx().local_addr.ip();
+                let pair = crate::tokio::UdpPair::for_ip(local_ip)
+                    .map_err(|e| wrap!(ErrorInt::Internal(e.into())))?;
+                headers.insert(
+                    msg::HeaderName::TRANSPORT,
+                    msg::HeaderValue::try_from(format!(
+                        "RTP/AVP/UDP;unicast;client_port={}-{}",
+                        pair.rtp_port,
+                        pair.rtp_port + 1,
+                    ))
+                    .unwrap(),
+                );
+                *inner.flags |= SessionFlag::UdpStreams as u8;
+                Some((
+                    UdpStreamContext {
+                        local_ip,
+                        peer_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        local_rtp_port: pair.rtp_port,
+                        peer_rtp_port: 0,
+                    },
+                    UdpSockets {
+                        rtp: pair.rtp_socket,
+                        rtcp: pair.rtcp_socket,
+                        read_buf: crate::buf::MarkBuf::new(65536),
+                    },
+                ))
+            }
+        };
+        if let &mut Some(ref s) = inner.session {
+            headers.insert(msg::HeaderName::SESSION, s.id.clone());
+        }
+        let mut req = OwnedMessage::Request {
+            head: msg::Request {
+                method: msg::Method::SETUP,
+                request_uri: Some(url),
+                headers,
+            },
+            body: Bytes::new(),
+        };
+        let (msg_ctx, cseq, response, _resp_body) = conn
+            .send(
+                ResponseMode::Normal,
+                inner.options,
+                inner.presentation.tool.as_ref(),
+                inner.requested_auth,
+                &mut req,
+            )
+            .await?;
+        debug!("SETUP response: {:#?}", response);
+        let conn_ctx = conn.inner.ctx();
+        let status = response.status_code;
+        let response = parse::parse_setup(&response).map_err(|description| {
+            wrap!(ErrorInt::RtspResponseError {
+                conn_ctx: *conn_ctx,
+                msg_ctx,
+                method: msg::Method::SETUP,
+                cseq,
+                status,
+                description,
+            })
+        })?;
+        match inner.session.as_ref() {
+            Some(SessionHeader { id, .. }) if *id != response.session.id => {
+                match inner.options.session_id {
+                    SessionIdPolicy::UseFirst => (),
+                    _ => {
+                        bail!(ErrorInt::RtspResponseError {
+                            conn_ctx: *conn.inner.ctx(),
+                            msg_ctx,
+                            method: msg::Method::SETUP,
+                            cseq,
+                            status,
+                            description: format!(
+                                "session id changed from {:?} to {:?}",
+                                id, response.session.id,
+                            ),
+                        });
+                    }
+                }
+            }
+            Some(_) => {}
+            None => {
+                debug!(
+                    "established session {:?}, timeout={}s",
+                    response.session.id, response.session.timeout_sec
+                );
+                *inner.session = Some(response.session)
+            }
+        };
+        let conn_ctx = conn.inner.ctx();
+        let (stream_ctx, udp_sockets);
+        match udp {
+            None => {
+                let channel_id = match response.channel_id {
+                    Some(id) => id,
+                    None => bail!(ErrorInt::RtspResponseError {
+                        conn_ctx: *conn.inner.ctx(),
+                        msg_ctx,
+                        method: msg::Method::SETUP,
+                        cseq,
+                        status,
+                        description: "Transport header is missing interleaved parameter".to_owned(),
+                    }),
+                };
+                conn.channels
+                    .assign(channel_id, stream_i)
+                    .map_err(|description| {
+                        wrap!(ErrorInt::RtspResponseError {
+                            conn_ctx: *conn_ctx,
+                            msg_ctx,
+                            method: msg::Method::SETUP,
+                            cseq,
+                            status,
+                            description,
+                        })
+                    })?;
+                stream_ctx = StreamContext(StreamContextInner::Tcp(TcpStreamContext {
+                    rtp_channel_id: channel_id,
+                }));
+                udp_sockets = None;
+            }
+            Some((mut ctx, sockets)) => {
+                // TODO: RFC 2326 section 12.39 says "If the source address for
+                // the stream is different than can be derived from the RTSP
+                // endpoint address (the server in playback or the client in
+                // recording), the source MAY be specified." Not MUST,
+                // unfortunately. But let's see if we can get away with this
+                // for now.
+                let source = match response.source {
+                    Some(s) => s,
+                    None => conn.inner.ctx().peer_addr.ip(),
+                };
+                let server_port = response.server_port.ok_or_else(|| {
+                    wrap!(ErrorInt::RtspResponseError {
+                        conn_ctx: *conn_ctx,
+                        msg_ctx,
+                        method: msg::Method::SETUP,
+                        cseq,
+                        status,
+                        description: "Transport header is missing server_port parameter".to_owned(),
+                    })
+                })?;
+                ctx.peer_ip = source;
+                ctx.peer_rtp_port = server_port;
+                sockets
+                    .rtp
+                    .connect(SocketAddr::new(source, server_port))
+                    .await
+                    .map_err(|e| wrap!(ErrorInt::ConnectError(e)))?;
+                sockets
+                    .rtcp
+                    .connect(SocketAddr::new(source, server_port + 1))
+                    .await
+                    .map_err(|e| wrap!(ErrorInt::ConnectError(e)))?;
+                punch_firewall_hole(&sockets)
+                    .await
+                    .map_err(|e| wrap!(ErrorInt::ConnectError(e)))?;
+                stream_ctx = StreamContext(StreamContextInner::Udp(ctx));
+                udp_sockets = Some(sockets);
+            }
+        };
+        if let Some(format) = options.frame_format
+            && let Ok(d) = &mut stream.depacketizer
+        {
+            d.set_frame_format(format);
+        }
+        if sending {
+            *inner.flags |= SessionFlag::Backchannel as u8;
+        }
+        stream.state = StreamState::Init(StreamStateInit {
+            ssrc: response.ssrc,
+            initial_seq: None,
+            initial_rtptime: None,
+            ctx: stream_ctx,
+            udp_sockets,
+        });
+        Ok(())
+    }
+
+    /// Sends a `PLAY` request for the entire presentation.
+    ///
+    /// The presentation must support aggregate control, as defined in [RFC 2326
+    /// section 1.3](https://tools.ietf.org/html/rfc2326#section-1.3).
+    ///
+    /// If a [`StreamDirection::Sending`] stream has been set up, the request
+    /// carries the ONVIF backchannel `Require` header, and the caller may send
+    /// on it as soon as this returns.
+    pub async fn play(mut self, policy: PlayOptions) -> Result<Session<Playing>, Error> {
+        let inner = self.0.as_mut().project();
+        let conn = inner
+            .conn
+            .as_mut()
+            .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?;
+        let session = inner.session.as_ref().ok_or_else(|| {
+            wrap!(ErrorInt::FailedPrecondition(
+                "must SETUP before PLAY".into()
+            ))
+        })?;
+        if let Some(ref t) = inner.presentation.tool
+            && (*inner.flags & (SessionFlag::TcpStreams as u8)) != 0
+            && t.has_live555_tcp_bug()
+        {
+            warn!(
+                "Connecting via TCP to known-broken RTSP server {:?}. \
+                        See <https://github.com/scottlamb/retina/issues/17>. \
+                        Consider using UDP instead!",
+                t
+            );
+        }
+
+        trace!("PLAY with channel mappings: {:#?}", conn.channels);
+        *inner.flags |= SessionFlag::MaybePlaying as u8;
+        let mut headers: msg::Headers = [
+            (msg::HeaderName::SESSION, session.id.clone()),
+            (
+                msg::HeaderName::RANGE,
+                msg::HeaderValue::try_from("npt=0.000-").unwrap(),
+            ),
+        ]
+        .into();
+        if *inner.flags & (SessionFlag::Backchannel as u8) != 0 {
+            // ONVIF Streaming Specification section 5.3.2.2: "The
+            // Require-header indicates that a special interpretation of the
+            // PLAY command is necessary. The command covers both starting of
+            // the video and audio stream from NVT to the client and starting
+            // the audio connection from client to server."
+            headers.insert(msg::HeaderName::REQUIRE, backchannel_require());
+        }
+        let (msg_ctx, cseq, response, _resp_body) = conn
+            .send(
+                ResponseMode::Play,
+                inner.options,
+                inner.presentation.tool.as_ref(),
+                inner.requested_auth,
+                &mut OwnedMessage::Request {
+                    head: msg::Request {
+                        method: msg::Method::PLAY,
+                        request_uri: Some(inner.presentation.control.clone()),
+                        headers,
+                    },
+                    body: Bytes::new(),
+                },
+            )
+            .await?;
+        parse::parse_play(&response, inner.presentation).map_err(|description| {
+            wrap!(ErrorInt::RtspResponseError {
+                conn_ctx: *conn.inner.ctx(),
+                msg_ctx,
+                method: msg::Method::PLAY,
+                cseq,
+                status: response.status_code,
+                description,
+            })
+        })?;
+
+        // Count how many streams to receive have been setup (not how many are
+        // in the presentation). Sending streams have no say in timestamps:
+        // servers don't necessarily describe them in `RTP-Info`.
+        let setup_streams = inner
+            .presentation
+            .streams
+            .iter()
+            .filter(|s| {
+                s.direction == StreamDirection::Receiving && matches!(s.state, StreamState::Init(_))
+            })
+            .count();
+
+        let all_have_time = inner.presentation.streams.iter().all(|s| match s.state {
+            StreamState::Init(StreamStateInit {
+                initial_rtptime, ..
+            }) if s.direction == StreamDirection::Receiving => initial_rtptime.is_some(),
+            _ => true,
+        });
+
+        // Move all streams that have been set up from Init to Playing state. Check that required
+        // parameters are present while doing so.
+        for (i, s) in inner.presentation.streams.iter_mut().enumerate() {
+            match std::mem::replace(&mut s.state, StreamState::Uninit) {
+                StreamState::Init(StreamStateInit { ctx, .. })
+                    if s.direction == StreamDirection::Sending =>
+                {
+                    let conn_ctx = conn.inner.ctx();
+                    s.state = StreamState::Playing {
+                        // The timeline only places timestamps of any RTCP
+                        // sender reports the server sends on this stream.
+                        timeline: Timeline::new(None, s.clock_rate_hz, None).map_err(
+                            |description| {
+                                wrap!(ErrorInt::RtspResponseError {
+                                    conn_ctx: *conn_ctx,
+                                    msg_ctx,
+                                    method: msg::Method::PLAY,
+                                    cseq,
+                                    status: response.status_code,
+                                    description,
+                                })
+                            },
+                        )?,
+
+                        // Handles RTCP receiver reports the server sends about
+                        // Retina's packets. These have the server's SSRC, so
+                        // don't expect Retina's.
+                        rtp_handler: rtp::InorderParser::new(
+                            None,
+                            None,
+                            s.rtp_payload_type,
+                            policy.unknown_rtcp_ssrc,
+                        ),
+                        ctx,
+                        udp_sockets: None,
+
+                        // Receiver reports describe only media Retina receives.
+                        reception: None,
+                        sender: Some(Box::new(rtp::Sender::new(
+                            s.rtp_payload_type,
+                            s.clock_rate_hz,
+                        ))),
+                    };
+                }
+                StreamState::Init(StreamStateInit {
+                    initial_rtptime,
+                    initial_seq,
+                    ssrc,
+                    ctx,
+                    udp_sockets,
+                }) => {
+                    let initial_rtptime = match policy.initial_timestamp {
+                        InitialTimestampPolicy::Require | InitialTimestampPolicy::Default
+                            if setup_streams > 1 =>
+                        {
+                            if initial_rtptime.is_none() {
+                                bail!(ErrorInt::RtspResponseError {
+                                    conn_ctx: *conn.inner.ctx(),
+                                    msg_ctx,
+                                    method: msg::Method::PLAY,
+                                    cseq,
+                                    status: response.status_code,
+                                    description: format!(
+                                        "Expected rtptime on PLAY with mode {:?}, missing on \
+                                             stream {} ({:?}). Consider setting initial timestamp \
+                                             mode permissive.",
+                                        policy.initial_timestamp, i, s.control
+                                    ),
+                                });
+                            }
+                            initial_rtptime
+                        }
+                        InitialTimestampPolicy::Permissive
+                            if setup_streams > 1 && all_have_time =>
+                        {
+                            initial_rtptime
+                        }
+                        _ => None,
+                    };
+                    let initial_seq = match (initial_seq, policy.initial_seq) {
+                        (Some(seq), InitialSequenceNumberPolicy::Ignore)
+                        | (
+                            Some(seq @ 0 | seq @ 1),
+                            InitialSequenceNumberPolicy::Default
+                            | InitialSequenceNumberPolicy::IgnoreSuspiciousValues,
+                        ) => {
+                            log::info!(
+                                "ignoring PLAY seq={} on stream {} due to policy {:?}",
+                                seq,
+                                i,
+                                policy.initial_seq
+                            );
+                            None
+                        }
+                        (Some(seq), _) => {
+                            log::debug!("setting PLAY seq={} on stream {}", seq, i);
+                            Some(seq)
+                        }
+                        (None, _) => {
+                            log::debug!("no PLAY seq on stream {}", i);
+                            None
+                        }
+                    };
+                    let conn_ctx = conn.inner.ctx();
+                    s.state = StreamState::Playing {
+                        timeline: Timeline::new(
+                            initial_rtptime,
+                            s.clock_rate_hz,
+                            policy.enforce_timestamps_with_max_jump_secs,
+                        )
+                        .map_err(|description| {
+                            wrap!(ErrorInt::RtspResponseError {
+                                conn_ctx: *conn_ctx,
+                                msg_ctx,
+                                method: msg::Method::PLAY,
+                                cseq,
+                                status: response.status_code,
+                                description,
+                            })
+                        })?,
+                        rtp_handler: rtp::InorderParser::new(
+                            ssrc,
+                            initial_seq,
+                            s.rtp_payload_type,
+                            policy.unknown_rtcp_ssrc,
+                        ),
+                        ctx,
+                        udp_sockets,
+                        reception: inner
+                            .options
+                            .receiver_reports
+                            .enabled()
+                            .then(|| receiver_report::ReceptionStats::new(s.clock_rate_hz)),
+                        sender: None,
+                    };
+                }
+                StreamState::Uninit => {}
+                StreamState::Playing { .. } => unreachable!(),
+            };
+        }
+        *inner.keepalive_timer = Some(Box::pin(tokio::time::sleep(keepalive_interval(session))));
+        if inner.options.receiver_reports.enabled() {
+            let mut rng = rand::thread_rng();
+            let schedule = receiver_report::ReportSchedule::new(report_now(), &mut rng);
+            *inner.reports = Some(ReportState {
+                writer: receiver_report::ReportWriter::random(&mut rng),
+                timer: Box::pin(tokio::time::sleep_until(schedule.next_due().into())),
+                schedule,
+            });
+        }
+        Ok(Session(self.0, Playing(())))
+    }
+}
+
+/// Notes an unexpected RTSP interleaved data message.
+///
+/// This is assumed to be due to a live555 RTP/AVP/TCP session that belonged
+/// to a since-closed RTSP connection, as described in case 2 of "Stale sessions"
+/// at [`SessionGroup`]. If there's no known session which explains this,
+/// adds an unknown session with live555's default timeout.
+fn note_stale_live555_data(
+    tool: Option<&Tool>,
+    options: &SessionOptions,
+    conn_ctx: &crate::ConnectionContext,
+    channel_id: u8,
+    msg_ctx: &RtspMessageContext,
+) {
+    let known_to_have_live555_tcp_bug = tool.map(Tool::has_live555_tcp_bug).unwrap_or(false);
+    if !known_to_have_live555_tcp_bug {
+        log::warn!(
+            "saw unexpected RTSP packet. This is presumed to be due to a bug in old
+             live555 servers' TCP handling, though tool attribute {tool:?} does not refer to a \
+             known-buggy version. Consider switching to UDP.\n\n\
+             conn: {conn_ctx:?}\n\
+             channel: {channel_id}\n\
+             msg: {msg_ctx:?}"
+        );
+    }
+
+    let group = match options.session_group.as_ref() {
+        Some(g) => g,
+        None => {
+            log::debug!("Not tracking stale session because there's no session group.");
+            return;
+        }
+    };
+
+    // The caller *might* have a better guess than LIVE555_EXPIRATION_SEC via a SETUP response,
+    // but it's also possible for note_stale_live555_data to be called prior to SETUP.
+    let expires =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(LIVE555_EXPIRATION_SEC);
+    let seqnum;
+    {
+        let mut lock = group.sessions.lock().unwrap();
+        for s in &lock.sessions {
+            if s.has_tcp {
+                // This session plausibly explains the packet.
+                // (We could go so far as to examine the data packet's SSRC to
+                // see if it matches one associated with this session. But
+                // retrying once per expiration is probably good enough.)
+                log::debug!(
+                    "Unexpected RTSP interleaved packet (live555 stale file \
+                     descriptor bug) plausibly explained by known stale \
+                     session {:?}/{}. Not adding a session entry.",
+                    group.debug_id(),
+                    s.seqnum,
+                );
+                return;
+            }
+        }
+        seqnum = lock.next_seqnum;
+        lock.next_seqnum += 1;
+        log::debug!(
+            "Unexpected RTSP interleaved packet, presumed due to live555 stale \
+             file descriptor bug; adding stale session {:?}/{} that will \
+             expire in {} seconds.",
+            group.debug_id(),
+            seqnum,
+            LIVE555_EXPIRATION_SEC,
+        );
+        lock.sessions.push(StaleSession {
+            seqnum,
+            expires,
+            teardown_rx: None,
+            has_tcp: true,
+            maybe_playing: true,
+        });
+    }
+
+    // Spawn a task which removes the stale session at its expiration.
+    // We could instead prune expired entries on stale_session() calls and
+    // set a deadline within await_stale_sessions() calls, which might be
+    // a bit more efficient. But this is simpler given that we already are
+    // spawning tasks for stale sessions created from Session's Drop impl.
+    let group = group.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep_until(expires).await;
+        if !group.try_remove_seqnum(seqnum) {
+            log::warn!(
+                "Unable to find stale live555 file descriptor session {:?}/{} at expiration",
+                group.debug_id(),
+                seqnum
+            );
+        } else {
+            log::debug!(
+                "Stale live555 file descriptor bug session {:?}/{} presumed expired.",
+                group.debug_id(),
+                seqnum
+            );
+        }
+    });
+}
+
+#[rustfmt::skip]
+const HOLE_PUNCH_RTP: [u8; 12] = [
+    2 << 6,     // version=2 + p=0 + x=0 + cc=0
+    0,          // m=0 + pt=0
+    0, 0,       // sequence number=0
+    0, 0, 0, 0, // timestamp=0 0,
+    0, 0, 0, 0, // ssrc=0
+];
+#[rustfmt::skip]
+const HOLE_PUNCH_RTCP: [u8; 8] = [
+    2 << 6,     // version=2 + p=0 + rc=0
+    201,        // pt=200 (reception report)
+    0, 1,       // length=1 (in 4-byte words minus 1)
+    0, 0, 0, 0, // ssrc=0 (bogus but we don't know the ssrc reliably yet)
+];
+
+/// Sends dummy RTP and RTCP packets to punch a hole in connection-tracking
+/// firewalls.
+///
+/// This is useful when the client is on the protected side of the firewall and
+/// the server isn't. The server should discard these dummy packets, but they
+/// prompt the firewall to add the appropriate connection tracking state for
+/// server->client packets to make it through.
+///
+/// Note this is insufficient for NAT traversal; the NAT firewall must be
+/// RTSP-aware to rewrite the Transport header's client_ports.
+async fn punch_firewall_hole(sockets: &UdpSockets) -> Result<(), std::io::Error> {
+    sockets.rtp.send(&HOLE_PUNCH_RTP[..]).await?;
+    sockets.rtcp.send(&HOLE_PUNCH_RTCP[..]).await?;
+    Ok(())
+}
+
+/// An item yielded by [`Session<Playing>`]'s [`futures::stream::Stream`] impl.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum PacketItem {
+    Rtp(crate::rtp::ReceivedPacket),
+    Rtcp(crate::rtcp::ReceivedCompoundPacket),
+}
+
+impl Session<Playing> {
+    /// Returns a wrapper which demuxes/depacketizes into frames.
+    ///
+    /// Fails if a stream that has been setup can't be depacketized.
+    pub fn demuxed(mut self) -> Result<Demuxed, Error> {
+        let inner = self.0.as_mut().project();
+        let conn = inner
+            .conn
+            .as_ref()
+            .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?;
+        for s in &mut *inner.presentation.streams {
+            if s.direction == StreamDirection::Receiving
+                && matches!(s.state, StreamState::Playing { .. })
+                && let Err(ref description) = s.depacketizer
+            {
+                bail!(ErrorInt::RtspResponseError {
+                    conn_ctx: *conn.inner.ctx(),
+                    msg_ctx: *inner.describe_ctx,
+                    method: msg::Method::DESCRIBE,
+                    cseq: *inner.describe_cseq,
+                    status: *inner.describe_status,
+                    description: description.clone(),
+                });
+            }
+        }
+        Ok(Demuxed {
+            state: DemuxedState::Waiting,
+            session: self,
+        })
+    }
+
+    fn handle_keepalive_timer(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Result<(), Error> {
+        let inner = self.0.as_mut().project();
+        let session = inner
+            .session
+            .as_ref()
+            .expect("keepalive_timer can't fire without a session");
+        let keepalive_interval = keepalive_interval(session);
+        let conn = inner
+            .conn
+            .as_mut()
+            .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?;
+        // Expect the previous keepalive request to have finished. A request
+        // still marked `Flushing` may have been written since by the `Sink`
+        // impl's flush; then only the response is missing.
+        match *inner.keepalive_state {
+            KeepaliveState::Flushing { cseq, end, .. } if conn.inner.written() < end => {
+                bail!(ErrorInt::WriteError {
+                    conn_ctx: *conn.inner.ctx(),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!("Unable to write keepalive {cseq} within {keepalive_interval:?}",),
+                    ),
+                })
+            }
+            KeepaliveState::Flushing { cseq, .. } | KeepaliveState::Waiting { cseq, .. } => {
+                bail!(ErrorInt::RtspReadError {
+                    conn_ctx: *conn.inner.ctx(),
+                    msg_ctx: conn.inner.eof_ctx(),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!(
+                            "Server failed to respond to keepalive {cseq} within {keepalive_interval:?}",
+                        ),
+                    ),
+                })
+            }
+            KeepaliveState::Idle => {}
+        }
+
+        // Send a new keepalive and reset the timer.
+        //
+        // RTSP/1.0 (the version Retina implements) doesn't describe how to send
+        // a keepalive. The ONVIF Streaming Specification (in version 21.06 section
+        // 5.2.2.2
+        // <https://www.onvif.org/specs/stream/ONVIF-Streaming-Spec.pdf>) and
+        // RTSP/2.0 recommend using `SET_PARAMETER`. However, this method is optional,
+        // and some servers (e.g. rtsp-simple-server as of 2021-08-07) behave badly
+        // on receiving unsupported methods. See discussion at
+        // <https://github.com/aler9/rtsp-simple-server/issues/1066>. Initially
+        // send `OPTIONS`, then use (bodyless) `GET_PARAMETER` or `SET_PARAMETER`
+        // if available.
+        //
+        // Prefer `GET_PARAMETER` over `SET_PARAMETER`, contrary to the ONVIF
+        // recommendation. Tapo cameras advertise `SET_PARAMETER` but reply to it
+        // with `400 Bad Request` with the previous request's `CSeq`, while handling
+        // `GET_PARAMETER` correctly. ffmpeg also prefers `GET_PARAMETER` (and never
+        // uses `SET_PARAMETER` for keepalives), so this is likely the more
+        // well-tested choice in general.
+        let method = if *inner.flags & (SessionFlag::GetParameterSupported as u8) != 0 {
+            KeepaliveMethod::GetParameter
+        } else if *inner.flags & (SessionFlag::SetParameterSupported as u8) != 0 {
+            KeepaliveMethod::SetParameter
+        } else {
+            KeepaliveMethod::Options
+        };
+        let mut req = OwnedMessage::Request {
+            head: msg::Request {
+                method: method.into(),
+                request_uri: Some(inner.presentation.base_url.clone()),
+                headers: [(msg::HeaderName::SESSION, session.id.clone())].into(),
+            },
+            body: Bytes::new(),
+        };
+        let cseq = conn.fill_req(inner.options, inner.requested_auth, &mut req)?;
+        trace!("sending {:?} keepalive", method);
+
+        // The outbound data are keepalives, receiver reports, and backchannel
+        // media with its RTCP. The connection's `start_send` needs no
+        // readiness: it appends to the write buffer, after anything queued
+        // earlier, so a keepalive never waits on backchannel backpressure. It
+        // fails only if an earlier write failed.
+        conn.inner.start_send_unpin(req).map_err(|e| wrap!(e))?;
+        let end = conn.inner.queued_end();
+        if let Poll::Ready(Err(e)) = conn.inner.poll_flush_unpin(cx) {
+            bail!(e);
+        }
+        *inner.keepalive_state = if conn.inner.written() >= end {
+            KeepaliveState::Waiting { cseq, method }
+        } else {
+            KeepaliveState::Flushing { cseq, method, end }
+        };
+
+        inner
+            .keepalive_timer
+            .as_mut()
+            .expect("keepalive timer set in state Playing")
+            .as_mut()
+            .reset(tokio::time::Instant::now() + keepalive_interval);
+        Ok(())
+    }
+
+    /// Writes a receiver report for each stream and schedules the next.
+    ///
+    /// Each stream is its own RTP session, so each gets its own report on its
+    /// own RTCP channel or socket. Over TCP, the report is queued on the RTSP
+    /// connection, and the poll loop flushes it (along with any keepalive). Over
+    /// UDP, it's sent right away if the socket has room; otherwise this report
+    /// is skipped, as later reports carry cumulative statistics anyway.
+    fn handle_report_timer(mut self: Pin<&mut Self>) -> Result<(), Error> {
+        let inner = self.0.as_mut().project();
+        let reports = inner
+            .reports
+            .as_mut()
+            .expect("report timer can't fire without reports");
+        let conn = inner
+            .conn
+            .as_mut()
+            .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?;
+        let now = report_now();
+        for (i, s) in inner.presentation.streams.iter_mut().enumerate() {
+            let StreamState::Playing {
+                ctx,
+                udp_sockets,
+                reception: Some(reception),
+                ..
+            } = &mut s.state
+            else {
+                continue;
+            };
+            let block = reception.report_block(now);
+            trace!("sending RTCP receiver report for stream {i}: {block:?}");
+            let pkt = reports.writer.write(block.as_ref());
+            match (udp_sockets, &ctx.0) {
+                (Some(sockets), _) => {
+                    if let Err(e) = sockets.rtcp.try_send(&pkt) {
+                        // `ConnectionRefused` can follow an ICMP error, as with
+                        // `punch_firewall_hole`. Neither it nor a full socket
+                        // buffer is a reason to end the session.
+                        match e.kind() {
+                            io::ErrorKind::WouldBlock | io::ErrorKind::ConnectionRefused => {
+                                debug!("Unable to send RTCP receiver report for stream {i}: {e}")
+                            }
+                            _ => warn!("Unable to send RTCP receiver report for stream {i}: {e}"),
+                        }
+                    }
+                }
+                (None, StreamContextInner::Tcp(tcp)) => {
+                    conn.inner
+                        .start_send_unpin(OwnedMessage::Data {
+                            channel_id: tcp.rtp_channel_id + 1,
+                            body: Bytes::from(pkt),
+                        })
+                        .map_err(|e| wrap!(e))?;
+                }
+                (None, _) => unreachable!("stream {i} has neither TCP nor UDP context"),
+            }
+        }
+        reports.schedule.sent(now, &mut rand::thread_rng());
+        reports
+            .timer
+            .as_mut()
+            .reset(reports.schedule.next_due().into());
+        Ok(())
+    }
+
+    fn handle_response(
+        mut self: Pin<&mut Self>,
+        msg_ctx: &crate::RtspMessageContext,
+        response: msg::Response,
+    ) -> Result<(), Error> {
+        let inner = self.0.as_mut().project();
+        match inner.keepalive_state {
+            // The response may arrive while still `Flushing`: the write buffer
+            // is shared with the `Sink` impl, whose flush may write the
+            // keepalive before the `Stream` impl next checks.
+            KeepaliveState::Flushing { cseq, method, .. }
+            | KeepaliveState::Waiting { cseq, method }
+                if parse::get_cseq(&response) == Some(*cseq) =>
+            {
+                // We don't care if the keepalive response succeeds or fails, but we should
+                // log it, to help debugging if on failure the server doesn't extend the
+                // timeout or gets angry and closes the connection. (rtsp-simple-server
+                // does the latter as of 2022-08-07, though I'm told this will be fixed.)
+                // A keepalive retried with a fresh challenge (below) gets one retry only:
+                // whatever this response is, the flag is spent.
+                let retry = SessionFlag::KeepaliveAuthRetry as u8;
+                let retried = *inner.flags & retry != 0;
+                *inner.flags &= !retry;
+                let mut retrying = false;
+                if !response.status_code.is_success() {
+                    // Some cameras (Axis, measured 2026-11-08) refuse a keepalive that reuses
+                    // the handshake's digest nonce and send a fresh challenge. Adopt it, so the
+                    // next keepalive authenticates; otherwise every keepalive fails and only
+                    // cameras that also count RTCP receiver reports keep the session alive.
+                    if response.status_code == StatusCode::UNAUTHORIZED
+                        && inner.options.creds.is_some()
+                        && let Some(h) = response.headers.get("WWW-Authenticate")
+                    {
+                        let h: &str = h;
+                        match http_auth::PasswordClient::try_from(h) {
+                            Ok(c) => {
+                                *inner.requested_auth = Some(c);
+                                if !retried {
+                                    // Retry once, soon, with the fresh challenge, so this
+                                    // keepalive window still gets an accepted keepalive; a
+                                    // server that refuses the retry too waits for the normal
+                                    // interval.
+                                    *inner.flags |= retry;
+                                    if let Some(t) = inner.keepalive_timer.as_mut() {
+                                        t.as_mut().reset(
+                                            tokio::time::Instant::now()
+                                                + std::time::Duration::from_secs(1),
+                                        );
+                                    }
+                                    retrying = true;
+                                }
+                            }
+                            Err(e) => {
+                                warn!("keepalive: can't understand WWW-Authenticate: {e}");
+                            }
+                        }
+                    }
+                    if retrying {
+                        debug!("keepalive refused with a fresh challenge; retrying in 1 s");
+                    } else {
+                        warn!("keepalive failed with {:?}", response.status_code);
+                    }
+                } else {
+                    trace!("keepalive succeeded with {:?}", response.status_code);
+                    if matches!(method, KeepaliveMethod::Options) {
+                        match parse::parse_options(&response) {
+                            Ok(r) => {
+                                if r.set_parameter_supported {
+                                    *inner.flags |= SessionFlag::SetParameterSupported as u8;
+                                }
+                                if r.get_parameter_supported {
+                                    *inner.flags |= SessionFlag::GetParameterSupported as u8;
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Unable to parse OPTIONS response: {}", e);
+                            }
+                        }
+                    }
+                }
+                *inner.keepalive_state = KeepaliveState::Idle;
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        // The only response we expect in this state is to our keepalive request.
+        bail!(ErrorInt::RtspFramingError {
+            conn_ctx: *inner
+                .conn
+                .as_ref()
+                .expect("have conn when handling response")
+                .inner
+                .ctx(),
+            msg_ctx: *msg_ctx,
+            description: format!("Unexpected RTSP response {response:#?}"),
+        })
+    }
+
+    /// Maps an interleaved TCP data message to a [`StreamItem`].
+    ///
+    /// Handles unassigned channels (returning `Ok(None)`); validation is
+    /// deferred to [`Session::validate_item`].
+    fn handle_data(
+        mut self: Pin<&mut Self>,
+        msg_ctx: &RtspMessageContext,
+        channel_id: u8,
+        body_pos: u64,
+        body_len: u16,
+    ) -> Result<Option<StreamItem>, Error> {
+        let inner = self.0.as_mut().project();
+        let conn = inner
+            .conn
+            .as_mut()
+            .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?;
+        let m = match conn.channels.lookup(channel_id) {
+            Some(m) => m,
+            None => {
+                let body = conn.inner.body_bytes(body_pos, u32::from(body_len));
+                conn.handle_unassigned_data(
+                    *msg_ctx,
+                    inner.options,
+                    inner.presentation.tool.as_ref(),
+                    channel_id,
+                    body,
+                )?;
+                return Ok(None);
+            }
+        };
+        Ok(Some(StreamItem {
+            pkt_ctx: crate::PacketContext(crate::PacketContextInner::Tcp { msg_ctx: *msg_ctx }),
+            stream_i: m.stream_i,
+            channel_type: m.channel_type,
+            body_pos,
+            body_len,
+        }))
+    }
+
+    /// Polls a UDP socket, reading into `read_buf`'s spare capacity via
+    /// vectored I/O (`socket2::SockRef::recv_vectored`). Handles spurious
+    /// readiness, `ConnectionRefused` (from firewall hole-punching), and
+    /// wraps I/O errors.
+    ///
+    /// On success, returns the byte count. The caller must call `advance_end`
+    /// or the data will be overwritten on next call.
+    ///
+    /// Reads at most [`u16::MAX`] bytes, above any real datagram (65,507 for
+    /// IPv4, 65,527 for IPv6), so the length fits in a `u16`. Note the vectored
+    /// slices scatter a *single* datagram across the ring's wrap point;
+    /// `recvmsg` on a datagram socket never coalesces queued packets.
+    ///
+    /// TODO: drain several packets per syscall via `recvmmsg` and/or `UDP_GRO`.
+    /// That needs the caller to return a batch and the ring to hold more than
+    /// one packet at a time; each datagram's length is still `u16`-bounded.
+    fn poll_udp_recv(
+        socket: &UdpSocket,
+        cx: &mut std::task::Context,
+        read_buf: &mut crate::buf::MarkBuf,
+        conn_ctx: &crate::ConnectionContext,
+        stream_ctx: &crate::StreamContext,
+    ) -> Poll<Result<u16, Error>> {
+        const MAX_DATAGRAM: usize = u16::MAX as usize;
+        // `spare_capacity` returns *all* the free space, which may exceed the
+        // requested reserve; clamp so `recv_vectored` can't exceed a `u16`.
+        let (s1, s2) = read_buf.spare_capacity(MAX_DATAGRAM);
+        let s1_len = s1.len().min(MAX_DATAGRAM);
+        let s2_len = s2.len().min(MAX_DATAGRAM - s1_len);
+        let s1 = &mut s1[..s1_len];
+        let s2 = &mut s2[..s2_len];
+        loop {
+            ready!(socket.poll_recv_ready(cx)).map_err(|source| {
+                wrap!(ErrorInt::UdpRecvError {
+                    conn_ctx: *conn_ctx,
+                    stream_ctx: stream_ctx.to_owned(),
+                    when: crate::WallTime::now(),
+                    source,
+                })
+            })?;
+            // SAFETY: MaybeUninit<u8> has the same layout as u8, and
+            // initialized memory is valid MaybeUninit.
+            let s1_mu = unsafe {
+                std::slice::from_raw_parts_mut(s1.as_mut_ptr().cast::<MaybeUninit<u8>>(), s1.len())
+            };
+            let s2_mu = unsafe {
+                std::slice::from_raw_parts_mut(s2.as_mut_ptr().cast::<MaybeUninit<u8>>(), s2.len())
+            };
+            let mut bufs = [
+                socket2::MaybeUninitSlice::new(s1_mu),
+                socket2::MaybeUninitSlice::new(s2_mu),
+            ];
+            // Must go through `try_io` rather than issuing the syscall
+            // directly: on `WouldBlock` it clears tokio's cached readiness, so
+            // the next `poll_recv_ready` actually waits. Calling
+            // `SockRef::recv_vectored` here instead leaves the readiness set,
+            // and this task then burns CPU re-polling indefinitely (tokio's
+            // cooperative budget makes it yield after ~128 futile syscalls,
+            // whereupon the stale readiness wakes it right back up).
+            let r = socket.try_io(tokio::io::Interest::READABLE, || {
+                socket2::SockRef::from(socket).recv_vectored(&mut bufs)
+            });
+            match r {
+                Ok((n, _flags)) => {
+                    debug_assert!(n <= MAX_DATAGRAM);
+                    return Poll::Ready(Ok(n as u16));
+                }
+                Err(source) if source.kind() == io::ErrorKind::WouldBlock => {
+                    // Spurious readiness. Loop back to poll_recv_ready
+                    // to wait for actual readiness.
+                    continue;
+                }
+                Err(source) if source.kind() == io::ErrorKind::ConnectionRefused => {
+                    // The packets sent by `punch_firewall_hole` can elicit a
+                    // 'destination unreachable' ICMP response from the server,
+                    // which gets turned into a 'connection refused' error.
+                    debug!("Ignoring UDP connection refused error");
+                    continue;
+                }
+                Err(source) => {
+                    return Poll::Ready(Err(wrap!(ErrorInt::UdpRecvError {
+                        conn_ctx: *conn_ctx,
+                        stream_ctx: stream_ctx.to_owned(),
+                        when: crate::WallTime::now(),
+                        source,
+                    })));
+                }
+            }
+        }
+    }
+
+    /// Polls a single UDP stream, `inner.presentation.streams[i]`.
+    ///
+    /// Reads from RTCP then RTP sockets into the per-stream ring buffer.
+    /// Returns a raw [`StreamItem`]; validation is deferred to
+    /// [`Session::validate_item`].
+    ///
+    /// Only returns `Poll::Pending` after both RTCP and RTP sockets have
+    /// returned `Poll::Pending`.
+    fn poll_udp_stream(
+        &mut self,
+        cx: &mut std::task::Context,
+        i: usize,
+    ) -> Poll<Option<Result<StreamItem, Error>>> {
+        let inner = self.0.as_mut().project();
+        let s = &mut inner.presentation.streams[i];
+        let (stream_ctx, udp_sockets) = match &mut s.state {
+            StreamState::Playing {
+                ctx,
+                udp_sockets: Some(udp_sockets),
+                ..
+            } => (ctx, udp_sockets),
+            _ => return Poll::Pending,
+        };
+        let conn_ctx = inner
+            .conn
+            .as_ref()
+            .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?
+            .inner
+            .ctx();
+
+        // Prioritize RTCP over RTP within a stream.
+        for channel_type in [ChannelType::Rtcp, ChannelType::Rtp] {
+            let socket = match channel_type {
+                ChannelType::Rtcp => &udp_sockets.rtcp,
+                ChannelType::Rtp => &udp_sockets.rtp,
+            };
+            let body_pos = udp_sockets.read_buf.end();
+            match Self::poll_udp_recv(socket, cx, &mut udp_sockets.read_buf, conn_ctx, stream_ctx) {
+                Poll::Ready(Ok(n)) => {
+                    udp_sockets.read_buf.advance_end(usize::from(n));
+                    udp_sockets
+                        .read_buf
+                        .advance_unparsed(udp_sockets.read_buf.end());
+                    return Poll::Ready(Some(Ok(StreamItem {
+                        pkt_ctx: crate::PacketContext(crate::PacketContextInner::Udp {
+                            received: Instant::now(),
+                            received_wall: crate::WallTime::now(),
+                        }),
+                        stream_i: i,
+                        channel_type,
+                        body_pos,
+                        body_len: n,
+                    })));
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e))),
+                Poll::Pending => {}
+            }
+        }
+        Poll::Pending
+    }
+
+    /// Polls all UDP streams, round-robining between them to avoid starvation.
+    fn poll_udp(&mut self, cx: &mut std::task::Context) -> Poll<Option<Result<StreamItem, Error>>> {
+        // Assume 0 <= inner.udp_next_poll_i < inner.presentation.streams.len().
+        // play() would have failed if there were no (setup) streams.
+        let starting_i = *self.0.as_mut().project().udp_next_poll_i;
+        loop {
+            let inner = self.0.as_mut().project();
+            let i = *inner.udp_next_poll_i;
+            *inner.udp_next_poll_i += 1;
+            if *inner.udp_next_poll_i == inner.presentation.streams.len() {
+                *inner.udp_next_poll_i = 0;
+            }
+
+            if let Poll::Ready(r) = self.poll_udp_stream(cx, i) {
+                return Poll::Ready(r);
+            }
+
+            if *self.0.as_mut().project().udp_next_poll_i == starting_i {
+                break;
+            }
+        }
+        Poll::Pending
+    }
+
+    /// Validates a raw [`StreamItem`], returning a [`ValidatedItem`].
+    ///
+    /// This is the single processing point for both TCP and UDP paths:
+    /// RTP header validation, `rtp_handler.rtp()`, and `rtp_handler.rtcp()`
+    /// all happen here.
+    fn validate_item(
+        mut self: Pin<&mut Self>,
+        item: StreamItem,
+    ) -> Result<Option<ValidatedItem>, Error> {
+        let inner = self.0.as_mut().project();
+        let conn = inner
+            .conn
+            .as_ref()
+            .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?;
+        let stream = &mut inner.presentation.streams[item.stream_i];
+        let StreamState::Playing {
+            timeline,
+            rtp_handler,
+            ctx: stream_ctx,
+            udp_sockets,
+            reception,
+            ..
+        } = &mut stream.state
+        else {
+            unreachable!("stream {} not in Playing state", item.stream_i);
+        };
+        match item.channel_type {
+            ChannelType::Rtp if stream.direction == StreamDirection::Sending => {
+                // Retina sends RTP on this stream; the server shouldn't.
+                debug!(
+                    "ignoring RTP packet received on sending stream {}",
+                    item.stream_i
+                );
+                Ok(None)
+            }
+            ChannelType::Rtp => {
+                let body_len = usize::from(item.body_len);
+                let split = match udp_sockets {
+                    Some(s) => s.read_buf.split(item.body_pos, body_len),
+                    None => conn.inner.read_buf().split(item.body_pos, body_len),
+                };
+                let (header, payload_range) =
+                    crate::rtp::PacketHeader::validate(split).map_err(|reason| {
+                        wrap!(ErrorInt::PacketError {
+                            conn_ctx: *conn.inner.ctx(),
+                            stream_ctx: stream_ctx.to_owned(),
+                            pkt_ctx: item.pkt_ctx,
+                            stream_id: item.stream_i,
+                            description: rtp_handler.validate_error(reason, split),
+                        })
+                    })?;
+
+                // Count the packet for receiver reports as it arrives, before
+                // `rtp_handler` skips or rejects it for being out of order: RFC
+                // 3550 appendix A.1 counts reordered and duplicate packets as
+                // received. Like `rtp_handler`, ignore pt=50 packets and
+                // another stream's packets.
+                if let Some(reception) = reception
+                    && header.payload_type() != 50
+                    && !rtp_handler.is_other_stream(&header)
+                {
+                    reception.rtp(
+                        header.ssrc(),
+                        header.sequence_number(),
+                        header.timestamp(),
+                        report_now(),
+                    );
+                }
+                let Some(meta) = rtp_handler.rtp(
+                    inner.options,
+                    stream_ctx,
+                    inner.presentation.tool.as_ref(),
+                    conn.inner.ctx(),
+                    &item.pkt_ctx,
+                    timeline,
+                    item.stream_i,
+                    &header,
+                )?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(ValidatedItem::Rtp(ValidatedRtp {
+                    meta,
+                    body_pos: item.body_pos,
+                    body_len: item.body_len,
+                    payload_range,
+                })))
+            }
+            ChannelType::Rtcp => {
+                let body = match udp_sockets {
+                    Some(s) => Bytes::from(
+                        s.read_buf
+                            .split(item.body_pos, usize::from(item.body_len))
+                            .to_owned(),
+                    ),
+                    None => conn
+                        .inner
+                        .body_bytes(item.body_pos, u32::from(item.body_len)),
+                };
+                match rtp_handler.rtcp(
+                    inner.options,
+                    stream_ctx,
+                    inner.presentation.tool.as_ref(),
+                    conn.inner.ctx(),
+                    &item.pkt_ctx,
+                    timeline,
+                    item.stream_i,
+                    body,
+                ) {
+                    Ok(p) => {
+                        // Note sender reports for the LSR and DLSR fields of
+                        // receiver reports. `rtp_handler` has already checked
+                        // the SSRC (per `UnknownRtcpSsrcPolicy`) and set
+                        // `rtp_timestamp` iff the packet begins with a valid
+                        // sender report.
+                        if let (Some(reception), Some(PacketItem::Rtcp(pkt))) = (reception, &p)
+                            && pkt.rtp_timestamp().is_some()
+                            && let Some(Ok(Some(sr))) =
+                                pkt.pkts().next().map(|p| p.as_sender_report())
+                        {
+                            reception.sender_report(sr.ssrc(), sr.ntp_timestamp(), report_now());
+                        }
+                        Ok(p.map(ValidatedItem::Rtcp))
+                    }
+                    Err(description) => Err(wrap!(ErrorInt::PacketError {
+                        conn_ctx: *conn.inner.ctx(),
+                        stream_ctx: stream_ctx.to_owned(),
+                        pkt_ctx: item.pkt_ctx,
+                        stream_id: item.stream_i,
+                        description,
+                    })),
+                }
+            }
+        }
+    }
+
+    /// Polls for the next validated item (RTP or RTCP) from either the RTSP
+    /// connection or UDP sockets, handling keepalives along the way.
+    fn poll_stream_item(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Result<ValidatedItem, Error>>> {
+        loop {
+            // First try receiving data on the RTSP connection. Let this starve
+            // sending keepalives; if we can't keep up, the server should
+            // probably drop us.
+            match Pin::new(&mut self.0.conn.as_mut().unwrap().inner).poll_next(cx) {
+                Poll::Ready(Some(Ok(msg))) => match msg.msg {
+                    msg::Message::Data(d) => {
+                        if let Some(item) = self.as_mut().handle_data(
+                            &msg.ctx,
+                            d.channel_id,
+                            msg.body_pos,
+                            d.body_len,
+                        )? {
+                            match self.as_mut().validate_item(item)? {
+                                Some(v) => return Poll::Ready(Some(Ok(v))),
+                                None => continue,
+                            }
+                        }
+                        continue;
+                    }
+                    msg::Message::Response(response) => {
+                        if let Err(e) = self.as_mut().handle_response(&msg.ctx, response) {
+                            return Poll::Ready(Some(Err(e)));
+                        }
+                        continue;
+                    }
+                    msg::Message::Request(request) => {
+                        warn!(
+                            "Received RTSP request in Playing state. Responding unimplemented.\n{:#?}",
+                            request
+                        );
+                    }
+                },
+                Poll::Ready(Some(Err(e))) => {
+                    debug!("RTSP connection error: {:?}", e);
+                    return Poll::Ready(Some(Err(e)));
+                }
+                Poll::Ready(None) => {
+                    debug!("Server closed RTSP connection");
+                    return Poll::Ready(None);
+                }
+                std::task::Poll::Pending => {}
+            }
+
+            // Next try receiving data on the UDP sockets, if any.
+            if self.0.flags & (SessionFlag::UdpStreams as u8) != 0
+                && let Poll::Ready(Some(result)) = self.as_mut().poll_udp(cx)
+            {
+                match self.as_mut().validate_item(result?)? {
+                    Some(v) => return Poll::Ready(Some(Ok(v))),
+                    None => continue,
+                }
+            }
+
+            // Then check if it's time for a new keepalive.
+            // Note: in production keepalive_timer is always Some. Tests may disable it.
+            if let Some(t) = self.0.keepalive_timer.as_mut()
+                && matches!(t.as_mut().poll(cx), Poll::Ready(()))
+            {
+                self.as_mut().handle_keepalive_timer(cx)?;
+            }
+
+            // Then check if it's time for receiver reports.
+            if let Some(r) = self.0.reports.as_mut()
+                && matches!(r.timer.as_mut().poll(cx), Poll::Ready(()))
+            {
+                self.as_mut().handle_report_timer()?;
+            }
+
+            // Then finish flushing the current keepalive and/or receiver
+            // reports if necessary, along with any backchannel media queued
+            // via the `Sink` impl before or after them. The keepalive is
+            // written once the connection's count reaches its end, even if
+            // backchannel media queued after it keeps the flush pending.
+            let keepalive_flushing = match self.0.keepalive_state {
+                KeepaliveState::Flushing { cseq, method, end } => Some((cseq, method, end)),
+                _ => None,
+            };
+            let conn = &mut self.0.conn.as_mut().unwrap().inner;
+            if keepalive_flushing.is_some() || conn.has_unflushed() {
+                if let Poll::Ready(Err(e)) = conn.poll_flush_unpin(cx) {
+                    return Poll::Ready(Some(Err(Error(Arc::new(e)))));
+                }
+                if let Some((cseq, method, end)) = keepalive_flushing
+                    && conn.written() >= end
+                {
+                    self.0.keepalive_state = KeepaliveState::Waiting { cseq, method };
+                }
+            }
+
+            // Nothing to do. The poll calls above have already registered cx as necessary.
+            return Poll::Pending;
+        }
+    }
+}
+
+#[pin_project::pinned_drop]
+impl PinnedDrop for SessionInner {
+    fn drop(self: Pin<&mut Self>) {
+        let this = self.project();
+
+        let has_tcp = (*this.flags & (SessionFlag::TcpStreams as u8)) != 0;
+        let just_try_once = match this.options.teardown {
+            TeardownPolicy::Auto if has_tcp => {
+                // If the server is known to have the live555 bug, try really hard to send a
+                // TEARDOWN before considering the session cleaned up. Otherwise, try once on
+                // the existing connection, primarily in case the server has
+                // this bug but doesn't advertise a buggy version.
+                !this
+                    .presentation
+                    .tool
+                    .as_ref()
+                    .map(Tool::has_live555_tcp_bug)
+                    .unwrap_or(false)
+            }
+            TeardownPolicy::Auto | TeardownPolicy::Always => false,
+            TeardownPolicy::Never => return,
+        };
+
+        let session = match this.session.take() {
+            Some(s) => s,
+            None => return,
+        };
+
+        // For now, assume the whole timeout is left.
+        let expires = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(session.timeout_sec.into());
+
+        // Track the session, if there is a group.
+        let (teardown_tx, teardown_rx) = tokio::sync::watch::channel(None);
+        let seqnum = if let Some(session_group) = this.options.session_group.as_ref() {
+            let mut lock = session_group.sessions.lock().unwrap();
+            let seqnum = lock.next_seqnum;
+            lock.next_seqnum += 1;
+            lock.sessions.push(StaleSession {
+                seqnum,
+                expires,
+                teardown_rx: Some(teardown_rx),
+                has_tcp,
+                maybe_playing: *this.flags & (SessionFlag::MaybePlaying as u8) != 0,
+            });
+            log::debug!(
+                "{:?}/{} tracking TEARDOWN of session id {}",
+                session_group.debug_id(),
+                seqnum,
+                session.id
+            );
+            Some(seqnum)
+        } else {
+            None
+        };
+
+        tokio::spawn(teardown::background_teardown(
+            seqnum,
+            this.presentation.base_url.clone(),
+            this.presentation.tool.take(),
+            session.id,
+            *this.flags & (SessionFlag::Backchannel as u8) != 0,
+            just_try_once,
+            std::mem::take(this.options),
+            this.requested_auth.take(),
+            this.conn.take(),
+            teardown_tx,
+            expires,
+        ));
+    }
+}
+
+impl futures::Stream for Session<Playing> {
+    type Item = Result<PacketItem, Error>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let item = ready!(self.as_mut().poll_stream_item(cx));
+        Poll::Ready(match item {
+            Some(Ok(ValidatedItem::Rtcp(pkt))) => Some(Ok(pkt)),
+            Some(Ok(ValidatedItem::Rtp(rtp))) => {
+                let stream = &mut self.0.presentation.streams[rtp.meta.stream_id];
+                let data = match &mut stream.state {
+                    StreamState::Playing {
+                        udp_sockets: Some(udp_sockets),
+                        ..
+                    } => Bytes::from(
+                        udp_sockets
+                            .read_buf
+                            .split(rtp.body_pos, usize::from(rtp.body_len))
+                            .to_owned(),
+                    ),
+                    _ => {
+                        let conn = self.0.conn.as_ref().unwrap();
+                        conn.inner.body_bytes(rtp.body_pos, u32::from(rtp.body_len))
+                    }
+                };
+                Some(Ok(rtp.into_received_packet(data)))
+            }
+            Some(Err(e)) => Some(Err(e)),
+            None => None,
+        })
+    }
+}
+
+impl Session<Playing> {
+    /// Queues `pkt` on its stream's RTP channel, plus an RTCP sender report if
+    /// one is due. Implements [`futures::Sink::start_send`].
+    fn queue_packet(mut self: Pin<&mut Self>, pkt: crate::rtp::SendingPacket) -> Result<(), Error> {
+        let inner = self.0.as_mut().project();
+        let conn = inner
+            .conn
+            .as_mut()
+            .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?;
+        let stream_id = pkt.stream_id;
+        let Some(stream) = inner.presentation.streams.get_mut(stream_id) else {
+            bail!(ErrorInt::InvalidArgument(format!(
+                "can't send on stream {stream_id}: presentation has only {} streams",
+                inner.presentation.streams.len()
+            )));
+        };
+        if stream.direction != StreamDirection::Sending {
+            bail!(ErrorInt::InvalidArgument(format!(
+                "can't send on stream {stream_id}: it isn't an ONVIF backchannel (a=sendonly) stream"
+            )));
+        }
+        let StreamState::Playing {
+            ctx: stream_ctx,
+            sender: Some(sender),
+            ..
+        } = &mut stream.state
+        else {
+            bail!(ErrorInt::FailedPrecondition(format!(
+                "can't send on stream {stream_id}: it wasn't set up before PLAY"
+            )));
+        };
+        let StreamContextInner::Tcp(TcpStreamContext { rtp_channel_id }) = stream_ctx.0 else {
+            bail!(ErrorInt::Internal(
+                "sending stream unexpectedly isn't using TCP".into()
+            ));
+        };
+        const MAX_PAYLOAD_LEN: usize = (u16::MAX - crate::rtp::PacketHeader::LEN) as usize;
+        if pkt.payload.len() > MAX_PAYLOAD_LEN {
+            bail!(ErrorInt::InvalidArgument(format!(
+                "can't send {}-byte payload on stream {stream_id}: RTSP interleaved data allows at \
+                 most {MAX_PAYLOAD_LEN} bytes after the RTP header",
+                pkt.payload.len()
+            )));
+        }
+        let now = tokio::time::Instant::now();
+        conn.inner
+            .queue_data(rtp_channel_id, |out| sender.write_rtp(now, &pkt, out))?;
+        if sender.report_due(now) {
+            let ntp = crate::NtpTimestamp::now();
+            conn.inner
+                .queue_data(rtp_channel_id.wrapping_add(1), |out| {
+                    sender.write_sender_report(now, ntp, out)
+                })?;
+        }
+        Ok(())
+    }
+}
+
+/// Sends RTP packets on [`StreamDirection::Sending`] streams (ONVIF backchannel).
+///
+/// Retina fills in the SSRC, sequence numbers, and payload type, and sends
+/// RTCP sender reports for each sending stream itself, every few seconds while
+/// packets flow. Packets go out on the RTSP connection, interleaved with RTSP
+/// requests.
+///
+/// `poll_ready` applies backpressure once a few kilobytes (about half a second
+/// of G.711 audio) are waiting to be written, so sent media stays close to real
+/// time when the server reads slowly. It then accepts one packet of any allowed
+/// size.
+///
+/// Errors are returned rather than panicking: `start_send` fails without
+/// sending anything if the packet is for a stream that isn't set up for sending
+/// or its length is unacceptable; the session is still usable.
+/// Errors from `poll_ready`, `poll_flush`, and `poll_close` mean the connection
+/// has failed; any unsent data is discarded, and later sends fail too.
+///
+/// The caller must keep polling the [`futures::Stream`] impl (or drop the
+/// session) for keepalives to be sent and RTCP and other incoming data to be
+/// processed, even if it only wishes to send. To do both from separate tasks,
+/// use [`futures::StreamExt::split`].
+///
+/// `poll_close` just flushes; it doesn't end the session. Drop the session to
+/// tear it down.
+impl futures::Sink<crate::rtp::SendingPacket> for Session<Playing> {
+    type Error = Error;
+
+    fn poll_ready(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        let conn = self
+            .0
+            .as_mut()
+            .project()
+            .conn
+            .as_mut()
+            .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?;
+        conn.inner.poll_write_ready(cx).map_err(|e| wrap!(e))
+    }
+
+    fn start_send(
+        self: Pin<&mut Self>,
+        item: crate::rtp::SendingPacket,
+    ) -> Result<(), Self::Error> {
+        self.queue_packet(item)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        let conn = self
+            .0
+            .as_mut()
+            .project()
+            .conn
+            .as_mut()
+            .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?;
+        conn.inner.poll_flush_unpin(cx).map_err(|e| wrap!(e))
+    }
+
+    fn poll_close(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        self.poll_flush(cx)
+    }
+}
+
+/// Raw received packet before validation.
+///
+/// Both TCP and UDP paths produce this minimal descriptor; validation
+/// happens in [`Session::validate_item`].
+struct StreamItem {
+    pkt_ctx: crate::PacketContext,
+    stream_i: usize,
+    channel_type: ChannelType,
+    body_pos: u64,
+    body_len: u16,
+}
+
+/// Validated stream data (RTP or RTCP), ready for consumption.
+///
+/// Callers convert to their specific item type (`PacketItem` or `CodecItem`).
+enum ValidatedItem {
+    Rtcp(PacketItem),
+    Rtp(ValidatedRtp),
+}
+
+/// Metadata for a validated RTP packet whose body is in a ring buffer.
+struct ValidatedRtp {
+    meta: crate::rtp::PacketMeta,
+    body_pos: u64,
+    body_len: u16,
+    payload_range: std::ops::Range<u16>,
+}
+
+impl ValidatedRtp {
+    /// Converts to a [`PacketItem::Rtp`] for the non-Demuxed path, given the
+    /// body already copied from the ring buffer as `Bytes`.
+    fn into_received_packet(self, data: Bytes) -> PacketItem {
+        PacketItem::Rtp(crate::rtp::ReceivedPacket {
+            ctx: self.meta.ctx,
+            stream_id: self.meta.stream_id,
+            timestamp: self.meta.timestamp,
+            data,
+            payload_range: self.payload_range,
+            loss: self.meta.loss,
+        })
+    }
+}
+
+enum DemuxedState {
+    Waiting,
+    Pulling(usize),
+    Fused,
+}
+
+/// Wrapper returned by [`Session<Playing>::demuxed`] which demuxes/depacketizes into frames.
+pub struct Demuxed {
+    state: DemuxedState,
+    session: Session<Playing>,
+}
+
+impl Demuxed {
+    /// Returns the server's version as declared in the `DESCRIBE` response's `a:tool` SDP
+    /// attribute.
+    pub fn tool(&self) -> Option<&Tool> {
+        self.session.tool()
+    }
+
+    /// Returns the available streams as described by the server.
+    pub fn streams(&self) -> &[Stream] {
+        self.session.streams()
+    }
+}
+
+/// Sends RTP packets on [`StreamDirection::Sending`] streams (ONVIF backchannel)
+/// by forwarding to the [`futures::Sink`] impl on [`Session<Playing>`]; see
+/// there for details.
+///
+/// As there, the caller must keep polling the [`futures::Stream`] impl (or
+/// drop the `Demuxed`) for keepalives to be sent and incoming data to be
+/// processed. To do both from separate tasks, use [`futures::StreamExt::split`].
+impl futures::Sink<crate::rtp::SendingPacket> for Demuxed {
+    type Error = Error;
+
+    fn poll_ready(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        futures::Sink::poll_ready(Pin::new(&mut self.session), cx)
+    }
+
+    fn start_send(
+        mut self: Pin<&mut Self>,
+        item: crate::rtp::SendingPacket,
+    ) -> Result<(), Self::Error> {
+        futures::Sink::start_send(Pin::new(&mut self.session), item)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        futures::Sink::poll_flush(Pin::new(&mut self.session), cx)
+    }
+
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        futures::Sink::poll_close(Pin::new(&mut self.session), cx)
+    }
+}
+
+impl futures::Stream for Demuxed {
+    type Item = Result<CodecItem, Error>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        loop {
+            let stream_id = match self.state {
+                DemuxedState::Waiting => {
+                    match ready!(Pin::new(&mut self.session).poll_stream_item(cx)) {
+                        Some(Ok(ValidatedItem::Rtp(rtp))) => {
+                            let stream_id = rtp.meta.stream_id;
+                            let inner = &mut *self.session.0;
+                            let stream = &mut inner.presentation.streams[stream_id];
+                            let payload_pos = rtp.body_pos + u64::from(rtp.payload_range.start);
+                            let payload_len = rtp.payload_range.end - rtp.payload_range.start;
+                            let depacketizer = match &mut stream.depacketizer {
+                                Ok(d) => d,
+                                Err(_) => unreachable!("depacketizer was Ok"),
+                            };
+                            let buf = match &stream.state {
+                                StreamState::Playing {
+                                    udp_sockets: Some(udp_sockets),
+                                    ..
+                                } => &udp_sockets.read_buf,
+                                _ => inner.conn.as_ref().unwrap().inner.read_buf(),
+                            };
+                            depacketizer
+                                .push(&crate::buf::PacketRef::new(
+                                    rtp.meta,
+                                    buf,
+                                    payload_pos,
+                                    payload_len,
+                                ))
+                                .map_err(|description| {
+                                    let conn_ctx = *inner.conn.as_ref().unwrap().inner.ctx();
+                                    wrap!(ErrorInt::RtpPacketError {
+                                        conn_ctx,
+                                        stream_ctx: stream.ctx().unwrap().to_owned(),
+                                        pkt_ctx: rtp.meta.ctx,
+                                        stream_id,
+                                        ssrc: rtp.meta.ssrc,
+                                        sequence_number: rtp.meta.sequence_number,
+                                        description,
+                                    })
+                                })?;
+                            stream_id
+                        }
+                        Some(Ok(ValidatedItem::Rtcp(pkt))) => {
+                            let p = match pkt {
+                                PacketItem::Rtcp(r) => r,
+                                _ => unreachable!(),
+                            };
+                            return Poll::Ready(Some(Ok(CodecItem::Rtcp(p))));
+                        }
+                        Some(Err(e)) => return Poll::Ready(Some(Err(e))),
+                        None => return Poll::Ready(None),
+                    }
+                }
+                DemuxedState::Pulling(stream_id) => stream_id,
+                DemuxedState::Fused => return Poll::Ready(None),
+            };
+            let inner = self.session.0.as_mut().project();
+            let stream = &mut inner.presentation.streams[stream_id];
+            let stream_ctx = match stream.state {
+                StreamState::Playing { ref ctx, .. } => ctx,
+                _ => unreachable!(),
+            };
+            let depacketizer = match &mut stream.depacketizer {
+                Ok(d) => d,
+                Err(_) => unreachable!("depacketizer was Ok"),
+            };
+            let conn_ctx = inner
+                .conn
+                .as_ref()
+                .ok_or_else(|| wrap!(ErrorInt::FailedPrecondition("no connection".into())))?
+                .inner
+                .ctx();
+
+            // Note we're committed now to calling `pull` and returning
+            // `Ready` if it has a frame. This is because the
+            // `Stream::parameters` contract guarantees that changes in
+            // upcoming frames are *not* reflected. It's implemented by a
+            // call to `Depacketizer::pull`, which doesn't make a like
+            // guarantee about the state between `push` and `pull`. So we
+            // can't let our callers observe that state.
+            match depacketizer.pull() {
+                Some(Ok(item)) => {
+                    self.state = DemuxedState::Pulling(stream_id);
+                    return Poll::Ready(Some(Ok(item)));
+                }
+                None => {
+                    self.state = DemuxedState::Waiting;
+                    continue;
+                }
+                Some(Err(e)) => {
+                    let conn_ctx = *conn_ctx;
+                    let stream_ctx = *stream_ctx;
+                    self.state = DemuxedState::Fused;
+                    return Poll::Ready(Some(Err(Error(Arc::new(ErrorInt::RtpPacketError {
+                        conn_ctx,
+                        stream_ctx,
+                        pkt_ctx: e.pkt_ctx,
+                        stream_id,
+                        ssrc: e.ssrc,
+                        sequence_number: e.sequence_number,
+                        description: e.description,
+                    })))));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::{init_logging, response};
+
+    /// Bytes each direction of a mock connection holds before writes block.
+    ///
+    /// Tests that exercise backpressure write well past this.
+    const MOCK_BUF_SIZE: usize = 64 * 1024;
+
+    /// Fake addresses of the client and server ends of a mock connection.
+    const MOCK_CLIENT_ADDR: std::net::SocketAddr =
+        std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 40000);
+    const MOCK_SERVER_ADDR: std::net::SocketAddr =
+        std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 554);
+
+    /// Returns the client and server ends of an in-memory RTSP connection.
+    ///
+    /// In-memory rather than loopback TCP so tests are deterministic under
+    /// paused time; see the testing notes in `CONTRIBUTING.md`.
+    fn mock_pair() -> (tokio::io::DuplexStream, tokio::io::DuplexStream) {
+        tokio::io::duplex(MOCK_BUF_SIZE)
+    }
+
+    /// Wraps the client end from [`mock_pair`] as a [`crate::tokio::Connection`].
+    fn mock_client_conn(
+        stream: tokio::io::DuplexStream,
+        max_message_size: usize,
+    ) -> crate::tokio::Connection {
+        crate::tokio::Connection::from_duplex(
+            stream,
+            MOCK_CLIENT_ADDR,
+            MOCK_SERVER_ADDR,
+            max_message_size,
+        )
+    }
+
+    /// Two mutually connected localhost UDP sockets, as `setup` establishes
+    /// for a UDP stream.
+    ///
+    /// Unlike the in-memory RTSP connection from [`mock_pair`], these are
+    /// real sockets, as `Session` reads UDP through `tokio::net::UdpSocket`.
+    /// Paused-time tests that use them may still see auto-advance race with
+    /// datagram delivery.
+    async fn udp_socketpair() -> (UdpSocket, UdpSocket) {
+        let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        a.connect(b.local_addr().unwrap()).await.unwrap();
+        b.connect(a.local_addr().unwrap()).await.unwrap();
+        (a, b)
+    }
+
+    /// Polls [`Session::poll_udp_recv`] once, returning its `Poll`.
+    async fn poll_udp_recv_once(
+        socket: &UdpSocket,
+        read_buf: &mut crate::buf::MarkBuf,
+    ) -> Poll<Result<u16, Error>> {
+        let conn_ctx = crate::ConnectionContext::dummy();
+        let stream_ctx = crate::StreamContext::dummy();
+        std::future::poll_fn(|cx| {
+            Poll::Ready(Session::<Playing>::poll_udp_recv(
+                socket,
+                cx,
+                read_buf,
+                &conn_ctx,
+                &stream_ctx,
+            ))
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn udp_recv_pending_when_idle() {
+        let (a, _b) = udp_socketpair().await;
+        let mut read_buf = crate::buf::MarkBuf::new(128 * 1024);
+        assert!(poll_udp_recv_once(&a, &mut read_buf).await.is_pending());
+    }
+
+    #[tokio::test]
+    async fn udp_recv_datagram() {
+        let (a, b) = udp_socketpair().await;
+        let mut read_buf = crate::buf::MarkBuf::new(128 * 1024);
+        b.send(b"hello world").await.unwrap();
+        a.readable().await.unwrap();
+
+        let pos = read_buf.end();
+        let Poll::Ready(Ok(n)) = poll_udp_recv_once(&a, &mut read_buf).await else {
+            panic!("expected a datagram");
+        };
+        assert_eq!(n, 11);
+        read_buf.advance_end(usize::from(n));
+        assert_eq!(read_buf.split(pos, 11).to_owned(), b"hello world");
+    }
+
+    /// A datagram landing on the ring's wrap point must be scattered correctly
+    /// across both halves of the vectored read.
+    #[tokio::test]
+    async fn udp_recv_scatters_across_ring_wrap() {
+        let (a, b) = udp_socketpair().await;
+
+        // Position `end` 10 bytes short of the ring's end, and consume
+        // everything, so the free space wraps and its first half is 10 bytes.
+        let mut read_buf = crate::buf::MarkBuf::new(128 * 1024);
+        let head = read_buf.capacity() - 10;
+        read_buf.extend(&vec![0u8; head]);
+        read_buf.advance_unparsed(read_buf.end());
+
+        let datagram: Vec<u8> = (0..100u8).collect();
+        b.send(&datagram).await.unwrap();
+        a.readable().await.unwrap();
+
+        let pos = read_buf.end();
+        let Poll::Ready(Ok(n)) = poll_udp_recv_once(&a, &mut read_buf).await else {
+            panic!("expected a datagram");
+        };
+        assert_eq!(n, 100);
+        read_buf.advance_end(usize::from(n));
+
+        let split = read_buf.split(pos, 100);
+        let (s1, s2) = split.slices();
+        assert_eq!((s1.len(), s2.len()), (10, 90), "should have wrapped");
+        assert_eq!(split.to_owned(), datagram);
+    }
+
+    /// Regression test: tokio caches readiness, and only its own `try_*` /
+    /// `try_io` helpers clear it. Issuing the `recvmsg` directly after
+    /// `poll_recv_ready` leaves stale readiness set, so the task is woken again
+    /// as soon as it yields and re-polls forever, burning CPU without making
+    /// progress. (It doesn't hang outright: tokio's cooperative budget forces a
+    /// yield after ~128 futile syscalls, then the stale readiness wakes it
+    /// straight back up.)
+    ///
+    /// Asserts the socket is polled once and then stays asleep.
+    #[tokio::test]
+    async fn udp_recv_stale_readiness_does_not_spin() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let (a, b) = udp_socketpair().await;
+        b.send(b"hello").await.unwrap();
+        a.readable().await.unwrap(); // tokio caches READABLE
+
+        // Consume the datagram behind tokio's back, so the socket is no longer
+        // readable but tokio still believes it is.
+        let mut scratch = [MaybeUninit::<u8>::uninit(); 64];
+        let n = socket2::SockRef::from(&a).recv(&mut scratch[..]).unwrap();
+        assert_eq!(n, 5);
+
+        let mut read_buf = crate::buf::MarkBuf::new(128 * 1024);
+        let conn_ctx = crate::ConnectionContext::dummy();
+        let stream_ctx = crate::StreamContext::dummy();
+        let polls = AtomicUsize::new(0);
+        let fut = std::future::poll_fn(|cx| {
+            polls.fetch_add(1, Ordering::Relaxed);
+            Session::<Playing>::poll_udp_recv(&a, cx, &mut read_buf, &conn_ctx, &stream_ctx)
+        });
+        let r = tokio::time::timeout(std::time::Duration::from_millis(200), fut).await;
+        assert!(r.is_err(), "expected no datagram; got {:?}", r.map(drop));
+        let polls = polls.load(Ordering::Relaxed);
+        assert!(
+            polls < 10,
+            "polled {polls} times in 200ms: spinning on stale readiness",
+        );
+    }
+
+    async fn connect_to_mock() -> (RtspConnection, crate::tokio::Connection) {
+        let (client, server) = mock_pair();
+        let client = mock_client_conn(client, usize::MAX);
+        let server = crate::tokio::Connection::from_duplex(
+            server,
+            MOCK_SERVER_ADDR,
+            MOCK_CLIENT_ADDR,
+            usize::MAX,
+        );
+        let client = RtspConnection {
+            inner: client,
+            channels: ChannelMappings::default(),
+            next_cseq: 1,
+            seen_unassigned: false,
+        };
+        (client, server)
+    }
+
+    /// Receives a request and sends a response, filling in the matching `CSeq`.
+    async fn req_response(
+        server: &mut crate::tokio::Connection,
+        expected_method: msg::Method,
+        response: (msg::Response, Bytes),
+    ) {
+        req_response_returning_req(server, expected_method, response).await;
+    }
+
+    /// As [`req_response`], also returning the request for inspection.
+    async fn req_response_returning_req(
+        server: &mut crate::tokio::Connection,
+        expected_method: msg::Method,
+        (mut response, resp_body): (msg::Response, Bytes),
+    ) -> msg::Request {
+        let msg = server.next().await.unwrap().unwrap();
+        let req = match msg.msg {
+            msg::Message::Request(r) => r,
+            o => panic!("expected {expected_method:?} request, got {o:#?}"),
+        };
+        assert_eq!(req.method, expected_method);
+        let cseq = req.headers.get("CSeq").unwrap().to_string();
+        response.headers.insert(
+            msg::HeaderName::CSEQ,
+            msg::HeaderValue::try_from(cseq).unwrap(),
+        );
+        server
+            .send(OwnedMessage::Response {
+                head: response,
+                body: resp_body,
+            })
+            .await
+            .unwrap();
+        req
+    }
+
+    /// Tests the happy path from initialization to teardown (first attempt succeeds).
+    #[tokio::test(start_paused = true)]
+    async fn simple() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let url = Url::parse("rtsp://192.168.5.206:554/h264Preview_01_main").unwrap();
+        let group = Arc::new(SessionGroup::default());
+
+        // DESCRIBE.
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(
+                conn,
+                SessionOptions::default()
+                    .session_group(group.clone())
+                    .unassigned_channel_data(UnassignedChannelDataPolicy::Ignore),
+                url
+            ),
+            req_response(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(include_bytes!("testdata/reolink_describe.txt"))
+            ),
+        );
+        let mut session = session.unwrap();
+        assert_eq!(session.streams().len(), 2);
+
+        // SETUP.
+        tokio::join!(
+            async {
+                session.setup(0, SetupOptions::default()).await.unwrap();
+            },
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(include_bytes!("testdata/reolink_setup.txt"))
+            ),
+        );
+
+        // PLAY.
+        let (session, _) = tokio::join!(
+            session.play(PlayOptions::default()),
+            req_response(
+                &mut server,
+                msg::Method::PLAY,
+                response(include_bytes!("testdata/reolink_play.txt"))
+            ),
+        );
+        {
+            let session = session.unwrap();
+            tokio::pin!(session);
+
+            // Packets: first ignored one (unassigned channel), then one passed through.
+            tokio::join!(
+                async {
+                    match session.next().await {
+                        Some(Ok(PacketItem::Rtp(p))) => {
+                            assert_eq!(p.ssrc(), 0xdcc4a0d8);
+                            assert_eq!(p.sequence_number(), 0x41d4);
+                            assert_eq!(p.payload(), b"hello world");
+                        }
+                        o => panic!("unexpected item: {o:#?}"),
+                    }
+                },
+                async {
+                    let bad_pkt = b"data on unassigned channel";
+                    server
+                        .send(OwnedMessage::Data {
+                            channel_id: 2,
+                            body: Bytes::from_static(bad_pkt),
+                        })
+                        .await
+                        .unwrap();
+                    let good_pkt = b"\x80\x60\x41\xd4\x00\x00\x00\x00\xdc\xc4\xa0\xd8hello world";
+                    server
+                        .send(OwnedMessage::Data {
+                            channel_id: 0,
+                            body: Bytes::from_static(good_pkt),
+                        })
+                        .await
+                        .unwrap();
+                },
+            );
+        };
+
+        // Drop (initiated by exiting the scope above).
+        // This server advertises an ancient version of live555, so Retina
+        // sends a TEARDOWN even with TCP.
+
+        let stale_sessions = group.stale_sessions();
+        assert_eq!(stale_sessions.num_sessions, 1);
+
+        tokio::join!(
+            group.await_stale_sessions(&stale_sessions),
+            req_response(
+                &mut server,
+                msg::Method::TEARDOWN,
+                response(include_bytes!("testdata/reolink_teardown.txt"))
+            ),
+        );
+        assert_eq!(group.stale_sessions().num_sessions, 0);
+    }
+
+    /// As above, but TEARDOWN fails until session expiration.
+    #[tokio::test(start_paused = true)]
+    async fn session_expiration() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let url = Url::parse("rtsp://192.168.5.206:554/h264Preview_01_main").unwrap();
+        let group = Arc::new(SessionGroup::default());
+
+        // DESCRIBE.
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(
+                conn,
+                SessionOptions::default().session_group(group.clone()),
+                url
+            ),
+            req_response(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(include_bytes!("testdata/reolink_describe.txt"))
+            ),
+        );
+        let mut session = session.unwrap();
+        assert_eq!(session.streams().len(), 2);
+
+        // SETUP.
+        tokio::join!(
+            async {
+                session.setup(0, SetupOptions::default()).await.unwrap();
+            },
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(include_bytes!("testdata/reolink_setup.txt"))
+            ),
+        );
+
+        // PLAY.
+        let (session, _) = tokio::join!(
+            session.play(PlayOptions::default()),
+            req_response(
+                &mut server,
+                msg::Method::PLAY,
+                response(include_bytes!("testdata/reolink_play.txt"))
+            ),
+        );
+        let drop_time;
+        {
+            let session = session.unwrap();
+            tokio::pin!(session);
+
+            // Packet.
+            tokio::join!(
+                async {
+                    match session.next().await {
+                        Some(Ok(PacketItem::Rtp(p))) => {
+                            assert_eq!(p.ssrc(), 0xdcc4a0d8);
+                            assert_eq!(p.sequence_number(), 0x41d4);
+                            assert_eq!(p.payload(), b"hello world");
+                        }
+                        o => panic!("unexpected item: {o:#?}"),
+                    }
+                },
+                async {
+                    let pkt = b"\x80\x60\x41\xd4\x00\x00\x00\x00\xdc\xc4\xa0\xd8hello world";
+                    server
+                        .send(OwnedMessage::Data {
+                            channel_id: 0,
+                            body: Bytes::from_static(pkt),
+                        })
+                        .await
+                        .unwrap();
+                },
+            );
+            drop_time = tokio::time::Instant::now();
+        }
+
+        // Drop (initiated by exiting the scope above).
+        // This server advertises an ancient version of live555, so Retina
+        // sends a TEARDOWN even with TCP.
+        server.close().await.unwrap();
+        let stale_sessions = group.stale_sessions();
+        assert_eq!(stale_sessions.num_sessions, 1);
+
+        // Even if repeated attempts fail, the stale session will go away on timeout.
+        // The "60" in the assert below is the RFC-defined default timeout when
+        // none is specified in the SETUP response.
+        group.await_stale_sessions(&stale_sessions).await;
+        assert_eq!(group.stale_sessions().num_sessions, 0);
+
+        assert_eq!(
+            tokio::time::Instant::now() - drop_time,
+            std::time::Duration::from_secs(60)
+        );
+    }
+
+    /// Stale sessions detected via unexpected RTSP interleaved packets should be tracked
+    /// until expiration.
+    #[tokio::test(start_paused = true)]
+    async fn stale_file_descriptor_session() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let url = Url::parse("rtsp://192.168.5.206:554/h264Preview_01_main").unwrap();
+        let group = Arc::new(SessionGroup::default());
+        let bogus_rtp = OwnedMessage::Data {
+            channel_id: 0,
+            body: Bytes::from_static(b"bogus pkt"),
+        };
+
+        let start = tokio::time::Instant::now();
+
+        // DESCRIBE.
+        tokio::join!(
+            async {
+                let e = Session::describe_with_conn(
+                    conn,
+                    SessionOptions::default()
+                        .session_group(group.clone())
+                        .unassigned_channel_data(UnassignedChannelDataPolicy::AssumeStaleSession),
+                    url,
+                )
+                .await
+                .map(|_s| ())
+                .unwrap_err();
+                assert!(matches!(*e.0, ErrorInt::RtspUnassignedChannelError { .. }));
+            },
+            async { server.send(bogus_rtp).await.unwrap() },
+        );
+
+        let stale_sessions = group.stale_sessions();
+        assert_eq!(stale_sessions.num_sessions, 1);
+
+        group.await_stale_sessions(&stale_sessions).await;
+        let elapsed = tokio::time::Instant::now() - start;
+        assert_eq!(group.stale_sessions().num_sessions, 0);
+
+        assert_eq!(
+            elapsed,
+            std::time::Duration::from_secs(LIVE555_EXPIRATION_SEC)
+        );
+    }
+
+    #[test]
+    fn credentials_debug_omits_password() {
+        let creds = Credentials {
+            username: "admin".to_owned(),
+            password: "secret".to_owned(),
+        };
+        assert_eq!(
+            format!("{creds:?}"),
+            r#"Credentials { username: "admin", password: <redacted> }"#
+        );
+    }
+
+    /// A playing session with credentials whose digest challenge (nonce `nonce-0`) came from
+    /// session setup, and whose keepalive is due at once.
+    async fn playing_session_with_auth() -> (Session<Playing>, crate::tokio::Connection) {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let url = Url::parse("rtsp://192.168.5.206:554/h264Preview_01_main").unwrap();
+        let opts = SessionOptions::default().creds(Some(Credentials {
+            username: "admin".to_owned(),
+            password: "secret".to_owned(),
+        }));
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(conn, opts, url),
+            req_response(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(include_bytes!("testdata/reolink_describe.txt"))
+            ),
+        );
+        let mut session = session.unwrap();
+        tokio::join!(
+            async {
+                session.setup(0, SetupOptions::default()).await.unwrap();
+            },
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(include_bytes!("testdata/reolink_setup.txt"))
+            ),
+        );
+        let (session, _) = tokio::join!(
+            session.play(PlayOptions::default()),
+            req_response(
+                &mut server,
+                msg::Method::PLAY,
+                response(include_bytes!("testdata/reolink_play.txt"))
+            ),
+        );
+        let mut session = session.unwrap();
+        session.0.flags |= SessionFlag::GetParameterSupported as u8;
+        // As on Axis cameras: the session is already authenticating, with the nonce from setup.
+        session.0.requested_auth = Some(
+            http_auth::PasswordClient::try_from(r#"Digest realm="cam", nonce="nonce-0""#).unwrap(),
+        );
+        (session, server)
+    }
+
+    /// Reads the next keepalive and returns its `CSeq` and `Authorization` header.
+    async fn next_keepalive(server: &mut crate::tokio::Connection) -> (msg::HeaderValue, String) {
+        let msg = server.next().await.unwrap().unwrap();
+        let req = match msg.msg {
+            msg::Message::Request(r) => r,
+            o => panic!("expected keepalive request, got {o:#?}"),
+        };
+        assert_eq!(req.method, msg::Method::GET_PARAMETER);
+        let cseq = req.headers.get("CSeq").unwrap().clone();
+        let auth = req
+            .headers
+            .get("Authorization")
+            .map(|a| a.to_string())
+            .unwrap_or_default();
+        (cseq, auth)
+    }
+
+    /// Refuses a keepalive with `401` and a challenge carrying `nonce`.
+    async fn refuse_keepalive(
+        server: &mut crate::tokio::Connection,
+        cseq: msg::HeaderValue,
+        nonce: &str,
+    ) {
+        let mut headers = msg::Headers::default();
+        headers.insert(msg::HeaderName::CSEQ, cseq);
+        headers.insert(
+            msg::HeaderName::try_from("WWW-Authenticate").unwrap(),
+            msg::HeaderValue::try_from(format!(r#"Digest realm="cam", nonce="{nonce}""#)).unwrap(),
+        );
+        server
+            .send(OwnedMessage::Response {
+                head: msg::Response {
+                    status_code: StatusCode::UNAUTHORIZED,
+                    reason_phrase: "Unauthorized".to_owned(),
+                    headers,
+                },
+                body: Bytes::new(),
+            })
+            .await
+            .unwrap();
+    }
+
+    /// Tests that a keepalive refused with 401 and a fresh challenge adopts it and is retried
+    /// one second later with the new nonce, as cameras that rotate their digest nonce require.
+    #[tokio::test(start_paused = true)]
+    async fn keepalive_unauthorized_adopts_challenge_and_retries() {
+        let (session, mut server) = playing_session_with_auth().await;
+        tokio::pin!(session);
+        let server_side = async {
+            let (cseq, auth) = next_keepalive(&mut server).await;
+            assert!(auth.contains("nonce-0"), "{auth}");
+            refuse_keepalive(&mut server, cseq, "nonce-1").await;
+            let refused_at = tokio::time::Instant::now();
+            let (_, auth) = next_keepalive(&mut server).await;
+            assert!(auth.contains("nonce-1"), "{auth}");
+            assert_eq!(
+                tokio::time::Instant::now() - refused_at,
+                std::time::Duration::from_secs(1)
+            );
+        };
+        tokio::select! {
+            _ = server_side => {}
+            o = session.next() => panic!("unexpected item: {o:#?}"),
+        }
+    }
+
+    /// Tests that a retry refused again is not retried a second later: the next keepalive waits
+    /// for the normal interval (30 s for the 60 s default session timeout), and then carries the
+    /// latest challenge.
+    #[tokio::test(start_paused = true)]
+    async fn keepalive_retry_refused_waits_for_the_normal_interval() {
+        let (session, mut server) = playing_session_with_auth().await;
+        tokio::pin!(session);
+        let server_side = async {
+            let (cseq, _) = next_keepalive(&mut server).await;
+            refuse_keepalive(&mut server, cseq, "nonce-1").await;
+            let (cseq, auth) = next_keepalive(&mut server).await;
+            assert!(auth.contains("nonce-1"), "{auth}");
+            refuse_keepalive(&mut server, cseq, "nonce-2").await;
+            let refused_at = tokio::time::Instant::now();
+            let (_, auth) = next_keepalive(&mut server).await;
+            assert!(auth.contains("nonce-2"), "{auth}");
+            // The retry was sent when the timer fired, which reset it to the normal interval;
+            // its refusal leaves that timer alone.
+            assert_eq!(
+                tokio::time::Instant::now() - refused_at,
+                std::time::Duration::from_secs(30)
+            );
+        };
+        tokio::select! {
+            _ = server_side => {}
+            o = session.next() => panic!("unexpected item: {o:#?}"),
+        }
+    }
+
+    /// Tests that a keepalive response with an unexpected `CSeq` is a fatal error.
+    ///
+    /// Tapo cameras reply to `SET_PARAMETER` with the previous request's
+    /// `CSeq`. Retina avoids this by preferring `GET_PARAMETER`, but a mismatched
+    /// response is still an error rather than being guessed to belong to the
+    /// outstanding keepalive.
+    #[tokio::test]
+    async fn keepalive_unexpected_cseq() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let url = Url::parse("rtsp://192.168.5.206:554/h264Preview_01_main").unwrap();
+
+        // DESCRIBE.
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(conn, SessionOptions::default(), url),
+            req_response(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(include_bytes!("testdata/reolink_describe.txt"))
+            ),
+        );
+        let mut session = session.unwrap();
+
+        // SETUP.
+        tokio::join!(
+            async {
+                session.setup(0, SetupOptions::default()).await.unwrap();
+            },
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(include_bytes!("testdata/reolink_setup.txt"))
+            ),
+        );
+
+        // PLAY.
+        let (session, _) = tokio::join!(
+            session.play(PlayOptions::default()),
+            req_response(
+                &mut server,
+                msg::Method::PLAY,
+                response(include_bytes!("testdata/reolink_play.txt"))
+            ),
+        );
+        let session = session.unwrap();
+        tokio::pin!(session);
+
+        // Pretend a previous `OPTIONS` advertised both parameter methods, and
+        // make the keepalive fire almost immediately.
+        session.0.flags |=
+            SessionFlag::SetParameterSupported as u8 | SessionFlag::GetParameterSupported as u8;
+        session.0.keepalive_timer = Some(Box::pin(tokio::time::sleep(
+            std::time::Duration::from_millis(1),
+        )));
+
+        tokio::join!(
+            async {
+                match session.next().await {
+                    Some(Err(e)) => {
+                        assert!(
+                            matches!(*e.0, ErrorInt::RtspFramingError { .. }),
+                            "unexpected error: {e}"
+                        );
+                    }
+                    o => panic!("unexpected item: {o:#?}"),
+                }
+            },
+            async {
+                let msg = server.next().await.unwrap().unwrap();
+                let req = match msg.msg {
+                    msg::Message::Request(r) => r,
+                    o => panic!("expected keepalive request, got {o:#?}"),
+                };
+                assert_eq!(req.method, msg::Method::GET_PARAMETER);
+                let cseq: u32 = req.headers.get("CSeq").unwrap().parse().unwrap();
+                let mut headers = msg::Headers::default();
+                headers.insert(
+                    msg::HeaderName::CSEQ,
+                    msg::HeaderValue::try_from((cseq - 1).to_string()).unwrap(),
+                );
+                server
+                    .send(OwnedMessage::Response {
+                        head: msg::Response {
+                            status_code: StatusCode::try_from(400u16).unwrap(),
+                            reason_phrase: "Bad Request".to_owned(),
+                            headers,
+                        },
+                        body: Bytes::new(),
+                    })
+                    .await
+                    .unwrap();
+            },
+        );
+    }
+
+    /// Tests ignoring bogus RTP and RTCP messages while waiting for PLAY response.
+    #[tokio::test]
+    async fn ignore_early_rtp_rtcp() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let url = Url::parse("rtsp://192.168.5.206:554/h264Preview_01_main").unwrap();
+        let bogus_rtp = OwnedMessage::Data {
+            channel_id: 0,
+            body: Bytes::from_static(b"bogus pkt"),
+        };
+        let bogus_rtcp = OwnedMessage::Data {
+            channel_id: 1,
+            body: Bytes::from_static(b"bogus pkt"),
+        };
+
+        // DESCRIBE.
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(conn, SessionOptions::default(), url),
+            async {
+                req_response(
+                    &mut server,
+                    msg::Method::DESCRIBE,
+                    response(include_bytes!("testdata/reolink_describe.txt")),
+                )
+                .await;
+            },
+        );
+        let mut session = session.unwrap();
+        assert_eq!(session.streams().len(), 2);
+
+        // SETUP.
+        tokio::join!(
+            async {
+                session.setup(0, SetupOptions::default()).await.unwrap();
+            },
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(include_bytes!("testdata/reolink_setup.txt"))
+            ),
+        );
+
+        // PLAY.
+        let (session, _) = tokio::join!(session.play(PlayOptions::default()), async move {
+            server.send(bogus_rtp).await.unwrap();
+            server.send(bogus_rtcp).await.unwrap();
+            req_response(
+                &mut server,
+                msg::Method::PLAY,
+                response(include_bytes!("testdata/reolink_play.txt")),
+            )
+            .await
+        },);
+        let _session = session.unwrap();
+    }
+
+    /// A camera that sends `Session: 1 ;timeout=60`. The id is trimmed and
+    /// sent back in `PLAY`, which used to panic on the invalid header value.
+    #[tokio::test]
+    async fn session_id_trailing_space() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let url = Url::parse("rtsp://192.168.5.206:554/h264Preview_01_main").unwrap();
+
+        // DESCRIBE.
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(conn, SessionOptions::default(), url),
+            req_response(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(include_bytes!("testdata/reolink_describe.txt"))
+            ),
+        );
+        let mut session = session.unwrap();
+
+        // SETUP.
+        tokio::join!(
+            async {
+                session.setup(0, SetupOptions::default()).await.unwrap();
+            },
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(
+                    b"RTSP/1.0 200 OK\r\n\
+                      CSeq: 2\r\n\
+                      Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\
+                      Session: 1 ;timeout=60\r\n\r\n"
+                )
+            ),
+        );
+
+        // PLAY.
+        let (session, _) = tokio::join!(session.play(PlayOptions::default()), async {
+            let msg = server.next().await.unwrap().unwrap();
+            let msg::Message::Request(r) = msg.msg else {
+                panic!()
+            };
+            assert_eq!(r.method, msg::Method::PLAY);
+            assert_eq!(r.headers.get("Session").map(|v| &**v), Some("1"));
+            let (mut resp, body) = response(b"RTSP/1.0 200 OK\r\nSession: 1\r\n\r\n");
+            resp.headers.insert(
+                msg::HeaderName::CSEQ,
+                r.headers.get("CSeq").unwrap().clone(),
+            );
+            server
+                .send(OwnedMessage::Response { head: resp, body })
+                .await
+                .unwrap();
+        });
+        session.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reject_session_id_change() {
+        session_id_change(SessionIdPolicy::RequireMatch, true).await
+    }
+
+    #[tokio::test]
+    async fn ignore_session_id_change() {
+        session_id_change(SessionIdPolicy::UseFirst, false).await
+    }
+
+    async fn session_id_change(policy: SessionIdPolicy, expect_error: bool) {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let url = Url::parse("rtsp://127.0.0.1:554/camera").unwrap();
+        let group = Arc::new(SessionGroup::default());
+
+        // DESCRIBE.
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(
+                conn,
+                SessionOptions::default()
+                    .session_group(group.clone())
+                    .session_id(policy),
+                url
+            ),
+            req_response(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(include_bytes!("testdata/h264dvr_describe.txt"))
+            ),
+        );
+        let mut session = session.unwrap();
+        assert_eq!(session.streams().len(), 2);
+
+        // SETUP.
+        tokio::join!(
+            async {
+                session
+                    .setup(
+                        0,
+                        SetupOptions::default()
+                            .transport(Transport::Udp(UdpTransportOptions::default())),
+                    )
+                    .await
+                    .unwrap();
+            },
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(include_bytes!("testdata/h264dvr_setup_video.txt"))
+            ),
+        );
+
+        tokio::join!(
+            async {
+                let r = session
+                    .setup(
+                        1,
+                        SetupOptions::default()
+                            .transport(Transport::Udp(UdpTransportOptions::default())),
+                    )
+                    .await;
+                if expect_error {
+                    let e = r.unwrap_err();
+                    assert!(matches!(*e.0, ErrorInt::RtspResponseError { .. }));
+                } else {
+                    r.unwrap();
+                }
+            },
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(include_bytes!("testdata/h264dvr_setup_audio.txt"))
+            ),
+        );
+    }
+
+    /// Sends `DESCRIBE` to a server which answers with the raw bytes `resp`,
+    /// then holds the connection open.
+    async fn describe_raw(
+        options: SessionOptions,
+        resp: Vec<u8>,
+    ) -> Result<Session<Described>, Error> {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let (client, mut server) = mock_pair();
+        let inner = mock_client_conn(client, options.get_max_message_size());
+        let conn = RtspConnection {
+            inner,
+            channels: ChannelMappings::default(),
+            next_cseq: 1,
+            seen_unassigned: false,
+        };
+        let url = Url::parse("rtsp://127.0.0.1:554/camera").unwrap();
+        let serve = async move {
+            let mut req = Vec::new();
+            while !req.ends_with(b"\r\n\r\n") {
+                let mut buf = [0u8; 1024];
+                let n = server.read(&mut buf).await.unwrap();
+                assert_ne!(n, 0, "client hung up before sending its request");
+                req.extend_from_slice(&buf[..n]);
+            }
+            // The client may hang up partway through; that's fine.
+            let _ = server.write_all(&resp).await;
+            server
+        };
+        let (session, _server) = tokio::join!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                Session::describe_with_conn(conn, options, url),
+            ),
+            serve,
+        );
+        session.expect("DESCRIBE should finish rather than buffer forever")
+    }
+
+    fn assert_too_large(r: Result<Session<Described>, Error>) {
+        let e = r.map(|_| ()).unwrap_err();
+        assert!(
+            matches!(*e.0, ErrorInt::RtspFramingError { .. }),
+            "expected framing error, got {e}"
+        );
+        assert!(e.to_string().contains("exceeds max_message_size"), "{e}");
+    }
+
+    /// Appends header lines to `resp` until it's at least 2 MiB.
+    fn push_junk_headers(resp: &mut Vec<u8>) {
+        let mut i = 0;
+        while resp.len() < 2 << 20 {
+            resp.extend_from_slice(format!("X-Junk-{i}: {:0>64}\r\n", 0).as_bytes());
+            i += 1;
+        }
+    }
+
+    /// The limit rejects a declared body length up front, without waiting for
+    /// the body.
+    #[tokio::test]
+    async fn describe_rejects_huge_content_length() {
+        init_logging();
+        let resp = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 1000000000\r\n\r\n";
+        let options = SessionOptions::default().max_message_size(64 << 10);
+        assert_too_large(describe_raw(options, resp.to_vec()).await);
+    }
+
+    /// The limit rejects a header block that never ends.
+    #[tokio::test]
+    async fn describe_rejects_endless_headers() {
+        init_logging();
+        let mut resp = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n".to_vec();
+        push_junk_headers(&mut resp);
+        let options = SessionOptions::default().max_message_size(64 << 10);
+        assert_too_large(describe_raw(options, resp).await);
+    }
+
+    /// A response exactly at the limit passes; one byte over fails.
+    #[tokio::test]
+    async fn describe_max_message_size() {
+        init_logging();
+        let (mut head, body) = response(include_bytes!("testdata/reolink_describe.txt"));
+        head.headers.insert(
+            msg::HeaderName::CSEQ,
+            msg::HeaderValue::try_from("1").unwrap(),
+        );
+        let mut resp = Vec::new();
+        OwnedMessage::Response { head, body }
+            .write(&mut resp)
+            .unwrap();
+        let len = resp.len();
+        let session = describe_raw(
+            SessionOptions::default().max_message_size(len),
+            resp.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(session.streams().len(), 2);
+        assert_too_large(
+            describe_raw(SessionOptions::default().max_message_size(len - 1), resp).await,
+        );
+    }
+
+    /// By default there's no limit: a 2 MiB response is accepted.
+    #[tokio::test]
+    async fn describe_no_max_message_size_by_default() {
+        init_logging();
+        let (mut head, body) = response(include_bytes!("testdata/reolink_describe.txt"));
+        head.headers.insert(
+            msg::HeaderName::CSEQ,
+            msg::HeaderValue::try_from("1").unwrap(),
+        );
+        let mut wire = Vec::new();
+        OwnedMessage::Response { head, body }
+            .write(&mut wire)
+            .unwrap();
+        let status_line_len = wire.windows(2).position(|w| w == b"\r\n").unwrap() + 2;
+        let (status_line, rest) = wire.split_at(status_line_len);
+        let mut resp = status_line.to_vec();
+        push_junk_headers(&mut resp);
+        resp.extend_from_slice(rest);
+        let session = describe_raw(SessionOptions::default(), resp).await.unwrap();
+        assert_eq!(session.streams().len(), 2);
+    }
+
+    /// Describes, sets up stream 0 via TCP, and plays a session against the
+    /// mock server, using the Reolink test data.
+    async fn play_tcp(options: SessionOptions) -> (Session<Playing>, crate::tokio::Connection) {
+        let (conn, mut server) = connect_to_mock().await;
+        let url = Url::parse("rtsp://192.168.5.206:554/h264Preview_01_main").unwrap();
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(conn, options, url),
+            req_response(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(include_bytes!("testdata/reolink_describe.txt"))
+            ),
+        );
+        let mut session = session.unwrap();
+        tokio::join!(
+            async {
+                session.setup(0, SetupOptions::default()).await.unwrap();
+            },
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(include_bytes!("testdata/reolink_setup.txt"))
+            ),
+        );
+        let (session, _) = tokio::join!(
+            session.play(PlayOptions::default()),
+            req_response(
+                &mut server,
+                msg::Method::PLAY,
+                response(include_bytes!("testdata/reolink_play.txt"))
+            ),
+        );
+        (session.unwrap(), server)
+    }
+
+    /// The SSRC in the Reolink test data's RTP packets.
+    const REOLINK_SSRC: u32 = 0xdcc4a0d8;
+
+    fn rtp_pkt(seq: u16, timestamp: u32) -> Bytes {
+        let mut pkt = vec![0x80, 0x60];
+        pkt.extend_from_slice(&seq.to_be_bytes());
+        pkt.extend_from_slice(&timestamp.to_be_bytes());
+        pkt.extend_from_slice(&REOLINK_SSRC.to_be_bytes());
+        pkt.extend_from_slice(b"hello world");
+        Bytes::from(pkt)
+    }
+
+    fn sender_report_pkt(ntp: u64, timestamp: u32) -> Bytes {
+        let mut pkt = vec![0x80, 200, 0, 6];
+        pkt.extend_from_slice(&REOLINK_SSRC.to_be_bytes());
+        pkt.extend_from_slice(&ntp.to_be_bytes());
+        pkt.extend_from_slice(&timestamp.to_be_bytes());
+        pkt.extend_from_slice(&[0; 8]); // packet and octet counts.
+        Bytes::from(pkt)
+    }
+
+    /// Polls `session` (which must yield nothing) until `server` receives a
+    /// message, and returns it with its body.
+    async fn recv_while_polling(
+        session: &mut Pin<&mut Session<Playing>>,
+        server: &mut crate::tokio::Connection,
+    ) -> (msg::Message, Bytes) {
+        tokio::select! {
+            item = session.next() => panic!("unexpected item: {item:#?}"),
+            msg = server.next() => {
+                let msg = msg.unwrap().unwrap();
+                let body = server.body_bytes(msg.body_pos, msg.body_len);
+                (msg.msg, body)
+            }
+        }
+    }
+
+    /// Like [`recv_while_polling`], expecting interleaved data on `channel_id`.
+    async fn recv_data_while_polling(
+        session: &mut Pin<&mut Session<Playing>>,
+        server: &mut crate::tokio::Connection,
+        channel_id: u8,
+    ) -> Bytes {
+        match recv_while_polling(session, server).await {
+            (msg::Message::Data(d), body) => {
+                assert_eq!(d.channel_id, channel_id);
+                body
+            }
+            (o, _) => panic!("expected data, got {o:#?}"),
+        }
+    }
+
+    /// Reports are sent on the stream's RTCP channel when due: an empty RR
+    /// before any RTP has arrived, then one describing what has.
+    #[tokio::test(start_paused = true)]
+    async fn receiver_reports_tcp() {
+        init_logging();
+        let (session, mut server) = play_tcp(
+            SessionOptions::default()
+                .unassigned_channel_data(UnassignedChannelDataPolicy::Ignore)
+                .receiver_reports(ReceiverReportPolicy::Always),
+        )
+        .await;
+        tokio::pin!(session);
+        let reports = session.0.reports.as_ref().unwrap();
+        let (ssrc, cname) = (reports.writer.ssrc, reports.writer.cname.clone());
+        let due = tokio::time::Instant::from_std(reports.schedule.next_due());
+
+        // RFC 3550 section 6.2: the first report may come after half the 5 s
+        // minimum, randomized and compensated as in section 6.3.1.
+        let played = tokio::time::Instant::now();
+        assert!(due - played >= std::time::Duration::from_millis(1026));
+        assert!(due - played < std::time::Duration::from_millis(3079));
+
+        // Nothing has arrived yet, so the first report is an empty RR.
+        let report = recv_data_while_polling(&mut session, &mut server, 1).await;
+        // tokio's timers have millisecond resolution, so the report goes out
+        // at the first tick at or after `due`.
+        let now = tokio::time::Instant::now();
+        assert!(
+            now >= due && now < due + std::time::Duration::from_millis(1),
+            "{:?} after due",
+            now.saturating_duration_since(due)
+        );
+        receiver_report::tests::parse_report(&report, ssrc, 0, &cname);
+
+        let ntp = 0xe436_2f99_cccc_cccc;
+        tokio::join!(
+            async {
+                for _ in 0..4 {
+                    match session.next().await {
+                        Some(Ok(_)) => {}
+                        o => panic!("unexpected item: {o:#?}"),
+                    }
+                }
+            },
+            async {
+                // seq 0x41d6 is lost; 0x41d7 is 6000 ticks late relative to
+                // 0x41d5 (all arrive at the same paused instant).
+                for (channel_id, body) in [
+                    (0, rtp_pkt(0x41d4, 1_000)),
+                    (0, rtp_pkt(0x41d5, 4_000)),
+                    (0, rtp_pkt(0x41d7, 10_000)),
+                    (1, sender_report_pkt(ntp, 10_000)),
+                ] {
+                    server
+                        .send(OwnedMessage::Data { channel_id, body })
+                        .await
+                        .unwrap();
+                }
+            },
+        );
+
+        // 1.5 s later, before the next report is due, make it due.
+        tokio::time::advance(std::time::Duration::from_millis(1500)).await;
+        let reports = session.0.reports.as_mut().unwrap();
+        assert!(
+            tokio::time::Instant::from_std(reports.schedule.next_due())
+                > tokio::time::Instant::now()
+        );
+        reports.timer.as_mut().reset(tokio::time::Instant::now());
+        let report = recv_data_while_polling(&mut session, &mut server, 1).await;
+        let rr = receiver_report::tests::parse_report(&report, ssrc, 1, &cname);
+        let block = receiver_report::tests::parse_block(rr);
+        assert_eq!(
+            block,
+            receiver_report::ReportBlock {
+                ssrc: REOLINK_SSRC,
+                fraction_lost: 85, // 1 of 3 expected since 0x41d5, the first valid packet.
+                cumulative_lost: 1,
+                extended_highest_seq: 0x41d7,
+                jitter: 375, // 6000 / 16
+                lsr: 0x2f99_cccc,
+                dlsr: 98_304, // 1.5 s in units of 1/65536 s
+            }
+        );
+    }
+
+    /// Reports keep coming on schedule while nothing else wakes the session.
+    #[tokio::test(start_paused = true)]
+    async fn receiver_reports_tcp_quiet() {
+        init_logging();
+        let (mut session, mut server) =
+            play_tcp(SessionOptions::default().receiver_reports(ReceiverReportPolicy::Always))
+                .await;
+        let reports = session.0.reports.as_ref().unwrap();
+        let (ssrc, cname) = (reports.writer.ssrc, reports.writer.cname.clone());
+        let due = tokio::time::Instant::from_std(reports.schedule.next_due());
+
+        // Poll the session from its own task, so only its own wakers wake it.
+        let session = tokio::spawn(async move {
+            let item = session.next().await;
+            panic!("unexpected item: {item:#?}");
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            for i in 0..3 {
+                let msg = server.next().await.unwrap().unwrap();
+                let msg::Message::Data(d) = msg.msg else {
+                    panic!("expected data, got {:#?}", msg.msg);
+                };
+                assert_eq!(d.channel_id, 1);
+                let report = server.body_bytes(msg.body_pos, msg.body_len);
+                receiver_report::tests::parse_report(&report, ssrc, 0, &cname);
+
+                // Each report is at least 5 s × 0.5 / (e - 3/2) after the last.
+                assert!(
+                    tokio::time::Instant::now() >= due + i * std::time::Duration::from_millis(2052)
+                );
+            }
+        })
+        .await
+        .unwrap();
+        session.abort();
+    }
+
+    /// A keepalive and a report due at once both reach the server intact, in
+    /// that order.
+    #[tokio::test]
+    async fn receiver_report_and_keepalive_back_to_back() {
+        init_logging();
+        let (session, mut server) =
+            play_tcp(SessionOptions::default().receiver_reports(ReceiverReportPolicy::Always))
+                .await;
+        tokio::pin!(session);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(1);
+        session.0.keepalive_timer = Some(Box::pin(tokio::time::sleep_until(deadline)));
+        let reports = session.0.reports.as_mut().unwrap();
+        reports.timer.as_mut().reset(deadline);
+        let (ssrc, cname) = (reports.writer.ssrc, reports.writer.cname.clone());
+
+        match recv_while_polling(&mut session, &mut server).await {
+            (msg::Message::Request(r), body) => {
+                assert_eq!(r.method, msg::Method::OPTIONS);
+                assert!(r.headers.get("CSeq").is_some());
+                assert!(body.is_empty());
+            }
+            (o, _) => panic!("expected keepalive request, got {o:#?}"),
+        }
+        let report = recv_data_while_polling(&mut session, &mut server, 1).await;
+        receiver_report::tests::parse_report(&report, ssrc, 0, &cname);
+    }
+
+    /// Without `SessionOptions::receiver_reports`, no RTCP is written.
+    #[tokio::test(start_paused = true)]
+    async fn receiver_reports_off_by_default() {
+        init_logging();
+        let (session, mut server) = play_tcp(SessionOptions::default()).await;
+        tokio::pin!(session);
+        assert!(session.0.reports.is_none());
+        assert!(session.0.presentation.streams.iter().all(|s| !matches!(
+            s.state,
+            StreamState::Playing {
+                reception: Some(_),
+                ..
+            }
+        )));
+        tokio::join!(
+            async {
+                match session.next().await {
+                    Some(Ok(PacketItem::Rtp(_))) => {}
+                    o => panic!("unexpected item: {o:#?}"),
+                }
+            },
+            async {
+                server
+                    .send(OwnedMessage::Data {
+                        channel_id: 0,
+                        body: rtp_pkt(0x41d4, 0),
+                    })
+                    .await
+                    .unwrap();
+            },
+        );
+        // As in production, only keepalives follow: no RTCP. End between
+        // keepalives, not on one, as two timers due at the same instant fire
+        // in no particular order.
+        let end = tokio::time::Instant::now() + std::time::Duration::from_secs(100);
+        let mut keepalives = 0;
+        while let Ok((m, _)) =
+            tokio::time::timeout_at(end, recv_while_polling(&mut session, &mut server)).await
+        {
+            let msg::Message::Request(r) = m else {
+                panic!("expected only keepalives, got {m:#?}");
+            };
+            assert_eq!(r.method, msg::Method::OPTIONS);
+            let cseq = r.headers.get("CSeq").unwrap().parse::<u32>().unwrap();
+            send_keepalive_response(&mut server, cseq).await;
+            keepalives += 1;
+        }
+        assert_eq!(keepalives, 3); // at 30, 60, and 90 s.
+    }
+
+    /// Over UDP, reports go from the stream's RTCP socket to the server's RTCP
+    /// port.
+    #[tokio::test]
+    async fn receiver_reports_udp() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let url = Url::parse("rtsp://192.168.5.206:554/h264Preview_01_main").unwrap();
+
+        // DESCRIBE.
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(
+                conn,
+                SessionOptions::default().receiver_reports(ReceiverReportPolicy::Always),
+                url
+            ),
+            req_response(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(include_bytes!("testdata/reolink_describe.txt"))
+            ),
+        );
+        let mut session = session.unwrap();
+
+        // SETUP, with server sockets for the stream.
+        let server_udp = crate::tokio::UdpPair::for_ip(IpAddr::V4(Ipv4Addr::LOCALHOST)).unwrap();
+        let ((), client_rtp_port) = tokio::join!(
+            async {
+                session
+                    .setup(
+                        0,
+                        SetupOptions::default().transport(Transport::Udp(Default::default())),
+                    )
+                    .await
+                    .unwrap();
+            },
+            async {
+                let msg = server.next().await.unwrap().unwrap();
+                let msg::Message::Request(req) = msg.msg else {
+                    panic!("expected SETUP request");
+                };
+                assert_eq!(req.method, msg::Method::SETUP);
+                let transport: &str = req.headers.get("Transport").unwrap();
+                let client_port = transport
+                    .split(';')
+                    .find_map(|p| p.strip_prefix("client_port="))
+                    .unwrap()
+                    .to_owned();
+                let client_rtp_port: u16 = client_port.split('-').next().unwrap().parse().unwrap();
+                let mut headers = msg::Headers::default();
+                for (name, value) in [
+                    ("CSeq", req.headers.get("CSeq").unwrap().to_string()),
+                    ("Session", "F8F8E425".to_owned()),
+                    (
+                        "Transport",
+                        format!(
+                            "RTP/AVP/UDP;unicast;client_port={client_port};server_port={}-{}",
+                            server_udp.rtp_port,
+                            server_udp.rtp_port + 1
+                        ),
+                    ),
+                ] {
+                    headers.insert(
+                        msg::HeaderName::try_from(name).unwrap(),
+                        msg::HeaderValue::try_from(value).unwrap(),
+                    );
+                }
+                server
+                    .send(OwnedMessage::Response {
+                        head: msg::Response {
+                            status_code: StatusCode::OK,
+                            reason_phrase: "OK".to_owned(),
+                            headers,
+                        },
+                        body: Bytes::new(),
+                    })
+                    .await
+                    .unwrap();
+                client_rtp_port
+            },
+        );
+        let client_rtcp_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), client_rtp_port + 1);
+
+        // The firewall hole-punching packet arrives first.
+        let mut buf = [0u8; 1500];
+        let (n, from) = server_udp.rtcp_socket.recv_from(&mut buf).await.unwrap();
+        assert_eq!((&buf[..n], from), (&HOLE_PUNCH_RTCP[..], client_rtcp_addr));
+
+        // PLAY.
+        let (session, _) = tokio::join!(
+            session.play(PlayOptions::default()),
+            req_response(
+                &mut server,
+                msg::Method::PLAY,
+                response(include_bytes!("testdata/reolink_play.txt"))
+            ),
+        );
+        let session = session.unwrap();
+        tokio::pin!(session);
+        let mut reports = session.0.reports.take().unwrap();
+        let (ssrc, cname) = (reports.writer.ssrc, reports.writer.cname.clone());
+
+        // RTP.
+        let client_rtp_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), client_rtp_port);
+        for seq in [0x41d4, 0x41d5] {
+            server_udp
+                .rtp_socket
+                .send_to(&rtp_pkt(seq, 0), client_rtp_addr)
+                .await
+                .unwrap();
+            match session.next().await {
+                Some(Ok(PacketItem::Rtp(p))) => assert_eq!(p.sequence_number(), seq),
+                o => panic!("unexpected item: {o:#?}"),
+            }
+        }
+
+        // The report.
+        reports.timer.as_mut().reset(tokio::time::Instant::now());
+        session.0.reports = Some(reports);
+        let (n, from) = tokio::select! {
+            item = session.next() => panic!("unexpected item: {item:#?}"),
+            r = server_udp.rtcp_socket.recv_from(&mut buf) => r.unwrap(),
+        };
+        assert_eq!(from, client_rtcp_addr);
+        let rr = receiver_report::tests::parse_report(&buf[..n], ssrc, 1, &cname);
+        let block = receiver_report::tests::parse_block(rr);
+        assert_eq!(
+            (
+                block.ssrc,
+                block.extended_highest_seq,
+                block.cumulative_lost
+            ),
+            (REOLINK_SSRC, 0x41d5, 0)
+        );
+    }
+
+    #[test]
+    fn receiver_report_policy_from_str() {
+        for policy in [
+            ReceiverReportPolicy::Default,
+            ReceiverReportPolicy::Never,
+            ReceiverReportPolicy::Always,
+        ] {
+            let parsed: ReceiverReportPolicy = policy.to_string().parse().unwrap();
+            assert_eq!(parsed.enabled(), policy.enabled());
+        }
+        assert!(!ReceiverReportPolicy::default().enabled());
+        assert!("sometimes".parse::<ReceiverReportPolicy>().is_err());
+    }
+
+    const BACKCHANNEL_URL: &str = "rtsp://192.168.0.1/";
+    const BACKCHANNEL_DESCRIBE: &[u8] = include_bytes!("testdata/onvif_backchannel_describe.txt");
+    const BACKCHANNEL_SETUP_VIDEO: &[u8] = b"RTSP/1.0 200 OK\r\n\
+        CSeq: 0\r\n\
+        Session: 12345678;timeout=60\r\n\
+        Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n";
+    const BACKCHANNEL_SETUP_BACK: &[u8] = b"RTSP/1.0 200 OK\r\n\
+        CSeq: 0\r\n\
+        Session: 12345678;timeout=60\r\n\
+        Transport: RTP/AVP/TCP;unicast;interleaved=2-3;ssrc=0BADF00D\r\n\r\n";
+    const BACKCHANNEL_PLAY: &[u8] = b"RTSP/1.0 200 OK\r\n\
+        CSeq: 0\r\n\
+        Session: 12345678\r\n\
+        RTP-Info: url=rtsp://192.168.0.1/video;seq=1;rtptime=0\r\n\r\n";
+    const BACKCHANNEL_TEARDOWN: &[u8] = b"RTSP/1.0 200 OK\r\n\
+        CSeq: 0\r\n\
+        Session: 12345678\r\n\r\n";
+
+    /// Receives an interleaved data message, returning its channel id and body.
+    ///
+    /// Fails rather than hanging if none arrives.
+    async fn next_data(server: &mut crate::tokio::Connection) -> (u8, Bytes) {
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(10), server.next())
+            .await
+            .expect("expected interleaved data")
+            .unwrap()
+            .unwrap();
+        match msg.msg {
+            msg::Message::Data(d) => (
+                d.channel_id,
+                server.body_bytes(msg.body_pos, u32::from(d.body_len)),
+            ),
+            o => panic!("expected interleaved data, got {o:#?}"),
+        }
+    }
+
+    /// Returns the `Require` header of `req`, if any.
+    fn require(req: &msg::Request) -> Option<&str> {
+        req.headers.get("Require").map(|v| &**v)
+    }
+
+    /// The `Require` header is sent on `DESCRIBE` only when the caller asks
+    /// for a backchannel, and `a=sendonly` media are only then sending streams.
+    #[tokio::test]
+    async fn backchannel_require_only_when_requested() {
+        init_logging();
+        for backchannel in [false, true] {
+            let (conn, mut server) = connect_to_mock().await;
+            let (session, req) = tokio::join!(
+                Session::describe_with_conn(
+                    conn,
+                    SessionOptions::default().backchannel(backchannel),
+                    Url::parse(BACKCHANNEL_URL).unwrap(),
+                ),
+                req_response_returning_req(
+                    &mut server,
+                    msg::Method::DESCRIBE,
+                    response(BACKCHANNEL_DESCRIBE)
+                ),
+            );
+            let session = session.unwrap();
+            let directions: Vec<_> = session.streams().iter().map(Stream::direction).collect();
+            if backchannel {
+                assert_eq!(require(&req), Some("www.onvif.org/ver20/backchannel"));
+                assert_eq!(
+                    directions,
+                    [
+                        StreamDirection::Receiving,
+                        StreamDirection::Receiving,
+                        StreamDirection::Sending
+                    ]
+                );
+            } else {
+                assert_eq!(require(&req), None);
+                assert_eq!(directions, [StreamDirection::Receiving; 3]);
+            }
+        }
+    }
+
+    /// A server without backchannel support answers `551 Option not supported`
+    /// (ONVIF Streaming Specification section 5.3.2). The error carries the
+    /// status and a hint. Other errors, or a 551 without the backchannel
+    /// option, have no hint.
+    #[tokio::test]
+    async fn backchannel_describe_unsupported() {
+        init_logging();
+        for (backchannel, raw, status, hint) in [
+            (
+                true,
+                &b"RTSP/1.0 551 Option not supported\r\n\
+                   CSeq: 0\r\n\
+                   Unsupported: www.onvif.org/ver20/backchannel\r\n\r\n"[..],
+                551,
+                true,
+            ),
+            (
+                true,
+                b"RTSP/1.0 404 Not Found\r\nCSeq: 0\r\n\r\n",
+                404,
+                false,
+            ),
+            (
+                false,
+                b"RTSP/1.0 551 Option not supported\r\nCSeq: 0\r\n\r\n",
+                551,
+                false,
+            ),
+        ] {
+            let (conn, mut server) = connect_to_mock().await;
+            let (session, _) = tokio::join!(
+                Session::describe_with_conn(
+                    conn,
+                    SessionOptions::default().backchannel(backchannel),
+                    Url::parse(BACKCHANNEL_URL).unwrap(),
+                ),
+                req_response(&mut server, msg::Method::DESCRIBE, response(raw)),
+            );
+            let e = session.map(|_| ()).unwrap_err();
+            assert_eq!(e.status_code(), Some(status));
+            let msg = e.to_string();
+            assert_eq!(msg.contains("ONVIF backchannel"), hint, "{msg}");
+        }
+    }
+
+    /// `SETUP` of a sending stream over UDP fails without a request, and with
+    /// TCP carries the `Require` header.
+    #[tokio::test]
+    async fn backchannel_setup() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(
+                conn,
+                SessionOptions::default().backchannel(true),
+                Url::parse(BACKCHANNEL_URL).unwrap(),
+            ),
+            req_response(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(BACKCHANNEL_DESCRIBE)
+            ),
+        );
+        let mut session = session.unwrap();
+        let e = session
+            .setup(
+                2,
+                SetupOptions::default().transport(Transport::Udp(UdpTransportOptions::default())),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(*e.0, ErrorInt::Unsupported(_)), "{e}");
+
+        // The next request the server sees is the TCP `SETUP`.
+        let (r, req) = tokio::join!(
+            session.setup(2, SetupOptions::default()),
+            req_response_returning_req(
+                &mut server,
+                msg::Method::SETUP,
+                response(BACKCHANNEL_SETUP_BACK)
+            ),
+        );
+        r.unwrap();
+        assert_eq!(
+            req.request_uri.as_ref().unwrap().as_str(),
+            "rtsp://192.168.0.1/audioback"
+        );
+        assert_eq!(require(&req), Some("www.onvif.org/ver20/backchannel"));
+        assert_eq!(
+            req.headers.get("Transport").map(|v| &**v),
+            Some("RTP/AVP/TCP;unicast;interleaved=0-1")
+        );
+    }
+
+    /// A refused `SETUP` of the backchannel leaves the session usable: it
+    /// plays the other streams, and as no sending stream was set up, `PLAY`
+    /// and `TEARDOWN` go without the `Require` header and sending fails.
+    #[tokio::test]
+    async fn backchannel_setup_refused() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(
+                conn,
+                SessionOptions::default().backchannel(true),
+                Url::parse(BACKCHANNEL_URL).unwrap(),
+            ),
+            req_response(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(BACKCHANNEL_DESCRIBE)
+            ),
+        );
+        let mut session = session.unwrap();
+        let (r, _) = tokio::join!(
+            session.setup(0, SetupOptions::default()),
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(BACKCHANNEL_SETUP_VIDEO)
+            ),
+        );
+        r.unwrap();
+        let (r, _) = tokio::join!(
+            session.setup(2, SetupOptions::default()),
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(b"RTSP/1.0 453 Not Enough Bandwidth\r\nCSeq: 0\r\n\r\n")
+            ),
+        );
+        assert_eq!(r.unwrap_err().status_code(), Some(453));
+        let (session, req) = tokio::join!(
+            session.play(PlayOptions::default()),
+            req_response_returning_req(&mut server, msg::Method::PLAY, response(BACKCHANNEL_PLAY)),
+        );
+        assert_eq!(require(&req), None);
+        let mut session = session.unwrap();
+        let e = session
+            .send(crate::rtp::SendingPacket::new(
+                2,
+                0,
+                Bytes::from_static(&[0xff; 160]),
+            ))
+            .await
+            .unwrap_err();
+        assert!(matches!(*e.0, ErrorInt::FailedPrecondition(_)), "{e}");
+        drop(session);
+        let req = req_response_returning_req(
+            &mut server,
+            msg::Method::TEARDOWN,
+            response(BACKCHANNEL_TEARDOWN),
+        )
+        .await;
+        assert_eq!(require(&req), None);
+    }
+
+    /// Plays a video stream and a backchannel on one connection: checks the
+    /// `Require` headers and the exact interleaved RTP and RTCP bytes sent,
+    /// receives on both streams, and checks errors for bad packets.
+    #[tokio::test]
+    async fn backchannel_send() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+
+        // DESCRIBE.
+        let (session, req) = tokio::join!(
+            Session::describe_with_conn(
+                conn,
+                SessionOptions::default().backchannel(true),
+                Url::parse(BACKCHANNEL_URL).unwrap(),
+            ),
+            req_response_returning_req(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(BACKCHANNEL_DESCRIBE)
+            ),
+        );
+        assert_eq!(require(&req), Some("www.onvif.org/ver20/backchannel"));
+        let mut session = session.unwrap();
+
+        // SETUP video, without `Require`, then the backchannel, with it.
+        let (r, req) = tokio::join!(
+            session.setup(0, SetupOptions::default()),
+            req_response_returning_req(
+                &mut server,
+                msg::Method::SETUP,
+                response(BACKCHANNEL_SETUP_VIDEO)
+            ),
+        );
+        r.unwrap();
+        assert_eq!(require(&req), None);
+        let (r, req) = tokio::join!(
+            session.setup(2, SetupOptions::default()),
+            req_response_returning_req(
+                &mut server,
+                msg::Method::SETUP,
+                response(BACKCHANNEL_SETUP_BACK)
+            ),
+        );
+        r.unwrap();
+        assert_eq!(require(&req), Some("www.onvif.org/ver20/backchannel"));
+
+        // PLAY, with `Require`. `RTP-Info` describes only the video stream.
+        let (session, req) = tokio::join!(
+            session.play(PlayOptions::default()),
+            req_response_returning_req(&mut server, msg::Method::PLAY, response(BACKCHANNEL_PLAY)),
+        );
+        assert_eq!(require(&req), Some("www.onvif.org/ver20/backchannel"));
+        let mut session = session.unwrap();
+
+        // Replace the random SSRC, sequence number, timestamp offset, and
+        // CNAME so the bytes are predictable. Start near wraparound.
+        {
+            let StreamState::Playing {
+                sender: Some(sender),
+                ..
+            } = &mut session.0.presentation.streams[2].state
+            else {
+                panic!("backchannel stream should be playing with a sender");
+            };
+            sender.ssrc = 0x0102_0304;
+            sender.next_seq = 0xfffe;
+            sender.timestamp_offset = 0xffff_ff00;
+            sender.cname = "abcdefghijklmnop".into();
+        }
+
+        // Packet 1 is followed by a sender report and SDES CNAME. The report
+        // describes the instant packet 1 was sent, so its RTP timestamp is
+        // packet 1's.
+        let ntp_before = crate::NtpTimestamp::now();
+        session
+            .send(crate::rtp::SendingPacket::new(2, 0, Bytes::from_static(&[0xff; 160])).mark(true))
+            .await
+            .unwrap();
+        let ntp_after = crate::NtpTimestamp::now();
+        let (channel, rtp) = next_data(&mut server).await;
+        assert_eq!(channel, 2);
+        let mut expected = b"\x80\x80\xff\xfe\xff\xff\xff\x00\x01\x02\x03\x04".to_vec();
+        expected.extend_from_slice(&[0xff; 160]);
+        crate::testutil::assert_eq_hex!(rtp, expected);
+        let (channel, rtcp) = next_data(&mut server).await;
+        assert_eq!(channel, 3);
+        let ntp = crate::NtpTimestamp(u64::from_be_bytes(rtcp[8..16].try_into().unwrap()));
+        assert!(
+            ntp_before <= ntp && ntp <= ntp_after,
+            "{ntp:?} not in [{ntp_before:?}, {ntp_after:?}]"
+        );
+        let mut expected = b"\x80\xc8\x00\x06\x01\x02\x03\x04".to_vec(); // SR header, SSRC.
+        expected.extend_from_slice(&ntp.0.to_be_bytes());
+        expected.extend_from_slice(b"\xff\xff\xff\x00"); // RTP timestamp.
+        expected.extend_from_slice(b"\x00\x00\x00\x01\x00\x00\x00\xa0"); // 1 packet, 160 octets.
+        expected.extend_from_slice(b"\x81\xca\x00\x06\x01\x02\x03\x04"); // SDES header, SSRC.
+        expected.extend_from_slice(b"\x01\x10abcdefghijklmnop\x00\x00"); // CNAME, end.
+        crate::rtcp::ReceivedCompoundPacket::validate(&rtcp).unwrap();
+        crate::testutil::assert_eq_hex!(rtcp, expected);
+
+        // Packet 2 comes soon after, so no sender report follows.
+        session
+            .send(crate::rtp::SendingPacket::new(
+                2,
+                160,
+                Bytes::from_static(&[0xff; 160]),
+            ))
+            .await
+            .unwrap();
+        let (channel, rtp) = next_data(&mut server).await;
+        assert_eq!(channel, 2);
+        assert_eq!(
+            &rtp[..12],
+            b"\x80\x00\xff\xff\xff\xff\xff\xa0\x01\x02\x03\x04"
+        );
+
+        // Bad packets fail without sending anything or advancing the sequence number.
+        for (pkt, want) in [
+            (
+                crate::rtp::SendingPacket::new(0, 0, Bytes::new()),
+                "isn't an ONVIF backchannel",
+            ),
+            (
+                crate::rtp::SendingPacket::new(1, 0, Bytes::new()),
+                "isn't an ONVIF backchannel",
+            ),
+            (
+                crate::rtp::SendingPacket::new(3, 0, Bytes::new()),
+                "has only 3 streams",
+            ),
+            (
+                crate::rtp::SendingPacket::new(2, 0, Bytes::from(vec![0; 65_524])),
+                "at most 65523 bytes",
+            ),
+        ] {
+            let e = session.send(pkt).await.unwrap_err();
+            assert!(matches!(*e.0, ErrorInt::InvalidArgument(_)), "{e}");
+            assert!(e.to_string().contains(want), "{e} should contain {want:?}");
+        }
+
+        // When the report interval has passed, packet 3 is followed by another
+        // sender report. (`client::rtp::tests::sender_report_schedule` checks
+        // the interval.) The sequence number and timestamp wrap. The report is
+        // built as packet 3 is sent, so its RTP timestamp, extrapolated from the
+        // most recent packet, is packet 3's.
+        {
+            let StreamState::Playing {
+                sender: Some(sender),
+                ..
+            } = &mut session.0.presentation.streams[2].state
+            else {
+                unreachable!();
+            };
+            sender.next_report = Some(tokio::time::Instant::now());
+        }
+        session
+            .send(crate::rtp::SendingPacket::new(
+                2,
+                320,
+                Bytes::from_static(&[0xff; 160]),
+            ))
+            .await
+            .unwrap();
+        let (channel, rtp) = next_data(&mut server).await;
+        assert_eq!(channel, 2);
+        assert_eq!(
+            &rtp[..12],
+            b"\x80\x00\x00\x00\x00\x00\x00\x40\x01\x02\x03\x04"
+        );
+        let (channel, rtcp) = next_data(&mut server).await;
+        assert_eq!(channel, 3);
+        assert_eq!(
+            &rtcp[16..28],
+            b"\x00\x00\x00\x40\x00\x00\x00\x03\x00\x00\x01\xe0"
+        );
+
+        // Receive while sending: RTP on the backchannel's channel is ignored;
+        // video RTP and the server's RTCP receiver report come through.
+        for (channel_id, body) in [
+            (2, &b"\x80\x00\x00\x01\x00\x00\x00\x00\xaa\xbb\xcc\xdd?"[..]),
+            (
+                0,
+                &b"\x80\x1a\x00\x01\x00\x00\x00\x00\x11\x22\x33\x44hello"[..],
+            ),
+            (3, &b"\x80\xc9\x00\x01\xaa\xbb\xcc\xdd"[..]),
+        ] {
+            server
+                .send(OwnedMessage::Data {
+                    channel_id,
+                    body: Bytes::from_static(body),
+                })
+                .await
+                .unwrap();
+        }
+        match session.next().await {
+            Some(Ok(PacketItem::Rtp(p))) => {
+                assert_eq!(p.stream_id(), 0);
+                assert_eq!(p.payload(), b"hello");
+            }
+            o => panic!("unexpected item: {o:#?}"),
+        }
+        match session.next().await {
+            Some(Ok(PacketItem::Rtcp(p))) => {
+                assert_eq!(p.stream_id(), 2);
+                assert_eq!(p.raw(), b"\x80\xc9\x00\x01\xaa\xbb\xcc\xdd");
+            }
+            o => panic!("unexpected item: {o:#?}"),
+        }
+
+        // TEARDOWN carries `Require`, as in the ONVIF spec's example.
+        drop(session);
+        let req = req_response_returning_req(
+            &mut server,
+            msg::Method::TEARDOWN,
+            response(BACKCHANNEL_TEARDOWN),
+        )
+        .await;
+        assert_eq!(require(&req), Some("www.onvif.org/ver20/backchannel"));
+    }
+
+    /// Describes [`BACKCHANNEL_DESCRIBE`] with the backchannel option, sets up
+    /// only the backchannel (stream 2), and plays, with keepalives disabled.
+    async fn play_backchannel(
+        conn: RtspConnection,
+        server: &mut crate::tokio::Connection,
+    ) -> Session<Playing> {
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(
+                conn,
+                SessionOptions::default().backchannel(true),
+                Url::parse(BACKCHANNEL_URL).unwrap(),
+            ),
+            req_response(
+                server,
+                msg::Method::DESCRIBE,
+                response(BACKCHANNEL_DESCRIBE)
+            ),
+        );
+        let mut session = session.unwrap();
+        let (r, _) = tokio::join!(
+            session.setup(2, SetupOptions::default()),
+            req_response(server, msg::Method::SETUP, response(BACKCHANNEL_SETUP_BACK)),
+        );
+        r.unwrap();
+        let (session, _) = tokio::join!(
+            session.play(PlayOptions::default()),
+            req_response(server, msg::Method::PLAY, response(BACKCHANNEL_PLAY)),
+        );
+        session.unwrap()
+    }
+
+    /// Sends `server` a response to a keepalive request with the given `CSeq`.
+    async fn send_keepalive_response(server: &mut crate::tokio::Connection, cseq: u32) {
+        let mut response = response(BACKCHANNEL_TEARDOWN).0;
+        response.headers.insert(
+            msg::HeaderName::CSEQ,
+            msg::HeaderValue::try_from(cseq.to_string()).unwrap(),
+        );
+        server
+            .send(OwnedMessage::Response {
+                head: response,
+                body: Bytes::new(),
+            })
+            .await
+            .unwrap();
+    }
+
+    /// The `Sink` impl's flush may write a keepalive request before the
+    /// `Stream` impl sees it, so the response can arrive while the keepalive
+    /// is still marked as flushing. It's accepted.
+    #[tokio::test]
+    async fn keepalive_response_while_flushing() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let mut session = play_backchannel(conn, &mut server).await;
+        session.0.keepalive_state = KeepaliveState::Flushing {
+            cseq: 1000,
+            method: KeepaliveMethod::GetParameter,
+            end: u64::MAX,
+        };
+        send_keepalive_response(&mut server, 1000).await;
+        server
+            .send(OwnedMessage::Data {
+                channel_id: 3,
+                body: Bytes::from_static(b"\x80\xc9\x00\x01\xaa\xbb\xcc\xdd"),
+            })
+            .await
+            .unwrap();
+
+        // Let the response arrive, so the session reads it before it next
+        // tries to flush.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        match session.next().await {
+            Some(Ok(PacketItem::Rtcp(p))) => assert_eq!(p.stream_id(), 2),
+            o => panic!("unexpected item: {o:#?}"),
+        }
+        assert!(matches!(session.0.keepalive_state, KeepaliveState::Idle));
+    }
+
+    /// The [`Demuxed`] wrapper sends via the session's `Sink` impl.
+    #[tokio::test]
+    async fn backchannel_send_demuxed() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let mut demuxed = play_backchannel(conn, &mut server).await.demuxed().unwrap();
+        demuxed
+            .send(crate::rtp::SendingPacket::new(2, 0, Bytes::from_static(&[0xff; 160])).mark(true))
+            .await
+            .unwrap();
+        let (channel, rtp) = next_data(&mut server).await;
+        assert_eq!(channel, 2);
+        assert_eq!(rtp.len(), 12 + 160);
+        assert_eq!(rtp[1], 0x80); // marker, payload type 0.
+        let (channel, rtcp) = next_data(&mut server).await;
+        assert_eq!(channel, 3);
+        assert_eq!(rtcp[1], 200); // sender report.
+        let e = demuxed
+            .send(crate::rtp::SendingPacket::new(0, 0, Bytes::new()))
+            .await
+            .unwrap_err();
+        assert!(matches!(*e.0, ErrorInt::InvalidArgument(_)), "{e}");
+        demuxed.close().await.unwrap();
+    }
+
+    /// With receiver reports enabled, a video stream gets receiver reports on
+    /// its RTCP channel while the backchannel gets none: Retina sends rather
+    /// than receives its media, and describes it in sender reports instead.
+    #[tokio::test]
+    async fn backchannel_with_receiver_reports() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(
+                conn,
+                SessionOptions::default()
+                    .backchannel(true)
+                    .receiver_reports(ReceiverReportPolicy::Always),
+                Url::parse(BACKCHANNEL_URL).unwrap(),
+            ),
+            req_response(
+                &mut server,
+                msg::Method::DESCRIBE,
+                response(BACKCHANNEL_DESCRIBE)
+            ),
+        );
+        let mut session = session.unwrap();
+        let (r, _) = tokio::join!(
+            session.setup(0, SetupOptions::default()),
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(BACKCHANNEL_SETUP_VIDEO)
+            ),
+        );
+        r.unwrap();
+        let (r, _) = tokio::join!(
+            session.setup(2, SetupOptions::default()),
+            req_response(
+                &mut server,
+                msg::Method::SETUP,
+                response(BACKCHANNEL_SETUP_BACK)
+            ),
+        );
+        r.unwrap();
+        let (session, _) = tokio::join!(
+            session.play(PlayOptions::default()),
+            req_response(&mut server, msg::Method::PLAY, response(BACKCHANNEL_PLAY)),
+        );
+        let session = session.unwrap();
+        tokio::pin!(session);
+        assert!(matches!(
+            session.0.presentation.streams[0].state,
+            StreamState::Playing {
+                reception: Some(_),
+                sender: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            session.0.presentation.streams[2].state,
+            StreamState::Playing {
+                reception: None,
+                sender: Some(_),
+                ..
+            }
+        ));
+
+        // Make a report due now. Only the video stream's goes out.
+        let reports = session.0.reports.as_mut().unwrap();
+        let (ssrc, cname) = (reports.writer.ssrc, reports.writer.cname.clone());
+        reports.timer.as_mut().reset(tokio::time::Instant::now());
+        let report = recv_data_while_polling(&mut session, &mut server, 1).await;
+        receiver_report::tests::parse_report(&report, ssrc, 0, &cname);
+
+        // Backchannel media and its sender report follow directly, on the
+        // backchannel's channels.
+        session
+            .send(crate::rtp::SendingPacket::new(2, 0, Bytes::from_static(&[0xff; 160])).mark(true))
+            .await
+            .unwrap();
+        let (channel, rtp) = next_data(&mut server).await;
+        assert_eq!(channel, 2);
+        assert_eq!(rtp.len(), 12 + 160);
+        let (channel, rtcp) = next_data(&mut server).await;
+        assert_eq!(channel, 3);
+        assert_eq!(rtcp[1], 200); // sender report.
+    }
+
+    /// Backchannel media queued after a keepalive request can keep the write
+    /// buffer from emptying past the keepalive interval. The keepalive counts
+    /// as written once its own bytes are out, so the session waits for the
+    /// response rather than timing out writing it. A keepalive that really
+    /// can't be written still times out.
+    #[tokio::test]
+    async fn keepalive_written_while_media_queued() {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let mut session = play_backchannel(conn, &mut server).await;
+        session.0.flags |= SessionFlag::GetParameterSupported as u8;
+
+        /// Queues 16 MiB of media on the backchannel: far more than the
+        /// mock connection holds (`MOCK_BUF_SIZE`), so writes block until the
+        /// server reads.
+        fn queue_media(session: &mut Session<Playing>) {
+            let conn = &mut session.0.conn.as_mut().unwrap().inner;
+            for _ in 0..1024 {
+                conn.queue_data(2, |out| out.resize(out.len() + 16_384, 0xd5))
+                    .unwrap();
+            }
+        }
+
+        /// Makes the keepalive timer fire on the next poll.
+        fn fire_keepalive_timer(session: &mut Session<Playing>) {
+            session.0.keepalive_timer =
+                Some(Box::pin(tokio::time::sleep(std::time::Duration::ZERO)));
+        }
+
+        /// Polls `session` until `done`, failing if it yields an item.
+        async fn poll_until(
+            session: &mut Session<Playing>,
+            done: impl Fn(&KeepaliveState) -> bool,
+        ) {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                while !done(&session.0.keepalive_state) {
+                    match futures::poll!(session.next()) {
+                        Poll::Pending => tokio::task::yield_now().await,
+                        Poll::Ready(o) => panic!("unexpected item: {o:#?}"),
+                    }
+                }
+            })
+            .await
+            .unwrap();
+        }
+
+        // The keepalive is queued behind media and can't be written yet. More
+        // media is queued behind it.
+        queue_media(&mut session);
+        fire_keepalive_timer(&mut session);
+        poll_until(&mut session, |s| {
+            matches!(s, KeepaliveState::Flushing { .. })
+        })
+        .await;
+        queue_media(&mut session);
+
+        // The server reads up to the keepalive request, which is then written,
+        // while media remains queued behind it.
+        let (cseq, ()) = tokio::join!(
+            async {
+                loop {
+                    let msg = server.next().await.unwrap().unwrap();
+                    if let msg::Message::Request(r) = msg.msg {
+                        assert_eq!(r.method, msg::Method::GET_PARAMETER);
+                        break r.headers.get("CSeq").unwrap().parse::<u32>().unwrap();
+                    }
+                }
+            },
+            poll_until(&mut session, |s| matches!(
+                s,
+                KeepaliveState::Waiting { .. }
+            )),
+        );
+        let conn = &session.0.conn.as_ref().unwrap().inner;
+        assert!(conn.written() < conn.queued_end());
+
+        // The response arrives, and the next keepalive is sent without error.
+        send_keepalive_response(&mut server, cseq).await;
+        poll_until(&mut session, |s| matches!(s, KeepaliveState::Idle)).await;
+        fire_keepalive_timer(&mut session);
+        poll_until(&mut session, |s| {
+            matches!(s, KeepaliveState::Flushing { .. })
+        })
+        .await;
+
+        // The server isn't reading, so that keepalive is never written.
+        fire_keepalive_timer(&mut session);
+        let e = loop {
+            match futures::poll!(session.next()) {
+                Poll::Pending => tokio::task::yield_now().await,
+                Poll::Ready(Some(Err(e))) => break e,
+                Poll::Ready(o) => panic!("unexpected item: {o:#?}"),
+            }
+        };
+        match &*e.0 {
+            ErrorInt::WriteError { source, .. } => {
+                assert_eq!(source.kind(), std::io::ErrorKind::TimedOut);
+                assert!(
+                    source.to_string().contains("Unable to write keepalive"),
+                    "{e}"
+                );
+            }
+            _ => panic!("unexpected error: {e}"),
+        }
+    }
+
+    // See with: cargo test -- --nocapture client::tests::print_sizes
+    #[test]
+    fn print_sizes() {
+        init_logging();
+        for (name, size) in &[
+            ("PacketItem", std::mem::size_of::<PacketItem>()),
+            ("Presentation", std::mem::size_of::<Presentation>()),
+            ("RtspConnection", std::mem::size_of::<RtspConnection>()),
+            (
+                "Session",
+                std::mem::size_of::<Session<Described>>(), // <Playing> is the same size.
+            ),
+            ("SessionInner", std::mem::size_of::<SessionInner>()),
+            ("SessionOptions", std::mem::size_of::<SessionOptions>()),
+            ("Demuxed", std::mem::size_of::<Demuxed>()),
+            ("Stream", std::mem::size_of::<Stream>()),
+        ] {
+            log::info!("{name:-40} {size:4}");
+        }
+    }
+
+    #[test]
+    fn check_live555_tcp_bug() {
+        init_logging();
+        assert!(!Tool::new("not live555").has_live555_tcp_bug());
+        assert!(!Tool::new("LIVE555 Streaming Media v").has_live555_tcp_bug());
+        assert!(Tool::new("LIVE555 Streaming Media v2013.04.08").has_live555_tcp_bug());
+        assert!(!Tool::new("LIVE555 Streaming Media v2017.06.04").has_live555_tcp_bug());
+        assert!(!Tool::new("LIVE555 Streaming Media v2020.01.01").has_live555_tcp_bug());
+    }
+
+    #[test]
+    fn await_stale_sessions_is_send() {
+        // There's probably a more elegant way to test this, but here goes.
+        fn assert_send<T: Send>(_: T) {}
+        let group = SessionGroup::default();
+        let stale_sessions = group.stale_sessions();
+        assert_send(group.await_stale_sessions(&stale_sessions));
+    }
+
+    #[test]
+    fn validate_hole_punch_rtp() {
+        let (header, _) = crate::rtp::PacketHeader::validate(&HOLE_PUNCH_RTP[..]).unwrap();
+        assert_eq!(header.payload_type(), 0);
+    }
+
+    #[test]
+    fn validate_hole_punch_rtcp() {
+        let (pkt_ref, _) = crate::rtcp::PacketRef::parse(&HOLE_PUNCH_RTCP[..]).unwrap();
+        assert!(matches!(
+            pkt_ref.as_typed().unwrap(),
+            Some(crate::rtcp::TypedPacketRef::ReceiverReport(_))
+        ));
+    }
+}

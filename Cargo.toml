@@ -35,7 +35,7 @@ members = [
 # `sc-geom` (see: `libs/sc-geom/Cargo.toml`) roots its own nested workspace.
 # As a workspace for its sibling crates, so it stays out of the main repo's workspace.
 # If not excluded below, cargo path dependencies ->leads to "multiple workspace roots".
-exclude = ["libs/sc-geom"]
+exclude = ["libs/sc-geom", "libs/vendor/retina"]
 
 [workspace.package]
 edition      = "2024"
@@ -163,3 +163,9 @@ unused_qualifications         = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+
+# retina with a tolerant RTSP head reader: a printer's camera (a Chitu board)
+# answers PLAY with header lines the crate refused. See
+# libs/vendor/retina/BREADSLICER.md.
+[patch.crates-io]
+retina = { path = "libs/vendor/retina" }

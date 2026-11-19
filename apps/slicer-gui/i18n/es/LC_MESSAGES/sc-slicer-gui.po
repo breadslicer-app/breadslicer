@@ -9118,3 +9118,68 @@ msgstr "Volver"
 msgctxt "SendToPrinter"
 msgid "Writing the printer file…"
 msgstr "Escribiendo el archivo de impresora…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Show camera"
+msgstr "Ver la cámara"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Hide camera"
+msgstr "Ocultar la cámara"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Enlarge"
+msgstr "Agrandar"
+
+#: ui/main-window.slint
+msgctxt "SlicePanel"
+msgid "Close"
+msgstr "Cerrar"
+
+#: src/printer_camera.rs
+msgctxt "PrinterCamera"
+msgid "Turning on the camera of {}…"
+msgstr "Prendiendo la cámara de {}…"
+
+#: src/printer_camera.rs
+msgctxt "PrinterCamera"
+msgid "{} says it has no camera."
+msgstr "{} dice que no tiene cámara."
+
+#: src/printer_camera.rs
+msgctxt "PrinterCamera"
+msgid "{} already streams its camera to as many viewers as it allows. Close it in other apps (or restart the printer) and try again."
+msgstr "{} ya transmite su cámara a todos los que permite a la vez. Cerrala en las otras aplicaciones (o reiniciá la impresora) y probá de nuevo."
+
+#: src/printer_camera.rs
+msgctxt "PrinterCamera"
+msgid "{} refused to turn its camera on (code {})."
+msgstr "{} no quiso prender la cámara (código {})."
+
+#: src/printer_camera.rs
+msgctxt "PrinterCamera"
+msgid "Could not ask {} for its camera: {}"
+msgstr "No se le pudo pedir la cámara a {}: {}"
+
+#: src/printer_camera.rs
+msgctxt "PrinterCamera"
+msgid "The camera stream of {} failed: {}"
+msgstr "Falló el video de la cámara de {}: {}"
+
+#: src/printer_camera.rs
+msgctxt "PrinterCamera"
+msgid "The camera of {} streams something Breadslicer does not read yet ({})."
+msgstr "La cámara de {} manda un video que Breadslicer todavía no lee ({})."
+
+#: src/printer_camera.rs
+msgctxt "PrinterCamera"
+msgid "The pictures of {}'s camera do not decode: {}"
+msgstr "Las imágenes de la cámara de {} no se pueden leer: {}"
+
+#: src/printer_camera.rs
+msgctxt "PrinterCamera"
+msgid "The camera of {} sent nothing. It may be busy with another app: try again in a moment."
+msgstr "La cámara de {} no mandó nada. Puede estar ocupada con otra aplicación: probá de nuevo en un momento."

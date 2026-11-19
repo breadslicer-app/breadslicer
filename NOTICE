@@ -33,3 +33,13 @@ the source as their licenses require:
   libs/cut.
   https://github.com/larsbrubaker/manifold-rust
   https://github.com/elalish/manifold
+
+- OpenH264 (Cisco Systems; BSD-2-Clause), built from source through the
+  openh264 crate (Ralf Biedert; BSD-2-Clause): decodes a network printer's
+  camera stream. retina (Scott Lamb; MIT or Apache-2.0) reads that stream
+  over RTSP; a copy of it with a more tolerant RTSP head reader is in
+  libs/vendor/retina (see BREADSLICER.md there). Used as crates. See
+  libs/printer-link.
+  https://github.com/cisco/openh264
+  https://github.com/ralfbiedert/openh264-rs
+  https://github.com/scottlamb/retina
