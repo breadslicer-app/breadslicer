@@ -960,6 +960,24 @@ pub(crate) fn message_dialog_over(window: &slint::Window) -> rfd::AsyncMessageDi
 /// render); callers typically pair this output with the error's own `Display`
 /// rendering and skip the chain section when the returned string is empty. The
 /// labels are in the language in force when it is called.
+/// The reason of `err` on one line: each cause after the next ": ", unless
+/// the text so far already says it. A wrapper that shows its cause's text
+/// (as the mesh readers' errors do) would otherwise repeat it once per layer.
+pub(crate) fn failure_reason(err: &anyhow::Error) -> String {
+    let mut out = String::new();
+    for cause in err.chain() {
+        let text = cause.to_string();
+        if text.is_empty() || out.contains(&text) {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push_str(": ");
+        }
+        out.push_str(&text);
+    }
+    out
+}
+
 pub(crate) fn format_anyhow_chain(err: &anyhow::Error) -> String {
     let mut chain = err.chain();
     let Some(first) = chain.next() else {
@@ -974,6 +992,33 @@ pub(crate) fn format_anyhow_chain(err: &anyhow::Error) -> String {
         out.push_str(&ctr!("ErrorDialog", "caused by: {}", cause));
     }
     out
+}
+
+#[cfg(test)]
+mod failure_reason_tests {
+    use super::failure_reason;
+
+    #[derive(Debug)]
+    struct Shows(anyhow::Error);
+    impl std::fmt::Display for Shows {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+    impl std::error::Error for Shows {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(self.0.as_ref())
+        }
+    }
+
+    #[test]
+    fn a_cause_its_wrapper_shows_is_said_once() {
+        let inner = anyhow::anyhow!("expected finite f32 for v0.x");
+        let err = anyhow::Error::new(Shows(anyhow::Error::new(Shows(inner))));
+        assert_eq!(failure_reason(&err), "expected finite f32 for v0.x");
+        let err = anyhow::anyhow!("no facets").context("reading part.stl");
+        assert_eq!(failure_reason(&err), "reading part.stl: no facets");
+    }
 }
 
 #[cfg(test)]

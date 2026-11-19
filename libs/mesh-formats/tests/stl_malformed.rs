@@ -84,7 +84,7 @@ endsolid foo
     }
 
     #[test]
-    fn non_numeric_normal_component_is_an_error() {
+    fn a_nan_normal_component_opens_with_the_normal_of_its_vertices() {
         let buf = b"\
 solid foo
   facet normal NaN 0 0
@@ -96,10 +96,10 @@ solid foo
   endfacet
 endsolid foo
 ";
-        // "NaN" parses as a float but is rejected by the finite-only check in
-        // `parse_finite_f32`.
+        // Some exporters write NaN normals: only the vertices have to be
+        // numbers, the facet takes the normal they give.
         let mut reader = Cursor::new(buf.to_vec());
-        assert!(read_stla(&mut reader).is_err());
+        assert!(read_stla(&mut reader).is_ok());
     }
 
     #[test]
@@ -485,13 +485,24 @@ mod binary_stl_malformed_tests {
         triangle[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
 
-    /// Pins that NaN bit patterns in any f32 of a binary STL triangle record
-    /// are rejected, as the finite-only check of the ASCII reader
-    /// (`parse_finite_f32`) does. Each offset is a distinct field (normal.x to
-    /// v2.z), so a failure names the field.
+    /// Pins that NaN bit patterns in any vertex f32 of a binary STL triangle
+    /// record are rejected, as the finite-only check of the ASCII reader
+    /// (`parse_finite_f32`) does, and that a NaN normal is not: it gives way
+    /// to the normal of the vertices. Each offset is a distinct field, so a
+    /// failure names the field.
     #[test]
-    fn nan_in_any_triangle_field_is_an_error() {
-        for offset in [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44] {
+    fn nan_in_any_vertex_field_is_an_error() {
+        for offset in [0, 4, 8] {
+            let mut triangle = well_formed_triangle_bytes();
+            write_f32(&mut triangle, offset, f32::NAN);
+            let buf = make_binary_stl_with_count(1, &triangle);
+            let mut reader = Cursor::new(buf);
+            assert!(
+                read_stlb(&mut reader).is_ok(),
+                "binary STL with a NaN normal at offset {offset} opens",
+            );
+        }
+        for offset in [12, 16, 20, 24, 28, 32, 36, 40, 44] {
             let mut triangle = well_formed_triangle_bytes();
             write_f32(&mut triangle, offset, f32::NAN);
             let buf = make_binary_stl_with_count(1, &triangle);
@@ -506,8 +517,8 @@ mod binary_stl_malformed_tests {
     /// Pins that positive and negative infinity in any f32 field of a binary
     /// STL triangle record are rejected.
     #[test]
-    fn infinity_in_any_triangle_field_is_an_error() {
-        for offset in [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44] {
+    fn infinity_in_any_vertex_field_is_an_error() {
+        for offset in [12, 16, 20, 24, 28, 32, 36, 40, 44] {
             for infinity in [f32::INFINITY, f32::NEG_INFINITY] {
                 let mut triangle = well_formed_triangle_bytes();
                 write_f32(&mut triangle, offset, infinity);
@@ -536,17 +547,17 @@ mod binary_stl_malformed_tests {
     }
 
     /// Pins that a representative NaN bit-pattern that is *not* the canonical
-    /// `f32::NAN` (different payload bits) is also rejected. Guards against a
-    /// fix that compares the bit pattern against a single NaN encoding instead
-    /// of using `is_finite`.
+    /// `f32::NAN` (different payload bits) is also rejected in a vertex.
+    /// Guards against a fix that compares the bit pattern against a single
+    /// NaN encoding instead of using `is_finite`.
     #[test]
-    fn non_canonical_nan_bit_pattern_in_normal_is_an_error() {
+    fn non_canonical_nan_bit_pattern_in_a_vertex_is_an_error() {
         // Quiet NaN with a non-zero payload, distinct from the bit pattern
         // produced by `f32::NAN`.
         let weird_nan = f32::from_bits(0x7FC0_1234);
         debug_assert!(weird_nan.is_nan());
         let mut triangle = well_formed_triangle_bytes();
-        write_f32(&mut triangle, 0, weird_nan); // normal.x
+        write_f32(&mut triangle, 12, weird_nan); // v0.x
         let buf = make_binary_stl_with_count(1, &triangle);
         let mut reader = Cursor::new(buf);
         assert!(read_stlb(&mut reader).is_err());

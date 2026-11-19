@@ -25,7 +25,7 @@ use sc_mesh_core::{MeshMetadata, Triangle, Vertex};
 use sc_scene::Scene;
 
 use crate::error::LoadStlError;
-use crate::stl::{Facet, mesh_from_facets};
+use crate::stl::{Facet, kept_normal, mesh_from_facets};
 
 type Result<T> = std::result::Result<T, LoadStlError>;
 
@@ -347,11 +347,9 @@ where
                 tokens: lowercased_tokens(content.line),
             });
         }
-        let declared = [
-            parse_finite_f32(x, "facet normal component")?,
-            parse_finite_f32(y, "facet normal component")?,
-            parse_finite_f32(z, "facet normal component")?,
-        ];
+        // A declared normal that is not a number (nan, inf) gives way to the
+        // normal of the vertices (`kept_normal`).
+        let declared = [parse_f32(x)?, parse_f32(y)?, parse_f32(z)?];
 
         expect_keywords(lines, tokenize, &["outer", "loop"], "outer loop")?;
 
@@ -364,7 +362,7 @@ where
         expect_keywords(lines, tokenize, &["endfacet"], "endfacet")?;
 
         soup.push(Facet {
-            declared_normal: declared.map(f32::to_bits),
+            declared_normal: kept_normal(declared, &vertices),
             triangle: Triangle::new(vertices),
         });
     }
@@ -477,16 +475,21 @@ where
 /// the retired reader lowercased every token up front and its error payloads
 /// carried the lowercased form.
 fn parse_finite_f32(token: &str, what: &'static str) -> Result<f32> {
-    let value = token
-        .parse::<f32>()
-        .map_err(|source| LoadStlError::InvalidFloat {
-            token: token.to_ascii_lowercase(),
-            source,
-        })?;
+    let value = parse_f32(token)?;
     if !value.is_finite() {
         return Err(LoadStlError::NonFiniteFloat { what, value });
     }
     Ok(value)
+}
+
+/// Parses an f32, nan and inf included, straight from a token sub-slice.
+fn parse_f32(token: &str) -> Result<f32> {
+    token
+        .parse::<f32>()
+        .map_err(|source| LoadStlError::InvalidFloat {
+            token: token.to_ascii_lowercase(),
+            source,
+        })
 }
 
 /// Returns the tokens of `line`, lowercased as the retired reader put them in
@@ -546,6 +549,49 @@ endsolid";
         else",
         );
         assert!(!probe(&mut reader_3).unwrap());
+    }
+
+    #[test]
+    fn a_nan_normal_takes_the_normal_of_its_vertices() {
+        // Some exporters write `facet normal nan nan nan`: the file opens and
+        // the facet keeps the normal its vertices give, +Z here.
+        let scene = read_stla_slice(
+            b"solid n
+facet normal nan NaN inf
+outer loop
+vertex 0 0 0
+vertex 1 0 0
+vertex 0 1 0
+endloop
+endfacet
+endsolid n
+",
+        )
+        .expect("a NaN normal is no error");
+        let mesh = single_leaf_mesh(&scene);
+        let normals = mesh.declared_facet_normals().expect("normals are kept");
+        assert_eq!(normals[0].map(f32::from_bits), [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn a_nan_vertex_is_still_refused() {
+        let err = read_stla_slice(
+            b"solid n
+facet normal 0 0 1
+outer loop
+vertex nan 0 0
+vertex 1 0 0
+vertex 0 1 0
+endloop
+endfacet
+endsolid n
+",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, LoadStlError::NonFiniteFloat { .. }),
+            "{err:?}"
+        );
     }
 
     #[test]

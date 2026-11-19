@@ -14,7 +14,8 @@ use crate::MAX_MESH_ELEMENT_COUNT;
 use crate::error::LoadStlError;
 use crate::messages::LoadStlWarning;
 use crate::stl::{
-    Facet, STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES, STL_TRIANGLE_RECORD_BYTES, mesh_from_facets,
+    Facet, STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES, STL_TRIANGLE_RECORD_BYTES, kept_normal,
+    mesh_from_facets,
 };
 
 type Result<T> = std::result::Result<T, LoadStlError>;
@@ -207,7 +208,9 @@ fn parse_triangle_record_lenient(record: &[u8], saw_non_finite: &AtomicBool) -> 
         f(40),
         f(44),
     ];
-    if fields.iter().any(|value| !value.is_finite()) {
+    // Only a vertex must be a number: a declared normal that is not gives way
+    // to the normal of the vertices.
+    if fields[3..].iter().any(|value| !value.is_finite()) {
         saw_non_finite.store(true, Ordering::Relaxed);
     }
 
@@ -219,7 +222,7 @@ fn parse_triangle_record_lenient(record: &[u8], saw_non_finite: &AtomicBool) -> 
     ];
 
     Facet {
-        declared_normal: declared.map(f32::to_bits),
+        declared_normal: kept_normal(declared, &vertices),
         triangle: Triangle::new(vertices),
     }
 }
@@ -239,7 +242,17 @@ fn parse_triangle_record(record: &[u8]) -> Result<Facet> {
         Ok(value)
     };
 
-    let declared = [f(0, "normal.x")?, f(4, "normal.y")?, f(8, "normal.z")?];
+    // A declared normal that is not a number gives way to the normal of the
+    // vertices (`kept_normal`): only the vertices must be numbers.
+    let raw = |offset: usize| {
+        f32::from_le_bytes([
+            record[offset],
+            record[offset + 1],
+            record[offset + 2],
+            record[offset + 3],
+        ])
+    };
+    let declared = [raw(0), raw(4), raw(8)];
     let vertices = [
         Vertex::new([f(12, "v0.x")?, f(16, "v0.y")?, f(20, "v0.z")?]),
         Vertex::new([f(24, "v1.x")?, f(28, "v1.y")?, f(32, "v1.z")?]),
@@ -254,7 +267,7 @@ fn parse_triangle_record(record: &[u8]) -> Result<Facet> {
     //     relative to the VisCAM convention.
 
     Ok(Facet {
-        declared_normal: declared.map(f32::to_bits),
+        declared_normal: kept_normal(declared, &vertices),
         triangle: Triangle::new(vertices),
     })
 }
@@ -479,7 +492,7 @@ mod binary_stl_reader_tests {
         let n = PARALLEL_PARSE_MIN_RECORDS + 1000;
         let mut bytes = repeated_record_document(n as u32, n);
         corrupt_float(&mut bytes, 5, 44); // v2.z
-        corrupt_float(&mut bytes, n - 500, 0); // normal.x
+        corrupt_float(&mut bytes, n - 500, 12); // v0.x
         assert!(matches!(
             read_stlb_slice(&bytes),
             Err(LoadStlError::NonFiniteFloat { what: "v2.z", .. }),
@@ -501,18 +514,45 @@ mod binary_stl_reader_tests {
 
     #[test]
     fn earlier_bad_float_wins_over_later_truncation() {
-        // Record 0 carries a NaN normal.x, and the file is missing its second
+        // Record 0 carries a NaN v0.x, and the file is missing its second
         // declared record. The record error comes first in file order.
         let mut bytes = single_triangle_with_attribute_bytes(0);
         bytes[STL_HEADER_BYTES..PREAMBLE_BYTES].copy_from_slice(&2u32.to_le_bytes());
-        bytes[PREAMBLE_BYTES..PREAMBLE_BYTES + 4].copy_from_slice(&f32::NAN.to_le_bytes());
+        bytes[PREAMBLE_BYTES + 12..PREAMBLE_BYTES + 16].copy_from_slice(&f32::NAN.to_le_bytes());
         assert!(matches!(
             read_stlb_slice(&bytes),
-            Err(LoadStlError::NonFiniteFloat {
-                what: "normal.x",
-                ..
-            }),
+            Err(LoadStlError::NonFiniteFloat { what: "v0.x", .. }),
         ));
+    }
+
+    #[test]
+    fn a_nan_normal_takes_the_normal_of_its_vertices() {
+        // Some exporters write NaN normals: the file opens, in both paths, and
+        // the facet keeps the normal its vertices give.
+        for n in [1, PARALLEL_PARSE_MIN_RECORDS + 10] {
+            let mut bytes = repeated_record_document(n as u32, n);
+            for record in 0..n {
+                for field in [0, 4, 8] {
+                    corrupt_float(&mut bytes, record, field);
+                }
+            }
+            let soup = super::parse_triangle_records(&bytes).expect("a NaN normal is no error");
+            assert_eq!(soup.len(), n);
+            let vertices = soup[0].triangle.vertices();
+            let expected = super::kept_normal([f32::NAN; 3], &vertices);
+            assert!(
+                expected.iter().any(|&bits| bits != 0),
+                "the record is not degenerate"
+            );
+            assert!(soup.iter().all(|f| f.declared_normal == expected));
+            assert!(
+                soup[0]
+                    .declared_normal
+                    .map(f32::from_bits)
+                    .iter()
+                    .all(|c| c.is_finite())
+            );
+        }
     }
 }
 

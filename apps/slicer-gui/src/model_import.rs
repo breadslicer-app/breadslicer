@@ -232,13 +232,13 @@ fn prepare_opening(job: OpeningJob, sink: &LoadProgressSink) -> anyhow::Result<O
         if base.is_none() {
             match loaded.and_then(|loaded| opened_scene(loaded, &path, job.build_volume)) {
                 Ok(opened) => base = Some((path, opened)),
-                Err(err) => failures.push((path, format!("{err:#}"))),
+                Err(err) => failures.push((path, crate::error_dialog::failure_reason(&err))),
             }
             continue;
         }
         match loaded.and_then(|loaded| imported_file(&path, loaded, &job.build_volume)) {
             Ok(file) => files.push(file),
-            Err(err) => failures.push((path, format!("{err:#}"))),
+            Err(err) => failures.push((path, crate::error_dialog::failure_reason(&err))),
         }
     }
     let Some((path, mut opened)) = base else {
@@ -364,7 +364,7 @@ pub(crate) fn prepare_models(job: ImportJob, sink: &LoadProgressSink) -> Prepare
     for (path, loaded) in job.paths.into_iter().zip(read) {
         match loaded.and_then(|loaded| imported_file(&path, loaded, &job.build_volume)) {
             Ok(file) => files.push(file),
-            Err(err) => failures.push((path, format!("{err:#}"))),
+            Err(err) => failures.push((path, crate::error_dialog::failure_reason(&err))),
         }
     }
     let (placements, plates) = place_files(job.standing, job.stands_on, &files, &job.plates);
