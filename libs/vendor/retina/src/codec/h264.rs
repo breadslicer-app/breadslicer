@@ -116,6 +116,10 @@ pub(crate) struct Depacketizer {
     /// FU-A, forbidden by RFC 6184 section 5.8).
     seen_single_fragment_fu_a: bool,
 
+    /// True if we've dropped a packet whose NAL header names no NAL type
+    /// (Breadslicer: logged once per stream).
+    seen_bad_nal_header: bool,
+
     /// Output format controlling NAL framing and parameter set insertion.
     frame_format: super::FrameFormat,
 }
@@ -317,6 +321,7 @@ impl Depacketizer {
             parameters,
             seen_inconsistent_fu_a_nal_hdr: false,
             seen_single_fragment_fu_a: false,
+            seen_bad_nal_header: false,
             frame_format: Default::default(),
         })
     }
@@ -495,7 +500,22 @@ impl Depacketizer {
             self.mark = Some(pkt.mark());
         }
 
-        let payload = pkt.payload();
+        let mut payload = pkt.payload();
+        let mut payload_pos = payload_pos;
+        let mut payload_len = payload_len;
+
+        // Breadslicer: some cameras (the Chitu boards in Elegoo printers) keep
+        // the Annex B start code in front of the NAL, which RFC 6184 leaves
+        // out. Skip it; a start code further in is split by the scanner.
+        let start_code = annex_b_start_code(&payload);
+        if start_code > 0 {
+            if usize::from(payload_len) <= start_code {
+                return Err("Empty NAL after a start code".into());
+            }
+            payload.advance(start_code);
+            payload_pos += crate::to_u64(start_code);
+            payload_len -= start_code as u16;
+        }
 
         // https://tools.ietf.org/html/rfc6184#section-5.2
         let nal_header = payload.byte_at(0);
@@ -643,7 +663,23 @@ impl Depacketizer {
                     }
                 }
             }
-            _ => return Err(format!("bad nal header {nal_header:02x}")),
+            _ => {
+                // Breadslicer: a packet that names no NAL type loses its access
+                // unit, as a lost packet would, instead of ending the stream.
+                if !self.seen_bad_nal_header {
+                    log::warn!(
+                        "dropping a packet with bad nal header {nal_header:02x};                          will not log about this again for this stream"
+                    );
+                    self.seen_bad_nal_header = true;
+                }
+                self.discard_au();
+                self.input_state = if mark {
+                    DepacketizerInputState::PostMark { timestamp, loss: 1 }
+                } else {
+                    DepacketizerInputState::Loss { timestamp, pkts: 1 }
+                };
+                return Ok(());
+            }
         }
         self.input_state = if mark {
             match self.nals.last() {
@@ -937,6 +973,17 @@ fn has_recovery_point_sei(pieces: &[BufRange], buf: &MarkBuf) -> bool {
 ///
 /// We specifically prohibit this for the SPS, PPS, and SEI. Some cameras
 /// incorrectly set the RTP marker bit and/or change the timestamp after these.
+/// Breadslicer: the length of an Annex B start code (`00 00 01` or
+/// `00 00 00 01`) at the start of an RTP payload, or 0 when there is none.
+fn annex_b_start_code<'i>(payload: &impl crate::inputs::Input<'i>) -> usize {
+    let at = |i: usize| (i < payload.len()).then(|| payload.byte_at(i));
+    match (at(0), at(1), at(2), at(3)) {
+        (Some(0), Some(0), Some(1), _) => 3,
+        (Some(0), Some(0), Some(0), Some(1)) => 4,
+        _ => 0,
+    }
+}
+
 fn can_end_au(nal_unit_type: UnitType) -> bool {
     // H.264 section 7.4.1.2.3 specifies that SPS, PPS, and SEI NAL units
     // must precede the primary coded picture within an access unit. If any of

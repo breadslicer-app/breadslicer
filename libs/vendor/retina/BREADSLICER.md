@@ -12,6 +12,14 @@ In `src/client/parse.rs`:
   JPEG: 90000) takes it whatever the SDP's rtpmap says: the same printer
   declares H.264 at 9000.
 
+In `src/codec/h264.rs`:
+
+- an Annex B start code (`00 00 01` or `00 00 00 01`) in front of an RTP
+  payload is skipped: the same printer sends every NAL behind one, which
+  RFC 6184 leaves out;
+- a packet whose NAL header names no NAL type drops its access unit, as a lost
+  packet would, instead of ending the stream.
+
 In `src/rtsp/parse.rs`:
 
 - a header line may end in a bare LF, and the head may end in one;
