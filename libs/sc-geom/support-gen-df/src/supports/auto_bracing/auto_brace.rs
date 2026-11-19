@@ -240,6 +240,22 @@ fn build_support_samples(c: &SupportCollections, store: &SupportCollections) -> 
             None,
         );
     }
+    // SoulCrafted (#632): sticks too, model to model: inside a cavity they
+    // stand up to tens of millimetres, unbraced.
+    for s in c.sticks.values() {
+        push(
+            ShaftEntity::Stick(s),
+            s.base.type_id,
+            SupportTypeId::Stick,
+            &s.base.model_id,
+            &s.segments,
+            EndpointHosts {
+                root: None,
+                host_knot: None,
+            },
+            None,
+        );
+    }
     for k in c.kickstands.values() {
         push(
             ShaftEntity::Kickstand(k),
