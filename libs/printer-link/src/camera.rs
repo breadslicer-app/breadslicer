@@ -21,7 +21,8 @@ use futures_util::StreamExt;
 use openh264::decoder::Decoder;
 use openh264::formats::YUVSource;
 use retina::client::{
-    PlayOptions, Session, SessionGroup, SessionOptions, SetupOptions, TeardownPolicy,
+    PlayOptions, ReceiverReportPolicy, Session, SessionGroup, SessionOptions, SetupOptions,
+    TeardownPolicy, Transport,
 };
 use retina::codec::{CodecItem, FrameFormat, ParametersRef};
 
@@ -31,6 +32,9 @@ use crate::sdcp::{self, Printer};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 /// How long the first picture may take to come.
 const FIRST_PICTURE_TIMEOUT: Duration = Duration::from_secs(12);
+/// How long the first picture may take over UDP before TCP is tried: a
+/// firewall that drops the datagrams shows as nothing coming.
+const FIRST_UDP_PICTURE_TIMEOUT: Duration = Duration::from_secs(6);
 /// How long the stream may go quiet once it has shown something.
 const QUIET_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often the stream is looked at for a stop.
@@ -63,6 +67,8 @@ pub enum Event {
     /// The printer is streaming: where from and what.
     Playing {
         url: String,
+        /// How the pictures come: `"udp"` or `"tcp"`.
+        transport: &'static str,
         codec: String,
         width: u32,
         height: u32,
@@ -154,30 +160,92 @@ pub fn watch_stream(
         .build()
         .map_err(|err| CameraError::Stream(err.to_string()))?;
     let group = Arc::new(SessionGroup::default());
-    let watched = runtime.block_on(play(parsed, group.clone(), cancel, on_event));
-    // The session sends its TEARDOWN as it drops: give it the time to go.
-    runtime.block_on(async {
-        let _ = tokio::time::timeout(TEARDOWN_WAIT, group.await_teardown()).await;
-    });
-    watched
+    // UDP first: the printers' boards (Chitu) stream only that way, and answer
+    // a request for TCP without the channels to read it on. TCP once after,
+    // for a camera that serves only TCP or a network that drops datagrams.
+    let mut udp_failure = None;
+    for (transport, first_picture) in [
+        (
+            Transport::Udp(Default::default()),
+            FIRST_UDP_PICTURE_TIMEOUT,
+        ),
+        (Transport::Tcp(Default::default()), FIRST_PICTURE_TIMEOUT),
+    ] {
+        let attempt = runtime.block_on(play(
+            parsed.clone(),
+            group.clone(),
+            transport,
+            first_picture,
+            cancel,
+            on_event,
+        ));
+        // The session sends its TEARDOWN as it drops: give it the time to go,
+        // so a printer with few slots has this one back before the next.
+        runtime.block_on(async {
+            let _ = tokio::time::timeout(TEARDOWN_WAIT, group.await_teardown()).await;
+        });
+        match attempt {
+            Ok(()) => return Ok(()),
+            Err(Attempt::Final(err)) => return Err(err),
+            Err(Attempt::OtherTransport(err)) => match udp_failure.take() {
+                None => udp_failure = Some(err),
+                Some(udp) => {
+                    return Err(CameraError::Stream(format!(
+                        "{} (over UDP: {})",
+                        stream_text(&err),
+                        stream_text(&udp)
+                    )));
+                }
+            },
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+    }
+    Err(udp_failure.unwrap_or(CameraError::Silent))
+}
+
+/// What an error says, without its own heading.
+fn stream_text(err: &CameraError) -> String {
+    match err {
+        CameraError::Stream(what) => what.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// How one way of reading the stream ended badly.
+enum Attempt {
+    /// Nothing the other way would change.
+    Final(CameraError),
+    /// The printer described its stream but this way gave no picture.
+    OtherTransport(CameraError),
 }
 
 async fn play(
     url: url::Url,
     group: Arc<SessionGroup>,
+    transport: Transport,
+    first_picture: Duration,
     cancel: &AtomicBool,
     on_event: &mut dyn FnMut(Event),
-) -> Result<(), CameraError> {
+) -> Result<(), Attempt> {
+    let transport_name = match transport {
+        Transport::Udp(_) => "udp",
+        _ => "tcp",
+    };
+    let fin = Attempt::Final;
+    let other = Attempt::OtherTransport;
     let stream_error = |err: retina::Error| CameraError::Stream(err.to_string());
     let text = url.to_string();
     let options = SessionOptions::default()
         .user_agent("Breadslicer".to_owned())
         .session_group(group)
-        .teardown(TeardownPolicy::Auto);
+        .teardown(TeardownPolicy::Auto)
+        .receiver_reports(ReceiverReportPolicy::Always);
     let mut session = tokio::time::timeout(CONNECT_TIMEOUT, Session::describe(url, options))
         .await
-        .map_err(|_| CameraError::Silent)?
-        .map_err(stream_error)?;
+        .map_err(|_| fin(CameraError::Silent))?
+        .map_err(|err| fin(stream_error(err)))?;
     let offered: Vec<String> = session
         .streams()
         .iter()
@@ -189,25 +257,27 @@ async fn play(
             .flatten()
             .map(|codec| (i, codec))
     }) else {
-        return Err(CameraError::NoVideo(offered));
+        return Err(fin(CameraError::NoVideo(offered)));
     };
     tokio::time::timeout(
         CONNECT_TIMEOUT,
         session.setup(
             index,
-            SetupOptions::default().frame_format(FrameFormat::SIMPLE),
+            SetupOptions::default()
+                .frame_format(FrameFormat::SIMPLE)
+                .transport(transport),
         ),
     )
     .await
-    .map_err(|_| CameraError::Silent)?
-    .map_err(stream_error)?;
+    .map_err(|_| other(CameraError::Silent))?
+    .map_err(|err| other(stream_error(err)))?;
     let playing = tokio::time::timeout(CONNECT_TIMEOUT, session.play(PlayOptions::default()))
         .await
-        .map_err(|_| CameraError::Silent)?
-        .map_err(stream_error)?;
-    let mut demuxed = playing.demuxed().map_err(stream_error)?;
+        .map_err(|_| other(CameraError::Silent))?
+        .map_err(|err| other(stream_error(err)))?;
+    let mut demuxed = playing.demuxed().map_err(|err| fin(stream_error(err)))?;
 
-    let mut pictures = Pictures::new(codec)?;
+    let mut pictures = Pictures::new(codec).map_err(fin)?;
     let started = Instant::now();
     let mut last_heard = Instant::now();
     let mut last_shown: Option<Instant> = None;
@@ -216,22 +286,26 @@ async fn play(
         if cancel.load(Ordering::Relaxed) {
             return Ok(());
         }
-        if last_heard.elapsed() > QUIET_TIMEOUT
-            || (!playing_told && started.elapsed() > FIRST_PICTURE_TIMEOUT)
-        {
-            return Err(CameraError::Silent);
+        if !playing_told && started.elapsed() > first_picture {
+            return Err(other(CameraError::Silent));
+        }
+        if last_heard.elapsed() > QUIET_TIMEOUT {
+            return Err(fin(CameraError::Silent));
         }
         let item = match tokio::time::timeout(CANCEL_POLL, demuxed.next()).await {
             Err(_) => continue,
-            Ok(None) => return Ok(()),
-            Ok(Some(item)) => item.map_err(stream_error)?,
+            Ok(None) if playing_told => return Ok(()),
+            Ok(None) => return Err(other(CameraError::Silent)),
+            Ok(Some(Ok(item))) => item,
+            Ok(Some(Err(err))) if playing_told => return Err(fin(stream_error(err))),
+            Ok(Some(Err(err))) => return Err(other(stream_error(err))),
         };
         let CodecItem::VideoFrame(frame) = item else {
             continue;
         };
         last_heard = Instant::now();
         let due = last_shown.is_none_or(|at| at.elapsed() >= SHOW_EVERY);
-        let Some(picture) = pictures.push(frame.data(), due)? else {
+        let Some(picture) = pictures.push(frame.data(), due).map_err(fin)? else {
             continue;
         };
         if !playing_told {
@@ -242,6 +316,7 @@ async fn play(
             };
             on_event(Event::Playing {
                 url: text.clone(),
+                transport: transport_name,
                 codec,
                 width: picture.width,
                 height: picture.height,

@@ -95,12 +95,13 @@ impl PrinterCamera {
                 let mut on_event = |event: Event| match event {
                     Event::Playing {
                         url,
+                        transport,
                         codec,
                         width,
                         height,
                     } => {
                         crate::breadcrumbs::note(&format!(
-                            "printer camera: {codec} {width}x{height} from {url}"
+                            "printer camera: {codec} {width}x{height} from {url} over {transport}"
                         ));
                         let _ = ui.upgrade_in_event_loop(move |ui| {
                             if ui.get_slice_camera_on() {
