@@ -5516,8 +5516,13 @@ impl ViewportController {
         // cut is closed by the models' back faces.
         // While a gesture moves something off the slice, the cut is closed
         // the same way.
-        let capped = self.session.section() == WorkspaceSection::Slice || !self.gesture_active();
-        let cap_key = slice_clip.filter(|_| capped).map(|_| {
+        // The slice's picture caps the cut only in the Slice tab, and only
+        // while the slice still shows the scene and nothing is being moved:
+        // anywhere else the cut is the models' own section, live, as they
+        // stand (a model moved after slicing showed the old slice off it).
+        let in_slice = self.session.section() == WorkspaceSection::Slice;
+        let capped = in_slice && self.slice_current.get() && !self.gesture_active();
+        let slice_key = || {
             let mut key = DefaultHasher::new();
             (
                 self.session.document().slice_generation(),
@@ -5526,7 +5531,13 @@ impl ViewportController {
             )
                 .hash(&mut key);
             key.finish()
-        });
+        };
+        let cap_key = slice_clip.filter(|_| capped).map(|_| slice_key());
+        // The 2D layer pane shows the slice's layer as before: a picture of
+        // the print, beside the view.
+        let pane_key = slice_clip
+            .filter(|_| in_slice || !self.gesture_active())
+            .map(|_| slice_key());
         renderer.set_cap_plate(
             self.session
                 .document()
@@ -5580,7 +5591,7 @@ impl ViewportController {
         // generation changes. Because this runs in the paint pass, every
         // trigger that repaints (slider, section, scene, slice completion)
         // refreshes the panel with no extra wiring.
-        self.reconcile_slice_view_image(&ui, cap_key, selected_layer, &build_volume);
+        self.reconcile_slice_view_image(&ui, pane_key, selected_layer, &build_volume);
         self.mark_paint(1);
 
         if self.render.is_refused_size((eff_w, eff_h)) {
