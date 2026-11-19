@@ -280,6 +280,13 @@ impl SupportSize {
     }
 }
 
+/// How many times farther apart the contacts inside a closed cavity stand
+/// (#632), on tips that many times wider.
+pub const CAVITY_SPREAD: f64 = 2.0;
+
+/// How much thicker than its zone's a cavity support's trunk may be (#632).
+pub const CAVITY_TRUNK_GROWTH: f64 = 1.5;
+
 impl ZoneRules {
     /// The rules with every number inside its bounds.
     pub fn clamped(&self) -> Self {
@@ -408,6 +415,35 @@ impl ZoneRules {
             .or((!self.sizes.is_empty()).then_some(0))
     }
 
+    /// SoulCrafted (#632): the size and spacing for a contact of size `size`,
+    /// `spacing_mm` apart, inside a closed cavity, where nobody sees the mark
+    /// a tip leaves. Up to [`CAVITY_SPREAD`] times farther apart, on a tip that
+    /// many times wider (the same load on each square mm of contact), with a
+    /// trunk no thinner, and no more than [`CAVITY_TRUNK_GROWTH`] times
+    /// thicker: fewer, stiffer supports. `None` when the rules have no such
+    /// size: the contact stays as the zone has it.
+    pub fn cavity_size(&self, size: usize, spacing_mm: f64) -> Option<(usize, f64)> {
+        let base = self.sizes.get(size)?;
+        let fits = |s: &SupportSize| {
+            s.trunk_diameter_mm >= base.trunk_diameter_mm - 1e-9
+                && s.trunk_diameter_mm <= base.trunk_diameter_mm * CAVITY_TRUNK_GROWTH + 1e-9
+                && s.tip_diameter_mm > base.tip_diameter_mm + 1e-9
+        };
+        let want = base.tip_diameter_mm * CAVITY_SPREAD;
+        let sized = |a: &(usize, &SupportSize), b: &(usize, &SupportSize)| {
+            a.1.tip_diameter_mm
+                .total_cmp(&b.1.tip_diameter_mm)
+                .then(a.1.trunk_diameter_mm.total_cmp(&b.1.trunk_diameter_mm))
+        };
+        let candidates = || self.sizes.iter().enumerate().filter(|(_, s)| fits(s));
+        let (index, pick) = candidates()
+            .filter(|(_, s)| s.tip_diameter_mm >= want - 1e-9)
+            .min_by(sized)
+            .or_else(|| candidates().max_by(sized))?;
+        let spread = (pick.tip_diameter_mm / base.tip_diameter_mm).min(CAVITY_SPREAD);
+        Some((index, spacing_mm * spread))
+    }
+
     /// How close two supports `spacing_a_mm` and `spacing_b_mm` apart may
     /// stand before the less urgent one is dropped.
     pub fn dedup_radius_mm(spacing_a_mm: f64, spacing_b_mm: f64) -> f64 {
@@ -526,5 +562,31 @@ mod tests {
             ..ignore
         };
         assert!(!off.ignores(0.001, height(1)));
+    }
+
+    #[test]
+    fn a_cavity_takes_fewer_wider_tips_on_a_trunk_no_thinner() {
+        let size = |id: &str, tip: f64, trunk: f64| SupportSize {
+            id: id.into(),
+            tip_diameter_mm: tip,
+            trunk_diameter_mm: trunk,
+            ..Default::default()
+        };
+        let mut rules = rules();
+        rules.sizes = vec![
+            size("small", 0.24, 1.1),
+            size("large", 0.4, 1.1),
+            size("factory-medium", 0.6, 1.3),
+            size("heavy", 1.0, 3.0),
+        ];
+        // Twice as wide is reached: twice as far apart.
+        assert_eq!(rules.cavity_size(0, 1.8), Some((2, 3.6)));
+        // Not reached: the widest that fits, as much farther as it is wider.
+        let (size, spacing) = rules.cavity_size(1, 2.0).unwrap();
+        assert_eq!(size, 2);
+        assert!((spacing - 3.0).abs() < 1e-9, "{spacing}");
+        // Nothing wider without a trunk past half as thick again: as it was.
+        assert_eq!(rules.cavity_size(2, 2.8), None);
+        assert_eq!(rules.cavity_size(9, 2.8), None);
     }
 }

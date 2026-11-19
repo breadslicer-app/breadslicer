@@ -344,6 +344,7 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
                 tip_diameter_mm: None,
                 grid_point: (grid && normal.is_some()).then_some(true),
                 zone_size: Some(size),
+                enclosed: false,
             },
             zone,
             spacing_mm: spacing,
@@ -549,6 +550,25 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
             !is_support_blocked_contact(m.blocked, m.mesh.rays, m.side, p.candidate.tip_pos, None)
         });
     }
+    // Inside a closed cavity, fewer and stiffer (#632).
+    if let Some(m) = mesh {
+        for p in &mut pending {
+            if !matches!(p.zone, Zone::Overhang | Zone::Stabilization) {
+                continue;
+            }
+            let Some(size) = p.candidate.zone_size else {
+                continue;
+            };
+            let Some((cavity_size, spacing)) = rules.cavity_size(size, p.spacing_mm) else {
+                continue;
+            };
+            if is_enclosed(m, p.candidate.tip_pos, p.candidate.tip_normal) {
+                p.candidate.zone_size = Some(cavity_size);
+                p.candidate.enclosed = true;
+                p.spacing_mm = spacing;
+            }
+        }
+    }
     let max_z = pending
         .iter()
         .fold(1.0f64, |m, p| m.max(p.candidate.z_height));
@@ -564,6 +584,78 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
         .map(|island| format!("zi-{}", island.id))
         .collect();
     thin(pending, &anchors)
+}
+
+/// How far off its surface a contact is looked around from, in mm.
+const ENCLOSURE_STANDOFF_MM: f64 = 0.3;
+
+/// How many directions out of a contact [`is_enclosed`] looks along.
+const ENCLOSURE_DIRECTIONS: usize = 128;
+
+/// Whether a contact at `pos`, on a surface facing `normal`, lies inside a
+/// closed cavity of its model (#632): every way out of it, along
+/// [`ENCLOSURE_DIRECTIONS`] directions spread evenly over the sphere, runs
+/// into the model. A deep fold on the outside lets some of them out; a
+/// cavity with a drain hole still is one, unless the hole lies on one of
+/// those lines. A contact inside the material of an overlapping part is not
+/// in a cavity.
+pub fn is_enclosed(mesh: AutoSupportMesh<'_>, pos: Vec3, normal: Vec3) -> bool {
+    let normal = if normal.length_sq() > 1e-12 {
+        normal.normalize()
+    } else {
+        Vec3::new(0.0, 0.0, -1.0)
+    };
+    let origin = pos.add(normal.multiply_scalar(ENCLOSURE_STANDOFF_MM));
+    // In air, not inside the material of another part of the model that
+    // overlaps this one: a ray out of air crosses the surface an even number
+    // of times. Three rays, the majority says.
+    let crossings_odd = |direction: Vec3| {
+        mesh.mesh
+            .rays
+            .intersect_object(
+                &Ray { origin, direction },
+                Side::Double,
+                0.0,
+                f64::INFINITY,
+                false,
+            )
+            .len()
+            % 2
+            == 1
+    };
+    let inside_material = [
+        Vec3::new(0.0, 0.0, 1.0),
+        Vec3::new(0.577, 0.577, -0.577),
+        Vec3::new(-0.707, 0.0, 0.707),
+    ]
+    .into_iter()
+    .filter(|d| crossings_odd(*d))
+    .count()
+        >= 2;
+    if inside_material {
+        return false;
+    }
+    let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+    let n = ENCLOSURE_DIRECTIONS as f64;
+    // From straight down up: most contacts that are not in a cavity see the
+    // plate, and that answers at once.
+    (0..ENCLOSURE_DIRECTIONS).all(|i| {
+        let z = -1.0 + (2.0 * i as f64 + 1.0) / n;
+        let r = (1.0 - z * z).max(0.0).sqrt();
+        let (sin, cos) = (golden * i as f64).sin_cos();
+        let direction = Vec3::new(r * cos, r * sin, z);
+        !mesh
+            .mesh
+            .rays
+            .intersect_object(
+                &Ray { origin, direction },
+                Side::Double,
+                0.0,
+                f64::INFINITY,
+                true,
+            )
+            .is_empty()
+    })
 }
 
 /// How much further than [`ZoneRules::dedup_radius_mm`] a candidate that is
@@ -658,6 +750,7 @@ mod tests {
             tip_diameter_mm: None,
             grid_point: None,
             zone_size: Some(0),
+            enclosed: false,
         };
         let pending = vec![
             Pending {

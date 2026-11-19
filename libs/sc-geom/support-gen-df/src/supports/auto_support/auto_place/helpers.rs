@@ -95,6 +95,8 @@ pub struct PlanCtx<'a> {
     exact_contact: Cell<Option<(Vec3, Vec3)>>,
     /// SoulCrafted (#445): a fan reads only the shafts in its reach.
     near_fans: Cell<bool>,
+    /// SoulCrafted (#632): the contact being placed lies in a closed cavity.
+    enclosed: Cell<bool>,
 }
 
 impl<'a> PlanCtx<'a> {
@@ -114,6 +116,7 @@ impl<'a> PlanCtx<'a> {
             active_zone: Cell::new(None),
             exact_contact: Cell::new(None),
             near_fans: Cell::new(false),
+            enclosed: Cell::new(false),
         }
     }
 
@@ -196,6 +199,29 @@ impl<'a> PlanCtx<'a> {
     /// Places what follows with zone size `size` (`None`: the run's own).
     pub fn set_zone(&self, size: Option<usize>) {
         self.active_zone.set(size);
+    }
+
+    /// Whether what follows lies inside a closed cavity, its zone size the
+    /// cavity's (#632).
+    pub fn set_enclosed(&self, enclosed: bool) {
+        self.enclosed.set(enclosed);
+    }
+
+    /// The zone size a contact inside a closed cavity was given (#632): its
+    /// bridge keeps it, instead of the run's thinnest.
+    pub fn enclosed_zone_size(
+        &self,
+    ) -> Option<&crate::supports::auto_support::zone_rules::SupportSize> {
+        if !self.enclosed.get() {
+            return None;
+        }
+        let i = self.active_zone.get()?;
+        self.base_live
+            .auto_support
+            .zone_rules
+            .as_ref()?
+            .sizes
+            .get(i)
     }
 
     /// The zone size whose tip a contact of `tip_diameter_mm` was drawn

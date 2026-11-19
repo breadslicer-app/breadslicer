@@ -616,6 +616,7 @@ pub fn generate_grid_candidates(
                 tip_diameter_mm: None,
                 grid_point: Some(true),
                 zone_size: None,
+                enclosed: false,
             });
         };
 

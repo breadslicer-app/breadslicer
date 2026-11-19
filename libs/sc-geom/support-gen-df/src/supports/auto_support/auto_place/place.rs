@@ -495,19 +495,20 @@ pub fn place_one_candidate(
             // SoulCrafted (#360): a zone preset bridges a cavity with its
             // thinnest size, whatever the zone: a cavity is tight. A support
             // placed by hand keeps the size asked for (#564).
+            let thinnest = || {
+                live.auto_support.zone_rules.as_ref().and_then(|r| {
+                    r.sizes
+                        .iter()
+                        .min_by(|a, b| a.trunk_diameter_mm.total_cmp(&b.trunk_diameter_mm))
+                        .map(|s| s.band())
+                })
+            };
             let band = ctx
                 .hand_zone_size()
                 .map(|s| s.band())
-                .or_else(|| {
-                    live.auto_support.zone_rules.as_ref().and_then(|r| {
-                        r.sizes
-                            .iter()
-                            .min_by(|a, b| a.trunk_diameter_mm.total_cmp(&b.trunk_diameter_mm))
-                            .map(|s| s.band())
-                    })
-                })
+                .or_else(thinnest)
                 .unwrap_or_else(|| ctx.bands.active(live));
-            let bridge = {
+            let bridge_with = |band: &crate::supports::auto_support::settings::SizingBand| {
                 let field = mesh.field();
                 build_cavity_bridge(
                     tip_pos,
@@ -526,6 +527,14 @@ pub fn place_one_candidate(
                     &mut || ctx.id(),
                 )
             };
+            // Inside a closed cavity, a stick takes the contact's own cavity
+            // size, wider and stiffer (#632); a twig, short and in a tight
+            // spot, stays the thinnest, as does one that cannot be wider.
+            let bridge = ctx
+                .enclosed_zone_size()
+                .and_then(|size| bridge_with(&size.band()))
+                .filter(|bridge| bridge.kind == SupportTypeId::Stick)
+                .or_else(|| bridge_with(&band));
             if let Some(bridge) = bridge {
                 // The cap measures from the `upper` contact, which the builder
                 // sorts to the tip, so the span is ~0 and has never rejected
