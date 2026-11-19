@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with the scene chunk stored as two Zstandard frames in a row, which decompress to its payload but are not one frame.",
+  "reason": "bad-payload",
+  "chunk": "SCNE"
+}

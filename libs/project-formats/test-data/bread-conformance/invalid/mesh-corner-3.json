@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with its triangle's corner value set to 3, which names no corner.",
+  "reason": "malformed",
+  "chunk": "MESH"
+}

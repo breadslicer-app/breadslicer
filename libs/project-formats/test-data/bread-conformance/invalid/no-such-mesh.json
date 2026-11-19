@@ -1,0 +1,5 @@
+{
+  "description": "A scene of one mesh whose leaf names mesh 1, which does not exist.",
+  "reason": "malformed",
+  "chunk": "SCNE"
+}

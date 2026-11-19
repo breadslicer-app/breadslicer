@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with its scene chunk written twice.",
+  "reason": "chunk-count",
+  "chunk": "SCNE"
+}

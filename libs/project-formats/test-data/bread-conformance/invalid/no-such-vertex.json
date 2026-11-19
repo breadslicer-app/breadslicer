@@ -1,0 +1,5 @@
+{
+  "description": "A mesh of 3 vertices whose triangle names vertex 3, which it does not have.",
+  "reason": "no-such-vertex",
+  "chunk": "MESH"
+}

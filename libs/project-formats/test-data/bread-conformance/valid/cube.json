@@ -1,0 +1,39 @@
+{
+  "description": "A unit cube of 8 vertices and 12 triangles, with a named scene, node and mesh.",
+  "meta": {
+    "name": "cube scene",
+    "comment": null
+  },
+  "meshes": [
+    {
+      "meta": {
+        "name": "cube mesh",
+        "comment": null
+      },
+      "vertex_count": 8,
+      "triangle_count": 12,
+      "vertices_sha256": "00a243bc525d6c1ddfbb802ecb7d85ef371044606da877d1061e873f4f2bdab3",
+      "triangles_sha256": "c8879e3b5eeb2c47ce8bca379dd5a5a11942d446290fd735efa3ddb2b2714117"
+    }
+  ],
+  "mesh_resources": [],
+  "nodes": [
+    {
+      "kind": "leaf",
+      "meta": {
+        "name": "cube",
+        "comment": null
+      },
+      "transform": null,
+      "mesh": 0
+    }
+  ],
+  "subtrees": [],
+  "roots": [0],
+  "settings": null,
+  "supports": [],
+  "hollows": [],
+  "thumbnail": null,
+  "support_previews": [],
+  "surface": []
+}

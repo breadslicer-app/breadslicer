@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with the raw length of the scene chunk one byte more than its payload decompresses to.",
+  "reason": "bad-payload",
+  "chunk": "SCNE"
+}

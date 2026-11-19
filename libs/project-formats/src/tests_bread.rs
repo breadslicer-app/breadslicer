@@ -368,7 +368,7 @@ fn the_conformance_files_open_or_are_refused() {
         }
     }
     let invalid = conformance("invalid");
-    assert!(invalid.len() >= 17, "the invalid files are there");
+    assert!(invalid.len() >= 19, "the invalid files are there");
     for path in invalid {
         let bytes = std::fs::read(&path).unwrap();
         match read_bread_project(Cursor::new(bytes)) {

@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file after a text-mode transfer turned every CR LF into LF, which changes the magic.",
+  "reason": "not-bread",
+  "chunk": null
+}

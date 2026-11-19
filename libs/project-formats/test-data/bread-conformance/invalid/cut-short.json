@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with its last byte cut off, inside the stored bytes of the mesh chunk.",
+  "reason": "cut-short",
+  "chunk": null
+}

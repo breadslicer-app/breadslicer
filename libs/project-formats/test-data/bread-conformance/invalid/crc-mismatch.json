@@ -1,0 +1,5 @@
+{
+  "description": "The triangle file with one bit flipped in the stored bytes of the mesh chunk, so they no longer match its CRC.",
+  "reason": "crc",
+  "chunk": "MESH"
+}

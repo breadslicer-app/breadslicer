@@ -1,0 +1,5 @@
+{
+  "description": "A mesh of two triangles in connectivity B whose permutation puts both at index 0.",
+  "reason": "malformed",
+  "chunk": "MESH"
+}
