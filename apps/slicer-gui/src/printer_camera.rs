@@ -40,14 +40,15 @@ impl PrinterCamera {
         }
     }
 
-    /// The camera button: stops the stream shown, or shows `printer`'s.
-    pub(crate) fn toggle(&self, printer: Option<Printer>) {
+    /// The camera button: stops the stream shown, or shows `printer`'s,
+    /// called `name`.
+    pub(crate) fn toggle(&self, printer: Option<Printer>, name: &str) {
         let showing = self.watching.borrow().as_ref().map(|w| w.printer.clone());
         self.stop();
         match (showing, printer) {
             // Pressed again for the same printer: it only closes.
             (Some(shown), Some(printer)) if shown == printer => {}
-            (_, Some(printer)) => self.start(printer),
+            (_, Some(printer)) => self.start(printer, name),
             (_, None) => {}
         }
     }
@@ -65,7 +66,7 @@ impl PrinterCamera {
         }
     }
 
-    fn start(&self, printer: Printer) {
+    fn start(&self, printer: Printer, name: &str) {
         let cancel = Arc::new(AtomicBool::new(false));
         *self.watching.borrow_mut() = Some(Watching {
             cancel: cancel.clone(),
@@ -75,85 +76,118 @@ impl PrinterCamera {
             ui.set_slice_camera_on(true);
             ui.set_slice_camera_live(false);
             ui.set_slice_camera_image(Image::default());
-            ui.set_slice_camera_title(printer.name.as_str().into());
-            ui.set_slice_camera_status(ctr!(
-                "PrinterCamera",
-                "Turning on the camera of {}…",
-                printer.name
-            ));
+            ui.set_slice_camera_title(name.into());
+            ui.set_slice_camera_status(ctr!("PrinterCamera", "Turning on the camera of {}…", name));
             ui.set_slice_camera_status_bad(false);
         }
-        crate::breadcrumbs::started("printer camera");
-        let ui = self.ui.clone();
-        // The picture waiting to be shown, and whether the window was already
-        // asked to show it.
-        let latest: Arc<Mutex<Option<Picture>>> = Arc::new(Mutex::new(None));
-        let asked = Arc::new(AtomicBool::new(false));
-        std::thread::Builder::new()
-            .name("printer-camera".into())
-            .spawn(move || {
-                let mut on_event = |event: Event| match event {
-                    Event::Playing {
-                        url,
-                        transport,
-                        codec,
-                        width,
-                        height,
-                    } => {
-                        crate::breadcrumbs::note(&format!(
-                            "printer camera: {codec} {width}x{height} from {url} over {transport}"
-                        ));
-                        let _ = ui.upgrade_in_event_loop(move |ui| {
-                            if ui.get_slice_camera_on() {
-                                ui.set_slice_camera_live(true);
-                                ui.set_slice_camera_status(SharedString::default());
-                            }
-                        });
-                    }
-                    Event::Picture(picture) => {
-                        *latest.lock().unwrap_or_else(|e| e.into_inner()) = Some(picture);
-                        if asked.swap(true, Ordering::AcqRel) {
-                            return;
-                        }
-                        let (latest, asked, cancel) =
-                            (latest.clone(), asked.clone(), cancel.clone());
-                        let _ = ui.upgrade_in_event_loop(move |ui| {
-                            asked.store(false, Ordering::Release);
-                            let picture = latest.lock().unwrap_or_else(|e| e.into_inner()).take();
-                            if let Some(picture) = picture
-                                && !cancel.load(Ordering::Relaxed)
-                            {
-                                ui.set_slice_camera_image(image_of(&picture));
-                            }
-                        });
-                    }
-                };
-                let watched = camera::watch(&printer, &cancel, &mut on_event);
-                crate::breadcrumbs::finished(
-                    "printer camera",
-                    &match &watched {
-                        Ok(()) => "closed".to_owned(),
-                        Err(err) => format!("failed: {err}"),
-                    },
-                );
-                let Err(err) = watched else {
-                    return;
-                };
-                if cancel.load(Ordering::Relaxed) {
-                    return;
+        spawn_feed(printer, name, cancel, self.ui.clone(), |ui, feed| {
+            if !ui.get_slice_camera_on() {
+                return;
+            }
+            match feed {
+                Feed::Live => {
+                    ui.set_slice_camera_live(true);
+                    ui.set_slice_camera_status(SharedString::default());
                 }
-                let text = failure_text(&err, &printer.name);
+                Feed::Picture(picture) => ui.set_slice_camera_image(image_of(&picture)),
+                Feed::Failed(text) => {
+                    ui.set_slice_camera_live(false);
+                    ui.set_slice_camera_image(Image::default());
+                    ui.set_slice_camera_status(text.into());
+                    ui.set_slice_camera_status_bad(true);
+                }
+            }
+        });
+    }
+}
+
+/// What a camera stream hands the window, on its event loop.
+pub(crate) enum Feed {
+    /// The stream plays: pictures are on their way.
+    Live,
+    /// The latest picture.
+    Picture(Picture),
+    /// The stream could not be shown, in the card's words.
+    Failed(String),
+}
+
+/// Watches `printer`'s camera, called `name` in what it says, on a thread of its own until `cancel`, handing
+/// `deliver` what happens on the window's event loop. Only the latest
+/// picture is handed over: a slow window never queues pictures up. Nothing
+/// is handed over once `cancel` is set.
+pub(crate) fn spawn_feed(
+    printer: Printer,
+    name: &str,
+    cancel: Arc<AtomicBool>,
+    ui: slint::Weak<MainWindow>,
+    deliver: impl Fn(&MainWindow, Feed) + Send + Sync + 'static,
+) {
+    let deliver = Arc::new(deliver);
+    let name = name.to_owned();
+    crate::breadcrumbs::started("printer camera");
+    // The picture waiting to be shown, and whether the window was already
+    // asked to show it.
+    let latest: Arc<Mutex<Option<Picture>>> = Arc::new(Mutex::new(None));
+    let asked = Arc::new(AtomicBool::new(false));
+    std::thread::Builder::new()
+        .name("printer-camera".into())
+        .spawn(move || {
+            let hand = |feed: Feed| {
+                let (deliver, cancel) = (deliver.clone(), cancel.clone());
                 let _ = ui.upgrade_in_event_loop(move |ui| {
-                    if ui.get_slice_camera_on() {
-                        ui.set_slice_camera_live(false);
-                        ui.set_slice_camera_image(Image::default());
-                        ui.set_slice_camera_status(text.into());
-                        ui.set_slice_camera_status_bad(true);
+                    if !cancel.load(Ordering::Relaxed) {
+                        deliver(&ui, feed);
                     }
                 });
-            })
-            .expect("a thread for the printer's camera");
-    }
+            };
+            let mut on_event = |event: Event| match event {
+                Event::Playing {
+                    url,
+                    transport,
+                    codec,
+                    width,
+                    height,
+                } => {
+                    crate::breadcrumbs::note(&format!(
+                        "printer camera: {codec} {width}x{height} from {url} over {transport}"
+                    ));
+                    hand(Feed::Live);
+                }
+                Event::Picture(picture) => {
+                    *latest.lock().unwrap_or_else(|e| e.into_inner()) = Some(picture);
+                    if asked.swap(true, Ordering::AcqRel) {
+                        return;
+                    }
+                    let (latest, asked, cancel, deliver) = (
+                        latest.clone(),
+                        asked.clone(),
+                        cancel.clone(),
+                        deliver.clone(),
+                    );
+                    let _ = ui.upgrade_in_event_loop(move |ui| {
+                        asked.store(false, Ordering::Release);
+                        let picture = latest.lock().unwrap_or_else(|e| e.into_inner()).take();
+                        if let Some(picture) = picture
+                            && !cancel.load(Ordering::Relaxed)
+                        {
+                            deliver(&ui, Feed::Picture(picture));
+                        }
+                    });
+                }
+            };
+            let watched = camera::watch(&printer, &cancel, &mut on_event);
+            crate::breadcrumbs::finished(
+                "printer camera",
+                &match &watched {
+                    Ok(()) => "closed".to_owned(),
+                    Err(err) => format!("failed: {err}"),
+                },
+            );
+            if let Err(err) = watched {
+                hand(Feed::Failed(failure_text(&err, &name)));
+            }
+        })
+        .expect("a thread for the printer's camera");
 }
 
 impl Drop for PrinterCamera {
@@ -165,7 +199,7 @@ impl Drop for PrinterCamera {
 }
 
 /// A picture as the window shows it.
-fn image_of(picture: &Picture) -> Image {
+pub(crate) fn image_of(picture: &Picture) -> Image {
     let buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
         &picture.rgba,
         picture.width,

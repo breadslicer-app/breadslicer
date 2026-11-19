@@ -9183,3 +9183,108 @@ msgstr "Las imágenes de la cámara de {} no se pueden leer: {}"
 msgctxt "PrinterCamera"
 msgid "The camera of {} sent nothing. It may be busy with another app: try again in a moment."
 msgstr "La cámara de {} no mandó nada. Puede estar ocupada con otra aplicación: probá de nuevo en un momento."
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "All cameras"
+msgstr "Todas las cámaras"
+
+#: ui/workspace/printer-wall.slint
+msgctxt "PrinterWall"
+msgid "Rename"
+msgstr "Cambiar nombre"
+
+#: ui/workspace/printer-wall.slint
+msgctxt "PrinterWall"
+msgid "Its name in Breadslicer"
+msgstr "Su nombre en Breadslicer"
+
+#: ui/workspace/printer-wall.slint
+msgctxt "PrinterWall"
+msgid "Done"
+msgstr "Listo"
+
+#: ui/workspace/printer-wall.slint
+msgctxt "PrinterWall"
+msgid "Printers"
+msgstr "Impresoras"
+
+#: ui/workspace/printer-wall.slint
+msgctxt "PrinterWall"
+msgid "Searching…"
+msgstr "Buscando…"
+
+#: ui/workspace/printer-wall.slint
+msgctxt "PrinterWall"
+msgid "Search again"
+msgstr "Buscar de nuevo"
+
+#: ui/workspace/printer-wall.slint
+msgctxt "PrinterWall"
+msgid "All printers"
+msgstr "Todas las impresoras"
+
+#: ui/workspace/printer-wall.slint
+msgctxt "PrinterWall"
+msgid "Close"
+msgstr "Cerrar"
+
+#: ui/workspace/printer-wall.slint
+msgctxt "PrinterWall"
+msgid "Looking for printers on the network…"
+msgstr "Buscando impresoras en la red…"
+
+#: ui/workspace/printer-wall.slint
+msgctxt "PrinterWall"
+msgid "No printer found yet. Check that they are on and on the same network, or add one by its IP address in the Send to printer card."
+msgstr "Todavía no se encontró ninguna impresora. Revisá que estén prendidas y en la misma red, o agregá una por su dirección IP en la tarjeta Enviar a la impresora."
+
+#: src/printer_wall.rs
+msgctxt "PrinterWall"
+msgid "Asking what it does…"
+msgstr "Preguntando qué está haciendo…"
+
+#: src/printer_wall.rs
+msgctxt "PrinterWall"
+msgid "Not answering"
+msgstr "No responde"
+
+#: src/printer_wall.rs
+msgctxt "PrinterWall"
+msgid "Printing · layer {} of {}"
+msgstr "Imprimiendo · capa {} de {}"
+
+#: src/printer_wall.rs
+msgctxt "PrinterWall"
+msgid "Printing {} · layer {} of {}"
+msgstr "Imprimiendo {} · capa {} de {}"
+
+#: src/printer_wall.rs
+msgctxt "PrinterWall"
+msgid "Printing"
+msgstr "Imprimiendo"
+
+#: src/printer_wall.rs
+msgctxt "PrinterWall"
+msgid "Idle"
+msgstr "Lista"
+
+#: src/printer_wall.rs
+msgctxt "PrinterWall"
+msgid "Taking a file"
+msgstr "Recibiendo un archivo"
+
+#: src/printer_wall.rs
+msgctxt "PrinterWall"
+msgid "Running an exposure test"
+msgstr "Haciendo una prueba de exposición"
+
+#: src/printer_wall.rs
+msgctxt "PrinterWall"
+msgid "Checking itself"
+msgstr "Haciendo su chequeo"
+
+#: src/printer_wall.rs
+msgctxt "PrinterWall"
+msgid "Busy"
+msgstr "Ocupada"

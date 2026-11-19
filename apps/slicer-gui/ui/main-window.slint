@@ -13,6 +13,7 @@ import { Icons } from "./kit/icons.slint";
 import { CaptionButton, CaptionKind, DisclosureChevron, Icon, LayerRuler, SupportLink, ToolButton, ToolTip, ToolTipState, WorkflowTab } from "./kit/controls.slint";
 import { CutCard, HollowInspector, OrientCard, OrientOption, OverhangCard, ReviewCard, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { ScenePanel, SceneRow } from "./workspace/scene-panel.slint";
+import { PrinterTile, PrinterWall } from "./workspace/printer-wall.slint";
 import { Card, Note, ScCheckBox } from "./kit/controls.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { PresetCard, ShapeCallout, ShapeSize, ShareItem, SharePicker, ZoneRow } from "./workspace/support-shape.slint";
@@ -655,6 +656,12 @@ export component MainWindow inherits Window {
     in property <string> slice-camera-status;
     in property <bool> slice-camera-status-bad: false;
     callback slice-camera-toggle();
+    // Every printer's camera at once (#643).
+    in-out property <bool> printer-wall-open: false;
+    in property <[PrinterTile]> printer-wall-tiles;
+    callback printer-wall-opened();
+    callback printer-wall-closed();
+    callback printer-wall-renamed(string, string);
     // Slice run state, driving the Slice button's disabled state and the
     // input-capturing progress modal. `slicing-in-progress` is set by the
     // Rust driver when a slice starts and cleared on every exit path.
@@ -2505,6 +2512,9 @@ export component MainWindow inherits Window {
                                 camera-toggle => {
                                     root.slice-camera-toggle();
                                 }
+                                cameras-open => {
+                                    root.printer-wall-opened();
+                                }
                                 setup-open <=> root.slice-setup-open;
                                 review-fixing: root.review-fixing;
                                 overhang-map-on <=> root.overhang-map-on;
@@ -3697,6 +3707,25 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
             }
+        }
+    }
+
+    // Every printer's camera at once (#643), over the whole window.
+    if root.printer-wall-open: PrinterWall {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        tiles: root.printer-wall-tiles;
+        searching: root.slice-send-searching;
+        closed => {
+            root.printer-wall-closed();
+        }
+        search => {
+            root.slice-send-search(true);
+        }
+        renamed(key, name) => {
+            root.printer-wall-renamed(key, name);
         }
     }
 

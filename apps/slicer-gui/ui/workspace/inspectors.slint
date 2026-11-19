@@ -3037,6 +3037,8 @@ export component SliceInspector inherits VerticalLayout {
     in property <string> camera-status;
     in property <bool> camera-status-bad;
     callback camera-toggle();
+    // Opens every printer's camera at once (#643).
+    callback cameras-open();
     // PRINT SETUP open or folded: kept by the window, so it stays as left
     // when the tab is left and come back to.
     in-out property <bool> setup-open: true;
@@ -3258,14 +3260,26 @@ export component SliceInspector inherits VerticalLayout {
                 }
             }
         }
-        ScButton {
-            text: root.camera-on
-                ? @tr("SlicePanel" => "Hide camera")
-                : @tr("SlicePanel" => "Show camera");
-            icon: Icons.camera;
-            enabled: root.send-index >= 0 || root.camera-on;
-            clicked => {
-                root.camera-toggle();
+        HorizontalLayout {
+            spacing: 8px;
+            ScButton {
+                horizontal-stretch: 1;
+                text: root.camera-on
+                    ? @tr("SlicePanel" => "Hide camera")
+                    : @tr("SlicePanel" => "Show camera");
+                icon: Icons.camera;
+                enabled: root.send-index >= 0 || root.camera-on;
+                clicked => {
+                    root.camera-toggle();
+                }
+            }
+            ScButton {
+                horizontal-stretch: 1;
+                text: @tr("SlicePanel" => "All cameras");
+                icon: Icons.enlarge;
+                clicked => {
+                    root.cameras-open();
+                }
             }
         }
         if root.camera-on: Rectangle {
@@ -3296,8 +3310,9 @@ export component SliceInspector inherits VerticalLayout {
                 }
             }
             if root.camera-live: ScButton {
-                x: parent.width - self.width - 6px;
+                x: 6px;
                 y: 6px;
+                width: parent.width - 12px;
                 icon: Icons.enlarge;
                 text: @tr("SlicePanel" => "Enlarge");
                 clicked => {

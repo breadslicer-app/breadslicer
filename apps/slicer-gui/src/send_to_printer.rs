@@ -9,10 +9,11 @@
 //! Nothing starts a print unless that button is pressed.
 //!
 //! The network work runs on worker threads; its progress is read by a timer
-//! on the UI thread. The printer used last is remembered in a file of the
-//! app's own.
+//! on the UI thread. The printers seen, the one used last first, and the
+//! names given to them (#631) are kept in a file of the app's own.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -28,6 +29,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use crate::MainWindow;
 use crate::i18n::ctr;
 use crate::printer_camera::PrinterCamera;
+use crate::printer_wall::PrinterWall;
 use crate::slice_panel::SlicePanelBridge;
 use crate::viewport::ViewportController;
 
@@ -49,14 +51,19 @@ pub(crate) struct SendToPrinter {
     ui: slint::Weak<MainWindow>,
     ctrl: Rc<ViewportController>,
     panel: Rc<SlicePanelBridge>,
-    /// The printers in the card's list, the one used last first.
+    /// The printers in the card's list, the one used last first, as they
+    /// name themselves.
     printers: RefCell<Vec<Printer>>,
+    /// The names given to them in Breadslicer (#631), by mainboard id.
+    own_names: RefCell<HashMap<String, String>>,
     searched_at: Cell<Option<Instant>>,
     searching: Cell<bool>,
     sending: RefCell<Option<Sending>>,
     progress: slint::Timer,
     /// The picked printer's camera (#633).
     camera: PrinterCamera,
+    /// Every printer's camera at once (#643).
+    wall: PrinterWall,
 }
 
 impl SendToPrinter {
@@ -65,16 +72,19 @@ impl SendToPrinter {
         ctrl: Rc<ViewportController>,
         panel: Rc<SlicePanelBridge>,
     ) -> Rc<Self> {
+        let known = Known::read();
         let this = Rc::new(Self {
             ui: ui.as_weak(),
             ctrl,
             panel,
-            printers: RefCell::new(remembered().into_iter().collect()),
+            printers: RefCell::new(known.printers),
+            own_names: RefCell::new(known.names),
             searched_at: Cell::new(None),
             searching: Cell::new(false),
             sending: RefCell::new(None),
             progress: slint::Timer::default(),
             camera: PrinterCamera::new(ui),
+            wall: PrinterWall::new(ui),
         });
         this.show_printers();
         {
@@ -121,7 +131,37 @@ impl SendToPrinter {
             let weak = Rc::downgrade(&this);
             ui.on_slice_camera_toggle(move || {
                 if let Some(this) = weak.upgrade() {
-                    this.camera.toggle(this.picked());
+                    let picked = this.picked();
+                    let name = picked.as_ref().map(|p| p.name.clone()).unwrap_or_default();
+                    this.camera.toggle(picked, &name);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&this);
+            ui.on_printer_wall_opened(move || {
+                if let Some(this) = weak.upgrade() {
+                    // A printer streams to few viewers: the wall's own
+                    // stream replaces the card's.
+                    this.camera.stop();
+                    this.wall.open(&this.known_printers());
+                    this.search(false);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&this);
+            ui.on_printer_wall_closed(move || {
+                if let Some(this) = weak.upgrade() {
+                    this.wall.close();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&this);
+            ui.on_printer_wall_renamed(move |key, name| {
+                if let Some(this) = weak.upgrade() {
+                    this.rename(&key, &name);
                 }
             });
         }
@@ -138,11 +178,70 @@ impl SendToPrinter {
         this
     }
 
-    /// The printer picked in the card.
+    /// The printer picked in the card, by the name it is shown by.
     fn picked(&self) -> Option<Printer> {
         let ui = self.ui.upgrade()?;
         let at = usize::try_from(ui.get_slice_send_index()).ok()?;
-        self.printers.borrow().get(at).cloned()
+        self.printers.borrow().get(at).map(|p| self.shown(p))
+    }
+
+    /// `printer` with the name it was given in Breadslicer, if any.
+    fn shown(&self, printer: &Printer) -> Printer {
+        let mut shown = printer.clone();
+        if let Some(name) = self.own_names.borrow().get(&printer.mainboard_id) {
+            shown.name = name.clone();
+        }
+        shown
+    }
+
+    /// The printers known, each by the name it is shown by.
+    pub(crate) fn known_printers(&self) -> Vec<Printer> {
+        self.printers
+            .borrow()
+            .iter()
+            .map(|p| self.shown(p))
+            .collect()
+    }
+
+    /// Gives the printer with `mainboard_id` its own name; an empty one
+    /// puts back the name it gives itself.
+    pub(crate) fn rename(&self, mainboard_id: &str, name: &str) {
+        let name = name.trim();
+        {
+            let mut names = self.own_names.borrow_mut();
+            if name.is_empty() {
+                names.remove(mainboard_id);
+            } else {
+                names.insert(mainboard_id.to_owned(), name.to_owned());
+            }
+        }
+        self.keep();
+        self.show_printers();
+        self.wall.show(&self.known_printers());
+    }
+
+    /// Puts `printer`, just sent to, first in the list for the next run.
+    fn used(&self, printer: &Printer) {
+        {
+            let mut printers = self.printers.borrow_mut();
+            if let Some(at) = printers
+                .iter()
+                .position(|p| p.mainboard_id == printer.mainboard_id)
+            {
+                let used = printers.remove(at);
+                printers.insert(0, used);
+            }
+        }
+        self.keep();
+    }
+
+    /// Keeps the printers known and their names for the next run.
+    fn keep(&self) {
+        Known {
+            printers: self.printers.borrow().clone(),
+            names: self.own_names.borrow().clone(),
+        }
+        .write();
     }
 
     fn show_printers(&self) {
@@ -153,7 +252,7 @@ impl SendToPrinter {
             .printers
             .borrow()
             .iter()
-            .map(|p| SharedString::from(format!("{} · {}", p.name, p.ip)))
+            .map(|p| SharedString::from(format!("{} · {}", self.shown(p).name, p.ip)))
             .collect();
         let count = labels.len() as i32;
         ui.set_slice_send_printers(ModelRc::new(VecModel::from(labels)));
@@ -242,7 +341,9 @@ impl SendToPrinter {
             }
             *printers = list;
         }
+        self.keep();
         self.show_printers();
+        self.wall.show(&self.known_printers());
         if let Some(picked) = picked
             && let Some(at) = self
                 .printers
@@ -455,7 +556,7 @@ impl SendToPrinter {
         );
         match outcome {
             Ok((sent, bytes)) => {
-                remember(&printer);
+                self.used(&printer);
                 let took = took_text(&sent, bytes);
                 let written = seconds_text(written_in);
                 if start {
@@ -578,34 +679,93 @@ async fn on_worker<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static)
     rx.await.ok().flatten()
 }
 
-/// Where the printer used last is kept.
-fn remembered_path() -> Option<PathBuf> {
+/// The printers seen on the network, the one used last first, and the
+/// names given to them, kept in a file of the app's own.
+#[derive(Debug, Default, PartialEq)]
+struct Known {
+    printers: Vec<Printer>,
+    names: HashMap<String, String>,
+}
+
+impl Known {
+    fn read() -> Self {
+        let Some(folder) = data_folder() else {
+            return Self::default();
+        };
+        if let Ok(text) = std::fs::read_to_string(folder.join(KNOWN_FILE))
+            && let Ok(value) = serde_json::from_str::<Value>(&text)
+        {
+            return Self::from_json(&value);
+        }
+        // The single printer kept before the list (#630).
+        let old = std::fs::read_to_string(folder.join("network-printer.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|value| printer_from_json(&value));
+        Self {
+            printers: old.into_iter().collect(),
+            names: HashMap::new(),
+        }
+    }
+
+    fn write(&self) {
+        let Some(folder) = data_folder() else {
+            return;
+        };
+        let _ = std::fs::create_dir_all(&folder);
+        if let Err(err) = std::fs::write(folder.join(KNOWN_FILE), self.to_json().to_string()) {
+            eprintln!("The network printers were not kept: {err}");
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        let printers: Vec<Value> = self
+            .printers
+            .iter()
+            .map(|p| {
+                let mut value = printer_to_json(p);
+                if let Some(name) = self.names.get(&p.mainboard_id) {
+                    value["own_name"] = json!(name);
+                }
+                value
+            })
+            .collect();
+        json!({ "printers": printers })
+    }
+
+    fn from_json(value: &Value) -> Self {
+        let mut known = Self::default();
+        for entry in value
+            .get("printers")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(printer) = printer_from_json(entry) else {
+                continue;
+            };
+            if let Some(name) = entry.get("own_name").and_then(Value::as_str)
+                && !name.trim().is_empty()
+            {
+                known
+                    .names
+                    .insert(printer.mainboard_id.clone(), name.to_owned());
+            }
+            known.printers.push(printer);
+        }
+        known
+    }
+}
+
+/// The file the network printers are kept in.
+const KNOWN_FILE: &str = "network-printers.json";
+
+/// The app's data folder; none in tests.
+fn data_folder() -> Option<PathBuf> {
     if cfg!(test) {
         return None;
     }
-    Some(
-        sc_app_paths::project_dirs()?
-            .data_local_dir()
-            .join("network-printer.json"),
-    )
-}
-
-/// The printer used last, as it was then.
-fn remembered() -> Option<Printer> {
-    let text = std::fs::read_to_string(remembered_path()?).ok()?;
-    printer_from_json(&serde_json::from_str(&text).ok()?)
-}
-
-fn remember(printer: &Printer) {
-    let Some(path) = remembered_path() else {
-        return;
-    };
-    if let Some(folder) = path.parent() {
-        let _ = std::fs::create_dir_all(folder);
-    }
-    if let Err(err) = std::fs::write(&path, printer_to_json(printer).to_string()) {
-        eprintln!("The printer used last was not kept: {err}");
-    }
+    Some(sc_app_paths::project_dirs()?.data_local_dir().to_path_buf())
 }
 
 fn printer_to_json(printer: &Printer) -> Value {
@@ -633,6 +793,27 @@ fn printer_from_json(value: &Value) -> Option<Printer> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_printers_known_read_back_with_their_names() {
+        let printer = |id: &str, name: &str| Printer {
+            ip: Ipv4Addr::new(192, 168, 1, 50),
+            mainboard_id: id.into(),
+            name: name.into(),
+            model: "ELEGOO Mars 5 Ultra".into(),
+            firmware: "V1.0".into(),
+        };
+        let known = Known {
+            printers: vec![printer("a", "Mars 5 Ultra"), printer("b", "Saturn 4 Ultra")],
+            names: HashMap::from([("b".to_owned(), "La grande".to_owned())]),
+        };
+        assert_eq!(Known::from_json(&known.to_json()), known);
+        assert_eq!(
+            Known::from_json(&json!({ "printers": [{ "ip": "x" }] })),
+            Known::default(),
+            "an entry that does not read is left out"
+        );
+    }
 
     #[test]
     fn the_printer_used_last_reads_back_as_it_was_kept() {
