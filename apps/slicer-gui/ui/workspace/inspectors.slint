@@ -3012,6 +3012,14 @@ export component SliceInspector inherits VerticalLayout {
     callback send-address(string);
     callback send(bool, string);
     callback send-cancel();
+    // The picked printer's camera (#633).
+    in property <bool> camera-on;
+    in property <bool> camera-live;
+    in-out property <bool> camera-large;
+    in property <image> camera-image;
+    in property <string> camera-status;
+    in property <bool> camera-status-bad;
+    callback camera-toggle();
     // PRINT SETUP open or folded: kept by the window, so it stays as left
     // when the tab is left and come back to.
     in-out property <bool> setup-open: true;
@@ -3269,6 +3277,53 @@ export component SliceInspector inherits VerticalLayout {
                     clicked => {
                         root.send-address(address-input.text);
                     }
+                }
+            }
+        }
+        ScButton {
+            text: root.camera-on
+                ? @tr("SlicePanel" => "Hide camera")
+                : @tr("SlicePanel" => "Show camera");
+            icon: Icons.camera;
+            enabled: root.send-index >= 0 || root.camera-on;
+            clicked => {
+                root.camera-toggle();
+            }
+        }
+        if root.camera-on: Rectangle {
+            height: 180px;
+            background: #0b0c0d;
+            border-radius: 3px;
+            clip: true;
+            Image {
+                width: 100%;
+                height: 100%;
+                source: root.camera-image;
+                image-fit: contain;
+            }
+            if !root.camera-live: Text {
+                x: 10px;
+                width: parent.width - 20px;
+                height: 100%;
+                text: root.camera-status;
+                color: root.camera-status-bad ? Theme.warning : Theme.text-muted;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                enabled: root.camera-live;
+                double-clicked => {
+                    root.camera-large = true;
+                }
+            }
+            if root.camera-live: ScButton {
+                x: parent.width - self.width - 6px;
+                y: 6px;
+                icon: Icons.enlarge;
+                text: @tr("SlicePanel" => "Enlarge");
+                clicked => {
+                    root.camera-large = true;
                 }
             }
         }

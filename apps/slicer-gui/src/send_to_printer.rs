@@ -27,6 +27,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::MainWindow;
 use crate::i18n::ctr;
+use crate::printer_camera::PrinterCamera;
 use crate::slice_panel::SlicePanelBridge;
 use crate::viewport::ViewportController;
 
@@ -54,6 +55,8 @@ pub(crate) struct SendToPrinter {
     searching: Cell<bool>,
     sending: RefCell<Option<Sending>>,
     progress: slint::Timer,
+    /// The picked printer's camera (#633).
+    camera: PrinterCamera,
 }
 
 impl SendToPrinter {
@@ -71,6 +74,7 @@ impl SendToPrinter {
             searching: Cell::new(false),
             sending: RefCell::new(None),
             progress: slint::Timer::default(),
+            camera: PrinterCamera::new(ui),
         });
         this.show_printers();
         {
@@ -110,6 +114,14 @@ impl SendToPrinter {
             ui.on_slice_send(move |start, text| {
                 if let Some(this) = weak.upgrade() {
                     this.send(start, &text);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&this);
+            ui.on_slice_camera_toggle(move || {
+                if let Some(this) = weak.upgrade() {
+                    this.camera.toggle(this.picked());
                 }
             });
         }
