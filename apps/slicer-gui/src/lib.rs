@@ -119,6 +119,7 @@ mod support_gen_run;
 mod support_hints;
 mod support_lines;
 mod support_persist;
+mod support_area;
 mod surface_brush;
 #[cfg(test)]
 mod test_support;

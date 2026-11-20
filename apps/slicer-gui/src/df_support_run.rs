@@ -301,8 +301,11 @@ pub(crate) struct DfSupportRun {
     brace_from: RefCell<Option<(DrawnSet, BraceEnd)>>,
     /// The line tool's first point (#178): the next click places the row.
     line_from: Cell<Option<[f32; 3]>>,
-    /// The line tool's spacing between supports, mm.
+    /// The line tool's spacing between supports, mm; the Area tool's grid
+    /// too (#177).
     line_spacing: Cell<f64>,
+    /// The Area tool's brush (#177): it paints where supports go.
+    area_brush: Rc<crate::surface_brush::SurfaceBrush>,
     box_poll: slint::Timer,
     /// This driver, for what a drag starts from the viewport's side.
     me: RefCell<std::rc::Weak<DfSupportRun>>,
@@ -1808,6 +1811,11 @@ impl DfSupportRun {
             }
         });
         let sessions = document.support_sessions();
+        let area_brush = crate::surface_brush::SurfaceBrush::new(
+            document.clone(),
+            sc_scene::PaintKind::SupportEnforce,
+        );
+        ctrl.set_support_brush(area_brush.clone());
         let run = Rc::new(Self {
             ui: ui.as_weak(),
             bus,
@@ -1862,6 +1870,7 @@ impl DfSupportRun {
             brace_from: RefCell::new(None),
             line_from: Cell::new(None),
             line_spacing: Cell::new(LINE_SPACING_MM),
+            area_brush,
             box_poll: slint::Timer::default(),
             me: RefCell::new(std::rc::Weak::new()),
             queued_clicks: RefCell::new(std::collections::VecDeque::new()),
@@ -2081,6 +2090,18 @@ impl DfSupportRun {
         {
             let run = run.clone();
             ui.on_support_line_spacing_edited(move |v| run.on_line_spacing(v));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_area_fill(move || run.fill_painted());
+        }
+        {
+            let run = run.clone();
+            ui.on_support_area_clear(move || run.clear_painted());
+        }
+        {
+            let run = run.clone();
+            ui.on_support_area_brush_edited(move |v| run.on_area_brush_size(v));
         }
         {
             let run = run.clone();
@@ -5426,6 +5447,14 @@ impl DfSupportRun {
         self.line_from.set(None);
         self.show_add_note(Default::default());
         if let Some(ui) = self.ui.upgrade() {
+            // The Area tool paints where supports go, and its paint shows
+            // while it is armed (#177).
+            let area = ui.get_support_tool() == 7;
+            if area != self.area_brush.armed() {
+                self.area_brush.set_armed(area, None);
+                self.ctrl
+                    .show_paint_of(sc_scene::PaintKind::SupportEnforce, area);
+            }
             self.refresh_tip_label(&ui, None);
             // The supports picked go with the Select tool.
             if ui.get_support_tool() != 5 {
@@ -5963,6 +5992,42 @@ impl DfSupportRun {
             return;
         }
         self.start_points(ui, tool, &row, how);
+    }
+
+    /// Places a support on every node of a grid over each patch painted
+    /// with the Area tool (#177), as one edit, the spacing the field's.
+    fn fill_painted(self: &Rc<Self>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let spacing = self.line_spacing.get();
+        let mut row: Vec<[f32; 3]> = crate::support_area::painted_patches(&self.document)
+            .iter()
+            .flat_map(|(_, patch)| crate::support_area::grid_on(patch, spacing))
+            .collect();
+        if row.is_empty() {
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "Paint where the supports go first, or Shift+click a face to take its plane."
+            ));
+            return;
+        }
+        row.truncate(crate::support_area::MOST_POINTS);
+        self.place_row(&ui, row);
+    }
+
+    /// Takes the Area tool's paint off every model (#177).
+    fn clear_painted(&self) {
+        for leaf in crate::support_area::painted_leaves(&self.document) {
+            self.area_brush.clear(leaf);
+        }
+    }
+
+    fn on_area_brush_size(&self, mm: f32) {
+        self.area_brush.set_radius_mm(mm);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_area_brush(self.area_brush.radius_mm());
+        }
     }
 
     fn on_line_spacing(&self, mm: f32) {
@@ -13233,6 +13298,79 @@ mod hand_edit_tests {
             }
             assert!(document.undo().unwrap());
             assert!(run.support_leaf().is_none(), "one undo takes the row out");
+        });
+    }
+
+    /// The Area tool (#177): the underside of a bare slab painted, one
+    /// action places a support on every node of a 2 mm grid over it, as one
+    /// Undo step; the paint stays until cleared.
+    #[test]
+    fn the_paint_of_the_area_tool_fills_with_a_grid_in_one_step() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = wired_viewport(&window);
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    translation([10.0, 20.0, 9.0]),
+                    LeafPayload::Mesh(Arc::new(slab_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("slab.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            ctrl.set_section(WorkspaceSection::Supports);
+            window.set_support_tool(7);
+            run.on_tool_changed();
+            assert!(run.area_brush.armed());
+
+            run.fill_painted();
+            assert!(
+                run.support_leaf().is_none(),
+                "nothing painted, nothing placed"
+            );
+            let bottom: Vec<u32> = slab_mesh()
+                .faces()
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| {
+                    f.vertices
+                        .iter()
+                        .all(|v| slab_mesh().vertices()[v.get() as usize].as_array()[2] == 0.0)
+                })
+                .map(|(i, _)| i as u32)
+                .collect();
+            assert_eq!(bottom.len(), 2);
+            let edit = SceneEdit::PaintSurface {
+                node_id: leaf,
+                kind: sc_scene::PaintKind::SupportEnforce,
+                changes: sc_scene::PaintChanges::from_faces(
+                    bottom
+                        .iter()
+                        .map(|&f| (f, sc_scene::UNPAINTED, sc_scene::PAINTED))
+                        .collect(),
+                ),
+            };
+            document.apply_edit(edit.clone()).unwrap();
+            document.push_edit(edit);
+
+            run.fill_painted();
+            settle_click(&run);
+            let session = in_force_session(&run).expect("the grid started a set");
+            let tips: Vec<[f64; 3]> = session.tips().into_iter().map(|t| t.1).collect();
+            assert!(tips.len() >= 40, "{} supports", tips.len());
+            for tip in &tips {
+                assert!((tip[2] - 9.0).abs() < 0.3, "on the underside: {tip:?}");
+            }
+            assert_eq!(crate::support_area::painted_leaves(&document), vec![leaf]);
+            assert!(document.undo().unwrap());
+            assert!(run.support_leaf().is_none(), "one undo takes the grid out");
+            run.clear_painted();
+            assert!(crate::support_area::painted_leaves(&document).is_empty());
         });
     }
 

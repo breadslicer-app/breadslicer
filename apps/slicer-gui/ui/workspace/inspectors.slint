@@ -2162,6 +2162,11 @@ export component SupportsInspector inherits VerticalLayout {
     // The line tool's spacing between supports, mm (#178).
     in property <float> line-spacing: 2;
     callback line-spacing-edited(float);
+    // The Area tool (#177): its brush, and filling or clearing the paint.
+    in property <float> area-brush: 3;
+    callback area-brush-edited(float);
+    callback area-fill();
+    callback area-clear();
     in property <[int]> shape-choices;
     in property <[int]> shape-choice-defaults;
     in property <[string]> bracing-presets;
@@ -2308,6 +2313,16 @@ export component SupportsInspector inherits VerticalLayout {
                 }
             }
             HandToolButton {
+                icon: Icons.support-area;
+                label: @tr("Inspector" => "Area");
+                shortcut: "P";
+                active: root.tool == 7;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 7 ? 0 : 7);
+                }
+            }
+            HandToolButton {
                 icon: Icons.move-tip;
                 label: @tr("Inspector" => "Move tip");
                 shortcut: "M";
@@ -2355,6 +2370,46 @@ export component SupportsInspector inherits VerticalLayout {
         }
         if root.tool == 6: Note {
             text: @tr("Inspector" => "Click the model where the row starts, then where it ends: a support at every dot, along the surface. Keys 1–4 pick the size. Esc drops the first point.");
+        }
+        if root.tool == 7: Note {
+            text: @tr("Inspector" => "Paint the faces where supports go; Shift+click takes the connected faces of the same plane, Alt erases. Then place a support on every node of a grid over the paint.");
+        }
+        if root.tool == 7: NumberField {
+            label: @tr("Inspector" => "Brush");
+            unit: "mm";
+            decimals: 1;
+            value: root.area-brush;
+            committed(v) => {
+                root.area-brush-edited(v);
+            }
+        }
+        if root.tool == 7: NumberField {
+            label: @tr("Inspector" => "Supports apart");
+            unit: "mm";
+            decimals: 1;
+            value: root.line-spacing;
+            committed(v) => {
+                root.line-spacing-edited(v);
+            }
+        }
+        if root.tool == 7: HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Place supports on the paint");
+                kind: ButtonKind.primary;
+                enabled: !root.running;
+                clicked => {
+                    root.area-fill();
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Clear paint");
+                kind: ButtonKind.ghost;
+                clicked => {
+                    root.area-clear();
+                }
+            }
         }
         if root.tool == 6: NumberField {
             label: @tr("Inspector" => "Supports apart");

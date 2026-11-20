@@ -327,6 +327,11 @@ export component MainWindow inherits Window {
     // The line tool's spacing between supports, mm (#178).
     in property <float> support-line-spacing: 2;
     callback support-line-spacing-edited(float);
+    // The Area tool (#177): its brush, and filling or clearing the paint.
+    in property <float> support-area-brush: 3;
+    callback support-area-brush-edited(float);
+    callback support-area-fill();
+    callback support-area-clear();
     in property <[ZoneRow]> support-zone-rows;
     in property <[string]> support-zone-size-names;
     in property <float> support-zone-angle;
@@ -2027,6 +2032,10 @@ export component MainWindow inherits Window {
                                     root.arm-support-tool(6);
                                     return true;
                                 }
+                                if key == "p" || key == "P" {
+                                    root.arm-support-tool(7);
+                                    return true;
+                                }
                                 // Remove: B a box or a brush; [ and ] the brush.
                                 if root.support-tool == 2 && (key == "b" || key == "B") {
                                     root.support-remove-mode = root.support-remove-mode == 1 ? 0 : 1;
@@ -3107,6 +3116,16 @@ export component MainWindow inherits Window {
                                     line-spacing: root.support-line-spacing;
                                     line-spacing-edited(v) => {
                                         root.support-line-spacing-edited(v);
+                                    }
+                                    area-brush: root.support-area-brush;
+                                    area-brush-edited(v) => {
+                                        root.support-area-brush-edited(v);
+                                    }
+                                    area-fill => {
+                                        root.support-area-fill();
+                                    }
+                                    area-clear => {
+                                        root.support-area-clear();
                                     }
                                     zone-rows: root.support-zone-rows;
                                     zone-size-names: root.support-zone-size-names;

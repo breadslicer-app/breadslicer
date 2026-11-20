@@ -213,6 +213,10 @@ pub(crate) struct ViewportController {
     drag_tool_for_test: Cell<Option<SupportDragKind>>,
     /// The brush that paints faces (#183), once a tool installs it.
     surface_brush: RefCell<Option<Rc<SurfaceBrush>>>,
+    /// The brush that paints where supports go (#177), on any model.
+    support_brush: RefCell<Option<Rc<SurfaceBrush>>>,
+    /// Which paint shows.
+    paint_kind: Cell<sc_scene::PaintKind>,
     /// Whether the paint shows, and that what the renderer holds is old.
     paint_shown: Cell<bool>,
     paint_owed: Cell<bool>,
@@ -358,6 +362,8 @@ impl ViewportController {
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
+            support_brush: RefCell::new(None),
+            paint_kind: Cell::new(sc_scene::PaintKind::Detail),
             paint_shown: Cell::new(false),
             paint_owed: Cell::new(false),
             brush_press: Cell::new(false),
@@ -436,6 +442,8 @@ impl ViewportController {
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
+            support_brush: RefCell::new(None),
+            paint_kind: Cell::new(sc_scene::PaintKind::Detail),
             paint_shown: Cell::new(false),
             paint_owed: Cell::new(false),
             brush_press: Cell::new(false),
@@ -3760,18 +3768,33 @@ impl ViewportController {
 
     /// Shows the paint on the models, or hides it. The ring goes with it.
     pub(crate) fn show_paint(&self, on: bool) {
-        if self.paint_shown.replace(on) != on {
+        self.show_paint_of(sc_scene::PaintKind::Detail, on);
+    }
+
+    /// [`Self::show_paint`] for the paint of `kind` (#177).
+    pub(crate) fn show_paint_of(&self, kind: sc_scene::PaintKind, on: bool) {
+        let kind_changed = self.paint_kind.replace(kind) != kind;
+        if self.paint_shown.replace(on) != on || (on && kind_changed) {
             self.paint_owed.set(true);
             self.mark_dirty();
         }
     }
 
+    /// Installs the brush that paints where supports go (#177).
+    pub(crate) fn set_support_brush(&self, brush: Rc<SurfaceBrush>) {
+        *self.support_brush.borrow_mut() = Some(brush);
+    }
+
     fn armed_brush(&self) -> Option<Rc<SurfaceBrush>> {
-        self.surface_brush
-            .borrow()
-            .as_ref()
-            .filter(|brush| brush.armed())
-            .cloned()
+        // The support brush works in the Supports tab alone (#177).
+        let supports = self.session.section() == WorkspaceSection::Supports;
+        let slots = [(&self.surface_brush, true), (&self.support_brush, supports)];
+        slots.into_iter().find_map(|(slot, here)| {
+            slot.borrow()
+                .as_ref()
+                .filter(|b| here && b.armed())
+                .cloned()
+        })
     }
 
     /// Whether the brush is on: it takes the left button, and the gizmo goes.
@@ -3782,7 +3805,12 @@ impl ViewportController {
     /// Where the pixel `at` lands on the model the brush works on.
     fn brush_aim(&self, at: [f32; 2]) -> Option<BrushAim> {
         let vp = self.render.viewport()?;
-        let target = self.session.document().selection_primary_node_id()?;
+        // Where supports go is painted on any model (#177); the detail, on
+        // the one picked.
+        let anywhere = self
+            .armed_brush()
+            .is_some_and(|b| b.kind() == sc_scene::PaintKind::SupportEnforce);
+        let selected = self.session.document().selection_primary_node_id();
         let (ray, view) = {
             let camera_slot = self.camera.camera_cell().borrow();
             let camera = camera_slot.as_ref()?;
@@ -3804,6 +3832,11 @@ impl ViewportController {
         self.session
             .document()
             .with_scene(|spatial| {
+                let target = if anywhere {
+                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id))?.leaf
+                } else {
+                    selected?
+                };
                 aim(spatial, &ray, &view, target, |id| {
                     !shows_supports(spatial, id)
                 })
@@ -3862,8 +3895,10 @@ impl ViewportController {
             return false;
         }
         self.brush_waiting.set(None);
-        if let Some(brush) = self.surface_brush.borrow().as_ref() {
-            brush.end(true);
+        for slot in [&self.surface_brush, &self.support_brush] {
+            if let Some(brush) = slot.borrow().as_ref() {
+                brush.end(true);
+            }
         }
         self.mark_dirty();
         true
@@ -4307,7 +4342,10 @@ impl ViewportController {
 
     /// Drops a stroke in flight: Esc or a right press. Whether there was one.
     pub(crate) fn cancel_brush_stroke(&self) -> bool {
-        let Some(brush) = self.surface_brush.borrow().clone() else {
+        let stroking = [&self.surface_brush, &self.support_brush]
+            .into_iter()
+            .find_map(|slot| slot.borrow().as_ref().filter(|b| b.stroking()).cloned());
+        let Some(brush) = stroking else {
             return false;
         };
         if !brush.stroking() {
@@ -6041,7 +6079,7 @@ impl ViewportController {
                 spatial
                     .graph()
                     .surface_tags_iter()
-                    .filter(|(_, kind, _)| *kind == sc_scene::PaintKind::Detail)
+                    .filter(|(_, kind, _)| *kind == self.paint_kind.get())
                     .map(|(leaf, _, tags)| crate::mesh_render::PaintLayer {
                         leaf,
                         tags: tags.clone(),

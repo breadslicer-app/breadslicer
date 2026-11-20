@@ -9803,3 +9803,23 @@ msgid "Click where the row ends: {n} support."
 msgid_plural "Click where the row ends: {n} supports."
 msgstr[0] "Hacé clic donde termina la fila: {n} soporte."
 msgstr[1] "Hacé clic donde termina la fila: {n} soportes."
+
+msgctxt "Inspector"
+msgid "Area"
+msgstr "Área"
+
+msgctxt "Inspector"
+msgid "Paint the faces where supports go; Shift+click takes the connected faces of the same plane, Alt erases. Then place a support on every node of a grid over the paint."
+msgstr "Pintá las caras donde van soportes; Shift+clic toma las caras unidas del mismo plano, Alt borra. Después poné un soporte en cada punto de una grilla sobre lo pintado."
+
+msgctxt "Inspector"
+msgid "Place supports on the paint"
+msgstr "Poner soportes en lo pintado"
+
+msgctxt "Inspector"
+msgid "Clear paint"
+msgstr "Borrar la pintura"
+
+msgctxt "DfSupportDialog"
+msgid "Paint where the supports go first, or Shift+click a face to take its plane."
+msgstr "Primero pintá donde van los soportes, o hacé Shift+clic en una cara para tomar su plano."
