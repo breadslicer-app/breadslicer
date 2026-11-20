@@ -2132,6 +2132,11 @@ impl ViewportController {
         // The plates the files need beyond those there are, with the models
         // in one step of history (#557).
         let before = document.undo_len();
+        // Into a scene that holds nothing, the first file is what the scene
+        // stands for from now on, unless it is a project (#650).
+        let was_empty = document
+            .with_scene(|spatial| spatial.leaf_id_at_index(0).is_none())
+            .unwrap_or(false);
         if !models.files.is_empty() {
             for _ in document.plates().count()..models.plates {
                 self.add_plate();
@@ -2147,6 +2152,10 @@ impl ViewportController {
         document.join_last_steps(document.undo_len().saturating_sub(before));
         match added {
             Ok(added) if !added.is_empty() => {
+                if was_empty && let Some(file) = models.files.first() {
+                    document.stand_for_import(file.path.clone());
+                    self.mirror_title_to_ui();
+                }
                 self.say_where_imported(&added);
                 // Each file keeps its import notes, with the scene's.
                 self.session.loader().note_imported(&models);

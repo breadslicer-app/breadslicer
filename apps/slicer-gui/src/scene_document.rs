@@ -1119,6 +1119,16 @@ impl SceneDocument {
         self.mark_project_state_unsaved();
     }
 
+    /// Makes a scene that is not a project stand for `path`, a file imported
+    /// into it while it held no model (#650): the file it was opened from has
+    /// none left in it, and the title named it still. A project keeps its
+    /// file: Save writes there.
+    pub(crate) fn stand_for_import(&self, path: PathBuf) {
+        if self.is_loaded() && !self.is_project() {
+            *self.source_path.borrow_mut() = Some(path);
+        }
+    }
+
     /// Returns a copy of the scene's own print choices.
     pub(crate) fn print_selection(&self) -> PrintSelection {
         self.print_selection.borrow().clone()
