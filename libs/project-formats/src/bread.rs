@@ -236,8 +236,8 @@ pub(crate) fn parse_settings(
 /// phase as begun and the compress phase as done.
 ///
 /// `thumbnail` is a PNG of the scene as it is now (#203), or `None`: never
-/// the one a file was opened with. Each support leaf's current mesh goes in
-/// as its preview (#204).
+/// the one a file was opened with. Supports go in as their data alone: no
+/// support mesh, not even as a preview (#204).
 #[allow(clippy::too_many_arguments)]
 pub fn write_bread_project_with_progress<W: Write>(
     scene: &Scene,

@@ -207,18 +207,15 @@ fn supports_come_back_on_their_model_with_an_empty_leaf() {
     let file = to_file(&scene, None, &supports, &[], None).unwrap();
     assert_eq!(file.scene.meshes.len(), 2, "the model and the empty leaf");
     assert!(file.scene.mesh_resources.is_empty());
-    // What the leaf shows goes in as its preview (#204), in its own space.
-    let [preview] = file.support_previews.as_slice() else {
-        panic!("one preview");
-    };
-    assert_eq!(preview.leaf, 1);
-    assert_eq!(preview.mesh.triangles.len(), unit_cube_mesh().faces().len());
+    // Supports are their data alone: no mesh of them, not even a preview
+    // (#204).
+    assert!(file.support_previews.is_empty());
     assert!(file.thumbnail.is_none());
     // A thumbnail handed in is the file's (#203), and the file still writes.
     let png = vec![0x89, b'P', b'N', b'G', 1, 2, 3];
     let with = to_file(&scene, None, &supports, &[], Some(png.clone())).unwrap();
     assert_eq!(with.thumbnail, Some(png));
-    bread_format::write_file(&file, Vec::new()).expect("the previews are accepted");
+    bread_format::write_file(&with, Vec::new()).expect("the file writes");
 
     let back = round_trip(&scene, &supports, &[]);
     let [support] = back.supports.as_slice() else {
