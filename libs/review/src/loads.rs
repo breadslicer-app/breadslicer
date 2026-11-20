@@ -22,12 +22,37 @@
 //!
 //! Supports are not in the tables (#432): what they pull with reaches the
 //! raft through themselves, not the model.
+//!
+//! # Who takes the pull: bodies and tips (#241)
+//!
+//! On each layer, a *body* is the model printed so far and connected: the
+//! solid regions of this layer and of every layer below, joined through
+//! their links (a union-find walked from the plate up, so two parts that
+//! meet higher up are two bodies until then). A body that reaches down to
+//! the build plate, or into the raft, is held by it. Any other is held by
+//! the support tips that end in it, read as data ([`ReviewInput::tips`]): a
+//! tip belongs to the solid region its end lies in, on the layer of its end.
+//!
+//! The pull of a body's regions on a layer is shared among its tips as on a
+//! rigid body ([`sc_peel::TipGroup`]): the mean, plus the leverage of where
+//! the pull centres and of its sideways share at the film. What a tip holds
+//! is its contact section times the tips' strength
+//! ([`sc_peel::PeelModel::tip_capacity_n`]); its *utilisation* is the load
+//! over that. For every tip the review keeps its worst layer, and for every
+//! body held by tips alone (followed up to where it joins the rest) the layer
+//! where its most loaded tip is worst off.
 
-use sc_peel::PeelModel;
+use std::collections::{BTreeSet, HashMap};
 
+use sc_peel::{Band, PeelModel, TipLoadCase, TipSums};
+use sc_sl1cer::geom2d::Point2D;
+
+use crate::checks::islands::PLATE_LAYERS;
 use crate::checks::traps::DEFAULT_DRAIN_PX;
+use crate::input::ReviewInput;
 use crate::regions::{PlateRegions, Region};
 use crate::runner::ReviewContext;
+use crate::union_find::{RegionRef, UnionFind};
 
 /// Settings of the loads.
 #[derive(Clone, Debug, PartialEq)]
@@ -59,6 +84,81 @@ pub struct PlateLoads {
     /// The suction under each solid region, mm²: `region_cup_mm2[layer]`
     /// lists `(region, mm²)` for the regions that close a cavity.
     pub region_cup_mm2: Vec<Vec<(u32, f64)>>,
+    /// Every support tip that ends in the model, with its worst load (#241).
+    pub tips: Vec<TipLoad>,
+    /// For every body held by tips alone, the layer its most loaded tip is
+    /// worst off, by utilisation.
+    pub bodies: Vec<BodyPeak>,
+    /// Every body and layer with a suction cup: whether tips hold it and how
+    /// hard its worst tip is pulled then.
+    pub cups: Vec<CupLoad>,
+}
+
+/// A support tip and the hardest pull on it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TipLoad {
+    /// Where it ends in the model, plate millimetres.
+    pub at_mm: [f64; 3],
+    /// The radius of its contact, mm.
+    pub radius_mm: f64,
+    /// The layer it ends on.
+    pub layer: usize,
+    /// The hardest pull on it, N: the middle of the band, 0 while no peel
+    /// reaches it (a tip in a body the plate holds).
+    pub worst_n: f64,
+    /// The layer of that pull.
+    pub worst_layer: usize,
+    /// What it holds, N.
+    pub capacity_n: Band,
+}
+
+impl TipLoad {
+    /// Its worst load over what it holds, both the middle of their bands.
+    pub fn utilization(&self) -> f64 {
+        if self.capacity_n.mid > 0.0 {
+            self.worst_n / self.capacity_n.mid
+        } else {
+            0.0
+        }
+    }
+}
+
+/// The worst moment of a body held by tips alone.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BodyPeak {
+    /// The layer whose peel loads its tips worst.
+    pub layer: usize,
+    /// What the body pulls with on that layer, N.
+    pub force_n: Band,
+    /// Where that pull centres, plate millimetres.
+    pub at_mm: [f64; 2],
+    /// How many tips hold it then.
+    pub tips: u32,
+    /// The most loaded of them, by index in [`PlateLoads::tips`].
+    pub worst_tip: usize,
+    /// Its load then, N.
+    pub worst_n: Band,
+    /// Its load over what it holds, the middles of both bands.
+    pub utilization: f64,
+    /// The first pixels of the body's parts, `(layer, region)`: where tips
+    /// reach it from below.
+    pub starts: Vec<(usize, u32)>,
+}
+
+/// A suction cup on a layer, and the body around it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CupLoad {
+    /// The layer.
+    pub layer: usize,
+    /// The centre of the cup's section, plate millimetres.
+    pub at_mm: [f64; 2],
+    /// Its section, mm².
+    pub cup_mm2: f64,
+    /// Whether tips alone hold the body: else the plate does, or nothing.
+    pub on_tips: bool,
+    /// The worst utilisation of the body's tips on this layer, 0 when tips
+    /// do not hold it.
+    pub utilization: f64,
 }
 
 impl PlateLoads {
@@ -98,9 +198,13 @@ pub fn plate_loads(ctx: &ReviewContext<'_>, options: &LoadOptions) -> PlateLoads
         cup_mm2: vec![0.0; count],
         model_force_n: vec![0.0; count],
         region_cup_mm2: vec![Vec::new(); count],
+        ..PlateLoads::default()
     };
+    // The centre of each region's cups, in pixels, weighted by area.
+    let mut centres: Vec<Vec<(u32, [f64; 2])>> = vec![Vec::new(); count];
     for (layer, table) in regions.layers().iter().enumerate() {
         let mut cups: Vec<(u32, f64)> = Vec::new();
+        let mut moments: Vec<[f64; 2]> = Vec::new();
         for (air, region) in table.air.iter().enumerate() {
             if drained[layer][air] || region.area_px < options.drain_px {
                 continue;
@@ -109,11 +213,27 @@ pub fn plate_loads(ctx: &ReviewContext<'_>, options: &LoadOptions) -> PlateLoads
                 continue;
             };
             let mm2 = region.area_px as f64 * pixel_mm2;
-            match cups.iter_mut().find(|(index, _)| *index == around) {
-                Some(cup) => cup.1 += mm2,
-                None => cups.push((around, mm2)),
+            let moment = region.centroid_px.map(|v| v * region.area_px as f64);
+            match cups.iter().position(|(index, _)| *index == around) {
+                Some(at) => {
+                    cups[at].1 += mm2;
+                    moments[at][0] += moment[0];
+                    moments[at][1] += moment[1];
+                }
+                None => {
+                    cups.push((around, mm2));
+                    moments.push(moment);
+                }
             }
         }
+        centres[layer] = cups
+            .iter()
+            .zip(&moments)
+            .map(|((index, mm2), moment)| {
+                let px = mm2 / pixel_mm2;
+                (*index, [moment[0] / px, moment[1] / px])
+            })
+            .collect();
         cups.sort_unstable_by_key(|(index, _)| *index);
         loads.cup_mm2[layer] = cups.iter().map(|(_, mm2)| mm2).sum();
         loads.model_force_n[layer] = table
@@ -133,7 +253,299 @@ pub fn plate_loads(ctx: &ReviewContext<'_>, options: &LoadOptions) -> PlateLoads
             .sum();
         loads.region_cup_mm2[layer] = cups;
     }
+    share(ctx, options, &mut loads, &centres);
     loads
+}
+
+/// Where a tip ends and how wide its contact is.
+#[derive(Clone, Copy, Debug)]
+struct Contact {
+    at: [f64; 3],
+    radius: f64,
+}
+
+/// The tips of `input`, one per tip: a tip with a neck is two cones, the
+/// second starting where the first ends, and only the first ends in the
+/// model.
+fn contacts(input: &ReviewInput<'_>) -> Vec<Contact> {
+    let key = |p: [f64; 3]| p.map(|v| (v * 1e5).round() as i64);
+    let joints: BTreeSet<[i64; 3]> = input.tips().iter().map(|cone| key(cone.base_mm)).collect();
+    input
+        .tips()
+        .iter()
+        .filter(|cone| !joints.contains(&key(cone.tip_mm)))
+        .filter(|cone| cone.tip_mm.iter().all(|v| v.is_finite()))
+        .map(|cone| Contact {
+            at: cone.tip_mm,
+            radius: cone.tip_radius_mm.max(0.0),
+        })
+        .collect()
+}
+
+/// The solid region tip `contact` ends in: on the layer of its end, or on
+/// the one above or below when the end falls on a layer's edge. Within the
+/// tip's reach of a region's box, the nearest box, then the nearest centre.
+fn region_of(
+    input: &ReviewInput<'_>,
+    regions: &PlateRegions,
+    contact: &Contact,
+) -> Option<RegionRef> {
+    let z = contact.at[2];
+    let layer = input.layers().partition_point(|span| span.top_mm <= z);
+    if layer >= input.layer_count() {
+        return None;
+    }
+    let (x, y) = input
+        .pixel_map()
+        .mm_to_pixel(Point2D::new(contact.at[0], contact.at[1]));
+    let [pw, ph] = input.pixel_size_mm();
+    let reach = contact.radius / pw.min(ph) + 1.0;
+    let mut tried = vec![layer, layer + 1];
+    if let Some(below) = layer.checked_sub(1) {
+        tried.push(below);
+    }
+    tried
+        .into_iter()
+        .filter(|&l| l < input.layer_count())
+        .find_map(|l| {
+            let mut best: Option<(f64, f64, u32)> = None;
+            for (index, region) in regions.layer(l).solid.iter().enumerate() {
+                let b = region.bbox;
+                let dx = (f64::from(b.x0) - x).max(x - f64::from(b.x1)).max(0.0);
+                let dy = (f64::from(b.y0) - y).max(y - f64::from(b.y1)).max(0.0);
+                let gap = dx.hypot(dy);
+                if gap > reach {
+                    continue;
+                }
+                let centre = (region.centroid_px[0] - x).hypot(region.centroid_px[1] - y);
+                if best.is_none_or(|(g, c, _)| (gap, centre) < (g, c)) {
+                    best = Some((gap, centre, index as u32));
+                }
+            }
+            best.map(|(_, _, index)| RegionRef { layer: l, index })
+        })
+}
+
+/// What a body knows of itself, kept at its root.
+#[derive(Clone, Debug, Default)]
+struct Body {
+    /// The plate or the raft holds it.
+    anchored: bool,
+    sums: TipSums,
+    tips: Vec<usize>,
+    starts: Vec<(usize, u32)>,
+}
+
+impl Body {
+    fn absorb(&mut self, other: Self) {
+        self.anchored |= other.anchored;
+        self.sums.merge(&other.sums);
+        self.tips.extend(other.tips);
+        self.starts.extend(other.starts);
+    }
+}
+
+/// What a body's regions pull with on one layer.
+#[derive(Clone, Copy, Debug)]
+struct LayerPull {
+    root: usize,
+    /// A region of the body on this layer, for the body it ends up in.
+    region: u32,
+    force: Band,
+    /// The pull's moments, in pixels.
+    moment: [f64; 2],
+    cup_mm2: f64,
+    cup_moment: [f64; 2],
+}
+
+/// The walk of #241: bodies from the plate up, each layer's pull shared
+/// among the tips of each body.
+fn share(
+    ctx: &ReviewContext<'_>,
+    options: &LoadOptions,
+    loads: &mut PlateLoads,
+    centres: &[Vec<(u32, [f64; 2])>],
+) {
+    let (input, regions) = (ctx.input, ctx.regions);
+    let model = &options.model;
+    let pixel_mm2 = input.pixel_area_mm2();
+    let layers = regions.layers();
+    let mut offsets = Vec::with_capacity(layers.len() + 1);
+    let mut total = 0;
+    for table in layers {
+        offsets.push(total);
+        total += table.solid.len();
+    }
+    offsets.push(total);
+
+    // Tips, each on its region.
+    let mut tips_at: Vec<Vec<usize>> = vec![Vec::new(); total];
+    for contact in contacts(input) {
+        let Some(region) = region_of(input, regions, &contact) else {
+            continue;
+        };
+        tips_at[offsets[region.layer] + region.index as usize].push(loads.tips.len());
+        loads.tips.push(TipLoad {
+            at_mm: contact.at,
+            radius_mm: contact.radius,
+            layer: region.layer,
+            worst_n: 0.0,
+            worst_layer: region.layer,
+            capacity_n: model.tip_capacity_n(contact.radius),
+        });
+    }
+    if loads.tips.is_empty() {
+        return;
+    }
+
+    let held_below = PLATE_LAYERS.max(input.raft_layers());
+    let ends = regions.group_solid(|_, _| true);
+    let mut peaks: Vec<Option<BodyPeak>> = vec![None; ends.len()];
+    let mut sets = UnionFind::new(total);
+    let mut bodies: Vec<Body> = vec![Body::default(); total];
+    for (layer, table) in layers.iter().enumerate() {
+        for index in 0..table.solid.len() {
+            let id = offsets[layer] + index;
+            let body = &mut bodies[id];
+            body.anchored = layer < held_below;
+            if !body.anchored && table.start_of(index as u32).is_some() {
+                body.starts.push((layer, index as u32));
+            }
+            for &tip in &tips_at[id] {
+                let at = loads.tips[tip].at_mm;
+                body.sums.add([at[0], at[1]], at[2]);
+                body.tips.push(tip);
+            }
+        }
+        for link in regions.solid_links(layer) {
+            let a = offsets[layer - 1] + link.lower as usize;
+            let b = offsets[layer] + link.upper as usize;
+            let (ra, rb) = (sets.find(a), sets.find(b));
+            if ra == rb {
+                continue;
+            }
+            sets.union(ra, rb);
+            let root = sets.find(ra);
+            let other = if root == ra { rb } else { ra };
+            let taken = std::mem::take(&mut bodies[other]);
+            bodies[root].absorb(taken);
+        }
+
+        // Each body's pull on this layer.
+        let mut pulls: Vec<LayerPull> = Vec::new();
+        let mut pull_of: HashMap<usize, usize> = HashMap::new();
+        for (index, region) in table.solid.iter().enumerate() {
+            let root = sets.find(offsets[layer] + index);
+            let cup = loads.cup_of(layer, index as u32);
+            let force = model.region_force_n(region.area_px as f64 * pixel_mm2, None, cup);
+            let cup_centre = centres[layer]
+                .iter()
+                .find(|(around, _)| *around as usize == index)
+                .map_or([0.0; 2], |(_, centre)| *centre);
+            let pull = LayerPull {
+                root,
+                region: index as u32,
+                force,
+                moment: region.centroid_px.map(|v| v * force.mid),
+                cup_mm2: cup,
+                cup_moment: cup_centre.map(|v| v * cup),
+            };
+            match pull_of.get(&root).map(|&at| &mut pulls[at]) {
+                Some(known) => {
+                    known.force = known.force.plus(force);
+                    for axis in 0..2 {
+                        known.moment[axis] += pull.moment[axis];
+                        known.cup_moment[axis] += pull.cup_moment[axis];
+                    }
+                    known.cup_mm2 += cup;
+                }
+                None => {
+                    pull_of.insert(root, pulls.len());
+                    pulls.push(pull);
+                }
+            }
+        }
+
+        for pull in pulls {
+            let body = &bodies[pull.root];
+            let on_tips = !body.anchored && body.sums.count() > 0;
+            let at_px = pull
+                .moment
+                .map(|v| v / pull.force.mid.max(f64::MIN_POSITIVE));
+            let at_mm = input.pixel_to_plate(at_px);
+            let mut worst: Option<(usize, f64)> = None;
+            if on_tips && let Some(group) = body.sums.group() {
+                let case = TipLoadCase {
+                    force_n: pull.force.mid,
+                    at_mm,
+                    z_mm: input.layers()[layer].top_mm,
+                    lateral_share: model.lateral_share,
+                };
+                for &tip in &body.tips {
+                    let load = &mut loads.tips[tip];
+                    let n = group.load_n([load.at_mm[0], load.at_mm[1]], &case);
+                    if n > load.worst_n {
+                        load.worst_n = n;
+                        load.worst_layer = layer;
+                    }
+                    let used = if load.capacity_n.mid > 0.0 {
+                        n / load.capacity_n.mid
+                    } else {
+                        0.0
+                    };
+                    if worst.is_none_or(|(_, u)| used > u) {
+                        worst = Some((tip, used));
+                    }
+                }
+            }
+            if pull.cup_mm2 > 0.0 {
+                let cup_px = pull.cup_moment.map(|v| v / pull.cup_mm2);
+                loads.cups.push(CupLoad {
+                    layer,
+                    at_mm: input.pixel_to_plate(cup_px),
+                    cup_mm2: pull.cup_mm2,
+                    on_tips,
+                    utilization: worst.map_or(0.0, |(_, u)| u),
+                });
+            }
+            let Some((tip, utilization)) = worst else {
+                continue;
+            };
+            let end = ends.group_of(RegionRef {
+                layer,
+                index: pull.region,
+            });
+            if peaks[end]
+                .as_ref()
+                .is_some_and(|peak| peak.utilization >= utilization)
+            {
+                continue;
+            }
+            let worst_mid = utilization * loads.tips[tip].capacity_n.mid;
+            let ratio = |v: f64| {
+                if pull.force.mid > 0.0 {
+                    v / pull.force.mid
+                } else {
+                    0.0
+                }
+            };
+            peaks[end] = Some(BodyPeak {
+                layer,
+                force_n: pull.force,
+                at_mm,
+                tips: body.sums.count(),
+                worst_tip: tip,
+                worst_n: Band::new(
+                    worst_mid * ratio(pull.force.low),
+                    worst_mid,
+                    worst_mid * ratio(pull.force.high),
+                ),
+                utilization,
+                starts: body.starts.clone(),
+            });
+        }
+    }
+    loads.bodies = peaks.into_iter().flatten().collect();
 }
 
 /// Which air regions of every layer drain: open air, or air linked through

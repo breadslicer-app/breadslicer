@@ -122,3 +122,130 @@ fn moving_the_plate_changes_nothing() {
     };
     assert_eq!(loads_of(&at(0.0, 0.0)), loads_of(&at(37.0, 21.0)));
 }
+
+// Bodies and tips (#241).
+
+/// The loads without a sideways share, so a share is the bolt group's.
+fn straight_loads_of(fixture: &Fixture) -> PlateLoads {
+    let input = fixture.input();
+    let regions = PlateRegions::compute(&input, &SweepOptions::default());
+    let options = LoadOptions {
+        model: PeelModel {
+            lateral_share: 0.0,
+            ..PeelModel::default()
+        },
+        ..LoadOptions::default()
+    };
+    plate_loads(&ReviewContext::new(&input, &regions), &options)
+}
+
+/// An 8 x 8 mm slab from layer 5 up: 64 mm².
+fn slab() -> FixtureBuilder {
+    FixtureBuilder::new(10).model(5..10, Shape::rect(40.0, 20.0, 120.0, 100.0))
+}
+
+#[test]
+fn four_tips_share_a_centred_pull() {
+    let fixture = slab()
+        .tip(50.0, 30.0, 5, 2.0)
+        .tip(110.0, 30.0, 5, 2.0)
+        .tip(50.0, 90.0, 5, 2.0)
+        .tip(110.0, 90.0, 5, 2.0)
+        .build();
+    let loads = straight_loads_of(&fixture);
+    assert_eq!(loads.tips.len(), 4);
+    for tip in &loads.tips {
+        assert_eq!(tip.layer, 5);
+        assert!((tip.worst_n - pull(64.0) / 4.0).abs() < 1e-6, "{tip:?}");
+    }
+    assert_eq!(loads.bodies.len(), 1);
+    assert_eq!(loads.bodies[0].tips, 4);
+    assert_eq!(loads.bodies[0].starts, vec![(5, 0)]);
+}
+
+#[test]
+fn tips_off_centre_follow_the_lever() {
+    // Two tips 2 mm apart, the pull centred 2 mm right of their middle.
+    let fixture = slab()
+        .tip(50.0, 60.0, 5, 2.0)
+        .tip(70.0, 60.0, 5, 2.0)
+        .build();
+    let loads = straight_loads_of(&fixture);
+    let force = pull(64.0);
+    let near_tip = loads.tips.iter().map(|tip| tip.worst_n).fold(0.0, f64::max);
+    assert!((near_tip - 1.5 * force).abs() < 1e-6, "{near_tip}");
+    let peak = &loads.bodies[0];
+    assert!((peak.worst_n.mid - 1.5 * force).abs() < 1e-6);
+    assert!(peak.utilization > 1.0);
+}
+
+#[test]
+fn the_plate_takes_the_pull_of_what_stands_on_it() {
+    let fixture = FixtureBuilder::new(10)
+        .model(0..10, Shape::rect(40.0, 20.0, 120.0, 100.0))
+        .tip(80.0, 60.0, 5, 2.0)
+        .build();
+    let loads = loads_of(&fixture);
+    assert_eq!(loads.tips.len(), 1);
+    assert_eq!(loads.tips[0].worst_n, 0.0);
+    assert!(loads.bodies.is_empty());
+}
+
+#[test]
+fn a_part_that_joins_the_plate_unloads_its_tips() {
+    // The slab hangs from one tip until a bridge joins it to a column on
+    // the plate, and then grows: none of that reaches the tip.
+    let fixture = FixtureBuilder::new(14)
+        .model(0..14, Shape::rect(150.0, 40.0, 170.0, 60.0))
+        .model(5..8, Shape::rect(40.0, 20.0, 120.0, 100.0))
+        .model(8..14, Shape::rect(40.0, 20.0, 160.0, 100.0))
+        .tip(80.0, 60.0, 5, 2.0)
+        .build();
+    let loads = straight_loads_of(&fixture);
+    assert_eq!(loads.bodies.len(), 1);
+    assert!(loads.bodies[0].layer < 8, "{:?}", loads.bodies[0]);
+    assert!(loads.tips[0].worst_layer < 8);
+    assert!((loads.tips[0].worst_n - pull(64.0)).abs() < 1e-6);
+}
+
+#[test]
+fn a_sideways_share_loads_the_tips_more() {
+    let build = || {
+        slab()
+            .tip(50.0, 30.0, 5, 2.0)
+            .tip(110.0, 30.0, 5, 2.0)
+            .tip(50.0, 90.0, 5, 2.0)
+            .tip(110.0, 90.0, 5, 2.0)
+            .build()
+    };
+    let straight = straight_loads_of(&build());
+    let sideways = loads_of(&build());
+    for (a, b) in straight.tips.iter().zip(&sideways.tips) {
+        assert!(b.worst_n > a.worst_n);
+        // Taller is worse: the worst layer is the top one.
+        assert_eq!(b.worst_layer, 9);
+    }
+}
+
+#[test]
+fn moving_the_plate_moves_the_tips_alone() {
+    let at = |dx: f64, dy: f64| {
+        slab_at(dx, dy)
+            .tip(50.0 + dx, 60.0 + dy, 5, 2.0)
+            .tip(70.0 + dx, 70.0 + dy, 5, 2.0)
+            .tip(100.0 + dx, 40.0 + dy, 5, 2.0)
+            .build()
+    };
+    let (here, there) = (loads_of(&at(0.0, 0.0)), loads_of(&at(30.0, 10.0)));
+    for (a, b) in here.tips.iter().zip(&there.tips) {
+        assert!((a.worst_n - b.worst_n).abs() < 1e-9);
+        assert_eq!(a.worst_layer, b.worst_layer);
+    }
+}
+
+fn slab_at(dx: f64, dy: f64) -> FixtureBuilder {
+    FixtureBuilder::new(10).model(
+        5..10,
+        Shape::rect(40.0 + dx, 20.0 + dy, 120.0 + dx, 100.0 + dy),
+    )
+}
