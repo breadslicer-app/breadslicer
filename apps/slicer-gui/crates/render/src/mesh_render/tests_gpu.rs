@@ -2954,3 +2954,50 @@ fn upload_after_an_edit_timings() {
     scene.remove_leaf(leaves[2]).unwrap();
     time("one model deleted", &mut renderer, &scene);
 }
+
+/// The `.bread` thumbnail (#203) shows the model, not the background alone.
+#[test]
+fn the_bread_thumbnail_shows_the_model() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(
+        device.clone(),
+        DeviceToken::next(),
+        queue.clone(),
+        DeviceLoss::default(),
+    )
+    .expect("Renderer::new under the test device");
+    let graph =
+        triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 50.0]));
+    renderer.upload_scene(&graph).expect("upload the triangle");
+    // As in the window: the viewport has drawn its own frames first, at
+    // another size, with its focus and plates set.
+    renderer.set_plates(crate::plates::Plates::default());
+    renderer.set_focus(&[first_leaf(&graph)]);
+    renderer.set_dim_all(true);
+    let camera = camera_framing_the_scene(&renderer);
+    for _ in 0..2 {
+        renderer
+            .render(
+                Some(SceneRender {
+                    graph: &graph,
+                    selection: &[first_leaf(&graph)],
+                    gizmo: None,
+                    clip_z: None,
+                }),
+                TEST_BV,
+                &camera,
+                800,
+                600,
+            )
+            .expect("render is not refused");
+    }
+    let rgba = crate::print_file_preview::render_thumbnail(&mut renderer, &graph, TEST_BV, 256)
+        .expect("a thumbnail is drawn");
+    assert!(
+        count_drawn_pixels(&rgba) > 0,
+        "the model should be in its thumbnail",
+    );
+}

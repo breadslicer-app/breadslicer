@@ -1311,7 +1311,23 @@ impl ViewportController {
         let build_volume = self.build_volume();
         let mut cell = self.render.renderer_cell().borrow_mut();
         let renderer = cell.as_mut()?;
-        let rgba = self
+        // The scene reaches the GPU when the window paints: a save before that
+        // paint would draw a scene the renderer does not hold, which shows the
+        // background alone.
+        if self.render.frame().upload_owed() {
+            match self
+                .session
+                .document()
+                .with_scene(|spatial| renderer.upload_scene(spatial.graph()))
+            {
+                Some(Ok(())) => {
+                    self.render.update_frame(FrameState::after_upload_success);
+                    self.session.loader().note_upload_success();
+                }
+                _ => return None,
+            }
+        }
+        let mut rgba = self
             .session
             .document()
             .with_scene(|spatial| {
@@ -1323,6 +1339,10 @@ impl ViewportController {
                 )
             })
             .flatten()?;
+        if !clear_thumbnail_background(&mut rgba) {
+            crate::breadcrumbs::note("save: the thumbnail came out blank, left out");
+            return None;
+        }
         thumbnail_png_of(&rgba, SIDE)
     }
 
@@ -4941,7 +4961,7 @@ impl ViewportController {
             .iter()
             .map(|l| l.node_id())
             .collect();
-        let text = if crate::mirror::mirror(&document, &models, axis) {
+        let text = if crate::mirror::mirror(document, &models, axis) {
             match axis {
                 crate::mirror::MirrorAxis::X => ctr!("Workspace", "Mirrored left to right."),
                 crate::mirror::MirrorAxis::Y => ctr!("Workspace", "Mirrored front to back."),
@@ -5290,7 +5310,6 @@ impl ViewportController {
                 "{} hidden model(s) left out of the slice. Show them in the scene panel to print them.",
                 left_out
             )
-            .into()
         });
         for row in rows.iter_mut().filter(|r| !r.plate) {
             let Some(&(id, model)) = usize::try_from(row.index).ok().and_then(|i| leaves.get(i))
@@ -6345,6 +6364,25 @@ impl ViewportController {
         }
         self.on_paint();
     }
+}
+
+/// Makes the background of a thumbnail transparent, so it sits on Explorer's
+/// light and dark themes alike (#203): the background is the colour of the
+/// picture's corner, which framing leaves empty. `false` when the picture is
+/// that colour alone, nothing drawn on it.
+fn clear_thumbnail_background(rgba: &mut [u8]) -> bool {
+    let Some(&[r, g, b, _]) = rgba.as_chunks::<4>().0.first() else {
+        return false;
+    };
+    let mut drawn = false;
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        if pixel[..3] == [r, g, b] {
+            pixel[3] = 0;
+        } else {
+            drawn = true;
+        }
+    }
+    drawn
 }
 
 /// `rgba`, a `side` x `side` picture, as a PNG (#203).
@@ -8139,7 +8177,7 @@ pub(crate) fn scene_rows(
         rows.push(crate::SceneRow {
             plate: true,
             index: -1,
-            text: ctr!("Inspector", "Off the plates").into(),
+            text: ctr!("Inspector", "Off the plates"),
             active: false,
             ..Default::default()
         });
@@ -8184,5 +8222,23 @@ mod scene_rows_tests {
         // With every object on a plate, no such heading.
         let (rows, _) = scene_rows(&names, 2, 0, &objects, &[Some(0), Some(0), Some(1)]);
         assert!(rows.iter().all(|r| r.index >= 0));
+    }
+}
+
+#[cfg(test)]
+mod thumbnail_background_tests {
+    use super::clear_thumbnail_background;
+
+    #[test]
+    fn the_background_goes_transparent_and_the_model_stays() {
+        let mut rgba = [17, 19, 21, 255, 200, 190, 180, 255, 17, 19, 21, 255].to_vec();
+        assert!(clear_thumbnail_background(&mut rgba));
+        assert_eq!(rgba, [17, 19, 21, 0, 200, 190, 180, 255, 17, 19, 21, 0]);
+    }
+
+    #[test]
+    fn a_picture_of_the_background_alone_is_blank() {
+        let mut rgba = [17, 19, 21, 255].repeat(16);
+        assert!(!clear_thumbnail_background(&mut rgba));
     }
 }
