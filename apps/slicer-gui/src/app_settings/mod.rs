@@ -541,6 +541,10 @@ pub(crate) struct AppSettings {
     /// (the default).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     support_lines_under_plate: bool,
+    /// How the supports are drawn at any camera height (#137): 0 whole, 1
+    /// their contacts and lines, 2 translucent. Omitted in TOML while whole.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    support_view: u8,
     /// The app messages the user silenced with "Don't show again", by key
     /// (see `error_dialog::MessageKey`). Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -603,6 +607,7 @@ impl Default for AppSettings {
             controls_layout: crate::controls_layout::ControlsLayout::default(),
             hide_rafts_under_plate: default_hide_rafts_under_plate(),
             support_lines_under_plate: false,
+            support_view: 0,
             silenced_messages: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
@@ -805,6 +810,14 @@ impl AppSettings {
 
     pub(crate) fn set_support_lines_under_plate(&mut self, on: bool) {
         self.support_lines_under_plate = on;
+    }
+
+    pub(crate) fn support_view(&self) -> u8 {
+        self.support_view.min(2)
+    }
+
+    pub(crate) fn set_support_view(&mut self, view: u8) {
+        self.support_view = view.min(2);
     }
 
     pub(crate) fn silenced_messages(&self) -> BTreeSet<String> {
@@ -1310,4 +1323,8 @@ mod language_setting_tests {
         let system = settings_with(LanguageSetting::System);
         assert_eq!(system.unbundled_language(), None);
     }
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
 }

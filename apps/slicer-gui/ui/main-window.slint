@@ -14,7 +14,7 @@ import { CaptionButton, CaptionKind, DisclosureChevron, Icon, LayerRuler, Suppor
 import { CutCard, HollowInspector, OrientCard, OrientOption, OverhangCard, ReviewCard, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { ScenePanel, SceneRow } from "./workspace/scene-panel.slint";
 import { PrinterTile, PrinterWall } from "./workspace/printer-wall.slint";
-import { Card, Note, ScCheckBox } from "./kit/controls.slint";
+import { Card, Note, ScCheckBox, Segmented } from "./kit/controls.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { PresetCard, ShapeCallout, ShapeSize, ShareItem, SharePicker, ZoneRow } from "./workspace/support-shape.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
@@ -349,6 +349,10 @@ export component MainWindow inherits Window {
     in property <bool> support-lift-on-plate;
     in property <string> support-lift-on-plate-label;
     callback support-lift-on-plate-toggled(bool);
+    // How the supports are drawn at any camera height (#137): 0 whole, 1
+    // their contacts and lines, 2 translucent.
+    in property <int> support-view;
+    callback support-view-picked(int);
     // The Supports tab's FROM BELOW card: "Hide the raft" (#492) and
     // "Supports as dotted lines" (#493).
     in property <bool> support-hide-rafts-under-plate: true;
@@ -2520,6 +2524,28 @@ export component MainWindow inherits Window {
                                         limit: root.overhang-map-limit;
                                         toggled(on) => {
                                             root.overhang-map-toggled(on);
+                                        }
+                                    }
+                                    Card {
+                                        title: @tr("Inspector" => "SUPPORTS");
+
+                                        Segmented {
+                                            options: [
+                                                @tr("Inspector" => "Whole"),
+                                                @tr("Inspector" => "Contacts"),
+                                                @tr("Inspector" => "See-through")
+                                            ];
+                                            current: root.support-view;
+                                            picked(i) => {
+                                                root.support-view-picked(i);
+                                            }
+                                        }
+                                        Note {
+                                            text: root.support-view == 1
+                                                ? @tr("Inspector" => "A dot where each support touches the model, the rest as lines.")
+                                                : root.support-view == 2
+                                                ? @tr("Inspector" => "The supports see-through, to look at the model behind them.")
+                                                : @tr("Inspector" => "The supports drawn as they print.");
                                         }
                                     }
                                     Card {

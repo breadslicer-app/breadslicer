@@ -9642,3 +9642,38 @@ msgid "{n} picked support holds others up and stays as it is: pick the ones at t
 msgid_plural "{n} picked supports hold others up and stay as they are: pick the ones at the ends."
 msgstr[0] "{n} soporte elegido sostiene a otros y queda como está: elegí los de las puntas."
 msgstr[1] "{n} soportes elegidos sostienen a otros y quedan como están: elegí los de las puntas."
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "SUPPORTS"
+msgstr "SOPORTES"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Whole"
+msgstr "Completos"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Contacts"
+msgstr "Contactos"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "See-through"
+msgstr "Translúcidos"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "A dot where each support touches the model, the rest as lines."
+msgstr "Un punto donde cada soporte toca el modelo, el resto como líneas."
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "The supports see-through, to look at the model behind them."
+msgstr "Los soportes translúcidos, para ver el modelo detrás."
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "The supports drawn as they print."
+msgstr "Los soportes dibujados como se imprimen."

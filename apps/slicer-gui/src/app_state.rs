@@ -382,6 +382,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_controls_layout(snap.controls_layout);
     settings.set_hide_rafts_under_plate(snap.hide_rafts_under_plate);
     settings.set_support_lines_under_plate(snap.support_lines_under_plate);
+    settings.set_support_view(snap.support_view);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
@@ -552,6 +553,7 @@ impl AppState {
             controls_layout: settings.controls_layout(),
             hide_rafts_under_plate: settings.hide_rafts_under_plate(),
             support_lines_under_plate: settings.support_lines_under_plate(),
+            support_view: settings.support_view(),
             // Never stored: the log runs until the app closes and every launch
             // starts with it off (#74).
             diagnostic_log: false,
@@ -2789,6 +2791,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::Controls,
             PreferencesChange::HideRaftsUnderPlate,
             PreferencesChange::SupportLinesUnderPlate,
+            PreferencesChange::SupportView,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,

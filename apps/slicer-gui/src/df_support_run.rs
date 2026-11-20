@@ -205,6 +205,7 @@ pub(crate) struct DfSupportRun {
     /// Keeps the Supports tab's support-lines box (#493) following the
     /// shared setting.
     lines_under_plate_pref: RefCell<Option<Subscription>>,
+    support_view_pref: RefCell<Option<Subscription>>,
     /// For the run in flight that regenerates supports (#153): the scene
     /// revision that left its models waiting, and the models.
     regenerating: RefCell<Option<(SceneRevision, SupportsWanted)>>,
@@ -1728,6 +1729,7 @@ impl DfSupportRun {
             overhang_pref: RefCell::new(None),
             raft_under_plate_pref: RefCell::new(None),
             lines_under_plate_pref: RefCell::new(None),
+            support_view_pref: RefCell::new(None),
             regenerating: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
@@ -2165,7 +2167,37 @@ impl DfSupportRun {
             *run.lines_under_plate_pref.borrow_mut() = Some(subscription);
         }
         run.support_lines_under_plate(run.bus.snapshot().support_lines_under_plate);
+        {
+            let bus = run.bus.clone();
+            ui.on_support_view_picked(move |view| {
+                bus.update(move |snap| {
+                    snap.support_view = u8::try_from(view.clamp(0, 2)).unwrap_or(0);
+                    PreferencesChange::SupportView
+                });
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            let subscription = run.bus.subscribe(move |snap, change| {
+                if matches!(change, PreferencesChange::SupportView)
+                    && let Some(run) = weak.upgrade()
+                {
+                    run.support_view(snap.support_view);
+                }
+            });
+            *run.support_view_pref.borrow_mut() = Some(subscription);
+        }
+        run.support_view(run.bus.snapshot().support_view);
         run
+    }
+
+    /// How the supports are drawn at any camera height in this window
+    /// (#137).
+    fn support_view(&self, view: u8) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_view(i32::from(view));
+        }
+        self.ctrl.set_support_view(view);
     }
 
     /// Whether the supports are drawn as lines from under the plate in this
@@ -13295,6 +13327,44 @@ mod hand_edit_tests {
             let (off, none) = ctrl.under_plate_supports_for_test();
             assert_eq!(off, f32::MAX);
             assert!(none.is_none());
+        });
+    }
+
+    /// #137: the view mode in Scene settings draws the supports as their
+    /// contacts and lines, or see-through, at any camera height; the raft
+    /// stays. Whole draws them as they print.
+    #[test]
+    fn the_support_view_mode_holds_from_above_the_plate() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let place = AffineTransform3D::from_translation([25.0, 22.0, 12.0]);
+            let mut camera = camera_at([35.0, 27.0, 12.0], 0.4, -1.2, 60.0);
+            camera.pitch = 0.6;
+            let (ctrl, _document, run) =
+                wired_slab(&window, Transform3D::Affine(place), camera);
+            let top = in_force_session(&run).unwrap().raft_top_mm() as f32;
+
+            assert_eq!(window.get_support_view(), 0, "whole by default");
+            assert!(ctrl.under_plate_supports_for_test().1.is_none());
+
+            window.invoke_support_view_picked(1);
+            assert_eq!(window.get_support_view(), 1);
+            let (shown_up_to, lines) = ctrl.under_plate_supports_for_test();
+            assert!(lines.is_some(), "contacts draw the lines from above too");
+            let kept = if top > 0.0 {
+                crate::under_plate::hidden_below_mm(top)
+            } else {
+                -1.0
+            };
+            assert_eq!(shown_up_to, kept, "the raft stays");
+
+            window.invoke_support_view_picked(2);
+            let (see_through, none) = ctrl.under_plate_supports_for_test();
+            assert_eq!(see_through, kept);
+            assert!(none.is_none(), "see-through draws no lines");
+
+            window.invoke_support_view_picked(0);
+            assert_eq!(ctrl.under_plate_supports_for_test().0, f32::MAX);
         });
     }
 

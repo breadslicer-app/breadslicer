@@ -176,6 +176,9 @@ pub(crate) struct ViewportController {
     /// change.
     support_lines_on: Cell<bool>,
     support_lines: crate::support_lines::LinesCache,
+    /// How the supports are drawn at any camera height (#137): 0 whole, 1
+    /// their contacts and lines, 2 translucent.
+    support_view: Cell<u8>,
     overhang_angle_deg: Cell<f32>,
     /// The support tips the map leaves what they hold plain by (#484), and
     /// the reach of the Supports tab's options, for a set that records none.
@@ -274,6 +277,10 @@ enum TabTool {
     Drain,
 }
 
+/// How far the supports fade in the translucent view mode (#137): what of
+/// the model behind them shows through.
+const SUPPORT_TRANSLUCENT_FADE: f32 = 0.7;
+
 impl ViewportController {
     pub(crate) fn new(
         ui: &MainWindow,
@@ -331,6 +338,7 @@ impl ViewportController {
             hide_rafts_under_plate: Cell::new(true),
             support_lines_on: Cell::new(false),
             support_lines: Default::default(),
+            support_view: Cell::new(0),
             overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
             overhang_tips: Default::default(),
             tab_tip_reach_mm: Cell::new(default_tip_reach_mm()),
@@ -408,6 +416,7 @@ impl ViewportController {
             hide_rafts_under_plate: Cell::new(true),
             support_lines_on: Cell::new(false),
             support_lines: Default::default(),
+            support_view: Cell::new(0),
             overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
             overhang_tips: Default::default(),
             tab_tip_reach_mm: Cell::new(default_tip_reach_mm()),
@@ -1539,6 +1548,23 @@ impl ViewportController {
         }
     }
 
+    /// How the supports are drawn at any camera height (#137): 0 whole, 1
+    /// their contacts and lines, 2 translucent.
+    pub(crate) fn set_support_view(&self, view: u8) {
+        if self.support_view.replace(view.min(2)) != view.min(2) {
+            self.mark_dirty();
+        }
+    }
+
+    /// How far the supports fade for the view mode (#137).
+    fn support_view_fade(&self) -> f32 {
+        match self.support_view.get() {
+            1 => 1.0,
+            2 => SUPPORT_TRANSLUCENT_FADE,
+            _ => 0.0,
+        }
+    }
+
     /// Whether `camera` sees past the rafts: under the plate, with the
     /// Supports tab's box on (#481, #492).
     fn sees_past_rafts(&self, camera: &crate::camera::OrbitCamera) -> bool {
@@ -1611,17 +1637,25 @@ impl ViewportController {
     /// and the lines drawn in their place. Kept as they are with the box off
     /// or the camera above the plate.
     fn under_plate_supports(&self) -> (f32, Option<Arc<crate::mesh_render::SupportLines>>) {
-        if !self.support_lines_on.get() || !self.under_plate() {
+        let view = self.support_view.get();
+        let under = self.under_plate();
+        let lines_under = self.support_lines_on.get() && under;
+        if view == 0 && !lines_under {
             return (f32::MAX, None);
         }
+        // The raft stays as the supports above it go, unless the view from
+        // under the plate hides it too.
         let raft_top = self.raft_top();
-        let shown_up_to = if self.hide_rafts_under_plate.get() || raft_top <= 0.0 {
+        let shown_up_to = if raft_top <= 0.0 || (under && self.hide_rafts_under_plate.get()) {
             -1.0
         } else {
             hidden_below_mm(raft_top)
         };
-        let lines = self.support_lines.lines(self.session.document());
-        (shown_up_to, Some(lines))
+        // Contacts draw the lines at any height (#137); translucent supports
+        // only from under the plate, with the box on.
+        let lines =
+            (view == 1 || lines_under).then(|| self.support_lines.lines(self.session.document()));
+        (shown_up_to, lines)
     }
 
     /// Whether the supports are left out of the view: while the Hollow tab's
@@ -5691,6 +5725,7 @@ impl ViewportController {
         let (shown_up_to, lines) = self.under_plate_supports();
         renderer.set_support_lines(shown_up_to, lines.as_ref());
         renderer.set_supports_hidden(self.supports_hidden());
+        renderer.set_support_view_fade(self.support_view_fade());
         renderer.set_plates(self.session.document().plates());
         renderer.set_dim_all(self.dims_off_plate());
         renderer.set_plate_tools(

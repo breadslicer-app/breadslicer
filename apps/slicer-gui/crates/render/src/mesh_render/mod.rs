@@ -138,6 +138,10 @@ struct FrameLook {
     supports_shown_up_to_mm: f32,
     /// The support meshes are left out whole, lines and all (#512).
     supports_hidden: bool,
+    /// How far the supports fade at any camera height, for the view mode
+    /// picked in Scene settings (#137): 0 drawn whole, 1 gone for their
+    /// lines, between translucent.
+    support_view_fade: f32,
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -421,6 +425,8 @@ pub struct Renderer {
     /// drawn in its place.
     supports_shown_up_to_mm: f32,
     support_lines: support_lines::LinesSlot,
+    /// The supports' fade of the view mode (#137).
+    support_view_fade: f32,
     /// Leaves the support meshes out of the view, as the Hollow tab's lasso
     /// does to keep the model clear (#512).
     supports_hidden: bool,
@@ -527,6 +533,7 @@ impl Renderer {
             raft_top_mm: 0.0,
             supports_shown_up_to_mm: f32::MAX,
             supports_hidden: false,
+            support_view_fade: 0.0,
             focus: Vec::new(),
             support_lines: support_lines::LinesSlot::default(),
             target_manager: TargetManager {
@@ -1026,6 +1033,7 @@ impl Renderer {
                 raft_top_mm: self.raft_top_mm,
                 supports_shown_up_to_mm: self.supports_shown_up_to_mm,
                 supports_hidden: self.supports_hidden,
+                support_view_fade: self.support_view_fade,
             },
         )
     }
@@ -1075,6 +1083,12 @@ impl Renderer {
     /// (#512), or draws them again.
     pub fn set_supports_hidden(&mut self, hidden: bool) {
         self.supports_hidden = hidden;
+    }
+
+    /// How far the supports fade at any camera height (#137): 0 whole, 1
+    /// gone for their lines, between translucent.
+    pub fn set_support_view_fade(&mut self, fade: f32) {
+        self.support_view_fade = fade.clamp(0.0, 1.0);
     }
 
     /// The scene's plates for the frames to come (#545).
@@ -1251,6 +1265,7 @@ impl Renderer {
                 raft_top_mm: 0.0,
                 supports_shown_up_to_mm: f32::MAX,
                 supports_hidden: false,
+                support_view_fade: 0.0,
             },
         )
     }
@@ -1312,6 +1327,7 @@ impl Renderer {
             raft_top_mm,
             supports_shown_up_to_mm,
             supports_hidden,
+            support_view_fade,
         } = look;
         let tip_cell_mm = self.tip_cell_mm;
         if self.core.device_loss.is_lost() {
@@ -1439,6 +1455,13 @@ impl Renderer {
         } else {
             0.0
         };
+        // The supports fade with the plate from under it, or as the view
+        // mode has them at any height (#137): whichever goes further.
+        let support_fade = if contents == FrameContents::Workspace {
+            under_plate.max(support_view_fade)
+        } else {
+            0.0
+        };
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             light_dir: frame::pack_light_dir(clip_z),
@@ -1456,14 +1479,15 @@ impl Renderer {
                 breached_plates,
                 self.plate_tools
                     .map_or(0, |hovered| hovered.map_or(1, |i| 2 + i)),
-                0,
+                // w: how far the supports fade, in thousandths (#137).
+                (support_fade * 1000.0).round() as u32,
             ],
             overhang: overhang_map.map_or([0.0; 4], |map| {
                 let [limit, radians, contact, _] = map.uniform(env_min.z);
                 [limit, radians, contact, tip_cell_mm]
             }),
             under_plate: [
-                if under_plate > 0.0 {
+                if support_fade > 0.0 {
                     supports_shown_up_to_mm
                 } else {
                     f32::MAX
@@ -1571,7 +1595,7 @@ impl Renderer {
                 } else if under_plate > 0.0 && raft_top_mm > 0.0 {
                     self.record_support_cuts(&mut pass, inst, selection, &support_objects);
                 }
-                if !supports_hidden && under_plate > 0.0 && !self.support_lines.is_empty() {
+                if !supports_hidden && support_fade > 0.0 && !self.support_lines.is_empty() {
                     self.support_lines.record(
                         &mut pass,
                         &self.pipelines.mesh.line_pipeline,
@@ -1582,13 +1606,13 @@ impl Renderer {
                 // While the plate fades, what of the supports fades with it
                 // goes translucent (#481, #493), over the lines coming in.
                 let fading = raft_top_mm > 0.0 || supports_shown_up_to_mm < f32::MAX;
-                if !supports_hidden && under_plate > 0.0 && under_plate < 1.0 && fading {
+                if !supports_hidden && support_fade > 0.0 && support_fade < 1.0 && fading {
                     self.record_support_fade(
                         &mut pass,
                         inst,
                         selection,
                         &support_objects,
-                        under_plate,
+                        support_fade,
                     );
                 }
                 if contents == FrameContents::Workspace {

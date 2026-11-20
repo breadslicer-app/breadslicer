@@ -502,6 +502,7 @@ impl PanelUpdate {
             | PreferencesChange::Controls
             | PreferencesChange::HideRaftsUnderPlate
             | PreferencesChange::SupportLinesUnderPlate
+            | PreferencesChange::SupportView
             | PreferencesChange::DiagnosticLog
             | PreferencesChange::SilencedMessages => None,
         }
