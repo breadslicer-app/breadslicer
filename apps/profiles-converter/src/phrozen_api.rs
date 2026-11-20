@@ -13,6 +13,12 @@
 //! those answers saved as `<machine>.variants.json`; a
 //! `<machine>.resins.json` next to one names the brands. Exposures come as
 //! ranges (`35 ± 5`) and the profile takes the middle.
+//!
+//! The older machines' pages (the Shuffle family and the Transform) carry
+//! their table in the page itself instead: a CSV of one row per resin in
+//! the `data-rs-csv` attribute, laid out by the page's table template. The
+//! reader takes those pages saved as HTML, named as Phrozen names them
+//! (`resin-shuffle-4k.html`), among the same inputs.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -35,22 +41,47 @@ use crate::reader::{ProfileReader, SourceReading};
 use crate::source_note::SourceNote;
 
 /// Each machine the service answers for, against the printer we ship for
-/// it.
+/// it. Phrozen's page for the 12K upgrade kit of the Mighty 8K reads the
+/// service's Mighty 12K, so that machine is our Mighty 12K Upgrade.
 const MACHINES: [(&str, Option<&str>); 11] = [
     ("Phrozen Sonic Mini 4K", Some("phrozen-sonic-mini-4k")),
     ("Phrozen Sonic Mini 8K", Some("phrozen-sonic-mini-8k")),
     ("Phrozen Sonic Mini 8K S", Some("phrozen-sonic-mini-8k-s")),
     ("Phrozen Sonic Mighty 4K", Some("phrozen-sonic-mighty-4k")),
     ("Phrozen Sonic Mighty 8K", Some("phrozen-sonic-mighty-8k")),
-    ("Phrozen Sonic Mighty 12K", None),
+    (
+        "Phrozen Sonic Mighty 12K",
+        Some("phrozen-sonic-mighty-12k-upgrade"),
+    ),
     (
         "Phrozen Sonic Mighty Revo",
         Some("phrozen-sonic-mighty-revo"),
     ),
-    ("Phrozen Sonic Mighty Revo 16K", None),
+    (
+        "Phrozen Sonic Mighty Revo 16K",
+        Some("phrozen-sonic-mighty-revo-16k"),
+    ),
     ("Phrozen Sonic Mega 8K", Some("phrozen-sonic-mega-8k")),
-    ("Phrozen Sonic Mega 8K S", None),
-    ("Phrozen Sonic Mega 8K V2", None),
+    ("Phrozen Sonic Mega 8K S", Some("phrozen-sonic-mega-8k-s")),
+    ("Phrozen Sonic Mega 8K V2", Some("phrozen-sonic-mega-8k-v2")),
+];
+
+/// Each saved resin page with its table in the page, against the printer
+/// we ship for it. The Shuffle's page is named for the Shuffle and the
+/// Shuffle Lite, and holds the same table as the Shuffle Lite's. The
+/// Transform's page is its standard mode; the fast mode's page is left
+/// out, since our Transform profile is one machine.
+const PAGES: [(&str, Option<&str>); 7] = [
+    ("resin-shuffle-4k", Some("phrozen-shuffle-4k")),
+    ("resin-shuffle-lite", Some("phrozen-shuffle-lite")),
+    ("resin-shuffle-shuffle-lite", Some("phrozen-shuffle")),
+    (
+        "resin-shuffle-xl-shuffle-xl-lite",
+        Some("phrozen-shuffle-xl"),
+    ),
+    ("resin-shuffle-xllite", Some("phrozen-shuffle-xl-lite")),
+    ("resin-transform", Some("phrozen-transform")),
+    ("resin-transform-fast", None),
 ];
 
 /// The brand each of the service's brand keys stands for.
@@ -86,6 +117,9 @@ pub enum PhrozenApiError {
     },
     /// An answer names a machine the reader does not know.
     UnknownMachine { path: PathBuf, machine: String },
+    /// A saved page is not one of the resin pages this reader knows, or
+    /// its table is not laid out as the reader expects.
+    UnknownPage { path: PathBuf, why: &'static str },
     /// A resin's name cannot be an id.
     InvalidId {
         resin: String,
@@ -103,6 +137,7 @@ impl fmt::Display for PhrozenApiError {
                 "{} answers for {machine:?}, a machine this reader does not know",
                 path.display()
             ),
+            Self::UnknownPage { path, why } => write!(f, "{}: {why}", path.display()),
             Self::InvalidId { resin, source } => write!(f, "{resin:?} cannot be named: {source}"),
         }
     }
@@ -114,7 +149,7 @@ impl std::error::Error for PhrozenApiError {
             Self::Io { source, .. } => Some(source),
             Self::Json { source, .. } => Some(source),
             Self::InvalidId { source, .. } => Some(source),
-            Self::UnknownMachine { .. } => None,
+            Self::UnknownMachine { .. } | Self::UnknownPage { .. } => None,
         }
     }
 }
@@ -259,6 +294,272 @@ fn brands_next_to(path: &Path) -> Result<BTreeMap<String, String>, PhrozenApiErr
         .collect())
 }
 
+/// One resin's calibration on one machine, as a source states it.
+struct Row<'a> {
+    printer: &'a PrinterId,
+    brand: &'a str,
+    resin: &'a str,
+    colour: &'a str,
+    height: PositiveFiniteMm,
+    density: Option<DensityGPerCm3>,
+    block: MaterialPerPrinter,
+}
+
+/// Files a row under its resin's profile; a machine calibrated twice with
+/// different values is noted, to be dropped.
+fn file_row(
+    resins: &mut BTreeMap<MaterialId, MaterialProfile>,
+    disagree: &mut BTreeSet<(MaterialId, PrinterId)>,
+    row: Row<'_>,
+) -> Result<(), PhrozenApiError> {
+    let Row {
+        printer,
+        brand,
+        resin,
+        colour,
+        height,
+        density,
+        block,
+    } = row;
+    let named = resin_name(brand, resin, colour);
+    let id_text = format!("{}-{}-{}um", slug(brand), slug(&named), microns(height));
+    let id = MaterialId::new(&id_text).map_err(|source| PhrozenApiError::InvalidId {
+        resin: named.clone(),
+        source,
+    })?;
+    let profile = resins.entry(id.clone()).or_insert_with(|| MaterialProfile {
+        extension: false,
+        identity: MaterialIdentity {
+            id: id.clone(),
+            brand: NonEmptyString::new(brand).expect("not empty"),
+            family: NonEmptyString::new(family_of(resin)).expect("a constant"),
+            name: NonEmptyString::new(&format!("{named} ({} um)", microns(height)))
+                .expect("not empty"),
+            profile_version: Version::new(1, 0, 0),
+            origin: None,
+        },
+        intent: MaterialIntent {
+            target_energy_density_mj_per_cm2: None,
+            target_layer_height_mm: Some(height),
+        },
+        defaults: MaterialDefaults::default(),
+        physical: MaterialPhysical::default(),
+        per_printer: BTreeMap::new(),
+        notes: BTreeMap::new(),
+    });
+    if profile.physical.liquid_density_g_per_cm3.is_none() {
+        profile.physical.liquid_density_g_per_cm3 = density;
+    }
+    let target = CalibrationTarget::from_printer(printer);
+    match profile.per_printer.get(&target) {
+        Some(held) if *held != block => {
+            disagree.insert((id, printer.clone()));
+        }
+        Some(_) => {}
+        None => {
+            profile.per_printer.insert(target, block);
+        }
+    }
+    Ok(())
+}
+
+/// A page's figure: a number, or a range `a - b` read as its middle.
+fn span_middle(cell: &str) -> Option<f64> {
+    let mut ends = cell.split('-').map(|end| end.trim().parse::<f64>().ok());
+    let low = ends.next()??;
+    let value = match ends.next() {
+        None => low,
+        Some(high) => (low + high?) / 2.0,
+    };
+    (ends.next().is_none() && value.is_finite()).then_some(value)
+}
+
+/// The resins and colours a page's row names. A row names a resin and
+/// its colours after a dash (`ABS-like Resin - Gray / White`, or
+/// `Aqua Resin-Green/Blue`); the Aqua 4K colours are listed under Aqua
+/// Resin as `Gray-4k`, and are Aqua 4K Resin's.
+fn page_resins(name: &str) -> Vec<(String, String)> {
+    let name = name.trim();
+    let (resin, colours) = match name.split_once(" - ") {
+        Some((resin, colours)) => (resin.trim(), colours),
+        None => match name.find("Resin-") {
+            Some(at) => (&name[..at + "Resin".len()], &name[at + "Resin-".len()..]),
+            None => (name, ""),
+        },
+    };
+    let colours: Vec<&str> = colours
+        .split('/')
+        .map(str::trim)
+        .filter(|colour| !colour.is_empty())
+        .collect();
+    if colours.is_empty() {
+        return vec![(resin.to_owned(), String::new())];
+    }
+    colours
+        .into_iter()
+        .map(|colour| {
+            let four_k = colour.to_ascii_lowercase().ends_with("-4k");
+            match (four_k, resin.strip_suffix(" Resin")) {
+                (true, Some(line)) => (
+                    format!("{line} 4K Resin"),
+                    colour[..colour.len() - "-4k".len()].to_owned(),
+                ),
+                _ => (resin.to_owned(), colour.to_owned()),
+            }
+        })
+        .collect()
+}
+
+/// The calibration a page's row states, by the page's table template:
+/// `shuffle-4k` gives times in milliseconds and a delay before each
+/// exposure, `shuffle-xl-lite` times in seconds and a light-off delay,
+/// which counts the travel too and so has no place in a profile. The
+/// cells follow the resin's name, the layer height and retract speed
+/// first.
+fn page_block(template: &str, cells: &[Option<f64>]) -> Option<MaterialPerPrinter> {
+    let sec = |v: Option<f64>, scale: f64| PositiveFiniteSec::new(v? / scale).ok();
+    let mm = |v: Option<f64>| PositiveFiniteMm::new(v?).ok();
+    let speed = |v: Option<f64>| PositiveFiniteMmPerMin::new(v?).ok();
+    let count = |v: Option<f64>| {
+        v.filter(|n| *n >= 0.0 && n.fract() == 0.0)
+            .map(|n| n as u32)
+    };
+    // Bottom: count, exposure, lift, lift speed. Normal: exposure, lift,
+    // lift speed.
+    let (scale, rest, bottom, normal) = match (template, cells.len()) {
+        ("shuffle-4k", 10) => (1000.0, cells[2], &cells[3..7], &cells[7..10]),
+        ("shuffle-xl-lite", 11) => (1.0, None, &cells[2..6], &cells[7..10]),
+        _ => return None,
+    };
+    let rest = rest.and_then(|ms| NonNegativeFiniteSec::new(ms / 1000.0).ok());
+    let retract = speed(cells[1]);
+    Some(MaterialPerPrinter {
+        normal_exposure_sec: Some(sec(normal[0], scale)?),
+        bottom_exposure_sec: Some(sec(bottom[1], scale)?),
+        bottom_layer_count: count(bottom[0]),
+        transition_layer_count: None,
+        wait_before_cure_sec: rest,
+        wait_after_cure_sec: None,
+        wait_after_lift_sec: None,
+        bottom_wait_before_cure_sec: rest,
+        bottom_wait_after_cure_sec: None,
+        bottom_wait_after_lift_sec: None,
+        lift_distance_mm: Some(mm(normal[1])?),
+        lift_speed_mm_min: Some(speed(normal[2])?),
+        retract_speed_mm_min: Some(retract?),
+        bottom_lift_distance_mm: mm(bottom[2]),
+        bottom_lift_speed_mm_min: speed(bottom[3]),
+        bottom_retract_speed_mm_min: retract,
+        light_pwm: None,
+        bottom_light_pwm: None,
+        second_travel: None,
+        bottom_second_travel: None,
+    })
+}
+
+/// The text between `start` and the next `end` after it.
+fn between<'a>(text: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let from = text.find(start)? + start.len();
+    let len = text[from..].find(end)?;
+    Some(&text[from..from + len])
+}
+
+/// The entities Phrozen's pages may write inside the CSV attribute.
+fn unescape(text: &str) -> String {
+    text.replace("&#39;", "'")
+        .replace("&quot;", "\"")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+/// Reads one saved resin page whose table is in the page.
+fn read_page(
+    path: &Path,
+    resins: &mut BTreeMap<MaterialId, MaterialProfile>,
+    disagree: &mut BTreeSet<(MaterialId, PrinterId)>,
+    notes: &mut Vec<SourceNote>,
+) -> Result<(), PhrozenApiError> {
+    let unknown = |why| PhrozenApiError::UnknownPage {
+        path: path.to_path_buf(),
+        why,
+    };
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let (_, ours) = PAGES
+        .iter()
+        .find(|(page, _)| *page == stem)
+        .ok_or_else(|| unknown("not a resin page this reader knows"))?;
+    let html = std::fs::read_to_string(path).map_err(|source| PhrozenApiError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let csv = between(&html, "data-rs-csv=\"", "\"")
+        .map(unescape)
+        .ok_or_else(|| unknown("the page holds no resin table"))?;
+    let template = between(&html, "templateType = '#resin-block-template-", "'")
+        .ok_or_else(|| unknown("the page names no table template"))?;
+    let rows: Vec<Vec<&str>> = csv
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.split(',').collect())
+        .collect();
+    let model = format!("Phrozen {stem}");
+    let Some(printer) = ours else {
+        notes.push(SourceNote::RowsForAMachineWeDoNotShip {
+            model,
+            rows: rows.len(),
+        });
+        return Ok(());
+    };
+    let printer = PrinterId::new(printer).expect("the map holds only ids we ship");
+    let mut unread = 0;
+    for row in &rows {
+        // The row's number, the resin, then the template's cells.
+        let [_, name, cells @ ..] = row.as_slice() else {
+            unread += 1;
+            continue;
+        };
+        let cells: Vec<Option<f64>> = cells.iter().map(|cell| span_middle(cell)).collect();
+        let height = cells
+            .first()
+            .copied()
+            .flatten()
+            .and_then(|h| PositiveFiniteMm::new(h).ok());
+        let (Some(block), Some(height)) = (page_block(template, &cells), height) else {
+            unread += 1;
+            continue;
+        };
+        for (resin, colour) in page_resins(name) {
+            file_row(
+                resins,
+                disagree,
+                Row {
+                    printer: &printer,
+                    brand: "Phrozen",
+                    resin: &resin,
+                    colour: &colour,
+                    height,
+                    density: None,
+                    block,
+                },
+            )?;
+        }
+    }
+    if unread > 0 {
+        notes.push(SourceNote::RowsWeCannotRead {
+            model: model.clone(),
+            rows: unread,
+        });
+    }
+    if template == "shuffle-xl-lite" {
+        notes.push(SourceNote::SettingsWithNoPlace {
+            settings: format!("{model}'s light-off delay"),
+            rows: rows.len(),
+        });
+    }
+    Ok(())
+}
+
 impl ProfileReader for PhrozenApiReader {
     type Error = PhrozenApiError;
 
@@ -276,7 +577,13 @@ impl ProfileReader for PhrozenApiReader {
                 }
             }
         }
-        for path in inputs {
+        // The service's answers first, so a resin both name is spelled as
+        // the service spells it.
+        let (pages, answers): (Vec<&Path>, Vec<&Path>) = inputs
+            .iter()
+            .copied()
+            .partition(|path| path.extension().is_some_and(|ext| ext == "html"));
+        for path in answers {
             let variants: Vec<Variant> = read_json(path)?;
             let Some(machine) = variants.iter().find_map(|v| {
                 v.datasheet
@@ -313,48 +620,21 @@ impl ProfileReader for PhrozenApiReader {
                     continue;
                 };
                 let brand = brand_name(brands.get(resin).map(String::as_str).unwrap_or(""));
-                let named = resin_name(&brand, resin, colour);
-                let id_text = format!("{}-{}-{}um", slug(&brand), slug(&named), microns(height));
-                let id =
-                    MaterialId::new(&id_text).map_err(|source| PhrozenApiError::InvalidId {
-                        resin: named.clone(),
-                        source,
-                    })?;
                 let density = figure(entry.datasheet.get("basic_info_density_g_ml"))
                     .and_then(|d| DensityGPerCm3::new(d).ok());
-                let profile = resins.entry(id.clone()).or_insert_with(|| MaterialProfile {
-                    extension: false,
-                    identity: MaterialIdentity {
-                        id: id.clone(),
-                        brand: NonEmptyString::new(&brand).expect("not empty"),
-                        family: NonEmptyString::new(family_of(resin)).expect("a constant"),
-                        name: NonEmptyString::new(&format!("{named} ({} um)", microns(height)))
-                            .expect("not empty"),
-                        profile_version: Version::new(1, 0, 0),
-                        origin: None,
+                file_row(
+                    &mut resins,
+                    &mut disagree,
+                    Row {
+                        printer: &printer,
+                        brand: &brand,
+                        resin,
+                        colour,
+                        height,
+                        density,
+                        block,
                     },
-                    intent: MaterialIntent {
-                        target_energy_density_mj_per_cm2: None,
-                        target_layer_height_mm: Some(height),
-                    },
-                    defaults: MaterialDefaults::default(),
-                    physical: MaterialPhysical::default(),
-                    per_printer: BTreeMap::new(),
-                    notes: BTreeMap::new(),
-                });
-                if profile.physical.liquid_density_g_per_cm3.is_none() {
-                    profile.physical.liquid_density_g_per_cm3 = density;
-                }
-                let target = CalibrationTarget::from_printer(&printer);
-                match profile.per_printer.get(&target) {
-                    Some(held) if *held != block => {
-                        disagree.insert((id, printer.clone()));
-                    }
-                    Some(_) => {}
-                    None => {
-                        profile.per_printer.insert(target, block);
-                    }
-                }
+                )?;
             }
             if unread > 0 {
                 notes.push(SourceNote::RowsWeCannotRead {
@@ -362,6 +642,9 @@ impl ProfileReader for PhrozenApiReader {
                     rows: unread,
                 });
             }
+        }
+        for path in pages {
+            read_page(path, &mut resins, &mut disagree, &mut notes)?;
         }
         for (material, printer) in disagree {
             if let Some(profile) = resins.get_mut(&material) {
@@ -440,7 +723,7 @@ mod phrozen_api_tests {
         for (name, text) in files {
             let path = dir.path().join(name);
             std::fs::write(&path, text).unwrap();
-            if name.ends_with(".variants.json") {
+            if name.ends_with(".variants.json") || name.ends_with(".html") {
                 paths.push(path);
             }
         }
@@ -486,14 +769,38 @@ mod phrozen_api_tests {
     }
 
     #[test]
-    fn a_machine_we_do_not_ship_is_noted() {
+    fn the_mighty_12k_answers_calibrate_the_mighty_12k_upgrade() {
         let mighty_12k = MINI_8K.replace("Phrozen Sonic Mini 8K", "Phrozen Sonic Mighty 12K");
         let reading = read(&[("m12.variants.json", &mighty_12k)]);
-        assert!(reading.profiles.is_empty());
-        assert!(matches!(
-            reading.notes.as_slice(),
-            [SourceNote::RowsForAMachineWeDoNotShip { rows: 2, .. }]
-        ));
+        let [ConvertedProfile::Material(profile)] = reading.profiles.as_slice() else {
+            panic!("one material, the other entry states no normal exposure");
+        };
+        let upgrade = PrinterId::new("phrozen-sonic-mighty-12k-upgrade").unwrap();
+        assert!(
+            profile
+                .per_printer
+                .contains_key(&CalibrationTarget::from_printer(&upgrade))
+        );
+    }
+
+    #[test]
+    fn every_machine_the_service_answers_for_is_one_we_ship() {
+        let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/profiles/printers");
+        for (machine, ours) in MACHINES {
+            let ours = ours.unwrap_or_else(|| panic!("{machine} has no printer of ours"));
+            assert!(
+                shipped.join(format!("{ours}.toml")).is_file(),
+                "{machine}: {ours} is not a printer we ship"
+            );
+        }
+        for (page, ours) in PAGES {
+            if let Some(ours) = ours {
+                assert!(
+                    shipped.join(format!("{ours}.toml")).is_file(),
+                    "{page}: {ours} is not a printer we ship"
+                );
+            }
+        }
     }
 
     #[test]
@@ -539,6 +846,109 @@ mod phrozen_api_tests {
             resin_name("Phrozen", "Aqua Clear Plus", ""),
             "Aqua Clear Plus"
         );
+    }
+
+    const SHUFFLE_4K_PAGE: &str = "<div id=\"rs\" data-rs-csv=\"1,ABS-like Resin - Gray / White,0.05,150,1000,6,50000 - 60000,8,60,8000 - 10000,6,60\n\
+        2,Aqua Resin - Green / Gray-4k,0.05,150,2000,6,60000 - 70000,8,60,9000 - 11000,6,60\n\
+        3,Rock-Black Stiff Resin,0.05,150,1000,6,50000 - 60000,8,60,11000 - 13000,6,60\"></div>\n\
+        <script>var templateType = '#resin-block-template-shuffle-4k';</script>";
+
+    const XL_LITE_PAGE: &str = "<div data-rs-csv=\"1,TR250LV High Temp Resin - Gray,0.05,150,6,60 - 70,8,60,14,7 - 8,8,60,13\"></div>\n\
+        <script>var templateType = '#resin-block-template-shuffle-xl-lite';</script>";
+
+    fn material<'a>(reading: &'a SourceReading, id: &str) -> &'a MaterialProfile {
+        reading
+            .profiles
+            .iter()
+            .find_map(|p| match p {
+                ConvertedProfile::Material(m) if m.identity.id.as_str() == id => Some(m),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no {id}"))
+    }
+
+    #[test]
+    fn a_page_s_table_calibrates_its_machine_in_seconds() {
+        let reading = read(&[("resin-shuffle-4k.html", SHUFFLE_4K_PAGE)]);
+        let printer = PrinterId::new("phrozen-shuffle-4k").unwrap();
+        let target = CalibrationTarget::from_printer(&printer);
+        // One row, 2 colours, 2 profiles.
+        let gray = material(&reading, "phrozen-abs-like-resin-gray-50um");
+        material(&reading, "phrozen-abs-like-resin-white-50um");
+        let b = gray.per_printer[&target];
+        assert_eq!(b.normal_exposure_sec.unwrap().value(), 9.0);
+        assert_eq!(b.bottom_exposure_sec.unwrap().value(), 55.0);
+        assert_eq!(b.bottom_layer_count, Some(6));
+        assert_eq!(b.wait_before_cure_sec.unwrap().value(), 1.0);
+        assert_eq!(b.lift_distance_mm.unwrap().value(), 6.0);
+        assert_eq!(b.bottom_lift_distance_mm.unwrap().value(), 8.0);
+        assert_eq!(b.lift_speed_mm_min.unwrap().value(), 60.0);
+        assert_eq!(b.retract_speed_mm_min.unwrap().value(), 150.0);
+        // Aqua Resin's "-4k" colours are Aqua 4K Resin's.
+        material(&reading, "phrozen-aqua-resin-green-50um");
+        material(&reading, "phrozen-aqua-4k-resin-gray-50um");
+        material(&reading, "phrozen-rock-black-stiff-resin-50um");
+        assert_eq!(reading.profiles.len(), 5);
+    }
+
+    #[test]
+    fn a_page_s_light_off_delay_is_left_out_and_said() {
+        let reading = read(&[("resin-shuffle-xllite.html", XL_LITE_PAGE)]);
+        let printer = PrinterId::new("phrozen-shuffle-xl-lite").unwrap();
+        let profile = material(&reading, "phrozen-tr250lv-high-temp-resin-gray-50um");
+        let b = profile.per_printer[&CalibrationTarget::from_printer(&printer)];
+        assert_eq!(b.normal_exposure_sec.unwrap().value(), 7.5);
+        assert_eq!(b.bottom_exposure_sec.unwrap().value(), 65.0);
+        assert!(b.wait_before_cure_sec.is_none());
+        assert!(matches!(
+            reading.notes.as_slice(),
+            [SourceNote::SettingsWithNoPlace { rows: 1, .. }]
+        ));
+    }
+
+    #[test]
+    fn a_page_s_resin_joins_the_service_s_profile_of_it() {
+        let reading = read(&[
+            ("mini-8k.variants.json", MINI_8K),
+            ("mini-8k.resins.json", MINI_8K_RESINS),
+            (
+                "resin-shuffle-4k.html",
+                &SHUFFLE_4K_PAGE.replace("Rock-Black Stiff Resin", "Aqua 8K Resin - Gray"),
+            ),
+        ]);
+        let profile = material(&reading, "phrozen-aqua-8k-resin-gray-50um");
+        assert_eq!(profile.identity.name.as_str(), "Aqua 8K Resin Gray (50 um)");
+        assert_eq!(profile.per_printer.len(), 2);
+    }
+
+    #[test]
+    fn an_unknown_page_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resin-giga.html");
+        std::fs::write(&path, SHUFFLE_4K_PAGE).unwrap();
+        assert!(matches!(
+            PhrozenApiReader.read(&[path.as_path()]),
+            Err(PhrozenApiError::UnknownPage { .. })
+        ));
+    }
+
+    #[test]
+    fn the_transform_s_fast_mode_is_noted_not_read() {
+        let reading = read(&[("resin-transform-fast.html", SHUFFLE_4K_PAGE)]);
+        assert!(reading.profiles.is_empty());
+        assert!(matches!(
+            reading.notes.as_slice(),
+            [SourceNote::RowsForAMachineWeDoNotShip { rows: 3, .. }]
+        ));
+    }
+
+    #[test]
+    fn a_span_reads_as_its_middle() {
+        assert_eq!(span_middle("50000 - 60000"), Some(55000.0));
+        assert_eq!(span_middle("15000-16000"), Some(15500.0));
+        assert_eq!(span_middle("0.05"), Some(0.05));
+        assert_eq!(span_middle(""), None);
+        assert_eq!(span_middle("a - 3"), None);
     }
 
     #[test]

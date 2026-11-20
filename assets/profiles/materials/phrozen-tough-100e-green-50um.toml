@@ -25,6 +25,45 @@ bottom_lift_distance_mm = 10.0
 bottom_lift_speed_mm_min = 60.0
 bottom_retract_speed_mm_min = 150.0
 
+[per_printer.phrozen-sonic-mega-8k-s]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 6
+wait_before_cure_sec = 10.0
+bottom_wait_before_cure_sec = 10.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mega-8k-v2]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+bottom_layer_count = 6
+wait_before_cure_sec = 10.0
+bottom_wait_before_cure_sec = 10.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mighty-12k-upgrade]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+bottom_layer_count = 6
+wait_before_cure_sec = 10.0
+bottom_wait_before_cure_sec = 10.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
 [per_printer.phrozen-sonic-mighty-4k]
 normal_exposure_sec = 3.5
 bottom_exposure_sec = 30.0
@@ -52,6 +91,19 @@ bottom_retract_speed_mm_min = 150.0
 [per_printer.phrozen-sonic-mighty-revo]
 normal_exposure_sec = 4.0
 bottom_exposure_sec = 35.0
+bottom_layer_count = 6
+wait_before_cure_sec = 10.0
+bottom_wait_before_cure_sec = 10.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mighty-revo-16k]
+normal_exposure_sec = 3.5
+bottom_exposure_sec = 25.0
 bottom_layer_count = 6
 wait_before_cure_sec = 10.0
 bottom_wait_before_cure_sec = 10.0

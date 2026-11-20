@@ -175,10 +175,25 @@ profile pages (`phrozen3d.com/pages/resin-<printer>`):
 as `<machine>.variants.json` and `<machine>.resins.json`, are read by
 `profiles-converter --format phrozen-api`. Phrozen publishes each
 exposure as a value and a tolerance (`35 ± 5`); a profile takes the
-value. Each colour is its own profile. The service also answers for the
-Sonic Mighty 12K, Mighty Revo 16K, Mega 8K S and Mega 8K V2, which are
-not in the catalog yet, and on the Sonic Mini 4K it states a word where
-the BASF resins' lift speed goes, so those 16 rows are left out.
+value. Each colour is its own profile. The service's Sonic Mighty 12K is
+our Sonic Mighty 12K Upgrade: Phrozen's page for the 12K upgrade kit of
+the Mighty 8K shows that machine's answers. On the Sonic Mini 4K the
+service states a word where the BASF resins' lift speed goes, so those 16
+rows are left out. Phrozen publishes nothing for the Sonic Mighty Revo 16K
+Max, the Sonic XL 4K 2022 or the Shuffle 16 (the 16K Max's and the Mega 8K
+V2's pages are gone; the service still answers for the V2).
+
+The older machines' pages (Shuffle, Shuffle Lite, Shuffle 4K, Shuffle XL,
+Shuffle XL Lite and Transform) hold their table in the page itself, as a
+CSV in the `data-rs-csv` attribute; the same reader takes those pages
+saved as HTML (`resin-shuffle-4k.html`, ...). Their exposures are ranges
+(`50000 - 60000` ms) and a profile takes the middle; a row naming several
+colours (`ABS-like Resin - Gray / White`) calibrates each colour's
+profile, and Aqua Resin's `Gray-4k` and `Ivory-4k` are Aqua 4K Resin's.
+The Shuffle pages' delay, in milliseconds, is the wait before each
+exposure. The Shuffle XL Lite's page gives a light-off delay instead,
+which counts the platform's travel too, so it is left out. The Transform
+takes its page for the standard mode; the fast mode's page is not read.
 
 Prusa's SL1 and SL1S settings are read by `profiles-converter --format
 prusa-sla` from the vendor bundle Prusa publishes for PrusaSlicer,
