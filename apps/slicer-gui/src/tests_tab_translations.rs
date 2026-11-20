@@ -958,6 +958,7 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
     ("arrange_run/fill.rs", include_str!("arrange_run/fill.rs")),
     ("controls_layout.rs", include_str!("controls_layout.rs")),
     ("cut_run.rs", include_str!("cut_run.rs")),
+    ("measure.rs", include_str!("measure.rs")),
     ("df_support_run.rs", include_str!("df_support_run.rs")),
     ("export_print_file.rs", include_str!("export_print_file.rs")),
     ("graphics_status.rs", include_str!("graphics_status.rs")),

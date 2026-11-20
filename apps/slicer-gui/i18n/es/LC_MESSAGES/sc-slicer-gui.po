@@ -9573,3 +9573,33 @@ msgid "{n} imported support held a piece cut off and was removed."
 msgid_plural "{n} imported supports held pieces cut off and were removed."
 msgstr[0] "{n} soporte importado sostenía una pieza cortada y se quitó."
 msgstr[1] "{n} soportes importados sostenían piezas cortadas y se quitaron."
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Measure"
+msgstr "Medir"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "MEASURE · Shift+click adds a segment · Esc clears"
+msgstr "MEDIR · Shift+clic suma un tramo · Esc borra"
+
+#: src/measure.rs
+msgctxt "Measure"
+msgid "Click a point on a model."
+msgstr "Hacé clic en un punto de un modelo."
+
+#: src/measure.rs
+msgctxt "Measure"
+msgid "Click a second point. Shift+click adds a segment."
+msgstr "Hacé clic en un segundo punto. Shift+clic suma un tramo."
+
+#: src/measure.rs
+msgctxt "Measure"
+msgid "Distance {} mm"
+msgstr "Distancia {} mm"
+
+#: src/measure.rs
+msgctxt "Measure"
+msgid "Total {} mm"
+msgstr "Total {} mm"

@@ -154,6 +154,17 @@ pub(crate) struct ViewportController {
     hint_marks: RefCell<Option<crate::mesh_render::Overlay>>,
     /// What a Repair run left broken, marked over the scene (#253).
     repair_marks: crate::repair_marks::MarksLayer,
+    /// The Measure tool (#652).
+    measure: crate::measure::Measure,
+    /// The scene's overlay with the measure's marks over it, and what it
+    /// was made of.
+    measured: RefCell<
+        Option<(
+            Option<crate::mesh_render::Overlay>,
+            crate::mesh_render::Overlay,
+            crate::mesh_render::Overlay,
+        )>,
+    >,
     /// The overhang map's box, and the self-support angle it paints by.
     overhang_map_on: Cell<bool>,
     /// The Supports tab's box (#492): whether the rafts fade out with the
@@ -310,6 +321,8 @@ impl ViewportController {
             overlay: RefCell::new(None),
             hint_marks: RefCell::new(None),
             repair_marks: Default::default(),
+            measure: Default::default(),
+            measured: RefCell::new(None),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
             estimate_listener: RefCell::new(None),
@@ -385,6 +398,8 @@ impl ViewportController {
             overlay: RefCell::new(None),
             hint_marks: RefCell::new(None),
             repair_marks: Default::default(),
+            measure: Default::default(),
+            measured: RefCell::new(None),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
             estimate_listener: RefCell::new(None),
@@ -3159,18 +3174,21 @@ impl ViewportController {
         // keeping its selection box) is a click until it moves.
         let drag = self
             .drag_tool_armed()
+            .filter(|_| !self.measure.on())
             .filter(|kind| !(modifiers.shift && *kind != SupportDragKind::MoveTip));
         self.support_drag.set(match drag {
             Some(kind) => DragPhase::Pressed([cursor.x, cursor.y], kind),
             None => DragPhase::Idle,
         });
         // Nothing is selected in the Slice tab (#140): Shift draws no box.
-        if !self.selectable() {
+        // Measuring (#652), a click is a point and Shift chains it.
+        if !self.selectable() || self.measure.on() {
             modifiers.shift = false;
         }
         // A plain press on empty space boxes (#622), unless a tool owns the
         // press or the plate's tools are under it.
         let empty_boxes = self.selectable()
+            && !self.measure.on()
             && drag.is_none()
             && !self.add_support_armed()
             && self.plate_tool_hovered.get().is_none();
@@ -3180,7 +3198,7 @@ impl ViewportController {
             self.render.viewport(),
             cursor,
             modifiers,
-            self.allows_transform_gizmo() && !self.cut_on(),
+            self.allows_transform_gizmo() && !self.cut_on() && !self.measure.on(),
             self.supports_selectable(),
             empty_boxes,
         );
@@ -3205,7 +3223,7 @@ impl ViewportController {
             self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
         }
-        if !self.allows_transform_gizmo() || self.cut_on() {
+        if !self.allows_transform_gizmo() || self.cut_on() || self.measure.on() {
             return;
         }
         if self.input.on_pointer_move(
@@ -3244,6 +3262,10 @@ impl ViewportController {
         match outcome {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
             PointerUpOutcome::Click(cursor) => {
+                if self.measure.on() {
+                    self.measure_click(cursor, modifiers.shift);
+                    return;
+                }
                 if let Some(plate) = self.plate_name_under(cursor) {
                     self.plate_name_clicked(plate);
                     return;
@@ -3793,6 +3815,119 @@ impl ViewportController {
         }
         self.mark_dirty();
         true
+    }
+
+    /// Whether the Measure tool is on (#652).
+    pub(crate) fn measuring(&self) -> bool {
+        self.measure.on()
+    }
+
+    /// Turns the Measure tool on or off (#652); off forgets its points.
+    pub(crate) fn set_measuring(&self, on: bool) {
+        self.measure.set_on(on);
+        self.show_measure();
+    }
+
+    /// Esc while measuring: forgets the points, or with none, turns the
+    /// tool off.
+    pub(crate) fn measure_escape(&self) {
+        if !self.measure.clear() {
+            self.measure.set_on(false);
+        }
+        self.show_measure();
+    }
+
+    /// The points taken so far, world mm.
+    pub(crate) fn measure_points(&self) -> Vec<[f64; 3]> {
+        self.measure.points()
+    }
+
+    fn show_measure(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_measure_on(self.measure.on());
+            ui.set_measure_text(self.measure.text().into());
+        }
+        self.mark_dirty();
+    }
+
+    /// A click while measuring: the point of the model under `cursor`, on
+    /// a corner of its face when one is within [`crate::measure::SNAP_PX`].
+    pub(crate) fn measure_click(&self, cursor: ScreenPoint, chain: bool) {
+        let Some(vp) = self.render.viewport() else {
+            return;
+        };
+        let Some(camera) = self.camera.camera_cell().borrow().as_ref().cloned() else {
+            return;
+        };
+        let fov = crate::mesh_render::default_fov_y();
+        let (w, h) = (vp.width(), vp.height());
+        let ray = picking::ray_from_pixel(&camera, fov, w, h, cursor.x, cursor.y);
+        let point = self
+            .session
+            .document()
+            .with_scene(|spatial| {
+                let hit = picking::pick_face_where(&ray, spatial, |_| true)?;
+                let at = ray.origin + ray.direction * hit.t;
+                let query = spatial.leaf(hit.leaf)?;
+                let world = query.world_transform();
+                let face = query.mesh().faces().get(hit.face as usize)?;
+                let mut best: Option<(f32, glam::Vec3)> = None;
+                for v in face.vertices {
+                    let corner = world.apply_to_vertex(query.mesh().vertices()[v.get() as usize]);
+                    let corner = glam::Vec3::from(corner.coords());
+                    if let Some((x, y)) =
+                        picking::project_world_to_screen(&camera, fov, w, h, corner)
+                    {
+                        let px = (x - cursor.x).hypot(y - cursor.y);
+                        if px <= crate::measure::SNAP_PX && best.is_none_or(|(b, _)| px < b) {
+                            best = Some((px, corner));
+                        }
+                    }
+                }
+                let p = best.map_or(at, |(_, c)| c);
+                Some([f64::from(p.x), f64::from(p.y), f64::from(p.z)])
+            })
+            .flatten();
+        if let Some(point) = point {
+            self.measure.take(point, chain);
+            self.show_measure();
+        }
+    }
+
+    /// `overlay` with the measure's marks over it, as thick as a couple of
+    /// pixels at the camera's distance.
+    fn with_measure(
+        &self,
+        overlay: Option<crate::mesh_render::Overlay>,
+    ) -> Option<crate::mesh_render::Overlay> {
+        if !self.measure.on() {
+            return overlay;
+        }
+        let distance = self
+            .camera
+            .camera_cell()
+            .borrow()
+            .as_ref()
+            .map_or(100.0, |c| c.distance);
+        // In steps, so a zoom does not draw it again every frame.
+        let radius = 2f32.powf((distance * 0.0016).max(0.02).log2().round());
+        let Some(marks) = self.measure.overlay(radius) else {
+            return overlay;
+        };
+        let Some(base) = overlay else {
+            return Some(marks);
+        };
+        let mut both = self.measured.borrow_mut();
+        if let Some((b, m, joined)) = both.as_ref()
+            && b.as_ref().is_some_and(|b| Arc::ptr_eq(b, &base))
+            && Arc::ptr_eq(m, &marks)
+        {
+            return Some(joined.clone());
+        }
+        let joined: crate::mesh_render::Overlay =
+            base.iter().chain(marks.iter()).cloned().collect();
+        *both = Some((Some(base), marks, joined.clone()));
+        Some(joined)
     }
 
     /// Installs the Cut tool's handles: offered the pointer in the
@@ -4491,8 +4626,8 @@ impl ViewportController {
         let groups: Vec<Option<Vec<sc_scene::NodeId>>> =
             models.iter().map(|&m| document.group_of(m)).collect();
         let grouped = groups.iter().any(Option::is_some);
-        let one_group = groups.first().is_some_and(|g| g.is_some())
-            && groups.iter().all(|g| *g == groups[0]);
+        let one_group =
+            groups.first().is_some_and(|g| g.is_some()) && groups.iter().all(|g| *g == groups[0]);
         (models.len() >= 2 && !one_group, grouped)
     }
 
@@ -5522,6 +5657,7 @@ impl ViewportController {
         let overlay = self
             .repair_marks
             .over(self.overlay.borrow().as_ref(), marks_shown);
+        let overlay = self.with_measure(overlay);
         renderer.set_overlay(overlay.as_ref());
         let hints = (self.session.section() == WorkspaceSection::Supports)
             .then(|| self.hint_marks.borrow().clone())

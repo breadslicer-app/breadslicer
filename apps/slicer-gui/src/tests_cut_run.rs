@@ -383,3 +383,53 @@ fn imported_supports_of_a_piece_cut_off_go_with_the_cut() {
         assert_eq!(faces(), 36, "undo brings it back");
     });
 }
+
+/// A real pre-supported file (`BREADSLICER_CUT_STL`) split as Separate does
+/// and cut through the middle: what the cut takes off with the pieces.
+#[test]
+#[ignore = "needs a real pre-supported STL"]
+fn a_real_presupported_model_cut() {
+    let Ok(path) = std::env::var("BREADSLICER_CUT_STL") else {
+        return;
+    };
+    on_fresh_slint_thread(move || {
+        let loaded =
+            sc_mesh_formats::load_mesh_from_path(std::path::Path::new(&path), None, None).unwrap();
+        let leaf = loaded.graph.roots()[0];
+        let mesh = loaded.graph.leaf_mesh_arc(leaf).unwrap().clone();
+        let split = sc_mesh_core::presupported::find_supports(&mesh).expect("pre-supported");
+        let f = fixture(split.model);
+        let mut graph = f.document.with_scene(|s| s.graph().clone()).unwrap();
+        // The fixture moved the model 10 mm right: the supports too.
+        let set = graph
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
+                LeafPayload::Mesh(Arc::new(split.supports)),
+            )
+            .unwrap();
+        graph.add_root(set).unwrap();
+        f.document.install_graph(graph, PathBuf::from("real.stl"));
+        f.document.set_selection(Selection::One(LeafId(f.leaf)));
+        let bodies = || {
+            f.document
+                .with_scene(|s| crate::imported_supports::body_tops(s, &[set]).len())
+                .unwrap()
+        };
+        let owned = f
+            .document
+            .with_scene(|s| crate::imported_supports::imported_of(s, f.leaf, None))
+            .unwrap();
+        eprintln!("supports owned by the model: {owned:?} (set {set:?})");
+        let before = bodies();
+        opened(&f);
+        eprintln!("card: {}", f.window.get_cut_status());
+        f.run.apply();
+        eprintln!(
+            "imported bodies {before} -> {}, leaves {}",
+            bodies(),
+            leaves(&f)
+        );
+        assert!(bodies() < before, "some supports held the piece cut off");
+    });
+}

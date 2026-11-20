@@ -45,6 +45,8 @@ mod tests_controller_section_gating;
 mod tests_controller_support_drag;
 #[cfg(test)]
 mod tests_controller_supports_selection;
+#[cfg(test)]
+mod tests_measure;
 mod types;
 
 #[cfg(test)]
