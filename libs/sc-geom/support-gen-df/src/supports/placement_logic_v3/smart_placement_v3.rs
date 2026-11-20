@@ -138,6 +138,10 @@ pub struct SmartPlacementV3Context {
     /// Resolve as if the grid were off. Set only by the retry below: a grid
     /// placement that cannot meet the shape rule is re-resolved without it.
     pub ignore_grid: bool,
+    /// The tight pass (#466), set only by the retry below: a contact the
+    /// normal pass refuses for the model in the way gets the cones that lean
+    /// past its cap.
+    pub tight: bool,
 }
 
 // Standoff from model geometry, matching the shaft collision gate used
@@ -205,6 +209,15 @@ const MIN_ALLOWED_ROUTED_ANGLE_DEG: f64 = 15.0;
 /// at each angle. Smallest deviation first.
 const CONE_DEVIATION_ANGLES_DEG: [f64; 3] = [10.0, 20.0, 30.0];
 const CONE_DEVIATION_DIRECTION_COUNT: usize = 8;
+
+/// The tight pass (#466): a contact no cone above clears gets a second look
+/// with the tip leaning further off the face, with every collision check. The
+/// tip ends in a ball, so it holds at that angle to the face.
+///
+/// Measured on the scorecard (#234): 45 degrees places most of what the model
+/// was in the way of and buries no more tips; 60 buries more, and shorter tips
+/// add almost nothing.
+const TIGHT_CONE_DEVIATION_DEG: f64 = 45.0;
 
 /// A memo key part as JavaScript's string key makes it: `Math.round` of the
 /// value, with -0 and 0 one key and every NaN one key.
@@ -304,6 +317,8 @@ struct Gates<'a> {
     cone_height: f64,
     roots_radius: f64,
     shaft_radius: f64,
+    /// How far the cone may swing off the surface normal.
+    max_deviation_deg: f64,
     // Two memos only: the roots volume (a disk + cone sweep, the most expensive
     // per-point check here) and the contact-cone gate. The segment test is
     // deliberately not memoized: the key costs more than the cell-cached call.
@@ -431,7 +446,7 @@ impl Gates<'_> {
                     first_joint.z - cone_start_pos.z,
                 )
                 .normalize(),
-                MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG,
+                self.max_deviation_deg,
             );
             let aligned_socket =
                 get_socket_position(cone_start_pos, aligned_axis, Some(&tip_profile));
@@ -525,11 +540,15 @@ impl Gates<'_> {
 
 /// Axes the cone can take to reach around geometry beside the tip.
 ///
-/// The contact disk stays flat on the surface, so the cone may only swing away
-/// from the surface normal by `MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG`.
-/// Ordered smallest deviation first, then outward direction first, so the first
-/// candidate that clears is the least-distorted cone.
-fn build_cone_deviation_axes(tip_normal: Vec3, outward_hint: Vec3) -> Vec<Vec3> {
+/// Each of `angles_deg` off the surface normal, in every direction around it:
+/// up to `MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG` in the normal pass,
+/// further in the tight pass. Ordered as the angles are, then outward direction
+/// first, so the first candidate that clears is the least-distorted cone.
+fn build_cone_deviation_axes(
+    tip_normal: Vec3,
+    outward_hint: Vec3,
+    angles_deg: &[f64],
+) -> Vec<Vec3> {
     let normal = tip_normal;
     if normal.length_sq() < 1e-10 {
         return Vec::new();
@@ -556,11 +575,8 @@ fn build_cone_deviation_axes(tip_normal: Vec3, outward_hint: Vec3) -> Vec<Vec3> 
     };
 
     let mut axes = Vec::new();
-    for angle_deg in CONE_DEVIATION_ANGLES_DEG {
-        let angle_rad = deg_to_rad(js_min(
-            angle_deg,
-            MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG,
-        ));
+    for &angle_deg in angles_deg {
+        let angle_rad = deg_to_rad(angle_deg);
         for direction in build_direction_fan(Some(preferred), CONE_DEVIATION_DIRECTION_COUNT) {
             let tilt = tangent_x
                 .multiply_scalar(direction.x)
@@ -570,6 +586,24 @@ fn build_cone_deviation_axes(tip_normal: Vec3, outward_hint: Vec3) -> Vec<Vec3> 
         }
     }
     axes
+}
+
+/// The cones of the tight pass (#466): the tip leaning past the normal pass's
+/// cap, in every direction around the tip, the way off the surface first.
+fn tight_cones(
+    tip_normal: Vec3,
+    outward_hint: Vec3,
+    cone_start_pos: Vec3,
+    profile: &SupportTipProfile,
+) -> Vec<Cone> {
+    build_cone_deviation_axes(tip_normal, outward_hint, &[TIGHT_CONE_DEVIATION_DEG])
+        .into_iter()
+        .map(|axis| Cone {
+            socket_pos: get_socket_position(cone_start_pos, axis, Some(profile)),
+            cone_axis: axis,
+            cone_start_pos,
+        })
+        .collect()
 }
 
 /// Whether a resolved chain holds the shape rule: every span from the socket down
@@ -630,19 +664,41 @@ pub fn calculate_smart_placement_v3(
     sdf.enable_column_map(clearance_mm, COLUMN_MAP_CELL_MM);
     drop(setup);
 
-    match route(input, sdf, stats, settings, context, standard) {
+    let result = match route(input, sdf, stats, settings, context, standard) {
         Some(result) => result,
         // The grid could not serve this contact at the shape rule: re-resolve
         // it as if the grid were off.
-        None => calculate_smart_placement_v3(
-            input,
-            sdf,
-            matrix_world,
-            stats,
-            settings,
-            SmartPlacementV3Context { ignore_grid: true },
-        ),
+        None => {
+            return calculate_smart_placement_v3(
+                input,
+                sdf,
+                matrix_world,
+                stats,
+                settings,
+                SmartPlacementV3Context {
+                    ignore_grid: true,
+                    ..context
+                },
+            );
+        }
+    };
+    if result.error != Some(LimitationCode::CollisionWithModel) || context.tight {
+        return result;
     }
+    // The model is in the way of every cone the normal pass tries: the tight
+    // pass looks again before the contact is refused.
+    let tight = calculate_smart_placement_v3(
+        input,
+        sdf,
+        matrix_world,
+        stats,
+        settings,
+        SmartPlacementV3Context {
+            tight: true,
+            ..context
+        },
+    );
+    if tight.error.is_none() { tight } else { result }
 }
 
 /// The routing body. `None` asks the caller to retry with the grid ignored.
@@ -677,25 +733,16 @@ fn route(
         cone_height: settings.roots.cone_height_mm,
         roots_radius: settings.roots.diameter_mm / 2.0,
         shaft_radius: settings.shaft.diameter_mm / 2.0,
+        max_deviation_deg: if context.tight {
+            TIGHT_CONE_DEVIATION_DEG
+        } else {
+            MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG
+        },
         roots_memo: HashMap::new(),
         cone_gate_memo: HashMap::new(),
     };
 
     let cone_axis_hint = standard.cone_axis.unwrap_or(placement.tip_normal);
-    // Built only when needed: the walk around the tip is the rare case.
-    let mut deviation_axes: Option<Vec<Vec3>> = None;
-    let mut deviation_cones = |cone_start_pos: Vec3| -> Vec<Cone> {
-        deviation_axes
-            .get_or_insert_with(|| build_cone_deviation_axes(placement.tip_normal, cone_axis_hint))
-            .iter()
-            .map(|&axis| Cone {
-                socket_pos: get_socket_position(cone_start_pos, axis, Some(&placement.tip_profile)),
-                cone_axis: axis,
-                cone_start_pos,
-            })
-            .collect()
-    };
-
     let socket_pos = standard.socket_pos;
     let vertical_span_mm = js_max(0.0, socket_pos.z - root_top_z);
     let max_lateral_mm = js_min(72.0, js_max(48.0, vertical_span_mm * 2.5));
@@ -713,8 +760,39 @@ fn route(
     //    its turn only when no deviation clears.
     let straight_cone =
         gates.resolve_cone_socket_and_axis(socket_pos, &[], placement.tip_normal, cone_axis_hint);
-    let deviated = deviation_cones(straight_cone.cone_start_pos);
-    for candidate in std::iter::once(straight_cone).chain(deviated.iter().copied()) {
+    // Each cone, and whether it swings off the cone the policy asks for. The
+    // tight pass has only the cones that lean past the normal pass's cap.
+    let deviated = if context.tight {
+        tight_cones(
+            placement.tip_normal,
+            cone_axis_hint,
+            straight_cone.cone_start_pos,
+            &placement.tip_profile,
+        )
+    } else {
+        build_cone_deviation_axes(
+            placement.tip_normal,
+            cone_axis_hint,
+            &CONE_DEVIATION_ANGLES_DEG,
+        )
+        .into_iter()
+        .map(|axis| Cone {
+            socket_pos: get_socket_position(
+                straight_cone.cone_start_pos,
+                axis,
+                Some(&placement.tip_profile),
+            ),
+            cone_axis: axis,
+            cone_start_pos: straight_cone.cone_start_pos,
+        })
+        .collect()
+    };
+    let cones: Vec<(Cone, bool)> = (!context.tight)
+        .then_some((straight_cone, false))
+        .into_iter()
+        .chain(deviated.into_iter().map(|cone| (cone, true)))
+        .collect();
+    for &(candidate, _) in &cones {
         gates.stats.cones_tested += 1;
         if gates.contact_cone_blocked_at(candidate.cone_start_pos, candidate.socket_pos) {
             continue;
@@ -784,9 +862,7 @@ fn route(
 
     // The cone decides which socket the chain starts from: the cheap cone test
     // first, and the expensive joint search once per socket that clears.
-    let socket_candidates =
-        std::iter::once((straight_cone, false)).chain(deviated.iter().map(|&cone| (cone, true)));
-    for (socket_candidate, is_deviated) in socket_candidates {
+    for &(socket_candidate, is_deviated) in &cones {
         let start_socket = socket_candidate.socket_pos;
         gates.stats.cones_tested += 1;
         if gates.contact_cone_blocked_at(socket_candidate.cone_start_pos, start_socket) {

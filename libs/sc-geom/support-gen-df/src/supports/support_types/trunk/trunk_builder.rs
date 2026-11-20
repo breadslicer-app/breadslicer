@@ -294,6 +294,7 @@ pub fn build_trunk_data_routed(
         settings,
         SmartPlacementV3Context {
             ignore_grid: input.ignore_grid == Some(true),
+            ..Default::default()
         },
     );
     let field: &dyn CollisionField = &*router.sdf;
