@@ -32,6 +32,12 @@
 //! not hold is not offered again while the models stand: it would be the
 //! same support. A refused one is, once the scene has changed since it was
 //! refused (#163): it can hang from a support added since.
+//!
+//! A *delete mark* (#462) is the person's choice to take a small island no
+//! support reaches off the layers. Like a leave mark it is a decision: a
+//! `.bread` keeps it, under its own kind ([`DELETED_ISLAND`]), and every
+//! slice of the same models erases the island it finds again at that place
+//! ([`FindingKey::finds`]), with its pixels as that slice's review sees them.
 
 use std::sync::Arc;
 
@@ -48,6 +54,10 @@ const SAME_PLACE_UM: i64 = 1000;
 /// How many layers a finding's start may have moved to still be the one a
 /// decision was made about: 10, half a millimetre at 0.05 mm.
 const SAME_PLACE_LAYERS: usize = 10;
+
+/// The kind a `.bread` keeps a deleted island under (#462): no finding has
+/// it, so a build that does not delete islands drops the decision.
+pub(crate) const DELETED_ISLAND: &str = "island-deleted";
 
 /// A finding as the next review of the same scene finds it again: its kind,
 /// its layers and its focus, to the micrometre.
@@ -79,6 +89,19 @@ impl FindingKey {
             && self.first_layer.abs_diff(other.first_layer) <= SAME_PLACE_LAYERS
             && (ax - bx).abs() <= SAME_PLACE_UM
             && (ay - by).abs() <= SAME_PLACE_UM
+    }
+
+    /// Whether `finding` is the island this key was made of, found again
+    /// on another slice of the same models (#462).
+    pub(crate) fn finds(&self, finding: &Finding) -> bool {
+        self.check == CheckKind::Island && self.same_place(&Self::of(finding))
+    }
+
+    /// The key of the island a deleted island's note stands for (#462): the
+    /// note keeps its layers and place.
+    pub(crate) fn as_island(mut self) -> Self {
+        self.check = CheckKind::Island;
+        self
     }
 
     /// This key as a `.bread` keeps it.
@@ -137,6 +160,8 @@ pub(crate) struct ReviewMarks<P> {
     refused: Vec<(FindingKey, String, SceneRevision)>,
     /// Findings that got a support.
     supported: Vec<FindingKey>,
+    /// Small islands to take off the layers (#462).
+    deleted: Vec<FindingKey>,
     next_id: u64,
     /// The fills the held slice cured, by id, sorted.
     in_slice: Vec<u64>,
@@ -150,6 +175,7 @@ impl<P> Default for ReviewMarks<P> {
             left: Vec::new(),
             refused: Vec::new(),
             supported: Vec::new(),
+            deleted: Vec::new(),
             next_id: 0,
             in_slice: Vec::new(),
         }
@@ -171,6 +197,7 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
             self.left.clear();
             self.refused.clear();
             self.supported.clear();
+            self.deleted.clear();
         }
         moved
     }
@@ -242,9 +269,17 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
         self.left.iter().any(|left| left.same_place(key))
     }
 
-    /// The decisions a `.bread` keeps: the findings left alone.
+    /// The decisions a `.bread` keeps: the findings left alone, then the
+    /// islands deleted (#462).
     pub(crate) fn decisions(&self) -> Vec<ReviewDecision> {
-        self.left.iter().map(FindingKey::decision).collect()
+        self.left
+            .iter()
+            .map(FindingKey::decision)
+            .chain(self.deleted.iter().map(|key| ReviewDecision {
+                check: DELETED_ISLAND.to_owned(),
+                ..key.decision()
+            }))
+            .collect()
     }
 
     /// Takes the decisions a `.bread` kept, made on `models`.
@@ -257,6 +292,29 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
             self.adopt(models);
             self.left = left;
         }
+        let deleted = deleted_islands(decisions);
+        if !deleted.is_empty() {
+            self.adopt(models);
+            self.deleted = deleted;
+        }
+    }
+
+    /// Marks the island of `key` to delete, or unmarks it (#462). Returns
+    /// whether it is marked now.
+    pub(crate) fn toggle_delete(&mut self, key: FindingKey, models: &P) -> bool {
+        self.adopt(models);
+        if let Some(at) = self.deleted.iter().position(|d| d.same_place(&key)) {
+            self.deleted.remove(at);
+            self.release();
+            return false;
+        }
+        self.deleted.push(key);
+        true
+    }
+
+    /// Whether the island of `key` is marked to delete.
+    pub(crate) fn is_deleted(&self, key: &FindingKey) -> bool {
+        self.deleted.iter().any(|d| d.same_place(key))
     }
 
     /// Records that the engine refused the support of the finding of `key`,
@@ -311,6 +369,7 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
             && self.left.is_empty()
             && self.refused.is_empty()
             && self.supported.is_empty()
+            && self.deleted.is_empty()
         {
             self.models = None;
         }
@@ -349,6 +408,20 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
     pub(crate) fn cured_count(&self) -> usize {
         self.in_slice.len()
     }
+}
+
+/// The islands `decisions` delete (#462).
+pub(crate) fn deleted_islands(decisions: &[ReviewDecision]) -> Vec<FindingKey> {
+    decisions
+        .iter()
+        .filter(|decision| decision.check == DELETED_ISLAND)
+        .filter_map(|decision| {
+            FindingKey::of_decision(&ReviewDecision {
+                check: CheckKind::Island.as_str().to_owned(),
+                ..decision.clone()
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -565,5 +638,42 @@ mod review_marks_tests {
         let mut marks: ReviewMarks<i32> = ReviewMarks::default();
         marks.restore_decisions(&[decision], &7);
         assert!(marks.decisions().is_empty());
+    }
+
+    fn island(first_layer: usize, x_mm: f64) -> Finding {
+        let mut finding = trap(first_layer, x_mm);
+        finding.check = CheckKind::Island;
+        finding
+    }
+
+    #[test]
+    fn a_deleted_island_is_a_decision_of_its_own_kind() {
+        let mut marks: ReviewMarks<i32> = ReviewMarks::default();
+        let key = FindingKey::of(&island(40, 1.0));
+        assert!(marks.toggle_delete(key, &7));
+        assert!(marks.is_deleted(&FindingKey::of(&island(42, 1.3))));
+        // The island found again where it was; nothing else.
+        assert!(key.finds(&island(42, 1.3)));
+        assert!(!key.finds(&trap(40, 1.0)));
+        assert!(!key.finds(&island(40, 4.0)));
+        let decisions = marks.decisions();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].check, DELETED_ISLAND);
+        assert_eq!(deleted_islands(&decisions), vec![key]);
+        // Not a finding left alone, and back from a project as it went.
+        assert!(!marks.is_left(&key));
+        let mut reopened: ReviewMarks<i32> = ReviewMarks::default();
+        reopened.restore_decisions(&decisions, &7);
+        assert!(reopened.is_deleted(&key) && !reopened.is_left(&key));
+        assert_eq!(reopened.decisions(), decisions);
+        // The note that took its place brings it back.
+        let mut note = island(40, 1.0);
+        note.check = CheckKind::CleanUp;
+        assert!(!marks.toggle_delete(FindingKey::of(&note).as_island(), &7));
+        assert!(marks.decisions().is_empty());
+        // Moved models drop it.
+        marks.toggle_delete(key, &7);
+        assert!(marks.follow(Some(&8)));
+        assert!(!marks.is_deleted(&key));
     }
 }

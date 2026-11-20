@@ -266,6 +266,11 @@ pub struct Finding {
     /// check keeps no pixels.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub footprint: Option<Arc<CavityFill>>,
+    /// The pixels deleting it takes off the layers (#462): a small island's
+    /// pieces up to where it joins the rest, with a pixel around them, as
+    /// debris goes. `None` for anything that cannot be deleted.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub removal: Option<Arc<CavityFill>>,
 }
 
 /// The most layers a finding's footprint keeps, from its first layer
@@ -305,6 +310,7 @@ impl Finding {
             fix: None,
             largest_mm2: None,
             footprint: None,
+            removal: None,
         }
     }
 
@@ -326,6 +332,13 @@ impl Finding {
     #[must_use]
     pub fn with_footprint(mut self, footprint: Arc<CavityFill>) -> Self {
         self.footprint = Some(footprint);
+        self
+    }
+
+    /// The same finding with the pixels deleting it takes off (#462).
+    #[must_use]
+    pub fn with_removal(mut self, removal: Arc<CavityFill>) -> Self {
+        self.removal = Some(removal);
         self
     }
 

@@ -262,6 +262,34 @@ fn a_bowl_never_ends_open_towards_the_film() {
     }
 }
 
+/// #128: with no suction cups as the objective, none of the options leaves
+/// a bowl open towards the film, whichever way it stands now, and a pose
+/// with a cup costs more than one without.
+#[test]
+fn no_cups_offers_no_pose_with_a_cup() {
+    let bowl = Shape::default().bowl(20.0, 17.0, 64, 16).mesh();
+    let ctx = OrientContext::new(Preset::NoCups);
+    assert_eq!(Preset::NoCups.as_str(), "no-cups");
+    assert_eq!("no-cups".parse::<Preset>(), Ok(Preset::NoCups));
+    for (axis, angle) in [([1.0, 0.0, 0.0], PI), ([0.2, 1.0, 0.0], 2.6)] {
+        let r = axis_angle(unit(axis).unwrap(), angle);
+        let o = search(&rotated(&bowl, &r), &ctx);
+        assert!(!o.options.is_empty());
+        for option in &o.options {
+            assert!(
+                option.cost.cup_area_mm2 < 1.0,
+                "an option with {} mm² of cup",
+                option.cost.cup_area_mm2
+            );
+        }
+    }
+    // Opening straight up: the cup is there now, and every option is better.
+    let o = search(&bowl, &ctx);
+    assert!(o.current.cost.cup_area_mm2 > 100.0);
+    assert!(!o.keep_current);
+    assert!(o.recommended().cost.cup_area_mm2 < 1.0);
+}
+
 #[test]
 fn a_thin_plate_stands_tilted_with_lower_force() {
     let plate = Shape::default()

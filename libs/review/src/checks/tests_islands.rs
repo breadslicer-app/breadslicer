@@ -620,3 +620,49 @@ fn the_result_does_not_depend_on_the_threads() {
         assert_eq!(swept.layers(), reference.layers());
     }
 }
+
+#[test]
+fn a_small_island_can_be_deleted_with_a_pixel_around_it() {
+    // An 8 x 8 pixel piece (0.64 mm²) from layer 4, joined to the body by a
+    // bridge on layer 8: its four layers can go, each with a pixel around.
+    let fixture = body(12)
+        .model(4..12, Shape::rect(62.0, 30.0, 70.0, 38.0))
+        .model(8..12, Shape::rect(55.0, 30.0, 70.0, 38.0))
+        .build();
+    let found = findings_of(&fixture, CheckKind::Island);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let removal = found[0].removal.as_ref().expect("a small island can go");
+    assert_eq!(removal.slabs.len(), 4);
+    for slab in &removal.slabs {
+        let area: f64 = slab
+            .rects
+            .iter()
+            .map(crate::fill::PlateRect::area_mm2)
+            .sum();
+        assert!((area - 1.0).abs() < 1e-9, "{area}");
+    }
+    let note = deleted_island_note(&found[0]);
+    assert_eq!(note.check, CheckKind::CleanUp);
+    assert_eq!(note.severity, Severity::Info);
+    assert_eq!((note.first_layer, note.last_layer), (4, 7));
+    assert_eq!(note.removal, found[0].removal);
+}
+
+#[test]
+fn a_large_or_long_island_cannot_be_deleted() {
+    // 9 mm²: too large.
+    let fixture = with_block(body(12), 4, 12)
+        .model(8..12, Shape::rect(55.0, 40.0, 105.0, 45.0))
+        .build();
+    let found = findings_of(&fixture, CheckKind::Island);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].removal.is_none());
+    // Small, but on its own for more layers than the review keeps.
+    let layers = REMOVABLE_LAYERS + 8;
+    let fixture = body(layers)
+        .model(4..layers, Shape::rect(62.0, 30.0, 70.0, 38.0))
+        .build();
+    let found = findings_of(&fixture, CheckKind::Island);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].removal.is_none());
+}

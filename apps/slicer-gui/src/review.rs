@@ -22,6 +22,11 @@
 //! preview and the printer file see them gone on this same slice. The model
 //! meshes are not touched.
 //!
+//! The small islands the person chose to delete (#462) are found again on
+//! the review's own list ([`FindingKey::finds`]) and leave the layers with
+//! what the review erases: each island's finding becomes a note, and it plans
+//! no tip. The model meshes are not touched either.
+//!
 //! A review never fails the slice. An input the review refuses, or a panic
 //! inside a check, becomes [`ReviewOutcome::Failed`], and the slice lands as
 //! usual.
@@ -33,16 +38,19 @@ use std::time::Duration;
 
 use sc_geom::df_supports::{SupportContact, recommended_lift_mm};
 use sc_print_glue::{PlateFrame, SlicedPlate};
+use sc_review::finding::sort_findings;
 use sc_review::{
     CavityFill, Finding, Growth, Island, IslandStart, ReviewInput, ReviewLeaf, ReviewOptions,
     SweepWatch, TipCone, TipPlan, TipPlanOptions, erase_stack, plan_all_tips, review_with,
 };
+use sc_review::{ReviewReport, deleted_island_note};
 use sc_scene::NodeId;
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 use sc_sl1cer::profile::{LayerSchedule, SliceProfile};
 use sc_sl1cer::{CancelToken, LeafSlices};
 
 use crate::mesh_loader::panic_message;
+use crate::review_marks::FindingKey;
 
 /// What the review of one slice gave.
 #[derive(Clone, Debug, PartialEq)]
@@ -202,6 +210,31 @@ pub(crate) fn review_slices(
     cancel: &CancelToken,
     on_layer: &(dyn Fn(usize) + Sync),
 ) -> ReviewOutcome {
+    review_slices_deleting(
+        plate,
+        filled,
+        sets,
+        raft_top_mm,
+        reading,
+        &[],
+        cancel,
+        on_layer,
+    )
+}
+
+/// [`review_slices`], taking off the layers the small islands `deleted`
+/// names (#462).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn review_slices_deleting(
+    plate: &SlicedPlate,
+    filled: Option<&ContourStack>,
+    sets: &[SupportSet],
+    raft_top_mm: Option<f64>,
+    reading: PlateReading,
+    deleted: &[FindingKey],
+    cancel: &CancelToken,
+    on_layer: &(dyn Fn(usize) + Sync),
+) -> ReviewOutcome {
     let PlateReading {
         bare_tip_mm,
         origin,
@@ -221,6 +254,7 @@ pub(crate) fn review_slices(
         filled,
         &supports,
         raft_top_mm,
+        deleted,
         watch,
     )
 }
@@ -244,6 +278,7 @@ fn review_stacks(
     filled: Option<&ContourStack>,
     supports: &KnownSupports<'_>,
     raft_top_mm: Option<f64>,
+    deleted: &[FindingKey],
     watch: SweepWatch<'_>,
 ) -> ReviewOutcome {
     guarded(|| {
@@ -258,7 +293,9 @@ fn review_stacks(
             .with_tips(supports.tips.clone())
             .with_support_extent(support_layers(leaves, supports.sets), supports.box_mm);
         Ok(
-            match review_with(&input, &ReviewOptions::default(), watch) {
+            match review_with(&input, &ReviewOptions::default(), watch)
+                .map(|report| without_deleted(report, deleted))
+            {
                 None => ReviewOutcome::Cancelled,
                 Some(mut report) => ReviewOutcome::Reviewed {
                     tips: tip_plan(&report.islands, &report.growths, supports).map(|plan| {
@@ -277,6 +314,40 @@ fn review_stacks(
             },
         )
     })
+}
+
+/// `report` with the small islands `deleted` names taken off the layers
+/// (#462): each one found again and small enough to delete leaves the
+/// islands, its finding becomes the note of its deletion, and its pixels join
+/// what the review erases. An island grown past what can be deleted stays.
+fn without_deleted(mut report: ReviewReport, deleted: &[FindingKey]) -> ReviewReport {
+    if deleted.is_empty() {
+        return report;
+    }
+    let mut removals: Vec<Arc<CavityFill>> = Vec::new();
+    for finding in &mut report.findings {
+        let Some(removal) = finding.removal.clone() else {
+            continue;
+        };
+        if !deleted.iter().any(|key| key.finds(finding)) {
+            continue;
+        }
+        if let Some(sc_review::SuggestedFix::AddSupport { at }) = finding.fix {
+            let first_layer = finding.first_layer;
+            report
+                .islands
+                .retain(|island| !(island.first_layer == first_layer && island.at == at));
+        }
+        *finding = deleted_island_note(finding);
+        removals.push(removal);
+    }
+    if !removals.is_empty() {
+        report.erased = CavityFill::union(
+            std::iter::once(&report.erased).chain(removals.iter().map(|removal| &**removal)),
+        );
+        sort_findings(&mut report.findings);
+    }
+    report
 }
 
 /// The tips `islands` and `growths` need, of the widest contact among the
@@ -337,7 +408,34 @@ pub(crate) fn review_bare_for_test(
         frame,
         bare_tip_mm,
     };
-    review_stacks(leaves, profile, filled, &supports, None, watch)
+    review_stacks(leaves, profile, filled, &supports, None, &[], watch)
+}
+
+/// [`review_bare_for_test`], deleting the small islands `deleted` names
+/// (#462).
+#[cfg(test)]
+pub(crate) fn review_deleting_for_test(
+    leaves: &[LeafSlices],
+    filled: Option<&ContourStack>,
+    profile: &SliceProfile,
+    sets: &[SupportSet],
+    bare_tip_mm: Option<f64>,
+    deleted: &[FindingKey],
+) -> ReviewOutcome {
+    let cancel = CancelToken::new();
+    let watch = SweepWatch {
+        cancel: &cancel,
+        on_layer: &|_| {},
+    };
+    let frame = PlateFrame::default();
+    let supports = KnownSupports {
+        sets,
+        tips: support_tips(sets, &frame),
+        box_mm: None,
+        frame,
+        bare_tip_mm,
+    };
+    review_stacks(leaves, profile, filled, &supports, None, deleted, watch)
 }
 
 /// The resin of the leaves of `sets`, in cubic millimetres: what their
@@ -515,7 +613,7 @@ mod review_tests {
             frame: PlateFrame::default(),
             bare_tip_mm: None,
         };
-        let outcome = review_stacks(&leaves, &profile(4), None, &supports, None, watch);
+        let outcome = review_stacks(&leaves, &profile(4), None, &supports, None, &[], watch);
         assert_eq!(outcome, ReviewOutcome::Cancelled);
     }
 

@@ -125,14 +125,18 @@ pub enum Preset {
     LowerForce,
     /// The least height, which is print time.
     Faster,
+    /// No suction cups (#128): a pose that leaves a hollow open towards the
+    /// film costs far more than anything else, then as balanced.
+    NoCups,
 }
 
 impl Preset {
-    pub const ALL: [Preset; 4] = [
+    pub const ALL: [Preset; 5] = [
         Preset::Balanced,
         Preset::FewerSupports,
         Preset::LowerForce,
         Preset::Faster,
+        Preset::NoCups,
     ];
 
     /// The preset's name on the command line.
@@ -142,6 +146,7 @@ impl Preset {
             Preset::FewerSupports => "fewer-supports",
             Preset::LowerForce => "lower-force",
             Preset::Faster => "faster",
+            Preset::NoCups => "no-cups",
         }
     }
 
@@ -158,6 +163,7 @@ impl Preset {
             slenderness: 2.0,
             slender_from: 4.0,
             detail_up: 20.0,
+            cup_per_mm2: 0.0,
         };
         match self {
             Preset::Balanced => balanced,
@@ -178,6 +184,10 @@ impl Preset {
             },
             Preset::Faster => Weights {
                 height_per_mm: 0.4,
+                ..balanced
+            },
+            Preset::NoCups => Weights {
+                cup_per_mm2: NO_CUPS_PER_MM2,
                 ..balanced
             },
         }
@@ -245,7 +255,15 @@ pub struct Weights {
     /// For a painted model: the cost of the detail facing straight down,
     /// against straight up (D4).
     pub detail_up: f64,
+    /// Per square millimetre of the largest cup under the film (T4), on top
+    /// of the suction its peel force counts: 0 but for [`Preset::NoCups`].
+    pub cup_per_mm2: f64,
 }
+
+/// What a square millimetre of cup costs with [`Preset::NoCups`], in
+/// equivalent tips: 5, so a cup of a few square millimetres outweighs any
+/// pose's tips, force and height.
+pub const NO_CUPS_PER_MM2: f64 = 5.0;
 
 /// What a search needs to know about the print.
 #[derive(Debug, Clone, Copy, PartialEq)]

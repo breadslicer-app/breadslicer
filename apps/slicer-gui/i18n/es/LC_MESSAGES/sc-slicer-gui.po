@@ -9845,3 +9845,74 @@ msgstr "Hacerlos editables en los mismos contactos"
 msgctxt "DfSupportDialog"
 msgid "No contact tips were found in these imported supports; they stay as they are."
 msgstr "No se encontraron puntas de contacto en estos soportes importados; quedan como están."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The next slice deletes this island from the print. Undo brings it back."
+msgstr "El próximo laminado borra esta isla de la impresión. Deshacer la trae de vuelta."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The island stays in the print."
+msgstr "La isla queda en la impresión."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The islands come back. Slice again to apply."
+msgstr "Las islas vuelven. Laminá de nuevo para aplicar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One island will be deleted. Slice again to apply."
+msgid_plural "{n} islands will be deleted. Slice again to apply."
+msgstr[0] "Se va a borrar una isla. Laminá de nuevo para aplicar."
+msgstr[1] "Se van a borrar {n} islas. Laminá de nuevo para aplicar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} layer"
+msgid_plural "{n} layers"
+msgstr[0] "{n} capa"
+msgstr[1] "{n} capas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Keep it in the print"
+msgstr "Dejarla en la impresión"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Bring it back"
+msgstr "Traerla de vuelta"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Delete from the print ({})"
+msgstr "Borrar de la impresión ({})"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Marked: the next slice takes this island off the layers, up to where it joins the model."
+msgstr "Marcada: el próximo laminado saca esta isla de las capas, hasta donde se une al modelo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "No suction cups"
+msgstr "Sin ventosas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Turn the model…"
+msgstr "Girar el modelo…"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "No model was found around this suction cup."
+msgstr "No se encontró ningún modelo alrededor de esta ventosa."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Drain drilled. Slice again to check the result."
+msgstr "Drenaje perforado. Laminá de nuevo para revisar el resultado."

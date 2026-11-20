@@ -30,7 +30,9 @@
 //! estimates all cure them. A Slice press with fills to change re-slices
 //! even when nothing else changed. What the review takes off the layers by
 //! itself (#432) is cut from the model leaves and the fills and merged with
-//! them, which removes it from all three.
+//! them, which removes it from all three. So do the small islands the
+//! person chose to delete (#462): they travel with the run as decisions, and
+//! a Slice press with deletions to change re-slices too.
 //!
 //! A slice the slicer refuses for meshes that are not closed offers Repair on
 //! its card (#407): the Repair driver repairs those objects only and, once they
@@ -63,7 +65,7 @@ use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
 use crate::repair_report::object_names_by_leaf;
 use crate::repair_run::RepairRun;
-use crate::review::{ReviewOutcome, SupportSet, erased_stack, review_slices};
+use crate::review::{ReviewOutcome, SupportSet, erased_stack, review_slices_deleting};
 use crate::review_panel::ReviewPanel;
 use crate::scene_document::{SceneDocument, SceneEvent};
 use crate::slice_projection::{SliceFailure, current_layer_values, load_selected_profiles};
@@ -209,6 +211,9 @@ pub(crate) struct SliceRun {
     // The ids of the Review card's fills the in-flight run cures, for the
     // card once it lands.
     pending_fills: RefCell<Vec<u64>>,
+    // The islands the in-flight run deletes (#462), for the card once it
+    // lands.
+    pending_deletes: RefCell<Vec<crate::review_marks::FindingKey>>,
     // Poll timer driving the modal's progress readout. Behind an `Rc` so its
     // own callback can stop it through a `Weak` without a cycle.
     poll_timer: Rc<slint::Timer>,
@@ -257,6 +262,7 @@ impl SliceRun {
             cancel: RefCell::new(None),
             pending_params: RefCell::new(None),
             pending_fills: RefCell::new(Vec::new()),
+            pending_deletes: RefCell::new(Vec::new()),
             poll_timer: Rc::new(slint::Timer::default()),
             landed: RefCell::new(None),
             every_plate: Cell::new(false),
@@ -511,6 +517,10 @@ impl SliceRun {
             ReSliceDecision::FirstSlice => self.launch(current, trigger),
             // Fills to add or drop: the scene is the same, the slice is not.
             ReSliceDecision::Unchanged if self.review.fills_pending() => {
+                self.launch(current, trigger)
+            }
+            // Islands to delete or bring back (#462): the same.
+            ReSliceDecision::Unchanged if self.review.deletes_pending() => {
                 self.launch(current, trigger)
             }
             // The held slice already shows the islands: their marks again.
@@ -780,6 +790,8 @@ impl SliceRun {
             );
         let patches = self.review.fills_for_slice();
         *self.pending_fills.borrow_mut() = patches.ids;
+        let deleted = self.review.deletes_for_slice();
+        *self.pending_deletes.borrow_mut() = deleted.clone();
 
         self.start_poll();
         // The raft the scene's supports stand on, for the review (#131).
@@ -797,6 +809,7 @@ impl SliceRun {
                 supports,
                 support_sets,
                 fills: patches.fills,
+                deleted,
                 origin,
             },
             cancel,
@@ -937,6 +950,7 @@ impl SliceRun {
         let islands_after = self.islands_after.replace(false);
         let pending = self.pending_params.borrow_mut().take();
         let fill_ids = std::mem::take(&mut *self.pending_fills.borrow_mut());
+        let deleted = std::mem::take(&mut *self.pending_deletes.borrow_mut());
         if let Some(ui) = self.ui.upgrade() {
             ui.set_slicing_in_progress(false);
             ui.set_slice_quiet(false);
@@ -983,6 +997,7 @@ impl SliceRun {
                     // After the slice is stored: the panel ties the findings
                     // to the slice now held, which cured these fills.
                     self.review.fills_landed(fill_ids);
+                    self.review.deletes_landed(deleted);
                     self.review.support_islands_once_shown(islands_after);
                     self.review.show(completed.review);
                     self.tell_repaired_for_slice(&completed.repaired);
@@ -1217,6 +1232,8 @@ struct SliceInputs {
     support_sets: Vec<SupportSet>,
     /// The cavities to fill (#132).
     fills: Vec<Arc<CavityFill>>,
+    /// The small islands to delete (#462).
+    deleted: Vec<crate::review_marks::FindingKey>,
     /// Where the sliced plate's centre stands in the scene (#547).
     origin: [f64; 2],
 }
@@ -1253,7 +1270,7 @@ fn run_slice(
         sc_print_glue::SliceRun::Completed(plate) => {
             progress.start_review();
             let filled = fill_stack(inputs.fills.iter().map(|fill| &**fill), plate.schedule());
-            let review = review_slices(
+            let review = review_slices_deleting(
                 &plate,
                 filled.as_ref(),
                 &inputs.support_sets,
@@ -1265,6 +1282,7 @@ fn run_slice(
                     bare_tip_mm: inputs.bare_tip_mm,
                     origin: inputs.origin,
                 },
+                &inputs.deleted,
                 cancel,
                 &|done| progress.record_review(done),
             );
@@ -1616,6 +1634,7 @@ mod progress_tests {
             bare_tip_mm: None,
             supports: SupportOwners::new(),
             fills: Vec::new(),
+            deleted: Vec::new(),
             support_sets: Vec::new(),
             origin: [0.0; 2],
         }

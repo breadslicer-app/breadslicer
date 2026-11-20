@@ -168,6 +168,73 @@ impl CavityFill {
     pub fn is_empty(&self) -> bool {
         self.slabs.iter().all(|slab| slab.rects.is_empty())
     }
+
+    /// `fills` as one, with disjoint rectangles on each slab (#462): what
+    /// [`erase_stack`] needs to take several erasures off in one stack,
+    /// such as the review's own and the islands deleted, whose pixel around
+    /// them may overlap. Slabs of the same layer, the same bottom and top,
+    /// become one; the first fill's rectangles stay as they are, and each
+    /// later one adds only what lies outside those before it.
+    pub fn union<'f>(fills: impl IntoIterator<Item = &'f CavityFill>) -> CavityFill {
+        let mut slabs: Vec<FillSlab> = Vec::new();
+        for slab in fills.into_iter().flat_map(|fill| &fill.slabs) {
+            let same = slabs
+                .iter_mut()
+                .find(|kept| kept.bottom_mm == slab.bottom_mm && kept.top_mm == slab.top_mm);
+            match same {
+                None => slabs.push(slab.clone()),
+                Some(kept) => {
+                    add_outside(&mut kept.rects, &slab.rects);
+                    add_outside(&mut kept.rim, &slab.rim);
+                }
+            }
+        }
+        slabs.sort_by(|a, b| a.bottom_mm.total_cmp(&b.bottom_mm));
+        CavityFill { slabs }
+    }
+}
+
+/// Adds to the disjoint `kept` what of `more` lies outside them, as
+/// disjoint rectangles.
+fn add_outside(kept: &mut Vec<PlateRect>, more: &[PlateRect]) {
+    for rect in more {
+        let mut pieces = vec![*rect];
+        for other in kept.iter().filter(|other| other.overlaps(rect)) {
+            pieces = pieces.iter().flat_map(|piece| piece.minus(other)).collect();
+            if pieces.is_empty() {
+                break;
+            }
+        }
+        kept.extend(pieces);
+    }
+}
+
+impl PlateRect {
+    /// What of this rectangle lies outside `other`: up to four disjoint
+    /// rectangles, the strips below and above `other` across the whole
+    /// width, then those left and right of it.
+    fn minus(&self, other: &Self) -> Vec<PlateRect> {
+        if !self.overlaps(other) {
+            return vec![*self];
+        }
+        let mut pieces = Vec::with_capacity(4);
+        let (y0, y1) = (self.y0_mm.max(other.y0_mm), self.y1_mm.min(other.y1_mm));
+        let mut push = |x0_mm: f64, y0_mm: f64, x1_mm: f64, y1_mm: f64| {
+            if x0_mm < x1_mm && y0_mm < y1_mm {
+                pieces.push(PlateRect {
+                    x0_mm,
+                    y0_mm,
+                    x1_mm,
+                    y1_mm,
+                });
+            }
+        };
+        push(self.x0_mm, self.y0_mm, self.x1_mm, y0);
+        push(self.x0_mm, y1, self.x1_mm, self.y1_mm);
+        push(self.x0_mm, y0, self.x0_mm.max(other.x0_mm), y1);
+        push(self.x1_mm.min(other.x1_mm), y0, self.x1_mm, y1);
+        pieces
+    }
 }
 
 /// The contour stack that cures `fills` on a plate cut with `schedule`: one
@@ -458,6 +525,73 @@ mod fill_tests {
             y0_mm,
             x1_mm,
             y1_mm,
+        }
+    }
+
+    #[test]
+    fn erasures_that_overlap_unite_and_cancel_once() {
+        // Two erasures overlapping on layer 1 (a square each, sharing one
+        // corner square), the second also on layer 2: as one, every point
+        // of either is cancelled once, and nothing else.
+        let schedule = LayerSchedule::uniform(0.05, 0.05, 3).unwrap();
+        let first = CavityFill {
+            slabs: vec![slab(0.05, 0.10, vec![rect(0.0, 0.0, 2.0, 2.0)])],
+        };
+        let second = CavityFill {
+            slabs: vec![
+                slab(0.10, 0.15, vec![rect(0.0, 0.0, 1.0, 1.0)]),
+                slab(
+                    0.05,
+                    0.10,
+                    vec![rect(1.0, 1.0, 3.0, 3.0), rect(-1.0, 0.5, 0.5, 1.0)],
+                ),
+            ],
+        };
+        let union = CavityFill::union([&first, &second]);
+        assert_eq!(union.slabs.len(), 2);
+        assert_eq!(union.slabs[0].bottom_mm, 0.05);
+        let rects = &union.slabs[0].rects;
+        for (i, a) in rects.iter().enumerate() {
+            for b in &rects[i + 1..] {
+                assert!(!a.overlaps(b), "{a:?} and {b:?}");
+            }
+        }
+        let area: f64 = rects.iter().map(PlateRect::area_mm2).sum();
+        assert!((area - (4.0 + 4.0 - 1.0 + 0.5)).abs() < 1e-9, "{area}");
+        assert_eq!(union.slabs[1].rects, vec![rect(0.0, 0.0, 1.0, 1.0)]);
+        // One square under all of it, erased by the union.
+        let square = Polygon::new_unchecked(
+            ring(&[[-2.0, -2.0], [4.0, -2.0], [4.0, 4.0], [-2.0, 4.0]]),
+            Vec::new(),
+        );
+        let layers = schedule
+            .iter_z()
+            .map(|z| ContourLayer::new(z, vec![square.clone()]))
+            .collect();
+        let plate = ContourStack::new_unchecked(layers);
+        let erased = erase_stack([&union], &[&plate], &schedule).expect("rings to cancel");
+        let before = rings(&plate, 1);
+        let mut after = before.clone();
+        after.extend(rings(&erased, 1));
+        let inside = |x: f64, y: f64| {
+            [
+                first.slabs[0].rects[0],
+                second.slabs[1].rects[0],
+                second.slabs[1].rects[1],
+            ]
+            .iter()
+            .any(|r| r.x0_mm < x && x < r.x1_mm && r.y0_mm < y && y < r.y1_mm)
+        };
+        for i in 0..60 {
+            for j in 0..60 {
+                let (x, y) = (-1.95 + 0.1 * f64::from(i), -1.95 + 0.1 * f64::from(j));
+                let expected = i32::from(!inside(x, y));
+                assert_eq!(
+                    winding(&after, Point2D::new(x, y)),
+                    expected,
+                    "at ({x}, {y})"
+                );
+            }
         }
     }
 

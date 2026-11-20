@@ -1057,6 +1057,16 @@ impl SceneDocument {
         *self.review_decisions.borrow_mut() = decisions;
     }
 
+    /// Keeps `decisions` with the project as a change of the print, which
+    /// leaves the project unsaved: an island deleted from it (#462).
+    pub(crate) fn change_review_decisions(&self, decisions: Vec<ReviewDecision>) {
+        if *self.review_decisions.borrow() == decisions {
+            return;
+        }
+        self.set_review_decisions(decisions);
+        self.mark_project_state_unsaved();
+    }
+
     /// Reports whether this document is a project: it was opened from a project
     /// file or has been saved as one.
     pub(crate) fn is_project(&self) -> bool {
