@@ -199,6 +199,27 @@ fn layer_duration_sec(layer: &LayerProgram) -> f64 {
         + tilt
 }
 
+/// How long each layer of `program` takes, in seconds: what its record asks
+/// for, scaled so the layers add up to the print time the program reports,
+/// the printer's time calibration included (#94).
+pub fn layer_times_sec(program: &PrintProgram) -> Vec<f64> {
+    let raw: Vec<f64> = program.layers.iter().map(layer_duration_sec).collect();
+    let total: f64 = raw.iter().sum();
+    let reported = program.print_time_sec.value();
+    let scale = if total > 0.0 { reported / total } else { 0.0 };
+    raw.into_iter().map(|sec| sec * scale).collect()
+}
+
+/// The speed each layer of `program` peels at: its first lift's, in mm/min,
+/// `None` for a layer the vat tilts off instead (#240).
+pub fn layer_lift_speeds_mm_min(program: &PrintProgram) -> Vec<Option<f64>> {
+    program
+        .layers
+        .iter()
+        .map(|layer| layer.lift.map(|stage| stage.speed_mm_min.value()))
+        .collect()
+}
+
 /// How long one tilt of the vat takes, out and back. Read from a file written
 /// for a Mars 5 Ultra: its print time less its layers' light, pauses and
 /// bottom travel, over the layers that tilt (0.80 s).

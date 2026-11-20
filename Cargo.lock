@@ -5483,6 +5483,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-peel"
+version = "0.1.0"
+
+[[package]]
 name = "sc-print-glue"
 version = "0.2.0"
 dependencies = [
@@ -5587,6 +5591,7 @@ name = "sc-review"
 version = "0.1.0"
 dependencies = [
  "rayon",
+ "sc-peel",
  "sc-print-primitives",
  "sc-sl1cer",
  "serde",
@@ -5645,6 +5650,7 @@ dependencies = [
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
+ "sc-peel",
  "sc-print-primitives",
  "sc-scene",
  "sc-sl1cer",

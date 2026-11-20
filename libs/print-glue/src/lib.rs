@@ -47,7 +47,9 @@ pub use fingerprint::{
 };
 pub use placement::place_on_plate;
 pub use prepare::{UnsliceableScene, UnsliceableSelection};
-pub use print_program::{SlabTopOutOfRange, UnprojectablePrint};
+pub use print_program::{
+    SlabTopOutOfRange, UnprojectablePrint, layer_lift_speeds_mm_min, layer_times_sec,
+};
 pub use projection::{
     UnschedulableHeight, project_hardware_to_slice_profile, project_to_slice_profile,
     total_layers_for_height,

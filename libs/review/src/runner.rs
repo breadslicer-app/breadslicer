@@ -15,6 +15,7 @@ use crate::checks::traps::{self, TrapOptions};
 use crate::fill::CavityFill;
 use crate::finding::{Finding, sort_findings};
 use crate::input::ReviewInput;
+use crate::loads::{self, LoadOptions, PlateLoads};
 use crate::regions::{PlateRegions, SweepOptions, SweepWatch};
 
 /// What every check receives: the input and the tables swept from it.
@@ -54,6 +55,8 @@ pub struct ReviewOptions {
     pub output: OutputOptions,
     /// Models inside the supports' raft (#131).
     pub raft: RaftOptions,
+    /// The peel loads (#240).
+    pub loads: LoadOptions,
 }
 
 /// Wall-clock time spent in each part of a review.
@@ -90,6 +93,8 @@ pub struct ReviewReport {
     pub parts: Vec<Part>,
     /// Where the time went.
     pub timings: ReviewTimings,
+    /// What the models pull on the film with, layer by layer (#240).
+    pub loads: PlateLoads,
 }
 
 /// Reviews `input` with the default options and returns the findings in
@@ -124,6 +129,7 @@ pub fn check_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Review
         || timed(|| traps::run(ctx, &options.traps, &options.sweep)),
     );
     let (output, output_time) = timed(|| output::run(ctx, &options.output, &options.sweep));
+    let plate_loads = loads::plate_loads(ctx, &options.loads);
     // A model in the raft explains the islands it starts there (#131).
     let clashes = raft::clashes(ctx, &options.raft);
     let mut findings: Vec<Finding> = islands
@@ -150,6 +156,7 @@ pub fn check_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Review
         growths: islands.growths,
         parts: islands.parts,
         timings,
+        loads: plate_loads,
     }
 }
 

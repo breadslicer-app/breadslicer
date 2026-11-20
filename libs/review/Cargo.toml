@@ -20,6 +20,7 @@ serde = ["dep:serde"]
 test-support = []
 
 [dependencies]
+sc-peel.workspace = true
 sc-print-primitives.workspace = true
 sc-sl1cer.workspace = true
 
