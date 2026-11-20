@@ -161,11 +161,22 @@ Lychee files that print correctly on it hold (UVtools reads them back
 identically from both). The 6 transition layers belong to the M7 Pro's
 profile, and the resin's price is not a profile field.
 
-The Creality Halot X1 resins come from the resin parameter table of
-Creality's wiki page for that machine, read by
-`profiles-converter --format creality-wiki` from the saved page. The wiki
-has the same tables for the X1 Neo and the Halot Sky 2025, which are not
-in the catalog yet: their rows are left out until they are.
+The Creality Halot X1, X1 Neo and X1 Max resins come from the resin
+parameter tables of Creality's wiki pages for those machines, read by
+`profiles-converter --format creality-wiki` from the saved pages. The X1
+Neo's and X1 Max's pages name each resin in a numbered section heading,
+and the reader knows which brand and resin each heading is: a resin the
+X1's page also tunes keeps that page's name, so one profile calibrates
+the three machines, and the X1 Max's High Precision Resin, sold in the
+High Fidelity Model Resin's colours, is filed as it. The X1 Neo's
+sections show a HALOT BOX and a Chitubox table of the same settings; the
+HALOT BOX one is read. The X1 Max's page states the layer height once for
+all its resins (0.05 mm). The X1 Neo's page names no brand: its Standard,
+Water-washable and ABS-like resins are filed under Creality's Standard
+Rigid, Water Washable and ABS-Like resins, whose other machines come from
+Creality's blog post, so those 3 profiles hold blocks from both sources
+and regenerating either keeps the other's. The wiki's Halot Sky 2025 page
+is for a machine not in the catalog: its rows are left out.
 
 Phrozen's resins, and the BASF Forward AM and Loctite resins Phrozen
 tunes for its machines, come from the service behind Phrozen's resin
