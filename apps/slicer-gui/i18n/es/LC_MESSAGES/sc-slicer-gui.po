@@ -9603,3 +9603,42 @@ msgstr "Distancia {} mm"
 msgctxt "Measure"
 msgid "Total {} mm"
 msgstr "Total {} mm"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Select"
+msgstr "Elegir"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Click a support to pick it, Shift+click to pick more. The numbers below then draw the picked supports again; a size chip gives them that size. Esc lets go."
+msgstr "Hacé clic en un soporte para elegirlo, Shift+clic para elegir más. Los números de abajo dibujan de nuevo los soportes elegidos; una ficha de tamaño les da ese tamaño. Esc los suelta."
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "various"
+msgstr "varios"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "{n} support picked: the numbers below draw it again."
+msgid_plural "{n} supports picked: the numbers below draw them again."
+msgstr[0] "{n} soporte elegido: los números de abajo lo dibujan de nuevo."
+msgstr[1] "{n} soportes elegidos: los números de abajo los dibujan de nuevo."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Picked supports"
+msgstr "Soportes elegidos"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Picked"
+msgstr "Elegidos"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "{n} picked support holds others up and stays as it is: pick the ones at the ends."
+msgid_plural "{n} picked supports hold others up and stay as they are: pick the ones at the ends."
+msgstr[0] "{n} soporte elegido sostiene a otros y queda como está: elegí los de las puntas."
+msgstr[1] "{n} soportes elegidos sostienen a otros y quedan como están: elegí los de las puntas."

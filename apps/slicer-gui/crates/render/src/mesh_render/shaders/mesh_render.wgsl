@@ -496,6 +496,9 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
     } else if (in.tint == 11u) {
         // The dot of an island too small for its paint to read (#542).
         return vec4<f32>(0.96, 0.36, 0.92, 0.95);
+    } else if (in.tint == 14u) {
+        // Supports the Select tool picked (#567): the selection's amber.
+        color = vec4<f32>(1.00, 0.68, 0.28, 0.85);
     } else if (in.tint == 13u) {
         // The Measure tool (#652): a light cyan, unlit, over everything.
         return vec4<f32>(0.38, 0.86, 1.00, 0.95);

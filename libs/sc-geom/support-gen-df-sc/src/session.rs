@@ -2675,18 +2675,85 @@ impl DfSupportSession {
         {
             return Some(shape);
         }
-        let size = self.size_of(id)?;
-        self.settings
-            .supports
-            .auto_support
-            .zone_rules
-            .as_ref()
-            .and_then(|r| r.sizes.iter().find(|s| s.id == size).cloned())
-            .or_else(|| {
-                crate::zone_presets::support_sizes()
-                    .into_iter()
-                    .find(|s| s.id == size)
-            })
+        if let Some(size) = self.size_of(id) {
+            let found = self
+                .settings
+                .supports
+                .auto_support
+                .zone_rules
+                .as_ref()
+                .and_then(|r| r.sizes.iter().find(|s| s.id == size).cloned())
+                .or_else(|| {
+                    crate::zone_presets::support_sizes()
+                        .into_iter()
+                        .find(|s| s.id == size)
+                });
+            if found.is_some() {
+                return found;
+            }
+        }
+        // A tip no size draws (#567): the shipped size nearest its width,
+        // with the width it has.
+        let d = self.tip_diameter(id)?;
+        let mut nearest = crate::zone_presets::support_sizes()
+            .into_iter()
+            .min_by(|a, b| {
+                (a.tip_diameter_mm - d)
+                    .abs()
+                    .total_cmp(&(b.tip_diameter_mm - d).abs())
+            })?;
+        nearest.tip_diameter_mm = d;
+        Some(nearest)
+    }
+
+    /// The support (a trunk, a branch or a leaf) nearest `point` (world
+    /// mm), within `reach_mm`: what the Select tool takes (#567). A point on
+    /// a root is its trunk's; a brace or a knot is no support of its own.
+    pub fn support_near(&self, point: [f64; 3], reach_mm: f64) -> Option<String> {
+        let (d, k) = self.nearest_support(point)?;
+        if d > reach_mm {
+            return None;
+        }
+        let id = self.removal_index().ids[k].clone();
+        if self.support_tip(&id).is_some() {
+            return Some(id);
+        }
+        self.state
+            .collections
+            .trunks
+            .iter()
+            .find(|(_, t)| t.root_id == id)
+            .map(|(trunk, _)| trunk.clone())
+            .filter(|trunk| self.support_tip(trunk).is_some())
+    }
+
+    /// Whether other supports hang from support `id`: one that cannot be
+    /// moved or drawn again alone (#567).
+    pub fn carries_others(&self, id: &str) -> bool {
+        let Ok(gone) = self.removal_of(&[id.to_owned()]) else {
+            return false;
+        };
+        let c = &self.state.collections;
+        gone.iter().any(|other| {
+            other != id
+                && (c.trunks.contains_key(other)
+                    || c.branches.contains_key(other)
+                    || c.leaves.contains_key(other)
+                    || c.twigs.contains_key(other)
+                    || c.sticks.contains_key(other)
+                    || c.stumps.contains_key(other))
+        })
+    }
+
+    /// Where support `id` touches the model (world mm).
+    pub fn tip_point(&self, id: &str) -> Option<[f64; 3]> {
+        self.support_tip(id).map(|(at, _)| at)
+    }
+
+    /// The supports `ids` drawn on their own, with what hangs from them:
+    /// how the Select tool shows them (#567).
+    pub fn drawing_of(&self, ids: &[String]) -> Result<IndexedMesh, EditError> {
+        self.preview_remove_tips(ids).map(|preview| preview.mesh)
     }
 
     /// Draws support `tip` again with the numbers of `shape`, its tip where

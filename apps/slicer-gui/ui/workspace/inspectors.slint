@@ -2268,6 +2268,16 @@ export component SupportsInspector inherits VerticalLayout {
             spacing: 6px;
 
             HandToolButton {
+                icon: Icons.select;
+                label: @tr("Inspector" => "Select");
+                shortcut: "E";
+                active: root.tool == 5;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 5 ? 0 : 5);
+                }
+            }
+            HandToolButton {
                 icon: Icons.add-support;
                 label: @tr("Inspector" => "Add");
                 shortcut: "A";
@@ -2316,6 +2326,9 @@ export component SupportsInspector inherits VerticalLayout {
         }
         if root.tool == 3: Note {
             text: @tr("Inspector" => "Drag a support by its tip over the model; it is routed again where you let go.");
+        }
+        if root.tool == 5: Note {
+            text: @tr("Inspector" => "Click a support to pick it, Shift+click to pick more. The numbers below then draw the picked supports again; a size chip gives them that size. Esc lets go.");
         }
         if root.tool == 4: Note {
             text: @tr("Inspector" => "Click a support where the brace starts, then the support it goes to.");

@@ -428,6 +428,10 @@ export component MainWindow inherits Window {
     // whether that line warns.
     in property <string> support-tip-label;
     in property <string> support-add-note;
+    // How many supports the Select tool picked (#567), and Esc letting go
+    // of them.
+    in property <int> support-picked-count;
+    callback support-picked-clear();
     in property <bool> support-add-note-warns;
     // Remove's drag (#3): 0 a box, 1 a brush of this radius (logical px).
     in-out property <int> support-remove-mode: 0;
@@ -1950,6 +1954,11 @@ export component MainWindow inherits Window {
                                 root.measure-escape();
                                 return true;
                             }
+                            if root.workspace-section == WorkspaceSection.Supports && root.support-tool == 5
+                                && root.support-picked-count > 0 {
+                                root.support-picked-clear();
+                                return true;
+                            }
                             if root.workspace-section == WorkspaceSection.Hollow && root.hollow-lasso-tool {
                                 root.hollow-lasso-tool = false;
                                 return true;
@@ -1994,6 +2003,10 @@ export component MainWindow inherits Window {
                                 }
                                 if key == "c" || key == "C" {
                                     root.arm-support-tool(4);
+                                    return true;
+                                }
+                                if key == "e" || key == "E" {
+                                    root.arm-support-tool(5);
                                     return true;
                                 }
                                 // Remove: B a box or a brush; [ and ] the brush.

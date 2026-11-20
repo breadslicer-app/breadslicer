@@ -269,6 +269,8 @@ enum TabTool {
     MoveTip,
     /// The brace tool (#3): a click on a support, then on another.
     Brace,
+    /// The Select tool (#567): a click picks a support, Shift+click more.
+    SelectSupport,
     Drain,
 }
 
@@ -3167,7 +3169,7 @@ impl ViewportController {
         }
         // Shift+click with Add armed hangs the support from the nearest one
         // (#3): the press is the tool's, not the start of a selection box.
-        if modifiers.shift && self.add_support_armed() {
+        if modifiers.shift && self.shift_click_tool_armed() {
             modifiers.shift = false;
         }
         // A press of a drag tool (Move tip; Remove's box or brush, Shift
@@ -3190,7 +3192,7 @@ impl ViewportController {
         let empty_boxes = self.selectable()
             && !self.measure.on()
             && drag.is_none()
-            && !self.add_support_armed()
+            && !self.shift_click_tool_armed()
             && self.plate_tool_hovered.get().is_none();
         let boxing = self.input.on_pointer_down(
             self.session.document(),
@@ -3274,7 +3276,7 @@ impl ViewportController {
                     self.run_plate_tool(tool, modifiers.shift);
                     return;
                 }
-                let forced = modifiers.shift && self.add_support_armed();
+                let forced = modifiers.shift && self.shift_click_tool_armed();
                 if modifiers.shift && !forced {
                     self.run_toggle_pick_at(cursor);
                 } else if self.cut_click(cursor) {
@@ -3392,7 +3394,7 @@ impl ViewportController {
                 Some(SupportDragKind::Brush)
             }
             TabTool::RemoveSupport => Some(SupportDragKind::Box),
-            TabTool::AddSupport | TabTool::Brace | TabTool::Drain => None,
+            TabTool::AddSupport | TabTool::Brace | TabTool::SelectSupport | TabTool::Drain => None,
         }
     }
 
@@ -3571,6 +3573,17 @@ impl ViewportController {
             .is_some_and(|ui| self.tab_tool(&ui) == Some(TabTool::AddSupport))
     }
 
+    /// Whether a tool that takes Shift+click as its own is armed: Add hangs
+    /// the support from the nearest one (#3), Select picks one more (#567).
+    fn shift_click_tool_armed(&self) -> bool {
+        self.ui.upgrade().is_some_and(|ui| {
+            matches!(
+                self.tab_tool(&ui),
+                Some(TabTool::AddSupport | TabTool::SelectSupport)
+            )
+        })
+    }
+
     /// The tab tool armed in the current section, if any.
     fn tab_tool(&self, ui: &MainWindow) -> Option<TabTool> {
         match self.session.section() {
@@ -3580,6 +3593,7 @@ impl ViewportController {
                 2 => Some(TabTool::RemoveSupport),
                 3 => Some(TabTool::MoveTip),
                 4 => Some(TabTool::Brace),
+                5 => Some(TabTool::SelectSupport),
                 _ => None,
             },
             _ => None,
@@ -3614,7 +3628,10 @@ impl ViewportController {
             .with_scene(|spatial| {
                 let on_supports = matches!(
                     tool,
-                    TabTool::RemoveSupport | TabTool::MoveTip | TabTool::Brace
+                    TabTool::RemoveSupport
+                        | TabTool::MoveTip
+                        | TabTool::Brace
+                        | TabTool::SelectSupport
                 );
                 // Remove and Move tip take only a support in sight (#3): the
                 // nearest hit among every leaf, model or supports, is one;
