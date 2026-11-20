@@ -129,7 +129,7 @@ mod part_edit;
 #[path = "pieces.rs"]
 mod pieces;
 
-pub use part_edit::{PartSizes, SupportParts};
+pub use part_edit::{ImportedPlan, PartSizes, SupportParts};
 
 pub use pieces::{SupportContact, SupportJoint, SupportPiece, SupportPieceKind};
 

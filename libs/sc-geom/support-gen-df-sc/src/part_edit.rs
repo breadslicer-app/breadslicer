@@ -17,9 +17,11 @@ use support_gen_df::supports::support_primitives::contact_cone::contact_cone_uti
 use support_gen_df::supports::types::{Joint, Roots, Segment, SegmentShape};
 use support_gen_df::three::Vec3;
 
+use support_gen_df::supports::auto_support::zone_rules::SupportSize;
+
 use super::{
     AddNote, AddOptions, At, DfSupportSession, EditError, EditPreview, FORCED_MAX_ANGLE_DEG,
-    MANUAL_MAX_ANGLE_DEG,
+    HandShape, MANUAL_MAX_ANGLE_DEG,
 };
 
 /// How far apart the axis of a shaft is read against the model, mm.
@@ -63,6 +65,19 @@ pub struct PartSizes {
     pub tip_mm: Option<f64>,
     pub trunk_mm: Option<f64>,
     pub foot_mm: Option<f64>,
+}
+
+/// A support of an imported set to make editable (#261).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImportedPlan {
+    /// Where its tip touches the model (world mm).
+    pub at: [f64; 3],
+    /// The numbers it is drawn with; `None` takes the preset's.
+    pub shape: Option<SupportSize>,
+    /// The route it took: where its foot stands across the plate (world
+    /// mm) and its elbows from the bottom up. `None` for one routed as Add
+    /// routes it, hung from another where one is in reach.
+    pub route: Option<([f64; 2], Vec<[f64; 3]>)>,
 }
 
 /// Which collection a shaft is in.
@@ -369,6 +384,104 @@ impl DfSupportSession {
         }
         *self = next;
         Ok(())
+    }
+
+    /// Gives the trunk of support `id` the route of `foot` (across the
+    /// plate, world mm) and `elbows` (from the bottom up, world mm), its tip
+    /// where it is (#261). Elbows lower than its root's top go; the rest
+    /// must rise to the tip, lean no more than a forced attach may and keep
+    /// off the model. On a refusal the session is as it was.
+    pub fn set_route(
+        &mut self,
+        id: &str,
+        foot: [f64; 2],
+        elbows: &[[f64; 3]],
+    ) -> Result<(), EditError> {
+        let route = self.route_of(id).ok_or(EditError::NothingThere)?;
+        let (Some(old_foot), ShaftKind::Trunk) = (route.foot, route.kind) else {
+            return Err(EditError::NothingThere);
+        };
+        let d = Vec3::new(foot[0] - old_foot.x, foot[1] - old_foot.y, 0.0);
+        let anchor = route.anchor.add(d);
+        let kept: Vec<(Option<String>, Vec3)> = elbows
+            .iter()
+            .map(|p| v(*p))
+            .filter(|p| p.z >= anchor.z + MIN_RISE_MM && p.z <= route.socket.z - MIN_RISE_MM)
+            .map(|p| (None, p))
+            .collect();
+        let mut way = vec![anchor];
+        way.extend(kept.iter().map(|(_, p)| *p));
+        way.push(route.socket);
+        if way
+            .windows(2)
+            .any(|w| lean_deg(w[0], w[1]) > FORCED_MAX_ANGLE_DEG)
+        {
+            return Err(EditError::CannotAttach(AddNote::Leans));
+        }
+        let mut next = self.clone();
+        next.reroute_shaft(id, Some(old_foot.add(d)), &kept);
+        *self = next.checked(id)?;
+        Ok(())
+    }
+
+    /// Adds a support of an imported set (#261): at its contact, drawn with
+    /// its numbers and, when it took a route of its own, on that route as
+    /// far as it is one a support may take here; else as Add routes it.
+    /// Returns whether the route was kept.
+    pub fn add_imported(&mut self, plan: &ImportedPlan) -> Result<bool, EditError> {
+        // A tip shorter than a support made here has brings its shaft too
+        // near the model for a route: it takes the length of the shipped
+        // size nearest its width, and with no luck the preset's numbers.
+        let longer = plan.shape.clone().and_then(|mut shape| {
+            let shipped = crate::zone_presets::support_sizes()
+                .into_iter()
+                .min_by(|a, b| {
+                    (a.tip_diameter_mm - shape.tip_diameter_mm)
+                        .abs()
+                        .total_cmp(&(b.tip_diameter_mm - shape.tip_diameter_mm).abs())
+                })?;
+            (shipped.tip_length_mm > shape.tip_length_mm).then(|| {
+                shape.tip_length_mm = shipped.tip_length_mm;
+                shape
+            })
+        });
+        let mut tries = vec![plan.shape.clone()];
+        tries.extend(longer.map(Some));
+        if plan.shape.is_some() {
+            tries.push(None);
+        }
+        let mut next = self.clone();
+        let mut placed = Err(EditError::NothingThere);
+        for shape in tries {
+            let how = AddOptions {
+                attach: false,
+                size: None,
+                shape: shape.map(HandShape),
+            };
+            placed = next
+                .place_at_as(At::Point(plan.at), &how, plan.route.is_some())
+                .map_err(|(err, _)| err);
+            if placed.is_ok() {
+                break;
+            }
+        }
+        let placed = placed?;
+        let mut kept = false;
+        if let Some((foot, elbows)) = &plan.route
+            && let Some(id) = placed
+                .added
+                .iter()
+                .find(|id| next.state.collections.trunks.contains_key(*id))
+                .cloned()
+        {
+            let mut routed = next.clone();
+            if routed.set_route(&id, *foot, elbows).is_ok() {
+                next = routed;
+                kept = true;
+            }
+        }
+        *self = next;
+        Ok(kept)
     }
 
     /// The session with support `id`'s trunk moved by `delta`, unchecked.
@@ -814,6 +927,67 @@ mod part_edit_tests {
         );
         assert_eq!(session.state, state);
         assert!(session.mesh().unwrap().is_some(), "it still draws");
+    }
+
+    /// #261: an imported support is placed with its numbers on the route it
+    /// took; a route through the model is not taken, the support is placed
+    /// as Add places it.
+    #[test]
+    fn an_imported_support_keeps_its_route_where_it_may() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        let mut shape = crate::zone_presets::support_sizes()[0].clone();
+        shape.tip_diameter_mm = 0.35;
+        shape.trunk_diameter_mm = 0.9;
+        let plan = ImportedPlan {
+            at: [5.0, 5.0, 12.0],
+            shape: Some(shape),
+            route: Some(([2.0, 5.0], vec![[2.0, 5.0, 6.0]])),
+        };
+        assert_eq!(session.add_imported(&plan), Ok(true));
+        let id = session.tip_near([5.0, 5.0, 12.0], 0.5).unwrap();
+        let parts = session.parts_of(&id).unwrap();
+        assert!((parts.foot.unwrap()[0] - 2.0).abs() < 1e-9, "{parts:?}");
+        assert!(
+            parts.elbows.iter().any(|(_, p)| (p[2] - 6.0).abs() < 1e-9),
+            "{parts:?}"
+        );
+        assert!((parts.tip_mm - 0.35).abs() < 1e-6, "{parts:?}");
+        assert_eq!(parts.trunk_mm, Some(0.9));
+        // An elbow over the tip's socket is no elbow of a route up to it.
+        let through = ImportedPlan {
+            at: [30.0, 5.0, 12.0],
+            shape: None,
+            route: Some(([30.0, 5.0], vec![[30.0, 5.0, 13.5]])),
+        };
+        assert_eq!(
+            session.add_imported(&through),
+            Ok(true),
+            "out of order goes"
+        );
+        let wrong = ImportedPlan {
+            at: [40.0, 5.0, 12.0],
+            shape: None,
+            // A foot 25 mm aside of a tip 9 mm up: too far over to print.
+            route: Some(([40.0, 30.0], vec![[40.0, 30.0, 3.0]])),
+        };
+        assert_eq!(session.add_imported(&wrong), Ok(false));
+        assert!(session.tip_near([40.0, 5.0, 12.0], 0.5).is_some());
+    }
+
+    /// #261: an imported tip too short for a route here takes the shipped
+    /// length, and the support is still made.
+    #[test]
+    fn a_short_imported_tip_takes_a_length_a_route_needs() {
+        let mut session = bare_slab(5.0, crate::DfSupportRequest::default());
+        let mut shape = crate::zone_presets::support_sizes()[0].clone();
+        shape.tip_length_mm = 0.8;
+        let plan = ImportedPlan {
+            at: [5.0, 5.0, 5.0],
+            shape: Some(shape),
+            route: Some(([5.0, 5.0], Vec::new())),
+        };
+        assert_eq!(session.add_imported(&plan), Ok(true));
+        assert!(session.tip_near([5.0, 5.0, 5.0], 0.5).is_some());
     }
 
     /// A run's own supports pass the check a moved shaft goes through.

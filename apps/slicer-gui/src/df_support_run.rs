@@ -49,10 +49,11 @@ use sc_geom::df_supports::zone_presets::{
 };
 use sc_geom::df_supports::{
     AddNote, AddOptions, BraceEnd, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
-    DfSupportSession, EditError, EditPreview, HandBraceRefusal, HandEditKind, KeptEdits, LostEdit,
-    LostWhy, PartSizes, RaftMode, ScanCache, scene_model_leaves, start_df_prescan,
-    start_df_supports,
+    DfSupportSession, EditError, EditPreview, HandBraceRefusal, HandEditKind, ImportedPlan,
+    KeptEdits, LostEdit, LostWhy, PartSizes, RaftMode, ScanCache, scene_model_leaves,
+    start_df_prescan, start_df_supports,
 };
+use sc_mesh_core::presupported::ImportedRoute;
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
 use sc_scene::NodeId;
@@ -680,6 +681,51 @@ enum EditOp {
     /// Gives these supports' parts these widths, their routes as they are
     /// (#377).
     Resize(Vec<String>, PartSizes),
+    /// Places these supports of an imported set made editable (#261), each
+    /// with its numbers and on its route where it may take it.
+    Imported(Vec<ImportedPlan>),
+}
+
+/// The numbers supports made from imported ones are drawn with (#261): the
+/// shipped hand size nearest their tips' width, with the middle values the
+/// imported supports have of their tip, tip length, shaft and foot. A file
+/// draws its supports in a few fixed sizes; the middle value is that size,
+/// clear of the few pieces read a little off. `None` with no route.
+fn imported_shape<'a>(
+    routes: impl Iterator<Item = &'a ImportedRoute> + Clone,
+) -> Option<sc_geom::df_supports::SupportSize> {
+    let middle = |values: Vec<f64>| -> Option<f64> {
+        let mut values: Vec<f64> = values.into_iter().filter(|v| v.is_finite()).collect();
+        values.sort_by(f64::total_cmp);
+        values.get(values.len() / 2).copied()
+    };
+    // Rounded to what a print shows: a twentieth of a millimetre.
+    let round = |v: f64| (v * 20.0).round() / 20.0;
+    let tip = round(middle(routes.clone().map(|r| r.tip.diameter_mm).collect())?);
+    let mut size = crate::support_shape_edit::hand_factory()
+        .rules
+        .sizes
+        .into_iter()
+        .min_by(|a, b| {
+            (a.tip_diameter_mm - tip)
+                .abs()
+                .total_cmp(&(b.tip_diameter_mm - tip).abs())
+        })?;
+    size.id = "imported".to_owned();
+    size.tip_diameter_mm = tip;
+    if let Some(t) = size.base_tip.as_mut() {
+        t.diameter_mm = tip;
+    }
+    if let Some(length) = middle(routes.clone().map(|r| r.tip_length_mm).collect()) {
+        size.tip_length_mm = round(length);
+    }
+    if let Some(shaft) = middle(routes.clone().filter_map(|r| r.shaft_mm).collect()) {
+        size.trunk_diameter_mm = round(shaft);
+    }
+    if let Some(foot) = middle(routes.filter_map(|r| r.foot.map(|(_, w)| w)).collect()) {
+        size.base_diameter_mm = round(foot);
+    }
+    Some(size.clamped())
 }
 
 /// A part of a support moved by a drag of the Select tool (#377).
@@ -805,7 +851,8 @@ fn compute_edit(
         | EditOp::Reshape(_)
         | EditOp::Reroute(..)
         | EditOp::MovePart(..)
-        | EditOp::Resize(..) => 0,
+        | EditOp::Resize(..)
+        | EditOp::Imported(_) => 0,
     };
     watch
         .total
@@ -952,6 +999,24 @@ fn compute_job(
                         took = true;
                     }
                 }
+            }
+            (EditOp::Imported(plans), false) => {
+                let mut routed = 0;
+                for plan in plans {
+                    match edited.add_imported(plan) {
+                        Ok(kept) => {
+                            took = true;
+                            routed += usize::from(kept);
+                        }
+                        Err(err) => {
+                            one(Err(err));
+                        }
+                    }
+                }
+                crate::breadcrumbs::note(&format!(
+                    "supports: {routed} of {} imported supports kept their route",
+                    plans.len()
+                ));
             }
         }
         if let (EditOp::Points(points), false) = (&op, from_preview) {
@@ -5833,10 +5898,13 @@ impl DfSupportRun {
     }
 
     /// The imported supports of the model picked, made editable at the same
-    /// contacts (#261): the contact tips are read off their cones, the
+    /// contacts (#261): each support is followed from its tip down, the
     /// imported supports go, and supports made here take every one of those
-    /// contacts, with the hand size nearest their tips' width, in the same
-    /// Undo step. What no route reaches is told, as a click of Add tells it.
+    /// contacts with the widths the imported ones had (tip, shaft, tip
+    /// length, foot: the file's own, its middle values), in the same Undo
+    /// step. One that stood on the raft takes its route there (its foot, its
+    /// elbows) where a support may; the rest are routed as Add routes one.
+    /// What no route reaches is told, as a click of Add tells it.
     fn imported_to_editable(self: &Rc<Self>) {
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -5856,13 +5924,27 @@ impl DfSupportRun {
                     leaf
                 };
                 let sets = crate::imported_supports::imported_of(spatial, model, None);
-                let mut tips: Vec<([f32; 3], f64)> = Vec::new();
+                let mut tips: Vec<(ImportedPlan, ImportedRoute)> = Vec::new();
                 for &set in &sets {
                     let q = spatial.leaf(set)?;
                     let world = q.world_transform();
-                    for tip in sc_mesh_core::presupported::support_tips(q.mesh()) {
-                        let at = sc_mesh_core::Vertex::new(tip.contact.map(|c| c as f32));
-                        tips.push((world.apply_to_vertex(at).coords(), tip.diameter_mm));
+                    let to_world = |p: [f64; 3]| {
+                        let at = sc_mesh_core::Vertex::new(p.map(|c| c as f32));
+                        world.apply_to_vertex(at).coords().map(f64::from)
+                    };
+                    for route in sc_mesh_core::presupported::support_routes(q.mesh()) {
+                        // Its elbows from the bottom up, as a route is given.
+                        let elbows: Vec<[f64; 3]> =
+                            route.elbows.iter().rev().map(|p| to_world(*p)).collect();
+                        let plan = ImportedPlan {
+                            at: to_world(route.tip.contact),
+                            shape: None,
+                            route: route.foot.map(|(foot, _)| {
+                                let foot = to_world(foot);
+                                ([foot[0], foot[1]], elbows)
+                            }),
+                        };
+                        tips.push((plan, route));
                     }
                 }
                 let removal = crate::split_bodies::removal_edit(spatial.graph(), &sets)?;
@@ -5879,19 +5961,7 @@ impl DfSupportRun {
             ));
             return;
         }
-        let mut widths: Vec<f64> = tips.iter().map(|t| t.1).collect();
-        widths.sort_by(f64::total_cmp);
-        let width = widths[widths.len() / 2];
-        let size = crate::support_shape_edit::hand_factory()
-            .rules
-            .sizes
-            .iter()
-            .min_by(|a, b| {
-                (a.tip_diameter_mm - width)
-                    .abs()
-                    .total_cmp(&(b.tip_diameter_mm - width).abs())
-            })
-            .map(|s| s.id.clone());
+        let shape = imported_shape(tips.iter().map(|(_, route)| route));
         if self.document.apply_edit(removal.clone()).is_err() {
             return;
         }
@@ -5903,16 +5973,33 @@ impl DfSupportRun {
         ));
         let how = AddOptions {
             attach: false,
-            size,
-            shape: None,
+            size: None,
+            shape: shape.clone().map(sc_geom::df_supports::HandShape),
         };
-        let points: Vec<[f32; 3]> = tips.iter().map(|t| t.0).collect();
+        let points: Vec<[f32; 3]> = tips
+            .iter()
+            .map(|(plan, _)| plan.at.map(|c| c as f32))
+            .collect();
         let mut refused = Vec::new();
-        let Ok(Prepared { sets, jobs }) =
+        let Ok(Prepared { sets, mut jobs }) =
             self.prepare_edit(&ui, HandTool::Add, &points, &how, &mut refused)
         else {
             return;
         };
+        // Each set places its share of the supports with their routes.
+        for job in &mut jobs {
+            if let EditOp::Points(points) = &job.op {
+                let plans = points
+                    .iter()
+                    .filter_map(|(i, _)| tips.get(*i))
+                    .map(|(plan, _)| ImportedPlan {
+                        shape: shape.clone(),
+                        ..plan.clone()
+                    })
+                    .collect();
+                job.op = EditOp::Imported(plans);
+            }
+        }
         let _ = self.launch_edit(
             &ui,
             sets,

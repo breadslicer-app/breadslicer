@@ -45,7 +45,7 @@ pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{
     AddNote, AddOptions, BraceEnd, COVERED_AGREEMENT, COVERED_SURFACE_MM, DfSupportSession,
-    EditError, EditPreview, HandShape, PartSizes, REVIEW_NUDGE_MM, SupportContact,
+    EditError, EditPreview, HandShape, ImportedPlan, PartSizes, REVIEW_NUDGE_MM, SupportContact,
     SupportJoint, SupportParts, SupportPiece, SupportPieceKind,
 };
 pub use support_gen_df::native::overhang::{
