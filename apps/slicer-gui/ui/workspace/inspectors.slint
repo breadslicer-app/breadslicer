@@ -2113,6 +2113,8 @@ export component SupportsInspector inherits VerticalLayout {
     in property <int> imported-bodies;
     callback remove-imported();
     callback replace-imported();
+    // Made editable at the same contacts (#261).
+    callback editable-imported();
     // The islands an analysis found (#525): how many no tip covers yet, -1
     // with no analysis of the models as they stand; whether a slice or Fix
     // All is busy; and the ways to find them and to support them all.
@@ -2219,6 +2221,13 @@ export component SupportsInspector inherits VerticalLayout {
             enabled: !root.running;
             clicked => {
                 root.replace-imported();
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Make editable at the same contacts");
+            enabled: !root.running;
+            clicked => {
+                root.editable-imported();
             }
         }
         ScButton {

@@ -9837,3 +9837,11 @@ msgstr "Tronco propio"
 msgctxt "Inspector"
 msgid "Hang from nearest"
 msgstr "Colgar del más cercano"
+
+msgctxt "Inspector"
+msgid "Make editable at the same contacts"
+msgstr "Hacerlos editables en los mismos contactos"
+
+msgctxt "DfSupportDialog"
+msgid "No contact tips were found in these imported supports; they stay as they are."
+msgstr "No se encontraron puntas de contacto en estos soportes importados; quedan como están."

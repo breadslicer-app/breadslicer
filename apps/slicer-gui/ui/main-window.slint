@@ -388,6 +388,9 @@ export component MainWindow inherits Window {
     callback support-islands-add-requested();
     callback support-islands-go-requested();
     callback imported-supports-replace-requested();
+    // The selected model's imported supports made editable at the same
+    // contacts (#261).
+    callback imported-supports-editable-requested();
     callback support-raft-off-requested();
     callback support-raft-ignore-requested();
     // The Supports tab manual tool: 0 none, 1 add a support where the model
@@ -3206,6 +3209,9 @@ export component MainWindow inherits Window {
                                     }
                                     replace-imported => {
                                         root.imported-supports-replace-requested();
+                                    }
+                                    editable-imported => {
+                                        root.imported-supports-editable-requested();
                                     }
                                     raft-lift => {
                                         root.support-raft-lift-requested();

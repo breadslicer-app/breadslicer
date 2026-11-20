@@ -2115,6 +2115,10 @@ impl DfSupportRun {
         }
         {
             let run = run.clone();
+            ui.on_imported_supports_editable_requested(move || run.imported_to_editable());
+        }
+        {
+            let run = run.clone();
             ui.on_support_area_clear(move || run.clear_painted());
         }
         {
@@ -5640,6 +5644,99 @@ impl DfSupportRun {
         }
     }
 
+    /// The imported supports of the model picked, made editable at the same
+    /// contacts (#261): the contact tips are read off their cones, the
+    /// imported supports go, and supports made here take every one of those
+    /// contacts, with the hand size nearest their tips' width, in the same
+    /// Undo step. What no route reaches is told, as a click of Add tells it.
+    fn imported_to_editable(self: &Rc<Self>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let Some(leaf) = self.document.selection_primary_node_id() else {
+            return;
+        };
+        let found = self
+            .document
+            .with_scene(|spatial| {
+                let query = spatial.leaf(leaf)?;
+                let model = if sc_mesh_core::presupported::is_imported_supports(query.mesh()) {
+                    crate::imported_supports::owner_of(spatial, leaf, None)?
+                } else if sc_geom::df_supports::is_any_support_mesh(query.mesh()) {
+                    return None;
+                } else {
+                    leaf
+                };
+                let sets = crate::imported_supports::imported_of(spatial, model, None);
+                let mut tips: Vec<([f32; 3], f64)> = Vec::new();
+                for &set in &sets {
+                    let q = spatial.leaf(set)?;
+                    let world = q.world_transform();
+                    for tip in sc_mesh_core::presupported::support_tips(q.mesh()) {
+                        let at = sc_mesh_core::Vertex::new(tip.contact.map(|c| c as f32));
+                        tips.push((world.apply_to_vertex(at).coords(), tip.diameter_mm));
+                    }
+                }
+                let removal = crate::split_bodies::removal_edit(spatial.graph(), &sets)?;
+                Some((tips, removal))
+            })
+            .flatten();
+        let Some((tips, removal)) = found else {
+            return;
+        };
+        if tips.is_empty() {
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "No contact tips were found in these imported supports; they stay as they are."
+            ));
+            return;
+        }
+        let mut widths: Vec<f64> = tips.iter().map(|t| t.1).collect();
+        widths.sort_by(f64::total_cmp);
+        let width = widths[widths.len() / 2];
+        let size = crate::support_shape_edit::hand_factory()
+            .rules
+            .sizes
+            .iter()
+            .min_by(|a, b| {
+                (a.tip_diameter_mm - width)
+                    .abs()
+                    .total_cmp(&(b.tip_diameter_mm - width).abs())
+            })
+            .map(|s| s.id.clone());
+        if self.document.apply_edit(removal.clone()).is_err() {
+            return;
+        }
+        self.document.push_edit(removal);
+        let join = self.document.scene_revision();
+        crate::breadcrumbs::note(&format!(
+            "supports: imported made editable, {} tips",
+            tips.len()
+        ));
+        let how = AddOptions {
+            attach: false,
+            size,
+            shape: None,
+        };
+        let points: Vec<[f32; 3]> = tips.iter().map(|t| t.0).collect();
+        let mut refused = Vec::new();
+        let Ok(Prepared { sets, jobs }) =
+            self.prepare_edit(&ui, HandTool::Add, &points, &how, &mut refused)
+        else {
+            return;
+        };
+        let _ = self.launch_edit(
+            &ui,
+            sets,
+            refused,
+            jobs,
+            HandTool::Add,
+            how,
+            None,
+            Some(join),
+        );
+    }
+
     /// The supports picked are routed again from their tips (#377): each on
     /// a route of its own (`own`), or hung from the nearest support. One
     /// Undo step for each set.
@@ -6699,7 +6796,7 @@ impl DfSupportRun {
         // takes them out of the scene again.
         if !born.is_empty() {
             let prior = (!edits.is_empty()).then(|| swap.clone());
-            return self.commit_born(ui, born, edits, prior, refused);
+            return self.commit_born(ui, born, edits, prior, refused, join);
         }
         // A Fix All run's later pass joins the run's entry (#163). The
         // scene is still at that revision (the edit is dropped otherwise),
@@ -6770,7 +6867,10 @@ impl DfSupportRun {
         edits: Vec<(DrawnSet, DfSupportSession, Arc<sc_mesh_core::IndexedMesh>)>,
         prior: Option<SceneEdit>,
         refused: &mut Refusals,
+        join: Option<SceneRevision>,
     ) -> HandEdit {
+        // Into the newest undo entry, when the scene is still at it (#261).
+        let joins = join.is_some_and(|revision| self.document.scene_revision() == revision);
         let fragment = SceneFragment::from_leaf_snapshots(
             born.iter()
                 .map(|(_, _, mesh)| (mesh.clone(), Transform3D::Identity)),
@@ -6789,6 +6889,9 @@ impl DfSupportRun {
                 return HandEdit::Failed(why);
             }
         };
+        if joins {
+            self.document.join_last_steps(2);
+        }
         crate::breadcrumbs::note(&format!("supports: {} sets born", leaves.len()));
         let mut roots = 0;
         for (drawn, edited, _) in edits {
@@ -12303,6 +12406,58 @@ mod hand_edit_tests {
     /// The Select tool (#567): a click picks a support, a number of the
     /// panel draws it again with that number in the same contact, as one
     /// step of Undo, and it stays picked.
+    /// #261: a pre-supported file's imported supports made editable at the
+    /// same contacts: the imported ones go and supports made here touch the
+    /// model where their tips did, in one Undo step.
+    #[test]
+    fn imported_supports_are_made_editable_at_their_contacts() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            ctrl.dialogs().attach(&window);
+            let import = crate::presupported_import::PresupportedImport::install(
+                &window,
+                document.clone(),
+                ctrl.dialogs(),
+            );
+            let (mesh, _) = crate::tests_presupported_import::presupported_mesh();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::new(mesh)),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("werewolf.stl"));
+            import.settle_for_test();
+            assert!(window.get_message_open(), "the question is up");
+            window.invoke_message_answered(crate::slint_ui::MessageAnswer::Separate);
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let before = document.scene_revision();
+            run.imported_to_editable();
+            settle_click(&run);
+            let imported = document
+                .with_scene(|spatial| crate::imported_supports::imported_leaves(spatial).len())
+                .unwrap();
+            assert_eq!(imported, 0, "the imported supports went");
+            let session = in_force_session(&run).unwrap_or_else(|| {
+                panic!("supports made here: {}", window.get_supports_last_run())
+            });
+            let tips = session.tips();
+            assert_eq!(tips.len(), 6, "{}", window.get_supports_last_run());
+            for (_, tip) in &tips {
+                assert!((tip[2] - 5.0).abs() < 0.3, "under the model: {tip:?}");
+            }
+            assert!(document.undo().unwrap());
+            assert_eq!(document.scene_revision(), before, "one undo step");
+        });
+    }
+
     /// #377: a picked support is routed again from its tip, on its own or
     /// hung from the nearest, as one Undo step; the tip stays where it was.
     #[test]

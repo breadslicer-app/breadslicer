@@ -221,6 +221,26 @@ fn a_presupported_file_comes_apart_into_its_model_and_its_supports() {
     assert_eq!(shells.count() as usize, 2 * SUPPORT_SPOTS.len() + 1);
 }
 
+/// #261: every support's contact cone gives its tip where it touches the
+/// model, how wide, and that the support leaves it downward; the horn on
+/// top, a cone narrowing up too but no support, is not in the supports.
+#[test]
+fn the_tips_of_imported_supports_are_read_off_their_cones() {
+    let (mesh, _) = presupported();
+    let found = find_supports(&mesh).expect("supports found");
+    let tips = support_tips(&found.supports);
+    assert_eq!(tips.len(), SUPPORT_SPOTS.len(), "{tips:?}");
+    for tip in &tips {
+        let spot = SUPPORT_SPOTS
+            .iter()
+            .find(|s| (s[0] - tip.contact[0]).abs() < 0.05 && (s[1] - tip.contact[1]).abs() < 0.05)
+            .unwrap_or_else(|| panic!("a tip off every spot: {tip:?}"));
+        assert!((tip.contact[2] - 5.0).abs() < 0.05, "{spot:?}: {tip:?}");
+        assert!((tip.diameter_mm - 0.3).abs() < 0.05, "{tip:?}");
+        assert!(tip.away[2] < -0.99, "down its cone: {tip:?}");
+    }
+}
+
 #[test]
 fn a_support_standing_on_the_model_and_a_lone_ball_come_off_with_the_supports() {
     let (mut b, mut model_faces) = {
