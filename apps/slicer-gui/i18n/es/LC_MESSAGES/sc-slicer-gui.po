@@ -9781,3 +9781,25 @@ msgstr "Buscar la plataforma hasta"
 msgctxt "Inspector"
 msgid "Model stands above the plate"
 msgstr "Altura del modelo sobre la plataforma"
+
+msgctxt "Inspector"
+msgid "Line"
+msgstr "Línea"
+
+msgctxt "Inspector"
+msgid "Click the model where the row starts, then where it ends: a support at every dot, along the surface. Keys 1–4 pick the size. Esc drops the first point."
+msgstr "Hacé clic en el modelo donde empieza la fila y después donde termina: un soporte en cada punto, siguiendo la superficie. Las teclas 1–4 eligen el tamaño. Esc suelta el primer punto."
+
+msgctxt "Inspector"
+msgid "Supports apart"
+msgstr "Separación entre soportes"
+
+msgctxt "DfSupportDialog"
+msgid "Click where the row ends."
+msgstr "Hacé clic donde termina la fila."
+
+msgctxt "DfSupportDialog"
+msgid "Click where the row ends: {n} support."
+msgid_plural "Click where the row ends: {n} supports."
+msgstr[0] "Hacé clic donde termina la fila: {n} soporte."
+msgstr[1] "Hacé clic donde termina la fila: {n} soportes."

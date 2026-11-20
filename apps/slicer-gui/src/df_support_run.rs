@@ -299,6 +299,10 @@ pub(crate) struct DfSupportRun {
     /// The brace tool's first end (#3), with the set it is on: the next
     /// click on a support lays the brace.
     brace_from: RefCell<Option<(DrawnSet, BraceEnd)>>,
+    /// The line tool's first point (#178): the next click places the row.
+    line_from: Cell<Option<[f32; 3]>>,
+    /// The line tool's spacing between supports, mm.
+    line_spacing: Cell<f64>,
     box_poll: slint::Timer,
     /// This driver, for what a drag starts from the viewport's side.
     me: RefCell<std::rc::Weak<DfSupportRun>>,
@@ -745,9 +749,7 @@ fn compute_edit(
 ) -> Computed {
     let points = |job: &EditJob| match &job.op {
         EditOp::Points(points) => points.len(),
-        EditOp::RemoveTips(_) | EditOp::MoveTip(..) | EditOp::Brace(..) | EditOp::Reshape(_) => {
-            0
-        }
+        EditOp::RemoveTips(_) | EditOp::MoveTip(..) | EditOp::Brace(..) | EditOp::Reshape(_) => 0,
     };
     watch
         .total
@@ -995,6 +997,12 @@ enum QueuedClick {
     },
     /// A drag's edit of the set its leaf shows.
     Gesture { leaf: NodeId, op: EditOp },
+    /// A row of the line tool (#178): every point in one edit.
+    Points {
+        tool: HandTool,
+        points: Vec<[f32; 3]>,
+        how: AddOptions,
+    },
 }
 
 /// A drag of a Supports tab tool in flight (#3).
@@ -1384,6 +1392,78 @@ fn preset_cards() -> Vec<(slint::SharedString, &'static str)> {
 }
 
 /// A zone's name and what it covers, as a row of the shape panel lists it.
+/// The line tool's spacing between supports, mm, until one is typed (#178).
+const LINE_SPACING_MM: f64 = 2.0;
+
+/// The supports of a row along `path` (points on the surface, in order),
+/// `spacing` mm apart along it (#178): evenly over each stretch, ends
+/// included. Where the path jumps (it left the model), a new stretch starts.
+fn line_points(path: &[[f32; 3]], spacing: f64) -> Vec<[f32; 3]> {
+    let spacing = spacing.max(0.1);
+    let gap = |a: [f32; 3], b: [f32; 3]| {
+        (0..3)
+            .map(|k| f64::from(b[k] - a[k]).powi(2))
+            .sum::<f64>()
+            .sqrt()
+    };
+    let mut stretches: Vec<Vec<[f32; 3]>> = Vec::new();
+    for &p in path {
+        match stretches.last_mut() {
+            Some(run)
+                if gap(*run.last().expect("a stretch has a point"), p) <= spacing.max(1.0) =>
+            {
+                run.push(p)
+            }
+            _ => stretches.push(vec![p]),
+        }
+    }
+    let mut out = Vec::new();
+    for run in stretches {
+        let lengths: Vec<f64> = std::iter::once(0.0)
+            .chain(run.windows(2).scan(0.0, |sum, w| {
+                *sum += gap(w[0], w[1]);
+                Some(*sum)
+            }))
+            .collect();
+        let total = *lengths.last().expect("a stretch has a point");
+        let n = (total / spacing).round() as usize;
+        if n == 0 {
+            out.push(run[0]);
+            continue;
+        }
+        for i in 0..=n {
+            let at = total * i as f64 / n as f64;
+            let k = lengths.partition_point(|&l| l < at).clamp(1, run.len() - 1);
+            let (a, b) = (run[k - 1], run[k]);
+            let span = lengths[k] - lengths[k - 1];
+            let t = if span > 0.0 {
+                ((at - lengths[k - 1]) / span) as f32
+            } else {
+                0.0
+            };
+            out.push([0, 1, 2].map(|c| a[c] + (b[c] - a[c]) * t));
+        }
+    }
+    out
+}
+
+/// A dot at each of `row`, for the line tool's preview.
+fn line_dots(row: &[[f32; 3]]) -> Option<crate::mesh_render::Overlay> {
+    use crate::mesh_render::{OverlayMesh, OverlayTint};
+    if row.is_empty() {
+        return None;
+    }
+    let mut piece = OverlayMesh {
+        positions: Vec::new(),
+        indices: Vec::new(),
+        tint: OverlayTint::Picked,
+    };
+    for &p in row {
+        crate::repair_marks::push_bar(&mut piece, p, p, 0.3);
+    }
+    Some(Arc::from(vec![Arc::new(piece)]))
+}
+
 /// What a bracing preset is called on the panel (#363).
 fn bracing_preset_name(id: &str) -> slint::SharedString {
     match id {
@@ -1780,6 +1860,8 @@ impl DfSupportRun {
             pending_click: RefCell::new(None),
             drag: RefCell::new(None),
             brace_from: RefCell::new(None),
+            line_from: Cell::new(None),
+            line_spacing: Cell::new(LINE_SPACING_MM),
             box_poll: slint::Timer::default(),
             me: RefCell::new(std::rc::Weak::new()),
             queued_clicks: RefCell::new(std::collections::VecDeque::new()),
@@ -1995,6 +2077,10 @@ impl DfSupportRun {
         {
             let run = run.clone();
             ui.on_support_shape_choice(move |code, v| run.on_shape_choice(code, v));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_line_spacing_edited(move |v| run.on_line_spacing(v));
         }
         {
             let run = run.clone();
@@ -4945,7 +5031,19 @@ impl DfSupportRun {
     /// the support from the nearest one (#3).
     fn on_tool_hover_with(self: &Rc<Self>, point: Option<[f32; 3]>, shift: bool) {
         // The Select tool shows what it picked, not what a click would do.
-        if self.ui.upgrade().is_some_and(|ui| ui.get_support_tool() == 5) {
+        if self
+            .ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_support_tool() == 5)
+        {
+            return;
+        }
+        if self
+            .ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_support_tool() == 6)
+        {
+            self.line_hover(point);
             return;
         }
         self.hover_at.set(point.map(|p| (p, shift)));
@@ -5325,6 +5423,7 @@ impl DfSupportRun {
     fn on_tool_changed(&self) {
         self.hover_at.set(None);
         self.brace_from.borrow_mut().take();
+        self.line_from.set(None);
         self.show_add_note(Default::default());
         if let Some(ui) = self.ui.upgrade() {
             self.refresh_tip_label(&ui, None);
@@ -5443,7 +5542,11 @@ impl DfSupportRun {
         self.show_hover_overlay();
         let carrying: usize = now
             .iter()
-            .map(|(drawn, ids)| ids.iter().filter(|id| drawn.session.carries_others(id)).count())
+            .map(|(drawn, ids)| {
+                ids.iter()
+                    .filter(|id| drawn.session.carries_others(id))
+                    .count()
+            })
             .sum();
         self.show_add_note(if count == 0 {
             Default::default()
@@ -5665,6 +5768,10 @@ impl DfSupportRun {
             self.select_click(&ui, point, forced);
             return;
         }
+        if tool == 6 {
+            self.line_click(&ui, point);
+            return;
+        }
         if self.pending_click.borrow().is_none() && self.remove_imported_body(point) {
             return;
         }
@@ -5784,6 +5891,88 @@ impl DfSupportRun {
         self.start_gesture(ui, drawn, EditOp::Brace(from, point), edited);
     }
 
+    /// Drops the line tool's first point, and the dots: whether there was
+    /// one (#178).
+    fn drop_line(&self) -> bool {
+        if self.line_from.take().is_none() {
+            return false;
+        }
+        self.ctrl.set_preview_overlay(None);
+        self.show_add_note(Default::default());
+        true
+    }
+
+    /// Where the supports of a row from the line's first point to `to` go
+    /// (#178): along the model's surface between them, as seen.
+    fn line_row(&self, from: [f32; 3], to: [f32; 3]) -> Vec<[f32; 3]> {
+        line_points(&self.ctrl.surface_path(from, to), self.line_spacing.get())
+    }
+
+    /// The line tool's hover: once the first point is in, a dot where each
+    /// support of the row would go.
+    fn line_hover(&self, point: Option<[f32; 3]>) {
+        self.hover_poll.stop();
+        let (Some(from), Some(to)) = (self.line_from.get(), point) else {
+            if self.line_from.get().is_none() {
+                self.ctrl.set_preview_overlay(None);
+            }
+            return;
+        };
+        let row = self.line_row(from, to);
+        self.ctrl.set_preview_overlay(line_dots(&row));
+        self.show_add_note((
+            ctr!(
+                "DfSupportDialog",
+                "Click where the row ends: {n} support.",
+                "Click where the row ends: {n} supports.",
+                row.len()
+            ),
+            false,
+        ));
+    }
+
+    /// A click of the line tool (#178): the first sets where the row
+    /// starts, the second places a support at every dot, as one edit.
+    fn line_click(self: &Rc<Self>, ui: &MainWindow, point: [f32; 3]) {
+        let Some(from) = self.line_from.get() else {
+            crate::breadcrumbs::note("supports: line started");
+            self.line_from.set(Some(point));
+            self.ctrl.set_preview_overlay(line_dots(&[point]));
+            self.show_add_note((ctr!("DfSupportDialog", "Click where the row ends."), false));
+            return;
+        };
+        let row = self.line_row(from, point);
+        self.line_from.set(None);
+        self.ctrl.set_preview_overlay(None);
+        self.show_add_note(Default::default());
+        self.place_row(ui, row);
+    }
+
+    /// Places a support at each of `row`, one edit, as Add places one.
+    fn place_row(self: &Rc<Self>, ui: &MainWindow, row: Vec<[f32; 3]>) {
+        crate::breadcrumbs::note(&format!("supports: line of {}", row.len()));
+        let (tool, how) = self.click_tool(ui, 1, false);
+        if self.pending_click.borrow().is_some() {
+            self.queued_clicks
+                .borrow_mut()
+                .push_back(QueuedClick::Points {
+                    tool,
+                    points: row,
+                    how,
+                });
+            return;
+        }
+        self.start_points(ui, tool, &row, how);
+    }
+
+    fn on_line_spacing(&self, mm: f32) {
+        let mm = f64::from(mm).clamp(0.3, 50.0);
+        self.line_spacing.set(mm);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_line_spacing(mm as f32);
+        }
+    }
+
     /// Drops the brace tool's first end, and what shows it: returns whether
     /// there was one.
     fn drop_brace(&self) -> bool {
@@ -5808,8 +5997,22 @@ impl DfSupportRun {
         point: [f32; 3],
         how: AddOptions,
     ) {
+        self.start_points(ui, tool, &[point], how);
+    }
+
+    /// [`Self::start_click`] for several points at once, one edit (#178).
+    fn start_points(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        tool: HandTool,
+        points: &[[f32; 3]],
+        how: AddOptions,
+    ) {
+        if points.is_empty() {
+            return;
+        }
         let mut refused = Vec::new();
-        let Ok(Prepared { sets, jobs }) = self.prepare_edit(ui, tool, &[point], &how, &mut refused)
+        let Ok(Prepared { sets, jobs }) = self.prepare_edit(ui, tool, points, &how, &mut refused)
         else {
             self.queued_clicks.borrow_mut().clear();
             return;
@@ -6013,6 +6216,9 @@ impl DfSupportRun {
         match next {
             Some(QueuedClick::Click { tool, point, how }) => {
                 self.start_click(&ui, tool, point, how);
+            }
+            Some(QueuedClick::Points { tool, points, how }) => {
+                self.start_points(&ui, tool, &points, how);
             }
             Some(QueuedClick::Gesture { leaf, op }) => {
                 let drawn = self
@@ -8282,7 +8488,7 @@ impl SupportDragHandler for DfSupportRun {
     }
 
     fn cancel_pending(&self) -> bool {
-        self.drop_brace()
+        self.drop_brace() || self.drop_line()
     }
 
     fn drag_end(&self, commit: bool) {
@@ -12023,16 +12229,27 @@ mod hand_edit_tests {
             let before = document.scene_revision();
             run.on_shape_value(0, 0.35);
             settle_click(&run);
-            assert_ne!(document.scene_revision(), before, "drawn again: {}", window.get_supports_last_run());
+            assert_ne!(
+                document.scene_revision(),
+                before,
+                "drawn again: {}",
+                window.get_supports_last_run()
+            );
             let drawn = run.sets_in_force()[0].clone();
-            let id = drawn.session.tip_near(tip, 0.05).expect("in the same contact");
+            let id = drawn
+                .session
+                .tip_near(tip, 0.05)
+                .expect("in the same contact");
             let shape = drawn.session.shape_of(&id).expect("its numbers");
             assert!((shape.tip_diameter_mm - 0.35).abs() < 1e-6, "{shape:?}");
             assert_eq!(window.get_support_picked_count(), 1, "still picked");
 
             assert!(document.undo().unwrap());
             let drawn = run.sets_in_force()[0].clone();
-            let id = drawn.session.tip_near(tip, 0.05).expect("back where it was");
+            let id = drawn
+                .session
+                .tip_near(tip, 0.05)
+                .expect("back where it was");
             assert!(
                 (drawn.session.shape_of(&id).unwrap().tip_diameter_mm - 0.35).abs() > 1e-6,
                 "Undo brings the old numbers back"
@@ -12946,6 +13163,76 @@ mod hand_edit_tests {
             assert!(document.undo().unwrap(), "one undo step");
             assert_eq!(leaves(), 2);
             assert!(in_force_session(&run).is_some(), "editable as it was");
+        });
+    }
+
+    /// The line tool (#178): dots evenly along each stretch of the path,
+    /// a new stretch where the path left the model.
+    #[test]
+    fn a_row_spreads_evenly_and_starts_again_past_a_gap() {
+        let path: Vec<[f32; 3]> = (0..=40).map(|i| [i as f32 * 0.25, 0.0, 5.0]).collect();
+        let row = line_points(&path, 2.0);
+        assert_eq!(row.len(), 6);
+        assert_eq!(row[0], [0.0, 0.0, 5.0]);
+        assert_eq!(row[5], [10.0, 0.0, 5.0]);
+        assert!((row[1][0] - 2.0).abs() < 1e-4);
+        let mut gapped = path.clone();
+        gapped.extend((0..=8).map(|i| [30.0 + i as f32 * 0.25, 0.0, 5.0]));
+        let row = line_points(&gapped, 2.0);
+        assert_eq!(row.len(), 6 + 2);
+        assert_eq!(*row.last().unwrap(), [32.0, 0.0, 5.0]);
+        assert_eq!(line_points(&[[1.0, 2.0, 3.0]], 2.0), vec![[1.0, 2.0, 3.0]]);
+    }
+
+    /// The line tool (#178): two clicks under a bare slab, seen from below,
+    /// place a row of supports along it, as one Undo step.
+    #[test]
+    fn two_clicks_of_the_line_tool_place_a_row_in_one_step() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = wired_viewport(&window);
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    translation([10.0, 20.0, 9.0]),
+                    LeafPayload::Mesh(Arc::new(slab_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("slab.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            ctrl.set_section(WorkspaceSection::Supports);
+            ctrl.set_viewport_for_test(800.0, 600.0);
+            ctrl.set_camera_for_test(camera_at([20.0, 25.0, 9.0], 0.3, -0.7, 50.0));
+            window.set_support_tool(6);
+            run.on_tool_changed();
+
+            run.on_tool_click_with([12.0, 25.0, 9.0], false);
+            assert!(
+                run.support_leaf().is_none(),
+                "the first click places nothing"
+            );
+            run.on_tool_hover_with(Some([28.0, 25.0, 9.0]), false);
+            assert!(
+                window.get_support_add_note().contains("9 supports"),
+                "{}",
+                window.get_support_add_note()
+            );
+            run.on_tool_click_with([28.0, 25.0, 9.0], false);
+            settle_click(&run);
+            let session = in_force_session(&run).expect("the row started a set");
+            let tips: Vec<[f64; 3]> = session.tips().into_iter().map(|t| t.1).collect();
+            assert_eq!(tips.len(), 9, "{tips:?}");
+            for tip in &tips {
+                assert!((tip[1] - 25.0).abs() < 0.3, "on the line: {tip:?}");
+                assert!((tip[2] - 9.0).abs() < 0.3, "on the underside: {tip:?}");
+            }
+            assert!(document.undo().unwrap());
+            assert!(run.support_leaf().is_none(), "one undo takes the row out");
         });
     }
 

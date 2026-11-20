@@ -2159,6 +2159,9 @@ export component SupportsInspector inherits VerticalLayout {
     // The whole preset's choices (#363): bottom, middle and top pattern
     // (simple, double, zigzag), the rings' diagonal (none, simple, double),
     // the bracing preset it is (-1 none), ignore small islands (0 or 1).
+    // The line tool's spacing between supports, mm (#178).
+    in property <float> line-spacing: 2;
+    callback line-spacing-edited(float);
     in property <[int]> shape-choices;
     in property <[int]> shape-choice-defaults;
     in property <[string]> bracing-presets;
@@ -2295,6 +2298,16 @@ export component SupportsInspector inherits VerticalLayout {
                 }
             }
             HandToolButton {
+                icon: Icons.support-line;
+                label: @tr("Inspector" => "Line");
+                shortcut: "N";
+                active: root.tool == 6;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 6 ? 0 : 6);
+                }
+            }
+            HandToolButton {
                 icon: Icons.move-tip;
                 label: @tr("Inspector" => "Move tip");
                 shortcut: "M";
@@ -2339,6 +2352,18 @@ export component SupportsInspector inherits VerticalLayout {
         }
         if root.tool == 4: Note {
             text: @tr("Inspector" => "Click a support where the brace starts, then the support it goes to.");
+        }
+        if root.tool == 6: Note {
+            text: @tr("Inspector" => "Click the model where the row starts, then where it ends: a support at every dot, along the surface. Keys 1–4 pick the size. Esc drops the first point.");
+        }
+        if root.tool == 6: NumberField {
+            label: @tr("Inspector" => "Supports apart");
+            unit: "mm";
+            decimals: 1;
+            value: root.line-spacing;
+            committed(v) => {
+                root.line-spacing-edited(v);
+            }
         }
         if root.tool == 2: LabeledRow {
             label: @tr("Inspector" => "Drag");

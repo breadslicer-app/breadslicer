@@ -274,6 +274,9 @@ enum TabTool {
     Brace,
     /// The Select tool (#567): a click picks a support, Shift+click more.
     SelectSupport,
+    /// The line tool (#178): a click on the model, then another, places a
+    /// row of supports along the surface between them.
+    SupportLine,
     Drain,
 }
 
@@ -3428,7 +3431,11 @@ impl ViewportController {
                 Some(SupportDragKind::Brush)
             }
             TabTool::RemoveSupport => Some(SupportDragKind::Box),
-            TabTool::AddSupport | TabTool::Brace | TabTool::SelectSupport | TabTool::Drain => None,
+            TabTool::AddSupport
+            | TabTool::Brace
+            | TabTool::SelectSupport
+            | TabTool::SupportLine
+            | TabTool::Drain => None,
         }
     }
 
@@ -3600,13 +3607,6 @@ impl ViewportController {
         }
     }
 
-    /// Whether the Supports tab's Add tool is armed.
-    fn add_support_armed(&self) -> bool {
-        self.ui
-            .upgrade()
-            .is_some_and(|ui| self.tab_tool(&ui) == Some(TabTool::AddSupport))
-    }
-
     /// Whether a tool that takes Shift+click as its own is armed: Add hangs
     /// the support from the nearest one (#3), Select picks one more (#567).
     fn shift_click_tool_armed(&self) -> bool {
@@ -3628,6 +3628,7 @@ impl ViewportController {
                 3 => Some(TabTool::MoveTip),
                 4 => Some(TabTool::Brace),
                 5 => Some(TabTool::SelectSupport),
+                6 => Some(TabTool::SupportLine),
                 _ => None,
             },
             _ => None,
@@ -3905,6 +3906,45 @@ impl ViewportController {
 
     /// A click while measuring: the point of the model under `cursor`, on
     /// a corner of its face when one is within [`crate::measure::SNAP_PX`].
+    /// The model's surface between `from` and `to` (world mm, on it) as it
+    /// is seen (#178): a point where each pixel or two of the straight line
+    /// between them on the screen meets a model, looking through the
+    /// supports. A stretch where the line leaves the models has no points.
+    pub(crate) fn surface_path(&self, from: [f32; 3], to: [f32; 3]) -> Vec<[f32; 3]> {
+        let Some(vp) = self.render.viewport() else {
+            return Vec::new();
+        };
+        let Some(camera) = self.camera.camera_cell().borrow().as_ref().cloned() else {
+            return Vec::new();
+        };
+        let fov = crate::mesh_render::default_fov_y();
+        let (w, h) = (vp.width(), vp.height());
+        let screen =
+            |p: [f32; 3]| picking::project_world_to_screen(&camera, fov, w, h, glam::Vec3::from(p));
+        let (Some(a), Some(b)) = (screen(from), screen(to)) else {
+            return vec![from, to];
+        };
+        // One sample every 1.5 px, at most 2000.
+        let steps = (((b.0 - a.0).hypot(b.1 - a.1) / 1.5).ceil() as usize).clamp(1, 2000);
+        let mut out = Vec::with_capacity(steps + 1);
+        out.push(from);
+        self.session.document().with_scene(|spatial| {
+            for i in 1..steps {
+                let t = i as f32 / steps as f32;
+                let (x, y) = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
+                let ray = picking::ray_from_pixel(&camera, fov, w, h, x, y);
+                if let Some(hit) =
+                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id))
+                {
+                    let p = ray.origin + ray.direction * hit.t;
+                    out.push([p.x, p.y, p.z]);
+                }
+            }
+        });
+        out.push(to);
+        out
+    }
+
     pub(crate) fn measure_click(&self, cursor: ScreenPoint, chain: bool) {
         let Some(vp) = self.render.viewport() else {
             return;

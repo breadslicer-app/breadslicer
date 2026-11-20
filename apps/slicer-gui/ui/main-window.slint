@@ -324,6 +324,9 @@ export component MainWindow inherits Window {
     in property <[int]> support-shape-choice-defaults;
     in property <[string]> support-bracing-presets;
     callback support-shape-choice(int, int);
+    // The line tool's spacing between supports, mm (#178).
+    in property <float> support-line-spacing: 2;
+    callback support-line-spacing-edited(float);
     in property <[ZoneRow]> support-zone-rows;
     in property <[string]> support-zone-size-names;
     in property <float> support-zone-angle;
@@ -2020,6 +2023,10 @@ export component MainWindow inherits Window {
                                     root.arm-support-tool(5);
                                     return true;
                                 }
+                                if key == "n" || key == "N" {
+                                    root.arm-support-tool(6);
+                                    return true;
+                                }
                                 // Remove: B a box or a brush; [ and ] the brush.
                                 if root.support-tool == 2 && (key == "b" || key == "B") {
                                     root.support-remove-mode = root.support-remove-mode == 1 ? 0 : 1;
@@ -2031,7 +2038,7 @@ export component MainWindow inherits Window {
                                 }
                                 // The tip size while Add is armed; the view keys
                                 // otherwise.
-                                if root.support-tool == 1 && (key == "1" || key == "2" || key == "3" || key == "4") {
+                                if (root.support-tool == 1 || root.support-tool == 6) && (key == "1" || key == "2" || key == "3" || key == "4") {
                                     root.support-tip-size = key.to-float();
                                     return true;
                                 }
@@ -3096,6 +3103,10 @@ export component MainWindow inherits Window {
                                     bracing-presets: root.support-bracing-presets;
                                     shape-choice(code, v) => {
                                         root.support-shape-choice(code, v);
+                                    }
+                                    line-spacing: root.support-line-spacing;
+                                    line-spacing-edited(v) => {
+                                        root.support-line-spacing-edited(v);
                                     }
                                     zone-rows: root.support-zone-rows;
                                     zone-size-names: root.support-zone-size-names;
