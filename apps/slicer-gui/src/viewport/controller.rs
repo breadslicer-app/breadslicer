@@ -3818,6 +3818,7 @@ impl ViewportController {
     }
 
     /// Whether the Measure tool is on (#652).
+    #[cfg(test)]
     pub(crate) fn measuring(&self) -> bool {
         self.measure.on()
     }
@@ -3838,6 +3839,7 @@ impl ViewportController {
     }
 
     /// The points taken so far, world mm.
+    #[cfg(test)]
     pub(crate) fn measure_points(&self) -> Vec<[f64; 3]> {
         self.measure.points()
     }
