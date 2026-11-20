@@ -309,6 +309,7 @@ fn a_sliver_past_the_overhang_angle_is_no_tip_but_anything_more_is() {
         tips,
         islands,
         facing_up: 0.5,
+        landings: 0.0,
     };
     assert_eq!(cost(0.0, 0).whole_tips(), 0);
     assert_eq!(cost(0.04, 0).whole_tips(), 0);

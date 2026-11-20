@@ -258,7 +258,7 @@ impl OrientAnalysis {
             }
         }
         finals.push(current_up);
-        let mut verdict: Vec<Candidate> = self.score_many(&finals, ctx, Quality::Verdict);
+        let mut verdict: Vec<Candidate> = self.score_many(&finals, ctx, Quality::verdict(ctx));
         let mut current = verdict.pop().expect("the current pose is scored");
         current.is_current = true;
         current.tilt_deg = 0.0;
