@@ -1288,6 +1288,10 @@ impl AppState {
         if !flags.any() {
             return;
         }
+        // Group with two models or more, Ungroup with a group among them.
+        let (group, ungroup) = wired.controller.group_offers();
+        wired.window.set_context_can_group(flags.can_copy && group);
+        wired.window.set_context_can_ungroup(flags.can_copy && ungroup);
         wired.window.invoke_show_context_menu(
             x,
             y,

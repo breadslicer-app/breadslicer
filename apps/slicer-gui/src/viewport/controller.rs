@@ -4483,11 +4483,23 @@ impl ViewportController {
         self.mark_dirty();
     }
 
-    /// Ctrl+G / Ctrl+Shift+G (#475): the selected models become a group, or
-    /// their groups are undone; the status bar says which.
-    pub(crate) fn group_selection(&self, group: bool) {
+    /// Whether the right-click menu offers Group (two models or more picked,
+    /// not already one group) and Ungroup (one of them in a group), #475.
+    pub(crate) fn group_offers(&self) -> (bool, bool) {
         let document = self.session.document();
-        let models: Vec<sc_scene::NodeId> = document
+        let models = self.selected_models();
+        let groups: Vec<Option<Vec<sc_scene::NodeId>>> =
+            models.iter().map(|&m| document.group_of(m)).collect();
+        let grouped = groups.iter().any(Option::is_some);
+        let one_group = groups.first().is_some_and(|g| g.is_some())
+            && groups.iter().all(|g| *g == groups[0]);
+        (models.len() >= 2 && !one_group, grouped)
+    }
+
+    /// The selected models: supports left out.
+    fn selected_models(&self) -> Vec<sc_scene::NodeId> {
+        let document = self.session.document();
+        document
             .with_scene(|spatial| {
                 document
                     .selection()
@@ -4501,7 +4513,14 @@ impl ViewportController {
                     })
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_default()
+    }
+
+    /// Ctrl+G / Ctrl+Shift+G (#475): the selected models become a group, or
+    /// their groups are undone; the status bar says which.
+    pub(crate) fn group_selection(&self, group: bool) {
+        let document = self.session.document();
+        let models = self.selected_models();
         let text = if group {
             if document.group(&models) {
                 document.set_selection(Selection::of(models.into_iter().map(LeafId)));

@@ -30,10 +30,14 @@
 //! ([`crate::support_follow`]): a turn about the vertical takes them along, a
 //! tilt makes them again. When the current pose is already the best, the
 //! tool says so and moves nothing.
+//!
+//! With two models or more picked (#221), Quick and Full orient each one on
+//! its own, side by side on the cores, and apply each one's best pose in one
+//! Undo step: no options are shown, as there is one choice per model.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -147,7 +151,21 @@ impl Target {
     /// The selected model; `None` without one, or when a support set is
     /// selected.
     pub(crate) fn selected(document: &SceneDocument) -> Option<Self> {
-        let leaf = document.selection_primary_node_id()?;
+        Self::of(document, document.selection_primary_node_id()?)
+    }
+
+    /// Every selected model, supports left out (#221).
+    pub(crate) fn every_selected(document: &SceneDocument) -> Vec<Self> {
+        document
+            .selection()
+            .leaves()
+            .iter()
+            .filter_map(|l| Self::of(document, l.node_id()))
+            .collect()
+    }
+
+    /// The model `leaf`; `None` for a support set.
+    fn of(document: &SceneDocument, leaf: NodeId) -> Option<Self> {
         let revision = document.scene_revision();
         document
             .with_scene(|spatial| {
@@ -307,6 +325,19 @@ struct Job {
 
 type Slot = Arc<Mutex<Option<(u64, Result<Worked, String>)>>>;
 
+/// Several models oriented each on its own (#221), in flight.
+struct Batch {
+    id: u64,
+    targets: Vec<Target>,
+    cancel: Arc<AtomicBool>,
+    started: Instant,
+}
+
+/// Each model's best world pose; `None` where it already stands best or the
+/// search was stopped.
+type Poses = Vec<Option<AffineTransform3D>>;
+type BatchSlot = Arc<Mutex<Option<(u64, Result<Poses, String>)>>>;
+
 /// The options on show, for the model and the scene they were found for.
 struct Shown {
     leaf: NodeId,
@@ -334,6 +365,8 @@ pub(crate) struct OrientRun {
     settings: Cell<OrientSettings>,
     analysis: RefCell<Option<(AnalysisKey, Arc<OrientAnalysis>)>>,
     job: RefCell<Option<Job>>,
+    batch: RefCell<Option<Batch>>,
+    batch_slot: BatchSlot,
     next_id: Cell<u64>,
     /// The run whose progress the card shows.
     live_id: Arc<AtomicU64>,
@@ -404,6 +437,8 @@ impl OrientRun {
                 settings: Cell::new(OrientSettings::default()),
                 analysis: RefCell::new(None),
                 job: RefCell::new(None),
+                batch: RefCell::new(None),
+                batch_slot: Arc::new(Mutex::new(None)),
                 next_id: Cell::new(1),
                 live_id: Arc::new(AtomicU64::new(0)),
                 slot: Arc::new(Mutex::new(None)),
@@ -643,7 +678,7 @@ impl OrientRun {
         self.open.set(true);
         ui.set_orient_open(true);
         self.ctrl.show_paint(true);
-        self.set_status(String::new());
+        self.set_status(self.many_hint());
         ui.set_orient_offer_arrange(false);
         self.show_painted_area();
         self.refresh_warning();
@@ -700,6 +735,17 @@ impl OrientRun {
         if !self.open.get() || !self.editable() {
             return;
         }
+        let many = Target::every_selected(&self.document);
+        if many.len() >= 2 {
+            self.last_mode.set(None);
+            self.clear_shown();
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_orient_offer_arrange(false);
+            }
+            self.cancel();
+            self.start_batch(many, mode);
+            return;
+        }
         let Some(target) = Target::selected(&self.document) else {
             return;
         };
@@ -723,13 +769,220 @@ impl OrientRun {
         self.start(target, Some(mode));
     }
 
-    fn start(&self, mut target: Target, mode: Option<SearchMode>) {
+    /// The corners, in world X/Y, of the plate `leaf` stands on: an option
+    /// is kept on its own plate, not the first. `None` past every plate.
+    fn plate_box(&self, leaf: NodeId) -> Option<([f64; 2], [f64; 2])> {
         let volume = self.ctrl.build_volume();
         let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
-        target.plate = Some((
-            [f64::from(lo.x), f64::from(lo.y)],
-            [f64::from(hi.x), f64::from(hi.y)],
+        let plates = self.document.plates();
+        let on = self
+            .document
+            .with_scene(|spatial| {
+                crate::plate_layout::plate_of_leaf(spatial, &volume, plates, leaf)
+            })
+            .flatten()?;
+        let at = crate::plates::offset(&volume, on);
+        Some((
+            [f64::from(lo.x + at.x), f64::from(lo.y + at.y)],
+            [f64::from(hi.x + at.x), f64::from(hi.y + at.y)],
+        ))
+    }
+
+    /// With several models picked, what the card says before a search.
+    fn many_hint(&self) -> String {
+        let count = Target::every_selected(&self.document).len();
+        if count < 2 {
+            return String::new();
+        }
+        ctr!(
+            "Inspector",
+            "{} models picked: Quick or Full orients each one on its own and applies its best pose, in one Undo step.",
+            count
+        )
+        .to_string()
+    }
+
+    /// Orients each of `targets` on its own (#221), side by side.
+    fn start_batch(&self, mut targets: Vec<Target>, mode: SearchMode) {
+        for target in &mut targets {
+            target.plate = self.plate_box(target.leaf);
+        }
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        let ctx = self.context(mode);
+        let cancel = Arc::new(AtomicBool::new(false));
+        *self.batch.borrow_mut() = Some(Batch {
+            id,
+            targets: targets.clone(),
+            cancel: cancel.clone(),
+            started: Instant::now(),
+        });
+        let total = targets.len();
+        crate::breadcrumbs::note(&format!("orient: {mode:?} on {total} models"));
+        if let Some(ui) = self.ui.upgrade() {
+            show_step(&ui, Step::Searching);
+            ui.set_orient_progress(0.0);
+        }
+        self.set_status(
+            ctr!(
+                "Inspector",
+                "Orienting each model: {}…",
+                format!("0/{total}")
+            )
+            .to_string(),
+        );
+        let slot = self.batch_slot.clone();
+        let ui_weak = self.ui.clone();
+        std::thread::spawn(move || {
+            let done = AtomicUsize::new(0);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                use rayon::prelude::*;
+                targets
+                    .par_iter()
+                    .map(|target| {
+                        let worked = work(target, None, Some(ctx.clone()), &cancel, &mut |_| {});
+                        let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                        let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                            ui.set_orient_progress(n as f32 / total as f32);
+                            ui.set_orient_status(
+                                ctr!(
+                                    "Inspector",
+                                    "Orienting each model: {}…",
+                                    format!("{n}/{total}")
+                                )
+                                .into(),
+                            );
+                        });
+                        match worked.found {
+                            Some(Ok(found)) if !found.outcome.keep_current => {
+                                found.worlds.first().copied()
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect::<Poses>()
+            }))
+            .map_err(|payload| panic_message(&payload));
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((id, result));
+            let _ = ui_weak.upgrade_in_event_loop(|ui| ui.invoke_orient_finished());
+        });
+    }
+
+    /// Applies what a batch found, when the scene is still the one it was
+    /// found for: each model to its best pose, in one Undo step.
+    fn finish_batch(&self) {
+        let taken = self
+            .batch_slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let Some((id, result)) = taken else {
+            return;
+        };
+        let batch = {
+            let mut slot = self.batch.borrow_mut();
+            if slot.as_ref().is_none_or(|b| b.id != id) {
+                return;
+            }
+            slot.take().expect("checked above")
+        };
+        self.show_idle();
+        let poses = match result {
+            Ok(poses) => poses,
+            Err(panic) => {
+                self.set_status(String::new());
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("OrientDialog", "Auto-orient failed"),
+                    context: None,
+                    message: ctr!(
+                        "OrientDialog",
+                        "The search stopped unexpectedly. The model was not moved."
+                    ),
+                    details: panic.as_str().into(),
+                });
+                return;
+            }
+        };
+        if batch.cancel.load(Ordering::Relaxed) {
+            self.set_status(
+                ctr!("Inspector", "Search cancelled. The model was not moved.").to_string(),
+            );
+            return;
+        }
+        let still = batch.targets.iter().all(|t| {
+            self.document.scene_revision() == t.revision
+                && self.local_of(t.leaf).as_ref() == Some(&t.local)
+        });
+        if !still || !self.open.get() {
+            self.set_status(
+                ctr!(
+                    "Inspector",
+                    "The scene changed while searching; the result was dropped. Search again."
+                )
+                .to_string(),
+            );
+            return;
+        }
+        let edits: Vec<SceneEdit> = batch
+            .targets
+            .iter()
+            .zip(&poses)
+            .filter_map(|(target, pose)| {
+                pose.map(|world| SceneEdit::SetLocalTransform {
+                    node_id: target.leaf,
+                    before: target.local,
+                    after: target.local_for(world),
+                })
+            })
+            .collect();
+        let moved = edits.len();
+        let total = batch.targets.len();
+        let seconds = format!("{:.1}", batch.started.elapsed().as_secs_f64());
+        crate::breadcrumbs::note(&format!(
+            "orient: {moved} of {total} models turned in {seconds} s"
         ));
+        if moved > 0 {
+            let edit = SceneEdit::Compound(edits);
+            match self.document.apply_edit(edit.clone()) {
+                Ok(()) => self.document.push_edit(edit),
+                Err(EditNotApplied::Rejected(error)) => {
+                    self.dialogs.show_error(move || ErrorTexts {
+                        heading: ctr!("OrientDialog", "Auto-orient failed"),
+                        context: None,
+                        message: ctr!(
+                            "OrientDialog",
+                            "The scene rejected the new pose; nothing was moved."
+                        ),
+                        details: error.to_string().into(),
+                    });
+                    return;
+                }
+                Err(EditNotApplied::NoSceneLoaded) => return,
+            }
+        }
+        let status = if moved == 0 {
+            ctr!(
+                "Inspector",
+                "Every model already stands as well as I found ({} s). Nothing was moved.",
+                seconds
+            )
+        } else {
+            ctr!(
+                "Inspector",
+                "Oriented {} models; the others already stood best. Undo puts them back.",
+                format!("{moved}/{total}")
+            )
+        };
+        self.set_status(status.to_string());
+        if let Some(ui) = self.ui.upgrade() {
+            // Tilted models have new footprints.
+            ui.set_orient_offer_arrange(moved > 0 && self.model_count() > 1);
+        }
+        self.refresh_warning();
+    }
+
+    fn start(&self, mut target: Target, mode: Option<SearchMode>) {
+        target.plate = self.plate_box(target.leaf);
         let id = self.next_id.get();
         self.next_id.set(id + 1);
         let cached = self
@@ -808,11 +1061,15 @@ impl OrientRun {
         if let Some(job) = self.job.borrow().as_ref() {
             job.cancel.store(true, Ordering::Relaxed);
         }
+        if let Some(batch) = self.batch.borrow().as_ref() {
+            batch.cancel.store(true, Ordering::Relaxed);
+        }
         self.queued.set(None);
     }
 
     /// Takes a worker's result on the UI thread.
     fn finish(&self) {
+        self.finish_batch();
         let taken = self
             .slot
             .lock()

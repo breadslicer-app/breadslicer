@@ -1061,3 +1061,18 @@ fn models_mirrored_together_turn_over_about_their_middle() {
         Vec3::new(30.0, -3.0, 0.0)
     ));
 }
+
+/// The right-click menu offers Group with two models or more picked that are
+/// not one group already, and Ungroup with a group among them (#475).
+#[test]
+fn group_is_offered_for_two_models_and_ungroup_for_a_group() {
+    let (ctrl, leaves) = window(&[Vec3::new(10.0, 5.0, 0.0), Vec3::new(30.0, -3.0, 0.0)]);
+    let document = ctrl.document();
+    document.set_selection(Selection::One(LeafId(leaves[0])));
+    assert_eq!(ctrl.group_offers(), (false, false), "one model");
+    document.set_selection(Selection::of(leaves.iter().copied().map(LeafId)));
+    assert_eq!(ctrl.group_offers(), (true, false), "two models");
+    assert!(document.group(&leaves));
+    document.set_selection(Selection::of(leaves.iter().copied().map(LeafId)));
+    assert_eq!(ctrl.group_offers(), (false, true), "one group");
+}

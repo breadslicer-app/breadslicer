@@ -9546,3 +9546,23 @@ msgstr "Espejado de adelante hacia atrás."
 msgctxt "Workspace"
 msgid "Pick a model to mirror it."
 msgstr "Elegí un modelo para espejarlo."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "{} models picked: Quick or Full orients each one on its own and applies its best pose, in one Undo step."
+msgstr "{} modelos elegidos: Rápida o Completa orienta cada uno por su cuenta y le aplica su mejor posición, en un solo paso de Deshacer."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "Orienting each model: {}…"
+msgstr "Orientando cada modelo: {}…"
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "Every model already stands as well as I found ({} s). Nothing was moved."
+msgstr "Cada modelo ya está en la mejor posición que encontré ({} s). No se movió nada."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "Oriented {} models; the others already stood best. Undo puts them back."
+msgstr "Orientados {} modelos; los demás ya estaban en su mejor posición. Deshacer los devuelve."

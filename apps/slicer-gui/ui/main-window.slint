@@ -1101,6 +1101,9 @@ export component MainWindow inherits Window {
     // `context-copy-pressed` / `context-paste-pressed` surface the
     // menu-item activations so the Rust wiring can route them to
     // the AppState clipboard methods.
+    // Whether the menu offers Group and Ungroup (#475).
+    in property <bool> context-can-group;
+    in property <bool> context-can-ungroup;
     callback show-context-menu(length, length, bool, bool, bool);
     show-context-menu(x, y, copy, paste, del) => {
         mv.show-context-menu(x, y, copy, paste, del);
@@ -1914,6 +1917,8 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                     mv := MeshViewer {
                         nav-map: root.nav-map;
+                        context-can-group: root.context-can-group;
+                        context-can-ungroup: root.context-can-ungroup;
                         projection-chip-width: root.projection-chip-width;
                         horizontal-stretch: 1;
                         rendering: root.mesh-rendering;
