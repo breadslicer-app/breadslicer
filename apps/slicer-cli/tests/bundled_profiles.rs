@@ -442,12 +442,17 @@ fn every_shipped_photo_is_named_by_its_printer() {
         }
         let file = path.file_name().unwrap().to_str().unwrap().to_owned();
         let id = file.trim_end_matches(".png");
+        // A profile that names no photo shows the one named for its id
+        // (the picker looks for `images/<id>.png`), so a photo is added
+        // by copying it in; one that names a photo must name this one.
         let named = bundled_printer(id).identity.image_asset_path;
-        assert_eq!(
-            named.as_ref().map(|image| image.as_str()),
-            Some(format!("images/{file}").as_str()),
-            "{id} must show the photo shipped for it",
-        );
+        if let Some(named) = named {
+            assert_eq!(
+                named.as_str(),
+                format!("images/{file}"),
+                "{id} must show the photo shipped for it",
+            );
+        }
         photos += 1;
     }
     assert!(photos > 0, "no photo found under {}", images.display());

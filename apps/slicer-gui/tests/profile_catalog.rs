@@ -389,6 +389,46 @@ fn image_path_is_none_when_the_field_is_absent() {
 }
 
 #[test]
+fn a_bundled_printer_naming_no_image_shows_the_photo_named_for_its_id() {
+    let bundled = tempfile::tempdir().unwrap();
+    fs::create_dir_all(bundled.path().join("images")).unwrap();
+    fs::write(bundled.path().join("images/by-id.png"), b"not a real png").unwrap();
+    write_printer(
+        bundled.path(),
+        "by-id",
+        "Maker",
+        "Model",
+        (100.0, 60.0, 80.0),
+        None,
+    );
+
+    let catalog = catalog_from(None, bundled.path());
+    assert_eq!(
+        catalog.printers()[0].image_path,
+        Some(bundled.path().join("images/by-id.png"))
+    );
+}
+
+#[test]
+fn a_user_printer_naming_no_image_borrows_no_photo_by_its_id() {
+    let user = tempfile::tempdir().unwrap();
+    let bundled = tempfile::tempdir().unwrap();
+    fs::create_dir_all(user.path().join("images")).unwrap();
+    fs::write(user.path().join("images/mine.png"), b"not a real png").unwrap();
+    write_printer(
+        user.path(),
+        "mine",
+        "Maker",
+        "Model",
+        (100.0, 60.0, 80.0),
+        None,
+    );
+
+    let catalog = catalog_from(Some(user.path()), bundled.path());
+    assert_eq!(catalog.printers()[0].image_path, None);
+}
+
+#[test]
 fn image_path_is_none_when_the_referenced_file_is_missing() {
     let bundled = tempfile::tempdir().unwrap();
     write_printer(
