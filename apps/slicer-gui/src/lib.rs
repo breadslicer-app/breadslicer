@@ -47,6 +47,7 @@ mod i18n;
 mod import_notes;
 mod imported_supports;
 mod island_paint;
+mod lay_on_face;
 mod measure;
 mod mirror;
 mod language;

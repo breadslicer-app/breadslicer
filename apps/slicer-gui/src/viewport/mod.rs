@@ -47,6 +47,8 @@ mod tests_controller_support_drag;
 mod tests_controller_supports_selection;
 #[cfg(test)]
 mod tests_measure;
+#[cfg(test)]
+mod tests_lay_on_face;
 mod types;
 
 #[cfg(test)]

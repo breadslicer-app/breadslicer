@@ -9603,3 +9603,18 @@ msgstr "Distancia {} mm"
 msgctxt "Measure"
 msgid "Total {} mm"
 msgstr "Total {} mm"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "LAY ON FACE · Click a flat face of a model to lay it on the plate · Esc cancels"
+msgstr "APOYAR EN CARA · Hacé clic en una cara plana de un modelo para apoyarlo en la placa · Esc cancela"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Lay on face"
+msgstr "Apoyar en cara"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pick a face…"
+msgstr "Elegí una cara…"

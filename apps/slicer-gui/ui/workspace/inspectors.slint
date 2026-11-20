@@ -1214,6 +1214,9 @@ export component TransformInspector inherits VerticalLayout {
     callback arrange-option-changed(int, float);
     // The Auto-orient button of the ROTATE card opens the Orient tool (#182).
     callback orient-requested();
+    // Lay on face (#15): armed, and the button that arms or disarms it.
+    in property <bool> lay-face-on;
+    callback lay-face-requested(bool);
 
     spacing: 12px;
 
@@ -1463,12 +1466,25 @@ export component TransformInspector inherits VerticalLayout {
                 root.numeric-edit(5, v);
             }
         }
-        ScButton {
-            text: @tr("Inspector" => "Auto-orient");
-            icon: Icons.orient;
-            kind: ButtonKind.ghost;
-            clicked => {
-                root.orient-requested();
+        HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Auto-orient");
+                icon: Icons.orient;
+                kind: ButtonKind.ghost;
+                horizontal-stretch: 1;
+                clicked => {
+                    root.orient-requested();
+                }
+            }
+            ScButton {
+                text: root.lay-face-on ? @tr("Inspector" => "Pick a face…") : @tr("Inspector" => "Lay on face");
+                kind: root.lay-face-on ? ButtonKind.primary : ButtonKind.ghost;
+                horizontal-stretch: 1;
+                clicked => {
+                    root.lay-face-requested(!root.lay-face-on);
+                }
             }
         }
     }

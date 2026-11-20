@@ -10405,6 +10405,38 @@ mod hand_edit_tests {
         });
     }
 
+    /// #15: laying a supported model on a side face tilts it: its set goes
+    /// in the same Undo step and it waits for new supports (#153); one Undo
+    /// puts the pose and the set back.
+    #[test]
+    fn laying_a_supported_model_on_a_face_makes_its_supports_again() {
+        use crate::camera::{AxisView, OrbitCamera};
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (ctrl, run, leaves) = supported_in(&window, &[[20.0, 20.0, 8.0]]);
+            let document = ctrl.document();
+            let before = leaf_transform(&document, leaves[0]);
+            let (_, mesh) = set_of(&document, &run, leaves[0]);
+            ctrl.set_section(WorkspaceSection::Transform);
+            ctrl.set_viewport_for_test(200.0, 100.0);
+            let mut camera = OrbitCamera::new(glam::Vec3::new(20.0, 20.0, 8.0), 20.0);
+            camera.set_axis_view(AxisView::Front);
+            ctrl.set_camera_for_test(camera);
+            ctrl.set_lay_on_face(true);
+            let centre = crate::viewport::ScreenPoint::new(100.0, 50.0);
+            ctrl.on_pointer_down(centre, crate::PointerModifiers::default());
+            ctrl.on_pointer_up(centre, crate::PointerModifiers::default());
+            assert_ne!(leaf_transform(&document, leaves[0]), before, "laid down");
+            assert!(support_sets(&document).is_empty(), "the old set is gone");
+            let (_, wants) = document.supports_wanted().expect("new supports wanted");
+            assert_eq!(wants.ids(), vec![leaves[0]]);
+
+            assert!(document.undo().unwrap());
+            assert_eq!(leaf_transform(&document, leaves[0]), before);
+            assert!(Arc::ptr_eq(&set_of(&document, &run, leaves[0]).1, &mesh));
+        });
+    }
+
     /// #197: Generate with one model selected regenerates that model's set
     /// alone, in one undoable step; with nothing selected, every set.
     #[test]

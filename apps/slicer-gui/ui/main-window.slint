@@ -926,6 +926,10 @@ export component MainWindow inherits Window {
     in property <string> measure-text;
     callback measure-toggled(bool);
     callback measure-escape();
+    // Lay on face (#15): armed, the next click on a model lays it on that
+    // face.
+    in-out property <bool> lay-face-on: false;
+    callback lay-face-toggled(bool);
     // Arrange (#180), the Transform tab's Arrange card: a run in flight, what
     // the last one did, and the card's settings (Rust keeps them).
     in property <bool> arranging: false;
@@ -1950,6 +1954,10 @@ export component MainWindow inherits Window {
                                 root.measure-escape();
                                 return true;
                             }
+                            if root.lay-face-on {
+                                root.lay-face-toggled(false);
+                                return true;
+                            }
                             if root.workspace-section == WorkspaceSection.Hollow && root.hollow-lasso-tool {
                                 root.hollow-lasso-tool = false;
                                 return true;
@@ -2420,6 +2428,25 @@ export component MainWindow inherits Window {
                         text: @tr("Inspector" => "Scene settings") + " ▾";
                         font-size: 11px;
                         font-family: "Consolas";
+                    }
+                    // Lay on face (#15): what the next click does, while armed.
+                    if root.has-scene && root.lay-face-on: Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        y: 12px;
+                        width: min(parent.width - 24px, lay-face-text.preferred-width + 28px);
+                        height: lay-face-text.preferred-height + 16px;
+                        border-radius: 2px;
+                        background: #171a1d;
+                        border-color: Theme.border-strong;
+                        border-width: 1px;
+
+                        lay-face-text := Text {
+                            text: @tr("Inspector" => "LAY ON FACE · Click a flat face of a model to lay it on the plate · Esc cancels");
+                            color: Theme.text;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
                     if root.has-scene && root.measure-on: Rectangle {
                         x: (parent.width - self.width) / 2;
@@ -2908,6 +2935,11 @@ export component MainWindow inherits Window {
                                         if !root.orient-open {
                                             root.orient-toggle-requested();
                                         }
+                                    }
+                                    lay-face-on: root.lay-face-on;
+                                    lay-face-requested(on) => {
+                                        root.lay-face-toggled(on);
+                                        mv.focus-viewport();
                                     }
                                 }
                                 if root.workspace-section == WorkspaceSection.Hollow: HollowInspector {

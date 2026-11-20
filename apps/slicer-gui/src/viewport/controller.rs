@@ -165,6 +165,8 @@ pub(crate) struct ViewportController {
             crate::mesh_render::Overlay,
         )>,
     >,
+    /// Lay on face (#15): the next click on a model lays it on that face.
+    lay_face: Cell<bool>,
     /// The overhang map's box, and the self-support angle it paints by.
     overhang_map_on: Cell<bool>,
     /// The Supports tab's box (#492): whether the rafts fade out with the
@@ -323,6 +325,7 @@ impl ViewportController {
             repair_marks: Default::default(),
             measure: Default::default(),
             measured: RefCell::new(None),
+            lay_face: Cell::new(false),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
             estimate_listener: RefCell::new(None),
@@ -400,6 +403,7 @@ impl ViewportController {
             repair_marks: Default::default(),
             measure: Default::default(),
             measured: RefCell::new(None),
+            lay_face: Cell::new(false),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
             estimate_listener: RefCell::new(None),
@@ -1392,6 +1396,9 @@ impl ViewportController {
         }
         if !self.allows_transform_gizmo() {
             self.cancel_transform_gestures();
+        }
+        if !self.allows_layout_tools() && self.lay_face.get() {
+            self.set_lay_on_face(false);
         }
         if !self.supports_selectable() {
             let kept = document
@@ -3174,7 +3181,7 @@ impl ViewportController {
         // keeping its selection box) is a click until it moves.
         let drag = self
             .drag_tool_armed()
-            .filter(|_| !self.measure.on())
+            .filter(|_| !self.measure.on() && !self.lay_face.get())
             .filter(|kind| !(modifiers.shift && *kind != SupportDragKind::MoveTip));
         self.support_drag.set(match drag {
             Some(kind) => DragPhase::Pressed([cursor.x, cursor.y], kind),
@@ -3182,13 +3189,14 @@ impl ViewportController {
         });
         // Nothing is selected in the Slice tab (#140): Shift draws no box.
         // Measuring (#652), a click is a point and Shift chains it.
-        if !self.selectable() || self.measure.on() {
+        if !self.selectable() || self.measure.on() || self.lay_face.get() {
             modifiers.shift = false;
         }
         // A plain press on empty space boxes (#622), unless a tool owns the
         // press or the plate's tools are under it.
         let empty_boxes = self.selectable()
             && !self.measure.on()
+            && !self.lay_face.get()
             && drag.is_none()
             && !self.add_support_armed()
             && self.plate_tool_hovered.get().is_none();
@@ -3198,7 +3206,10 @@ impl ViewportController {
             self.render.viewport(),
             cursor,
             modifiers,
-            self.allows_transform_gizmo() && !self.cut_on() && !self.measure.on(),
+            self.allows_transform_gizmo()
+                && !self.cut_on()
+                && !self.measure.on()
+                && !self.lay_face.get(),
             self.supports_selectable(),
             empty_boxes,
         );
@@ -3223,7 +3234,11 @@ impl ViewportController {
             self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
         }
-        if !self.allows_transform_gizmo() || self.cut_on() || self.measure.on() {
+        if !self.allows_transform_gizmo()
+            || self.cut_on()
+            || self.measure.on()
+            || self.lay_face.get()
+        {
             return;
         }
         if self.input.on_pointer_move(
@@ -3264,6 +3279,10 @@ impl ViewportController {
             PointerUpOutcome::Click(cursor) => {
                 if self.measure.on() {
                     self.measure_click(cursor, modifiers.shift);
+                    return;
+                }
+                if self.lay_face.get() {
+                    self.lay_on_face_click(cursor);
                     return;
                 }
                 if let Some(plate) = self.plate_name_under(cursor) {
@@ -3825,8 +3844,110 @@ impl ViewportController {
 
     /// Turns the Measure tool on or off (#652); off forgets its points.
     pub(crate) fn set_measuring(&self, on: bool) {
+        if on && self.lay_face.get() {
+            self.set_lay_on_face(false);
+        }
         self.measure.set_on(on);
         self.show_measure();
+    }
+
+    /// Whether the next click lays a model on a face (#15).
+    #[cfg(test)]
+    pub(crate) fn laying_on_face(&self) -> bool {
+        self.lay_face.get()
+    }
+
+    /// Arms or disarms Lay on face (#15); arming it ends Measure.
+    pub(crate) fn set_lay_on_face(&self, on: bool) {
+        let on = on && self.allows_layout_tools();
+        if on && self.measure.on() {
+            self.set_measuring(false);
+        }
+        self.lay_face.set(on);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_lay_face_on(on);
+        }
+        self.mark_dirty();
+    }
+
+    /// A click while Lay on face is armed (#15): the model under `cursor`
+    /// turns so the flat face clicked lies on the plate, in one Undo step,
+    /// and becomes the selection. Supports follow the usual rules (#153): a
+    /// tilt makes them again. The tool disarms either way. Whether a model
+    /// moved.
+    pub(crate) fn lay_on_face_click(&self, cursor: ScreenPoint) -> bool {
+        self.set_lay_on_face(false);
+        let Some(vp) = self.render.viewport() else {
+            return false;
+        };
+        let Some(camera) = self.camera.camera_cell().borrow().as_ref().cloned() else {
+            return false;
+        };
+        let fov = crate::mesh_render::default_fov_y();
+        let ray =
+            picking::ray_from_pixel(&camera, fov, vp.width(), vp.height(), cursor.x, cursor.y);
+        let document = self.session.document();
+        let hit = document
+            .with_scene(|spatial| {
+                let hit =
+                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id))?;
+                let query = spatial.leaf(hit.leaf)?;
+                let local = crate::lay_on_face::flat_normal(query.mesh(), hit.face as usize)?;
+                let world = match query.world_transform() {
+                    Transform3D::Identity => sc_mesh_core::transform::AffineTransform3D::identity(),
+                    Transform3D::Affine(a) => a,
+                };
+                let normal = crate::lay_on_face::world_normal(&world, local)?;
+                Some((
+                    hit.leaf,
+                    spatial.graph().leaf_mesh_arc(hit.leaf)?.clone(),
+                    world,
+                    query.local_transform(),
+                    query.parent_world().inverse().ok()?,
+                    normal,
+                ))
+            })
+            .flatten();
+        let Some((leaf, mesh, world, before, parent_inverse, normal)) = hit else {
+            return false;
+        };
+        let volume = self.build_volume();
+        let plate = self.plate_of_leaf(leaf).map(|on| {
+            let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+            let at = crate::plates::offset(&volume, on);
+            (
+                [f64::from(lo.x + at.x), f64::from(lo.y + at.y)],
+                [f64::from(hi.x + at.x), f64::from(hi.y + at.y)],
+            )
+        });
+        // A model on supports keeps its lift for the new ones; any other
+        // ends on the plate.
+        let drop = document.with_their_supports(vec![leaf]).len() == 1;
+        document.set_selection(Selection::One(LeafId(leaf)));
+        let Some(laid) = crate::lay_on_face::laid_pose(&mesh, &world, normal, plate, drop) else {
+            return false;
+        };
+        let after = parent_inverse.compose(&Transform3D::Affine(laid));
+        if after == before {
+            return false;
+        }
+        let edit = SceneEdit::SetLocalTransform {
+            node_id: leaf,
+            before,
+            after,
+        };
+        match document.apply_edit(edit.clone()) {
+            Ok(()) => document.push_edit(edit),
+            Err(EditNotApplied::Rejected(reason)) => {
+                self.show_edit_rejected(reason);
+                return false;
+            }
+            Err(_) => return false,
+        }
+        crate::breadcrumbs::note("lay on face");
+        self.readout_owed.set(true);
+        self.mark_dirty();
+        true
     }
 
     /// Esc while measuring: forgets the points, or with none, turns the
