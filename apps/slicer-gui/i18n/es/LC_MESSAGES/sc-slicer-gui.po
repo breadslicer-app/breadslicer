@@ -9917,6 +9917,8 @@ msgctxt "Review"
 msgid "Drain drilled. Slice again to check the result."
 msgstr "Drenaje perforado. Laminá de nuevo para revisar el resultado."
 
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
 msgid "LAYERS"
 msgstr "CAPAS"
 
