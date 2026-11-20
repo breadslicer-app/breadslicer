@@ -23,13 +23,15 @@
 //! and its socket (#109) or a pocket for a magnet on each side (#442).
 //!
 //! A model can also be cut along a stroke drawn over it in the view, or
-//! by a loop round a part ([`stroke_cut`], #440, #441).
+//! by a loop round a part ([`stroke_cut`], #440, #441), and the narrowings
+//! of its cross-section suggest where to cut ([`narrowings`], #443).
 
 mod fallback;
 mod joints;
 mod section;
 mod split;
 mod stroke;
+mod suggest;
 
 #[cfg(test)]
 mod tests;
@@ -46,6 +48,7 @@ pub use section::{CutModel, Fit, Section, SectionPiece};
 
 pub use split::{Cut, volume};
 pub use stroke::{Stroke, stroke_cut};
+pub use suggest::{Narrowing, narrowings};
 
 pub use joints::{Joined, Joint, MAGNET_PRESETS, MIN_WALL_MM, PinShape, add_joints, joint_points};
 

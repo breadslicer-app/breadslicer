@@ -270,6 +270,51 @@ fn a_stroke_across_the_model_cuts_it_along_the_stroke() {
     });
 }
 
+/// #443: Suggest puts the plane, level, at the model's narrowest place; it
+/// cuts nothing.
+#[test]
+fn suggest_puts_the_plane_at_the_neck() {
+    on_fresh_slint_thread(|| {
+        // Two 20 mm cubes stacked on a thin 4 mm neck, z 0 to 20, 26 to 46.
+        let mut mesh = cube();
+        for v in &mut mesh.vertices {
+            let p = v.as_array();
+            *v = Vertex::new([p[0], p[1], p[2] + 10.0]);
+        }
+        let mut neck = sc_mesh_fixtures::unit_cube_mesh();
+        for v in &mut neck.vertices {
+            let p = v.as_array();
+            *v = Vertex::new([p[0] * 4.0, p[1] * 4.0, p[2] * 8.0 + 23.0]);
+        }
+        let mut top = cube();
+        for v in &mut top.vertices {
+            let p = v.as_array();
+            *v = Vertex::new([p[0], p[1], p[2] + 36.0]);
+        }
+        let mut vertices = Vec::new();
+        let mut faces = Vec::new();
+        for part in [mesh, neck, top] {
+            let n = vertices.len() as u32;
+            vertices.extend(part.vertices.iter().copied());
+            faces.extend(part.faces.iter().map(|f| {
+                sc_mesh_core::IndexedTriangle::from_raw_indices(f.vertices.map(|v| v.get() + n))
+            }));
+        }
+        let f = fixture(IndexedMesh::new(None, vertices, faces));
+        opened(&f);
+        let undo = f.document.undo_len();
+        f.run.on_option(15, 0.0);
+        let h = f.window.get_cut_height();
+        assert!(h > 20.0 && h < 26.0, "at the neck: {h}");
+        assert!(
+            f.window.get_cut_status().contains("Suggested"),
+            "{}",
+            f.window.get_cut_status()
+        );
+        assert_eq!(f.document.undo_len(), undo, "nothing cut");
+    });
+}
+
 #[test]
 fn a_click_on_a_part_of_the_cut_leaves_it_whole() {
     on_fresh_slint_thread(|| {

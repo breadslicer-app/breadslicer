@@ -1051,6 +1051,14 @@ export component CutCard inherits Card {
                 root.apply();
             }
         }
+        if !root.stroke-mode: ScButton {
+            text: @tr("Inspector" => "Suggest");
+            kind: ButtonKind.ghost;
+            enabled: root.enabled;
+            clicked => {
+                root.option-changed(15, 0);
+            }
+        }
         ScButton {
             text: @tr("Inspector" => "Close");
             kind: ButtonKind.ghost;

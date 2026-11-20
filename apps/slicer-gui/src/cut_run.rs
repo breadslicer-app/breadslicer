@@ -37,6 +37,11 @@
 //! as it is drawn, the cut is worked out when it ends, and Cut puts it in
 //! the scene as a plane cut does.
 //!
+//! **Suggestions (#443).** Suggest puts the plane, level, at the narrowest
+//! place of the model's cross-section (a neck, a waist, an ankle:
+//! [`sc_cut::narrowings`]); pressing it again goes to the next one. Nothing
+//! is cut until Cut.
+//!
 //! **Joints (#109, #442).** The card can add a pin on the part below the
 //! plane and its socket on the part above, or a magnet pocket on each side,
 //! in the middle of each part of the cross-section the cut takes. They are
@@ -746,6 +751,10 @@ pub(crate) struct CutRun {
     stroke_cursor: Cell<[f64; 2]>,
     drawing: Cell<bool>,
     stroke_trial: RefCell<Option<StrokeTrial>>,
+    /// The suggested heights for the model on show, world mm, best first,
+    /// and the one on show (#443).
+    suggestions: RefCell<Option<(Target, Vec<f64>)>>,
+    suggested: Cell<usize>,
     target: RefCell<Option<Target>>,
     ready: RefCell<Option<Arc<Ready>>>,
     /// The mesh being made ready.
@@ -815,6 +824,8 @@ impl CutRun {
                 stroke_cursor: Cell::new([0.0; 2]),
                 drawing: Cell::new(false),
                 stroke_trial: RefCell::new(None),
+                suggestions: RefCell::new(None),
+                suggested: Cell::new(0),
                 target: RefCell::new(None),
                 ready: RefCell::new(None),
                 preparing: RefCell::new(None),
@@ -963,6 +974,84 @@ impl CutRun {
         ui.set_cut_joint_depth(depth as f32);
         ui.set_cut_joint_clearance(clearance as f32);
         ui.set_cut_joint_preset(j.preset());
+    }
+
+    /// Suggest (#443): the plane, level, to the narrowest place of the
+    /// model's cross-section; again, to the next one.
+    fn suggest(&self) {
+        let Some((_, target)) = self.on_show() else {
+            return;
+        };
+        if self.stroke_mode.get() {
+            self.set_stroke_mode(false);
+        }
+        let known = self
+            .suggestions
+            .borrow()
+            .as_ref()
+            .filter(|(t, _)| t.same(&target))
+            .map(|(_, list)| list.clone());
+        let (list, next) = match known {
+            Some(list) if !list.is_empty() => {
+                let next = (self.suggested.get() + 1) % list.len();
+                (list, next)
+            }
+            _ => {
+                // The model in the world, so heights and areas are the
+                // scene's.
+                let vertices = target
+                    .mesh
+                    .vertices()
+                    .iter()
+                    .map(|v| {
+                        let p = target.world.apply(v.as_array().map(f64::from));
+                        sc_mesh_core::Vertex::new(p.map(|c| c as f32))
+                    })
+                    .collect();
+                let world = IndexedMesh::new(None, vertices, target.mesh.faces().to_vec());
+                let list: Vec<f64> = sc_cut::narrowings(&world, [0.0, 0.0, 1.0])
+                    .into_iter()
+                    .map(|n| n.at)
+                    .collect();
+                *self.suggestions.borrow_mut() = Some((target.clone(), list.clone()));
+                (list, 0)
+            }
+        };
+        let Some(&height) = list.get(next) else {
+            self.say(
+                self.status_line(),
+                ctr!(
+                    "CutRun",
+                    "No narrowing found to suggest: the model is about as wide all the way up."
+                ),
+                self.ui.upgrade().is_some_and(|ui| ui.get_cut_can_cut()),
+            );
+            return;
+        };
+        self.suggested.set(next);
+        let mut s = self.settings.get();
+        s.height = height;
+        s.tilt = [0.0; 2];
+        self.settings.set(s);
+        self.push_settings();
+        self.refresh();
+    }
+
+    /// Which suggestion the plane stands at, as the card says it.
+    fn suggestion_note(&self) -> Option<String> {
+        let s = self.settings.get();
+        let suggestions = self.suggestions.borrow();
+        let (_, list) = suggestions.as_ref()?;
+        let k = self.suggested.get();
+        let at = *list.get(k)?;
+        ((s.height - at).abs() < 1e-6 && s.tilt == [0.0; 2]).then(|| {
+            ctr!(
+                "CutRun",
+                "Suggested: a narrowing of the model ({}). Suggest again for the next.",
+                format!("{} / {}", k + 1, list.len())
+            )
+            .to_string()
+        })
     }
 
     /// Draws strokes (`on`) or moves the plane (#440, #441).
@@ -1238,6 +1327,10 @@ impl CutRun {
         }
         if code == 14 {
             self.set_stroke_mode(value != 0.0);
+            return;
+        }
+        if code == 15 {
+            self.suggest();
             return;
         }
         let mut s = self.settings.get();
@@ -1864,6 +1957,11 @@ impl CutRun {
                     left
                 ));
             }
+        }
+        // A suggestion on show (#443).
+        if let Some(note) = self.suggestion_note() {
+            line.push(' ');
+            line.push_str(&note);
         }
         line.into()
     }

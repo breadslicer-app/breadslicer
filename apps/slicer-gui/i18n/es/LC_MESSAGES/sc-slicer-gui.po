@@ -9783,3 +9783,18 @@ msgstr "El trazo no corta el modelo en dos: dibujalo de un lado del modelo al ot
 msgctxt "CutRun"
 msgid "Working out the cut…"
 msgstr "Calculando el corte…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Suggest"
+msgstr "Sugerir"
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "No narrowing found to suggest: the model is about as wide all the way up."
+msgstr "No hay un estrechamiento para sugerir: el modelo tiene más o menos el mismo ancho de abajo arriba."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Suggested: a narrowing of the model ({}). Suggest again for the next."
+msgstr "Sugerido: un estrechamiento del modelo ({}). Volvé a tocar Sugerir para el siguiente."

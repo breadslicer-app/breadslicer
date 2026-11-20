@@ -120,3 +120,20 @@ fn a_stroke_that_misses_or_crosses_itself_cuts_nothing() {
     );
     assert!(stroke_cut(&mesh, &knot).is_err());
 }
+
+/// #443: a head on a thin neck over a base: the neck is the narrowing.
+#[test]
+fn the_narrowest_neck_is_where_a_cut_is_suggested() {
+    let base = Manifold::cube(Vec3::new(20.0, 20.0, 10.0), false);
+    let neck = Manifold::cube(Vec3::new(4.0, 4.0, 7.0), false).translate(Vec3::new(8.0, 8.0, 9.5));
+    let head =
+        Manifold::cube(Vec3::new(12.0, 12.0, 10.0), false).translate(Vec3::new(4.0, 4.0, 16.0));
+    let mesh = solid(&base.union(&neck).union(&head));
+    let found = crate::narrowings(&mesh, [0.0, 0.0, 1.0]);
+    let best = found.first().expect("a narrowing");
+    assert!(best.at > 10.0 && best.at < 16.0, "{found:?}");
+    assert!((best.area_mm2 - 16.0).abs() < 1.0, "{found:?}");
+    assert!(best.ratio < 0.2, "{found:?}");
+    // A plain block has none.
+    assert!(crate::narrowings(&block(), [0.0, 0.0, 1.0]).is_empty());
+}
