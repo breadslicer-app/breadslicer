@@ -8134,8 +8134,8 @@ msgstr "{} dice {} mm, pero los píxeles dan {} mm. Dejá uno de los dos vacío.
 
 #, rust-format
 msgctxt "MeshViewer"
-msgid "X Y Z lock an axis · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels"
-msgstr "X Y Z fijan un eje · Ctrl imanta · Shift fino · {} o Enter confirma · Esc cancela"
+msgid "X Y Z lock an axis · type a number · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels"
+msgstr "X Y Z fijan un eje · escribí un número · Ctrl imanta · Shift fino · {} o Enter confirma · Esc cancela"
 
 #: ui/mesh-viewer.slint
 msgctxt "MeshViewer"
@@ -9618,3 +9618,28 @@ msgstr "Apoyar en cara"
 msgctxt "Inspector"
 msgid "Pick a face…"
 msgstr "Elegí una cara…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Scale X"
+msgstr "Escala X"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Scale Y"
+msgstr "Escala Y"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Scale Z"
+msgstr "Escala Z"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Uniform scale"
+msgstr "Escala uniforme"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Each size and scale changes its own axis alone."
+msgstr "Cada tamaño y escala cambia solo su propio eje."

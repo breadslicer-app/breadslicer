@@ -2753,6 +2753,12 @@ impl ViewportController {
                         ModalOp::Move => "XY",
                         ModalOp::Rotate => "View",
                     });
+                    // A typed number shows where the axis does (#14).
+                    let axis = if g.typed.is_empty() {
+                        axis.to_string()
+                    } else {
+                        format!("{axis} = {}_", g.typed.text())
+                    };
                     if !several || g.op == ModalOp::Move {
                         // The keys in plain sight (#620).
                         return format!(
@@ -2761,7 +2767,7 @@ impl ViewportController {
                             axis,
                             ctr!(
                                 "MeshViewer",
-                                "X Y Z lock an axis · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels",
+                                "X Y Z lock an axis · type a number · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels",
                                 g.op.key()
                             )
                         );
@@ -2879,6 +2885,7 @@ impl ViewportController {
                     modifiers: Default::default(),
                     factor: 1.0,
                     individual: false,
+                    typed: Default::default(),
                 })
             })
             .flatten();
@@ -2903,6 +2910,25 @@ impl ViewportController {
         self.input.modal.set(Some(gesture));
         self.mirror_modal_to_ui();
         self.update_modal(ScreenPoint::new(x, y), gesture.modifiers);
+    }
+
+    /// A key typed during G, R or S (#14): a digit, a decimal point, a
+    /// minus or Backspace builds the number that takes the cursor's place.
+    /// Whether the key was the number's.
+    pub(crate) fn on_modal_transform_type(&self, key: &str) -> bool {
+        let Some(mut gesture) = self.input.modal.get() else {
+            return false;
+        };
+        if !gesture.typed.push(key) {
+            return false;
+        }
+        self.input.modal.set(Some(gesture));
+        self.mirror_modal_to_ui();
+        self.update_modal(
+            ScreenPoint::new(gesture.cursor[0], gesture.cursor[1]),
+            gesture.modifiers,
+        );
+        true
     }
 
     fn update_modal(&self, cursor: ScreenPoint, modifiers: gizmo::modifiers::DragModifiers) {
@@ -5233,6 +5259,9 @@ impl ViewportController {
         ui.set_selection_rot_y(r.rotation_deg[1] as f32);
         ui.set_selection_rot_z(r.rotation_deg[2] as f32);
         ui.set_selection_scale(r.scale_pct as f32);
+        ui.set_selection_scale_x(r.axis_scale_pct[0] as f32);
+        ui.set_selection_scale_y(r.axis_scale_pct[1] as f32);
+        ui.set_selection_scale_z(r.axis_scale_pct[2] as f32);
     }
 
     /// The viewport aids of a gesture in flight (BS-69): what it has done so

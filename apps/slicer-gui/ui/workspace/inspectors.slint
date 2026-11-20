@@ -1168,6 +1168,12 @@ export component TransformInspector inherits VerticalLayout {
     in property <float> rot-y;
     in property <float> rot-z;
     in property <float> scale;
+    // Scale along each of the object's own axes, percent, and whether the
+    // Size card scales all three together (#14; on by default).
+    in property <float> scale-x;
+    in property <float> scale-y;
+    in property <float> scale-z;
+    in-out property <bool> size-uniform: true;
     callback object-picked(int);
     // Shift+click or Ctrl+click on a row.
     callback object-toggled(int);
@@ -1521,10 +1527,10 @@ export component TransformInspector inherits VerticalLayout {
             world: root.size-x;
             model: root.model-x;
             world-committed(v) => {
-                root.numeric-edit(7, v);
+                root.numeric-edit(root.size-uniform ? 7 : 15, v);
             }
             model-committed(v) => {
-                root.numeric-edit(12, v);
+                root.numeric-edit(root.size-uniform ? 12 : 18, v);
             }
         }
         SizeRow {
@@ -1534,10 +1540,10 @@ export component TransformInspector inherits VerticalLayout {
             world: root.size-y;
             model: root.model-y;
             world-committed(v) => {
-                root.numeric-edit(8, v);
+                root.numeric-edit(root.size-uniform ? 8 : 16, v);
             }
             model-committed(v) => {
-                root.numeric-edit(13, v);
+                root.numeric-edit(root.size-uniform ? 13 : 19, v);
             }
         }
         SizeRow {
@@ -1547,15 +1553,15 @@ export component TransformInspector inherits VerticalLayout {
             world: root.size-z;
             model: root.model-z;
             world-committed(v) => {
-                root.numeric-edit(9, v);
+                root.numeric-edit(root.size-uniform ? 9 : 17, v);
             }
             model-committed(v) => {
-                root.numeric-edit(14, v);
+                root.numeric-edit(root.size-uniform ? 14 : 20, v);
             }
         }
         // With two columns, Scale spans from the middle of World to the
         // middle of Model, centred under both (BS-393).
-        HorizontalLayout {
+        if root.size-uniform: HorizontalLayout {
             spacing: 0px;
 
             NumberField {
@@ -1573,8 +1579,40 @@ export component TransformInspector inherits VerticalLayout {
                 width: 88px / 2;
             }
         }
+        // Scale per axis (#14): the uniform lock off, each axis on its own.
+        if !root.size-uniform: NumberField {
+            label: @tr("Inspector" => "Scale X");
+            unit: "%";
+            decimals: 1;
+            value: root.scale-x;
+            committed(v) => {
+                root.numeric-edit(21, v);
+            }
+        }
+        if !root.size-uniform: NumberField {
+            label: @tr("Inspector" => "Scale Y");
+            unit: "%";
+            decimals: 1;
+            value: root.scale-y;
+            committed(v) => {
+                root.numeric-edit(22, v);
+            }
+        }
+        if !root.size-uniform: NumberField {
+            label: @tr("Inspector" => "Scale Z");
+            unit: "%";
+            decimals: 1;
+            value: root.scale-z;
+            committed(v) => {
+                root.numeric-edit(23, v);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Uniform scale");
+            checked <=> root.size-uniform;
+        }
         Note {
-            text: @tr("Inspector" => "Sizes scale uniformly, keeping proportions.");
+            text: root.size-uniform ? @tr("Inspector" => "Sizes scale uniformly, keeping proportions.") : @tr("Inspector" => "Each size and scale changes its own axis alone.");
         }
         if root.tilted: Note {
             text: @tr("Inspector" => "Tilted: World is the box it takes on the plate; Model is its size along its own axes.");

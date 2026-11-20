@@ -135,6 +135,9 @@ export component MeshViewer inherits Rectangle {
     callback modal-transform-start(int, length, length);
     callback modal-transform-axis(int, length, length);
     callback modal-transform-finish(bool);
+    // A key typed during G, R or S (#14): the number that takes the
+    // cursor's place.
+    callback modal-transform-type(string);
     // A plain letter the active workspace tab may claim for its own tools
     // (A / X support tools, L layer view); returns whether it did.
     callback tab-tool-key(string) -> bool;
@@ -381,6 +384,7 @@ export component MeshViewer inherits Rectangle {
                 if (event.text == "x" || event.text == "X") { root.modal-transform-axis(0, ta.mouse-x, ta.mouse-y); }
                 if (event.text == "y" || event.text == "Y") { root.modal-transform-axis(1, ta.mouse-x, ta.mouse-y); }
                 if (event.text == "z" || event.text == "Z") { root.modal-transform-axis(2, ta.mouse-x, ta.mouse-y); }
+                root.modal-transform-type(event.text);
                 return accept;
             }
             if (event.text == "5" && !event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt) {

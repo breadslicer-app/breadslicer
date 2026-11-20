@@ -49,6 +49,8 @@ mod tests_controller_supports_selection;
 mod tests_measure;
 #[cfg(test)]
 mod tests_lay_on_face;
+#[cfg(test)]
+mod tests_typed_gesture;
 mod types;
 
 #[cfg(test)]

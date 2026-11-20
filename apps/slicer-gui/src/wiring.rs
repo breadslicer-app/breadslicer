@@ -362,6 +362,12 @@ pub(crate) fn wire_viewport_input(
         let ctrl = ctrl.clone();
         ui.on_modal_transform_finish(move |confirm| ctrl.on_modal_transform_finish(confirm));
     }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_modal_transform_type(move |key| {
+            ctrl.on_modal_transform_type(&key);
+        });
+    }
     ui.on_selection_cleared(move || ctrl.on_clear_selection());
 }
 

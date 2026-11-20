@@ -95,3 +95,32 @@ fn a_typed_rotation_keeps_the_lift() {
     // A unit cube turned 45 degrees about X spans sqrt 2 in Y and Z.
     assert!((size[1] - 2f64.sqrt()).abs() < 1e-4, "Y span {}", size[1]);
 }
+
+/// #14: with the Size card's uniform lock off, a typed size or scale
+/// changes its own axis alone, in one Undo step.
+#[test]
+fn a_typed_size_per_axis_scales_that_axis_alone() {
+    let ctrl = cube_in(WorkspaceSection::Transform);
+    ctrl.on_numeric_edit(2, 3.0);
+    let undo = ctrl.document().undo_len();
+    // Width (X) to 4 mm.
+    ctrl.on_numeric_edit(15, 4.0);
+    let (bottom, size) = bottom_and_size(&ctrl);
+    assert!((bottom - 3.0).abs() < 1e-4, "bottom at {bottom}");
+    assert!((size[0] - 4.0).abs() < 1e-4, "{size:?}");
+    assert!((size[1] - 1.0).abs() < 1e-4 && (size[2] - 1.0).abs() < 1e-4);
+    assert_eq!(ctrl.document().undo_len(), undo + 1);
+    // Scale Z to 250 %, along the model axis.
+    ctrl.on_numeric_edit(23, 250.0);
+    let (bottom, size) = bottom_and_size(&ctrl);
+    assert!((bottom - 3.0).abs() < 1e-4, "bottom at {bottom}");
+    assert!((size[2] - 2.5).abs() < 1e-4, "{size:?}");
+    assert!((size[0] - 4.0).abs() < 1e-4, "{size:?}");
+    // Model depth (Y) to 0.5 mm.
+    ctrl.on_numeric_edit(19, 0.5);
+    let (_, size) = bottom_and_size(&ctrl);
+    assert!((size[1] - 0.5).abs() < 1e-4, "{size:?}");
+    ctrl.on_undo_requested();
+    let (_, size) = bottom_and_size(&ctrl);
+    assert!((size[1] - 1.0).abs() < 1e-4, "{size:?}");
+}

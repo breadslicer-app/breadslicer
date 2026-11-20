@@ -216,6 +216,7 @@ mod modal_look_tests {
             modifiers: DragModifiers::default(),
             factor: 1.0,
             individual: false,
+            typed: Default::default(),
         }
     }
 
