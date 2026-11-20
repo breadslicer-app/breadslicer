@@ -511,7 +511,8 @@ impl OrientAnalysis {
             + w.area_jump_per_n * peel.jump_force_n
             + w.height_per_mm * height
             + w.slenderness * (slenderness - w.slender_from).max(0.0)
-            + detail.map_or(0.0, |d| w.detail_up * (1.0 - d.facing_up));
+            + detail.map_or(0.0, |d| w.detail_up * (1.0 - d.facing_up))
+            + w.cup_per_mm2 * cup_area_mm2;
         let layers = ((height + lift) / ctx.layer_height_mm.max(1e-3)).ceil() as usize;
         let cu = unit(ctx.current_up).unwrap_or([0.0, 0.0, 1.0]);
         let rotation = if turn_deg == 0.0 {

@@ -124,11 +124,12 @@ impl OrientSettings {
     }
 }
 
-const PRESETS: [Preset; 4] = [
+const PRESETS: [Preset; 5] = [
     Preset::Balanced,
     Preset::FewerSupports,
     Preset::LowerForce,
     Preset::Faster,
+    Preset::NoCups,
 ];
 
 /// The model a search is for, as the scene had it when the search started.
@@ -687,6 +688,28 @@ impl OrientRun {
         if self.job.borrow().is_none() && !self.has_analysis(&target) {
             self.start(target, None);
         }
+    }
+
+    /// Opens the tool on the selected model with `preset` as its objective
+    /// and runs a Quick search: the Review card's turn for a suction cup
+    /// (#128), which offers the tool's own three options.
+    pub(crate) fn search_with(&self, preset: Preset) {
+        let mut settings = self.settings.get();
+        settings.preset = preset;
+        self.settings.set(settings);
+        if let Some(ui) = self.ui.upgrade() {
+            self.push_settings(&ui);
+        }
+        if !self.open.get() {
+            self.open_tool();
+        }
+        self.search(SearchMode::Quick);
+    }
+
+    /// Whether the tool is open, and the objective it searches for.
+    #[cfg(test)]
+    pub(crate) fn open_with(&self) -> Option<Preset> {
+        self.open.get().then(|| self.settings.get().preset)
     }
 
     /// Closes the tool: a pose an option shows goes back, a search in

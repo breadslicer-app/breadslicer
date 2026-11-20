@@ -465,6 +465,7 @@ fn the_pictures_of_the_review_are_written_when_asked() {
                     lift_label: Default::default(),
                     delete: 0,
                     delete_size: Default::default(),
+                    turn: false,
                     remains: "Left by Fix All: drain holes are placed by hand, in the Hollow tab.".into(),
                 }
                 };

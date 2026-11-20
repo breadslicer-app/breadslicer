@@ -9654,3 +9654,23 @@ msgstr "Borrar de la impresión ({})"
 msgctxt "Review"
 msgid "Marked: the next slice takes this island off the layers, up to where it joins the model."
 msgstr "Marcada: el próximo laminado saca esta isla de las capas, hasta donde se une al modelo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "No suction cups"
+msgstr "Sin ventosas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Turn the model…"
+msgstr "Girar el modelo…"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "No model was found around this suction cup."
+msgstr "No se encontró ningún modelo alrededor de esta ventosa."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Drain drilled. Slice again to check the result."
+msgstr "Drenaje perforado. Laminá de nuevo para revisar el resultado."

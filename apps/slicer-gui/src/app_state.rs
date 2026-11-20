@@ -834,6 +834,8 @@ impl AppState {
             df_support_run.clone(),
             hollow_run.clone(),
         );
+        // A suction cup's row turns the model with the Orient tool (#128).
+        review_panel.set_orient(orient_run.clone());
         let slice_run = SliceRun::install(
             ui,
             self.prefs.clone(),

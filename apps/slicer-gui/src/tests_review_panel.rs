@@ -1459,6 +1459,139 @@ mod fix_all {
         });
     }
 
+    /// #128: a suction cup's row turns its model with the Orient tool, no
+    /// suction cups as the objective; its drain row is done only once a
+    /// drain lands in that model.
+    #[test]
+    fn a_suction_cup_turns_its_model_and_its_drain_row_waits_for_the_drill() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            document.install_graph(plate(), PathBuf::from("plate.bread"));
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
+            let orient = OrientRun::install(
+                &window,
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+                supports.clone(),
+            );
+            let hollow =
+                HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
+            panel.set_reslice(|| true);
+            panel.set_orient(orient.clone());
+            // A cup in the hollow cube at x = -5, over its underside.
+            let at = PlatePoint::new(-5.0, 0.0, 0.7);
+            let cup = Finding::new(
+                CheckKind::SuctionCup,
+                Severity::Warning,
+                14,
+                20,
+                at,
+                RoleScope::Model,
+                "Suction cup",
+                "Detail.",
+            )
+            .with_fix(SuggestedFix::AddDrain { at });
+            slice_with_extra(&document, &panel, false, &profile(), &[cup]);
+            let row = row_titled(&window, "Suction cup").expect("the cup's row");
+            assert!(row.turn);
+            assert!(
+                !row_titled(&window, "Unsupported island")
+                    .expect("the island")
+                    .turn
+            );
+            let cube = document
+                .with_scene(|spatial| {
+                    (0..)
+                        .map_while(|i| spatial.leaf_id_at_index(i))
+                        .find(|&leaf| {
+                            spatial.graph().world_transform_of(leaf).is_ok_and(|world| {
+                                let x = world.apply_to_vertex(Vertex::new([0.0; 3])).coords()[0];
+                                (f64::from(x) + 5.0).abs() < 1e-4
+                            })
+                        })
+                })
+                .flatten()
+                .expect("the hollow cube");
+
+            // Its drain button opens the tool: not done yet.
+            window.invoke_review_fix_requested(row.id);
+            assert!(window.get_hollow_drain_tool());
+            assert!(row_titled(&window, "Suction cup").is_some());
+            // A drain in another model does not do it; one in its model does.
+            let other = document
+                .with_scene(|spatial| {
+                    (0..)
+                        .map_while(|i| spatial.leaf_id_at_index(i))
+                        .find(|&leaf| leaf != cube)
+                })
+                .flatten()
+                .expect("another model");
+            panel.drain_landed(other);
+            assert!(
+                !panel
+                    .held
+                    .borrow()
+                    .as_ref()
+                    .expect("held")
+                    .fixed
+                    .contains(&(row.id as usize))
+            );
+            panel.drain_landed(cube);
+            assert!(
+                panel
+                    .held
+                    .borrow()
+                    .as_ref()
+                    .expect("held")
+                    .fixed
+                    .contains(&(row.id as usize))
+            );
+            assert!(
+                row_titled(&window, "Suction cup").is_none(),
+                "the row is done"
+            );
+
+            // A new slice: the cup again, and its turn.
+            slice_with_extra(&document, &panel, false, &profile(), &[cup_again(at)]);
+            let row = row_titled(&window, "Suction cup").expect("the cup's row");
+            window.invoke_review_turn_requested(row.id);
+            assert_eq!(orient.open_with(), Some(sc_orient::Preset::NoCups));
+            assert_eq!(document.selection(), Selection::One(LeafId(cube)));
+        });
+    }
+
+    fn cup_again(at: PlatePoint) -> Finding {
+        Finding::new(
+            CheckKind::SuctionCup,
+            Severity::Warning,
+            14,
+            20,
+            at,
+            RoleScope::Model,
+            "Suction cup",
+            "Detail.",
+        )
+        .with_fix(SuggestedFix::AddDrain { at })
+    }
+
     #[test]
     fn fix_all_fills_the_trap_and_slices_again() {
         let (before, fix_all, message, resliced, after, done) = on_fresh_slint_thread(|| {

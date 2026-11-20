@@ -54,7 +54,7 @@ pub(crate) struct OrientArgs {
 
 pub(crate) fn get_orient_options() -> impl Parser<CmdOptions> {
     let preset = long("preset")
-        .help("What the search weighs most: balanced, fewer-supports, lower-force or faster.")
+        .help("What the search weighs most: balanced, fewer-supports, lower-force, faster or no-cups.")
         .argument::<Preset>("PRESET")
         .fallback(Preset::Balanced);
     let json = long("json")

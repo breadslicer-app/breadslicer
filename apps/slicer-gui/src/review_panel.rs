@@ -99,6 +99,15 @@
 //! the next slice takes the island's pixels off the layers, up to where it
 //! joins the rest, and its row becomes a note that can bring it back.
 //!
+//! A row whose button opened the drain tool is done once a drain lands in
+//! that model (#128), drilled or hollowed with it: not when the tool opens,
+//! and not for a drain left out, a failed or a cancelled job.
+//!
+//! A suction cup also offers "Turn the model…" (#128): the Transform tab's
+//! Orient tool opens on the model holding it, with no suction cups as its
+//! objective, and searches; the person picks one of its options and applies
+//! it, one Undo step, as with the tool itself.
+//!
 //! Everything else stays as it is: a hollow, a suction cup or a large cavity,
 //! which only drain holes open, the output checks, a model in the raft and
 //! the supports' own findings. On the review that follows, each finding left
@@ -127,6 +136,7 @@ use crate::df_support_run::{
 use crate::error_dialog::InfoTexts;
 use crate::hollow_run::HollowRun;
 use crate::i18n::ctr;
+use crate::orient_run::OrientRun;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::review::{ReviewOutcome, TipHold};
 use crate::review_marks::{FindingKey, ReviewMarks, SlicePatches, deleted_islands};
@@ -302,6 +312,11 @@ pub(crate) struct ReviewPanel {
     scene_events: RefCell<Option<SceneSubscription>>,
     /// The islands the held slice deleted (#462).
     deletes_in_slice: RefCell<Vec<FindingKey>>,
+    /// The Orient tool, which turns a model with a suction cup (#128).
+    orient: RefCell<Option<Rc<OrientRun>>>,
+    /// The row whose drain tool is open (#128): the finding, its model and
+    /// the slice it is of. It is done once a drain lands in that model.
+    drain_wait: Cell<Option<(usize, NodeId, u64)>>,
 }
 
 /// What a run does.
@@ -421,8 +436,18 @@ impl ReviewPanel {
             repeat_pref: RefCell::new(None),
             scene_events: RefCell::new(None),
             deletes_in_slice: RefCell::new(Vec::new()),
+            orient: RefCell::new(None),
+            drain_wait: Cell::new(None),
         });
         *panel.me.borrow_mut() = Rc::downgrade(&panel);
+        {
+            let weak = Rc::downgrade(&panel);
+            panel.hollow.on_drained(Rc::new(move |leaf| {
+                if let Some(panel) = weak.upgrade() {
+                    panel.drain_landed(leaf);
+                }
+            }));
+        }
         {
             let weak = Rc::downgrade(&panel);
             let sub = panel.document.subscribe(move |event| {
@@ -481,6 +506,12 @@ impl ReviewPanel {
         ui.on_review_leave_requested(move |id| {
             if let Some(panel) = weak.upgrade() {
                 panel.leave(id);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        ui.on_review_turn_requested(move |id| {
+            if let Some(panel) = weak.upgrade() {
+                panel.turn_model(id);
             }
         });
         let weak = Rc::downgrade(self);
@@ -556,6 +587,11 @@ impl ReviewPanel {
     pub(crate) fn fills_for_slice(&self) -> SlicePatches {
         self.follow_models(SceneEvent::Mutated);
         self.marks.borrow().for_slice()
+    }
+
+    /// Lets a suction cup's row turn its model with the Orient tool (#128).
+    pub(crate) fn set_orient(&self, orient: Rc<OrientRun>) {
+        *self.orient.borrow_mut() = Some(orient);
     }
 
     /// Lets Fix All start a slice: `reslice` starts one without asking to
@@ -751,6 +787,66 @@ impl ReviewPanel {
         self.document
             .change_review_decisions(self.marks.borrow().decisions());
         self.push(None);
+    }
+
+    /// A drain landed in `leaf` (#128): the row whose drain tool is open on
+    /// it, for the slice still held, is done.
+    fn drain_landed(&self, leaf: NodeId) {
+        let Some((index, model, generation)) = self.drain_wait.get() else {
+            return;
+        };
+        if model != leaf {
+            return;
+        }
+        self.drain_wait.set(None);
+        let held = self
+            .held
+            .borrow()
+            .as_ref()
+            .is_some_and(|held| held.generation == generation);
+        if !held {
+            return;
+        }
+        self.mark_fixed(index);
+        self.push(Some(ctr!(
+            "Review",
+            "Drain drilled. Slice again to check the result."
+        )));
+    }
+
+    /// Opens the Orient tool on the model holding the suction cup of
+    /// finding `id`, with no suction cups as its objective, and searches
+    /// (#128): the person picks the pose. Nothing turns until they apply.
+    fn turn_model(&self, id: i32) {
+        if self.fixing() {
+            return;
+        }
+        let Some(finding) = self
+            .finding(id)
+            .filter(|finding| finding.check == CheckKind::SuctionCup)
+        else {
+            return;
+        };
+        if self.markable_models().is_none() {
+            return;
+        }
+        let at = match finding.fix {
+            Some(SuggestedFix::AddDrain { at } | SuggestedFix::Fill { at, .. }) => at,
+            _ => finding.focus,
+        };
+        let (Some(leaf), Some(orient)) = (
+            self.hollow.model_at(world(at, self.origin())),
+            self.orient.borrow().clone(),
+        ) else {
+            self.push(Some(ctr!(
+                "Review",
+                "No model was found around this suction cup."
+            )));
+            return;
+        };
+        self.ctrl.set_section(WorkspaceSection::Transform);
+        self.document.set_selection(Selection::One(LeafId(leaf)));
+        orient.search_with(sc_orient::Preset::NoCups);
     }
 
     /// Marks every resin trap that offers a fill.
@@ -2190,7 +2286,11 @@ impl ReviewPanel {
                 return;
             }
             Some(SuggestedFix::AddDrain { at } | SuggestedFix::Fill { at, .. }) => {
+                let model = self.hollow.model_at(world(at, self.origin()));
                 if self.open_drain_tool(world(at, self.origin())) {
+                    // Done once a drain lands there (#128).
+                    self.drain_wait
+                        .set(model.map(|leaf| (index, leaf, self.document.slice_generation())));
                     return;
                 }
                 Some(ctr!(
@@ -2427,6 +2527,7 @@ fn review_rows(
             // Offered by `mark_rows`, which knows the marks (#462).
             delete: 0,
             delete_size: SharedString::default(),
+            turn: false,
             remains: if after_fix_all {
                 fix_all_leaves(finding, hollow_drains(hollows, i))
             } else {
@@ -2995,6 +3096,8 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
                         | CheckKind::SurfaceGrowth
                 );
             (row.delete, row.delete_size) = delete_offer(finding, i, marks);
+            // A suction cup can be turned away from the film (#128).
+            row.turn = marks.fixable && finding.check == CheckKind::SuctionCup;
             // An island marked to delete wants no support (#462).
             if row.delete == 2 && row.fix == FixKind::AddSupport as i32 {
                 row.fix = FixKind::None as i32;
