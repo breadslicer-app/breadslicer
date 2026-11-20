@@ -6931,8 +6931,8 @@ msgstr "Cortado en {} piezas."
 
 #: src/cut_run.rs
 msgctxt "CutRun"
-msgid "Its supports were removed: generate supports for the pieces."
-msgstr "Se quitaron sus soportes: generá soportes para las piezas."
+msgid "Supports are being made again for the pieces."
+msgstr "Se están haciendo de nuevo los soportes de las piezas."
 
 #: src/cut_run.rs
 msgctxt "CutRun"
@@ -9509,8 +9509,13 @@ msgstr "Desagrupar (Ctrl+Shift+G)"
 
 #: src/viewport/controller.rs
 msgctxt "Workspace"
-msgid "Grouped: picked, moved and arranged as one, on one raft of lines. Ctrl+Shift+G undoes it."
-msgstr "Agrupados: se eligen, se mueven y se acomodan como uno, sobre una balsa de líneas. Ctrl+Shift+G lo deshace."
+msgid "Grouped: picked, moved and arranged as one, on one raft of lines. Dragging one of them with nothing picked moves it alone. Ctrl+Shift+G undoes it."
+msgstr "Agrupados: se eligen, se mueven y se acomodan como uno, sobre una balsa de líneas. Arrastrar uno sin nada elegido lo mueve solo a él. Ctrl+Shift+G lo deshace."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Moving this model alone, out of its group. Click it first to move the whole group."
+msgstr "Moviendo este modelo solo, fuera de su grupo. Hacé clic primero para mover el grupo entero."
 
 #: src/viewport/controller.rs
 msgctxt "Workspace"

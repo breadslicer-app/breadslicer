@@ -1700,8 +1700,9 @@ fn line_dots(row: &[[f32; 3]]) -> Option<crate::mesh_render::Overlay> {
         indices: Vec::new(),
         tint: OverlayTint::Picked,
     };
+    // Round, like the tip of a support (#661).
     for &p in row {
-        crate::repair_marks::push_bar(&mut piece, p, p, 0.3);
+        crate::measure::push_ball(&mut piece, p, 0.3);
     }
     Some(Arc::from(vec![Arc::new(piece)]))
 }
@@ -4776,6 +4777,22 @@ impl DfSupportRun {
     /// The Generate button with `options` in the tab, waited for: the lift of
     /// the models on the plate (#389) and what follows (#606) as pressed.
     #[cfg(test)]
+    /// Supports for every model of the document, made and pasted as a run
+    /// ends, with no question in the way: for tests of other tools that
+    /// need a supported model.
+    #[cfg(test)]
+    pub(crate) fn generate_now_for_test(&self) {
+        let graph = self
+            .document
+            .with_scene(|spatial| spatial.graph().clone())
+            .expect("a scene");
+        let outcome = start_df_supports(&graph, DfSupportRequest::default())
+            .expect("a run starts")
+            .join();
+        *self.started_on.borrow_mut() = Some(self.document.scene_revision());
+        self.finish(outcome);
+    }
+
     pub(crate) fn press_generate_and_wait(self: &Rc<Self>, options: DfSupportOptions) {
         self.set_options(options);
         self.start();
@@ -5211,7 +5228,7 @@ impl DfSupportRun {
     }
 
     /// The support mesh this driver pasted: its leaf and current mesh.
-    fn support_leaf(&self) -> Option<(NodeId, Arc<sc_mesh_core::IndexedMesh>)> {
+    pub(crate) fn support_leaf(&self) -> Option<(NodeId, Arc<sc_mesh_core::IndexedMesh>)> {
         self.document.with_scene(support_leaf).flatten()
     }
 

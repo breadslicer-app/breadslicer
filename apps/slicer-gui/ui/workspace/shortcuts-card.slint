@@ -76,9 +76,15 @@ export component ShortcutsCard inherits Rectangle {
 
     // The dim behind takes the click that closes the card.
     background: Theme.ground.transparentize(0.35);
+    // Nothing behind the card reacts while it is open (#653): the wheel and
+    // drags stop here as well as clicks.
     TouchArea {
+        mouse-cursor: default;
         clicked => {
             root.close();
+        }
+        scroll-event(event) => {
+            accept
         }
     }
     FocusScope {
@@ -102,8 +108,12 @@ export component ShortcutsCard inherits Rectangle {
         border-color: Theme.border;
         border-width: 1px;
         border-radius: 4px;
-        // Clicks on the card stay on it.
-        TouchArea { }
+        // Clicks and the wheel on the card stay on it.
+        TouchArea {
+            scroll-event(event) => {
+                accept
+            }
+        }
 
         card-layout := VerticalLayout {
             padding: 18px;

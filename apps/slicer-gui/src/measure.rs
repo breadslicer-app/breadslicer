@@ -71,7 +71,7 @@ impl Measure {
         reading(&self.points.borrow())
     }
 
-    /// The marks to draw: a bar along each segment and a block at each
+    /// The marks to draw: a thin bar along each segment and a ball at each
     /// point, `radius` mm thick. `None` with no points.
     pub(crate) fn overlay(&self, radius: f32) -> Option<Overlay> {
         let points = self.points.borrow();
@@ -94,12 +94,38 @@ impl Measure {
         for pair in points.windows(2) {
             crate::repair_marks::push_bar(&mut piece, f(pair[0]), f(pair[1]), radius);
         }
+        // Small round points, like the gizmo's ends (#654).
         for &p in points.iter() {
-            crate::repair_marks::push_bar(&mut piece, f(p), f(p), radius * 2.2);
+            push_ball(&mut piece, f(p), radius * 3.0);
         }
         let overlay: Overlay = Arc::from(vec![Arc::new(piece)]);
         *self.drawn.borrow_mut() = Some((points.clone(), key, overlay.clone()));
         Some(overlay)
+    }
+}
+
+/// A ball of `radius` mm around `at`: 12 around and 8 from pole to pole.
+pub(crate) fn push_ball(piece: &mut OverlayMesh, at: [f32; 3], radius: f32) {
+    const AROUND: u32 = 12;
+    const DOWN: u32 = 8;
+    let base = piece.positions.len() as u32;
+    for i in 0..=DOWN {
+        let polar = std::f32::consts::PI * i as f32 / DOWN as f32;
+        for j in 0..AROUND {
+            let turn = std::f32::consts::TAU * j as f32 / AROUND as f32;
+            piece.positions.push([
+                at[0] + radius * polar.sin() * turn.cos(),
+                at[1] + radius * polar.sin() * turn.sin(),
+                at[2] + radius * polar.cos(),
+            ]);
+        }
+    }
+    for i in 0..DOWN {
+        for j in 0..AROUND {
+            let (a, b) = (i * AROUND + j, i * AROUND + (j + 1) % AROUND);
+            let (c, d) = (a + AROUND, b + AROUND);
+            piece.indices.extend([a, c, b, b, c, d].map(|k| base + k));
+        }
     }
 }
 

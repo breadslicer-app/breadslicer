@@ -128,3 +128,25 @@ fn the_face_that_already_lies_down_only_drops_to_the_plate() {
     click(&ctrl, [0.0, 0.0, 2.0], AxisView::Bottom);
     assert_eq!(ctrl.document().undo_len(), undo_before + 1);
 }
+
+/// #656: armed, the flat face under the cursor lights up (the two
+/// triangles of the post's side), and goes when the tool is put away.
+#[test]
+fn the_face_under_the_cursor_lights_up_while_armed() {
+    let ctrl = post();
+    let mut camera = OrbitCamera::new(Vec3::new(0.0, 0.0, 5.0), 40.0);
+    camera.set_axis_view(AxisView::Front);
+    ctrl.set_camera_for_test(camera);
+    let centre = ScreenPoint::new(100.0, 50.0);
+    ctrl.on_pointer_move(centre, PointerModifiers::default());
+    assert_eq!(ctrl.lay_hover_faces(), 0, "nothing lit with the tool away");
+    ctrl.set_lay_on_face(true);
+    ctrl.on_pointer_move(centre, PointerModifiers::default());
+    assert_eq!(ctrl.lay_hover_faces(), 2, "the side's two triangles");
+    // Off the model, nothing.
+    ctrl.on_pointer_move(ScreenPoint::new(2.0, 2.0), PointerModifiers::default());
+    assert_eq!(ctrl.lay_hover_faces(), 0);
+    ctrl.on_pointer_move(centre, PointerModifiers::default());
+    ctrl.set_lay_on_face(false);
+    assert_eq!(ctrl.lay_hover_faces(), 0);
+}

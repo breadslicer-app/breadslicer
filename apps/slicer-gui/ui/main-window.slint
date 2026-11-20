@@ -437,6 +437,31 @@ export component MainWindow inherits Window {
             root.support-tip-size = 2;
         }
     }
+    // Closes every tool and clears what it drew (#655): the models it
+    // worked on went, or another scene came in.
+    public function close-tools() {
+        root.support-drag-cancel();
+        if root.support-picked-count > 0 {
+            root.support-picked-clear();
+        }
+        root.support-tool = 0;
+        if root.measure-on {
+            root.measure-toggled(false);
+            root.measure-on = false;
+        }
+        if root.lay-face-on {
+            root.lay-face-toggled(false);
+            root.lay-face-on = false;
+        }
+        root.hollow-lasso-tool = false;
+        root.hollow-drain-tool = false;
+        if root.orient-open {
+            root.orient-close-requested();
+        }
+        if root.cut-open {
+            root.cut-close-requested();
+        }
+    }
     // Arms hand tool `tool` (or puts it away when armed), on its page.
     function arm-support-tool(tool: int) {
         root.support-tool = root.support-tool == tool ? 0 : tool;
@@ -1512,8 +1537,12 @@ export component MainWindow inherits Window {
         capture-key-pressed(event) => {
             // F1: every keyboard shortcut (#49).
             if (event.text == Key.F1 && !event.repeat) {
-                root.shortcuts-open = true;
+                root.shortcuts-open = !root.shortcuts-open;
                 return accept;
+            }
+            // With the card open, keys go to the card alone (#653).
+            if (root.shortcuts-open) {
+                return reject;
             }
             // Ctrl+1 to Ctrl+4: the workflow tabs (#583). The window takes
             // them before the view, whose plain digits turn the camera.

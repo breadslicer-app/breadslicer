@@ -58,6 +58,51 @@ fn area_normal(c: &[[f64; 3]; 3]) -> [f64; 3] {
     cross(sub(c[1], c[0]), sub(c[2], c[0]))
 }
 
+/// The triangles of the flat face that triangle `face` belongs to, by the
+/// same rule as [`flat_normal`]: what a click there lays on the plate, lit
+/// while the cursor is over it (#656). Empty for a degenerate triangle.
+pub(crate) fn flat_patch(mesh: &IndexedMesh, face: usize) -> Vec<usize> {
+    let Some(seed) = corners(mesh, face) else {
+        return Vec::new();
+    };
+    let n0 = area_normal(&seed);
+    let len0 = length(n0);
+    if len0 <= 1e-12 {
+        return Vec::new();
+    }
+    let n0 = n0.map(|v| v / len0);
+    let d0 = dot(n0, seed[0]);
+    let tolerance = plane_tolerance(mesh);
+    let cos_flat = FLAT_DEG.to_radians().cos();
+    (0..mesh.faces().len())
+        .filter(|&i| {
+            corners(mesh, i).is_some_and(|c| {
+                let n = area_normal(&c);
+                let len = length(n);
+                len > 1e-12
+                    && dot(n, n0) >= cos_flat * len
+                    && c.iter().all(|p| (dot(n0, *p) - d0).abs() <= tolerance)
+            })
+        })
+        .collect()
+}
+
+/// How far from the clicked triangle's plane a triangle may lie and still be
+/// on it: a thousandth of the model's size, at least a micron.
+fn plane_tolerance(mesh: &IndexedMesh) -> f64 {
+    let (lo, hi) = mesh.vertices().iter().fold(
+        ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]),
+        |(lo, hi), v| {
+            let p = v.coords().map(f64::from);
+            (
+                [lo[0].min(p[0]), lo[1].min(p[1]), lo[2].min(p[2])],
+                [hi[0].max(p[0]), hi[1].max(p[1]), hi[2].max(p[2])],
+            )
+        },
+    );
+    (length(sub(hi, lo)) * 1e-3).max(1e-3)
+}
+
 /// The outward unit normal, in the mesh's own axes, of the flat face that
 /// triangle `face` belongs to: every triangle within [`FLAT_DEG`] of its
 /// normal and in its plane, averaged by area. `None` for a degenerate
@@ -71,19 +116,7 @@ pub(crate) fn flat_normal(mesh: &IndexedMesh, face: usize) -> Option<[f64; 3]> {
     }
     let n0 = n0.map(|v| v / len0);
     let d0 = dot(n0, seed[0]);
-    // In the plane: within a thousandth of the model's size, at least a
-    // micron.
-    let (lo, hi) = mesh.vertices().iter().fold(
-        ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]),
-        |(lo, hi), v| {
-            let p = v.coords().map(f64::from);
-            (
-                [lo[0].min(p[0]), lo[1].min(p[1]), lo[2].min(p[2])],
-                [hi[0].max(p[0]), hi[1].max(p[1]), hi[2].max(p[2])],
-            )
-        },
-    );
-    let tolerance = (length(sub(hi, lo)) * 1e-3).max(1e-3);
+    let tolerance = plane_tolerance(mesh);
     let cos_flat = FLAT_DEG.to_radians().cos();
     let mut sum = [0.0; 3];
     for i in 0..mesh.faces().len() {

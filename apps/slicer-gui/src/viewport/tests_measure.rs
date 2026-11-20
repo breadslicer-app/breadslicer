@@ -18,17 +18,8 @@ use crate::{PointerModifiers, WorkspaceSection};
 
 /// A unit cube at `at`, seen from straight above round `target`.
 fn scene(at: [f64; 3]) -> ViewportController {
-    let mut scene = Scene::new();
-    let leaf = scene
-        .add_leaf(
-            None,
-            Transform3D::Affine(AffineTransform3D::from_translation(at)),
-            LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
-        )
-        .expect("inline-mesh leaf");
-    scene.add_root(leaf).expect("a fresh root");
     let ctrl = ViewportController::new_for_test();
-    ctrl.install_graph_for_test(scene);
+    ctrl.install_graph_for_test(cube_at(at));
     ctrl.set_viewport_for_test(200.0, 100.0);
     ctrl.set_section(WorkspaceSection::Transform);
     ctrl
@@ -77,4 +68,52 @@ fn clicks_while_measuring_take_points_and_select_nothing() {
     // Off, a click selects again.
     click_over(&ctrl, [0.1, 0.1, 0.0], false);
     assert_eq!(ctrl.document().selection_node_ids().len(), 1);
+}
+
+/// A unit cube at `at`, with the controller listening to its document,
+/// as the window's is.
+fn listening(at: [f64; 3]) -> std::rc::Rc<ViewportController> {
+    let ctrl = std::rc::Rc::new(ViewportController::new_for_test());
+    ctrl.register_document_listener();
+    ctrl.install_graph_for_test(cube_at(at));
+    ctrl.set_viewport_for_test(200.0, 100.0);
+    ctrl.set_section(WorkspaceSection::Transform);
+    ctrl
+}
+
+fn cube_at(at: [f64; 3]) -> Scene {
+    let mut scene = Scene::new();
+    let leaf = scene
+        .add_leaf(
+            None,
+            Transform3D::Affine(AffineTransform3D::from_translation(at)),
+            LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+        )
+        .expect("inline-mesh leaf");
+    scene.add_root(leaf).expect("a fresh root");
+    scene
+}
+
+/// #655: the tools close and forget what they drew when the model they
+/// worked on goes, or another scene comes in; a model added keeps them.
+#[test]
+fn deleting_the_model_or_another_scene_closes_the_tools() {
+    let ctrl = listening([0.0, 0.0, 0.5]);
+    // Picked first, then measured.
+    click_over(&ctrl, [0.1, 0.1, 0.0], false);
+    let picked = ctrl.document().selection();
+    assert_eq!(ctrl.document().selection_node_ids().len(), 1);
+    ctrl.set_measuring(true);
+    click_over(&ctrl, [0.1, 0.1, 0.0], false);
+    assert_eq!(ctrl.measure_points().len(), 1);
+    ctrl.document().set_selection(picked);
+    ctrl.on_delete_requested();
+    assert!(!ctrl.measuring(), "Measure closes with its model gone");
+    assert!(ctrl.measure_points().is_empty());
+
+    let ctrl = listening([0.0, 0.0, 0.5]);
+    ctrl.set_lay_on_face(true);
+    assert!(ctrl.laying_on_face());
+    ctrl.install_graph_for_test(cube_at([5.0, 0.0, 0.5]));
+    assert!(!ctrl.laying_on_face(), "another scene closes Lay on face");
 }
