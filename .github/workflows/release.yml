@@ -1,0 +1,60 @@
+# Builds the portable Windows zip of a release from a clean checkout of a tag (#46).
+# A pushed tag v* makes a draft release with the zip attached, for a person to check and publish
+# (drafts are never announced on Discord). A manual run builds the zip of the branch it runs on
+# and keeps it as a workflow artifact, with no release.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version written in the zip's name and read-me files, without the v
+        required: true
+        default: 0.0.0-test
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Version and commit
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
+          fi
+          echo "BREADSLICER_COMMIT=${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+      - name: Build the app and the command-line slicer
+        shell: bash
+        run: |
+          cargo build --release --locked -p sc-slicer-gui --bin breadslicer
+          cargo build --release --locked -p sc-slicer-cli
+      - name: Package
+        shell: bash
+        run: |
+          python packages/windows/portable/package.py --version "$VERSION" --bin-dir target/release --out dist | tee dist-summary.txt
+          echo "ZIP=$(grep '^ZIP ' dist-summary.txt | cut -d' ' -f2-)" >> "$GITHUB_ENV"
+          echo "ZIP_SHA256=$(grep '^SHA256 ' dist-summary.txt | cut -d' ' -f2)" >> "$GITHUB_ENV"
+      - name: Keep the zip (manual run)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Breadslicer-${{ env.VERSION }}-windows-x64
+          path: ${{ env.ZIP }}
+      - name: Draft release (tag)
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+          printf 'Breadslicer %s for Windows, portable: unzip it anywhere and open breadslicer.exe.\n\nSHA-256 of the zip: %s\n\nSource code of this version: https://github.com/%s/tree/%s\n' \
+            "$VERSION" "$ZIP_SHA256" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" > notes.md
+          gh release create "$GITHUB_REF_NAME" "$ZIP" --draft $prerelease --title "Breadslicer $VERSION" --notes-file notes.md
