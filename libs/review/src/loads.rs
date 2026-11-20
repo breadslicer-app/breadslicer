@@ -394,9 +394,6 @@ fn share(
             capacity_n: model.tip_capacity_n(contact.radius),
         });
     }
-    if loads.tips.is_empty() {
-        return;
-    }
 
     let held_below = PLATE_LAYERS.max(input.raft_layers());
     let ends = regions.group_solid(|_, _| true);

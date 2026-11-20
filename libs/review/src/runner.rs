@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use crate::checks::islands::{self, Growth, Island, IslandOptions, Part};
 use crate::checks::output::{self, OutputOptions};
 use crate::checks::raft::{self, RaftOptions};
+use crate::checks::tip_load::{self, TipLoadOptions};
 use crate::checks::traps::{self, TrapOptions};
 use crate::fill::CavityFill;
 use crate::finding::{Finding, sort_findings};
@@ -57,6 +58,8 @@ pub struct ReviewOptions {
     pub raft: RaftOptions,
     /// The peel loads (#240).
     pub loads: LoadOptions,
+    /// Parts pulled harder than their tips hold (#129).
+    pub tip_load: TipLoadOptions,
 }
 
 /// Wall-clock time spent in each part of a review.
@@ -140,6 +143,13 @@ pub fn check_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Review
     findings.extend(clashes.into_iter().map(|clash| clash.finding));
     findings.extend(traps);
     findings.extend(output);
+    findings.extend(tip_load::run(ctx, &plate_loads, &options.tip_load));
+    tip_load::grade_cups(
+        &mut findings,
+        &plate_loads,
+        &options.loads.model,
+        &options.tip_load,
+    );
     sort_findings(&mut findings);
     let timings = ReviewTimings {
         sweep: ctx.regions.elapsed(),

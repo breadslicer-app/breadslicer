@@ -120,7 +120,18 @@ fn moving_the_plate_changes_nothing() {
             )
             .build()
     };
-    assert_eq!(loads_of(&at(0.0, 0.0)), loads_of(&at(37.0, 21.0)));
+    let (here, there) = (loads_of(&at(0.0, 0.0)), loads_of(&at(37.0, 21.0)));
+    assert_eq!(here.cup_mm2, there.cup_mm2);
+    assert_eq!(here.model_force_n, there.model_force_n);
+    assert_eq!(here.region_cup_mm2, there.region_cup_mm2);
+    assert_eq!(here.cups.len(), there.cups.len());
+    for (a, b) in here.cups.iter().zip(&there.cups) {
+        assert_eq!(
+            (a.layer, a.cup_mm2, a.on_tips),
+            (b.layer, b.cup_mm2, b.on_tips)
+        );
+        assert!((b.at_mm[0] - a.at_mm[0] - 3.7).abs() < 1e-9);
+    }
 }
 
 // Bodies and tips (#241).
