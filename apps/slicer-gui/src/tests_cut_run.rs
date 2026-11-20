@@ -217,6 +217,59 @@ fn a_cut_with_pins_or_magnets_joins_the_parts() {
     });
 }
 
+/// #440, #441: in Stroke mode a drag across the model cuts it along the
+/// stroke, and a loop round a corner cuts that corner off; each a cut as
+/// the plane's, one Undo step.
+#[test]
+fn a_stroke_across_the_model_cuts_it_along_the_stroke() {
+    on_fresh_slint_thread(|| {
+        let f = fixture(cube());
+        opened(&f);
+        f.run.on_option(14, 1.0);
+        assert!(f.window.get_cut_stroke_mode());
+        assert!(!f.window.get_cut_can_cut(), "nothing drawn yet");
+        // From above, straight across the cube (x 0 to 20, y -10 to 10)
+        // along y = 3.
+        assert!(f.run.press(&above(-10.0, 3.0)));
+        for k in 1..=10 {
+            f.run.drag(&above(-10.0 + f64::from(k) * 4.0, 3.0));
+        }
+        f.run.release(Some(&above(32.0, 3.0)), true);
+        land(&f.run);
+        assert!(f.window.get_cut_can_cut(), "{}", f.window.get_cut_warning());
+        f.run.apply();
+        assert_eq!(leaves(&f), 2);
+        let mut v = piece_volumes(&f);
+        v.sort_by(f64::total_cmp);
+        assert!((v[0] - 20.0 * 20.0 * 7.0).abs() < 1e-2, "{v:?}");
+        assert!((v[1] - 20.0 * 20.0 * 13.0).abs() < 1e-2, "{v:?}");
+        assert!(f.document.undo().unwrap());
+        assert_eq!(leaves(&f), 1);
+
+        f.document.set_selection(Selection::One(LeafId(f.leaf)));
+        f.run.toggle();
+        f.run.on_option(14, 1.0);
+        // From above, a loop round the cube's corner at x 20, y 10: the
+        // ring lies on the top face, so the loop cuts off nothing and says
+        // so.
+        let ring = [
+            [14.0, 4.0],
+            [26.0, 4.0],
+            [26.0, 16.0],
+            [14.0, 16.0],
+            [14.0, 4.5],
+        ];
+        assert!(f.run.press(&above(ring[0][0], ring[0][1])));
+        for p in &ring[1..] {
+            f.run.drag(&above(p[0], p[1]));
+        }
+        f.run.release(Some(&above(14.0, 4.2)), true);
+        land(&f.run);
+        assert!(!f.window.get_cut_can_cut());
+        assert!(!f.window.get_cut_warning().is_empty());
+    });
+}
+
 #[test]
 fn a_click_on_a_part_of_the_cut_leaves_it_whole() {
     on_fresh_slint_thread(|| {

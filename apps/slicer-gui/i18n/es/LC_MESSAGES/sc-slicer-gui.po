@@ -9743,3 +9743,43 @@ msgstr "Uniones agregadas: {}."
 msgctxt "CutRun"
 msgid "Joints left out: {} (too near the edge of the cut, or too deep for the part)."
 msgstr "Uniones que no entran: {} (muy cerca del borde del corte, o muy profundas para la pieza)."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Cut by"
+msgstr "Cortar con"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Plane"
+msgstr "Plano"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Stroke"
+msgstr "Trazo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Drag over the model in the view: a stroke from one side to the other cuts it along the stroke, through the model as seen; a loop round a part cuts that part off. Then press Cut."
+msgstr "Arrastrá sobre el modelo en la vista: un trazo de un lado al otro lo corta siguiendo el trazo, a través del modelo tal como se ve; un lazo alrededor de una parte la separa. Después tocá Cortar."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Draw across the model to cut it along the stroke, or draw a loop round a part to cut it off."
+msgstr "Dibujá a través del modelo para cortarlo siguiendo el trazo, o un lazo alrededor de una parte para separarla."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "The loop cuts nothing off: draw it round a part that stands out of the model."
+msgstr "El lazo no separa nada: dibujalo alrededor de una parte que sobresalga del modelo."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "The stroke does not cut the model in two: draw it from one side of the model to the other, without crossing itself."
+msgstr "El trazo no corta el modelo en dos: dibujalo de un lado del modelo al otro, sin que se cruce."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Working out the cut…"
+msgstr "Calculando el corte…"

@@ -1021,6 +1021,8 @@ export component MainWindow inherits Window {
     in property <float> cut-joint-depth: 3;
     in property <float> cut-joint-clearance: 0.15;
     in property <int> cut-joint-preset: -1;
+    // The Cut tool draws strokes in place of the plane (#440, #441).
+    in property <bool> cut-stroke-mode: false;
     // Opens the tool, or closes it when open (the rail button, K).
     callback cut-toggle-requested();
     callback cut-close-requested();
@@ -2791,6 +2793,7 @@ export component MainWindow inherits Window {
                                     joint-depth: root.cut-joint-depth;
                                     joint-clearance: root.cut-joint-clearance;
                                     joint-preset: root.cut-joint-preset;
+                                    stroke-mode: root.cut-stroke-mode;
                                     option-changed(code, value) => {
                                         root.cut-option-changed(code, value);
                                     }

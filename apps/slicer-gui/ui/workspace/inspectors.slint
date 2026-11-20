@@ -844,6 +844,8 @@ export component CutCard inherits Card {
     in property <float> joint-depth;
     in property <float> joint-clearance;
     in property <int> joint-preset: -1;
+    // Strokes drawn over the model in place of the plane (#440, #441).
+    in property <bool> stroke-mode;
     // 0 height, 1 tilt about x, 2 tilt about y, 3 bounded (0/1), 4 width,
     // 5 depth, 6 offset along the plane, 7 offset across it; the joints:
     // 8 kind, 9 square (0/1), 10 size, 11 depth, 12 clearance, 13 magnet
@@ -856,10 +858,25 @@ export component CutCard inherits Card {
     note: "K";
     highlighted: true;
 
-    Note {
+    LabeledRow {
+        label: @tr("Inspector" => "Cut by");
+        Segmented {
+            width: 190px;
+            options: [@tr("Inspector" => "Plane"), @tr("Inspector" => "Stroke")];
+            current: root.stroke-mode ? 1 : 0;
+            enabled: root.enabled;
+            picked(i) => {
+                root.option-changed(14, i);
+            }
+        }
+    }
+    if root.stroke-mode: Note {
+        text: @tr("Inspector" => "Drag over the model in the view: a stroke from one side to the other cuts it along the stroke, through the model as seen; a loop round a part cuts that part off. Then press Cut.");
+    }
+    if !root.stroke-mode: Note {
         text: @tr("Inspector" => "Cuts the selected model with a plane and closes the pieces. In the scene, the arrow moves the plane, the rings tilt it, the corners shape it and a drag on it moves it along. Click a part of the cut to take it or leave it.");
     }
-    NumberField {
+    if !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Height");
         unit: "mm";
         decimals: 2;
@@ -869,7 +886,7 @@ export component CutCard inherits Card {
             root.option-changed(0, v);
         }
     }
-    Slider {
+    if !root.stroke-mode: Slider {
         minimum: root.height-min;
         maximum: root.height-max;
         value: root.plane-height;
@@ -878,7 +895,7 @@ export component CutCard inherits Card {
             root.option-changed(0, v);
         }
     }
-    NumberField {
+    if !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Tilt front to back");
         unit: "°";
         decimals: 1;
@@ -888,7 +905,7 @@ export component CutCard inherits Card {
             root.option-changed(1, v);
         }
     }
-    NumberField {
+    if !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Tilt side to side");
         unit: "°";
         decimals: 1;
@@ -898,7 +915,7 @@ export component CutCard inherits Card {
             root.option-changed(2, v);
         }
     }
-    CheckBox {
+    if !root.stroke-mode: CheckBox {
         text: @tr("Inspector" => "Limit the plane");
         checked: root.bounded;
         enabled: root.enabled;
@@ -908,7 +925,7 @@ export component CutCard inherits Card {
     }
     // Each one under its own `if`: a wrapped Note inside a nested layout
     // under an `if` is measured as one line, and the card came out short.
-    if root.bounded: NumberField {
+    if root.bounded && !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Width");
         unit: "mm";
         decimals: 1;
@@ -918,7 +935,7 @@ export component CutCard inherits Card {
             root.option-changed(4, v);
         }
     }
-    if root.bounded: NumberField {
+    if root.bounded && !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Depth");
         unit: "mm";
         decimals: 1;
@@ -928,7 +945,7 @@ export component CutCard inherits Card {
             root.option-changed(5, v);
         }
     }
-    if root.bounded: NumberField {
+    if root.bounded && !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Move along X");
         unit: "mm";
         decimals: 1;
@@ -938,7 +955,7 @@ export component CutCard inherits Card {
             root.option-changed(6, v);
         }
     }
-    if root.bounded: NumberField {
+    if root.bounded && !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Move along Y");
         unit: "mm";
         decimals: 1;
@@ -949,7 +966,7 @@ export component CutCard inherits Card {
         }
     }
     // Joints across the cut (#109, #442), in the middle of each part cut.
-    LabeledRow {
+    if !root.stroke-mode: LabeledRow {
         label: @tr("Inspector" => "Joints");
         Segmented {
             width: 190px;
@@ -961,7 +978,7 @@ export component CutCard inherits Card {
             }
         }
     }
-    if root.joint-kind == 1: LabeledRow {
+    if root.joint-kind == 1 && !root.stroke-mode: LabeledRow {
         label: @tr("Inspector" => "Pin shape");
         Segmented {
             width: 190px;
@@ -973,7 +990,7 @@ export component CutCard inherits Card {
             }
         }
     }
-    if root.joint-kind == 2: LabeledRow {
+    if root.joint-kind == 2 && !root.stroke-mode: LabeledRow {
         label: @tr("Inspector" => "Magnet");
         Segmented {
             width: 190px;
@@ -985,7 +1002,7 @@ export component CutCard inherits Card {
             }
         }
     }
-    if root.joint-kind != 0: NumberField {
+    if root.joint-kind != 0 && !root.stroke-mode: NumberField {
         label: root.joint-kind == 1 ? @tr("Inspector" => "Pin size") : @tr("Inspector" => "Magnet diameter");
         unit: "mm";
         decimals: 2;
@@ -995,7 +1012,7 @@ export component CutCard inherits Card {
             root.option-changed(10, v);
         }
     }
-    if root.joint-kind != 0: NumberField {
+    if root.joint-kind != 0 && !root.stroke-mode: NumberField {
         label: root.joint-kind == 1 ? @tr("Inspector" => "Pin depth") : @tr("Inspector" => "Magnet height");
         unit: "mm";
         decimals: 2;
@@ -1005,7 +1022,7 @@ export component CutCard inherits Card {
             root.option-changed(11, v);
         }
     }
-    if root.joint-kind != 0: NumberField {
+    if root.joint-kind != 0 && !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Clearance");
         unit: "mm";
         decimals: 2;
