@@ -445,6 +445,35 @@ pub(crate) fn bodies_of(
     bodies
 }
 
+/// Every body of the imported sets `sets`, with its highest point in the
+/// world: where it holds the model up (#651).
+pub(crate) fn body_tops(spatial: &SceneSpatial, sets: &[NodeId]) -> Vec<(ImportedBody, [f64; 3])> {
+    let mut tops = Vec::new();
+    for &leaf in sets {
+        let (Some(query), Some(mesh)) = (spatial.leaf(leaf), spatial.graph().leaf_mesh_arc(leaf))
+        else {
+            continue;
+        };
+        let world = affine(&query.world_transform());
+        let index = index_of(mesh);
+        let mut faces: Vec<Vec<usize>> = vec![Vec::new(); index.shells.count() as usize];
+        for (f, &shell) in index.shells.labels().iter().enumerate() {
+            faces[shell as usize].push(f);
+        }
+        for faces in faces.into_iter().filter(|f| !f.is_empty()) {
+            let top = faces
+                .iter()
+                .flat_map(|&f| mesh.faces()[f].vertices)
+                .map(|v| xyz(&world.apply_to_vertex(mesh.vertices()[v.get() as usize])))
+                .fold([0.0, 0.0, f64::NEG_INFINITY], |best, p| {
+                    if p[2] > best[2] { p } else { best }
+                });
+            tops.push((ImportedBody { leaf, faces }, top));
+        }
+    }
+    tops
+}
+
 /// The edit that takes the bodies `bodies` off their sets, in one entry: a
 /// set left with others keeps them, one left with none goes. `None` when
 /// nothing would change.

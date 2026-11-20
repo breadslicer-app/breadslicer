@@ -10,9 +10,11 @@
 //! `every_test_file_is_a_module` fails when a new file is not listed below.
 
 mod bench_support_job;
+mod cavity_and_sizes;
 mod df_support_document;
 mod df_support_follow;
 mod df_supports_scene;
+mod raft_shapes;
 
 /// A file in `tests/` that is not declared above would never be compiled or
 /// run, because `autotests = false`.

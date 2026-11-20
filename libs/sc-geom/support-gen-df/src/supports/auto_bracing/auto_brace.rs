@@ -240,6 +240,22 @@ fn build_support_samples(c: &SupportCollections, store: &SupportCollections) -> 
             None,
         );
     }
+    // SoulCrafted (#632): sticks too, model to model: inside a cavity they
+    // stand up to tens of millimetres, unbraced.
+    for s in c.sticks.values() {
+        push(
+            ShaftEntity::Stick(s),
+            s.base.type_id,
+            SupportTypeId::Stick,
+            &s.base.model_id,
+            &s.segments,
+            EndpointHosts {
+                root: None,
+                host_knot: None,
+            },
+            None,
+        );
+    }
     for k in c.kickstands.values() {
         push(
             ShaftEntity::Kickstand(k),
@@ -592,13 +608,16 @@ impl Ladder<'_> {
         if !ignore_max_distance && horizontal_span > self.settings.max_brace_length_mm + EPS {
             return;
         }
-        let mesh = self.meshes.get(&low_anchor.model_id);
         let diameter = self.settings.brace_diameter_mm;
-        if !line_passes_mesh_clearance(low_anchor.pos, high_anchor.pos, mesh, diameter)
-            || (self.settings.exact_clearance
-                && !line_stays_off_mesh(low_anchor.pos, high_anchor.pos, mesh, diameter))
-        {
-            return;
+        // A brace of a group keeps off every model of it (#475).
+        for model in self.settings.braced_with(&low_anchor.model_id) {
+            let mesh = self.meshes.get(model);
+            if !line_passes_mesh_clearance(low_anchor.pos, high_anchor.pos, mesh, diameter)
+                || (self.settings.exact_clearance
+                    && !line_stays_off_mesh(low_anchor.pos, high_anchor.pos, mesh, diameter))
+            {
+                return;
+            }
         }
         self.commit(low, high, section, low_anchor, high_anchor);
     }
@@ -631,12 +650,18 @@ impl Ladder<'_> {
         // A bracing preset draws its braces at its own diameter (the
         // tessellation reads a brace's width off its knots), never thicker
         // than the thinner shaft it joins, or its end would stick out of it.
-        let exact = self.settings.stacked.is_some().then(|| {
+        let thinner = low_anchor
+            .host_diameter_mm
+            .min(high_anchor.host_diameter_mm);
+        let exact = if self.settings.follow_trunks {
+            // As thick as their trunks allow (#471).
+            Some(crate::supports::auto_support::zone_rules::BRACE_SHARE_OF_TRUNK * thinner)
+        } else {
             self.settings
-                .brace_diameter_mm
-                .min(low_anchor.host_diameter_mm)
-                .min(high_anchor.host_diameter_mm)
-        });
+                .stacked
+                .is_some()
+                .then(|| self.settings.brace_diameter_mm.min(thinner))
+        };
         let knot = |id: &str, a: &AnchorPoint| Knot {
             id: id.to_owned(),
             parent_shaft_id: a.segment_id.clone(),
@@ -1353,6 +1378,12 @@ pub fn build_auto_braced_snapshot(
         .into_iter()
         .filter(|s| is_auto_braceable_shaft_type(s.support_kind))
         .collect();
+    // The supports of a group of models are braced as one model's (#475).
+    if !settings.brace_together.is_empty() {
+        for sample in &mut arena {
+            sample.model_id = settings.bracing_key(&sample.model_id).to_owned();
+        }
+    }
     let trunk_count = arena.len();
     if trunk_count < auto_bracing_hard_rules::MIN_GROUP_SIZE {
         return (

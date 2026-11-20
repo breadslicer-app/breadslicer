@@ -286,6 +286,9 @@ export component MainWindow inherits Window {
     in property <int> support-raft-index: 0;
     in property <float> support-raft-thickness;
     in property <bool> support-raft-wall: true;
+    in property <bool> support-raft-pads;
+    in property <float> support-raft-holes;
+    in property <bool> support-raft-tabs;
     // The zone preset's summary (#360), empty without one.
     in property <string> support-zone-summary;
     // The shape of a support (#564).
@@ -323,6 +326,12 @@ export component MainWindow inherits Window {
     // A zone preset's pillar grid (#464): on or off, its spacing, and the
     // spacing its preset recommends in words, empty when none does.
     in property <bool> support-grid-on;
+    in property <bool> support-plate-only;
+    // A zone preset's mini supports, adaptive base and braces that follow
+    // their trunks (#471).
+    in property <bool> support-mini-supports: true;
+    in property <bool> support-adaptive-base;
+    in property <bool> support-braces-follow;
     in property <float> support-grid-spacing: 7;
     in property <string> support-grid-hint;
     // Models with supports made on another grid (#576), and the press that
@@ -646,6 +655,21 @@ export component MainWindow inherits Window {
     callback slice-send-name-edited(string);
     callback slice-send(bool, string);
     callback slice-send-cancel();
+    callback slice-send-picked(int);
+    in property <string> slice-send-own-summary;
+    in-out property <bool> slice-send-own-open: false;
+    in-out property <string> slice-send-own-name;
+    in property <string> slice-send-own-reported;
+    in property <[string]> slice-send-own-printers: [];
+    in-out property <int> slice-send-own-printer-index: 0;
+    in property <[string]> slice-send-own-resins: [];
+    in-out property <int> slice-send-own-resin-index: 0;
+    in-out property <string> slice-send-own-note;
+    in property <bool> slice-send-own-can-use: false;
+    in-out property <bool> slice-send-use-asking: false;
+    in property <string> slice-send-use-question;
+    in property <string> slice-send-mismatch;
+    callback slice-send-own-edited(int, string, int);
     // The camera of the printer picked in the card (#633): shown in the card,
     // and over the whole window when enlarged.
     in property <bool> slice-camera-on: false;
@@ -897,6 +921,11 @@ export component MainWindow inherits Window {
     callback repair-cancel();
     callback repair-marks-toggled(bool);
     callback overhang-map-toggled(bool);
+    // The Measure tool (#652): on, and what it reads.
+    in-out property <bool> measure-on: false;
+    in property <string> measure-text;
+    callback measure-toggled(bool);
+    callback measure-escape();
     // Arrange (#180), the Transform tab's Arrange card: a run in flight, what
     // the last one did, and the card's settings (Rust keeps them).
     in property <bool> arranging: false;
@@ -1077,6 +1106,9 @@ export component MainWindow inherits Window {
     // `context-copy-pressed` / `context-paste-pressed` surface the
     // menu-item activations so the Rust wiring can route them to
     // the AppState clipboard methods.
+    // Whether the menu offers Group and Ungroup (#475).
+    in property <bool> context-can-group;
+    in property <bool> context-can-ungroup;
     callback show-context-menu(length, length, bool, bool, bool);
     show-context-menu(x, y, copy, paste, del) => {
         mv.show-context-menu(x, y, copy, paste, del);
@@ -1890,6 +1922,8 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                     mv := MeshViewer {
                         nav-map: root.nav-map;
+                        context-can-group: root.context-can-group;
+                        context-can-ungroup: root.context-can-ungroup;
                         projection-chip-width: root.projection-chip-width;
                         horizontal-stretch: 1;
                         rendering: root.mesh-rendering;
@@ -1910,6 +1944,10 @@ export component MainWindow inherits Window {
                         paint-brush-on: root.orient-open && root.orient-brush-on;
                         tool-escape => {
                             if root.support-drag-cancel() {
+                                return true;
+                            }
+                            if root.measure-on {
+                                root.measure-escape();
                                 return true;
                             }
                             if root.workspace-section == WorkspaceSection.Hollow && root.hollow-lasso-tool {
@@ -2341,6 +2379,81 @@ export component MainWindow inherits Window {
                     // map and what shows from under the plate. Beside the
                     // projection chip of the view. Scene settings, not View,
                     // which is the menu bar's (#581).
+                    // The Measure tool (#652): beside Scene settings, and its
+                    // reading at the top of the view while it is on.
+                    if root.has-scene: Rectangle {
+                        x: 12px + root.projection-chip-width + 6px
+                            + (root.review-card-width > 0 ? root.review-card-width - root.projection-chip-width - 6px
+                            : scene-settings-width.preferred-width + 20px) + 6px;
+                        y: parent.height - 38px;
+                        width: measure-chip-text.preferred-width + 20px;
+                        height: 24px;
+                        border-radius: 2px;
+                        background: root.measure-on ? #2a3036 : #171a1d;
+                        border-color: root.measure-on ? Theme.text : measure-touch.has-hover ? Theme.border-strong : #272d32;
+                        border-width: 1px;
+                        accessible-role: button;
+                        accessible-label: @tr("Inspector" => "Measure");
+                        accessible-action-default => {
+                            root.measure-toggled(!root.measure-on);
+                        }
+
+                        measure-chip-text := Text {
+                            text: @tr("Inspector" => "Measure");
+                            color: root.measure-on ? Theme.text : #8b959d;
+                            font-size: 11px;
+                            font-family: "Consolas";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        measure-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.measure-toggled(!root.measure-on);
+                            }
+                        }
+                    }
+                    // Measures the Scene settings chip's text, for the chip
+                    // beside it.
+                    scene-settings-width := Text {
+                        visible: false;
+                        text: @tr("Inspector" => "Scene settings") + " ▾";
+                        font-size: 11px;
+                        font-family: "Consolas";
+                    }
+                    if root.has-scene && root.measure-on: Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        y: 12px;
+                        width: min(parent.width - 24px, measure-column.preferred-width + 28px);
+                        height: measure-column.preferred-height + 16px;
+                        border-radius: 2px;
+                        background: #171a1d;
+                        border-color: Theme.border-strong;
+                        border-width: 1px;
+
+                        measure-column := VerticalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            padding-top: 8px;
+                            padding-bottom: 8px;
+                            spacing: 2px;
+
+                            Text {
+                                text: root.measure-text;
+                                color: Theme.text;
+                                font-size: 13px;
+                                font-family: "Consolas";
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: @tr("Inspector" => "MEASURE · Shift+click adds a segment · Esc clears");
+                                color: #8b959d;
+                                font-size: 10px;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+
                     if root.has-scene: Rectangle {
                         x: 12px + root.projection-chip-width + 6px;
                         y: parent.height - 38px;
@@ -2502,6 +2615,25 @@ export component MainWindow inherits Window {
                                 }
                                 send-cancel => {
                                     root.slice-send-cancel();
+                                }
+                                send-picked(index) => {
+                                    root.slice-send-picked(index);
+                                }
+                                send-own-summary: root.slice-send-own-summary;
+                                send-own-open <=> root.slice-send-own-open;
+                                send-own-name <=> root.slice-send-own-name;
+                                send-own-reported: root.slice-send-own-reported;
+                                send-own-printers: root.slice-send-own-printers;
+                                send-own-printer-index <=> root.slice-send-own-printer-index;
+                                send-own-resins: root.slice-send-own-resins;
+                                send-own-resin-index <=> root.slice-send-own-resin-index;
+                                send-own-note <=> root.slice-send-own-note;
+                                send-own-can-use: root.slice-send-own-can-use;
+                                send-use-asking <=> root.slice-send-use-asking;
+                                send-use-question: root.slice-send-use-question;
+                                send-mismatch: root.slice-send-mismatch;
+                                send-own-edited(field, text, index) => {
+                                    root.slice-send-own-edited(field, text, index);
                                 }
                                 camera-on: root.slice-camera-on;
                                 camera-live: root.slice-camera-live;
@@ -2937,9 +3069,16 @@ export component MainWindow inherits Window {
                                     raft-index: root.support-raft-index;
                                     raft-thickness: root.support-raft-thickness;
                                     raft-wall: root.support-raft-wall;
+                                    raft-pads: root.support-raft-pads;
+                                    raft-holes: root.support-raft-holes;
+                                    raft-tabs: root.support-raft-tabs;
                                     one-raft: root.arrange-one-raft;
                                     zone-summary: root.support-zone-summary;
                                     grid-on: root.support-grid-on;
+                                    plate-only: root.support-plate-only;
+                                    mini-supports: root.support-mini-supports;
+                                    adaptive-base: root.support-adaptive-base;
+                                    braces-follow: root.support-braces-follow;
                                     grid-spacing: root.support-grid-spacing;
                                     grid-hint: root.support-grid-hint;
                                     grid-stale: root.support-grid-stale;

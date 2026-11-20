@@ -207,6 +207,11 @@ impl<'a> PlanCtx<'a> {
         self.enclosed.set(enclosed);
     }
 
+    /// Whether the contact being placed lies inside a closed cavity (#632).
+    pub fn is_enclosed(&self) -> bool {
+        self.enclosed.get()
+    }
+
     /// The zone size a contact inside a closed cavity was given (#632): its
     /// bridge keeps it, instead of the run's thinnest.
     pub fn enclosed_zone_size(
@@ -352,6 +357,67 @@ pub fn collect_host_entities(draft: &SupportState) -> Vec<HostEntry<'_>> {
             entity,
         })
         .collect()
+}
+
+/// The shaft of the host `(host_type_id, host_id)` names: a trunk's, or a
+/// stick's inside a cavity, which members hang from too (#632).
+pub fn host_shaft<'d>(
+    draft: &'d SupportState,
+    host_type_id: SupportTypeId,
+    host_id: &str,
+) -> Option<(&'d crate::supports::types::SupportEntity, &'d [Segment])> {
+    match host_type_id {
+        SupportTypeId::Trunk => draft
+            .collections
+            .trunks
+            .get(host_id)
+            .map(|t| (&t.base, t.segments.as_slice())),
+        SupportTypeId::Stick => draft
+            .collections
+            .sticks
+            .get(host_id)
+            .map(|s| (&s.base, s.segments.as_slice())),
+        _ => None,
+    }
+}
+
+/// The samples of the sticks of `draft` within `reach_mm` of `target` in
+/// plan: what a contact inside a cavity hangs from, sharing a stick from the
+/// cavity's floor instead of standing on one of its own (#632).
+pub fn collect_stick_shaft_points_near(
+    draft: &SupportState,
+    target: Vec3,
+    reach_mm: f64,
+) -> Vec<FanShaftPoint> {
+    let apart = |a: f64, b: f64, at: f64| at < a.min(b) - reach_mm || at > a.max(b) + reach_mm;
+    let mut points = Vec::new();
+    for (id, stick) in &draft.collections.sticks {
+        for seg in &stick.segments {
+            let (Some(a), Some(b)) = (&seg.bottom_joint, &seg.top_joint) else {
+                continue;
+            };
+            let (start, end) = (a.pos, b.pos);
+            if apart(start.x, end.x, target.x) || apart(start.y, end.y, target.y) {
+                continue;
+            }
+            for i in 0..=SHAFT_SAMPLES_PER_SEGMENT {
+                let t = f64::from(i) / f64::from(SHAFT_SAMPLES_PER_SEGMENT);
+                points.push(FanShaftPoint {
+                    host_type_id: SupportTypeId::Stick,
+                    host_id: id.clone(),
+                    segment_id: Some(seg.id.clone()),
+                    t: Some(t),
+                    pos: Vec3::new(
+                        start.x + (end.x - start.x) * t,
+                        start.y + (end.y - start.y) * t,
+                        start.z + (end.z - start.z) * t,
+                    ),
+                    diameter: seg.diameter,
+                });
+            }
+        }
+    }
+    points
 }
 
 /// The host entity `(host_type_id, host_id)` names.
@@ -600,10 +666,10 @@ pub fn count_attachments_on_host(
     host_id: &str,
     draft: &SupportState,
 ) -> usize {
-    let Some(host) = host_entity_of(draft, host_type_id, host_id) else {
+    let Some((_, segments)) = host_shaft(draft, host_type_id, host_id) else {
         return 0;
     };
-    let mut segment_ids: HashSet<&str> = host.segments.iter().map(|s| s.id.as_str()).collect();
+    let mut segment_ids: HashSet<&str> = segments.iter().map(|s| s.id.as_str()).collect();
     segment_ids.insert(host_id);
     draft
         .collections
@@ -616,10 +682,10 @@ pub fn count_attachments_on_host(
 /// Longest hosted member span (mm) on a host, knot to tip over its leaves and
 /// branches; zero when it carries nothing.
 pub fn max_member_span_mm(host_type_id: SupportTypeId, host_id: &str, draft: &SupportState) -> f64 {
-    let Some(host) = host_entity_of(draft, host_type_id, host_id) else {
+    let Some((_, segments)) = host_shaft(draft, host_type_id, host_id) else {
         return 0.0;
     };
-    let mut segment_ids: HashSet<&str> = host.segments.iter().map(|s| s.id.as_str()).collect();
+    let mut segment_ids: HashSet<&str> = segments.iter().map(|s| s.id.as_str()).collect();
     segment_ids.insert(host_id);
     let knot_by_id: HashMap<&str, Vec3> = draft
         .collections
@@ -1268,6 +1334,23 @@ pub struct OrphanInfo {
     pub knot_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// SoulCrafted (#63, #236): placed again after the cull, with the final
+    /// sizes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replaced: bool,
+}
+
+impl OrphanInfo {
+    /// Whether the plan placed it again after the cull (#63, #236): `None`
+    /// for one it does not try (its knot or host went missing, or it crosses
+    /// another shaft and was kept).
+    pub fn was_placed_again(&self) -> Option<bool> {
+        matches!(
+            self.reason,
+            OrphanReason::HostCulled | OrphanReason::Blocked
+        )
+        .then_some(self.replaced)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1280,6 +1363,8 @@ pub enum OrphanReason {
     Cross,
     Blocked,
     HostBlocked,
+    /// Its host was culled (SoulCrafted, #63): the member is placed again.
+    HostCulled,
 }
 
 /// A shaft-hosted member as the cull reads it.
@@ -1328,6 +1413,7 @@ pub fn validate_and_cull_orphans(
     draft: &SupportState,
     mesh: Option<&PlanMesh<'_>>,
     cones_clear: bool,
+    crossing: &HashSet<String>,
 ) -> (SupportState, Vec<OrphanInfo>) {
     let mut orphans: Vec<OrphanInfo> = Vec::new();
     const DRIFT_TOL_SQ: f64 = 0.25; // 0.5mm
@@ -1342,8 +1428,12 @@ pub fn validate_and_cull_orphans(
             entity,
         } in collect_host_entities(draft)
         {
-            let mut blocked = false;
+            // Placed again and found through a model (#236).
+            let mut blocked = crossing.contains(host_id);
             for seg in &entity.segments {
+                if blocked {
+                    break;
+                }
                 let (Some(a), Some(b)) = (&seg.bottom_joint, &seg.top_joint) else {
                     continue;
                 };
@@ -1360,13 +1450,13 @@ pub fn validate_and_cull_orphans(
                     break;
                 }
             }
-            let crossing = !blocked
+            let cone_crosses = !blocked
                 && cones_clear
                 && entity
                     .contact_cone
                     .as_ref()
                     .is_some_and(|c| contact_cone_crosses_model(c, mesh));
-            if blocked || crossing {
+            if blocked || cone_crosses {
                 let where_ = entity.contact_cone.as_ref().map_or(String::new(), |c| {
                     format!(
                         " @ ({}, {}, Z{})",
@@ -1378,12 +1468,13 @@ pub fn validate_and_cull_orphans(
                 let type_name = get_support_type_descriptor(host_type_id).singular;
                 culled_host_type_name.insert(host_id.to_owned(), type_name);
                 orphans.push(OrphanInfo {
+                    replaced: false,
                     id: host_id.to_owned(),
                     kind: host_type_id,
                     reason: OrphanReason::HostBlocked,
                     host_id: None,
                     knot_id: None,
-                    detail: Some(if crossing {
+                    detail: Some(if cone_crosses {
                         format!("{type_name} tip cone crosses mesh{where_}")
                     } else {
                         format!("{type_name} shaft pierces mesh{where_}")
@@ -1409,6 +1500,7 @@ pub fn validate_and_cull_orphans(
                     knot: Option<&str>,
                     detail: String| {
             orphans.push(OrphanInfo {
+                replaced: false,
                 id: member.id.to_owned(),
                 kind,
                 reason,
@@ -1417,6 +1509,16 @@ pub fn validate_and_cull_orphans(
                 detail: Some(detail),
             });
         };
+        if crossing.contains(member.id) {
+            push(
+                orphans,
+                OrphanReason::Blocked,
+                None,
+                Some(member.knot_id),
+                "placed again through the mesh".to_owned(),
+            );
+            return false;
+        }
         if member.knot_id.is_empty() {
             push(
                 orphans,
@@ -1454,7 +1556,15 @@ pub fn validate_and_cull_orphans(
             return false;
         };
         let owner = host_entity_of(draft, host_type_id, owner_id);
-        let Some((start, end)) = owner.and_then(|o| host_segment_span(draft, o, seg)) else {
+        // A stick inside a cavity hosts members too (#632): its segment runs
+        // joint to joint.
+        let stick_span = (host_type_id == SupportTypeId::Stick)
+            .then(|| seg.bottom_joint.as_ref().zip(seg.top_joint.as_ref()))
+            .flatten()
+            .map(|(a, b)| (a.pos, b.pos));
+        let Some((start, end)) =
+            stick_span.or_else(|| owner.and_then(|o| host_segment_span(draft, o, seg)))
+        else {
             let seg_index = owner.and_then(|o| o.segments.iter().position(|s| s.id == seg.id));
             let seg_num = seg_index.map_or(0, |i| i + 1);
             let total = owner.map_or(0, |o| o.segments.len());
@@ -1564,6 +1674,54 @@ pub fn validate_and_cull_orphans(
         true
     };
 
+    // Sticks and stumps whose tip cone crosses the model (#500). A stick
+    // inside a cavity can hold members (#632): they go with it, as with a
+    // culled trunk.
+    let mut sticks_to_remove: HashSet<String> = HashSet::new();
+    let mut stumps_to_remove: HashSet<String> = HashSet::new();
+    if cones_clear && let Some(mesh) = mesh {
+        let crossing_detail = |name: &str, cone: &ContactCone| {
+            format!(
+                "{name} tip cone crosses mesh @ ({}, {}, Z{})",
+                fixed1(cone.pos.x),
+                fixed1(cone.pos.y),
+                fixed1(cone.pos.z)
+            )
+        };
+        for (id, stick) in &draft.collections.sticks {
+            let crossing = [&stick.contact_cone_a, &stick.contact_cone_b]
+                .into_iter()
+                .find(|c| contact_cone_crosses_model(c, mesh));
+            if let Some(cone) = crossing {
+                orphans.push(OrphanInfo {
+                    replaced: false,
+                    id: id.clone(),
+                    kind: SupportTypeId::Stick,
+                    reason: OrphanReason::Blocked,
+                    host_id: None,
+                    knot_id: None,
+                    detail: Some(crossing_detail("Stick", cone)),
+                });
+                sticks_to_remove.insert(id.clone());
+                culled_host_type_name.insert(id.clone(), "Stick");
+            }
+        }
+        for (id, stump) in &draft.collections.stumps {
+            if contact_cone_crosses_model(&stump.contact_cone, mesh) {
+                orphans.push(OrphanInfo {
+                    replaced: false,
+                    id: id.clone(),
+                    kind: SupportTypeId::Stump,
+                    reason: OrphanReason::Blocked,
+                    host_id: None,
+                    knot_id: None,
+                    detail: Some(crossing_detail("Stump", &stump.contact_cone)),
+                });
+                stumps_to_remove.insert(id.clone());
+            }
+        }
+    }
+
     // Registry walk order: leaf orphans before branch ones.
     let mut members_to_remove: IndexMap<SupportTypeId, IndexSet<String>> = IndexMap::new();
     for type_id in SHAFT_HOSTED_MEMBER_TYPE_ORDER {
@@ -1587,9 +1745,10 @@ pub fn validate_and_cull_orphans(
                 .map_or(knot.parent_shaft_id.as_str(), |(_, id, _)| id);
             if let Some(name) = culled_host_type_name.get(culled_host_id) {
                 orphans.push(OrphanInfo {
+                    replaced: false,
                     id: member.id.to_owned(),
                     kind: type_id,
-                    reason: OrphanReason::MissingHost,
+                    reason: OrphanReason::HostCulled,
                     host_id: Some(culled_host_id.to_owned()),
                     knot_id: Some(knot.id.clone()),
                     detail: Some(format!("{name} culled (blocked)")),
@@ -1598,50 +1757,6 @@ pub fn validate_and_cull_orphans(
                     .get_mut(&type_id)
                     .expect("type")
                     .insert(member.id.to_owned());
-            }
-        }
-    }
-
-    // Sticks and stumps whose tip cone crosses the model (#500): they hold
-    // nothing else, so they go by themselves.
-    let mut sticks_to_remove: HashSet<String> = HashSet::new();
-    let mut stumps_to_remove: HashSet<String> = HashSet::new();
-    if cones_clear && let Some(mesh) = mesh {
-        let crossing_detail = |name: &str, cone: &ContactCone| {
-            format!(
-                "{name} tip cone crosses mesh @ ({}, {}, Z{})",
-                fixed1(cone.pos.x),
-                fixed1(cone.pos.y),
-                fixed1(cone.pos.z)
-            )
-        };
-        for (id, stick) in &draft.collections.sticks {
-            let crossing = [&stick.contact_cone_a, &stick.contact_cone_b]
-                .into_iter()
-                .find(|c| contact_cone_crosses_model(c, mesh));
-            if let Some(cone) = crossing {
-                orphans.push(OrphanInfo {
-                    id: id.clone(),
-                    kind: SupportTypeId::Stick,
-                    reason: OrphanReason::Blocked,
-                    host_id: None,
-                    knot_id: None,
-                    detail: Some(crossing_detail("Stick", cone)),
-                });
-                sticks_to_remove.insert(id.clone());
-            }
-        }
-        for (id, stump) in &draft.collections.stumps {
-            if contact_cone_crosses_model(&stump.contact_cone, mesh) {
-                orphans.push(OrphanInfo {
-                    id: id.clone(),
-                    kind: SupportTypeId::Stump,
-                    reason: OrphanReason::Blocked,
-                    host_id: None,
-                    knot_id: None,
-                    detail: Some(crossing_detail("Stump", &stump.contact_cone)),
-                });
-                stumps_to_remove.insert(id.clone());
             }
         }
     }
@@ -1698,9 +1813,17 @@ pub fn validate_and_cull_orphans(
             }
         }
     }
+    for id in &sticks_to_remove {
+        if let Some(entity) = draft.collections.sticks.get(id) {
+            for seg in &entity.segments {
+                segment_ids_to_remove.insert(&seg.id);
+            }
+        }
+    }
     for (kid, knot) in &draft.collections.knots {
         if (segment_ids_to_remove.contains(knot.parent_shaft_id.as_str())
-            || hosts_to_remove.contains(&knot.parent_shaft_id))
+            || hosts_to_remove.contains(&knot.parent_shaft_id)
+            || sticks_to_remove.contains(&knot.parent_shaft_id))
             && !remaining_knot_users.contains_key(kid)
         {
             knots_to_remove.insert(kid.clone());

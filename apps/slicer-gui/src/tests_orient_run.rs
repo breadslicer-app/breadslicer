@@ -1007,3 +1007,56 @@ fn without_paint_the_tool_finds_what_it_always_found() {
         assert_eq!(found.outcome.options, direct.options);
     });
 }
+
+/// Two models picked (#221): Quick orients each on its own and applies each
+/// one's best pose, both in one Undo step; no options are shown.
+#[test]
+fn two_models_picked_are_each_oriented_in_one_undo_step() {
+    on_fresh_slint_thread(|| {
+        let f = fixture();
+        let other_pose = Transform3D::Affine(
+            AffineTransform3D::from_translation([-60.0, -40.0, 30.0])
+                .compose(&AffineTransform3D::from_rotation_y(0.7)),
+        );
+        // The second cube joins the scene the fixture installed.
+        let mut graph = f.document.with_scene(|s| s.graph().clone()).unwrap();
+        let second = graph
+            .add_leaf(None, other_pose, LeafPayload::Mesh(Arc::new(cube())))
+            .unwrap();
+        graph.add_root(second).unwrap();
+        f.document.install_graph(graph, PathBuf::from("cubes.stl"));
+        f.document
+            .set_selection(Selection::of([LeafId(f.leaf), LeafId(second)]));
+        let before = (local(&f), f.run.local_of(second).unwrap());
+
+        f.run.toggle();
+        assert!(f.window.get_orient_open());
+        land(&f.run);
+        f.run.search(SearchMode::Quick);
+        assert!(f.window.get_orient_running());
+        let start = Instant::now();
+        while f
+            .run
+            .batch_slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_none()
+        {
+            assert!(
+                start.elapsed() < Duration::from_secs(120),
+                "the workers hang"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        f.run.finish();
+        assert!(!f.window.get_orient_running());
+        assert_eq!(options(&f), 0, "no options with several models");
+        let after = (local(&f), f.run.local_of(second).unwrap());
+        assert_ne!(after.0, before.0, "the first cube is turned");
+        assert_ne!(after.1, before.1, "the second cube is turned");
+
+        assert!(f.document.undo().unwrap());
+        assert_eq!((local(&f), f.run.local_of(second).unwrap()), before);
+        assert!(!f.document.can_undo(), "one step for both");
+    });
+}

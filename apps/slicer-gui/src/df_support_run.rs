@@ -213,6 +213,13 @@ pub(crate) struct DfSupportRun {
     last_change: Rc<Cell<Instant>>,
     prescan_timer: slint::Timer,
     _scene_events: SceneSubscription,
+    /// The models standing on a raft of their own (#198), and that raft: the
+    /// tab's raft changed while they alone were picked. Every other model
+    /// stands on the tab's.
+    own_rafts: RefCell<Vec<(NodeId, OwnRaft)>>,
+    /// The tab shows the picked model's raft (#198): told when the pick
+    /// changes.
+    selection_events: RefCell<Option<SceneSubscription>>,
     /// The options the next run uses (the Supports tab), saved across
     /// sessions.
     options: RefCell<DfSupportOptions>,
@@ -1706,6 +1713,8 @@ impl DfSupportRun {
             last_change,
             prescan_timer: slint::Timer::default(),
             _scene_events: scene_events,
+            own_rafts: RefCell::new(Vec::new()),
+            selection_events: RefCell::new(None),
             options: RefCell::new(load_saved_options()),
             presets: RefCell::new(Vec::new()),
             shape_view: Cell::new(crate::support_shape::View::default()),
@@ -1782,6 +1791,18 @@ impl DfSupportRun {
             });
         }
         *run.me.borrow_mut() = Rc::downgrade(&run);
+        {
+            let weak = Rc::downgrade(&run);
+            let sub = run.document.subscribe(move |event| {
+                if matches!(event, SceneEvent::SelectionChanged)
+                    && let Some(run) = weak.upgrade()
+                    && let Some(ui) = run.ui.upgrade()
+                {
+                    run.push_raft(&ui);
+                }
+            });
+            *run.selection_events.borrow_mut() = Some(sub);
+        }
         {
             let handler: Rc<dyn SupportDragHandler> = run.clone();
             run.ctrl.set_support_drag_handler(Rc::downgrade(&handler));
@@ -2437,9 +2458,18 @@ impl DfSupportRun {
         {
             return;
         }
-        let mut request = self.request_for_printer();
-        request.options = self.options.borrow().clone();
-        request.models = Some(wanted.ids());
+        // As Generate makes them: own rafts, drains and groups too.
+        let mut request = self.request_for_selection();
+        // A member of a group is made with the whole group (#475).
+        let mut models = wanted.ids();
+        for group in &request.together {
+            if group.iter().any(|m| models.contains(m)) {
+                models.extend(group.iter().copied());
+            }
+        }
+        models.sort_unstable();
+        models.dedup();
+        request.models = Some(models);
         crate::breadcrumbs::note(&format!(
             "supports: regenerating {} model(s)",
             wanted.models.len()
@@ -2913,7 +2943,62 @@ impl DfSupportRun {
         let mut request = self.request_for_printer();
         request.options = self.options.borrow().clone();
         request.models = self.target_models();
+        // No tip in a hollow's drain channel (#465).
+        request.keep_out = crate::raft_drains::drain_channels(&self.document);
+        // A model on a raft of its own keeps it (#198), a group's members
+        // stand on one raft (#475).
+        let mut own: Vec<NodeId> = self.own_rafts.borrow().iter().map(|(m, _)| *m).collect();
+        own.extend(self.document.groups().into_iter().flatten());
+        own.sort_unstable();
+        own.dedup();
+        request.own_rafts = own
+            .into_iter()
+            .map(|model| (model, self.raft_of(model).on(&request.options)))
+            .collect();
+        // A group is made as one structure, braced to itself (#475).
+        request.together = self.document.groups();
         request
+    }
+
+    /// The raft `model` stands on: its group's one raft of lines (#475), its
+    /// own (#198), or the tab's.
+    fn raft_of(&self, model: NodeId) -> OwnRaft {
+        let own = self
+            .own_rafts
+            .borrow()
+            .iter()
+            .find(|(m, _)| *m == model)
+            .map(|(_, own)| *own)
+            .unwrap_or_else(|| OwnRaft::of(&self.options.borrow()));
+        if self.document.group_of(model).is_some() {
+            OwnRaft {
+                raft: RaftMode::Lines,
+                apart: true,
+                ..own
+            }
+        } else {
+            own
+        }
+    }
+
+    /// Shows the raft of the picked model (#198), or the tab's.
+    fn push_raft(&self, ui: &MainWindow) {
+        let own = self
+            .target_models()
+            .and_then(|t| t.first().copied())
+            .map(|model| self.raft_of(model))
+            .unwrap_or_else(|| OwnRaft::of(&self.options.borrow()));
+        let tab = self.options.borrow().clone();
+        ui.set_support_raft_index(match own.on(&tab).raft_drawn() {
+            RaftMode::Solid => 0,
+            RaftMode::Lines => 1,
+            RaftMode::Off => 2,
+        });
+        ui.set_support_raft_thickness(own.thickness_mm as f32);
+        ui.set_support_raft_wall(own.wall);
+        ui.set_support_raft_pads(own.pads);
+        ui.set_support_raft_holes(own.holes_mm as f32);
+        ui.set_support_raft_tabs(own.tabs);
     }
 
     /// What a model with no supports yet is measured with by Fill bed and
@@ -3045,16 +3130,14 @@ impl DfSupportRun {
         ui.set_support_stabilization(o.stabilization);
         ui.set_support_bracing(o.bracing);
         ui.set_support_smooth(o.smooth_shafts);
-        ui.set_support_raft_index(match full.raft_drawn() {
-            RaftMode::Solid => 0,
-            RaftMode::Lines => 1,
-            RaftMode::Off => 2,
-        });
-        ui.set_support_raft_thickness(o.raft_thickness_mm as f32);
-        ui.set_support_raft_wall(o.raft_wall);
+        self.push_raft(ui);
         ui.set_arrange_one_raft(full.one_raft);
         ui.set_support_zone_summary(zone_summary(&o));
         ui.set_support_grid_on(o.zones.as_ref().is_some_and(|z| z.grid_mm.is_some()));
+        ui.set_support_plate_only(o.zones.as_ref().is_some_and(|z| z.rules.plate_only));
+        ui.set_support_mini_supports(o.zones.as_ref().is_none_or(|z| !z.rules.keep_long_island_branches));
+        ui.set_support_adaptive_base(o.zones.as_ref().is_some_and(|z| z.rules.adaptive_base));
+        ui.set_support_braces_follow(o.zones.as_ref().is_some_and(|z| z.rules.braces_follow_trunks));
         ui.set_support_grid_spacing(shown_grid_mm(&o) as f32);
         ui.set_support_grid_hint(grid_hint(&o));
         ui.set_support_lift_on_plate_label(lift_on_plate_label(support_lift_mm(
@@ -4168,6 +4251,39 @@ impl DfSupportRun {
     /// thickness, raft wall), then a zone preset's grid (#464): 12 turns it
     /// on at the spacing `value` (off at 0), 13 sets its spacing.
     fn on_option(&self, code: i32, value: f32) {
+        // With some models picked, their raft alone changes (#198): it
+        // becomes theirs, and the tab's raft stays the other models'.
+        if matches!(code, 9..=11 | 16..=18)
+            && let Some(targets) = self.target_models()
+        {
+            let mut own = self.raft_of(targets[0]);
+            match code {
+                9 => {
+                    own.raft = match value as i32 {
+                        1 => RaftMode::Lines,
+                        2 => RaftMode::Off,
+                        _ => RaftMode::Solid,
+                    }
+                }
+                10 => own.thickness_mm = f64::from(value),
+                11 => own.wall = value != 0.0,
+                16 => own.pads = value != 0.0,
+                17 => own.holes_mm = f64::from(value).max(0.0),
+                _ => own.tabs = value != 0.0,
+            }
+            {
+                let mut owns = self.own_rafts.borrow_mut();
+                owns.retain(|(m, _)| !targets.contains(m));
+                if own != OwnRaft::of(&self.options.borrow()) {
+                    owns.extend(targets.iter().map(|m| (*m, own)));
+                }
+            }
+            if let Some(ui) = self.ui.upgrade() {
+                self.push_raft(&ui);
+            }
+            self.rafts_follow();
+            return;
+        }
         let mut o = self.options.borrow().clone();
         let v = f64::from(value);
         let on = value != 0.0;
@@ -4205,8 +4321,31 @@ impl DfSupportRun {
             // plate under every set; the preset keeps its own raft for when
             // it goes off.
             14 => o.one_raft = on,
+            // Supports only from the plate (#471).
+            15 => {
+                let Some(zones) = o.zones.as_mut() else {
+                    return;
+                };
+                zones.rules.plate_only = on;
+            }
+            // Mini supports, an adaptive base, braces that follow their
+            // trunks (#471).
+            19..=21 => {
+                let Some(zones) = o.zones.as_mut() else {
+                    return;
+                };
+                match code {
+                    19 => zones.rules.keep_long_island_branches = !on,
+                    20 => zones.rules.adaptive_base = on,
+                    _ => zones.rules.braces_follow_trunks = on,
+                }
+            }
             10 => o.raft_thickness_mm = v,
             11 => o.raft_wall = on,
+            // A solid raft's other shapes (#138, #99).
+            16 => o.raft_pads = on,
+            17 => o.raft_holes_mm = v.max(0.0),
+            18 => o.raft_tabs = on,
             12 | 13 => {
                 let shown = shown_grid_mm(&o);
                 let Some(zones) = o.zones.as_mut() else {
@@ -4220,8 +4359,12 @@ impl DfSupportRun {
             }
             _ => return,
         }
+        // The tab's raft is every model's again.
+        if matches!(code, 9..=11 | 14 | 16..=18) {
+            self.own_rafts.borrow_mut().clear();
+        }
         self.set_options(o);
-        if matches!(code, 9..=11 | 14) {
+        if matches!(code, 9..=11 | 14 | 16..=18) {
             self.rafts_follow();
         }
     }
@@ -4231,6 +4374,11 @@ impl DfSupportRun {
     /// supports stay where they are: only the raft and the roots' feet on it
     /// change, so there is nothing to generate again.
     fn rafts_follow(&self) {
+        self.rafts_follow_for(self.target_models());
+    }
+
+    /// [`Self::rafts_follow`] for the sets of `targets`, every set for `None`.
+    fn rafts_follow_for(&self, targets: Option<Vec<NodeId>>) {
         // A run in flight lands with the raft it started with, and a hand
         // edit in flight with its set's: neither is drawn over under them.
         if self.handle.borrow().is_some()
@@ -4240,7 +4388,6 @@ impl DfSupportRun {
             return;
         }
         let options = self.options.borrow().clone();
-        let targets = self.target_models();
         let sets: Vec<DrawnSet> = self
             .document
             .with_scene(|spatial| sets_in_force(spatial, &self.sessions))
@@ -4248,6 +4395,8 @@ impl DfSupportRun {
             .into_iter()
             .filter(|d| !d.unborn && targets.as_ref().is_none_or(|t| t.contains(&d.model)))
             .collect();
+        // Each model on its own raft (#198), the rest on the tab's.
+        let options_of = |model: NodeId| self.raft_of(model).on(&options);
         let started = Instant::now();
         // Each set is drawn on its own thread: a set is a few tens of
         // milliseconds, a plate of them would add up.
@@ -4256,7 +4405,7 @@ impl DfSupportRun {
                 let jobs: Vec<_> = sets
                     .into_iter()
                     .filter_map(|drawn| {
-                        let next = drawn.session.with_raft_of(&options)?;
+                        let next = drawn.session.with_raft_of(&options_of(drawn.model))?;
                         Some(scope.spawn(move || {
                             let mesh =
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -6494,6 +6643,7 @@ impl DfSupportRun {
             .filter_map(|set| set.kept.clone())
             .collect();
         let crowded = outcome.crowded.len();
+        let uncleared = outcome.rafts_uncleared.len();
         // One set per model it placed supports on (#197). A copy that took
         // another's supports (#561) shows that one's mesh, turned and moved
         // onto it by its leaf: one mesh for every copy.
@@ -6536,6 +6686,23 @@ impl DfSupportRun {
         let fragment = SceneFragment::from_leaf_snapshots(
             sets.iter().map(|(_, mesh, at, _)| (mesh.clone(), *at)),
         );
+        // A hollow's drain whose mouth the new raft covers keeps the resin
+        // in (#467): said below.
+        let shut_drains = {
+            let mouths = crate::raft_drains::drain_mouths(&self.document);
+            if mouths.is_empty() {
+                0
+            } else {
+                let rafts: Vec<_> = sets
+                    .iter()
+                    .map(|(_, mesh, at, session)| {
+                        let top = session.raft_top_mm();
+                        (crate::raft_drains::raft_top(mesh, at, top), top)
+                    })
+                    .collect();
+                crate::raft_drains::shut(&mouths, &rafts)
+            }
+        };
         // Generating again replaces the supports already there (#152), in the
         // same undoable step as the paste: the sets of the models the run
         // covered, and, from a run over every model, supports no session drew.
@@ -6667,6 +6834,30 @@ impl DfSupportRun {
                 details: Default::default(),
             });
         }
+        if shut_drains > 0 {
+            self.dialogs.show_info(move || InfoTexts {
+                heading: ctr!("DfSupportDialog", "The raft covers a drain"),
+                message: ctr!(
+                    "DfSupportDialog",
+                    "The raft runs over {} drain hole(s) on the underside of a hollow model: the resin inside cannot get out there. Lift the model, move the drain, or set the raft to Off or to Lines.",
+                    shut_drains
+                ),
+                details: Default::default(),
+            });
+        }
+        // A raft whose clearance around the models failed is drawn under
+        // them, rather than no supports at all (#467).
+        if uncleared > 0 {
+            self.dialogs.show_info(move || InfoTexts {
+                heading: ctr!("DfSupportDialog", "Raft drawn under the model"),
+                message: ctr!(
+                    "DfSupportDialog",
+                    "The raft of {} model(s) could not be cut clear of the models standing on the plate, and runs under them. Check it in the Slice tab before printing, or set the raft to Off or to Lines.",
+                    uncleared
+                ),
+                details: Default::default(),
+            });
+        }
         if !kept.is_empty() {
             self.show_kept_edits(kept, details);
             return;
@@ -6686,6 +6877,48 @@ impl DfSupportRun {
                 message: summary.as_str().into(),
                 details: details.as_str().into(),
             });
+    }
+}
+
+/// The raft a model stands on (#198): of the options' raft fields, the ones
+/// a model may have of its own.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct OwnRaft {
+    raft: RaftMode,
+    thickness_mm: f64,
+    wall: bool,
+    pads: bool,
+    holes_mm: f64,
+    tabs: bool,
+    /// Drawn apart, under one raft with others (#475, #556).
+    apart: bool,
+}
+
+impl OwnRaft {
+    fn of(options: &DfSupportOptions) -> Self {
+        Self {
+            raft: options.raft,
+            thickness_mm: options.raft_thickness_mm,
+            wall: options.raft_wall,
+            pads: options.raft_pads,
+            holes_mm: options.raft_holes_mm,
+            tabs: options.raft_tabs,
+            apart: options.one_raft,
+        }
+    }
+
+    /// `options` with this raft.
+    fn on(&self, options: &DfSupportOptions) -> DfSupportOptions {
+        DfSupportOptions {
+            raft: self.raft,
+            raft_thickness_mm: self.thickness_mm,
+            raft_wall: self.wall,
+            raft_pads: self.pads,
+            raft_holes_mm: self.holes_mm,
+            raft_tabs: self.tabs,
+            one_raft: self.apart,
+            ..options.clone()
+        }
     }
 }
 
@@ -6955,6 +7188,9 @@ impl DfSupportRun {
             return;
         }
         let ids = wanted.ids();
+        // The models the run made sets for: the ones waiting, and the rest
+        // of their groups (#475).
+        let made: Vec<NodeId> = outcome.sets.iter().map(|set| set.model).collect();
         let summary = summary_message(&outcome);
         if let Some(ui) = self.ui.upgrade() {
             let seconds = outcome.timings.total.as_secs_f64();
@@ -6986,7 +7222,10 @@ impl DfSupportRun {
             .with_scene(|spatial| {
                 support_leaves(spatial)
                     .map(|(id, _)| id)
-                    .filter(|id| model_of(&self.sessions, *id).is_some_and(|m| ids.contains(&m)))
+                    .filter(|id| {
+                        model_of(&self.sessions, *id)
+                            .is_some_and(|m| ids.contains(&m) || made.contains(&m))
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -7814,9 +8053,10 @@ fn lost_line(edit: &LostEdit) -> slint::SharedString {
     }
 }
 
-/// One line: models, islands, roots and triangles.
+/// One line: models, islands, roots and triangles, and the supports that
+/// could not be placed again once sized (#236).
 fn summary_message(outcome: &DfSupportOutcome) -> String {
-    ctr!(
+    let mut line = ctr!(
         "Inspector",
         "Models: {}, islands: {}, support roots: {}, triangles: {}.",
         outcome.models,
@@ -7828,6 +8068,22 @@ fn summary_message(outcome: &DfSupportOutcome) -> String {
             .map(|set| set.session.state().collections.roots.len())
             .sum::<usize>(),
         outcome.triangles
+    )
+    .to_string();
+    if outcome.unplaced > 0 {
+        line.push(' ');
+        line.push_str(&unplaced_note(outcome.unplaced));
+    }
+    line
+}
+
+/// Supports the plan took off once sized and could not place again (#236).
+fn unplaced_note(n: usize) -> String {
+    ctr!(
+        "Inspector",
+        "One support did not fit once sized and was left out: Analyze islands shows what it held.",
+        "{n} supports did not fit once sized and were left out: Analyze islands shows what they held.",
+        n
     )
     .to_string()
 }

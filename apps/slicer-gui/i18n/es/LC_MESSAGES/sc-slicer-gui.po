@@ -7843,6 +7843,11 @@ msgctxt "Inspector"
 msgid "Send the selection here"
 msgstr "Mandar la selección acá"
 
+#: src/viewport/controller.rs
+msgctxt "Inspector"
+msgid "Off the plates"
+msgstr "Fuera de las camas"
+
 #: src/ui
 msgctxt "Inspector"
 msgid "Remove this plate: its models go to the plate that takes its place"
@@ -9082,7 +9087,7 @@ msgstr "Agregar"
 #: ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
 msgid "Send to printer"
-msgstr "Enviar a la impresora"
+msgstr "Enviar"
 
 #: ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
@@ -9298,3 +9303,303 @@ msgstr "Cantidad de capas de transición"
 msgctxt "SlicePanel"
 msgid "This format keeps one exposure for the bottom layers and one for the rest: the transition layers print at the normal exposure."
 msgstr "Este formato guarda una exposición para las capas de base y otra para el resto: las capas de transición se imprimen con la exposición normal."
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Done"
+msgstr "Listo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Edit printer"
+msgstr "Editar impresora"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Its name in Breadslicer"
+msgstr "Su nombre en Breadslicer"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "The printer's name in Breadslicer"
+msgstr "El nombre de la impresora en Breadslicer"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Printer profile"
+msgstr "Perfil de impresora"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Resin it is kept for"
+msgstr "Resina que usa"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Note"
+msgstr "Nota"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Dental only, the one by the window…"
+msgstr "Solo dental, la de la ventana…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Slice for this printer"
+msgstr "Laminar para esta impresora"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Use them"
+msgstr "Usarlos"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Send anyway"
+msgstr "Enviar igual"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "{} · not answering"
+msgstr "{} · no contesta"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "As it reports: {}"
+msgstr "La que dice ser: {}"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "Not set"
+msgstr "Sin elegir"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "No resin of its own"
+msgstr "Sin resina propia"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "Its printer profile is not set"
+msgstr "Sin perfil de impresora elegido"
+
+#: src/send_to_printer.rs
+msgctxt "SendToPrinter"
+msgid "The plate is sliced for {}. Using {} means slicing it again."
+msgstr "La cama está laminada para {}. Usar {} obliga a laminarla de nuevo."
+
+#: src/network_profiles.rs
+msgctxt "SendToPrinter"
+msgid "This plate is sliced for {}; {} is set up as {}."
+msgstr "Esta cama está laminada para {}; {} está configurada como {}."
+
+#: src/network_profiles.rs
+msgctxt "SendToPrinter"
+msgid "Breadslicer slices for {} now; {} is set up as {}."
+msgstr "Breadslicer lamina ahora para {}; {} está configurada como {}."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Raft drawn under the model"
+msgstr "Balsa debajo del modelo"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The raft of {} model(s) could not be cut clear of the models standing on the plate, and runs under them. Check it in the Slice tab before printing, or set the raft to Off or to Lines."
+msgstr "La balsa de {} modelo(s) no se pudo recortar alrededor de los modelos apoyados en la plataforma y pasa por debajo de ellos. Revisala en Laminar antes de imprimir, o poné la balsa en Ninguna o en Líneas."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The raft covers a drain"
+msgstr "La balsa tapa un drenaje"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The raft runs over {} drain hole(s) on the underside of a hollow model: the resin inside cannot get out there. Lift the model, move the drain, or set the raft to Off or to Lines."
+msgstr "La balsa pasa por encima de {} agujero(s) de drenaje en la base de un modelo hueco: la resina de adentro no puede salir por ahí. Levantá el modelo, mové el drenaje o poné la balsa en Ninguna o en Líneas."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "One support did not fit once sized and was left out: Analyze islands shows what it held."
+msgid_plural "{n} supports did not fit once sized and were left out: Analyze islands shows what they held."
+msgstr[0] "Un soporte no entró con su tamaño final y quedó afuera: Analizar islas muestra lo que sostenía."
+msgstr[1] "{n} soportes no entraron con su tamaño final y quedaron afuera: Analizar islas muestra lo que sostenían."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Supports only from the plate"
+msgstr "Soportes solo desde la plataforma"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "No support starts on the model: what cannot reach the plate is left out, and Review lists it."
+msgstr "Ningún soporte arranca sobre el modelo: lo que no llega a la plataforma queda afuera y la Revisión lo lista."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "A pad under each support"
+msgstr "Una almohadilla bajo cada soporte"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Holes between supports"
+msgstr "Agujeros entre soportes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Peel tabs"
+msgstr "Pestañas para despegar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Less raft to peel off the film: holes 0 for none. Print one to see how it holds before using it on a plate."
+msgstr "Menos balsa que despegar del film: agujeros 0 para ninguno. Imprimí una para ver cómo agarra antes de usarla en una cama."
+
+#: ui/mesh-viewer.slint
+msgctxt "MeshViewer"
+msgid "Group (Ctrl+G)"
+msgstr "Agrupar (Ctrl+G)"
+
+#: ui/mesh-viewer.slint
+msgctxt "MeshViewer"
+msgid "Ungroup (Ctrl+Shift+G)"
+msgstr "Desagrupar (Ctrl+Shift+G)"
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Grouped: picked, moved and arranged as one, on one raft of lines. Ctrl+Shift+G undoes it."
+msgstr "Agrupados: se eligen, se mueven y se acomodan como uno, sobre una balsa de líneas. Ctrl+Shift+G lo deshace."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Pick two models or more to group them."
+msgstr "Elegí dos modelos o más para agruparlos."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Ungrouped: each model is on its own again."
+msgstr "Desagrupados: cada modelo vuelve a estar solo."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "No group is picked."
+msgstr "No hay ningún grupo elegido."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Mini supports"
+msgstr "Minisoportes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "A long branch out to an island hangs from the nearest support instead, shorter."
+msgstr "Una rama larga hacia una isla cuelga del soporte más cercano, más corta."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Adaptive base"
+msgstr "Base adaptable"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "A tall support stands on a wider base: from 20 mm up it grows, to one and a half times at 60 mm."
+msgstr "Un soporte alto apoya en una base más ancha: crece desde los 20 mm hasta una vez y media a los 60 mm."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Braces as thick as their trunks"
+msgstr "Refuerzos según el tronco"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "A brace is 0.8 of the thinner trunk it joins, instead of the preset's diameter."
+msgstr "Un refuerzo mide 0,8 del tronco más fino que une, en vez del diámetro del preset."
+
+#: ui/mesh-viewer.slint
+msgctxt "MeshViewer"
+msgid "Mirror"
+msgstr "Espejar"
+
+#: ui/mesh-viewer.slint
+msgctxt "MeshViewer"
+msgid "Left to right (X)"
+msgstr "De izquierda a derecha (X)"
+
+#: ui/mesh-viewer.slint
+msgctxt "MeshViewer"
+msgid "Front to back (Y)"
+msgstr "De adelante hacia atrás (Y)"
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Mirrored left to right."
+msgstr "Espejado de izquierda a derecha."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Mirrored front to back."
+msgstr "Espejado de adelante hacia atrás."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Pick a model to mirror it."
+msgstr "Elegí un modelo para espejarlo."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "{} models picked: Quick or Full orients each one on its own and applies its best pose, in one Undo step."
+msgstr "{} modelos elegidos: Rápida o Completa orienta cada uno por su cuenta y le aplica su mejor posición, en un solo paso de Deshacer."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "Orienting each model: {}…"
+msgstr "Orientando cada modelo: {}…"
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "Every model already stands as well as I found ({} s). Nothing was moved."
+msgstr "Cada modelo ya está en la mejor posición que encontré ({} s). No se movió nada."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "Oriented {} models; the others already stood best. Undo puts them back."
+msgstr "Orientados {} modelos; los demás ya estaban en su mejor posición. Deshacer los devuelve."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "{n} imported support held a piece cut off and was removed."
+msgid_plural "{n} imported supports held pieces cut off and were removed."
+msgstr[0] "{n} soporte importado sostenía una pieza cortada y se quitó."
+msgstr[1] "{n} soportes importados sostenían piezas cortadas y se quitaron."
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Measure"
+msgstr "Medir"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "MEASURE · Shift+click adds a segment · Esc clears"
+msgstr "MEDIR · Shift+clic suma un tramo · Esc borra"
+
+#: src/measure.rs
+msgctxt "Measure"
+msgid "Click a point on a model."
+msgstr "Hacé clic en un punto de un modelo."
+
+#: src/measure.rs
+msgctxt "Measure"
+msgid "Click a second point. Shift+click adds a segment."
+msgstr "Hacé clic en un segundo punto. Shift+clic suma un tramo."
+
+#: src/measure.rs
+msgctxt "Measure"
+msgid "Distance {} mm"
+msgstr "Distancia {} mm"
+
+#: src/measure.rs
+msgctxt "Measure"
+msgid "Total {} mm"
+msgstr "Total {} mm"

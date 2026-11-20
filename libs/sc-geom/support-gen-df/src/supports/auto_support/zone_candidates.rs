@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use super::grid_placement::{
     PERIMETER_CONTACT_INSET_MM, SurfaceSampler, build_boundary_points, face_normal_at,
 };
+use super::resting::{RESTING_LAYERS, rests_on_model};
 use super::support_blockers::is_support_blocked_contact;
 use super::types::{AutoSupportMesh, CandidatePoint, CandidateSource, js_compare};
 use super::zone_rules::ZoneRules;
@@ -41,6 +42,8 @@ pub struct ZoneInput<'a> {
     pub rules: &'a ZoneRules,
     pub layer_height_mm: f64,
     pub mesh: Option<AutoSupportMesh<'a>>,
+    /// Where no tip may land (#465).
+    pub keep_out: &'a [KeepOut],
 }
 
 struct Pending {
@@ -74,9 +77,15 @@ fn surface_up(
     Some((hit.point, normal))
 }
 
-/// Points of a square lattice `spacing` apart over `cells` (centres of
-/// [`BODY_CELL_MM`] cells), each inside a cell.
-fn lattice_over_cells(cells: &[[f32; 2]], spacing: f64) -> Vec<(f64, f64)> {
+/// Points of an island's first layer `spacing` apart along its contours
+/// shrunk inward (#465): the first contour a tip's radius (`inset`) in from
+/// the edge, so the tip lands whole on the island, each next a spacing
+/// further in. A layer too narrow for the first contour gets its middle, the
+/// cell farthest from the edge. `cells` are the centres of [`BODY_CELL_MM`]
+/// cells, and so are the points.
+fn contour_points(cells: &[[f32; 2]], spacing: f64, inset: f64) -> Vec<(f64, f64)> {
+    use std::cmp::Reverse;
+    use std::collections::{BinaryHeap, HashMap};
     if cells.is_empty() || !(spacing > 0.0) {
         return Vec::new();
     }
@@ -86,38 +95,99 @@ fn lattice_over_cells(cells: &[[f32; 2]], spacing: f64) -> Vec<(f64, f64)> {
             (y / BODY_CELL_MM).floor() as i64,
         )
     };
-    let set: HashSet<(i64, i64)> = cells
+    let centres: Vec<(f64, f64)> = cells
         .iter()
-        .map(|c| key(f64::from(c[0]), f64::from(c[1])))
+        .map(|c| (f64::from(c[0]), f64::from(c[1])))
         .collect();
-    let (mut min_x, mut max_x, mut min_y, mut max_y) = (
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-    );
-    for c in cells {
-        let (x, y) = (f64::from(c[0]), f64::from(c[1]));
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
+    let index: HashMap<(i64, i64), usize> = centres
+        .iter()
+        .enumerate()
+        .map(|(i, &(x, y))| (key(x, y), i))
+        .collect();
+    // How far in from the edge each cell lies: a cell with a side open is
+    // half a cell in; steps between cells cost what they span.
+    #[derive(PartialEq, PartialOrd)]
+    struct Far(f64);
+    impl Eq for Far {}
+    impl Ord for Far {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.0.total_cmp(&other.0)
+        }
     }
-    // Centred on the footprint, so a footprint narrower than the spacing
-    // still gets its middle.
-    let nx = ((max_x - min_x) / spacing).floor();
-    let ny = ((max_y - min_y) / spacing).floor();
-    let x0 = (min_x + max_x) / 2.0 - nx * spacing / 2.0;
-    let y0 = (min_y + max_y) / 2.0 - ny * spacing / 2.0;
-    let mut out = Vec::new();
-    for i in 0..=(nx as i64) {
-        for j in 0..=(ny as i64) {
-            let x = x0 + i as f64 * spacing;
-            let y = y0 + j as f64 * spacing;
-            if set.contains(&key(x, y)) {
+    let n = centres.len();
+    let mut dist = vec![f64::INFINITY; n];
+    let mut heap = BinaryHeap::new();
+    let cell_of = |i: usize| key(centres[i].0, centres[i].1);
+    for i in 0..n {
+        let (cx, cy) = cell_of(i);
+        let open = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+            .iter()
+            .any(|(dx, dy)| !index.contains_key(&(cx + dx, cy + dy)));
+        if open {
+            dist[i] = BODY_CELL_MM * 0.5;
+            heap.push(Reverse((Far(dist[i]), i)));
+        }
+    }
+    let diagonal = BODY_CELL_MM * std::f64::consts::SQRT_2;
+    while let Some(Reverse((Far(d), i))) = heap.pop() {
+        if d > dist[i] {
+            continue;
+        }
+        let (cx, cy) = cell_of(i);
+        for (dx, dy, step) in [
+            (1, 0, BODY_CELL_MM),
+            (-1, 0, BODY_CELL_MM),
+            (0, 1, BODY_CELL_MM),
+            (0, -1, BODY_CELL_MM),
+            (1, 1, diagonal),
+            (1, -1, diagonal),
+            (-1, 1, diagonal),
+            (-1, -1, diagonal),
+        ] {
+            if let Some(&j) = index.get(&(cx + dx, cy + dy))
+                && d + step < dist[j]
+            {
+                dist[j] = d + step;
+                heap.push(Reverse((Far(dist[j]), j)));
+            }
+        }
+    }
+    let deepest = dist.iter().copied().fold(0.0_f64, f64::max);
+    let (mx, my) = centres
+        .iter()
+        .fold((0.0, 0.0), |(sx, sy), &(x, y)| (sx + x, sy + y));
+    let (mx, my) = (mx / n as f64, my / n as f64);
+    let band = BODY_CELL_MM * 0.75;
+    let mut out: Vec<(f64, f64)> = Vec::new();
+    let min_d2 = (spacing * 0.9) * (spacing * 0.9);
+    let mut ring = 0u32;
+    loop {
+        let at = inset + f64::from(ring) * spacing;
+        if at > deepest + band {
+            break;
+        }
+        // The ring's cells, walked around the island.
+        let mut on: Vec<usize> = (0..n).filter(|&i| (dist[i] - at).abs() <= band).collect();
+        on.sort_by(|&a, &b| {
+            let angle = |i: usize| (centres[i].1 - my).atan2(centres[i].0 - mx);
+            angle(a).total_cmp(&angle(b)).then(a.cmp(&b))
+        });
+        for i in on {
+            let (x, y) = centres[i];
+            if out
+                .iter()
+                .all(|&(px, py)| (px - x) * (px - x) + (py - y) * (py - y) >= min_d2)
+            {
                 out.push((x, y));
             }
         }
+        ring += 1;
+    }
+    if out.is_empty() {
+        let middle = (0..n)
+            .max_by(|&a, &b| dist[a].total_cmp(&dist[b]).then(b.cmp(&a)))
+            .expect("cells");
+        out.push(centres[middle]);
     }
     out
 }
@@ -304,6 +374,40 @@ fn island_source(island: &DetectedIsland) -> CandidateSource {
     }
 }
 
+/// SoulCrafted (#465): a cylinder no tip may land in, a hollow's drain
+/// channel, in world space: from its mouth along its axis, `radius_mm` wide.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KeepOut {
+    pub from: Vec3,
+    pub to: Vec3,
+    pub radius_mm: f64,
+}
+
+impl KeepOut {
+    /// The cylinder from `from` to `to`, `radius_mm` wide.
+    pub fn between(from: [f64; 3], to: [f64; 3], radius_mm: f64) -> Self {
+        Self {
+            from: Vec3::new(from[0], from[1], from[2]),
+            to: Vec3::new(to[0], to[1], to[2]),
+            radius_mm,
+        }
+    }
+
+    /// Whether `p` lies in the cylinder.
+    pub fn holds(&self, p: Vec3) -> bool {
+        let axis = self.to.sub(self.from);
+        let len2 = axis.length_sq();
+        if len2 <= 1e-12 {
+            return p.distance_to(self.from) <= self.radius_mm;
+        }
+        let t = p.sub(self.from).dot(axis) / len2;
+        if !(0.0..=1.0).contains(&t) {
+            return false;
+        }
+        p.distance_to(self.from.add(axis.multiply_scalar(t))) <= self.radius_mm
+    }
+}
+
 /// Every candidate the rules ask for, thinned and ordered (see the module).
 pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
     let rules = input.rules;
@@ -428,8 +532,13 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
                 false,
             );
             let half = band.spacing_mm * 0.5;
+            // Along the island's contours shrunk in from its edge (#465).
+            let inset = rules
+                .sizes
+                .get(size)
+                .map_or(0.0, |s| s.tip_diameter_mm * 0.5);
             let lattice = body.map_or_else(Vec::new, |b| {
-                lattice_over_cells(&b.first_layer_cells, band.spacing_mm)
+                contour_points(&b.first_layer_cells, band.spacing_mm, inset)
             });
             for (k, (x, y)) in lattice.into_iter().enumerate() {
                 let (dx, dy) = (x - island.contact.x, y - island.contact.y);
@@ -549,6 +658,16 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
         pending.retain(|p| {
             !is_support_blocked_contact(m.blocked, m.mesh.rays, m.side, p.candidate.tip_pos, None)
         });
+    }
+    // Nothing in a drain's channel (#465): a tip there plugs it.
+    if !input.keep_out.is_empty() {
+        pending.retain(|p| !input.keep_out.iter().any(|k| k.holds(p.candidate.tip_pos)));
+    }
+    // A contact with model material just below it rests on the model
+    // already: nothing hangs there, and a support has no room (#235).
+    if let Some(m) = mesh {
+        let below = RESTING_LAYERS * lh;
+        pending.retain(|p| !rests_on_model(m.mesh.rays, p.candidate.tip_pos, below));
     }
     // Inside a closed cavity, fewer and stiffer (#632).
     if let Some(m) = mesh {
@@ -719,21 +838,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_lattice_stays_inside_its_cells() {
-        // A 2 × 1 mm strip of cells.
+    fn contour_points_stand_a_tip_in_from_the_edge_and_a_spacing_apart() {
+        // A 4 × 4 mm square of cells.
         let mut cells = Vec::new();
-        for i in 0..8 {
-            for j in 0..4 {
+        for i in 0..16 {
+            for j in 0..16 {
                 cells.push([(i as f32 + 0.5) * 0.25, (j as f32 + 0.5) * 0.25]);
             }
         }
-        let points = lattice_over_cells(&cells, 0.8);
-        assert_eq!(points.len(), 3, "{points:?}");
-        for (x, y) in points {
-            assert!((0.0..2.0).contains(&x) && (0.0..1.0).contains(&y));
+        let (spacing, inset) = (0.8, 0.12);
+        let points = contour_points(&cells, spacing, inset);
+        assert!(points.len() >= 9, "{}", points.len());
+        let edge = |(x, y): (f64, f64)| x.min(y).min(4.0 - x).min(4.0 - y);
+        for &p in &points {
+            assert!(edge(p) >= inset - 0.01, "{p:?} out at the edge");
         }
-        // Narrower than the spacing: its middle.
-        assert_eq!(lattice_over_cells(&cells, 5.0).len(), 1);
+        // The first contour runs along the edge, a tip in.
+        assert!(points.iter().any(|&p| edge(p) < inset + 0.3));
+        for (i, a) in points.iter().enumerate() {
+            for b in &points[i + 1..] {
+                assert!((a.0 - b.0).hypot(a.1 - b.1) >= spacing * 0.9 - 1e-9);
+            }
+        }
+        // Narrower than the first contour: its middle.
+        let strip: Vec<[f32; 2]> = (0..12).map(|i| [(i as f32 + 0.5) * 0.25, 0.125]).collect();
+        assert_eq!(contour_points(&strip, spacing, 0.5).len(), 1);
     }
 
     #[test]

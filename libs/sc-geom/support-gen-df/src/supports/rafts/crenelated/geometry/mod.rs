@@ -12,5 +12,6 @@ pub mod generate_unioned_line_raft_mesh;
 pub mod model_plate_footprint;
 pub mod polygon_raster_2d;
 pub mod polygon_set_2d;
+pub mod raft_shapes;
 pub mod robust_wall;
 pub mod small;

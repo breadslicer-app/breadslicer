@@ -480,6 +480,7 @@ mod scene_save_tests {
             plates: 0,
             plate_names: Vec::new(),
             hand_placed: Vec::new(),
+            groups: Vec::new(),
         }
     }
 

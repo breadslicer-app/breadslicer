@@ -87,6 +87,15 @@ pub const MAX_CAVITY_BRIDGE_MM: f64 = 12.0;
 /// legal; that is what keeps a long rescue member honest.
 pub const CAVITY_FAN_RADIUS_MM: f64 = 12.0;
 
+/// Reach, in plan, of a contact inside a closed cavity hanging from a stick
+/// already there (#632): close enough that the stick it shares from the
+/// cavity's floor stays a stout trunk, not a long reach across the cavity.
+pub const CAVITY_STICK_FAN_RADIUS_MM: f64 = 6.0;
+
+/// Members one stick inside a cavity carries (#632): a 1 mm stick is no trunk
+/// of a grid.
+pub const CAVITY_STICK_MAX_MEMBERS: f64 = 4.0;
+
 /// Distance (mm) within which an existing support tip counts a candidate as already supported.
 pub const ALREADY_SUPPORTED_RADIUS_MM: f64 = 3.0;
 

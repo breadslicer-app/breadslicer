@@ -4,7 +4,9 @@
 //! `build_raft_footprint_meshes` is the seam the exporter and slicer share.
 
 use super::super::raft_types::{RaftBottomMode, RaftSettings, SupportBaseCircle};
-use super::compute_raft_footprint::{compute_raft_footprint_polygons, raft_wall_base_height_mm};
+use super::compute_raft_footprint::{
+    compute_raft_footprint_polygons, raft_dynamic_margin_mm, raft_wall_base_height_mm,
+};
 use super::generate_chamfered_base::generate_chamfered_base;
 use super::generate_crenelated_wall_manual::generate_crenelated_wall_manual;
 use super::generate_perimeter_wall::generate_perimeter_wall;
@@ -238,7 +240,31 @@ pub fn build_raft_footprint_meshes(
     if footprint.is_empty() {
         return Ok(RaftFootprintMeshes::default());
     }
-    let untrimmed = is_untrimmed_footprint(&footprint);
+    // SoulCrafted (#138, #99): a solid raft of another shape, drawn from its
+    // polygons (the hull's own path assumes a convex outline).
+    let reshaped = raft.bottom_mode == RaftBottomMode::Solid
+        && (raft.pads || raft.peel_tabs || raft.perforation_mm > 0.0);
+    if reshaped {
+        let margin = raft_dynamic_margin_mm(raft);
+        if raft.pads {
+            footprint = super::raft_shapes::pads(circles, margin)?;
+            if let Some(clear) = clearance.filter(|c| !c.is_empty()) {
+                let cut = super::compute_raft_footprint::inflate_model_plate_clearance(clear)?;
+                footprint = super::polygon_set_2d::difference_polygon_sets(&footprint, &cut)?;
+            }
+        }
+        if raft.peel_tabs {
+            footprint = super::raft_shapes::with_peel_tabs(&footprint)?;
+        }
+        if raft.perforation_mm > 0.0 {
+            footprint =
+                super::raft_shapes::perforated(&footprint, circles, raft.perforation_mm, margin)?;
+        }
+        if footprint.is_empty() {
+            return Ok(RaftFootprintMeshes::default());
+        }
+    }
+    let untrimmed = !reshaped && is_untrimmed_footprint(&footprint);
     let use_crenels = raft.crenulation_spacing > 0.0 && raft.crenulation_gap_width > 0.0;
     let wall_base_height = raft_wall_base_height_mm(raft);
 

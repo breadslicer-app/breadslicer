@@ -194,7 +194,7 @@ impl MarksLayer {
 
 /// Adds a closed square bar from `a` to `b`, `radius` wide on each side and
 /// reaching `radius` past both ends, so a tiny edge still shows as a dot.
-fn push_bar(piece: &mut OverlayMesh, a: [f32; 3], b: [f32; 3], radius: f32) {
+pub(crate) fn push_bar(piece: &mut OverlayMesh, a: [f32; 3], b: [f32; 3], radius: f32) {
     let a = glam::Vec3::from(a);
     let b = glam::Vec3::from(b);
     let axis = (b - a).try_normalize().unwrap_or(glam::Vec3::Z);

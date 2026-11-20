@@ -839,3 +839,37 @@ fn copies_keep_the_name_of_their_file() {
         }
     });
 }
+
+/// A scene opened from a file, all of its models deleted and others
+/// imported, stands for the first file imported: the title no longer names
+/// a file whose models are gone (#650). An import beside a model keeps it.
+#[test]
+fn a_scene_emptied_and_filled_again_is_named_after_the_new_file() {
+    on_fresh_slint_thread(|| {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dragon = write_box(dir.path(), "dragon.stl", [30.0, 20.0, 15.0]);
+        let goblin = write_box(dir.path(), "goblin.stl", [12.0, 12.0, 20.0]);
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        scene_with_a_box(&document, [40.0, 30.0, 10.0]);
+        assert_eq!(document.source_file_name().as_deref(), Some("base.stl"));
+
+        ctrl.open_models(vec![dragon]);
+        finish_loads(&ctrl);
+        assert_eq!(
+            document.source_file_name().as_deref(),
+            Some("base.stl"),
+            "beside a model the scene keeps its file"
+        );
+
+        let gone = sc_scene_edit::SceneEdit::Compound(document.removal_edits(leaves(&document)));
+        document.apply_edit(gone.clone()).expect("removed");
+        document.push_edit(gone);
+        assert!(leaves(&document).is_empty());
+
+        ctrl.open_models(vec![goblin]);
+        finish_loads(&ctrl);
+        assert_eq!(leaves(&document).len(), 1);
+        assert_eq!(document.source_file_name().as_deref(), Some("goblin.stl"));
+    });
+}

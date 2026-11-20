@@ -31,6 +31,7 @@ mod error_dialog;
 mod export_print_file;
 mod printer_camera;
 mod printer_wall;
+mod network_profiles;
 mod numbers;
 mod send_to_printer;
 mod export_progress;
@@ -41,10 +42,13 @@ mod graphics_status;
 mod hand_placed;
 mod hollow_persist;
 mod hollow_run;
+mod raft_drains;
 mod i18n;
 mod import_notes;
 mod imported_supports;
 mod island_paint;
+mod measure;
+mod mirror;
 mod language;
 mod launch_files;
 mod layer_keys;
@@ -120,6 +124,8 @@ mod surface_brush;
 mod test_support;
 #[cfg(test)]
 mod tests_bread_roundtrip;
+#[cfg(test)]
+mod tests_groups;
 #[cfg(test)]
 mod tests_import_timing;
 #[cfg(test)]

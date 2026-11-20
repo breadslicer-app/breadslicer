@@ -149,6 +149,20 @@ fn forge_claimed_size(bytes: &mut [u8], claimed: u32) {
     bytes[central + 24..central + 28].copy_from_slice(&claimed.to_le_bytes());
 }
 
+/// Whether `err` refuses the item `/big.bin` for inflating past what its
+/// header claims: the ZIP reader's own check (since zip 9, #646), or one of
+/// our caps when it comes first.
+fn refused_for_lying_low(err: &PackageReadError) -> bool {
+    match err {
+        PackageReadError::PartRead { part, source } => {
+            part == "/big.bin" && source.to_string().contains("larger than its declared")
+        }
+        PackageReadError::OversizedPart { part, .. } => part == "/big.bin",
+        PackageReadError::OversizedPackage { .. } => true,
+        _ => false,
+    }
+}
+
 /// Returns the decompressed bytes of the item `name` of a ZIP archive.
 fn item_bytes(archive: &[u8], name: &str) -> Vec<u8> {
     let mut archive = zip::ZipArchive::new(Cursor::new(archive)).expect("a ZIP archive");
@@ -160,7 +174,10 @@ fn item_bytes(archive: &[u8], name: &str) -> Vec<u8> {
 
 fn item_names(archive: &[u8]) -> BTreeSet<String> {
     let archive = zip::ZipArchive::new(Cursor::new(archive)).expect("a ZIP archive");
-    archive.file_names().map(String::from).collect()
+    archive
+        .file_names()
+        .map(|n| n.unwrap().into_owned())
+        .collect()
 }
 
 /// Returns a ZIP archive that stores `items` (name, bytes) uncompressed, in
@@ -1745,10 +1762,7 @@ mod read_limits_tests {
             max_total_bytes: 1 << 20,
         };
         let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
-        assert!(matches!(
-            err,
-            PackageReadError::OversizedPart { part, cap_bytes: 1024 } if part == "/big.bin"
-        ));
+        assert!(refused_for_lying_low(&err), "{err:?}");
     }
 
     #[test]
@@ -1762,10 +1776,7 @@ mod read_limits_tests {
             max_total_bytes: 1024,
         };
         let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
-        assert!(matches!(
-            err,
-            PackageReadError::OversizedPackage { cap_bytes: 1024 }
-        ));
+        assert!(refused_for_lying_low(&err), "{err:?}");
     }
 
     #[test]
@@ -1806,10 +1817,7 @@ mod read_limits_tests {
             max_total_bytes: 1023,
         };
         let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
-        assert!(
-            matches!(err, PackageReadError::OversizedPackage { cap_bytes: 1023 }),
-            "{err:?}",
-        );
+        assert!(refused_for_lying_low(&err), "{err:?}");
     }
 }
 
@@ -1956,26 +1964,14 @@ mod progress_tests {
     }
 
     #[test]
-    fn lying_low_claim_ticks_past_the_announced_total() {
-        // The header claims 10 bytes but inflation yields 100 KiB; under the
-        // default ceilings the entry itself is accepted, so the counts step
-        // past the claimed total exactly as the `DecompressionProgress` docs
-        // warn. The read still fails later (no content-types entry), which must
-        // not retract the ticks already delivered.
+    fn a_lying_low_claim_is_refused_while_it_inflates() {
+        // The header claims 10 bytes but inflation yields 100 KiB: since zip
+        // 9 the read of the item stops there, whatever the ceilings (#646).
         let mut bytes = single_entry_archive(vec![0u8; 100 * 1024]);
         forge_claimed_size(&mut bytes, 10);
-        let (result, ticks) = read_collecting_ticks(bytes);
-        assert!(matches!(
-            result.unwrap_err(),
-            PackageReadError::MissingContentTypes
-        ));
-        let last = ticks.last().expect("extraction must have ticked");
-        assert_eq!(last.total_bytes, 10, "the forged claim is the total");
-        assert_eq!(
-            last.decompressed_bytes,
-            100 * 1024,
-            "counts report real inflated bytes, not the claim"
-        );
+        let (result, _ticks) = read_collecting_ticks(bytes);
+        let err = result.unwrap_err();
+        assert!(refused_for_lying_low(&err), "{err:?}");
     }
 }
 
@@ -2650,5 +2646,22 @@ mod hand_off_tests {
     #[test]
     fn the_reader_ceiling_for_a_part_is_public() {
         assert_eq!(PackageReadLimits::default().max_part_bytes, MAX_PART_BYTES);
+    }
+}
+
+mod header_consistency_tests {
+    use super::*;
+
+    /// An item whose local header says another CRC than its central
+    /// directory entry reads differently in other tools: the package is
+    /// refused (#646).
+    #[test]
+    fn an_item_whose_two_headers_disagree_is_refused() {
+        let mut bytes = minimal_package_bytes(zip::write::SimpleFileOptions::default());
+        assert!(Package::read_from(Cursor::new(bytes.clone())).is_ok());
+        assert_eq!(&bytes[0..4], b"PK\x03\x04", "local header at start");
+        // The first item's local CRC-32.
+        bytes[14] ^= 0xff;
+        assert!(Package::read_from(Cursor::new(bytes)).is_err());
     }
 }

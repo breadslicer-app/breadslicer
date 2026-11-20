@@ -97,6 +97,8 @@ struct Seen {
     methods: Vec<String>,
     /// The Transport header of each SETUP.
     transports: Vec<String>,
+    /// The Session header of each TEARDOWN.
+    torn_down: Vec<String>,
 }
 
 /// How a played camera streams.
@@ -255,9 +257,17 @@ fn rtsp_connection(
                  Content-Length: 0\r\n\r\n"
             ),
             "PLAY" => format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n"),
+            // As the printers' boards do, a TEARDOWN is matched by its
+            // session id, whichever connection it comes on.
             "TEARDOWN" => {
-                stop.store(true, Ordering::Relaxed);
-                format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n")
+                let session = header("Session: ");
+                keep.lock().unwrap().torn_down.push(session.clone());
+                if session == "12345678" {
+                    stop.store(true, Ordering::Relaxed);
+                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n")
+                } else {
+                    format!("RTSP/1.0 454 Session Not Found\r\nCSeq: {cseq}\r\n\r\n")
+                }
             }
             _ => format!("RTSP/1.0 501 Not Implemented\r\nCSeq: {cseq}\r\n\r\n"),
         };
@@ -352,6 +362,7 @@ fn watch_four(url: &str) -> ((String, String, u32, u32), Vec<Picture>) {
                 cancel.store(true, Ordering::Relaxed);
             }
         }
+        _ => {}
     })
     .expect("it watches until closed");
     assert!(
@@ -410,6 +421,60 @@ fn a_printer_that_streams_over_udp_alone_is_watched_over_udp() {
     let asked = seen.lock().unwrap().transports.clone();
     assert_eq!(asked.len(), 1, "{asked:?}");
     assert!(asked[0].contains("client_port="), "{asked:?}");
+}
+
+#[test]
+fn a_stream_hands_out_its_session_and_gives_it_back_once_torn_down() {
+    let (url, seen) = rtsp_camera(coded_frames([30, 60, 220], 10), Serves::Udp);
+    let cancel = AtomicBool::new(false);
+    let mut leased = Vec::new();
+    let mut released = Vec::new();
+    let mut pictures = 0;
+    watch_stream(&url, &cancel, &mut |event| match event {
+        Event::Leased(lease) => leased.push(lease),
+        Event::Released(lease) => released.push(lease),
+        Event::Picture(_) => {
+            pictures += 1;
+            if pictures >= 2 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        }
+        _ => {}
+    })
+    .expect("it watches until closed");
+    assert_eq!(leased.len(), 1, "{leased:?}");
+    assert_eq!(leased[0].session, "12345678");
+    assert_eq!(leased[0].url, url);
+    assert_eq!(released, leased);
+    assert_eq!(seen.lock().unwrap().torn_down, vec!["12345678".to_owned()]);
+}
+
+#[test]
+fn a_stale_session_is_torn_down_from_a_connection_of_its_own() {
+    let (url, seen) = rtsp_camera(coded_frames([30, 60, 220], 2), Serves::Udp);
+    // The printer still knows the session: its slot is freed.
+    assert!(reclaim(&url, "12345678").expect("the camera answers"));
+    // One it no longer knows is said so, not an error.
+    assert!(!reclaim(&url, "99").expect("the camera answers"));
+    assert_eq!(
+        seen.lock().unwrap().torn_down,
+        vec!["12345678".to_owned(), "99".to_owned()]
+    );
+    let methods = seen.lock().unwrap().methods.clone();
+    assert_eq!(
+        methods,
+        vec!["TEARDOWN", "TEARDOWN"],
+        "nothing else is asked"
+    );
+}
+
+#[test]
+fn a_camera_that_does_not_answer_a_reclaim_is_an_error() {
+    // Nothing listens there.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    assert!(reclaim(&format!("rtsp://127.0.0.1:{port}/video"), "1").is_err());
 }
 
 #[test]

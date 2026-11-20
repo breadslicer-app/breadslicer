@@ -22,7 +22,7 @@ pub(crate) const STL_TRIANGLE_RECORD_BYTES: usize = 50;
 use std::io::{Cursor, Read, Seek, Write};
 
 use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
-use sc_mesh_core::{IndexedMesh, MeshMetadata, Triangle, indexed_mesh_from_soup};
+use sc_mesh_core::{IndexedMesh, MeshMetadata, Triangle, Vertex, indexed_mesh_from_soup};
 use sc_scene::{Scene, SceneError};
 
 use crate::error::{LoadStlError, WriteSceneError};
@@ -181,6 +181,18 @@ fn flattened_facet_normals(
 struct Facet {
     declared_normal: [u32; 3],
     triangle: Triangle,
+}
+
+/// The bits of the normal a facet keeps: the one its file declares, or, when
+/// that one is not a number (some exporters write NaN), the normal of its own
+/// vertices, or the zero vector when it is degenerate. Slicing never reads
+/// the declared normal: a NaN there is no reason to refuse the file.
+fn kept_normal(declared: [f32; 3], vertices: &[Vertex; 3]) -> [u32; 3] {
+    if declared.iter().all(|c| c.is_finite()) {
+        return declared.map(f32::to_bits);
+    }
+    sc_mesh_core::geometry::compute_normal_from_triangle_vertices(vertices)
+        .map_or([0; 3], |normal| normal.coords().map(f32::to_bits))
 }
 
 /// Builds the mesh of `facets` with `metadata`, 1 face per facet in file order,

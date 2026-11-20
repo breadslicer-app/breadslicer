@@ -25,8 +25,9 @@ use super::helpers::{
     branch_collides_with_sdf, build_hosted_branch, collect_contact_positions,
     collect_fan_shaft_points, collect_fan_shaft_points_near, collect_host_entities,
     compute_mesh_volume_mm3, count_attachments_on_host, filter_already_supported,
-    is_host_at_attachment_capacity, member_max_angle_from_vertical_deg, rehost_legacy_knots,
-    resolve_surface_normal, sync_contact_cone_diameters_with, validate_and_cull_orphans,
+    host_segment_span, is_host_at_attachment_capacity, member_max_angle_from_vertical_deg,
+    rehost_legacy_knots, resolve_surface_normal, sync_contact_cone_diameters_with,
+    validate_and_cull_orphans,
 };
 use super::place::{PlaceArgs, PlaceOutcome, RejectReason, grid_join_height, place_one_candidate};
 use super::report::{
@@ -201,6 +202,8 @@ pub struct ZonePlanInput<'a> {
     /// The down-facing regions up to the stabilization angle.
     pub steep: &'a [DetectedIsland],
     pub layer_height_mm: f64,
+    /// Where no tip may land (#465).
+    pub keep_out: &'a [super::super::zone_candidates::KeepOut],
 }
 
 /// A tip within this of an island's contact covers it (islands without
@@ -280,6 +283,109 @@ fn bump_source(by: &mut super::report::CandidatesBySource, source: CandidateSour
     }
 }
 
+/// SoulCrafted (#63, #236): the candidate to place again a support the cull
+/// took: the one it was placed from, or, for one the run did not place (a
+/// host's member it hung on), a candidate at its own contact.
+fn replace_candidate(
+    draft: &SupportState,
+    candidate_of: &std::collections::HashMap<String, CandidatePoint>,
+    id: &str,
+) -> Option<CandidatePoint> {
+    if let Some(candidate) = candidate_of.get(id) {
+        return Some(candidate.clone());
+    }
+    let c = &draft.collections;
+    let (base, cone) = c
+        .leaves
+        .get(id)
+        .map(|l| (&l.base, Some(&l.contact_cone)))
+        .or_else(|| {
+            c.branches
+                .get(id)
+                .map(|b| (&b.base, b.contact_cone.as_ref()))
+        })
+        .or_else(|| c.trunks.get(id).map(|t| (&t.base, t.contact_cone.as_ref())))?;
+    let cone = cone?;
+    Some(CandidatePoint {
+        id: id.to_owned(),
+        tip_pos: cone.pos,
+        tip_normal: cone.surface_normal.unwrap_or(cone.normal),
+        model_id: base.model_id.clone(),
+        source: if base.origin == Some(SupportOriginId::Overhang) {
+            CandidateSource::Overhang
+        } else {
+            CandidateSource::Voxel
+        },
+        island_area_mm2: 0.05,
+        z_height: cone.pos.z,
+        priority: 0.0,
+        tip_diameter_mm: None,
+        grid_point: None,
+        zone_size: None,
+        enclosed: false,
+    })
+}
+
+/// How deep into a model a shaft placed again may go, past its own radius,
+/// before it counts as through it (#236).
+const CROSSING_SLACK_MM: f64 = 0.15;
+
+/// Whether the trunk or branch `id` goes into any model of the plate on its
+/// way (#236), its axis sampled every 0.25 mm against the models' triangles.
+/// The last stretch up to its contact is its tip cone's, which the cull
+/// checks on its own.
+fn crosses_a_model(draft: &SupportState, id: &str, meshes: &BraceMeshes<'_>) -> bool {
+    let c = &draft.collections;
+    let spans: Vec<(Vec3, Vec3, f64)>;
+    let tip: Option<Vec3>;
+    if let Some(trunk) = c.trunks.get(id) {
+        spans = trunk
+            .segments
+            .iter()
+            .filter_map(|seg| {
+                host_segment_span(draft, trunk, seg).map(|(a, b)| (a, b, seg.diameter / 2.0))
+            })
+            .collect();
+        tip = trunk.contact_cone.as_ref().map(|cone| cone.pos);
+    } else if let Some(branch) = c.branches.get(id) {
+        let mut from = c.knots.get(&branch.parent_knot_id).map(|k| k.pos);
+        spans = branch
+            .segments
+            .iter()
+            .filter_map(|seg| {
+                let start = seg.bottom_joint.as_ref().map(|j| j.pos).or(from)?;
+                let end = seg.top_joint.as_ref().map(|j| j.pos)?;
+                from = Some(end);
+                Some((start, end, seg.diameter / 2.0))
+            })
+            .collect();
+        tip = branch.contact_cone.as_ref().map(|cone| cone.pos);
+    } else {
+        return false;
+    }
+    meshes.values().any(|mesh| {
+        let to_model = mesh.matrix.invert();
+        spans.iter().any(|&(a, b, radius)| {
+            let reach = radius - CROSSING_SLACK_MM;
+            if reach <= 0.0 {
+                return false;
+            }
+            let length = b.sub(a).length();
+            let steps = (length / 0.25).ceil().max(1.0) as usize;
+            (0..=steps).any(|k| {
+                let p = a.add(b.sub(a).multiply_scalar(k as f64 / steps as f64));
+                if tip.is_some_and(|t| t.distance_to(p) < 2.5) {
+                    return false;
+                }
+                let mut touches = false;
+                mesh.bvh
+                    .faces_within(p.apply_matrix4(&to_model), reach, |_, _| touches = true);
+                touches
+            })
+        })
+    })
+}
+
 /// The run's mutable bookkeeping, shared by the main pass, the gap-fill and
 /// the orphan re-place.
 struct RunState {
@@ -295,6 +401,11 @@ struct RunState {
     placed_contacts: Vec<PlacedContact>,
     presets: PresetCounts,
     rejection_reasons: IndexMap<String, usize>,
+    /// The candidate each placed support came from, by its id: a support
+    /// culled after the resize is placed again from it (#63, #236).
+    candidate_of: std::collections::HashMap<String, CandidatePoint>,
+    /// The support the last [`RunState::place`] made, if any.
+    last_placed: Option<String>,
 }
 
 impl RunState {
@@ -318,6 +429,10 @@ impl RunState {
         );
         ctx.set_zone(None);
         ctx.set_enclosed(false);
+        self.last_placed = result.entity_id.clone().filter(|_| result.kind.is_some());
+        if let Some(id) = &self.last_placed {
+            self.candidate_of.insert(id.clone(), candidate.clone());
+        }
         let placed_a_grid_host = result
             .kind
             .is_some_and(|k| get_support_type_descriptor(k).can_be_grid_host);
@@ -426,6 +541,9 @@ impl RunState {
         }
         *self.placed.get_mut(&host_type_id).expect("every type") -= 1;
         *self.placed.get_mut(&kind).expect("every type") += 1;
+        if let Some(candidate) = self.candidate_of.get(host_id).cloned() {
+            self.candidate_of.insert(entity_id.to_owned(), candidate);
+        }
         if let Some(entry) = self.forest_ledger.iter().find(|e| e.entity_id == host_id) {
             let entry = ForestLedgerEntry {
                 kind,
@@ -639,6 +757,7 @@ pub fn compute_auto_support_plan(
         let zone = input.zone.unwrap_or(ZonePlanInput {
             steep: &[],
             layer_height_mm: 0.05,
+            keep_out: &[],
         });
         generate_zone_candidates(&ZoneInput {
             islands: &islands_to_cover,
@@ -646,6 +765,7 @@ pub fn compute_auto_support_plan(
             rules,
             layer_height_mm: zone.layer_height_mm,
             mesh: auto_mesh,
+            keep_out: zone.keep_out,
         })
     } else {
         let field = mesh.map(|m| m.field());
@@ -814,6 +934,8 @@ pub fn compute_auto_support_plan(
         placed_contacts: Vec::new(),
         presets: PresetCounts::default(),
         rejection_reasons: IndexMap::new(),
+        candidate_of: std::collections::HashMap::new(),
+        last_placed: None,
     };
     let placed_host_count = |placed: &IndexMap<SupportTypeId, i64>| -> i64 {
         SupportTypeId::ALL
@@ -997,7 +1119,14 @@ pub fn compute_auto_support_plan(
     }
 
     ctx.set_zone(None);
-    if live.auto_support.rehang_island_branches {
+    // Mini supports, unless the zone preset turns them off (#471).
+    if live.auto_support.rehang_island_branches
+        && !live
+            .auto_support
+            .zone_rules
+            .as_ref()
+            .is_some_and(|r| r.keep_long_island_branches)
+    {
         rehang_island_branches(
             &mut run,
             model_id,
@@ -1404,114 +1533,86 @@ pub fn compute_auto_support_plan(
         run.draft = rehost_legacy_knots(&run.draft);
         let mut orphan_infos: Vec<OrphanInfo> = Vec::new();
         let pre_cull_draft = run.draft.clone();
-        let (culled, orphans) =
-            validate_and_cull_orphans(&run.draft, mesh, live.auto_support.tip_cones_clear);
+        let (culled, orphans) = validate_and_cull_orphans(
+            &run.draft,
+            mesh,
+            live.auto_support.tip_cones_clear,
+            &HashSet::new(),
+        );
         if !orphans.is_empty() {
             run.draft = culled;
             orphan_infos = orphans;
-            // Re-place members orphaned by a culled (blocked) host.
-            let requeue: Vec<OrphanInfo> = orphan_infos
+            // SoulCrafted (#63, #236): every support the cull took off its
+            // contact is placed again with the final sizes, from the
+            // candidate it came from: members of a culled host, and blocked
+            // members. One that crosses another shaft is only reported: the
+            // cull keeps it.
+            let requeue: Vec<(usize, CandidatePoint)> = orphan_infos
                 .iter()
-                .filter(|o| {
-                    o.reason == OrphanReason::MissingHost
-                        && o.detail
-                            .as_deref()
-                            .unwrap_or("")
-                            .contains("host trunk culled")
+                .enumerate()
+                .filter(|(_, o)| {
+                    matches!(o.reason, OrphanReason::HostCulled | OrphanReason::Blocked)
                 })
-                .cloned()
+                .filter_map(|(i, o)| {
+                    replace_candidate(&pre_cull_draft, &run.candidate_of, &o.id).map(|c| (i, c))
+                })
                 .collect();
             if !requeue.is_empty() {
-                for o in &requeue {
-                    let c = &pre_cull_draft.collections;
-                    let member = c
-                        .leaves
-                        .get(&o.id)
-                        .map(|l| (&l.base, Some(&l.contact_cone)))
-                        .or_else(|| {
-                            c.branches
-                                .get(&o.id)
-                                .map(|b| (&b.base, b.contact_cone.as_ref()))
-                        });
-                    let Some((base, Some(cone))) = member else {
-                        continue;
-                    };
+                let mut replaced: Vec<(usize, String)> = Vec::new();
+                for (i, candidate) in &requeue {
                     let recandidate = CandidatePoint {
-                        id: format!("{}-requeue", o.id),
-                        tip_pos: cone.pos,
-                        tip_normal: cone.surface_normal.unwrap_or(cone.normal),
-                        model_id: base.model_id.clone(),
-                        source: if base.origin == Some(SupportOriginId::Overhang) {
-                            CandidateSource::Overhang
-                        } else {
-                            CandidateSource::Voxel
-                        },
-                        island_area_mm2: 0.05,
-                        z_height: cone.pos.z,
-                        priority: 0.0,
-                        tip_diameter_mm: None,
-                        grid_point: None,
-                        zone_size: None,
-                        enclosed: false,
+                        id: format!("{}-requeue", candidate.id),
+                        ..candidate.clone()
                     };
-                    let result = place_one_candidate(
-                        &recandidate,
-                        &mut run.draft,
-                        &PlaceArgs {
-                            grid_host_ids: Some(&run.grid_host_ids),
-                            sizing_ctx: model_ctx.as_ref(),
-                        },
-                        ctx,
-                        false,
-                    );
-                    match result.kind {
-                        None => {
-                            run.rejected_count += 1;
-                            if let Some(reason) = result.rejected_reason {
-                                bump_reason(&mut run.rejection_reasons, reason);
-                            }
-                        }
-                        Some(kind) => *run.placed.get_mut(&kind).expect("every type") += 1,
-                    }
-                    if let Some(preset) = result.preset {
-                        // `analytics.presets` is the run's own object.
-                        analytics.presets.bump(preset);
-                    }
-                    if result.kind.is_some() {
-                        run.placed_contacts.push(PlacedContact {
-                            tip: recandidate.tip_pos,
-                            preset: result
-                                .preset
-                                .unwrap_or_else(|| preset_for_area(recandidate.island_area_mm2)),
-                        });
-                    }
-                    if let Some(entity_id) = &result.entity_id
-                        && is_auto_placed_type(result.kind)
+                    if run.place(&recandidate, model_ctx.as_ref(), ctx).is_some()
+                        && let Some(id) = run.last_placed.clone()
                     {
-                        run.forest_ledger.push(ForestLedgerEntry {
-                            display_id: recandidate.id.clone(),
-                            kind: result.kind.expect("auto-placed"),
-                            entity_id: entity_id.clone(),
-                            area_mm2: recandidate.island_area_mm2,
-                            z_height: recandidate.z_height,
-                            preset: result
-                                .preset
-                                .unwrap_or_else(|| preset_for_area(recandidate.island_area_mm2)),
-                            band_shaft_mm: ctx.bands.active(live).shaft_diameter_mm,
-                        });
+                        replaced.push((*i, id));
                     }
                 }
-                let (recheck, rechecked) =
-                    validate_and_cull_orphans(&run.draft, mesh, live.auto_support.tip_cones_clear);
+                if !replaced.is_empty() && zone_rules.is_none() {
+                    run.draft = compute_forest_diameter_profile(&run.draft, live, &mut || ctx.id());
+                    run.draft = rehost_legacy_knots(&run.draft);
+                }
+                // Placed again, a support may take a route the first pass did
+                // not: it is measured on every model of the plate exactly,
+                // from its foot up (the cull's field is the plan model's
+                // alone, and quantized).
+                let crossing: HashSet<String> = replaced
+                    .iter()
+                    .filter(|(_, id)| crosses_a_model(&run.draft, id, input.brace_meshes))
+                    .map(|(_, id)| id.clone())
+                    .collect();
+                // One last check, placing nothing again.
+                let (recheck, rechecked) = validate_and_cull_orphans(
+                    &run.draft,
+                    mesh,
+                    live.auto_support.tip_cones_clear,
+                    &crossing,
+                );
                 // DragonFruit's identity test: the cull returns its input
                 // untouched unless it removed something.
-                if recheck != run.draft {
+                let culled_again: HashSet<String> = if recheck != run.draft {
                     run.draft = recheck;
-                    let reported: HashSet<String> =
-                        orphan_infos.iter().map(|o| o.id.clone()).collect();
-                    orphan_infos
-                        .extend(rechecked.into_iter().filter(|o| !reported.contains(&o.id)));
+                    rechecked.iter().map(|o| o.id.clone()).collect()
+                } else {
+                    HashSet::new()
+                };
+                // A support placed again and culled again stays reported
+                // once, as the one it replaced, not placed again.
+                let mut reported: HashSet<String> =
+                    orphan_infos.iter().map(|o| o.id.clone()).collect();
+                for (i, id) in replaced {
+                    if !culled_again.contains(&id) {
+                        orphan_infos[i].replaced = true;
+                    }
+                    reported.insert(id);
                 }
+                orphan_infos.extend(
+                    rechecked
+                        .into_iter()
+                        .filter(|o| culled_again.contains(&o.id) && !reported.contains(&o.id)),
+                );
             }
         }
         let leaf_body_ratio = if zone_rules.is_some() {

@@ -11,8 +11,17 @@
 //! A printer streams to only a few viewers at once, and each connection it
 //! refuses costs it: a refusal is said, never retried in a loop, and the
 //! stream is torn down and turned off when the view closes.
+//!
+//! A stream dropped without its TEARDOWN (the app closed, the network went)
+//! keeps one of the board's video slots until the printer restarts. The
+//! board matches a TEARDOWN's session id against all its sessions, not the
+//! connection it comes on, so the session id of each stream is handed out
+//! ([`Event::Leased`]) and a later watch tears the stale ones down first
+//! ([`reclaim`]).
 
 use std::fmt;
+use std::io::{Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -48,6 +57,18 @@ const TEARDOWN_WAIT: Duration = Duration::from_secs(5);
 const SHOW_EVERY: Duration = Duration::from_millis(66);
 /// Pictures that may fail to decode in a row before the stream is given up.
 const MAX_BAD_PICTURES: usize = 60;
+/// How long tearing a stale session down may take, to connect and to answer.
+const RECLAIM_WAIT: Duration = Duration::from_secs(3);
+/// The port a camera streams on when its address names none.
+const RTSP_PORT: u16 = 554;
+
+/// A stream the printer may still keep a video slot for: where it streamed
+/// and the session id it gave at SETUP.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lease {
+    pub url: String,
+    pub session: String,
+}
 
 /// One picture, as rows of RGBA pixels from the top.
 #[derive(Clone, PartialEq, Eq)]
@@ -77,6 +98,14 @@ pub enum Event {
     },
     /// The latest picture.
     Picture(Picture),
+    /// The printer gave this stream a session: until [`Event::Released`],
+    /// it keeps a video slot for it.
+    Leased(Lease),
+    /// The stream was torn down: the printer has its slot back.
+    Released(Lease),
+    /// A stale session was torn down before the stream opened (`freed`), or
+    /// the printer no longer knew it.
+    Reclaimed { lease: Lease, freed: bool },
 }
 
 /// Why the camera could not be watched, or stopped.
@@ -128,13 +157,26 @@ impl fmt::Display for CameraError {
 impl std::error::Error for CameraError {}
 
 /// Watches `printer`'s camera until `cancel` is set or the stream ends,
-/// handing every event to `on_event`. Blocks: run it on a worker. The stream
-/// is turned off again on the way out, whatever happened.
+/// handing every event to `on_event`. Blocks: run it on a worker. The
+/// sessions in `stale`, of streams that never said they were torn down, are
+/// torn down first, so their video slots are free. The stream is turned off
+/// again on the way out, whatever happened.
 pub fn watch(
     printer: &Printer,
+    stale: &[Lease],
     cancel: &AtomicBool,
     on_event: &mut dyn FnMut(Event),
 ) -> Result<(), CameraError> {
+    for lease in stale {
+        // At the printer's address now: it may have moved.
+        let here = at_address(&lease.url, printer.ip);
+        if let Ok(freed) = reclaim(&here, &lease.session) {
+            on_event(Event::Reclaimed {
+                lease: lease.clone(),
+                freed,
+            });
+        }
+    }
     let answer = sdcp::video(printer.service(), &printer.mainboard_id, true)
         .map_err(CameraError::Printer)?;
     match answer.ack {
@@ -173,19 +215,30 @@ pub fn watch_stream(
         ),
         (Transport::Tcp(Default::default()), FIRST_PICTURE_TIMEOUT),
     ] {
+        let mut leased = None;
         let attempt = runtime.block_on(play(
             parsed.clone(),
             group.clone(),
             transport,
             first_picture,
             cancel,
-            on_event,
+            &mut |event| {
+                if let Event::Leased(lease) = &event {
+                    leased = Some(lease.clone());
+                }
+                on_event(event);
+            },
         ));
         // The session sends its TEARDOWN as it drops: give it the time to go,
         // so a printer with few slots has this one back before the next.
-        runtime.block_on(async {
-            let _ = tokio::time::timeout(TEARDOWN_WAIT, group.await_teardown()).await;
+        let torn_down = runtime.block_on(async {
+            tokio::time::timeout(TEARDOWN_WAIT, group.await_teardown())
+                .await
+                .is_ok()
         });
+        if torn_down && let Some(lease) = leased {
+            on_event(Event::Released(lease));
+        }
         match attempt {
             Ok(()) => return Ok(()),
             Err(Attempt::Final(err)) => return Err(err),
@@ -212,6 +265,70 @@ over TCP: {tcp}",
         }
     }
     Err(udp_failure.unwrap_or(CameraError::Silent))
+}
+
+/// `url` with its host made `ip`.
+fn at_address(url: &str, ip: std::net::Ipv4Addr) -> String {
+    let Ok(mut parsed) = url::Url::parse(url) else {
+        return url.to_owned();
+    };
+    match parsed.set_host(Some(&ip.to_string())) {
+        Ok(()) => parsed.to_string(),
+        Err(_) => url.to_owned(),
+    }
+}
+
+/// Tears down the session `session` of the stream at `url`, from a
+/// connection of its own, and closes it: the printer frees the video slot
+/// it kept for it. `true` when it did, `false` when it no longer knew the
+/// session (it was gone already); an error when the camera did not answer.
+pub fn reclaim(url: &str, session: &str) -> Result<bool, CameraError> {
+    let failed = CameraError::Stream;
+    let parsed = url::Url::parse(url).map_err(|err| failed(err.to_string()))?;
+    let host = parsed.host_str().ok_or_else(|| failed("no host".into()))?;
+    let at = (host, parsed.port().unwrap_or(RTSP_PORT))
+        .to_socket_addrs()
+        .map_err(|err| failed(err.to_string()))?
+        .next()
+        .ok_or_else(|| failed("no address".into()))?;
+    let mut stream =
+        TcpStream::connect_timeout(&at, RECLAIM_WAIT).map_err(|err| failed(err.to_string()))?;
+    stream
+        .set_read_timeout(Some(RECLAIM_WAIT))
+        .and_then(|()| stream.set_write_timeout(Some(RECLAIM_WAIT)))
+        .map_err(|err| failed(err.to_string()))?;
+    let request = format!(
+        "TEARDOWN {url} RTSP/1.0\r\nCSeq: 1\r\nSession: {session}\r\n\
+         User-Agent: Breadslicer\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|err| failed(err.to_string()))?;
+    // The status line is all that matters; the head is read to its end so
+    // the reply is whole before the connection closes.
+    let mut head = Vec::new();
+    let mut chunk = [0u8; 256];
+    while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() < 8192 {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => head.extend_from_slice(&chunk[..n]),
+            Err(err) if head.is_empty() => return Err(failed(err.to_string())),
+            Err(_) => break,
+        }
+    }
+    let text = String::from_utf8_lossy(&head);
+    let status = text
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .ok_or_else(|| {
+            failed(format!(
+                "an answer this does not read: {}",
+                first_line(&text)
+            ))
+        })?;
+    Ok(status == 200)
 }
 
 /// What an error says, without its own heading.
@@ -288,6 +405,13 @@ async fn play(
     .await
     .map_err(|_| other(CameraError::Silent))?
     .map_err(|err| other(stream_error(err)))?;
+    // From SETUP on, the printer keeps a slot for the session.
+    if let Some(id) = session.session_id() {
+        on_event(Event::Leased(Lease {
+            url: text.clone(),
+            session: id.to_owned(),
+        }));
+    }
     let playing = tokio::time::timeout(CONNECT_TIMEOUT, session.play(PlayOptions::default()))
         .await
         .map_err(|_| other(CameraError::Silent))?

@@ -61,6 +61,7 @@ fn payload() -> ProjectPayload {
         plates: 0,
         plate_names: Vec::new(),
         hand_placed: Vec::new(),
+        groups: Vec::new(),
     }
 }
 
@@ -330,6 +331,7 @@ fn the_models_placed_by_hand_come_back_with_the_settings() {
     ];
     let payload = ProjectPayload {
         hand_placed: vec![pose],
+        groups: vec![vec![0, 1]],
         ..ProjectPayload::default()
     };
     let text = serialize_settings(&payload, EmbedProfiles::No).expect("serialized");

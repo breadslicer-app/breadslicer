@@ -3198,10 +3198,19 @@ impl DfSupportSession {
     /// The supports and raft as one welded mesh, as a run hands them back;
     /// `None` when nothing is left.
     pub fn mesh(&self) -> Result<Option<IndexedMesh>, EditError> {
+        Ok(self.drawn()?.0)
+    }
+
+    /// [`Self::mesh`], and whether its raft had to be drawn without its
+    /// clearance around the models (#467).
+    pub fn drawn(&self) -> Result<(Option<IndexedMesh>, bool), EditError> {
         // The rafts are rebuilt from the roots inside the tessellation.
         let sink = support_soup(&self.state, &self.models, &self.settings)
             .map_err(|e| EditError::Tessellation(format!("{e:?}")))?;
-        Ok(weld_parts(&sink.floats, &sink.parts, DF_SUPPORT_MESH_NAME))
+        Ok((
+            weld_parts(&sink.floats, &sink.parts, DF_SUPPORT_MESH_NAME),
+            sink.raft_without_clearance,
+        ))
     }
 }
 

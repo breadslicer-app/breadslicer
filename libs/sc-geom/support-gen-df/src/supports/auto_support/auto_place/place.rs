@@ -13,13 +13,14 @@ use super::fan::{
 use super::helpers::{
     FanShaftPoint, HostedBranchInput, PlanCtx, branch_collides_with_sdf,
     branch_departure_angle_deg, build_hosted_branch, collect_fan_shaft_points,
-    collect_fan_shaft_points_near, contact_cone_collides, entity_cones, find_merge_host,
-    free_knot_id, host_entity_of, host_segment_span, is_host_at_attachment_capacity,
-    member_max_angle_from_vertical_deg, origin_by_source,
+    collect_fan_shaft_points_near, collect_stick_shaft_points_near, contact_cone_collides,
+    entity_cones, find_merge_host, free_knot_id, host_entity_of, host_segment_span,
+    is_host_at_attachment_capacity, member_max_angle_from_vertical_deg, origin_by_source,
 };
 use crate::supports::auto_support::constants::{
-    CAVITY_FAN_RADIUS_MM, GRID_HOST_FAN_RADIUS_MM, MAX_CAVITY_BRIDGE_MM,
-    MAX_LEAF_SPAN_BEFORE_BRANCH_MM, MIN_LEAF_FAN_RADIUS_MM,
+    CAVITY_FAN_RADIUS_MM, CAVITY_STICK_FAN_RADIUS_MM, CAVITY_STICK_MAX_MEMBERS,
+    GRID_HOST_FAN_RADIUS_MM, MAX_CAVITY_BRIDGE_MM, MAX_LEAF_SPAN_BEFORE_BRANCH_MM,
+    MIN_LEAF_FAN_RADIUS_MM,
 };
 use crate::supports::auto_support::parameter_sizing::{
     ModelSizingContext, preset_for_area, size_parameters,
@@ -492,9 +493,51 @@ pub fn place_one_candidate(
                 }),
                 Err(_) => None,
             };
+            // SoulCrafted (#471): supports only from the plate stand on
+            // nothing but the plate: no bridge from the model below.
+            if live
+                .auto_support
+                .zone_rules
+                .as_ref()
+                .is_some_and(|r| r.plate_only)
+            {
+                let mut out = PlaceOutcome::rejected(RejectReason::Trunk(error), preset);
+                out.cavity_fan_refusal = cavity_fan_refusal;
+                return out;
+            }
             // SoulCrafted (#360): a zone preset bridges a cavity with its
             // thinnest size, whatever the zone: a cavity is tight. A support
             // placed by hand keeps the size asked for (#564).
+            // Inside a closed cavity, a contact hangs from a stick a
+            // neighbour already stands on, sharing it from the cavity's
+            // floor, before it takes a stick of its own (#632).
+            if ctx.is_enclosed() {
+                let pool =
+                    collect_stick_shaft_points_near(draft, tip_pos, CAVITY_STICK_FAN_RADIUS_MM);
+                if !pool.is_empty() {
+                    let fan = fan_leaf_to_host(
+                        &FanArgs {
+                            target: tip_pos,
+                            model_id: &candidate.model_id,
+                            shaft_points: &pool,
+                            grid_host_ids: &HashSet::new(),
+                            knot_id_prefix: &format!("auto-cavity-stick-{}", candidate.id),
+                            fan_radius_mm: CAVITY_STICK_FAN_RADIUS_MM,
+                            grid_host_fan_radius_mm: CAVITY_STICK_FAN_RADIUS_MM,
+                            max_angle_deg: fan_max_angle,
+                            max_attachments: CAVITY_STICK_MAX_MEMBERS,
+                            draft,
+                            origin: Some(source_as_origin(candidate.source)),
+                            host_order: FanHostOrder::Nearest,
+                            rescue_span_override_mm: None,
+                        },
+                        ctx,
+                    );
+                    if let Ok(fanned) = fan_ok(fan) {
+                        return placed_fan(state, preset, fanned);
+                    }
+                }
+            }
             let thinnest = || {
                 live.auto_support.zone_rules.as_ref().and_then(|r| {
                     r.sizes

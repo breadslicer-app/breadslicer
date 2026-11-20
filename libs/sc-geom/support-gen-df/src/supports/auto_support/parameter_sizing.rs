@@ -287,14 +287,20 @@ pub fn size_parameters(
     let band = bands.active(settings);
 
     // SoulCrafted (#360): a zone size is drawn exactly as written.
-    if settings.auto_support.zone_rules.is_some() {
+    if let Some(rules) = settings.auto_support.zone_rules.as_ref() {
+        // A tall support on a wider base, with an adaptive base (#471).
+        let base = if rules.adaptive_base {
+            super::zone_rules::adaptive_base_factor(candidate.tip_pos.z)
+        } else {
+            1.0
+        };
         return SizeOverrides {
             shaft_diameter_mm: Some(band.shaft_diameter_mm),
             tip_contact_diameter_mm: Some(band.tip_contact_diameter_mm),
             tip_body_diameter_mm: Some(band.shaft_diameter_mm),
             tip_length_mm: Some(band.tip_length_mm),
             tip_penetration_mm: Some(band.tip_penetration_mm),
-            roots_diameter_mm: Some(band.root_diameter_mm),
+            roots_diameter_mm: Some(band.root_diameter_mm * base),
             roots_disk_height_mm: Some(band.root_disk_height_mm),
             roots_cone_height_mm: Some(band.root_cone_height_mm),
         };

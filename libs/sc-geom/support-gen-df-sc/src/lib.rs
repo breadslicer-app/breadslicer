@@ -51,7 +51,7 @@ pub use session::{
 pub use support_gen_df::native::overhang::{
     is_overhang_normal_z, overhang_and_stability_from_soup, overhang_normal_z_limit,
 };
-pub use support_gen_df::pipeline::ScanCache;
+pub use support_gen_df::pipeline::{KeepOut, ScanCache};
 pub use support_gen_df::supports::auto_bracing::auto_brace::HandBraceRefusal;
 pub use support_gen_df::supports::auto_support::zone_rules::{
     AreaBand, BaseTip, OverhangRule, StabilizationRule, SupportSize, ZoneRules,
@@ -159,6 +159,15 @@ pub struct DfSupportRequest {
     /// new set gets those edits put back where they still fit, and says how
     /// it went ([`DfSupportSet::kept`]).
     pub keep_edits: Vec<(NodeId, DfSupportSession)>,
+    /// Models that stand on a raft of their own (#198): by leaf, the options
+    /// whose raft their new set is drawn on, in place of `options`' raft.
+    pub own_rafts: Vec<(NodeId, DfSupportOptions)>,
+    /// Where no tip may land (#465): the channels of the hollows' drains,
+    /// in world space.
+    pub keep_out: Vec<KeepOut>,
+    /// Groups of models made as one structure (#475), by leaf: run together
+    /// as they stand, their supports braced to each other's.
+    pub together: Vec<Vec<NodeId>>,
 }
 
 impl Default for DfSupportRequest {
@@ -171,6 +180,9 @@ impl Default for DfSupportRequest {
             settings: None,
             models: None,
             keep_edits: Vec::new(),
+            own_rafts: Vec::new(),
+            keep_out: Vec::new(),
+            together: Vec::new(),
         }
     }
 }
@@ -232,6 +244,13 @@ pub struct DfSupportOutcome {
     /// Models whose supports, made for another copy (#561), run into a
     /// neighbouring model: Arrange all spaces them out.
     pub crowded: Vec<NodeId>,
+    /// Models whose raft could not be cut clear of the models around it
+    /// (#467): it was drawn without that clearance, under them.
+    pub rafts_uncleared: Vec<NodeId>,
+    /// Supports the plan took off once sized (they crossed the model or
+    /// another shaft) and could not place again (#236): their contacts are
+    /// left for Fix all.
+    pub unplaced: usize,
     /// Where the run spent its time.
     pub timings: PerfFrame,
 }
@@ -673,7 +692,11 @@ pub fn start_df_supports(
 /// that model's, turned and moved with it. A model whose hand edits are to
 /// be kept is no one's copy, and has none.
 fn copies_of(models: &[(NodeId, ModelInput)], request: &DfSupportRequest) -> Vec<Option<usize>> {
-    let keeps = |leaf: &NodeId| request.keep_edits.iter().any(|(m, _)| m == leaf);
+    // A model of a group (#475) is made with its group, as it stands.
+    let keeps = |leaf: &NodeId| {
+        request.keep_edits.iter().any(|(m, _)| m == leaf)
+            || request.together.iter().any(|g| g.contains(leaf))
+    };
     let mut of = vec![None; models.len()];
     for i in 0..models.len() {
         let (leaf, model) = &models[i];
@@ -730,11 +753,15 @@ fn merged(runs: Vec<DfSupportOutcome>) -> DfSupportOutcome {
             placed: Vec::new(),
             triangles: 0,
             crowded: Vec::new(),
+            rafts_uncleared: Vec::new(),
+            unplaced: 0,
             timings: PerfFrame::default(),
         };
     };
     for run in runs {
+        out.unplaced += run.unplaced;
         out.sets.extend(run.sets);
+        out.rafts_uncleared.extend(run.rafts_uncleared);
         out.models += run.models;
         out.islands += run.islands;
         out.triangles += run.triangles;
@@ -790,53 +817,89 @@ fn run_with_copies(
 ) -> Result<DfSupportOutcome, JobError> {
     let of = copies_of(models, request);
     let keeps = |leaf: &NodeId| request.keep_edits.iter().any(|(m, _)| m == leaf);
+    // The groups of two or more models of the run (#475), as model indices.
+    let groups: Vec<Vec<usize>> = request
+        .together
+        .iter()
+        .map(|g| {
+            (0..models.len())
+                .filter(|&i| g.contains(&models[i].0))
+                .collect::<Vec<_>>()
+        })
+        .filter(|g| g.len() >= 2)
+        .collect();
+    let grouped = |i: usize| groups.iter().any(|g| g.contains(&i));
     let firsts: Vec<usize> = (0..models.len()).filter(|&i| of[i].is_none()).collect();
-    let copies: Vec<u64> = firsts
+    // What is run: each first one not in a group by itself, each group as
+    // one run (#475).
+    struct Unit {
+        members: Vec<usize>,
+        copies: Vec<u64>,
+        /// What a single first one is run as: alone, unless its hand edits
+        /// are kept. A group runs as it stands.
+        alone: Option<ModelInput>,
+    }
+    let mut units: Vec<Unit> = firsts
         .iter()
-        .map(|&f| 1 + of.iter().filter(|o| **o == Some(f)).count() as u64)
-        .collect();
-    // What each first one is run as: alone, unless its hand edits are kept.
-    let alone: Vec<Option<ModelInput>> = firsts
-        .iter()
-        .map(|&f| (!keeps(&models[f].0)).then(|| standing_alone(&models[f].1)))
-        .collect();
-    let leaves: Vec<(NodeId, ModelInput)> = firsts
-        .iter()
-        .zip(&alone)
-        .map(|(&f, alone)| match alone {
-            Some(input) => (models[f].0, input.clone()),
-            None => models[f].clone(),
+        .filter(|&&f| !grouped(f))
+        .map(|&f| Unit {
+            members: vec![f],
+            copies: vec![1 + of.iter().filter(|o| **o == Some(f)).count() as u64],
+            alone: (!keeps(&models[f].0)).then(|| standing_alone(&models[f].1)),
         })
         .collect();
-    // Each first one in a run of its own: standing alone in the middle of
-    // the plate, models would stand in each other. The runs share nothing,
-    // so they run side by side (#232), each on its share of the cores.
+    for g in &groups {
+        units.push(Unit {
+            members: g.clone(),
+            copies: vec![1; g.len()],
+            alone: None,
+        });
+    }
+    // Each unit in a run of its own: standing alone in the middle of the
+    // plate, models would stand in each other. The runs share nothing, so
+    // they run side by side (#232), each on its share of the cores.
     let progress = RunProgress {
         done: AtomicU32::new(0),
-        total: (5 * leaves.len()) as u32,
-        models: leaves.len(),
+        total: (5 * units.len()) as u32,
+        models: units.len(),
     };
-    let runs = leaves
+    let runs = units
         .par_iter()
         .enumerate()
-        .map(|(k, leaf)| {
+        .map(|(k, unit)| {
             let prefix = if k == 0 {
                 id_prefix.clone()
             } else {
                 format!("{id_prefix}m{k}")
             };
+            let leaves: Vec<(NodeId, ModelInput)> = match &unit.alone {
+                Some(input) => vec![(models[unit.members[0]].0, input.clone())],
+                None => unit.members.iter().map(|&i| models[i].clone()).collect(),
+            };
+            let together = (unit.members.len() > 1)
+                .then(|| leaves.iter().map(|(_, m)| m.id.clone()).collect::<Vec<_>>());
             run_df_supports(
-                std::slice::from_ref(leaf),
+                &leaves,
                 request,
                 worker,
                 prefix,
-                &copies[k..=k],
+                &unit.copies,
+                together,
                 (&progress, k),
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut outcome = merged(runs);
     let mut made: Vec<Option<DfSupportSet>> = outcome.sets.drain(..).map(Some).collect();
+    // Where each model's set lies in `made`, and what its unit ran it as.
+    let mut made_at: Vec<Option<(usize, Option<&ModelInput>)>> = vec![None; models.len()];
+    let mut next = 0;
+    for unit in &units {
+        for &i in &unit.members {
+            made_at[i] = Some((next, unit.alone.as_ref()));
+            next += 1;
+        }
+    }
     // The sets in model order: each first one's, then each copy's from it.
     let mut sets: Vec<DfSupportSet> = Vec::with_capacity(models.len());
     let mut at: Vec<usize> = vec![usize::MAX; models.len()];
@@ -846,10 +909,10 @@ fn run_with_copies(
         }
         let set = match of[i] {
             None => {
-                let k = firsts.iter().position(|&f| f == i).expect("a first");
+                let (k, alone) = made_at[i].expect("a first");
                 // Made standing alone: turned and moved to where it stands,
                 // its own drawing.
-                match (&alone[k], made[k].take()) {
+                match (alone, made.get_mut(k).and_then(Option::take)) {
                     (Some(input), Some(set)) => {
                         let mut carried = carried_set(&set, 0, input, &models[i]);
                         carried.same_as = None;
@@ -877,7 +940,15 @@ fn run_with_copies(
         .map(|m| m.faces().len())
         .sum();
     let everyone = scene_model_leaves(scene, None).unwrap_or_default();
-    outcome.crowded = crowded_sets(&sets, &everyone);
+    // The members of a group stand side by side on purpose: crowding one
+    // another is no news (#475).
+    let together = |a: NodeId, b: NodeId| {
+        request
+            .together
+            .iter()
+            .any(|g| g.contains(&a) && g.contains(&b))
+    };
+    outcome.crowded = crowded_sets(&sets, &everyone, &together);
     outcome.sets = sets;
     Ok(outcome)
 }
@@ -930,7 +1001,11 @@ const CROWDED_DEPTH_MM: f64 = 0.05;
 /// The models of `sets` whose supports run into a model of `everyone` other
 /// than their own: some point of their mesh lies inside it, deeper than
 /// [`CROWDED_DEPTH_MM`].
-fn crowded_sets(sets: &[DfSupportSet], everyone: &[(NodeId, ModelInput)]) -> Vec<NodeId> {
+fn crowded_sets(
+    sets: &[DfSupportSet],
+    everyone: &[(NodeId, ModelInput)],
+    together: &dyn Fn(NodeId, NodeId) -> bool,
+) -> Vec<NodeId> {
     let bounds: Vec<([f64; 3], [f64; 3])> = everyone
         .iter()
         .map(|(_, m)| {
@@ -948,7 +1023,10 @@ fn crowded_sets(sets: &[DfSupportSet], everyone: &[(NodeId, ModelInput)]) -> Vec
             let (lo, hi) = mesh_bounds(mesh);
             everyone.iter().enumerate().any(|(k, (leaf, model))| {
                 let (mlo, mhi) = bounds[k];
-                if *leaf == set.model || (0..3).any(|a| hi[a] < mlo[a] || lo[a] > mhi[a]) {
+                if *leaf == set.model
+                    || together(*leaf, set.model)
+                    || (0..3).any(|a| hi[a] < mlo[a] || lo[a] > mhi[a])
+                {
                     return false;
                 }
                 let bvh = placed[k].get_or_init(|| session::PlacedBvh::of(model));
@@ -1021,10 +1099,13 @@ pub fn tip_diameter_for(request: &DfSupportRequest) -> f64 {
 /// caller that runs the pipeline itself with the settings a run would use,
 /// as the support scorecard does to read the plan's analytics (#234).
 pub fn settings_for(request: &DfSupportRequest) -> PipelineSettings {
-    match &request.settings {
+    let mut settings = match &request.settings {
         Some(settings) => settings.clone(),
         None => SettingsRecipe::of(request).settings(),
-    }
+    };
+    // No tip in a drain's channel (#465).
+    settings.keep_out.extend(request.keep_out.iter().copied());
+    settings
 }
 
 /// What a request's settings are made from when it gives none explicitly:
@@ -1160,9 +1241,14 @@ fn run_df_supports(
     worker: &JobWorker<DfSupportOutcome>,
     id_prefix: String,
     copies: &[u64],
+    together: Option<Vec<String>>,
     (progress, at): (&RunProgress, usize),
 ) -> Result<DfSupportOutcome, JobError> {
-    let settings = settings_for(request);
+    let mut settings = settings_for(request);
+    // A group's supports are braced to each other's (#475).
+    if let Some(group) = together {
+        settings.supports.auto_bracing.brace_together = vec![group];
+    }
     let models: Vec<ModelInput> = leaves.iter().map(|(_, m)| m.clone()).collect();
     let models = &models[..];
     let n = models.len();
@@ -1203,11 +1289,25 @@ fn run_df_supports(
     };
     let mut placed: Vec<(String, u64)> = Vec::new();
     let mut islands = 0;
+    let mut unplaced = 0;
     for (i, m) in out.models.iter().enumerate() {
         // A model stands for its copies too (#561).
         let copies = copies.get(i).copied().unwrap_or(1);
         islands += m.islands.filtered.len() * copies as usize;
         if let Some(plan) = &m.plan {
+            unplaced += plan
+                .result
+                .analytics
+                .as_ref()
+                .and_then(|a| a.forest_report.as_ref())
+                .and_then(|f| f.orphans.as_ref())
+                .map_or(0, |orphans| {
+                    orphans
+                        .iter()
+                        .filter(|o| o.was_placed_again() == Some(false))
+                        .count()
+                })
+                * copies as usize;
             for (&kind, &count) in &plan.result.placed {
                 if count <= 0 {
                     continue;
@@ -1238,6 +1338,7 @@ fn run_df_supports(
     session.warm();
     // Each model's supports and raft are drawn on their own.
     let mut sets = Vec::with_capacity(n);
+    let mut rafts_uncleared = Vec::new();
     for ((model, _), session) in leaves.iter().zip(session.split_by_model()) {
         if worker.is_cancelled() {
             return Err(JobError::Cancelled);
@@ -1256,12 +1357,21 @@ fn run_df_supports(
             }
             None => (session, None),
         };
+        // A model with a raft of its own stands on it (#198).
+        let session = match request.own_rafts.iter().find(|(m, _)| m == model) {
+            Some((_, own)) => session.with_raft_of(own).unwrap_or(session),
+            None => session,
+        };
         let mesh = if session.is_empty() {
             None
         } else {
-            session
-                .mesh()
-                .map_err(|e| JobError::Failed(e.to_string()))?
+            let (mesh, uncleared) = session
+                .drawn()
+                .map_err(|e| JobError::Failed(e.to_string()))?;
+            if uncleared {
+                rafts_uncleared.push(*model);
+            }
+            mesh
         };
         sets.push(DfSupportSet {
             model: *model,
@@ -1292,5 +1402,7 @@ fn run_df_supports(
         islands,
         placed,
         crowded: Vec::new(),
+        rafts_uncleared,
+        unplaced,
     })
 }

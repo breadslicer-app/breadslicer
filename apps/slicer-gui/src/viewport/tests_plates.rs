@@ -1008,3 +1008,71 @@ fn every_tab_shows_the_slice_s_layers_while_it_is_current() {
         assert!(ui.get_slice_layers_current(), "back where it was sliced");
     });
 }
+
+/// The volume `leaf` of `ctrl`'s scene encloses as it stands in the world,
+/// with the sign its winding gives: positive when it faces out.
+fn world_volume(ctrl: &ViewportController, leaf: NodeId) -> f64 {
+    let mesh = ctrl
+        .document()
+        .with_scene(|spatial| sc_scene::bake_leaf_to_world(spatial.graph(), leaf).ok())
+        .flatten()
+        .expect("the box baked");
+    mesh.faces
+        .iter()
+        .map(|face| {
+            let [a, b, c] = face
+                .vertices
+                .map(|v| mesh.vertices[usize::from(v)].coords().map(f64::from));
+            (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                / 6.0
+        })
+        .sum()
+}
+
+/// Mirror (#648): two models picked together turn over about the middle
+/// of the box they take, so they trade places along X and stay facing out,
+/// their transforms untouched; one Undo puts them back.
+#[test]
+fn models_mirrored_together_turn_over_about_their_middle() {
+    let (ctrl, leaves) = window(&[Vec3::new(10.0, 5.0, 0.0), Vec3::new(30.0, -3.0, 0.0)]);
+    let document = ctrl.document();
+    let before: Vec<_> = leaves
+        .iter()
+        .map(|&l| document.with_scene(|s| s.graph().node(l).map(|n| n.local_transform)))
+        .collect();
+    document.set_selection(Selection::of(leaves.iter().copied().map(LeafId)));
+    ctrl.mirror_selection(crate::mirror::MirrorAxis::X);
+    assert!(near(centre_of(&ctrl, leaves[0]), Vec3::new(30.0, 5.0, 0.0)));
+    assert!(near(
+        centre_of(&ctrl, leaves[1]),
+        Vec3::new(10.0, -3.0, 0.0)
+    ));
+    for (i, &leaf) in leaves.iter().enumerate() {
+        let now = document.with_scene(|s| s.graph().node(leaf).map(|n| n.local_transform));
+        assert_eq!(now, before[i], "the transform stays");
+        let volume = world_volume(&ctrl, leaf);
+        assert!((volume - 64.0).abs() < 1e-3, "faces out: {volume}");
+    }
+    assert!(document.undo().expect("undoes"));
+    assert!(near(centre_of(&ctrl, leaves[0]), Vec3::new(10.0, 5.0, 0.0)));
+    assert!(near(
+        centre_of(&ctrl, leaves[1]),
+        Vec3::new(30.0, -3.0, 0.0)
+    ));
+}
+
+/// The right-click menu offers Group with two models or more picked that are
+/// not one group already, and Ungroup with a group among them (#475).
+#[test]
+fn group_is_offered_for_two_models_and_ungroup_for_a_group() {
+    let (ctrl, leaves) = window(&[Vec3::new(10.0, 5.0, 0.0), Vec3::new(30.0, -3.0, 0.0)]);
+    let document = ctrl.document();
+    document.set_selection(Selection::One(LeafId(leaves[0])));
+    assert_eq!(ctrl.group_offers(), (false, false), "one model");
+    document.set_selection(Selection::of(leaves.iter().copied().map(LeafId)));
+    assert_eq!(ctrl.group_offers(), (true, false), "two models");
+    assert!(document.group(&leaves));
+    document.set_selection(Selection::of(leaves.iter().copied().map(LeafId)));
+    assert_eq!(ctrl.group_offers(), (false, true), "one group");
+}

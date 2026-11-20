@@ -1004,7 +1004,9 @@ pub static SUPPORT_TYPES: [SupportTypeDescriptor; 8] = [
         }),
         renamed_from: None,
         auto_placement: None,
-        is_auto_braceable: false,
+        // SoulCrafted (#632): a tall stick inside a cavity is braced as a
+        // trunk outside is.
+        is_auto_braceable: true,
         hosts_brace_snap_cone: false,
         shaft_taper: None,
         cone_body_follows: None,

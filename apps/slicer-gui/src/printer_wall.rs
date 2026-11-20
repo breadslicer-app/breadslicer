@@ -54,8 +54,8 @@ impl PrinterWall {
             .is_some_and(|ui| ui.get_printer_wall_open())
     }
 
-    /// Opens the wall on `printers`.
-    pub(crate) fn open(&self, printers: &[Printer]) {
+    /// Opens the wall on `printers`, each with what it is kept for.
+    pub(crate) fn open(&self, printers: &[(Printer, String)]) {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_printer_wall_open(true);
         }
@@ -63,12 +63,13 @@ impl PrinterWall {
     }
 
     /// Puts `printers` on the open wall: a tile for each one not on it yet,
-    /// the names of those on it brought up to date.
-    pub(crate) fn show(&self, printers: &[Printer]) {
+    /// the names and what they are kept for of those on it brought up to
+    /// date.
+    pub(crate) fn show(&self, printers: &[(Printer, String)]) {
         if !self.is_open() {
             return;
         }
-        for printer in printers {
+        for (printer, kept) in printers {
             let at = self
                 .on_wall
                 .borrow()
@@ -77,19 +78,20 @@ impl PrinterWall {
             match at {
                 Some(at) => {
                     if let Some(mut tile) = self.tiles.row_data(at)
-                        && tile.name.as_str() != printer.name
+                        && (tile.name.as_str() != printer.name || tile.kept.as_str() != kept)
                     {
                         tile.name = printer.name.as_str().into();
+                        tile.kept = kept.as_str().into();
                         self.tiles.set_row_data(at, tile);
                     }
                 }
-                None => self.put_up(printer.clone()),
+                None => self.put_up(printer.clone(), kept),
             }
         }
     }
 
     /// A tile for `printer`, its camera and its status on their way.
-    fn put_up(&self, printer: Printer) {
+    fn put_up(&self, printer: Printer, kept: &str) {
         let cancel = Arc::new(AtomicBool::new(false));
         let key = printer.mainboard_id.clone();
         self.on_wall.borrow_mut().push(OnWall {
@@ -101,6 +103,7 @@ impl PrinterWall {
             name: printer.name.as_str().into(),
             model: printer.model.as_str().into(),
             detail: ctr!("PrinterWall", "Asking what it does…"),
+            kept: kept.into(),
             image: Image::default(),
             live: false,
             status: ctr!(
@@ -284,21 +287,28 @@ mod tests {
                 model: "ELEGOO Mars 5 Ultra".into(),
                 firmware: String::new(),
             };
-            wall.show(&[printer("a", "Mars")]);
+            wall.show(&[(printer("a", "Mars"), String::new())]);
             assert_eq!(
                 ui.get_printer_wall_tiles().row_count(),
                 0,
                 "closed: nothing"
             );
 
-            wall.open(&[printer("a", "Mars"), printer("b", "Saturn")]);
+            wall.open(&[
+                (printer("a", "Mars"), String::new()),
+                (printer("b", "Saturn"), String::new()),
+            ]);
             assert!(ui.get_printer_wall_open());
             let tiles = ui.get_printer_wall_tiles();
             assert_eq!(tiles.row_count(), 2);
 
-            wall.show(&[printer("a", "La chica"), printer("b", "Saturn")]);
+            wall.show(&[
+                (printer("a", "La chica"), "Fast Grey  ·  Dental".to_owned()),
+                (printer("b", "Saturn"), String::new()),
+            ]);
             assert_eq!(tiles.row_count(), 2, "no second tile for a printer");
             assert_eq!(tiles.row_data(0).unwrap().name, "La chica");
+            assert_eq!(tiles.row_data(0).unwrap().kept, "Fast Grey  ·  Dental");
 
             wall.close();
             assert!(!ui.get_printer_wall_open());

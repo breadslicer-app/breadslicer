@@ -10,6 +10,7 @@ pub mod load_budget;
 pub mod minima_reinforcement;
 pub mod parameter_sizing;
 pub mod pose_stability;
+pub mod resting;
 pub mod settings;
 pub mod stabilization;
 pub mod support_blockers;

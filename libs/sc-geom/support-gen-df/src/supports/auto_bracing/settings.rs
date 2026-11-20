@@ -49,6 +49,38 @@ pub struct AutoBracingSettings {
     /// the port's defaults; Breadslicer's runs turn it on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub brace_tall_shafts: bool,
+    /// SoulCrafted (#475): the models braced together as one structure, by
+    /// their ids: a group of models whose supports share braces. A brace
+    /// between two of them belongs to the first of the group, and keeps off
+    /// every model of it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub brace_together: Vec<Vec<String>>,
+    /// SoulCrafted (#471): every brace is drawn at a share of the thinner
+    /// shaft it joins
+    /// ([`BRACE_SHARE_OF_TRUNK`](crate::supports::auto_support::zone_rules::BRACE_SHARE_OF_TRUNK)),
+    /// not at `brace_diameter_mm`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow_trunks: bool,
+}
+
+impl AutoBracingSettings {
+    /// The model `model_id` is braced as (#475): the first of its group, or
+    /// itself.
+    pub fn bracing_key<'a>(&'a self, model_id: &'a str) -> &'a str {
+        self.brace_together
+            .iter()
+            .find(|g| g.iter().any(|m| m == model_id))
+            .and_then(|g| g.first())
+            .map_or(model_id, String::as_str)
+    }
+
+    /// The models braced as `key` (#475): its group, or `key` alone.
+    pub fn braced_with<'a>(&'a self, key: &'a str) -> Vec<&'a str> {
+        self.brace_together
+            .iter()
+            .find(|g| g.first().is_some_and(|f| f == key))
+            .map_or_else(|| vec![key], |g| g.iter().map(String::as_str).collect())
+    }
 }
 
 /// How the links of a stacked chain are drawn.
@@ -180,6 +212,8 @@ pub fn create_default_auto_bracing_settings() -> AutoBracingSettings {
         stacked: None,
         exact_clearance: false,
         brace_tall_shafts: false,
+        brace_together: Vec::new(),
+        follow_trunks: false,
     }
 }
 
@@ -202,6 +236,8 @@ pub fn normalize_auto_bracing_settings(source: &AutoBracingSettings) -> AutoBrac
         remove_existing_bracing: source.remove_existing_bracing,
         exact_clearance: source.exact_clearance,
         brace_tall_shafts: source.brace_tall_shafts,
+        brace_together: source.brace_together.clone(),
+        follow_trunks: source.follow_trunks,
         stacked: source.stacked.as_ref().map(|st| StackedBracing {
             gap_mm: if st.gap_mm.is_finite() {
                 st.gap_mm.clamp(0.0, 50.0)

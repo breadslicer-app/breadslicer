@@ -220,7 +220,44 @@ pub struct ZoneRules {
     /// How far a trunk may wander sideways looking for a way down to the
     /// plate, mm.
     pub search_ground_mm: f64,
+    /// SoulCrafted (#471): every support stands on the plate; none starts on
+    /// the model below (no sticks or twigs). What cannot reach the plate is
+    /// left out.
+    pub plate_only: bool,
+    /// SoulCrafted (#471): mini supports off: a long branch out to an island
+    /// stays as it is, instead of hanging from the nearest support (#479).
+    /// Mini supports are on unless this says otherwise.
+    pub keep_long_island_branches: bool,
+    /// SoulCrafted (#471): a tall support stands on a wider base
+    /// ([`adaptive_base_factor`]): every peel levers it more.
+    pub adaptive_base: bool,
+    /// SoulCrafted (#471): a brace is [`BRACE_SHARE_OF_TRUNK`] of the
+    /// thinner trunk it joins, instead of the preset's diameter.
+    pub braces_follow_trunks: bool,
 }
+
+/// Where an adaptive base starts to grow, and where it stops (mm above the
+/// plate), and how much wider it is there (#471).
+pub const ADAPTIVE_BASE_FROM_MM: f64 = 20.0;
+pub const ADAPTIVE_BASE_FULL_MM: f64 = 60.0;
+pub const ADAPTIVE_BASE_GROWTH: f64 = 1.5;
+
+/// How much wider than the preset's the base of a support whose tip stands
+/// `height_mm` above the plate is, with an adaptive base (#471): as wide up
+/// to [`ADAPTIVE_BASE_FROM_MM`], growing evenly to [`ADAPTIVE_BASE_GROWTH`]
+/// times at [`ADAPTIVE_BASE_FULL_MM`] and above.
+pub fn adaptive_base_factor(height_mm: f64) -> f64 {
+    let t = ((height_mm - ADAPTIVE_BASE_FROM_MM) / (ADAPTIVE_BASE_FULL_MM - ADAPTIVE_BASE_FROM_MM))
+        .clamp(0.0, 1.0);
+    if t.is_nan() {
+        return 1.0;
+    }
+    1.0 + (ADAPTIVE_BASE_GROWTH - 1.0) * t
+}
+
+/// The share of the thinner trunk a brace takes when braces follow their
+/// trunks (#471).
+pub const BRACE_SHARE_OF_TRUNK: f64 = 0.8;
 
 /// The faces down-facing enough to stabilize: steeper than this from
 /// horizontal is a wall, which a tip cannot hold.
@@ -329,6 +366,10 @@ impl ZoneRules {
                 ..self.stabilization.clone()
             },
             search_ground_mm: finite_in(self.search_ground_mm, 1.0, 100.0, 30.0),
+            plate_only: self.plate_only,
+            keep_long_island_branches: self.keep_long_island_branches,
+            adaptive_base: self.adaptive_base,
+            braces_follow_trunks: self.braces_follow_trunks,
         }
     }
 

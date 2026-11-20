@@ -1288,6 +1288,10 @@ impl AppState {
         if !flags.any() {
             return;
         }
+        // Group with two models or more, Ungroup with a group among them.
+        let (group, ungroup) = wired.controller.group_offers();
+        wired.window.set_context_can_group(flags.can_copy && group);
+        wired.window.set_context_can_ungroup(flags.can_copy && ungroup);
         wired.window.invoke_show_context_menu(
             x,
             y,
@@ -3196,6 +3200,43 @@ mod window_wiring_tests {
             (0, true, 7.0, hint(7)),
         ];
         assert_eq!(steps, expected);
+    }
+
+    /// A zone preset's mini supports, adaptive base and braces that follow
+    /// their trunks (#471): on from the box, off again, kept by the preset.
+    #[test]
+    fn a_zone_presets_mini_supports_base_and_braces_turn_on_and_off_in_the_tab() {
+        let steps = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            let read = |w: &MainWindow| {
+                (
+                    w.get_support_mini_supports(),
+                    w.get_support_adaptive_base(),
+                    w.get_support_braces_follow(),
+                )
+            };
+            window.invoke_support_preset_picked(0);
+            let mut steps = vec![read(&window)];
+            window.invoke_support_option_changed(19, 0.0);
+            window.invoke_support_option_changed(20, 1.0);
+            window.invoke_support_option_changed(21, 1.0);
+            steps.push(read(&window));
+            window.invoke_support_option_changed(19, 1.0);
+            window.invoke_support_option_changed(20, 0.0);
+            window.invoke_support_option_changed(21, 0.0);
+            steps.push(read(&window));
+            steps
+        });
+        assert_eq!(
+            steps,
+            [
+                (true, false, false),
+                (false, true, true),
+                (true, false, false)
+            ]
+        );
     }
 
     /// The shape panel (#564): a preset shows its support drawn, its sizes

@@ -262,7 +262,10 @@ fn the_raft_still_to_be_drawn_is_told_until_it_lands() {
     on_fresh_slint_thread(|| {
         let window = MainWindow::new().expect("the headless platform creates a main window");
         let (document, run) = supported_slab(&window);
-        assert!(!run.rafts_pending(), "a raft of its own: nothing to wait for");
+        assert!(
+            !run.rafts_pending(),
+            "a raft of its own: nothing to wait for"
+        );
         run.on_option(9, 1.0);
         run.on_option(14, 1.0);
         assert!(run.rafts_pending(), "the plate's raft is still to be drawn");
@@ -322,5 +325,180 @@ fn the_raft_of_one_model_alone_moves_with_it_while_it_is_dragged() {
         );
         assert!(document.undo().unwrap());
         assert_eq!(leaf_transform(&document, raft), start, "one step back");
+    });
+}
+
+/// A raft of its own (#198): with one model picked, the raft changed is that
+/// model's alone. The other keeps the tab's raft, the tab shows the picked
+/// model's, and Generate again keeps each model on its own.
+#[test]
+fn a_picked_model_takes_a_raft_of_its_own_and_keeps_it() {
+    use crate::selection::{LeafId, Selection};
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0], [60.0, 20.0, 8.0]]);
+        let raft_of = |model: NodeId| {
+            run.sets_in_force()
+                .into_iter()
+                .find(|d| d.model == model)
+                .expect("its set")
+                .session
+                .options()
+                .expect("its options")
+                .raft
+        };
+        let tab = run.options.borrow().raft;
+        assert_ne!(tab, RaftMode::Off);
+
+        document.set_selection(Selection::One(LeafId(leaves[0])));
+        run.on_option(9, 2.0);
+        assert_eq!(raft_of(leaves[0]), RaftMode::Off, "the picked model's");
+        assert_eq!(raft_of(leaves[1]), tab, "the other keeps the tab's");
+        assert_eq!(
+            run.options.borrow().raft,
+            tab,
+            "the tab's raft is as it was"
+        );
+        assert_eq!(
+            window.get_support_raft_index(),
+            2,
+            "it shows the picked model's"
+        );
+
+        document.set_selection(Selection::One(LeafId(leaves[1])));
+        assert_ne!(window.get_support_raft_index(), 2, "the other's: the tab's");
+
+        // Generate again over both: each stands on its own raft still.
+        document.set_selection(Selection::None);
+        let options = run.options.borrow().clone();
+        run.press_generate_and_wait(options);
+        assert_eq!(raft_of(leaves[0]), RaftMode::Off);
+        assert_eq!(raft_of(leaves[1]), tab);
+
+        // The tab's raft changed with nothing picked is every model's again.
+        run.on_option(9, 1.0);
+        assert_eq!(raft_of(leaves[0]), RaftMode::Lines);
+        assert_eq!(raft_of(leaves[1]), RaftMode::Lines);
+    });
+}
+
+/// A group's members are made as one structure (#475): grouped, their
+/// supports are made again, together, in the grouping's undo step: braced
+/// to each other's and standing on one raft of lines; Undo takes the group
+/// and the supports back; ungrouped, each is made again on its own.
+#[test]
+fn a_group_of_models_is_braced_as_one_on_one_raft() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        // Three cubes, a trunk each: alone, none has a neighbour to brace to.
+        let (document, run, leaves) = supported(
+            &window,
+            &[[20.0, 20.0, 25.0], [27.0, 20.0, 25.0], [20.0, 27.0, 25.0]],
+        );
+        let apart = |model: NodeId| {
+            run.sets_in_force()
+                .into_iter()
+                .find(|d| d.model == model)
+                .expect("its set")
+                .session
+                .stands_on_one_raft()
+        };
+        // Braces from one member's supports to another's: their two ends
+        // nearest two different cubes.
+        let centres = [[20.5, 20.5], [27.5, 20.5], [20.5, 27.5]];
+        let nearest = |x: f64, y: f64| {
+            (0..3)
+                .min_by(|&a, &b| {
+                    let d = |i: usize| (x - centres[i][0]).hypot(y - centres[i][1]);
+                    d(a).total_cmp(&d(b))
+                })
+                .unwrap()
+        };
+        let braces = || -> usize {
+            run.sets_in_force()
+                .iter()
+                .map(|d| {
+                    let c = &d.session.state().collections;
+                    c.braces
+                        .values()
+                        .filter(|b| {
+                            match (c.knots.get(&b.start_knot_id), c.knots.get(&b.end_knot_id)) {
+                                (Some(a), Some(z)) => {
+                                    nearest(a.pos.x, a.pos.y) != nearest(z.pos.x, z.pos.y)
+                                }
+                                _ => false,
+                            }
+                        })
+                        .count()
+                })
+                .sum()
+        };
+        let made_again = || {
+            run.watch_wanted(&window);
+            let handle = run.handle.borrow_mut().take().expect("a run for the group");
+            run.finish(handle.join());
+            assert!(document.supports_wanted().is_none());
+        };
+        assert_eq!(braces(), 0, "alone, nothing braced across");
+        let steps = document.undo_len();
+
+        assert!(document.group(&leaves));
+        assert_eq!(document.undo_len(), steps + 1, "grouping is a step");
+        assert!(document.supports_wanted().is_some(), "the members wait");
+        made_again();
+        assert_eq!(
+            document.undo_len(),
+            steps + 1,
+            "made in the grouping's step"
+        );
+        assert!(leaves.iter().all(|&m| apart(m)), "on the group's raft");
+        assert!(braces() > 0, "braced across the members");
+        settle_rafts(&document, &run);
+        assert_eq!(plate_rafts(&document).len(), 1, "one raft under the group");
+
+        // Undo: no group, and the supports as they were.
+        assert!(document.undo().unwrap());
+        assert!(document.groups().is_empty());
+        assert_eq!(braces(), 0);
+        assert!(document.redo().unwrap());
+        assert_eq!(document.groups().len(), 1);
+        assert!(braces() > 0);
+
+        // Ungrouped: each made again on its own.
+        assert!(document.ungroup(&leaves[..1]));
+        made_again();
+        assert!(leaves.iter().all(|&m| !apart(m)), "each on its own again");
+        assert_eq!(braces(), 0);
+        settle_rafts(&document, &run);
+        assert!(plate_rafts(&document).is_empty());
+    });
+}
+
+/// Two groups on one plate stand on two rafts, and models of no group on
+/// one raft for all stand on the plate's own (#475).
+#[test]
+fn two_groups_on_one_plate_stand_on_two_rafts() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let (document, run, leaves) = supported(
+            &window,
+            &[
+                [20.0, 20.0, 25.0],
+                [27.0, 20.0, 25.0],
+                [60.0, 20.0, 25.0],
+                [67.0, 20.0, 25.0],
+            ],
+        );
+        let made_again = || {
+            run.watch_wanted(&window);
+            let handle = run.handle.borrow_mut().take().expect("a run for the group");
+            run.finish(handle.join());
+        };
+        assert!(document.group(&leaves[..2]));
+        made_again();
+        assert!(document.group(&leaves[2..]));
+        made_again();
+        settle_rafts(&document, &run);
+        assert_eq!(plate_rafts(&document).len(), 2, "a raft for each group");
     });
 }

@@ -202,11 +202,21 @@ fn model_knots(c: &SupportCollections, model_id: &str) -> HashSet<String> {
     let own_shafts = shaft_ids(c, on);
     let all_shafts = shaft_ids(c, |_| true);
     let own_knots = knots_named(c, on);
+    // A brace of a group (#475) may end on another model's shaft: its knot
+    // goes with the brace too.
+    let own_brace_ends: HashSet<&str> = c
+        .braces
+        .values()
+        .filter(|e| on(&e.base))
+        .flat_map(|e| [e.start_knot_id.as_str(), e.end_knot_id.as_str()])
+        .collect();
     c.knots
         .iter()
         .filter(|(id, knot)| {
             let host = knot.parent_shaft_id.as_str();
-            own_shafts.contains(host) || (!all_shafts.contains(host) && own_knots.contains(*id))
+            own_shafts.contains(host)
+                || own_brace_ends.contains(id.as_str())
+                || (!all_shafts.contains(host) && own_knots.contains(*id))
         })
         .map(|(id, _)| id.clone())
         .collect()

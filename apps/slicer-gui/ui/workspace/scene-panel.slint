@@ -279,10 +279,13 @@ export component ScenePanel inherits Rectangle {
                         horizontal-stretch: 1;
                         text: row.text;
                         active: row.active;
-                        can-send: root.can-send && !row.active && root.plate-count > 1;
+                        // Index -1: the objects past every plate, no plate.
+                        can-send: root.can-send && !row.active && root.plate-count > 1 && row.index >= 0;
                         can-remove: row.active && root.plate-count > 1;
                         picked => {
-                            root.plate-picked(row.index);
+                            if row.index >= 0 {
+                                root.plate-picked(row.index);
+                            }
                         }
                         send => {
                             root.plate-send(row.index);

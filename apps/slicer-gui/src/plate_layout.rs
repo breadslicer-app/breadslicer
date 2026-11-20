@@ -15,7 +15,9 @@ use crate::plates::Plates;
 use crate::scene_document::{SceneDocument, SceneEdit};
 
 /// The plate the object `leaf` of `spatial` belongs to: the one whose cell
-/// holds the middle of its footprint.
+/// holds the middle of its footprint. `None` past every plate: such an
+/// object is on none, not on the first (it was listed and sliced with it,
+/// #649).
 pub(crate) fn plate_of_leaf(
     spatial: &SceneSpatial,
     volume: &BuildVolume,
@@ -25,12 +27,12 @@ pub(crate) fn plate_of_leaf(
     let query = spatial.leaf(leaf)?;
     let aabb = query.transformed_aabb(query.world_transform())?;
     let (min, max) = (aabb.min().coords(), aabb.max().coords());
-    Some(crate::plates::plate_of(
+    crate::plates::cell_at(
         volume,
         plates,
         (min[0] + max[0]) / 2.0,
         (min[1] + max[1]) / 2.0,
-    ))
+    )
 }
 
 /// The plate the object `leaf` belongs to (#547): a support leaf the plate of

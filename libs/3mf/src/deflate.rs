@@ -369,7 +369,7 @@ mod deflate_tests {
         let mut archive = ZipArchive::new(io::Cursor::new(zip_bytes)).unwrap();
         assert_eq!(archive.len(), 1);
         let mut entry = archive.by_index(0).unwrap();
-        assert_eq!(entry.name(), "3D/3dmodel.model");
+        assert_eq!(entry.name().unwrap(), "3D/3dmodel.model");
         let mut got = Vec::new();
         entry.read_to_end(&mut got).unwrap();
         assert_eq!(got, data);

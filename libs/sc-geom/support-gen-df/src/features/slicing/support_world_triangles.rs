@@ -102,6 +102,9 @@ pub struct TriangleSink {
     pub floats: Vec<f32>,
     /// `floats.len()` at the end of each piece, ascending.
     pub parts: Vec<usize>,
+    /// SoulCrafted (#467): a raft whose clearance around its models could
+    /// not be cut was drawn without it, under the models, instead of none.
+    pub raft_without_clearance: bool,
 }
 
 impl TriangleSink {
@@ -1155,22 +1158,38 @@ fn append_slice_rafts(
             })
             .push(raft_circle_of(raft, &radii, root));
     }
-    let clearance =
-        collect_model_plate_footprint(input.plate_clearance_models, raft_band_top_mm(raft))?;
-    let clearance_cut = inflate_model_plate_clearance(&clearance)?;
+    // SoulCrafted (#467): polygons that fail to clear the models leave the
+    // raft without its clearance, said, rather than the plate without
+    // supports.
+    let cleared =
+        collect_model_plate_footprint(input.plate_clearance_models, raft_band_top_mm(raft))
+            .and_then(|clearance| Ok((inflate_model_plate_clearance(&clearance)?, clearance)));
+    let (clearance_cut, clearance) = cleared.unwrap_or_else(|_| {
+        sink.raft_without_clearance = true;
+        (Vec::new(), Vec::new())
+    });
     for key in order {
         let circles = &by_model[&key];
         if circles.is_empty() {
             continue;
         }
-        append_raft_of(
+        let (floats, parts) = (sink.floats.len(), sink.parts.len());
+        let drawn = append_raft_of(
             sink,
             circles,
             raft,
             &clearance,
             &clearance_cut,
             input.robust_raft_geometry,
-        )?;
+        );
+        if drawn.is_err() && !clearance.is_empty() {
+            sink.floats.truncate(floats);
+            sink.parts.truncate(parts);
+            sink.raft_without_clearance = true;
+            append_raft_of(sink, circles, raft, &[], &[], input.robust_raft_geometry)?;
+        } else {
+            drawn?;
+        }
     }
     Ok(())
 }

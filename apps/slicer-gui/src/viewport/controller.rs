@@ -154,6 +154,17 @@ pub(crate) struct ViewportController {
     hint_marks: RefCell<Option<crate::mesh_render::Overlay>>,
     /// What a Repair run left broken, marked over the scene (#253).
     repair_marks: crate::repair_marks::MarksLayer,
+    /// The Measure tool (#652).
+    measure: crate::measure::Measure,
+    /// The scene's overlay with the measure's marks over it, and what it
+    /// was made of.
+    measured: RefCell<
+        Option<(
+            Option<crate::mesh_render::Overlay>,
+            crate::mesh_render::Overlay,
+            crate::mesh_render::Overlay,
+        )>,
+    >,
     /// The overhang map's box, and the self-support angle it paints by.
     overhang_map_on: Cell<bool>,
     /// The Supports tab's box (#492): whether the rafts fade out with the
@@ -310,6 +321,8 @@ impl ViewportController {
             overlay: RefCell::new(None),
             hint_marks: RefCell::new(None),
             repair_marks: Default::default(),
+            measure: Default::default(),
+            measured: RefCell::new(None),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
             estimate_listener: RefCell::new(None),
@@ -385,6 +398,8 @@ impl ViewportController {
             overlay: RefCell::new(None),
             hint_marks: RefCell::new(None),
             repair_marks: Default::default(),
+            measure: Default::default(),
+            measured: RefCell::new(None),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
             estimate_listener: RefCell::new(None),
@@ -2132,6 +2147,11 @@ impl ViewportController {
         // The plates the files need beyond those there are, with the models
         // in one step of history (#557).
         let before = document.undo_len();
+        // Into a scene that holds nothing, the first file is what the scene
+        // stands for from now on, unless it is a project (#650).
+        let was_empty = document
+            .with_scene(|spatial| spatial.leaf_id_at_index(0).is_none())
+            .unwrap_or(false);
         if !models.files.is_empty() {
             for _ in document.plates().count()..models.plates {
                 self.add_plate();
@@ -2147,6 +2167,10 @@ impl ViewportController {
         document.join_last_steps(document.undo_len().saturating_sub(before));
         match added {
             Ok(added) if !added.is_empty() => {
+                if was_empty && let Some(file) = models.files.first() {
+                    document.stand_for_import(file.path.clone());
+                    self.mirror_title_to_ui();
+                }
                 self.say_where_imported(&added);
                 // Each file keeps its import notes, with the scene's.
                 self.session.loader().note_imported(&models);
@@ -3150,18 +3174,21 @@ impl ViewportController {
         // keeping its selection box) is a click until it moves.
         let drag = self
             .drag_tool_armed()
+            .filter(|_| !self.measure.on())
             .filter(|kind| !(modifiers.shift && *kind != SupportDragKind::MoveTip));
         self.support_drag.set(match drag {
             Some(kind) => DragPhase::Pressed([cursor.x, cursor.y], kind),
             None => DragPhase::Idle,
         });
         // Nothing is selected in the Slice tab (#140): Shift draws no box.
-        if !self.selectable() {
+        // Measuring (#652), a click is a point and Shift chains it.
+        if !self.selectable() || self.measure.on() {
             modifiers.shift = false;
         }
         // A plain press on empty space boxes (#622), unless a tool owns the
         // press or the plate's tools are under it.
         let empty_boxes = self.selectable()
+            && !self.measure.on()
             && drag.is_none()
             && !self.add_support_armed()
             && self.plate_tool_hovered.get().is_none();
@@ -3171,7 +3198,7 @@ impl ViewportController {
             self.render.viewport(),
             cursor,
             modifiers,
-            self.allows_transform_gizmo() && !self.cut_on(),
+            self.allows_transform_gizmo() && !self.cut_on() && !self.measure.on(),
             self.supports_selectable(),
             empty_boxes,
         );
@@ -3196,7 +3223,7 @@ impl ViewportController {
             self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
         }
-        if !self.allows_transform_gizmo() || self.cut_on() {
+        if !self.allows_transform_gizmo() || self.cut_on() || self.measure.on() {
             return;
         }
         if self.input.on_pointer_move(
@@ -3235,6 +3262,10 @@ impl ViewportController {
         match outcome {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
             PointerUpOutcome::Click(cursor) => {
+                if self.measure.on() {
+                    self.measure_click(cursor, modifiers.shift);
+                    return;
+                }
                 if let Some(plate) = self.plate_name_under(cursor) {
                     self.plate_name_clicked(plate);
                     return;
@@ -3784,6 +3815,121 @@ impl ViewportController {
         }
         self.mark_dirty();
         true
+    }
+
+    /// Whether the Measure tool is on (#652).
+    #[cfg(test)]
+    pub(crate) fn measuring(&self) -> bool {
+        self.measure.on()
+    }
+
+    /// Turns the Measure tool on or off (#652); off forgets its points.
+    pub(crate) fn set_measuring(&self, on: bool) {
+        self.measure.set_on(on);
+        self.show_measure();
+    }
+
+    /// Esc while measuring: forgets the points, or with none, turns the
+    /// tool off.
+    pub(crate) fn measure_escape(&self) {
+        if !self.measure.clear() {
+            self.measure.set_on(false);
+        }
+        self.show_measure();
+    }
+
+    /// The points taken so far, world mm.
+    #[cfg(test)]
+    pub(crate) fn measure_points(&self) -> Vec<[f64; 3]> {
+        self.measure.points()
+    }
+
+    fn show_measure(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_measure_on(self.measure.on());
+            ui.set_measure_text(self.measure.text().into());
+        }
+        self.mark_dirty();
+    }
+
+    /// A click while measuring: the point of the model under `cursor`, on
+    /// a corner of its face when one is within [`crate::measure::SNAP_PX`].
+    pub(crate) fn measure_click(&self, cursor: ScreenPoint, chain: bool) {
+        let Some(vp) = self.render.viewport() else {
+            return;
+        };
+        let Some(camera) = self.camera.camera_cell().borrow().as_ref().cloned() else {
+            return;
+        };
+        let fov = crate::mesh_render::default_fov_y();
+        let (w, h) = (vp.width(), vp.height());
+        let ray = picking::ray_from_pixel(&camera, fov, w, h, cursor.x, cursor.y);
+        let point = self
+            .session
+            .document()
+            .with_scene(|spatial| {
+                let hit = picking::pick_face_where(&ray, spatial, |_| true)?;
+                let at = ray.origin + ray.direction * hit.t;
+                let query = spatial.leaf(hit.leaf)?;
+                let world = query.world_transform();
+                let face = query.mesh().faces().get(hit.face as usize)?;
+                let mut best: Option<(f32, glam::Vec3)> = None;
+                for v in face.vertices {
+                    let corner = world.apply_to_vertex(query.mesh().vertices()[v.get() as usize]);
+                    let corner = glam::Vec3::from(corner.coords());
+                    if let Some((x, y)) =
+                        picking::project_world_to_screen(&camera, fov, w, h, corner)
+                    {
+                        let px = (x - cursor.x).hypot(y - cursor.y);
+                        if px <= crate::measure::SNAP_PX && best.is_none_or(|(b, _)| px < b) {
+                            best = Some((px, corner));
+                        }
+                    }
+                }
+                let p = best.map_or(at, |(_, c)| c);
+                Some([f64::from(p.x), f64::from(p.y), f64::from(p.z)])
+            })
+            .flatten();
+        if let Some(point) = point {
+            self.measure.take(point, chain);
+            self.show_measure();
+        }
+    }
+
+    /// `overlay` with the measure's marks over it, as thick as a couple of
+    /// pixels at the camera's distance.
+    fn with_measure(
+        &self,
+        overlay: Option<crate::mesh_render::Overlay>,
+    ) -> Option<crate::mesh_render::Overlay> {
+        if !self.measure.on() {
+            return overlay;
+        }
+        let distance = self
+            .camera
+            .camera_cell()
+            .borrow()
+            .as_ref()
+            .map_or(100.0, |c| c.distance);
+        // In steps, so a zoom does not draw it again every frame.
+        let radius = 2f32.powf((distance * 0.0016).max(0.02).log2().round());
+        let Some(marks) = self.measure.overlay(radius) else {
+            return overlay;
+        };
+        let Some(base) = overlay else {
+            return Some(marks);
+        };
+        let mut both = self.measured.borrow_mut();
+        if let Some((b, m, joined)) = both.as_ref()
+            && b.as_ref().is_some_and(|b| Arc::ptr_eq(b, &base))
+            && Arc::ptr_eq(m, &marks)
+        {
+            return Some(joined.clone());
+        }
+        let joined: crate::mesh_render::Overlay =
+            base.iter().chain(marks.iter()).cloned().collect();
+        *both = Some((Some(base), marks, joined.clone()));
+        Some(joined)
     }
 
     /// Installs the Cut tool's handles: offered the pointer in the
@@ -4442,8 +4588,95 @@ impl ViewportController {
             "invert" => self.invert_selection_on_plate(),
             "duplicate" => self.duplicate_selection(None),
             "duplicate-move" => self.duplicate_selection(Some(ScreenPoint::new(x, y))),
+            "group" => self.group_selection(true),
+            "ungroup" => self.group_selection(false),
+            "mirror-x" => self.mirror_selection(crate::mirror::MirrorAxis::X),
+            "mirror-y" => self.mirror_selection(crate::mirror::MirrorAxis::Y),
             _ => {}
         }
+    }
+
+    /// Mirror (#648): the selected models flipped along `axis`, together,
+    /// about the middle of the box they take; the status bar says so.
+    pub(crate) fn mirror_selection(&self, axis: crate::mirror::MirrorAxis) {
+        let document = self.session.document();
+        let models: Vec<sc_scene::NodeId> = document
+            .selection()
+            .leaves()
+            .iter()
+            .map(|l| l.node_id())
+            .collect();
+        let text = if crate::mirror::mirror(&document, &models, axis) {
+            match axis {
+                crate::mirror::MirrorAxis::X => ctr!("Workspace", "Mirrored left to right."),
+                crate::mirror::MirrorAxis::Y => ctr!("Workspace", "Mirrored front to back."),
+            }
+        } else {
+            ctr!("Workspace", "Pick a model to mirror it.")
+        };
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_status_notice(text);
+        }
+        self.mark_dirty();
+    }
+
+    /// Whether the right-click menu offers Group (two models or more picked,
+    /// not already one group) and Ungroup (one of them in a group), #475.
+    pub(crate) fn group_offers(&self) -> (bool, bool) {
+        let document = self.session.document();
+        let models = self.selected_models();
+        let groups: Vec<Option<Vec<sc_scene::NodeId>>> =
+            models.iter().map(|&m| document.group_of(m)).collect();
+        let grouped = groups.iter().any(Option::is_some);
+        let one_group =
+            groups.first().is_some_and(|g| g.is_some()) && groups.iter().all(|g| *g == groups[0]);
+        (models.len() >= 2 && !one_group, grouped)
+    }
+
+    /// The selected models: supports left out.
+    fn selected_models(&self) -> Vec<sc_scene::NodeId> {
+        let document = self.session.document();
+        document
+            .with_scene(|spatial| {
+                document
+                    .selection()
+                    .leaves()
+                    .iter()
+                    .map(|l| l.node_id())
+                    .filter(|&id| {
+                        spatial
+                            .leaf(id)
+                            .is_some_and(|q| !sc_geom::df_supports::is_any_support_mesh(q.mesh()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Ctrl+G / Ctrl+Shift+G (#475): the selected models become a group, or
+    /// their groups are undone; the status bar says which.
+    pub(crate) fn group_selection(&self, group: bool) {
+        let document = self.session.document();
+        let models = self.selected_models();
+        let text = if group {
+            if document.group(&models) {
+                document.set_selection(Selection::of(models.into_iter().map(LeafId)));
+                ctr!(
+                    "Workspace",
+                    "Grouped: picked, moved and arranged as one, on one raft of lines. Ctrl+Shift+G undoes it."
+                )
+            } else {
+                ctr!("Workspace", "Pick two models or more to group them.")
+            }
+        } else if document.ungroup(&models) {
+            ctr!("Workspace", "Ungrouped: each model is on its own again.")
+        } else {
+            ctr!("Workspace", "No group is picked.")
+        };
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_status_notice(text);
+        }
+        self.mark_dirty();
     }
 
     /// The models of the active plate, and in the Supports tab their
@@ -4687,18 +4920,14 @@ impl ViewportController {
             .with_scene(|spatial| {
                 let graph = spatial.graph();
                 let objects = build_object_list_names(graph);
-                let on_plate: Vec<u32> = graph
+                let on_plate: Vec<Option<u32>> = graph
                     .reachable_leaves(
                         sc_scene::CsgPolicy::Descend,
                         sc_scene::ReferencePolicy::Skip,
                     )
                     .unwrap_or_default()
                     .into_iter()
-                    .map(|leaf| {
-                        crate::plate_layout::plate_of_leaf(spatial, &volume, plates, leaf)
-                            .unwrap_or(0)
-                            .min(plates.count().saturating_sub(1))
-                    })
+                    .map(|leaf| crate::plate_layout::plate_of_leaf(spatial, &volume, plates, leaf))
                     .collect();
                 (objects, on_plate)
             })
@@ -5430,6 +5659,7 @@ impl ViewportController {
         let overlay = self
             .repair_marks
             .over(self.overlay.borrow().as_ref(), marks_shown);
+        let overlay = self.with_measure(overlay);
         renderer.set_overlay(overlay.as_ref());
         let hints = (self.session.section() == WorkspaceSection::Supports)
             .then(|| self.hint_marks.borrow().clone())
@@ -7480,7 +7710,7 @@ pub(crate) fn scene_rows(
     plate_count: u32,
     active: u32,
     objects: &[String],
-    on_plate: &[u32],
+    on_plate: &[Option<u32>],
 ) -> (Vec<crate::SceneRow>, Vec<i32>) {
     let mut rows = Vec::with_capacity(plate_count as usize + objects.len());
     let mut row_of = vec![0; objects.len()];
@@ -7496,7 +7726,7 @@ pub(crate) fn scene_rows(
             active: plate == active,
         });
         for (i, name) in objects.iter().enumerate() {
-            if on_plate.get(i).copied().unwrap_or(0) == plate {
+            if on_plate.get(i).copied().flatten() == Some(plate) {
                 row_of[i] = rows.len() as i32;
                 rows.push(crate::SceneRow {
                     plate: false,
@@ -7507,5 +7737,63 @@ pub(crate) fn scene_rows(
             }
         }
     }
+    // What stands past every plate is on none of them (#649): under a heading of
+    // its own, which picks no plate (index -1), and only when there is any.
+    let off: Vec<usize> = (0..objects.len())
+        .filter(|&i| {
+            on_plate
+                .get(i)
+                .copied()
+                .flatten()
+                .is_none_or(|p| p >= plate_count.max(1))
+        })
+        .collect();
+    if !off.is_empty() {
+        rows.push(crate::SceneRow {
+            plate: true,
+            index: -1,
+            text: ctr!("Inspector", "Off the plates").into(),
+            active: false,
+        });
+        for i in off {
+            row_of[i] = rows.len() as i32;
+            rows.push(crate::SceneRow {
+                plate: false,
+                index: i as i32,
+                text: objects[i].as_str().into(),
+                active: false,
+            });
+        }
+    }
     (rows, row_of)
+}
+
+#[cfg(test)]
+mod scene_rows_tests {
+    use super::scene_rows;
+
+    /// An object past every plate is on none: it is listed under a heading
+    /// of its own after the plates, not under the first plate.
+    #[test]
+    fn an_object_past_every_plate_is_listed_off_the_plates() {
+        let names = ["Plate 1".to_owned(), "Plate 2".to_owned()];
+        let objects = ["a".to_owned(), "b".to_owned(), "c".to_owned()];
+        let (rows, row_of) = scene_rows(&names, 2, 0, &objects, &[Some(0), None, Some(1)]);
+        let seen: Vec<(bool, i32)> = rows.iter().map(|r| (r.plate, r.index)).collect();
+        assert_eq!(
+            seen,
+            vec![
+                (true, 0),
+                (false, 0),
+                (true, 1),
+                (false, 2),
+                (true, -1),
+                (false, 1)
+            ]
+        );
+        assert_eq!(row_of, vec![1, 5, 3]);
+        // With every object on a plate, no such heading.
+        let (rows, _) = scene_rows(&names, 2, 0, &objects, &[Some(0), Some(0), Some(1)]);
+        assert!(rows.iter().all(|r| r.index >= 0));
+    }
 }

@@ -50,6 +50,8 @@ pub enum OverlayTint {
     IslandDot = 11,
     /// The paint of the island the camera went to (#538, #542): brighter.
     IslandVisited = 12,
+    /// The Measure tool's points and segments (#652), over everything.
+    Measure = 13,
 }
 
 /// The overlay as a whole: its pieces, each shared so a piece that did not

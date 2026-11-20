@@ -56,8 +56,10 @@ use crate::supports::settings::types::SupportSettings;
 use crate::supports::types::SupportState;
 use crate::three::buffer_geometry::BufferGeometry;
 use crate::three::{Matrix4, Vec3};
-use crate::three_mesh_bvh::{MeshBvh, Side};
-use crate::volume_analysis::islands::types::DetectedIsland;
+use crate::supports::auto_support::resting::{RESTING_LAYERS, rests_on_model};
+pub use crate::supports::auto_support::zone_candidates::KeepOut;
+use crate::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
+use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
 use crate::volume_analysis::islands::use_islands::{
     DerivedIslands, IslandPanelSettings, derive_islands, overhang_region_to_island,
 };
@@ -135,6 +137,9 @@ pub struct PipelineSettings {
     /// a set's own drawing leaves it out and keeps the feet its roots stand
     /// on it with.
     pub raft_apart: bool,
+    /// Where no tip may land (SoulCrafted, #465): a hollow's drain channels,
+    /// in world space.
+    pub keep_out: Vec<KeepOut>,
 }
 
 impl PipelineSettings {
@@ -153,6 +158,7 @@ impl PipelineSettings {
             shaft_style: ShaftStyle::DragonFruit,
             robust_raft_geometry: false,
             raft_apart: false,
+            keep_out: Vec::new(),
         }
     }
 }
@@ -733,10 +739,25 @@ fn run_pipeline(
 
         check()?;
         step(progress, Stage::DeriveIslands, i);
-        let islands = {
+        let mut islands = {
             let _perf = perf::scope("stage:derive-islands");
             derive_islands(&combined, &overhang, &[], &settings.panel)
         };
+        // SoulCrafted (#235): an island that starts on the material of
+        // another part of its model (a figure sunk into its base) is held
+        // by it: it is no island. Overhang regions are judged point by
+        // point, where their candidates are made.
+        if settings.supports.auto_support.zone_rules.is_some() {
+            let rays = BvhMesh {
+                bvh: &bvhs[i],
+                matrix_world: &identity,
+            };
+            let below = RESTING_LAYERS * settings.layer_height_mm;
+            islands.filtered.retain(|island| {
+                island.source == IslandSource::Overhang
+                    || !rests_on_model(rays, island.contact, below)
+            });
+        }
         // The zone rules' stabilization reads the steep regions as islands.
         let steep: Vec<DetectedIsland> = overhang
             .steep_regions
@@ -776,6 +797,7 @@ fn run_pipeline(
                 has_raft,
                 brace_meshes: &brace_meshes,
                 zone: Some(ZonePlanInput {
+                    keep_out: &settings.keep_out,
                     steep: &steep,
                     layer_height_mm: settings.layer_height_mm,
                 }),

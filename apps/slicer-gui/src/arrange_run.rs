@@ -1030,6 +1030,45 @@ fn gather(
 
 /// [`gather`], also when nothing would move.
 fn gather_all(document: &SceneDocument, selection: bool) -> Option<Gathered> {
+    let groups = document.groups();
+    let gathered = gather_bodies(document, selection);
+    gathered.map(|mut g| {
+        join_groups(&mut g, &groups);
+        g
+    })
+}
+
+/// A group of models (#475) is arranged as one body: its members' bodies
+/// joined into its first member's, moved together.
+fn join_groups(gathered: &mut Gathered, groups: &[Vec<NodeId>]) {
+    for group in groups {
+        let members: Vec<usize> = (0..gathered.anchors.len())
+            .filter(|&i| group.contains(&gathered.anchors[i]))
+            .collect();
+        let Some((&first, rest)) = members.split_first() else {
+            continue;
+        };
+        for &i in rest.iter().rev() {
+            let body = gathered.bodies.remove(i);
+            gathered.bodies[first].parts.extend(body.parts);
+            gathered.bodies[first].fixed &= body.fixed;
+            let leaves = gathered.leaves.remove(i);
+            gathered.leaves[first].extend(leaves);
+            let follows = gathered.follows.remove(i);
+            gathered.follows[first].extend(follows);
+            gathered.names.remove(i);
+            gathered.anchors.remove(i);
+            gathered.bare.remove(i);
+        }
+        // Measured as it stands: no forecast of supports for a group.
+        if !rest.is_empty() {
+            gathered.bare[first] = false;
+        }
+    }
+}
+
+/// Every body of the scene, a model with its supports each.
+fn gather_bodies(document: &SceneDocument, selection: bool) -> Option<Gathered> {
     let sessions = document.support_sessions();
     let selected = document.selection_node_ids();
     document.with_scene(|spatial| {

@@ -16,6 +16,8 @@ export struct PrinterTile {
     model: string,
     // What it does: printing a layer of so many, idle, not answering.
     detail: string,
+    // What it is kept for (#631): its resin and note; empty for none.
+    kept: string,
     image: image,
     live: bool,
     // Why there is no picture yet, or what went wrong.
@@ -87,6 +89,12 @@ component TileView inherits Rectangle {
         Text {
             text: root.tile.model == "" ? root.tile.detail : root.tile.model + "  ·  " + root.tile.detail;
             color: Theme.text-muted;
+            font-size: Theme.font-sm;
+            overflow: elide;
+        }
+        if root.tile.kept != "": Text {
+            text: root.tile.kept;
+            color: Theme.text-soft;
             font-size: Theme.font-sm;
             overflow: elide;
         }

@@ -499,6 +499,83 @@ fn the_pictures_of_the_review_are_written_when_asked() {
     }
 }
 
+/// Pictures of the Send to printer card with a printer of the user's own
+/// (#631): folded to its line, open, warning about another profile, and at
+/// the name before sending, in English and Spanish.
+#[test]
+fn the_pictures_of_the_send_card_are_written_when_asked() {
+    let Some(dir) = std::env::var_os(SHOTS_ENV).map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("the folder is made");
+    for language in ["en", "es"] {
+        let dir = dir.clone();
+        on_fresh_slint_thread(move || {
+            let window = MainWindow::new().expect("a main window");
+            slint::select_bundled_translation(language).expect("bundled language");
+            window.show().expect("the window shows");
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(1440.0, 1100.0));
+            window.set_has_scene(true);
+            window.set_workspace_section(WorkspaceSection::Slice);
+            window.set_slice_setup_open(false);
+            let names = |list: &[&str]| {
+                slint::ModelRc::new(slint::VecModel::from(
+                    list.iter()
+                        .map(|name| slint::SharedString::from(*name))
+                        .collect::<Vec<_>>(),
+                ))
+            };
+            window.set_slice_resin_options(names(&["Siraya Tech Fast ABS-like Grey"]));
+            window.set_slice_resin_current_index(0);
+            window.set_slice_export_enabled(true);
+            window.set_slice_send_shown(true);
+            window.set_slice_send_printers(names(&[
+                "Dental · 192.168.1.52",
+                "Minis · 192.168.1.53 · not answering",
+            ]));
+            window.set_slice_send_index(0);
+            window.set_slice_send_own_summary(
+                "ELEGOO Mars 5 Ultra  ·  Siraya Tech Fast ABS-like Grey  ·  Dental only".into(),
+            );
+            window.set_slice_send_own_name("Dental".into());
+            window.set_slice_send_own_reported("Mars 5 Ultra".into());
+            window.set_slice_send_own_printers(names(&[
+                "As it reports: ELEGOO Mars 5 Ultra",
+                "ELEGOO Mars 5 Ultra",
+                "ELEGOO Saturn 4 Ultra",
+            ]));
+            window.set_slice_send_own_resins(names(&[
+                "No resin of its own",
+                "Siraya Tech Fast ABS-like Grey",
+            ]));
+            window.set_slice_send_own_resin_index(1);
+            window.set_slice_send_own_note("Dental only".into());
+            window.set_slice_send_own_can_use(true);
+            window.set_slice_send_mismatch(
+                "This plate is sliced for ELEGOO Saturn 4 Ultra; Dental is set up as ELEGOO Mars 5 Ultra."
+                    .into(),
+            );
+            write(window.window(), &dir, &format!("send-{language}-folded"));
+            window.set_slice_send_own_open(true);
+            write(window.window(), &dir, &format!("send-{language}-open"));
+            window.set_slice_send_own_open(false);
+            window.set_slice_send_use_question(
+                "The plate is sliced for ELEGOO Saturn 4 Ultra. Using ELEGOO Mars 5 Ultra means slicing it again."
+                    .into(),
+            );
+            window.set_slice_send_use_asking(true);
+            write(window.window(), &dir, &format!("send-{language}-asking"));
+            window.set_slice_send_use_asking(false);
+            window.set_slice_send_name("Wolverine".into());
+            window.set_slice_send_name_preview("Wolverine.goo".into());
+            window.set_slice_send_naming(true);
+            write(window.window(), &dir, &format!("send-{language}-naming"));
+        });
+    }
+}
+
 /// Pictures of every printer's camera at once (#643), for 1, 3 and 5
 /// printers: live, still turning on, and failed.
 #[test]
@@ -542,6 +619,11 @@ fn the_pictures_of_the_printer_wall_are_written_when_asked() {
                         "Printing mini.goo · layer 412 of 1463".into()
                     } else {
                         "Idle".into()
+                    },
+                    kept: if i == 1 {
+                        "Siraya Tech Fast ABS-like Grey  ·  Dental only".into()
+                    } else {
+                        Default::default()
                     },
                     image: if i % 3 == 2 { slint::Image::default() } else { picture.clone() },
                     live: i % 3 != 2,

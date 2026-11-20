@@ -36,6 +36,16 @@ pub struct RaftSettings {
     pub show_footprint_border: bool,
     /// mm beyond the raft/model edge.
     pub footprint_border_margin: f64,
+    /// SoulCrafted (#138): a solid raft's holes between the supports, this
+    /// wide, mm; 0 for none.
+    #[serde(default)]
+    pub perforation_mm: f64,
+    /// SoulCrafted (#138): a pad under each support instead of one solid raft.
+    #[serde(default)]
+    pub pads: bool,
+    /// SoulCrafted (#99): tabs off a solid raft's two ends, to lever it off.
+    #[serde(default)]
+    pub peel_tabs: bool,
 }
 
 /// `DEFAULT_RAFT_SETTINGS`.
@@ -52,6 +62,9 @@ pub const DEFAULT_RAFT_SETTINGS: RaftSettings = RaftSettings {
     line_height_mm: 0.6,
     show_footprint_border: true,
     footprint_border_margin: 0.5,
+    perforation_mm: 0.0,
+    pads: false,
+    peel_tabs: false,
 };
 
 impl Default for RaftSettings {

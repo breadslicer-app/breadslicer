@@ -213,6 +213,14 @@ pub(crate) fn wire_viewport_input(
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_measure_toggled(move |on| ctrl.set_measuring(on));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_measure_escape(move || ctrl.measure_escape());
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_toggle_projection_requested(move || {
             remember_projection(&prefs, ctrl.on_toggle_projection())
         });

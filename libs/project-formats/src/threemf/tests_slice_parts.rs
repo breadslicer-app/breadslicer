@@ -104,7 +104,7 @@ fn rewritten(file: &[u8], change: impl Fn(&str, Vec<u8>) -> Option<Vec<u8>>) -> 
     let mut out = ZipWriter::new(Cursor::new(Vec::new()));
     for index in 0..source.len() {
         let mut entry = source.by_index(index).expect("the entry");
-        let name = entry.name().to_string();
+        let name = entry.name().unwrap().into_owned();
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes).expect("the entry reads");
         if let Some(bytes) = change(&name, bytes) {
@@ -304,7 +304,7 @@ fn a_part_that_failed_to_read_counts_as_missing() {
     let mut archive = ZipArchive::new(Cursor::new(&file)).expect("a ZIP");
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).expect("the entry");
-        let name = format!("/{}", entry.name());
+        let name = format!("/{}", entry.name().unwrap());
         if !slices.wants(&name) {
             continue;
         }
