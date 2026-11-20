@@ -9668,3 +9668,78 @@ msgstr "Bloquear: no se elige ni se mueve en la vista"
 msgctxt "SlicePanel"
 msgid "{} hidden model(s) left out of the slice. Show them in the scene panel to print them."
 msgstr "{} modelo(s) oculto(s) quedan fuera del laminado. Mostralos en el panel de escena para imprimirlos."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Joints"
+msgstr "Uniones"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "None"
+msgstr "Ninguna"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pins"
+msgstr "Pernos"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnets"
+msgstr "Imanes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pin shape"
+msgstr "Forma del perno"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Round"
+msgstr "Redondo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Square"
+msgstr "Cuadrado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnet"
+msgstr "Imán"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pin size"
+msgstr "Tamaño del perno"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnet diameter"
+msgstr "Diámetro del imán"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pin depth"
+msgstr "Largo del perno"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnet height"
+msgstr "Alto del imán"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Clearance"
+msgstr "Holgura"
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Joints added: {}."
+msgstr "Uniones agregadas: {}."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Joints left out: {} (too near the edge of the cut, or too deep for the part)."
+msgstr "Uniones que no entran: {} (muy cerca del borde del corte, o muy profundas para la pieza)."

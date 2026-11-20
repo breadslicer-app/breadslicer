@@ -27,6 +27,13 @@
 //!
 //! A model that is not closed is repaired first, on a copy, as Slice asks:
 //! the pieces come from the repaired model.
+//!
+//! **Joints (#109, #442).** The card can add a pin on the part below the
+//! plane and its socket on the part above, or a magnet pocket on each side,
+//! in the middle of each part of the cross-section the cut takes. They are
+//! worked out with the cut, so the card says how many fit before anything
+//! changes; one that does not fit (too near the edge of the cut, or too deep
+//! for the part behind it) is left out and said.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -34,7 +41,10 @@ use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use sc_cut::{Cut, CutError, CutModel, Fit, Outline, Plane, Section};
+use sc_cut::{
+    Cut, CutError, CutModel, Fit, Joint, MAGNET_PRESETS, Outline, PinShape, Plane, Section,
+    add_joints, joint_points,
+};
 use sc_geom::df_supports::is_any_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::RepairPasses;
@@ -119,6 +129,89 @@ impl CutSettings {
             c[k] = mid + (c[k] - mid) * size / old;
         }
         corners
+    }
+}
+
+/// The joints the card asks for (#109, #442), each kind keeping its own
+/// sizes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct JointSettings {
+    /// 0 none, 1 pin and socket, 2 magnet pockets.
+    pub(crate) kind: u8,
+    pub(crate) square: bool,
+    /// Pin: its size, depth and clearance, mm.
+    pub(crate) pin: [f64; 3],
+    /// Magnet: its diameter, height and clearance, mm.
+    pub(crate) magnet: [f64; 3],
+}
+
+impl Default for JointSettings {
+    fn default() -> Self {
+        let (
+            Joint::Pin {
+                size_mm,
+                depth_mm,
+                clearance_mm,
+                ..
+            },
+            Joint::Magnet {
+                diameter_mm,
+                height_mm,
+                clearance_mm: magnet_clearance,
+            },
+        ) = (Joint::default_pin(), Joint::default_magnet())
+        else {
+            unreachable!("the defaults are a pin and a magnet")
+        };
+        Self {
+            kind: 0,
+            square: false,
+            pin: [size_mm, depth_mm, clearance_mm],
+            magnet: [diameter_mm, height_mm, magnet_clearance],
+        }
+    }
+}
+
+impl JointSettings {
+    /// The joint to make, if any.
+    pub(crate) fn joint(&self) -> Option<Joint> {
+        match self.kind {
+            1 => Some(Joint::Pin {
+                shape: if self.square {
+                    PinShape::Square
+                } else {
+                    PinShape::Round
+                },
+                size_mm: self.pin[0],
+                depth_mm: self.pin[1],
+                clearance_mm: self.pin[2],
+            }),
+            2 => Some(Joint::Magnet {
+                diameter_mm: self.magnet[0],
+                height_mm: self.magnet[1],
+                clearance_mm: self.magnet[2],
+            }),
+            _ => None,
+        }
+    }
+
+    /// The sizes of the kind on show: size, depth and clearance.
+    fn shown(&self) -> [f64; 3] {
+        if self.kind == 2 {
+            self.magnet
+        } else {
+            self.pin
+        }
+    }
+
+    /// The magnet preset the sizes are, or -1.
+    fn preset(&self) -> i32 {
+        MAGNET_PRESETS
+            .iter()
+            .position(|&(d, h)| {
+                (d - self.magnet[0]).abs() < 1e-6 && (h - self.magnet[1]).abs() < 1e-6
+            })
+            .map_or(-1, |i| i as i32)
     }
 }
 
@@ -492,7 +585,8 @@ struct Ready {
 /// What the worker hands back.
 enum Worked {
     Ready(Result<Ready, String>),
-    Trial(Result<Cut, CutError>),
+    /// The cut, with how many joints it got and how many were left out.
+    Trial(Result<(Cut, [usize; 2]), CutError>),
 }
 
 type Slot = Arc<Mutex<Option<(u64, Worked)>>>;
@@ -510,6 +604,8 @@ struct Shown {
     trial: Option<Arc<Cut>>,
     /// The worker job working it out, or 0.
     trial_job: u64,
+    /// The joints the trial got and those left out (#109, #442).
+    joints: [usize; 2],
 }
 
 pub(crate) struct CutRun {
@@ -519,6 +615,8 @@ pub(crate) struct CutRun {
     ctrl: Rc<ViewportController>,
     open: Cell<bool>,
     settings: Cell<CutSettings>,
+    /// The joints across the cut (#109, #442).
+    joint: Cell<JointSettings>,
     target: RefCell<Option<Target>>,
     ready: RefCell<Option<Arc<Ready>>>,
     /// The mesh being made ready.
@@ -582,6 +680,7 @@ impl CutRun {
                     bounded: false,
                     corners: rect_corners([0.0; 2], [10.0; 2]),
                 }),
+                joint: Cell::new(JointSettings::default()),
                 target: RefCell::new(None),
                 ready: RefCell::new(None),
                 preparing: RefCell::new(None),
@@ -719,6 +818,52 @@ impl CutRun {
         ui.set_cut_depth(d as f32);
         ui.set_cut_offset_u(ou as f32);
         ui.set_cut_offset_v(ov as f32);
+        let j = self.joint.get();
+        let [size, depth, clearance] = j.shown();
+        ui.set_cut_joint_kind(i32::from(j.kind));
+        ui.set_cut_joint_square(j.square);
+        ui.set_cut_joint_size(size as f32);
+        ui.set_cut_joint_depth(depth as f32);
+        ui.set_cut_joint_clearance(clearance as f32);
+        ui.set_cut_joint_preset(j.preset());
+    }
+
+    /// A joint setting (#109, #442): 8 kind (0 none, 1 pin, 2 magnet), 9 a
+    /// square pin (0/1), 10 size, 11 depth, 12 clearance, 13 a magnet
+    /// preset. The cut is worked out again with it.
+    fn on_joint_option(&self, code: i32, value: f64) {
+        let mut j = self.joint.get();
+        let sizes = if j.kind == 2 {
+            &mut j.magnet
+        } else {
+            &mut j.pin
+        };
+        match code {
+            8 => j.kind = (value.round() as u8).min(2),
+            9 => j.square = value != 0.0,
+            10 => sizes[0] = value.max(0.1),
+            11 => sizes[1] = value.max(0.1),
+            12 => sizes[2] = value.clamp(0.0, 2.0),
+            13 => {
+                if let Some(&(d, h)) = MAGNET_PRESETS.get(value.round() as usize) {
+                    j.magnet[0] = d;
+                    j.magnet[1] = h;
+                }
+            }
+            _ => return,
+        }
+        if j == self.joint.get() {
+            return;
+        }
+        self.joint.set(j);
+        self.push_settings();
+        if let Some(shown) = self.shown.borrow_mut().as_mut() {
+            shown.trial = None;
+            shown.trial_job = 0;
+            shown.joints = [0, 0];
+        }
+        self.describe();
+        self.schedule_trial();
     }
 
     /// 0 height, 1 tilt about x, 2 tilt about y, 3 bounded (0/1), 4 width,
@@ -727,6 +872,10 @@ impl CutRun {
     fn on_option(&self, code: i32, value: f32) {
         if code == -1 {
             self.start_trial();
+            return;
+        }
+        if (8..=13).contains(&code) {
+            self.on_joint_option(code, f64::from(value));
             return;
         }
         let mut s = self.settings.get();
@@ -906,6 +1055,7 @@ impl CutRun {
             fills,
             trial: None,
             trial_job: 0,
+            joints: [0, 0],
         });
         self.show_overlay(&target, &world, true);
         self.describe();
@@ -942,10 +1092,12 @@ impl CutRun {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_cut_working(true);
         }
+        let joint = self.joint.get().joint();
         std::thread::spawn(move || {
-            let cut =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| section.cut(&chosen)))
-                    .unwrap_or_else(|payload| Err(CutError::Failed(panic_message(&payload))));
+            let cut = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                with_joints(&section, &chosen, joint)
+            }))
+            .unwrap_or_else(|payload| Err(CutError::Failed(panic_message(&payload))));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((id, Worked::Trial(cut)));
             let _ = ui.upgrade_in_event_loop(|ui| ui.invoke_cut_worked());
         });
@@ -994,9 +1146,10 @@ impl CutRun {
                 }
             }
             Worked::Trial(cut) => match cut {
-                Ok(cut) => {
+                Ok((cut, joints)) => {
                     if let Some(shown) = self.shown.borrow_mut().as_mut() {
                         shown.trial = Some(Arc::new(cut));
+                        shown.joints = joints;
                     }
                     self.redraw();
                     self.describe();
@@ -1298,6 +1451,20 @@ impl CutRun {
                 1 => ctr!("CutRun", "It leaves one piece.").to_string(),
                 n => ctr!("CutRun", "It leaves {} pieces.", n).to_string(),
             });
+            // The joints (#109, #442).
+            let [made, left] = shown.joints;
+            if made > 0 {
+                line.push(' ');
+                line.push_str(&ctr!("CutRun", "Joints added: {}.", made));
+            }
+            if left > 0 {
+                line.push(' ');
+                line.push_str(&ctr!(
+                    "CutRun",
+                    "Joints left out: {} (too near the edge of the cut, or too deep for the part).",
+                    left
+                ));
+            }
         }
         line.into()
     }
@@ -1704,3 +1871,26 @@ fn held_pieces(pieces: &[IndexedMesh], world: &Affine, tops: &[[f64; 3]]) -> Vec
 #[cfg(test)]
 #[path = "tests_cut_run.rs"]
 mod tests;
+
+/// The cut of `section` at the pieces `chosen` takes, with `joint` at the
+/// middle of each of them (#109, #442), and how many joints it got and how
+/// many were left out. A joint that the booleans could not make leaves the
+/// cut as it is and is counted out.
+fn with_joints(
+    section: &Section,
+    chosen: &[bool],
+    joint: Option<Joint>,
+) -> Result<(Cut, [usize; 2]), CutError> {
+    let mut cut = section.cut(chosen)?;
+    let Some(joint) = joint.filter(|_| cut.pieces.len() >= 2) else {
+        return Ok((cut, [0, 0]));
+    };
+    let at = joint_points(section, chosen);
+    match add_joints(&cut.pieces, section.plane(), &at, joint) {
+        Ok(joined) => {
+            cut.pieces = joined.pieces;
+            Ok((cut, [joined.made, joined.skipped]))
+        }
+        Err(_) => Ok((cut, [0, at.len()])),
+    }
+}

@@ -1013,6 +1013,14 @@ export component MainWindow inherits Window {
     in property <string> cut-status;
     in property <string> cut-warning;
     in property <bool> cut-can-cut: false;
+    // The joints across a cut (#109, #442): 0 none, 1 pin, 2 magnet; the
+    // sizes of the kind on show; the magnet preset (-1: none of them).
+    in property <int> cut-joint-kind: 0;
+    in property <bool> cut-joint-square: false;
+    in property <float> cut-joint-size: 3;
+    in property <float> cut-joint-depth: 3;
+    in property <float> cut-joint-clearance: 0.15;
+    in property <int> cut-joint-preset: -1;
     // Opens the tool, or closes it when open (the rail button, K).
     callback cut-toggle-requested();
     callback cut-close-requested();
@@ -2777,6 +2785,12 @@ export component MainWindow inherits Window {
                                     status: root.cut-status;
                                     warning: root.cut-warning;
                                     can-cut: root.cut-can-cut;
+                                    joint-kind: root.cut-joint-kind;
+                                    joint-square: root.cut-joint-square;
+                                    joint-size: root.cut-joint-size;
+                                    joint-depth: root.cut-joint-depth;
+                                    joint-clearance: root.cut-joint-clearance;
+                                    joint-preset: root.cut-joint-preset;
                                     option-changed(code, value) => {
                                         root.cut-option-changed(code, value);
                                     }

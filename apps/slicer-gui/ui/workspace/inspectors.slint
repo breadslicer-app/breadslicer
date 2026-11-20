@@ -837,8 +837,17 @@ export component CutCard inherits Card {
     in property <string> status;
     in property <string> warning;
     in property <bool> can-cut;
+    // The joints across the cut (#109, #442): 0 none, 1 pin, 2 magnet.
+    in property <int> joint-kind;
+    in property <bool> joint-square;
+    in property <float> joint-size;
+    in property <float> joint-depth;
+    in property <float> joint-clearance;
+    in property <int> joint-preset: -1;
     // 0 height, 1 tilt about x, 2 tilt about y, 3 bounded (0/1), 4 width,
-    // 5 depth, 6 offset along the plane, 7 offset across it.
+    // 5 depth, 6 offset along the plane, 7 offset across it; the joints:
+    // 8 kind, 9 square (0/1), 10 size, 11 depth, 12 clearance, 13 magnet
+    // preset.
     callback option-changed(int, float);
     callback apply();
     callback close();
@@ -937,6 +946,73 @@ export component CutCard inherits Card {
         enabled: root.enabled;
         committed(v) => {
             root.option-changed(7, v);
+        }
+    }
+    // Joints across the cut (#109, #442), in the middle of each part cut.
+    LabeledRow {
+        label: @tr("Inspector" => "Joints");
+        Segmented {
+            width: 190px;
+            options: [@tr("Inspector" => "None"), @tr("Inspector" => "Pins"), @tr("Inspector" => "Magnets")];
+            current: root.joint-kind;
+            enabled: root.enabled;
+            picked(i) => {
+                root.option-changed(8, i);
+            }
+        }
+    }
+    if root.joint-kind == 1: LabeledRow {
+        label: @tr("Inspector" => "Pin shape");
+        Segmented {
+            width: 190px;
+            options: [@tr("Inspector" => "Round"), @tr("Inspector" => "Square")];
+            current: root.joint-square ? 1 : 0;
+            enabled: root.enabled;
+            picked(i) => {
+                root.option-changed(9, i);
+            }
+        }
+    }
+    if root.joint-kind == 2: LabeledRow {
+        label: @tr("Inspector" => "Magnet");
+        Segmented {
+            width: 190px;
+            options: ["2 × 1", "3 × 2", "5 × 2"];
+            current: root.joint-preset;
+            enabled: root.enabled;
+            picked(i) => {
+                root.option-changed(13, i);
+            }
+        }
+    }
+    if root.joint-kind != 0: NumberField {
+        label: root.joint-kind == 1 ? @tr("Inspector" => "Pin size") : @tr("Inspector" => "Magnet diameter");
+        unit: "mm";
+        decimals: 2;
+        value: root.joint-size;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(10, v);
+        }
+    }
+    if root.joint-kind != 0: NumberField {
+        label: root.joint-kind == 1 ? @tr("Inspector" => "Pin depth") : @tr("Inspector" => "Magnet height");
+        unit: "mm";
+        decimals: 2;
+        value: root.joint-depth;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(11, v);
+        }
+    }
+    if root.joint-kind != 0: NumberField {
+        label: @tr("Inspector" => "Clearance");
+        unit: "mm";
+        decimals: 2;
+        value: root.joint-clearance;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(12, v);
         }
     }
     if root.status != "": Note {

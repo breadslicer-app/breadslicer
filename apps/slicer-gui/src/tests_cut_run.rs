@@ -148,6 +148,75 @@ fn a_cut_leaves_two_pieces_in_one_undo_step() {
     });
 }
 
+/// The volumes of the scene's pieces, lowest piece first.
+fn piece_volumes(f: &Fixture) -> Vec<f64> {
+    let mut pieces: Vec<(f64, f64)> = f
+        .document
+        .with_scene(|spatial| {
+            (0..)
+                .map_while(|i| spatial.leaf_id_at_index(i))
+                .filter_map(|id| {
+                    let mesh = spatial.graph().leaf_mesh_arc(id)?;
+                    let low = mesh
+                        .vertices()
+                        .iter()
+                        .map(|v| v.coords()[2])
+                        .fold(f32::INFINITY, f32::min);
+                    Some((f64::from(low), sc_cut::volume(mesh)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    pieces.sort_by(|a, b| a.0.total_cmp(&b.0));
+    pieces.into_iter().map(|p| p.1).collect()
+}
+
+/// #109, #442: pins put a pin on the part below and a socket in the part
+/// above; magnets a pocket in each. The card says so before the cut, and
+/// the cut is one Undo step as any.
+#[test]
+fn a_cut_with_pins_or_magnets_joins_the_parts() {
+    on_fresh_slint_thread(|| {
+        let f = fixture(cube());
+        opened(&f);
+        f.run.on_option(8, 1.0);
+        assert_eq!(f.window.get_cut_joint_kind(), 1);
+        f.run.on_option(-1, 0.0);
+        land(&f.run);
+        assert!(
+            f.window.get_cut_status().contains("Joints added: 1"),
+            "{}",
+            f.window.get_cut_status()
+        );
+        f.run.apply();
+        assert_eq!(leaves(&f), 2);
+        let half = 4000.0;
+        let v = piece_volumes(&f);
+        assert!(v[0] > half + 15.0, "the pin is on the part below: {v:?}");
+        assert!(v[1] < half - 15.0, "the socket is in the part above: {v:?}");
+        assert!(f.document.undo().unwrap());
+        assert_eq!(leaves(&f), 1);
+
+        // Magnets: a pocket on each side, the 5 x 2 mm preset. The model
+        // is ready already: the tool opens on it at once.
+        f.document.set_selection(Selection::One(LeafId(f.leaf)));
+        f.run.toggle();
+        assert!(f.window.get_cut_open());
+        f.run.on_option(8, 2.0);
+        f.run.on_option(13, 2.0);
+        assert_eq!(f.window.get_cut_joint_size(), 5.0);
+        assert_eq!(f.window.get_cut_joint_preset(), 2);
+        f.run.on_option(-1, 0.0);
+        land(&f.run);
+        f.run.apply();
+        let v = piece_volumes(&f);
+        let pocket = std::f64::consts::PI * 2.6 * 2.6 * 2.1;
+        for piece in &v {
+            assert!((half - pocket - piece).abs() < pocket * 0.05, "{v:?}");
+        }
+    });
+}
+
 #[test]
 fn a_click_on_a_part_of_the_cut_leaves_it_whole() {
     on_fresh_slint_thread(|| {
