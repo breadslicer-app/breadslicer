@@ -847,6 +847,8 @@ async fn save_to_target(
         // no scene means nothing to write.
         return SaveOutcome::NotSaved;
     };
+    // A save by hand draws the scene's thumbnail (#203); autosave does not.
+    let bundle = bundle.with_thumbnail(doc);
 
     let supports_as_mesh = bundle.supports_as_mesh();
     let paint_left_out = bundle.leaves_paint_out();

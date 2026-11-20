@@ -122,6 +122,7 @@ pub(crate) fn to_file(
     settings: Option<Vec<u8>>,
     supports: &[SupportDocument],
     hollows: &[HollowDocument],
+    thumbnail: Option<Vec<u8>>,
 ) -> Result<bf::BreadFile, WriteBreadProjectError> {
     let emptied: HashSet<NodeId> = supports.iter().map(|s| s.leaf).collect();
     let mut encoder = Encoder {
@@ -145,6 +146,21 @@ pub(crate) fn to_file(
     let node = |id: NodeId, missing: WriteBreadProjectError| {
         encoder.nodes.get(&id).copied().ok_or(missing)
     };
+    // What each support leaf shows now, for a reader that does not rebuild
+    // supports from their documents (#204). Its own stored mesh stays empty.
+    let support_previews = supports
+        .iter()
+        .filter_map(|s| {
+            let mesh = scene.leaf_mesh_arc(s.leaf)?;
+            if mesh.faces().is_empty() {
+                return None;
+            }
+            Some(bf::SupportPreview {
+                leaf: encoder.nodes.get(&s.leaf).copied()?,
+                mesh: mesh_out(mesh),
+            })
+        })
+        .collect();
     let supports = supports
         .iter()
         .map(|s| {
@@ -181,8 +197,8 @@ pub(crate) fn to_file(
         settings,
         supports,
         hollows,
-        thumbnail: None,
-        support_previews: Vec::new(),
+        thumbnail,
+        support_previews,
         surface,
     })
 }

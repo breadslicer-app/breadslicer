@@ -163,3 +163,28 @@ fn a_renderer_with_no_frame_to_give_leaves_the_file_without_previews() {
     assert!(previews_from(&state).is_none());
     assert_eq!(state.borrow().preview_calls.len(), 1);
 }
+
+/// #203: the `.bread` thumbnail is one square frame of the asked side, kept
+/// whole (alpha included), and none without models or a frame of that size.
+#[test]
+fn the_thumbnail_is_one_square_frame_of_its_side() {
+    use crate::print_file_preview::render_thumbnail;
+    let state = state_with_a_scene();
+    state
+        .borrow_mut()
+        .next_preview_frames
+        .extend([Ok(Some(frame(6, 6))), Ok(Some(frame(6, 4)))]);
+    let mut renderer = MockRenderer::new(state.clone());
+    let rgba = render_thumbnail(&mut renderer, &scene(), NO_PRINTER_BUILD_VOLUME, 6)
+        .expect("a frame came back");
+    assert_eq!(rgba, frame(6, 6).rgba);
+    assert!(
+        render_thumbnail(&mut renderer, &scene(), NO_PRINTER_BUILD_VOLUME, 6).is_none(),
+        "a frame of another size is no thumbnail"
+    );
+    let calls = &state.borrow().preview_calls;
+    assert_eq!((calls[0].width, calls[0].height), (6, 6));
+    let empty = MockRendererState::new_shared();
+    let mut renderer = MockRenderer::new(empty);
+    assert!(render_thumbnail(&mut renderer, &scene(), NO_PRINTER_BUILD_VOLUME, 6).is_none());
+}

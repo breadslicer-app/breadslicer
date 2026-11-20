@@ -234,18 +234,24 @@ pub(crate) fn parse_settings(
 ///
 /// The container is written in one pass, so `progress` reports the serialize
 /// phase as begun and the compress phase as done.
+///
+/// `thumbnail` is a PNG of the scene as it is now (#203), or `None`: never
+/// the one a file was opened with. Each support leaf's current mesh goes in
+/// as its preview (#204).
+#[allow(clippy::too_many_arguments)]
 pub fn write_bread_project_with_progress<W: Write>(
     scene: &Scene,
     payload: &ProjectPayload,
     embed: EmbedProfiles,
     supports: &[SupportDocument],
     hollows: &[HollowDocument],
+    thumbnail: Option<Vec<u8>>,
     writer: &mut W,
     mut progress: impl FnMut(WriteProgress),
 ) -> Result<(), WriteBreadProjectError> {
     progress(WriteProgress::Serialize { done: 0, total: 1 });
     let settings = serialize_settings(payload, embed)?.into_bytes();
-    let file = bread_file::to_file(scene, Some(settings), supports, hollows)?;
+    let file = bread_file::to_file(scene, Some(settings), supports, hollows, thumbnail)?;
     progress(WriteProgress::Serialize { done: 1, total: 1 });
     bread_format::write_file(&file, writer).map_err(WriteBreadProjectError::Container)?;
     progress(WriteProgress::Compress { done: 1, total: 1 });

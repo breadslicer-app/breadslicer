@@ -200,6 +200,8 @@ pub(crate) struct SaveBundle {
     supports_as_mesh: Option<SupportsAsMesh>,
     /// `.bread` only: how the models hollowed here were made (#161).
     hollows: Vec<HollowDocument>,
+    /// `.bread` only: a PNG of the scene as it is now (#203).
+    thumbnail: Option<Vec<u8>>,
     target: PathBuf,
 }
 
@@ -243,12 +245,22 @@ pub(crate) fn prepare_save(
             supports,
             supports_as_mesh,
             hollows,
+            thumbnail: None,
             target,
         }
     })
 }
 
 impl SaveBundle {
+    /// The bundle with the scene's thumbnail drawn now (#203), for a
+    /// `.bread`; a 3MF keeps none.
+    pub(crate) fn with_thumbnail(mut self, doc: &SceneDocument) -> Self {
+        if matches!(self.format, ProjectFormat::Bread) {
+            self.thumbnail = doc.thumbnail();
+        }
+        self
+    }
+
     /// Why the scene's supports go into a `.bread` as a mesh, or `None` when
     /// they are kept as data or there are none.
     pub(crate) fn supports_as_mesh(&self) -> Option<SupportsAsMesh> {
@@ -350,6 +362,7 @@ fn encode_bundle_into<W: Write + Seek>(
             EmbedProfiles::Yes,
             &bundle.supports,
             &bundle.hollows,
+            bundle.thumbnail.clone(),
             out,
             report,
         )?,

@@ -86,7 +86,7 @@ fn scene() -> Scene {
 }
 
 fn round_trip(scene: &Scene, supports: &[SupportDocument], hollows: &[HollowDocument]) -> Opened {
-    let file = to_file(scene, None, supports, hollows).expect("the scene converts");
+    let file = to_file(scene, None, supports, hollows, None).expect("the scene converts");
     let bytes = bread_format::write_file(&file, Vec::new()).expect("the file writes");
     from_file(
         bread_format::read_file(bytes.as_slice()).expect("the file reads"),
@@ -107,12 +107,12 @@ fn root_leaf(scene: &mut Scene, mesh: Arc<IndexedMesh>) -> NodeId {
 #[test]
 fn a_scene_comes_back_with_its_graph_and_shared_meshes() {
     let scene = scene();
-    let file = to_file(&scene, None, &[], &[]).unwrap();
+    let file = to_file(&scene, None, &[], &[], None).unwrap();
     assert_eq!(file.scene.meshes.len(), 2, "each mesh is stored once");
     let back = round_trip(&scene, &[], &[]).scene;
 
     // The conversion is canonical, so equal files mean equal scenes.
-    assert_eq!(to_file(&back, None, &[], &[]).unwrap(), file);
+    assert_eq!(to_file(&back, None, &[], &[], None).unwrap(), file);
     assert_eq!(back.meta(), scene.meta());
     let names = |s: &Scene| {
         s.roots()
@@ -176,7 +176,7 @@ fn a_scene_with_csg_is_refused() {
         .unwrap();
     scene.add_root(csg).unwrap();
     assert!(matches!(
-        to_file(&scene, None, &[], &[]),
+        to_file(&scene, None, &[], &[], None),
         Err(WriteBreadProjectError::Csg)
     ));
 }
@@ -204,9 +204,21 @@ fn supports_come_back_on_their_model_with_an_empty_leaf() {
         document: b"{}".to_vec(),
     }];
 
-    let file = to_file(&scene, None, &supports, &[]).unwrap();
+    let file = to_file(&scene, None, &supports, &[], None).unwrap();
     assert_eq!(file.scene.meshes.len(), 2, "the model and the empty leaf");
     assert!(file.scene.mesh_resources.is_empty());
+    // What the leaf shows goes in as its preview (#204), in its own space.
+    let [preview] = file.support_previews.as_slice() else {
+        panic!("one preview");
+    };
+    assert_eq!(preview.leaf, 1);
+    assert_eq!(preview.mesh.triangles.len(), unit_cube_mesh().faces().len());
+    assert!(file.thumbnail.is_none());
+    // A thumbnail handed in is the file's (#203), and the file still writes.
+    let png = vec![0x89, b'P', b'N', b'G', 1, 2, 3];
+    let with = to_file(&scene, None, &supports, &[], Some(png.clone())).unwrap();
+    assert_eq!(with.thumbnail, Some(png));
+    bread_format::write_file(&file, Vec::new()).expect("the previews are accepted");
 
     let back = round_trip(&scene, &supports, &[]);
     let [support] = back.supports.as_slice() else {
@@ -237,7 +249,7 @@ fn supports_whose_model_is_gone_are_refused() {
         document: Vec::new(),
     }];
     assert!(matches!(
-        to_file(&scene, None, &supports, &[]),
+        to_file(&scene, None, &supports, &[], None),
         Err(WriteBreadProjectError::SupportModelMissing)
     ));
 }
@@ -257,7 +269,7 @@ fn a_hollow_comes_back_with_its_original() {
         version: 3,
         document: b"settings and drains".to_vec(),
     }];
-    let file = to_file(&scene, None, &[], &hollows).unwrap();
+    let file = to_file(&scene, None, &[], &hollows, None).unwrap();
     assert_eq!(
         file.scene.meshes.len(),
         2,
@@ -305,7 +317,7 @@ fn paint_made_on_another_mesh_is_left_out_and_noted() {
     let mut scene = Scene::new();
     let leaf = root_leaf(&mut scene, Arc::new(cuboid_with_z_tunnel()));
     paint(&mut scene, leaf, PaintKind::Detail, 1..5);
-    let mut file = to_file(&scene, None, &[], &[]).unwrap();
+    let mut file = to_file(&scene, None, &[], &[], None).unwrap();
     // Another fingerprint: the paint was made on some other mesh.
     file.surface[0].document[10] ^= 1;
     let back = from_file(file, Drafts::default()).unwrap();
@@ -319,7 +331,7 @@ fn paint_made_on_another_mesh_is_left_out_and_noted() {
 
 #[test]
 fn the_thumbnail_is_read_when_it_comes_first() {
-    let mut file = to_file(&scene(), None, &[], &[]).unwrap();
+    let mut file = to_file(&scene(), None, &[], &[], None).unwrap();
     assert_eq!(
         read_bread_thumbnail(
             bread_format::write_file(&file, Vec::new())
@@ -357,7 +369,7 @@ fn a_file_saved_before_211_opens_with_its_supports_and_hollows() {
     let mut scene = Scene::new();
     root_leaf(&mut scene, Arc::new(cuboid_with_z_tunnel()));
     root_leaf(&mut scene, Arc::new(unit_cube_mesh()));
-    let file = to_file(&scene, None, &[], &[]).unwrap();
+    let file = to_file(&scene, None, &[], &[], None).unwrap();
 
     let original = bread_format::Mesh {
         meta: None,

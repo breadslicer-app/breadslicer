@@ -75,6 +75,7 @@ fn write(scene: &Scene, payload: &ProjectPayload, supports: &[SupportDocument]) 
         EmbedProfiles::Yes,
         supports,
         &[],
+        None,
         &mut bytes,
         |_| {},
     )
@@ -120,6 +121,7 @@ fn a_bread_project_opens_with_its_hollows() {
         EmbedProfiles::Yes,
         &[],
         &hollows,
+        None,
         &mut bytes,
         |_| {},
     )
@@ -197,6 +199,7 @@ fn references_alone_are_written_without_embedding() {
         EmbedProfiles::No,
         &[],
         &[],
+        None,
         &mut bytes,
         |_| {},
     )
@@ -234,6 +237,7 @@ fn settings_of_a_newer_version_open_the_scene_as_a_project_without_them() {
         Some(b"version = 99\nfuture = true\n".to_vec()),
         &[],
         &[],
+        None,
     )
     .unwrap();
     let bytes = bread_format::write_file(&file, Vec::new()).unwrap();
@@ -258,6 +262,7 @@ fn a_profile_that_is_not_text_is_refused() {
         EmbedProfiles::Yes,
         &[],
         &[],
+        None,
         &mut Vec::new(),
         |_| {},
     )

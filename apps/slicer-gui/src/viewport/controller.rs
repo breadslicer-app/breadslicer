@@ -1295,6 +1295,37 @@ impl ViewportController {
     ///
     /// `None` when the format carries no previews, when no scene is loaded, or
     /// when the device cannot draw them.
+    /// Lets the document draw its `.bread` thumbnail through this window's
+    /// renderer (#203).
+    pub(crate) fn install_thumbnailer(self: &Rc<Self>) {
+        let me = Rc::downgrade(self);
+        self.session
+            .document()
+            .set_thumbnailer(Rc::new(move || me.upgrade()?.thumbnail_png()));
+    }
+
+    /// The `.bread` thumbnail: the whole scene from the previews' camera,
+    /// 256 x 256 (#203).
+    pub(crate) fn thumbnail_png(&self) -> Option<Vec<u8>> {
+        const SIDE: u32 = 256;
+        let build_volume = self.build_volume();
+        let mut cell = self.render.renderer_cell().borrow_mut();
+        let renderer = cell.as_mut()?;
+        let rgba = self
+            .session
+            .document()
+            .with_scene(|spatial| {
+                print_file_preview::render_thumbnail(
+                    renderer.as_mut(),
+                    spatial.graph(),
+                    build_volume,
+                    SIDE,
+                )
+            })
+            .flatten()?;
+        thumbnail_png_of(&rgba, SIDE)
+    }
+
     pub(crate) fn print_file_previews(&self, format: PrinterFileFormat) -> Option<PrintPreviews> {
         // TODO: this draws 2 frames and waits for the GPU to hand them back,
         // all on the UI thread, so the window stops repainting for as long as
@@ -6317,6 +6348,16 @@ impl ViewportController {
         }
         self.on_paint();
     }
+}
+
+/// `rgba`, a `side` x `side` picture, as a PNG (#203).
+fn thumbnail_png_of(rgba: &[u8], side: u32) -> Option<Vec<u8>> {
+    use image::ImageEncoder;
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(rgba, side, side, image::ExtendedColorType::Rgba8)
+        .ok()?;
+    Some(png)
 }
 
 /// The colour of painted faces, from the theme; its alpha is how much it

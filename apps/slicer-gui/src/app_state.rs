@@ -688,6 +688,7 @@ impl AppState {
             &self.prefs,
         ));
         ctrl.register_document_listener();
+        ctrl.install_thumbnailer();
         crate::startup_timing::mark("viewport controller");
         // Bus listeners run on `update` only, so the window gets the current
         // build volume here, and the subscription below delivers each later

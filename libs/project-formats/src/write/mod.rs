@@ -84,9 +84,16 @@ where
         // A `.bread` never stores slices. Called through here it stores no
         // support documents either, so support leaves keep their meshes; a
         // caller with supports as data uses `write_bread_project_with_progress`.
-        ProjectFileType::Bread => {
-            write_bread_project_with_progress(scene, payload, embed, &[], &[], writer, progress)
-                .map_err(WriteProjectError::Bread)
-        }
+        ProjectFileType::Bread => write_bread_project_with_progress(
+            scene,
+            payload,
+            embed,
+            &[],
+            &[],
+            None,
+            writer,
+            progress,
+        )
+        .map_err(WriteProjectError::Bread),
     }
 }

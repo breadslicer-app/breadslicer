@@ -399,6 +399,9 @@ pub(crate) struct SceneDocument {
     /// Puts back what a live preview shows (the Orient tool's options,
     /// #182), while one is up.
     live_preview: RefCell<Option<Rc<dyn Fn()>>>,
+    /// Draws the scene as a `.bread` thumbnail (#203): installed by the
+    /// window's viewport, which holds the renderer.
+    thumbnailer: RefCell<Option<Rc<dyn Fn() -> Option<Vec<u8>>>>>,
     /// Whether each stored mesh slices, for the Transform tab's MESH CHECK
     /// card.
     mesh_check: MeshCheck,
@@ -567,6 +570,7 @@ impl SceneDocument {
             support_follow: Cell::new(None),
             hollows: Rc::default(),
             live_preview: RefCell::new(None),
+            thumbnailer: RefCell::new(None),
             mesh_check: MeshCheck::default(),
             paint_report: RefCell::new(Vec::new()),
         })
@@ -577,6 +581,18 @@ impl SceneDocument {
     /// pointer (#182). `restore` puts back what the history has; Undo, Redo
     /// and a save run it first, so neither the history nor a file ever takes
     /// the preview for the scene.
+    /// Installs what draws the `.bread` thumbnail (#203).
+    pub(crate) fn set_thumbnailer(&self, draw: Rc<dyn Fn() -> Option<Vec<u8>>>) {
+        *self.thumbnailer.borrow_mut() = Some(draw);
+    }
+
+    /// A PNG of the scene as it is now, for the `.bread` thumbnail (#203);
+    /// `None` without a window to draw it, or when it cannot be drawn.
+    pub(crate) fn thumbnail(&self) -> Option<Vec<u8>> {
+        let draw = self.thumbnailer.borrow().clone()?;
+        draw()
+    }
+
     pub(crate) fn set_live_preview(&self, restore: Option<Rc<dyn Fn()>>) {
         *self.live_preview.borrow_mut() = restore;
     }
