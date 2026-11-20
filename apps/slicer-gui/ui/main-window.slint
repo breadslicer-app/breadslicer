@@ -332,6 +332,9 @@ export component MainWindow inherits Window {
     callback support-area-brush-edited(float);
     callback support-area-fill();
     callback support-area-clear();
+    // The supports picked routed again (#377): on their own, or hung from
+    // the nearest.
+    callback support-picked-reroute(bool);
     in property <[ZoneRow]> support-zone-rows;
     in property <[string]> support-zone-size-names;
     in property <float> support-zone-angle;
@@ -3124,6 +3127,10 @@ export component MainWindow inherits Window {
                                     area-fill => {
                                         root.support-area-fill();
                                     }
+                                    picked-reroute(own) => {
+                                        root.support-picked-reroute(own);
+                                    }
+                                    picked-count: root.support-picked-count;
                                     area-clear => {
                                         root.support-area-clear();
                                     }

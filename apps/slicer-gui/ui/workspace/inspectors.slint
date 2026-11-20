@@ -2167,6 +2167,9 @@ export component SupportsInspector inherits VerticalLayout {
     callback area-brush-edited(float);
     callback area-fill();
     callback area-clear();
+    // The supports picked routed again (#377), and how many there are.
+    callback picked-reroute(bool);
+    in property <int> picked-count;
     in property <[int]> shape-choices;
     in property <[int]> shape-choice-defaults;
     in property <[string]> bracing-presets;
@@ -2361,6 +2364,24 @@ export component SupportsInspector inherits VerticalLayout {
         }
         if root.tool == 3: Note {
             text: @tr("Inspector" => "Drag a support by its tip over the model; it is routed again where you let go.");
+        }
+        if root.tool == 5 && root.picked-count > 0: HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Own trunk");
+                enabled: !root.running;
+                clicked => {
+                    root.picked-reroute(true);
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Hang from nearest");
+                enabled: !root.running;
+                clicked => {
+                    root.picked-reroute(false);
+                }
+            }
         }
         if root.tool == 5: Note {
             text: @tr("Inspector" => "Click a support to pick it, Shift+click to pick more. The numbers below then draw the picked supports again; a size chip gives them that size. Esc lets go.");

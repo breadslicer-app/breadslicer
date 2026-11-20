@@ -664,6 +664,9 @@ enum EditOp {
     Reshape(Vec<(String, sc_geom::df_supports::SupportSize)>),
     /// Lays a brace from this end to the support at this point (#3).
     Brace(BraceEnd, [f32; 3]),
+    /// Routes these supports again from their tips (#377): on routes of
+    /// their own, or hung from the nearest support.
+    Reroute(Vec<String>, bool),
 }
 
 /// One set's share of a hand edit: where it starts and what it does.
@@ -752,7 +755,11 @@ fn compute_edit(
 ) -> Computed {
     let points = |job: &EditJob| match &job.op {
         EditOp::Points(points) => points.len(),
-        EditOp::RemoveTips(_) | EditOp::MoveTip(..) | EditOp::Brace(..) | EditOp::Reshape(_) => 0,
+        EditOp::RemoveTips(_)
+        | EditOp::MoveTip(..)
+        | EditOp::Brace(..)
+        | EditOp::Reshape(_)
+        | EditOp::Reroute(..) => 0,
     };
     watch
         .total
@@ -879,6 +886,13 @@ fn compute_job(
             (EditOp::Reshape(shapes), false) => {
                 for (id, shape) in shapes {
                     if one(edited.reshape(id, shape)) {
+                        took = true;
+                    }
+                }
+            }
+            (EditOp::Reroute(ids, own), false) => {
+                for id in ids {
+                    if one(edited.reroute(id, *own)) {
                         took = true;
                     }
                 }
@@ -2094,6 +2108,10 @@ impl DfSupportRun {
         {
             let run = run.clone();
             ui.on_support_area_fill(move || run.fill_painted());
+        }
+        {
+            let run = run.clone();
+            ui.on_support_picked_reroute(move |own| run.reroute_chosen(own));
         }
         {
             let run = run.clone();
@@ -5618,6 +5636,20 @@ impl DfSupportRun {
                 .collect();
             if !shapes.is_empty() {
                 self.start_gesture(ui, drawn, EditOp::Reshape(shapes), None);
+            }
+        }
+    }
+
+    /// The supports picked are routed again from their tips (#377): each on
+    /// a route of its own (`own`), or hung from the nearest support. One
+    /// Undo step for each set.
+    fn reroute_chosen(self: &Rc<Self>, own: bool) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        for (drawn, ids) in self.chosen_now() {
+            if !ids.is_empty() {
+                self.start_gesture(&ui, drawn, EditOp::Reroute(ids, own), None);
             }
         }
     }
@@ -12271,6 +12303,62 @@ mod hand_edit_tests {
     /// The Select tool (#567): a click picks a support, a number of the
     /// panel draws it again with that number in the same contact, as one
     /// step of Undo, and it stays picked.
+    /// #377: a picked support is routed again from its tip, on its own or
+    /// hung from the nearest, as one Undo step; the tip stays where it was.
+    #[test]
+    fn a_picked_support_is_routed_again_from_its_tip() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            let session = run.sets_in_force()[0].session.clone();
+            let tip = session
+                .tips()
+                .into_iter()
+                .find(|(id, _)| !session.carries_others(id))
+                .expect("a support at an end")
+                .1;
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(tip.map(|c| c as f32), false);
+            assert_eq!(window.get_support_picked_count(), 1);
+
+            let before = document.scene_revision();
+            run.reroute_chosen(true);
+            settle_click(&run);
+            assert_ne!(
+                document.scene_revision(),
+                before,
+                "routed again: {}",
+                window.get_supports_last_run()
+            );
+            let drawn = run.sets_in_force()[0].clone();
+            let id = drawn.session.tip_near(tip, 0.05).expect("its tip stays");
+            assert!(drawn.session.state().collections.trunks.contains_key(&id));
+            assert!(document.undo().unwrap());
+            assert_eq!(document.scene_revision(), before, "one undo step");
+        });
+    }
+
     #[test]
     fn a_picked_support_is_drawn_again_with_the_number_typed() {
         on_fresh_slint_thread(|| {

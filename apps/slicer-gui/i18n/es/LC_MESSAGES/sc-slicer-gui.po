@@ -9829,3 +9829,11 @@ msgid "{n} tip on painted detail could not be kept off it; it takes the finest t
 msgid_plural "{n} tips on painted detail could not be kept off it; they take the finest tip."
 msgstr[0] "{n} punta sobre detalle pintado no se pudo sacar de ahí; lleva la punta más fina."
 msgstr[1] "{n} puntas sobre detalle pintado no se pudieron sacar de ahí; llevan la punta más fina."
+
+msgctxt "Inspector"
+msgid "Own trunk"
+msgstr "Tronco propio"
+
+msgctxt "Inspector"
+msgid "Hang from nearest"
+msgstr "Colgar del más cercano"

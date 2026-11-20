@@ -1539,6 +1539,17 @@ impl DfSupportSession {
         at: At,
         how: &AddOptions,
     ) -> Result<Placed, (EditError, Option<AddNote>)> {
+        self.place_at_as(at, how, false)
+    }
+
+    /// [`Self::place_at`]; with `own`, a support that is not to hang from
+    /// another goes straight to a route of its own (#377).
+    fn place_at_as(
+        &mut self,
+        at: At,
+        how: &AddOptions,
+        own: bool,
+    ) -> Result<Placed, (EditError, Option<AddNote>)> {
         // The tip goes exactly where the person points (#3): a surface that
         // looks up is no place for one, nor is a wall (a run keeps its
         // trunks off one), and that is said rather than the tip going to
@@ -1595,7 +1606,13 @@ impl DfSupportSession {
                 tip_pos: tip,
                 tip_normal: normal,
                 model_id,
-                source: CandidateSource::Overhang,
+                // One of its own merges into no trunk either: the placer
+                // keeps a stabilization anchor standalone (#377).
+                source: if own {
+                    CandidateSource::Stabilization
+                } else {
+                    CandidateSource::Overhang
+                },
                 island_area_mm2: area_for_sizing(&settings.supports.auto_support.sizing_preset),
                 z_height: tip.z,
                 priority: 0.0,
@@ -1616,9 +1633,15 @@ impl DfSupportSession {
                 .map_err(|note| (EditError::CannotAttach(note), Some(note)))
             } else {
                 let reach = settings.supports.auto_support.leaf_fan_radius_mm;
-                match hang(&candidate, &mut state, &ctx, reach, FanHostOrder::Steepest) {
+                let hung = if own {
+                    Err(AddNote::TooFar)
+                } else {
+                    hang(&candidate, &mut state, &ctx, reach, FanHostOrder::Steepest)
+                };
+                match hung {
                     Ok(()) => Ok(None),
                     Err(why_not) => {
+                        let why_not = (!own).then_some(why_not);
                         // DragonFruit's placement without its own fan (no
                         // grid hosts skips it): a merge, its own trunk, a
                         // bridge from the model.
@@ -1633,7 +1656,7 @@ impl DfSupportSession {
                             false,
                         );
                         match (outcome.kind, outcome.rejected_reason) {
-                            (Some(_), _) => Ok(Some(why_not)),
+                            (Some(_), _) => Ok(why_not),
                             (None, reason) => {
                                 let why = reason.map_or_else(
                                     || "rejected".to_owned(),
@@ -2818,6 +2841,17 @@ impl DfSupportSession {
         to: At,
         how: &AddOptions,
     ) -> Result<(Placed, HashSet<String>), (EditError, Option<AddNote>)> {
+        self.move_in_place_as(tip, to, how, false)
+    }
+
+    /// [`Self::move_in_place`]; with `own`, as [`Self::place_at_as`].
+    fn move_in_place_as(
+        &mut self,
+        tip: &str,
+        to: At,
+        how: &AddOptions,
+        own: bool,
+    ) -> Result<(Placed, HashSet<String>), (EditError, Option<AddNote>)> {
         let gone = self
             .removal_of(&[tip.to_owned()])
             .map_err(|err| (err, None))?;
@@ -2848,13 +2882,33 @@ impl DfSupportSession {
         self.forget_braces(&gone);
         self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
         self.removal_index = Arc::default();
-        let placed = self.place_at(to, &how)?;
+        let placed = self.place_at_as(to, &how, own)?;
         if let Some(last) = self.hand_log.placed.last_mut()
             && placed.added.contains(&last.id)
         {
             last.moved_from = moved_from;
         }
         Ok((placed, gone))
+    }
+
+    /// Routes support `tip` again from where its tip is (#377): hung from
+    /// the nearest support it can reach (`own` false), or on a route of its
+    /// own, not hung from another (`own`). Its size and shape stay. A
+    /// support others hang from stays as it is. On a refusal the session is
+    /// as it was.
+    pub fn reroute(&mut self, tip: &str, own: bool) -> Result<(), EditError> {
+        let at = self.tip_point(tip).ok_or(EditError::NothingThere)?;
+        let how = AddOptions {
+            attach: !own,
+            size: None,
+            shape: None,
+        };
+        let mut moved = self.clone();
+        moved
+            .move_in_place_as(tip, At::Point(at), &how, own)
+            .map_err(|(err, _)| err)?;
+        *self = moved;
+        Ok(())
     }
 
     /// Moves the tip of support `tip` (an id [`Self::tips`] gives) to `to`
@@ -4357,6 +4411,40 @@ mod session_tests {
         assert!(dist(tips[0].1, [30.0, 5.0, 12.0]) < 0.5);
         assert_eq!(session.tip_diameter(&tips[0].0), Some(0.5));
         assert_eq!(session.shape_of(&tips[0].0), Some(shape));
+    }
+
+    /// #377: a support hung from another is routed again on its own, and
+    /// hung again; its tip stays where it was.
+    #[test]
+    fn a_hung_support_goes_its_own_way_and_hangs_again() {
+        let mut session = bare_slab(12.0, crate::DfSupportRequest::default());
+        session
+            .add_at([5.0, 5.0, 12.0], &AddOptions::default())
+            .unwrap();
+        let hung = AddOptions {
+            attach: true,
+            ..AddOptions::default()
+        };
+        session.add_at([7.0, 5.0, 12.0], &hung).unwrap();
+        let knots = |s: &DfSupportSession| s.state.collections.knots.len();
+        let trunks = |s: &DfSupportSession| s.state.collections.trunks.len();
+        assert_eq!(trunks(&session), 1);
+        assert!(knots(&session) > 0, "the second hangs from the first");
+        let id = session.tip_near([7.0, 5.0, 12.0], 1.0).unwrap();
+        session.reroute(&id, true).unwrap();
+        assert_eq!(trunks(&session), 2, "on a trunk of its own");
+        let id = session
+            .tip_near([7.0, 5.0, 12.0], 0.5)
+            .expect("its tip stays");
+        assert!(session.state.collections.trunks.contains_key(&id));
+        session.reroute(&id, false).unwrap();
+        assert_eq!(trunks(&session), 1, "hung again");
+        assert!(session.tip_near([7.0, 5.0, 12.0], 0.5).is_some());
+        // The first carries the second: it stays as it is.
+        let first = session.tip_near([5.0, 5.0, 12.0], 0.5).unwrap();
+        let before = session.state.clone();
+        assert!(session.reroute(&first, true).is_err());
+        assert_eq!(session.state, before);
     }
 
     #[test]
