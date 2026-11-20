@@ -169,6 +169,10 @@ pub struct DfSupportRequest {
     /// Groups of models made as one structure (#475), by leaf: run together
     /// as they stand, their supports braced to each other's.
     pub together: Vec<Vec<NodeId>>,
+    /// The faces painted as detail (#186), by leaf, in the order of its
+    /// mesh's faces: tips keep off them where they can. A run reads them off
+    /// its scene; set by hand, they stand in for it.
+    pub detail: Vec<(NodeId, Arc<[bool]>)>,
 }
 
 impl Default for DfSupportRequest {
@@ -184,6 +188,7 @@ impl Default for DfSupportRequest {
             own_rafts: Vec::new(),
             keep_out: Vec::new(),
             together: Vec::new(),
+            detail: Vec::new(),
         }
     }
 }
@@ -668,6 +673,10 @@ pub fn start_df_supports(
     // Baking a dense model takes a while: done on the worker, so the caller
     // (the UI thread) only clones the graph, whose meshes are shared.
     let scene = scene.clone();
+    let mut request = request;
+    if request.detail.is_empty() {
+        request.detail = painted_detail(&scene);
+    }
     let run = RUN.fetch_add(1, Ordering::Relaxed) + 1;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -687,16 +696,35 @@ pub fn start_df_supports(
     ))
 }
 
+/// The faces painted as detail (#186) of every leaf that has any, in the
+/// order of its mesh's faces.
+pub fn painted_detail(scene: &Scene) -> Vec<(NodeId, Arc<[bool]>)> {
+    scene
+        .surface_tags_iter()
+        .filter(|(_, kind, _)| *kind == sc_scene::PaintKind::Detail)
+        .filter_map(|(leaf, _, tags)| {
+            let painted: Arc<[bool]> = tags
+                .values()
+                .iter()
+                .map(|&v| v != sc_scene::UNPAINTED)
+                .collect();
+            painted.contains(&true).then_some((leaf, painted))
+        })
+        .collect()
+}
+
 /// For each model, the earlier model of `models` it is a copy of standing
 /// the same way (#561): the same mesh at the same height, tilted and scaled
 /// alike, only moved in X/Y and turned about Z. Such a copy's supports are
 /// that model's, turned and moved with it. A model whose hand edits are to
 /// be kept is no one's copy, and has none.
 fn copies_of(models: &[(NodeId, ModelInput)], request: &DfSupportRequest) -> Vec<Option<usize>> {
-    // A model of a group (#475) is made with its group, as it stands.
+    // A model of a group (#475) is made with its group, as it stands; one
+    // with painted detail (#186), with its own paint.
     let keeps = |leaf: &NodeId| {
         request.keep_edits.iter().any(|(m, _)| m == leaf)
             || request.together.iter().any(|g| g.contains(leaf))
+            || request.detail.iter().any(|(m, _)| m == leaf)
     };
     let mut of = vec![None; models.len()];
     for i in 0..models.len() {
@@ -1246,6 +1274,14 @@ fn run_df_supports(
     (progress, at): (&RunProgress, usize),
 ) -> Result<DfSupportOutcome, JobError> {
     let mut settings = settings_for(request);
+    // Tips keep off painted detail where they can (#186).
+    settings.detail_faces = leaves
+        .iter()
+        .filter_map(|(leaf, model)| {
+            let (_, painted) = request.detail.iter().find(|(m, _)| m == leaf)?;
+            Some((model.id.clone(), painted.clone()))
+        })
+        .collect();
     // A group's supports are braced to each other's (#475).
     if let Some(group) = together {
         settings.supports.auto_bracing.brace_together = vec![group];

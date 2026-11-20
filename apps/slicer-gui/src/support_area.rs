@@ -240,6 +240,48 @@ fn barycentric(t: [[f64; 2]; 3], q: [f64; 2]) -> Option<[f64; 3]> {
     (a >= EDGE && b >= EDGE && c >= EDGE).then_some([a, b, c])
 }
 
+/// How near painted detail a tip counts as on it (#186), mm.
+const ON_DETAIL_MM: f32 = 0.3;
+
+/// How many of `tips` (world mm) touch the faces of `leaf` painted as
+/// detail (#186): the ones the run could not keep off it.
+pub(crate) fn tips_on_detail(document: &SceneDocument, leaf: NodeId, tips: &[[f64; 3]]) -> usize {
+    let Some(tags) = document.surface_tags(leaf, PaintKind::Detail) else {
+        return 0;
+    };
+    let values = tags.values();
+    let tris: Vec<[glam::Vec3; 3]> = document
+        .with_scene(|spatial| {
+            let query = spatial.leaf(leaf)?;
+            let world = query.world_transform();
+            let mesh = query.mesh();
+            Some(
+                (0..mesh.faces().len())
+                    .filter(|&f| values.get(f) == Some(&PAINTED))
+                    .map(|f| {
+                        mesh.faces()[f].vertices.map(|v| {
+                            let p = world.apply_to_vertex(mesh.vertices()[v.get() as usize]);
+                            glam::Vec3::from(p.coords())
+                        })
+                    })
+                    .collect(),
+            )
+        })
+        .flatten()
+        .unwrap_or_default();
+    if tris.is_empty() {
+        return 0;
+    }
+    tips.iter()
+        .filter(|tip| {
+            let p = glam::Vec3::from(tip.map(|c| c as f32));
+            tris.iter().any(|&t| {
+                crate::island_paint::closest_on_triangle(p, t).distance(p) <= ON_DETAIL_MM
+            })
+        })
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

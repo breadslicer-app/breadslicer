@@ -204,6 +204,8 @@ pub struct ZonePlanInput<'a> {
     pub layer_height_mm: f64,
     /// Where no tip may land (#465).
     pub keep_out: &'a [super::super::zone_candidates::KeepOut],
+    /// The faces painted as detail, by face of the tree (#186).
+    pub detail: Option<&'a [bool]>,
 }
 
 /// A tip within this of an island's contact covers it (islands without
@@ -758,6 +760,7 @@ pub fn compute_auto_support_plan(
             steep: &[],
             layer_height_mm: 0.05,
             keep_out: &[],
+            detail: None,
         });
         generate_zone_candidates(&ZoneInput {
             islands: &islands_to_cover,
@@ -766,6 +769,7 @@ pub fn compute_auto_support_plan(
             layer_height_mm: zone.layer_height_mm,
             mesh: auto_mesh,
             keep_out: zone.keep_out,
+            detail: zone.detail,
         })
     } else {
         let field = mesh.map(|m| m.field());

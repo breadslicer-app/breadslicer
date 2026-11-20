@@ -7288,7 +7288,29 @@ impl DfSupportRun {
         let summary = summary_message(&outcome);
         if let Some(ui) = self.ui.upgrade() {
             let seconds = outcome.timings.total.as_secs_f64();
-            ui.set_supports_last_run(format!("{summary} {seconds:.1} s.").into());
+            let mut line = format!("{summary} {seconds:.1} s.");
+            // Painted detail is avoided where it can be (#186); the tips it
+            // could not be are told, with the finest tip.
+            let on_detail: usize = outcome
+                .sets
+                .iter()
+                .filter(|set| set.same_as.is_none())
+                .map(|set| {
+                    let tips: Vec<[f64; 3]> =
+                        set.session.tips().into_iter().map(|(_, p)| p).collect();
+                    crate::support_area::tips_on_detail(&self.document, set.model, &tips)
+                })
+                .sum();
+            if on_detail > 0 {
+                line.push(' ');
+                line.push_str(&ctr!(
+                    "DfSupportDialog",
+                    "{n} tip on painted detail could not be kept off it; it takes the finest tip.",
+                    "{n} tips on painted detail could not be kept off it; they take the finest tip.",
+                    on_detail
+                ));
+            }
+            ui.set_supports_last_run(line.into());
         }
         let mut details = details_message(&outcome);
         // A release build has no console (Windows GUI subsystem): the full

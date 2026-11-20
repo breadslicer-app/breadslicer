@@ -44,6 +44,8 @@ pub struct ZoneInput<'a> {
     pub mesh: Option<AutoSupportMesh<'a>>,
     /// Where no tip may land (#465).
     pub keep_out: &'a [KeepOut],
+    /// The faces painted as detail, by face of the tree (#186).
+    pub detail: Option<&'a [bool]>,
 }
 
 struct Pending {
@@ -663,6 +665,10 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
     if !input.keep_out.is_empty() {
         pending.retain(|p| !input.keep_out.iter().any(|k| k.holds(p.candidate.tip_pos)));
     }
+    // Painted detail is avoided, never forbidden (#186).
+    if let (Some(m), Some(detail)) = (mesh, input.detail) {
+        avoid_detail(&mut pending, m, detail, rules);
+    }
     // A contact with model material just below it rests on the model
     // already: nothing hangs there, and a support has no room (#235).
     if let Some(m) = mesh {
@@ -703,6 +709,86 @@ pub fn generate_zone_candidates(input: &ZoneInput<'_>) -> Vec<CandidatePoint> {
         .map(|island| format!("zi-{}", island.id))
         .collect();
     thin(pending, &anchors)
+}
+
+/// The face an upward ray from below `(x, y)` meets first between `lo` and
+/// `hi`: the point, its face's normal and the face.
+fn face_up(m: AutoSupportMesh<'_>, x: f64, y: f64, lo: f64, hi: f64) -> Option<(Vec3, Vec3, u32)> {
+    let from = lo - 1.0;
+    let ray = Ray {
+        origin: Vec3::new(x, y, from),
+        direction: Vec3::new(0.0, 0.0, 1.0),
+    };
+    let hit = m
+        .mesh
+        .rays
+        .intersect_object(&ray, Side::Double, 0.0, hi - from, false)
+        .into_iter()
+        .find(|h| h.point.z >= lo && h.point.z <= hi)?;
+    let normal = face_normal_at(m.mesh.rays, hit.face_index)?;
+    Some((hit.point, normal, hit.face_index as u32))
+}
+
+/// How many rings, and points on each, a contact on painted detail looks
+/// for bare surface around it over (#186).
+const DETAIL_RINGS: usize = 4;
+const DETAIL_RING_POINTS: usize = 12;
+
+/// Painted detail is avoided, never forbidden (#186): a contact on a painted
+/// face moves to the nearest bare point of the surface around it, within half
+/// its spacing, where the surface still faces down, so the zone stays
+/// covered; one that finds none keeps its place with the finest tip of the
+/// rules. No contact is dropped: an island left without a support fails the
+/// print, a mark on the detail does not.
+fn avoid_detail(
+    pending: &mut [Pending],
+    m: AutoSupportMesh<'_>,
+    detail: &[bool],
+    rules: &ZoneRules,
+) {
+    let painted = |face: u32| detail.get(face as usize).copied().unwrap_or(false);
+    let finest = rules
+        .sizes
+        .iter()
+        .enumerate()
+        .min_by(|a, b| a.1.tip_diameter_mm.total_cmp(&b.1.tip_diameter_mm))
+        .map(|(i, _)| i);
+    for p in pending.iter_mut() {
+        let t = p.candidate.tip_pos;
+        let on = face_up(m, t.x, t.y, t.z - 0.05, t.z + 0.05);
+        if !on.is_some_and(|(_, _, face)| painted(face)) {
+            continue;
+        }
+        let reach = (p.spacing_mm * 0.5).max(0.3);
+        let mut moved = None;
+        'rings: for ring in 1..=DETAIL_RINGS {
+            let r = reach * ring as f64 / DETAIL_RINGS as f64;
+            for k in 0..DETAIL_RING_POINTS {
+                let turn = (k as f64 + 0.5 * (ring % 2) as f64) / DETAIL_RING_POINTS as f64;
+                let (sin, cos) = (turn * std::f64::consts::TAU).sin_cos();
+                let (x, y) = (t.x + r * cos, t.y + r * sin);
+                if let Some((at, normal, face)) = face_up(m, x, y, t.z - r - 0.2, t.z + r + 0.2)
+                    && !painted(face)
+                    && normal.z < -0.1
+                {
+                    moved = Some((at, normal));
+                    break 'rings;
+                }
+            }
+        }
+        match moved {
+            Some((at, normal)) => {
+                p.candidate.z_height += at.z - t.z;
+                p.candidate.tip_pos = at;
+                p.candidate.tip_normal = normal;
+            }
+            None => {
+                if finest.is_some() {
+                    p.candidate.zone_size = finest;
+                }
+            }
+        }
+    }
 }
 
 /// How far off its surface a contact is looked around from, in mm.
