@@ -491,6 +491,7 @@ mod unsaved_project_state_tests {
                 printer: Some(printer("anycubic-photon")),
                 resin: None,
                 first_layer_height: None,
+                adaptive_layers: None,
                 output_format: None,
                 embedded: Vec::new(),
                 review_decisions: Vec::new(),
@@ -525,6 +526,7 @@ mod unsaved_project_state_tests {
             printer: Some(printer("anycubic-photon")),
             resin: None,
             first_layer_height: Some(mm(0.1)),
+            adaptive_layers: None,
             output_format: None,
             embedded: vec![EmbeddedProfile::Printer {
                 id: printer("anycubic-photon"),

@@ -17,11 +17,14 @@
 //! now.
 
 use sc_print_glue::PlateContours;
-use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId, ScaleCompensation};
+use sc_print_primitives::{
+    AaLevel, AdaptiveLayers, MaterialId, PositiveFiniteMm, PrinterId, ScaleCompensation,
+};
 use sc_print_profiles::{
     EffectiveMaterial, PrinterProfile, resolve_layer_height, resolve_scale_compensation,
     snap_to_z_step,
 };
+use sc_sla_formats::PrinterFileFormat;
 
 use crate::print_selection::PrintSelectionInForce;
 use crate::scene_document::SceneRevision;
@@ -35,6 +38,10 @@ pub(crate) struct SliceParams {
     pub printer: PrinterId,
     pub resin: MaterialId,
     pub first_layer_height: Option<PositiveFiniteMm>,
+    /// The adaptive layer heights the slice was cut with (#60): the
+    /// document's own, when the printer file it exports as keeps a height
+    /// per layer; `None` for every layer at the layer height.
+    pub adaptive_layers: Option<AdaptiveLayers>,
     pub aa_level: AaLevel,
     pub geometry: SceneRevision,
     /// The plate sliced, of several (#547); 0 with one.
@@ -47,22 +54,35 @@ pub(crate) struct SliceParams {
 
 impl SliceParams {
     /// Returns the inputs that a slice of `selection` runs with, or `None`
-    /// while it has no printer or no resin in force.
+    /// while it has no printer or no resin in force. The slice takes the
+    /// document's adaptive layers only when `format`, the printer file it
+    /// exports as, keeps a height per layer (#60).
     pub(crate) fn for_selection(
         selection: &PrintSelectionInForce,
         aa_level: AaLevel,
         geometry: SceneRevision,
+        format: Option<PrinterFileFormat>,
     ) -> Option<Self> {
         Some(Self {
             printer: selection.printer().in_force()?.clone(),
             resin: selection.resin().in_force()?.clone(),
             first_layer_height: selection.first_layer_height(),
+            adaptive_layers: adaptive_for(selection.adaptive_layers(), format),
             aa_level,
             geometry,
             plate: 0,
             plate_key: None,
         })
     }
+}
+
+/// The adaptive layers a slice for `format` takes of `chosen` (#60): none for
+/// a printer file that keeps one layer height, or before one is shown.
+pub(crate) fn adaptive_for(
+    chosen: Option<AdaptiveLayers>,
+    format: Option<PrinterFileFormat>,
+) -> Option<AdaptiveLayers> {
+    chosen.filter(|_| format.is_some_and(PrinterFileFormat::keeps_layer_heights))
 }
 
 /// The values the printer and resin profiles resolve to that shape a slice's
@@ -153,6 +173,7 @@ pub(crate) fn decide_re_slice(
     let scalars_match = held.printer == current.printer
         && held.resin == current.resin
         && held.first_layer_height == current.first_layer_height
+        && held.adaptive_layers == current.adaptive_layers
         && held.plate == current.plate;
     if scalars_match && !geometry_changed && !layers_changed {
         ReSliceDecision::Unchanged
@@ -180,6 +201,7 @@ mod decide_re_slice_tests {
             printer: PrinterId::new("elegoo-saturn-4-ultra").expect("valid id"),
             resin: MaterialId::new("standard-405").expect("valid id"),
             first_layer_height: Some(PositiveFiniteMm::new(0.05).expect("valid length")),
+            adaptive_layers: None,
             aa_level: AaLevel::Off,
             geometry: SceneRevision::from_top_edit_id(Some(7)),
             plate: 0,
@@ -211,6 +233,42 @@ mod decide_re_slice_tests {
             decide_re_slice(Some(&held), &params(), true, false),
             ReSliceDecision::Changed
         );
+    }
+
+    #[test]
+    fn turning_adaptive_layers_on_or_moving_their_range_is_a_change() {
+        let mm = |value| PositiveFiniteMm::new(value).expect("a length");
+        let on = SliceParams {
+            adaptive_layers: Some(AdaptiveLayers::new(mm(0.025), mm(0.1))),
+            ..params()
+        };
+        let wider = SliceParams {
+            adaptive_layers: Some(AdaptiveLayers::new(mm(0.02), mm(0.1))),
+            ..params()
+        };
+        for (held, current) in [(&params(), &on), (&on, &params()), (&on, &wider)] {
+            assert_eq!(
+                decide_re_slice(Some(held), current, false, false),
+                ReSliceDecision::Changed
+            );
+        }
+        assert_eq!(
+            decide_re_slice(Some(&on), &on, false, false),
+            ReSliceDecision::Unchanged
+        );
+    }
+
+    #[test]
+    fn adaptive_layers_reach_a_slice_only_for_a_format_that_keeps_them() {
+        use sc_sla_formats::{CtbVariant, GooVersion};
+
+        let chosen = Some(AdaptiveLayers::DEFAULT);
+        let ctb = PrinterFileFormat::Ctb(CtbVariant::PlainV5);
+        let goo = PrinterFileFormat::Goo(GooVersion::V3_0);
+        assert_eq!(adaptive_for(chosen, Some(ctb)), chosen);
+        assert_eq!(adaptive_for(chosen, Some(goo)), None);
+        assert_eq!(adaptive_for(chosen, None), None);
+        assert_eq!(adaptive_for(None, Some(ctb)), None);
     }
 
     #[test]
@@ -353,7 +411,7 @@ mod for_selection_tests {
         .in_force(&PrintDefaults::default());
 
         assert_eq!(
-            SliceParams::for_selection(&selection, AaLevel::Off, geometry()),
+            SliceParams::for_selection(&selection, AaLevel::Off, geometry(), None),
             None,
         );
     }
@@ -367,7 +425,7 @@ mod for_selection_tests {
         .in_force(&PrintDefaults::default());
 
         assert_eq!(
-            SliceParams::for_selection(&selection, AaLevel::Off, geometry()),
+            SliceParams::for_selection(&selection, AaLevel::Off, geometry(), None),
             None,
         );
     }
@@ -386,11 +444,12 @@ mod for_selection_tests {
         });
 
         assert_eq!(
-            SliceParams::for_selection(&selection, AaLevel::X4, geometry()),
+            SliceParams::for_selection(&selection, AaLevel::X4, geometry(), None),
             Some(SliceParams {
                 printer: printer(),
                 resin: resin(),
                 first_layer_height: Some(height),
+                adaptive_layers: None,
                 aa_level: AaLevel::X4,
                 geometry: geometry(),
                 plate: 0,

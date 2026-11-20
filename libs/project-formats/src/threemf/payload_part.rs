@@ -12,7 +12,9 @@
 //! Unknown keys inside a known version are ignored, so additive
 //! changes do not need a version bump.
 
-use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{
+    AdaptiveLayers, MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::payload::ProjectPayload;
@@ -54,11 +56,16 @@ pub(crate) struct PrintSection {
     pub(crate) first_layer_height_mm: Option<PositiveFiniteMm>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) output_format: Option<OutputFormatBinding>,
+    /// Adaptive layer heights (#60), when on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) adaptive_layers: Option<AdaptiveLayers>,
 }
 
 impl PrintSection {
     pub(crate) fn is_empty(&self) -> bool {
-        self.first_layer_height_mm.is_none() && self.output_format.is_none()
+        self.first_layer_height_mm.is_none()
+            && self.output_format.is_none()
+            && self.adaptive_layers.is_none()
     }
 }
 
@@ -93,6 +100,7 @@ pub(crate) enum PayloadParseOutcome {
         resin: Option<MaterialId>,
         first_layer_height: Option<PositiveFiniteMm>,
         output_format: Option<OutputFormatBinding>,
+        adaptive_layers: Option<AdaptiveLayers>,
         slice_fingerprint: Option<String>,
     },
     /// The document declares a version this build does not
@@ -117,6 +125,7 @@ pub(crate) fn serialize_payload(
         print: PrintSection {
             first_layer_height_mm: payload.first_layer_height,
             output_format: payload.output_format.clone(),
+            adaptive_layers: payload.adaptive_layers,
         },
         slices: SlicesSection {
             fingerprint: slice_fingerprint.map(str::to_string),
@@ -138,6 +147,7 @@ pub(crate) fn parse_payload(text: &str) -> Result<PayloadParseOutcome, toml_edit
         resin: doc.profiles.resin,
         first_layer_height: doc.print.first_layer_height_mm,
         output_format: doc.print.output_format,
+        adaptive_layers: doc.print.adaptive_layers,
         slice_fingerprint: doc.slices.fingerprint,
     })
 }

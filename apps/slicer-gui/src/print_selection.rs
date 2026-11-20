@@ -11,7 +11,9 @@
 
 use std::collections::BTreeMap;
 
-use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{
+    AdaptiveLayers, MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId,
+};
 
 /// The print choices that a document makes for itself. A `None` field means
 /// that the document has no choice of its own for that setting.
@@ -20,6 +22,9 @@ pub(crate) struct PrintSelection {
     pub(crate) printer: Option<PrinterId>,
     pub(crate) resin: Option<MaterialId>,
     pub(crate) first_layer_height: Option<PositiveFiniteMm>,
+    /// Adaptive layer heights (#60) in this range; `None` while they are
+    /// off, as a new document starts.
+    pub(crate) adaptive_layers: Option<AdaptiveLayers>,
     pub(crate) output_format: Option<OutputFormatBinding>,
 }
 
@@ -50,6 +55,7 @@ pub(crate) struct PrintSelectionInForce {
     printer: OwnOrDefault<PrinterId>,
     resin: OwnOrDefault<MaterialId>,
     first_layer_height: Option<PositiveFiniteMm>,
+    adaptive_layers: Option<AdaptiveLayers>,
     output_format: Option<OutputFormatBinding>,
 }
 
@@ -65,6 +71,7 @@ impl PrintSelection {
                 default: defaults.resin.clone(),
             },
             first_layer_height: self.first_layer_height,
+            adaptive_layers: self.adaptive_layers,
             output_format: self.output_format.clone(),
         }
     }
@@ -83,6 +90,12 @@ impl PrintSelectionInForce {
     /// material's resolved layer height applies.
     pub(crate) fn first_layer_height(&self) -> Option<PositiveFiniteMm> {
         self.first_layer_height
+    }
+
+    /// Returns the document's adaptive layer heights (#60), `None` while
+    /// they are off.
+    pub(crate) fn adaptive_layers(&self) -> Option<AdaptiveLayers> {
+        self.adaptive_layers
     }
 
     /// Returns the binding that the format dropdown restores: the own binding,
@@ -105,6 +118,7 @@ impl PrintSelectionInForce {
             printer: self.printer.in_force().cloned(),
             resin: self.resin.in_force().cloned(),
             first_layer_height: self.first_layer_height,
+            adaptive_layers: self.adaptive_layers,
             output_format: self.output_format.clone(),
         }
     }
@@ -341,6 +355,7 @@ mod print_selection_tests {
                 printer: Some(printer("own-printer")),
                 resin: Some(resin("own-resin")),
                 first_layer_height: None,
+                adaptive_layers: None,
                 output_format: None,
             },
         );
@@ -358,6 +373,7 @@ mod print_selection_tests {
                 printer: Some(printer("own-printer")),
                 resin: Some(resin("default-resin")),
                 first_layer_height: None,
+                adaptive_layers: None,
                 output_format: None,
             },
         );
@@ -372,6 +388,7 @@ mod print_selection_tests {
                 printer: Some(printer("default-printer")),
                 resin: Some(resin("own-resin")),
                 first_layer_height: None,
+                adaptive_layers: None,
                 output_format: None,
             },
         );
@@ -390,6 +407,7 @@ mod print_selection_tests {
                 printer: Some(printer("default-printer")),
                 resin: Some(resin("default-resin")),
                 first_layer_height: Some(mm(0.05)),
+                adaptive_layers: None,
                 output_format: Some(binding("v5")),
             },
         );
@@ -402,6 +420,7 @@ mod print_selection_tests {
                 printer: Some(printer("default-printer")),
                 resin: Some(resin("default-resin")),
                 first_layer_height: None,
+                adaptive_layers: None,
                 output_format: None,
             },
         );

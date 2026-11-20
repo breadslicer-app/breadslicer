@@ -92,12 +92,14 @@ fn extract_payload(
             resin,
             first_layer_height,
             output_format,
+            adaptive_layers,
             slice_fingerprint,
         } => Ok((
             Some(ProjectPayload {
                 printer,
                 resin,
                 first_layer_height,
+                adaptive_layers,
                 output_format,
                 embedded: collect_embedded(package, warnings),
                 review_decisions: Vec::new(),

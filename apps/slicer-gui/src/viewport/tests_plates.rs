@@ -989,6 +989,7 @@ fn every_tab_shows_the_slice_s_layers_while_it_is_current() {
                 printer: PrinterId::new("elegoo-saturn-4-ultra").unwrap(),
                 resin: MaterialId::new("standard-405").unwrap(),
                 first_layer_height: None,
+                adaptive_layers: None,
                 aa_level: AaLevel::Off,
                 geometry,
                 plate: 0,

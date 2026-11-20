@@ -46,6 +46,7 @@ fn payload() -> ProjectPayload {
         printer: Some(PrinterId::new("bread-printer").unwrap()),
         resin: Some(MaterialId::new("bread-resin").unwrap()),
         first_layer_height: Some(PositiveFiniteMm::new(0.05).unwrap()),
+        adaptive_layers: None,
         output_format: None,
         embedded: vec![
             EmbeddedProfile::Printer {
@@ -407,4 +408,25 @@ fn the_conformance_files_open_or_are_refused() {
             Err(e) => assert!(!e.to_string().is_empty()),
         }
     }
+}
+
+/// The adaptive layer heights come back with the settings (#60); off, the
+/// settings say nothing of them.
+#[test]
+fn the_adaptive_layers_come_back_with_the_settings() {
+    let mm = |value| PositiveFiniteMm::new(value).unwrap();
+    let payload = ProjectPayload {
+        adaptive_layers: Some(sc_print_primitives::AdaptiveLayers::new(mm(0.03), mm(0.08))),
+        ..ProjectPayload::default()
+    };
+    let text = serialize_settings(&payload, EmbedProfiles::No).expect("serialized");
+    assert!(text.contains("adaptive_layers"), "{text}");
+    let mut warnings = Vec::new();
+    let parsed = parse_settings(text.as_bytes(), &mut warnings)
+        .expect("parsed")
+        .expect("this version");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(parsed.adaptive_layers, payload.adaptive_layers);
+    let none = serialize_settings(&ProjectPayload::default(), EmbedProfiles::No).expect("written");
+    assert!(!none.contains("adaptive"), "{none}");
 }

@@ -19,14 +19,18 @@
 //! [`SliceResult`] at install time, when the scene-geometry marker is known.
 
 use sc_print_glue::{PersistedSliceValidity, PlateContours, validate_persisted_slices};
-use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId, ScaleCompensation};
+use sc_print_primitives::{
+    AaLevel, AdaptiveLayers, MaterialId, PositiveFiniteMm, PrinterId, ScaleCompensation,
+};
 use sc_print_profiles::resolve_scale_compensation;
 use sc_project_formats::{PersistedSlices, ProjectPayload};
 use sc_scene::Scene;
 use sc_sl1cer::profile::LayerSchedule;
 
 use crate::scene_document::SceneRevision;
-use crate::slice_projection::{load_selected_profiles, schedule_for_profiles};
+use crate::slice_projection::{
+    load_selected_profiles, project_adaptive_layers, schedule_for_profiles,
+};
 use crate::slice_result::{LayerValues, SliceParams, SliceResult};
 
 /// A project's persisted slices that passed revalidation on load: the reloaded
@@ -39,6 +43,7 @@ pub(crate) struct ReloadedSlices {
     printer: PrinterId,
     resin: MaterialId,
     first_layer_height: Option<PositiveFiniteMm>,
+    adaptive_layers: Option<AdaptiveLayers>,
     layers: Option<LayerValues>,
 }
 
@@ -57,6 +62,7 @@ impl ReloadedSlices {
                 printer: self.printer,
                 resin: self.resin,
                 first_layer_height: self.first_layer_height,
+                adaptive_layers: self.adaptive_layers,
                 aa_level: AaLevel::Off,
                 geometry,
                 plate: 0,
@@ -87,10 +93,17 @@ pub(crate) fn revalidate_persisted_slices(
     let printer = payload.printer.clone()?;
     let resin = payload.resin.clone()?;
     let first_layer_height = payload.first_layer_height;
+    let adaptive_layers = project_adaptive_layers(payload);
 
     let (printer_profile, resin_profile) = load_selected_profiles(&printer, &resin).ok()?;
-    let schedule =
-        schedule_for_profiles(&printer_profile, &resin_profile, first_layer_height, scene).ok()?;
+    let schedule = schedule_for_profiles(
+        &printer_profile,
+        &resin_profile,
+        first_layer_height,
+        adaptive_layers,
+        scene,
+    )
+    .ok()?;
     let contours = PlateContours::new(stack, schedule).ok()?;
     let scale = resolve_scale_compensation(&printer_profile, &resin_profile);
     if !slices_in_sync(&token, scene, contours.schedule(), scale) {
@@ -105,6 +118,7 @@ pub(crate) fn revalidate_persisted_slices(
         printer,
         resin,
         first_layer_height,
+        adaptive_layers,
         // The token pins the schedule and the scale compensation, so the
         // slices were cut with what the profiles hold at load.
         layers: LayerValues::resolve(&printer_profile, &resin_profile, first_layer_height),
@@ -184,6 +198,7 @@ mod reloaded_slices_tests {
             printer: None,
             resin: None,
             first_layer_height: None,
+            adaptive_layers: None,
             output_format: None,
             embedded: Vec::new(),
             review_decisions: Vec::new(),
@@ -276,6 +291,7 @@ mod reloaded_slices_tests {
             printer: printer.clone(),
             resin: resin.clone(),
             first_layer_height,
+            adaptive_layers: None,
             layers: None,
         };
         let geometry = SceneRevision::from_top_edit_id(None);
@@ -310,7 +326,7 @@ mod reloaded_slices_tests {
         let scene = cube_scene();
         let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
         let resin = MaterialId::new("siraya-tech-craft-high-clear").expect("valid id");
-        let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
+        let schedule = resolve_current_schedule(&printer, &resin, None, None, &scene)
             .expect("the bundled default profiles resolve a schedule");
         let token = token_under(&scene, &schedule, resolved_scale(&printer, &resin));
         let payload = ProjectPayload {
@@ -341,7 +357,7 @@ mod reloaded_slices_tests {
         let scene = cube_scene();
         let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
         let resin = MaterialId::new("siraya-tech-craft-high-clear").expect("valid id");
-        let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
+        let schedule = resolve_current_schedule(&printer, &resin, None, None, &scene)
             .expect("the bundled default profiles resolve a schedule");
         let current = resolved_scale(&printer, &resin);
         let shifted = |percent: ScaleCompensationPercent| {
@@ -405,5 +421,48 @@ mod reloaded_slices_tests {
             .is_some(),
             "a reopened project's slices must revalidate against the reloaded scene"
         );
+    }
+
+    /// Slices cut with adaptive layers (#60) reopen on the same variable
+    /// schedule when the project records them and a printer file that keeps
+    /// them; for one that keeps one height they were not cut that way, and
+    /// reopen without slices.
+    #[test]
+    fn adaptive_slices_reopen_on_their_variable_schedule() {
+        use sc_print_primitives::AdaptiveLayers;
+        use sc_sla_formats::{CtbVariant, GooVersion, PrinterFileFormat};
+
+        let scene = cube_scene();
+        let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
+        let resin = MaterialId::new("siraya-tech-craft-high-clear").expect("valid id");
+        let adaptive = Some(AdaptiveLayers::DEFAULT);
+        let schedule = resolve_current_schedule(&printer, &resin, None, adaptive, &scene)
+            .expect("the bundled default profiles resolve a schedule");
+        assert!(!schedule.is_uniform());
+        let token = token_under(&scene, &schedule, resolved_scale(&printer, &resin));
+        let reopen = |format: PrinterFileFormat| {
+            let payload = ProjectPayload {
+                printer: Some(printer.clone()),
+                resin: Some(resin.clone()),
+                adaptive_layers: adaptive,
+                output_format: Some(format.binding()),
+                ..empty_payload()
+            };
+            revalidate_persisted_slices(
+                &payload,
+                &scene,
+                PersistedSlices {
+                    contours: empty_layers_at(schedule.iter_z()),
+                    fingerprint: token.clone(),
+                },
+            )
+        };
+
+        let reloaded = reopen(PrinterFileFormat::Ctb(CtbVariant::PlainV5))
+            .expect("in sync on the variable schedule");
+        let result = reloaded.into_slice_result(SceneRevision::from_top_edit_id(None));
+        assert_eq!(result.contours.schedule(), &schedule);
+        assert_eq!(result.params.adaptive_layers, adaptive);
+        assert!(reopen(PrinterFileFormat::Goo(GooVersion::V3_0)).is_none());
     }
 }

@@ -66,6 +66,7 @@ pub(super) fn full_payload() -> ProjectPayload {
         printer: Some(printer_id("test-printer")),
         resin: Some(material_id("test-resin")),
         first_layer_height: None,
+        adaptive_layers: None,
         output_format: None,
         embedded: vec![
             EmbeddedProfile::Printer {

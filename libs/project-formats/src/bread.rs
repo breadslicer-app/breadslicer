@@ -128,6 +128,7 @@ pub(crate) fn serialize_settings(
         print: PrintSection {
             first_layer_height_mm: payload.first_layer_height,
             output_format: payload.output_format.clone(),
+            adaptive_layers: payload.adaptive_layers,
         },
         embedded,
         ignored: payload
@@ -204,6 +205,7 @@ pub(crate) fn parse_settings(
         printer: doc.profiles.printer,
         resin: doc.profiles.resin,
         first_layer_height: doc.print.first_layer_height_mm,
+        adaptive_layers: doc.print.adaptive_layers,
         output_format: doc.print.output_format,
         embedded,
         review_decisions: doc

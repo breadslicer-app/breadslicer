@@ -74,6 +74,7 @@ fn payload_with_ids() -> ProjectPayload {
         printer: Some(PrinterId::new("test-printer").expect("valid slug")),
         resin: Some(MaterialId::new("test-resin").expect("valid slug")),
         first_layer_height: None,
+        adaptive_layers: None,
         output_format: None,
         embedded: Vec::new(),
         review_decisions: Vec::new(),
