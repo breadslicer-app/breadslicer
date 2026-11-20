@@ -871,6 +871,8 @@ export component MainWindow inherits Window {
     callback save-as-3mf-requested();
     callback previous-versions-requested();
     callback export-as-requested();
+    // The models picked and their supports, alone (#40).
+    callback export-selection-requested();
     callback scene-load-finished();
     callback import-notes-requested();
     callback show-about-requested();
@@ -1295,6 +1297,14 @@ export component MainWindow inherits Window {
                 enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                 activated => {
                     root.export-as-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Export Selection…");
+                enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                activated => {
+                    root.export-selection-requested();
                 }
             }
         }
@@ -3592,6 +3602,14 @@ export component MainWindow inherits Window {
                     enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                     activated => {
                         root.export-as-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Export Selection…");
+                    enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                    activated => {
+                        root.export-selection-requested();
                     }
                 }
             }

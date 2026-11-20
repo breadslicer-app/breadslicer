@@ -65,7 +65,40 @@ pub(crate) fn default_export_extension(doc: &SceneDocument) -> &'static str {
 /// write, and taking it releases the scene borrow so the document stays usable
 /// while a worker writes the clone. Returns `None` when no scene is loaded.
 pub(crate) fn prepare_export(doc: &SceneDocument) -> Option<Scene> {
-    doc.with_scene(|spatial| spatial.graph().clone())
+    prepare_export_of(doc, false)
+}
+
+/// What an export writes (#40): the whole scene, or with `selection_only`
+/// the models picked with their supports (a support leaf picked on its own
+/// goes too). A hidden model (#16) and its supports never go, as they do not
+/// print. `None` when no scene is loaded or nothing is left to write.
+pub(crate) fn prepare_export_of(doc: &SceneDocument, selection_only: bool) -> Option<Scene> {
+    let hidden = doc.hidden_leaves();
+    let keep: Option<Vec<sc_scene::NodeId>> = selection_only.then(|| {
+        let picked: Vec<sc_scene::NodeId> =
+            doc.selection().leaves().iter().map(|leaf| leaf.0).collect();
+        doc.with_their_supports(picked)
+    });
+    if keep.as_ref().is_some_and(Vec::is_empty) {
+        return None;
+    }
+    doc.with_scene(|spatial| {
+        let mut scene = spatial.graph().clone();
+        let leaves: Vec<sc_scene::NodeId> =
+            (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect();
+        let mut left = 0;
+        for leaf in leaves {
+            let kept =
+                !hidden.contains(&leaf) && keep.as_ref().is_none_or(|keep| keep.contains(&leaf));
+            if kept {
+                left += 1;
+            } else {
+                let _ = scene.remove_leaf(leaf);
+            }
+        }
+        (left > 0).then_some(scene)
+    })
+    .flatten()
 }
 
 /// Why "Export As" writes no file, found before the write starts. Its text is
@@ -76,6 +109,8 @@ pub(crate) enum ExportRefusal {
     UnknownExtension,
     /// No scene is loaded.
     NoScene,
+    /// Export Selection with no model picked, or every one hidden (#40).
+    NothingPicked,
 }
 
 impl fmt::Display for ExportRefusal {
@@ -86,6 +121,10 @@ impl fmt::Display for ExportRefusal {
                 "Unable to infer file format from filename. Use one of: .stl (binary STL), .stla (ASCII STL), .obj, or .3mf."
             ),
             Self::NoScene => ctr!("ErrorDialog", "No scene loaded"),
+            Self::NothingPicked => ctr!(
+                "ErrorDialog",
+                "Nothing to export: pick the models to export first. Hidden models are left out."
+            ),
         };
         f.write_str(&text)
     }
@@ -563,5 +602,44 @@ mod scene_export_tests {
              (ASCII STL), .obj, or .3mf."
         );
         assert_eq!(ExportRefusal::NoScene.to_string(), "No scene loaded");
+    }
+
+    /// #40: Export Selection writes the models picked (with their
+    /// supports) alone, and nothing with none picked; a whole export keeps
+    /// every model.
+    #[test]
+    fn export_selection_writes_the_models_picked_alone() {
+        use crate::selection::{LeafId, Selection};
+        let mut g = Scene::new();
+        let mut leaves = Vec::new();
+        for x in [0.0, 10.0] {
+            let leaf = g
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.0])),
+                    LeafPayload::Mesh(Arc::new(unit_triangle())),
+                )
+                .expect("add leaf");
+            g.add_root(leaf).expect("root");
+            leaves.push(leaf);
+        }
+        let doc = SceneDocument::new();
+        doc.install_graph(g, PathBuf::from("two.stl"));
+        let count = |scene: &Scene| {
+            let mut n = 0;
+            scene
+                .for_each_expanded_leaf(sc_scene::CsgPolicy::Refuse, |_, _, _| {
+                    n += 1;
+                    Ok::<(), sc_scene::SceneError>(())
+                })
+                .unwrap();
+            n
+        };
+        assert_eq!(count(&prepare_export_of(&doc, false).unwrap()), 2);
+        assert!(prepare_export_of(&doc, true).is_none(), "nothing picked");
+        doc.set_selection(Selection::One(LeafId(leaves[1])));
+        let picked = prepare_export_of(&doc, true).expect("the model picked");
+        assert_eq!(count(&picked), 1);
+        assert_eq!(count(&prepare_export_of(&doc, false).unwrap()), 2);
     }
 }

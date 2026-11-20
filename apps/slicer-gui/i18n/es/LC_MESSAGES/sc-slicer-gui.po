@@ -10161,3 +10161,11 @@ msgstr "No hay un estrechamiento para sugerir: el modelo tiene más o menos el m
 msgctxt "CutRun"
 msgid "Suggested: a narrowing of the model ({}). Suggest again for the next."
 msgstr "Sugerido: un estrechamiento del modelo ({}). Volvé a tocar Sugerir para el siguiente."
+
+msgctxt "MenuBar"
+msgid "Export Selection…"
+msgstr "Exportar selección…"
+
+msgctxt "ErrorDialog"
+msgid "Nothing to export: pick the models to export first. Hidden models are left out."
+msgstr "No hay nada para exportar: primero elegí los modelos. Los modelos ocultos quedan afuera."
