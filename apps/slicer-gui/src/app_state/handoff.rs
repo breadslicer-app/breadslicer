@@ -25,6 +25,7 @@ use slint::winit_030::WinitWindowAccessor;
 
 use super::{AppState, DEVICE_LOST_TARGET};
 use crate::launch_files;
+use crate::link_scheme::LinkAction;
 use crate::mesh_loader::{LoadDispatch, decide_load_dispatch, is_project};
 
 /// How often files handed over to a busy window check whether it is free.
@@ -48,18 +49,62 @@ impl AppState {
         self: &Rc<Self>,
         paths: Vec<PathBuf>,
     ) -> Result<Option<u64>, Box<dyn std::error::Error>> {
+        let (paths, links) = launch_files::split_links(paths);
         let groups = launch_files::groups(paths);
         if groups.is_empty() {
-            return Ok(Some(self.spawn_main_window()?));
+            let window_id = self.spawn_main_window()?;
+            self.follow_links(window_id, links);
+            return Ok(Some(window_id));
         }
         crate::breadcrumbs::note(&format!("launch: {} group(s) of files", groups.len()));
+        let mut last = None;
         for group in groups {
             // The paths wait on the window's `PendingLoad` slot until
             // `RenderingSetup` publishes its GPU device.
             let window_id = self.spawn_main_window()?;
             self.open_paths_in_window(window_id, group);
+            last = Some(window_id);
+        }
+        if let Some(window_id) = last {
+            self.follow_links(window_id, links);
         }
         Ok(None)
+    }
+
+    /// Does what `breadslicer:` links ask (#114) in window `id`, once its
+    /// event loop runs. Files they name were opened with the others.
+    fn follow_links(&self, id: u64, links: Vec<LinkAction>) {
+        for link in links {
+            let what = match &link {
+                LinkAction::Show | LinkAction::OpenFile(_) => "show",
+                LinkAction::Diagnostics => "diagnostics",
+                LinkAction::Preferences => "preferences",
+                // The link itself may hold a path: never logged.
+                LinkAction::Unknown(_) => "not known",
+            };
+            crate::breadcrumbs::note(&format!("launch: link ({what})"));
+            let Some(window) = self
+                .main_windows
+                .borrow()
+                .get(&id)
+                .map(|wired| wired.window.clone_strong())
+            else {
+                return;
+            };
+            match link {
+                LinkAction::Diagnostics => {
+                    slint::Timer::single_shot(Duration::ZERO, move || {
+                        window.invoke_export_diagnostics_requested();
+                    });
+                }
+                LinkAction::Preferences => {
+                    slint::Timer::single_shot(Duration::ZERO, move || {
+                        window.invoke_show_preferences_requested();
+                    });
+                }
+                LinkAction::Show | LinkAction::OpenFile(_) | LinkAction::Unknown(_) => {}
+            }
+        }
     }
 
     /// Records that window `id` took the focus: handed-over files go there.
@@ -70,12 +115,14 @@ impl AppState {
     /// Queues the files a later launch handed over, brings the window they
     /// go to to the front and opens what it can take now.
     pub(crate) fn receive_handoff(self: &Rc<Self>, paths: Vec<PathBuf>) {
+        let (paths, links) = launch_files::split_links(paths);
         crate::breadcrumbs::note(&format!("launch: {} file(s) handed over", paths.len()));
         self.handoffs
             .borrow_mut()
             .extend(launch_files::groups(paths));
         if let Some(id) = self.handoff_window() {
             self.raise_window(id);
+            self.follow_links(id, links);
         }
         self.open_handoffs();
     }

@@ -52,6 +52,7 @@ mod measure;
 mod mirror;
 mod language;
 mod launch_files;
+mod link_scheme;
 mod layer_keys;
 mod layer_pixels;
 mod layer_timeline;
@@ -259,6 +260,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let migrated = sc_app_paths::migrate_legacy_user_dirs();
     install_crash_log();
     breadcrumbs::start(env!("CARGO_PKG_VERSION"), diagnostics::commit());
+    // `breadslicer://` links start this program (#114).
+    link_scheme::register();
     for dir in &migrated {
         breadcrumbs::note(&format!("migrated user data into {}", dir.display()));
     }

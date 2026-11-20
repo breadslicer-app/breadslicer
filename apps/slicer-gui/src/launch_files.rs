@@ -21,6 +21,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use crate::link_scheme::LinkAction;
 use crate::mesh_loader::is_project;
 
 /// The paths of `args` (the command line without the program), in order.
@@ -38,6 +39,11 @@ pub(crate) fn paths_of(args: impl IntoIterator<Item = OsString>) -> Vec<PathBuf>
             eprintln!("Ignoring unrecognised option: {}", raw.display());
             continue;
         }
+        // A `breadslicer:` link (#114) is not a file: it travels as it is.
+        if crate::link_scheme::is_link(&raw) {
+            paths.push(PathBuf::from(raw));
+            continue;
+        }
         let path = PathBuf::from(raw);
         paths.push(std::path::absolute(&path).unwrap_or(path));
     }
@@ -47,6 +53,24 @@ pub(crate) fn paths_of(args: impl IntoIterator<Item = OsString>) -> Vec<PathBuf>
 /// The paths on this process's command line; see [`paths_of`].
 pub(crate) fn from_env() -> Vec<PathBuf> {
     paths_of(std::env::args_os().skip(1))
+}
+
+/// Takes the `breadslicer:` links (#114) out of `paths`: the files, with
+/// the ones links ask to open added in place, and what the other links ask.
+pub(crate) fn split_links(paths: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<LinkAction>) {
+    let mut files = Vec::new();
+    let mut actions = Vec::new();
+    for path in paths {
+        if !crate::link_scheme::is_link(path.as_os_str()) {
+            files.push(path);
+            continue;
+        }
+        match crate::link_scheme::parse(&path.to_string_lossy()) {
+            LinkAction::OpenFile(file) => files.push(file),
+            action => actions.push(action),
+        }
+    }
+    (files, actions)
 }
 
 /// Splits `paths` into what opens together: every model in one group, each
@@ -128,5 +152,20 @@ mod tests {
     fn nothing_named_is_no_group() {
         assert!(groups(Vec::new()).is_empty());
         assert!(paths_of(Vec::<OsString>::new()).is_empty());
+    }
+
+    #[test]
+    fn links_travel_as_they_are_and_open_the_files_they_name() {
+        let paths = paths_of(args(&[
+            "breadslicer://diagnostics",
+            "a.stl",
+            "breadslicer://open?file=C%3A%2Fm%2Fb.stl",
+        ]));
+        assert_eq!(paths[0], PathBuf::from("breadslicer://diagnostics"));
+        let (files, links) = split_links(paths);
+        assert_eq!(files.len(), 2);
+        assert!(files[0].is_absolute());
+        assert_eq!(files[1], PathBuf::from("C:/m/b.stl"));
+        assert_eq!(links, vec![LinkAction::Diagnostics]);
     }
 }
