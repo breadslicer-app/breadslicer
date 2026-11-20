@@ -99,8 +99,9 @@ pub fn write_slice(
 /// writer has not landed, [`WriterError::ProgramLayerCountMismatch`]
 /// when the program and the stack disagree on the layer count,
 /// [`WriterError::PreviewSizeMismatch`] when a preview is the wrong
-/// size, and [`WriterError::OutputPathInvalid`] when `output` is a
-/// directory.
+/// size, [`WriterError::PrinterFileUnencodable`] when the layers vary
+/// their height and the format keeps one (#60), and
+/// [`WriterError::OutputPathInvalid`] when `output` is a directory.
 pub fn write_printer_file(
     stack: &ContourStack,
     output: &Path,
@@ -115,6 +116,13 @@ pub fn write_printer_file(
         return Err(WriterError::ProgramLayerCountMismatch {
             program_layers: program.layers.len(),
             stack_layers: stack.layers().len(),
+        });
+    }
+    if !format.keeps_layer_heights() && program.varies_layer_height() {
+        return Err(WriterError::PrinterFileUnencodable {
+            reason: format!(
+                "a {format} file keeps one layer height, and this print varies it; slice it at a fixed height"
+            ),
         });
     }
     validate_file_output_path(output, format)?;
@@ -134,7 +142,8 @@ pub fn write_printer_file(
         | PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
         | PrinterFileFormat::Cxdlp(_)
         | PrinterFileFormat::AnycubicZip(_)
-        | PrinterFileFormat::AnycubicBinary(_) => {
+        | PrinterFileFormat::AnycubicBinary(_)
+        | PrinterFileFormat::Sl1(_) => {
             let writer = external::writer_for(format)
                 .ok_or(WriterError::PrinterFormatNotImplemented { format })?;
             writer.write(format, program, previews, stack, &mut out)?;

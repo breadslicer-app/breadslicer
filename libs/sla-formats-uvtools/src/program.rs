@@ -137,7 +137,7 @@ pub(crate) fn uses_per_layer_settings(program: &PrintProgram, summary: &ProgramS
         this.exposure_sec != group.exposure_sec
             || this.lift_mm != group.lift_mm
             || this.lift_mm_min != group.lift_mm_min
-    })
+    }) || program.varies_layer_height()
 }
 
 /// Reports whether a layer departs from what the bottom, transition and normal
@@ -166,7 +166,7 @@ pub(crate) fn uses_per_layer_list(program: &PrintProgram, summary: &ProgramSumma
         (this.exposure_sec - exposure).abs() > 0.01
             || this.lift_mm != group.lift_mm
             || this.lift_mm_min != group.lift_mm_min
-    })
+    }) || program.varies_layer_height()
 }
 
 /// Above this, .NET leaves a float as it is when asked to round it.
@@ -213,7 +213,24 @@ pub(crate) fn round_display(value: f32) -> f32 {
 
 #[cfg(test)]
 mod program_tests {
+    use sc_print_primitives::{AaLevel, Mirror, PositiveFiniteMm};
+
     use super::*;
+    use crate::test_fixture::{program, raster};
+
+    #[test]
+    fn a_layer_of_its_own_height_asks_for_the_per_layer_list() {
+        let mut program = program("Mars", raster(AaLevel::Off, Mirror::default()), 6);
+        let summary = ProgramSummary::of(&program);
+        assert!(!uses_per_layer_settings(&program, &summary));
+        assert!(!uses_per_layer_list(&program, &summary));
+        // Layer 4 twice as high as the others, every top above it raised.
+        for layer in &mut program.layers[4..] {
+            layer.slab_top_mm = PositiveFiniteMm::new(layer.slab_top_mm.value() + 0.05).unwrap();
+        }
+        assert!(uses_per_layer_settings(&program, &summary));
+        assert!(uses_per_layer_list(&program, &summary));
+    }
 
     #[test]
     fn rounding_scales_in_single_precision_as_dotnet_does() {

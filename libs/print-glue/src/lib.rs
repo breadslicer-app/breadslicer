@@ -51,9 +51,10 @@ pub use print_program::{
     SlabTopOutOfRange, UnprojectablePrint, layer_lift_speeds_mm_min, layer_times_sec,
 };
 pub use projection::{
-    UnschedulableHeight, project_hardware_to_slice_profile, project_to_slice_profile,
-    total_layers_for_height,
+    UnschedulableHeight, project_hardware_to_slice_profile, project_hardware_to_slice_profile_on,
+    project_to_slice_profile, total_layers_for_height,
 };
+pub use sc_sl1cer::adaptive::AdaptiveLayers;
 pub use scale_compensation::{SupportOwners, scale_factors};
 pub use slice_plate::{
     MismatchedLayerCount, PlateContours, PlateFrame, SlicePlateError, SliceRun, SlicedPlate,

@@ -1090,6 +1090,22 @@ fn a_tilting_vat_lifts_its_bottom_layers_alone() {
 }
 
 #[test]
+fn a_vat_that_tilts_its_bottom_layers_too_lifts_no_layer() {
+    let tilting = PRINTER_TOML.replace(
+        "has_camera = false",
+        "has_camera = false
+tilting_vat = true
+tilts_bottom_layers = true",
+    );
+    let program = program(&tilting, 20);
+
+    for (index, layer) in program.layers.iter().enumerate() {
+        assert_eq!(layer.lift, None, "layer {index}");
+        assert_eq!(layer.retract, None, "layer {index}");
+    }
+}
+
+#[test]
 fn a_tilting_vat_spends_a_tilt_where_it_lifted() {
     let lifting = program(PRINTER_TOML, 20);
     let tilting = program(

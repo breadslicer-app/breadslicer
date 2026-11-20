@@ -1,0 +1,17 @@
+[identity]
+id = "druckwege-type-d-high-temp-50um"
+brand = "DruckWege"
+family = "standard"
+name = "Type D High Temp (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 10.0
+bottom_exposure_sec = 20.0

@@ -1,0 +1,18 @@
+[identity]
+id = "prusa-polymers-prusament-resin-model-plus-neutral-beige-50um"
+brand = "Prusa Polymers"
+family = "standard"
+name = "Prusament Resin Model+ Neutral Beige (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+liquid_density_g_per_cm3 = 1.1
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 2.2
+bottom_exposure_sec = 8.0

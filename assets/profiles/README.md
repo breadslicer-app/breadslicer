@@ -31,9 +31,9 @@ transition layers, a camera or a photo, so a printer that comes only from
 there declares none of them. Its family is the series its name opens with.
 
 55 of these machines take a file nothing in Breadslicer writes yet (NanoDLP,
-SVGX, CWS, LGS, FDG, ZIP, ...), and so do the Prusa SL1 and SL1S (their own
-archive) and the Jupiter 2 (GOO v5.1). Their profiles name the format all the
-same, and the Slice panel says that it cannot export it.
+SVGX, CWS, LGS, FDG, ZIP, ...), and so does the Jupiter 2 (GOO v5.1). Their
+profiles name the format all the same, and the Slice panel says that it
+cannot export it.
 
 The Anycubic and ELEGOO printers were first converted from the printer
 plugins of the DragonFruit slicer, published by the Open Resin Alliance
@@ -209,11 +209,21 @@ takes its page for the standard mode; the fast mode's page is not read.
 Prusa's SL1 and SL1S settings are read by `profiles-converter --format
 prusa-sla` from the vendor bundle Prusa publishes for PrusaSlicer,
 `PrusaResearchSLA/<version>.ini` in
-<https://github.com/prusa3d/PrusaSlicer-settings-prusa-sla> (version 1.0.11
-gives 370 resins of 24 brands). They are not in this library yet: these
-machines tilt the vat instead of lifting the platform, so a profile has no
-travel to give them, and the `.sl1` file is not written yet. The bundle's
-tilt, tower and delay settings have no place in our profiles either.
+<https://github.com/prusa3d/PrusaSlicer-settings-prusa-sla> (version 1.0.11:
+370 resins of 24 brands). Each gives the exposures, the layer height, the
+liquid density and Prusa's scale correction; the bundle's tilt, tower and
+delay settings have no place in our profiles. 20 of these resins (Liqcreate
+and Loctite) were already here from other sources: they gained the SL1 and
+SL1S blocks and kept everything else, Prusa's scale correction included,
+which they do not take.
+
+These machines tilt the vat on every layer and never lift the platform, so
+their profiles say so (`tilting_vat` and `tilts_bottom_layers`) and a resin
+states no travel for them. From PrusaSlicer's own settings for them, their
+profiles take the 10 faded layers it starts every print with (as the bottom
+layers) and, as the time each layer costs on top of its record, the fast
+tilt less the tilt every layer is already counted: 5 - 0.8 = 4.2 s on the
+SL1 and 2.5 - 0.8 = 1.7 s on the SL1S.
 
 Liqcreate's resins come from its support pages of resin settings, one per
 printer (`liqcreate.com/supportarticles/<page>/`), each with a table of a

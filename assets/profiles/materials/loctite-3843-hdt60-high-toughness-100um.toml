@@ -1,0 +1,17 @@
+[identity]
+id = "loctite-3843-hdt60-high-toughness-100um"
+brand = "Loctite"
+family = "standard"
+name = "3843 HDT60 High Toughness (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 18.0
+bottom_exposure_sec = 25.0

@@ -1,0 +1,17 @@
+[identity]
+id = "nextdent-surgical-guide-50um"
+brand = "NextDent"
+family = "standard"
+name = "Surgical Guide (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 7.0
+bottom_exposure_sec = 35.0

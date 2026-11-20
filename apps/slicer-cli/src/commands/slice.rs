@@ -16,9 +16,9 @@ use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_e
 use sc_mesh_core::primitives::CoordAxis;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_print_glue::{
-    PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams, SupportOwners,
-    UnsliceableScene, UnsliceableSelection, fallback_report_lines, place_on_plate, prepare_export,
-    slice_plate,
+    AdaptiveLayers, PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams,
+    SupportOwners, UnsliceableScene, UnsliceableSelection, fallback_report_lines, place_on_plate,
+    prepare_export, slice_plate,
 };
 use sc_print_primitives::{BuildVolume, PositiveFiniteMm, Side, Wall};
 use sc_print_profiles::{
@@ -95,10 +95,21 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         target_path
     };
 
-    let options = &args.plate;
+    let mut options = args.plate.clone();
     let printer = load_printer_profile(&options.printer_profile, libraries)?;
     let target_format = settle_for_printer(target_format, &printer.capabilities.output_formats)
         .map_err(|err| anyhow!("cannot write \"{}\": {err}", target_path.display()))?;
+    // A printer file that keeps one layer height gets a fixed one (#60).
+    if let SettledTarget::PrinterFile(format) = target_format
+        && options.adaptive_layers.is_some()
+        && !format.keeps_layer_heights()
+    {
+        eprintln!(
+            "warning: a {format} file keeps one layer height; slicing at a fixed height instead of adaptive layers"
+        );
+        options.adaptive_layers = None;
+    }
+    let options = &options;
     let (material, issues) = load_material_profile(&options.material_profile, libraries)?;
     for issue in &issues {
         eprintln!("warning: {issue}");
@@ -244,6 +255,10 @@ pub(crate) fn slice_scene(
         layer_height_request: options.layer_height,
         first_layer_height: options.first_layer_height,
         aa_level: options.aa,
+        adaptive: options.adaptive_layers.map(|range| AdaptiveLayers {
+            min_mm: range.min_mm,
+            max_mm: range.max_mm,
+        }),
     };
     match slice_plate(
         scene,

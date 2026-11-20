@@ -1,0 +1,17 @@
+[identity]
+id = "3dm-abs-orange-100um"
+brand = "3DM"
+family = "abs-like"
+name = "ABS Orange (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 25.0

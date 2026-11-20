@@ -22,6 +22,8 @@ from these files, each named again in the header of the module that ports it:
   UVtools.Core/FileFormats/ChituboxFile.cs       -> src/ctb_legacy.rs, src/read.rs
                                                     (CTB versions 2 to 4)
   UVtools.Core/FileFormats/CtbRleCodec.cs        -> src/read.rs (CTB layer decoder)
+  UVtools.Core/FileFormats/SL1File.cs            -> src/sl1.rs, src/read.rs
+                                                    (Prusa SL1 and SL1S)
   UVtools.Core/FileFormats/FileFormat.cs and
   UVtools.Core/Operations/OperationCalculator.cs -> src/ctb_legacy.rs (light-off
                                                     delay of CTB 2 and 3)

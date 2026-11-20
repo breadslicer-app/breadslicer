@@ -1,0 +1,17 @@
+[identity]
+id = "basf-forward-am-ultracur3d-fl-300-black-100um"
+brand = "BASF Forward AM"
+family = "standard"
+name = "Ultracur3D FL 300 Black (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 6.0
+bottom_exposure_sec = 25.0

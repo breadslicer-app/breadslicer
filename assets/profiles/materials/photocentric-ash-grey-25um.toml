@@ -1,0 +1,17 @@
+[identity]
+id = "photocentric-ash-grey-25um"
+brand = "Photocentric"
+family = "standard"
+name = "Ash Grey (25 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.025
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 30.0

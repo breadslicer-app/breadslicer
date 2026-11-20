@@ -1,0 +1,21 @@
+[identity]
+id = "3dm-abs-50um"
+brand = "3DM"
+family = "abs-like"
+name = "ABS (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 13.0
+bottom_exposure_sec = 25.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 2.6
+bottom_exposure_sec = 25.0

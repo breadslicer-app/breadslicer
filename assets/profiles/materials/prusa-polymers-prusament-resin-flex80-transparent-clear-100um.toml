@@ -1,0 +1,21 @@
+[identity]
+id = "prusa-polymers-prusament-resin-flex80-transparent-clear-100um"
+brand = "Prusa Polymers"
+family = "standard"
+name = "Prusament Resin Flex80 Transparent Clear (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 20.0
+bottom_exposure_sec = 30.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 6.0
+bottom_exposure_sec = 18.0

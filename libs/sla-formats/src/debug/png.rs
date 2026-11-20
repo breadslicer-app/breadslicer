@@ -158,12 +158,21 @@ fn add_metadata_chunks(
 }
 
 fn format_layer_schedule(schedule: &LayerSchedule) -> String {
-    match *schedule {
+    match schedule {
         LayerSchedule::Uniform(uniform) => format!(
             "uniform layer-height-mm={} first-layer-height-mm={} total-layers={}",
             uniform.layer_height().value(),
             uniform.first_layer_height().value(),
             uniform.total_layers().get(),
+        ),
+        LayerSchedule::Variable(variable) => format!(
+            "variable slab-tops-mm={}",
+            variable
+                .tops()
+                .iter()
+                .map(|top| top.value().to_string())
+                .collect::<Vec<_>>()
+                .join(","),
         ),
     }
 }

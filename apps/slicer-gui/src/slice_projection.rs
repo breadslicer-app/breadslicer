@@ -211,6 +211,7 @@ pub(crate) fn schedule_for_profiles(
         first_layer_height,
         // AA does not affect the schedule; any value serves.
         aa_level: AaLevel::Off,
+        adaptive: None,
     };
     schedule_for_selection(scene, printer, resin, &params).map_err(SliceFailure::from)
 }

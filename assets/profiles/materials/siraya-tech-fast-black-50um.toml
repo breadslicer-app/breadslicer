@@ -1,0 +1,21 @@
+[identity]
+id = "siraya-tech-fast-black-50um"
+brand = "Siraya Tech"
+family = "standard"
+name = "Fast Black (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 35.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 28.0

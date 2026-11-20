@@ -1194,6 +1194,7 @@ fn slice_and_review(
         layer_height_request: None,
         first_layer_height: None,
         aa_level: AaLevel::Off,
+        adaptive: None,
     };
     let plate = match slice_plate(
         scene,

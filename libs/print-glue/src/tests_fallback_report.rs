@@ -550,3 +550,34 @@ fn a_stated_liquid_density_alone_does_not_supply_the_cured_one() {
         "one density does not derive the other: {reported:?}",
     );
 }
+
+#[test]
+fn a_machine_that_never_lifts_reports_no_travel() {
+    let printer: PrinterProfile = toml_edit::de::from_str(&PRINTER_TOML.replace(
+        "has_camera = false",
+        "has_camera = false\ntilting_vat = true\ntilts_bottom_layers = true",
+    ))
+    .unwrap();
+    let material: MaterialProfile = toml_edit::de::from_str(BARE_MATERIAL_TOML).unwrap();
+    let config = sc_print_profiles::resolve(
+        &printer,
+        &EffectiveMaterial::from(material),
+        &SceneOverrides::default(),
+    )
+    .unwrap();
+
+    let fields: Vec<ResolvedField> = fallbacks_used(&config)
+        .into_iter()
+        .map(|used| used.field)
+        .collect();
+    assert!(fields.contains(&ResolvedField::WaitBeforeCureSec));
+    for travel in [
+        ResolvedField::WaitAfterLiftSec,
+        ResolvedField::BottomWaitAfterLiftSec,
+        ResolvedField::BottomLiftDistanceMm,
+        ResolvedField::BottomLiftSpeedMmMin,
+        ResolvedField::BottomRetractSpeedMmMin,
+    ] {
+        assert!(!fields.contains(&travel), "{travel:?}");
+    }
+}

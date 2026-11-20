@@ -63,3 +63,7 @@ retract_speed_mm_min = 150.0
 bottom_lift_distance_mm = 6.0
 bottom_lift_speed_mm_min = 60.0
 bottom_retract_speed_mm_min = 150.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 25.0

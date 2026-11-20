@@ -19,14 +19,15 @@ use sc_print_primitives::{AaLevel, PanelRotation, PositiveFiniteMm, ScaleCompens
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile, resolve_scale_compensation};
 use sc_scene::Scene;
 use sc_scene::node::NodeId;
+use sc_sl1cer::adaptive::AdaptiveLayers;
 use sc_sl1cer::contour::{ContourStack, LayerAlignmentError, merge_stacks};
 use sc_sl1cer::error::SliceSceneError;
-use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile, UniformSchedule};
+use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 use sc_sl1cer::{CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_scene_with_progress};
 use sc_sla_formats::RasterSetup;
 use sc_sla_formats::layer_images::{LitMeasure, lit_measures};
 
-use crate::prepare::{UnsliceableSelection, slice_profile_for_selection};
+use crate::prepare::{UnsliceableSelection, adaptive_profile, slice_profile_for_selection};
 use crate::scale_compensation::{
     LeafPivots, SupportOwners, compensated_heights, compensated_scene, scale_factors,
     support_box_mm,
@@ -42,6 +43,9 @@ pub struct SlicingParams {
     pub first_layer_height: Option<PositiveFiniteMm>,
     /// Anti-aliasing level forwarded to the engine's slice profile.
     pub aa_level: AaLevel,
+    /// Adaptive layer heights (#60), in this range; `None` slices every
+    /// layer at the layer height.
+    pub adaptive: Option<AdaptiveLayers>,
 }
 
 /// Why [`slice_plate`] produced no slices.
@@ -228,7 +232,7 @@ impl SlicedPlate {
         )?;
         Ok(PlateContours {
             stack: Arc::new(stack),
-            schedule: *self.profile.layer_schedule(),
+            schedule: self.profile.layer_schedule().clone(),
             lit: Arc::default(),
         })
     }
@@ -358,7 +362,6 @@ impl PlateContours {
         if kept >= self.stack.layers().len() {
             return self;
         }
-        let LayerSchedule::Uniform(grid) = self.schedule;
         let lit = self
             .lit
             .lock()
@@ -374,11 +377,7 @@ impl PlateContours {
             stack: Arc::new(ContourStack::new_unchecked(
                 self.stack.layers()[..kept].to_vec(),
             )),
-            schedule: LayerSchedule::Uniform(UniformSchedule::new(
-                grid.layer_height(),
-                grid.first_layer_height(),
-                layers,
-            )),
+            schedule: self.schedule.truncated(layers),
         }
     }
 }
@@ -455,7 +454,9 @@ pub fn schedule_for_selection(
     let scale = resolve_scale_compensation(printer, material);
     let compensated = compensated_heights(scene, scale);
     let scene = compensated.as_ref().unwrap_or(scene);
-    Ok(*profile_for(scene, printer, material, params)?.layer_schedule())
+    Ok(profile_for(scene, printer, material, params)?
+        .layer_schedule()
+        .clone())
 }
 
 fn profile_for(
@@ -464,7 +465,7 @@ fn profile_for(
     material: &EffectiveMaterial,
     params: &SlicingParams,
 ) -> Result<SliceProfile, UnsliceableSelection> {
-    slice_profile_for_selection(
+    let profile = slice_profile_for_selection(
         scene,
         printer,
         material,
@@ -472,5 +473,9 @@ fn profile_for(
         params.first_layer_height,
         params.aa_level,
         PackingMode::None,
-    )
+    )?;
+    Ok(match params.adaptive {
+        Some(layers) => adaptive_profile(scene, printer, material, profile, layers),
+        None => profile,
+    })
 }

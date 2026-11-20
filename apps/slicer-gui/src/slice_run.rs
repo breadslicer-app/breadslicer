@@ -1257,6 +1257,7 @@ fn run_slice(
         layer_height_request: None,
         first_layer_height: inputs.first_layer_height,
         aa_level: inputs.aa_level,
+        adaptive: None,
     };
     let run = slice_plate(
         scene,

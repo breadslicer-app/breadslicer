@@ -108,6 +108,7 @@ fn params() -> SlicingParams {
         layer_height_request: Some(mm(0.25)),
         first_layer_height: None,
         aa_level: AaLevel::Off,
+        adaptive: None,
     }
 }
 
@@ -242,6 +243,7 @@ fn an_unresolvable_layer_height_is_a_prepare_error() {
         layer_height_request: None,
         first_layer_height: None,
         aa_level: AaLevel::Off,
+        adaptive: None,
     };
     let err = slice_plate(
         &meshes_as_roots([unit_cube_mesh()]),

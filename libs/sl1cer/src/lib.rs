@@ -20,6 +20,7 @@
 //! build platform sits at Z = 0; layers are slabs of constant
 //! thickness along +Z.
 
+pub mod adaptive;
 pub mod api;
 pub mod contour;
 pub mod error;

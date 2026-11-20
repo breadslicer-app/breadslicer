@@ -1,0 +1,17 @@
+[identity]
+id = "resinworks-3d-green-100um"
+brand = "Resinworks 3D"
+family = "standard"
+name = "Green (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 13.0
+bottom_exposure_sec = 25.0

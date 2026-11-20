@@ -1,0 +1,17 @@
+[identity]
+id = "3djake-high-precision-grey-50um"
+brand = "3DJake"
+family = "standard"
+name = "High Precision Grey (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 35.0

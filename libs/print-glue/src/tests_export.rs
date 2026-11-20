@@ -15,13 +15,14 @@ use sc_print_profiles::{
 use sc_scene::Scene;
 use sc_scene_fixtures::{leaves_as_roots, trio_as_roots};
 use sc_sl1cer::CancelToken;
+use sc_sl1cer::adaptive::AdaptiveLayers;
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 use sc_sl1cer::profile::LayerSchedule;
 use sc_sla_formats::RasterSetup;
 
 use super::export::{ExportJob, UnexportableSlice, prepare_export};
 use super::fallback_report::fallbacks_used;
-use super::print_program::{SlabTopOutOfRange, UnprojectablePrint};
+use super::print_program::{SlabTopOutOfRange, UnprojectablePrint, layer_times_sec};
 use super::scale_compensation::SupportOwners;
 use super::slice_plate::{PlateContours, SliceRun, SlicedPlate, SlicingParams, slice_plate};
 
@@ -115,6 +116,7 @@ fn resin_defaults() -> SlicingParams {
         layer_height_request: None,
         first_layer_height: None,
         aa_level: AaLevel::Off,
+        adaptive: None,
     }
 }
 
@@ -433,7 +435,9 @@ fn a_program_failure_keeps_the_projection_message() {
 
 /// `contours` with `extra` empty layers stacked on top, on the same grid.
 fn with_dark_top(contours: PlateContours, extra: u32) -> PlateContours {
-    let LayerSchedule::Uniform(grid) = *contours.schedule();
+    let LayerSchedule::Uniform(grid) = contours.schedule().clone() else {
+        panic!("sliced on a uniform schedule")
+    };
     let schedule = LayerSchedule::uniform(
         grid.layer_height().value(),
         grid.first_layer_height().value(),
@@ -504,4 +508,74 @@ fn a_plate_that_lights_nothing_keeps_its_layers() {
         export(contours, &calibrated(), &SceneOverrides::default()).expect("the export prepares");
 
     assert_eq!(job.program.layers.len(), 3);
+}
+
+/// A 4 mm cube standing on the plate: upright walls and a flat top.
+fn standing_cube() -> Scene {
+    let scale = AffineTransform3D::from_uniform_scale(4.0);
+    let place = AffineTransform3D::from_translation([0.0, 0.0, 2.0]);
+    leaves_as_roots([(unit_cube_mesh(), Transform3D::Affine(place.compose(&scale)))])
+}
+
+#[test]
+fn adaptive_layers_thicken_on_walls_and_expose_each_layer_for_its_height() {
+    let params = SlicingParams {
+        adaptive: Some(AdaptiveLayers {
+            min_mm: mm(0.03),
+            max_mm: mm(0.1),
+        }),
+        ..resin_defaults()
+    };
+    let contours = contours_of(&standing_cube(), &params);
+    let schedule = contours.schedule().clone();
+    assert!(!schedule.is_uniform());
+    assert_eq!(schedule.nominal_layer_height(), mm(0.05));
+    let heights: Vec<f64> = schedule.iter_slab_heights().collect();
+    // 8 bottom and 5 transition layers keep the resin's 0.05 mm.
+    for height in &heights[..13] {
+        assert!((height - 0.05).abs() < 1e-9, "{heights:?}");
+    }
+    // The walls take the thickest layer; the flat top, the thinnest.
+    assert!(
+        heights[13..]
+            .iter()
+            .filter(|h| (*h - 0.1).abs() < 1e-9)
+            .count()
+            > 30
+    );
+    assert!((heights.last().unwrap() - 0.03).abs() < 1e-9, "{heights:?}");
+    let top = schedule.iter_slab_tops().last().unwrap();
+    assert!((top - 4.0).abs() < 0.03, "{top}");
+    assert!(heights.len() < 80, "{} layers", heights.len());
+
+    let job = export(contours, &calibrated(), &SceneOverrides::default())
+        .expect("an adaptive slice exports");
+    let program = job.program();
+    assert_eq!(program.layers.len(), heights.len());
+    for (index, (layer, height)) in program.layers.iter().zip(&heights).enumerate().skip(13) {
+        let expected = 2.5 * ((height - 0.05) / 0.164).exp();
+        assert!(
+            (layer.exposure_sec.value() - expected).abs() < 1e-9,
+            "layer {index}: {} for {height}",
+            layer.exposure_sec.value()
+        );
+    }
+    // The resin is each layer's area times its own height: the 4 mm cube.
+    assert!(
+        (program.volume_mm3.value() - 64.0).abs() < 1.5,
+        "{}",
+        program.volume_mm3.value()
+    );
+    let times: f64 = layer_times_sec(program).iter().sum();
+    assert!((times - program.print_time_sec.value()).abs() < 1e-6);
+}
+
+#[test]
+fn a_uniform_slice_keeps_the_resin_exposure_on_every_layer() {
+    let contours = contours_of(&standing_cube(), &resin_defaults());
+    assert!(contours.schedule().is_uniform());
+    let job =
+        export(contours, &calibrated(), &SceneOverrides::default()).expect("the export prepares");
+    let last = job.program().layers.last().unwrap();
+    assert_eq!(last.exposure_sec.value(), 2.5);
 }

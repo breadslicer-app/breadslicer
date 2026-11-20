@@ -762,6 +762,7 @@ fn new_profile(
             transition_layers: None,
             has_camera: false,
             tilting_vat: false,
+            tilts_bottom_layers: false,
             network_protocol: None,
         },
         constraints: PrinterConstraints {

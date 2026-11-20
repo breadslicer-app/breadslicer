@@ -13,7 +13,7 @@ use sc_print_primitives::{
     LightPwm, MassOutOfRange, NegativeDuration, NonEmptyString, NonNegativeFiniteSec,
     PositiveFiniteMm, PositiveFiniteSec, VolumeMm3, VolumeOutOfRange,
 };
-use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
+use sc_print_profiles::{MaterialResolved, PrinterCapabilities, ResolvedPrintConfig};
 use sc_sl1cer::profile::SliceProfile;
 use sc_sla_formats::{CreationTime, LayerProgram, MotionStage, PrintProgram, RasterSetup};
 
@@ -101,9 +101,17 @@ pub(crate) fn project_to_print_program(
 ) -> Result<PrintProgram, UnprojectablePrint> {
     let material = &config.material_resolved;
     let transition_count = material.transition_layer_count;
+    let schedule = profile.layer_schedule();
+    // A uniform schedule exposes every layer as the resin says; a variable
+    // one scales each layer above the bottom ones to its height (#60).
+    let heights: Vec<f64> = if schedule.is_uniform() {
+        Vec::new()
+    } else {
+        schedule.iter_slab_heights().collect()
+    };
 
     let layers = (0u32..)
-        .zip(profile.layer_schedule().iter_slab_tops())
+        .zip(schedule.iter_slab_tops())
         .map(|(layer_index, slab_top)| {
             let slab_top_mm = PositiveFiniteMm::new(slab_top).map_err(|_| {
                 UnprojectablePrint::SlabTop(SlabTopOutOfRange {
@@ -112,14 +120,17 @@ pub(crate) fn project_to_print_program(
                 })
             })?;
             let waits = waits_for(layer_index, material);
-            let motion = motion_for(
-                layer_index,
-                material,
-                config.printer.capabilities.tilting_vat,
-            );
+            let motion = motion_for(layer_index, material, &config.printer.capabilities);
+            let exposure_sec = exposure_for(layer_index, transition_count, material);
+            let exposure_sec = match heights.get(layer_index as usize) {
+                Some(&height) if layer_index >= material.bottom_layer_count => {
+                    exposure_for_height(exposure_sec, height, material.layer_height_mm.value())
+                }
+                _ => exposure_sec,
+            };
             Ok(LayerProgram {
                 slab_top_mm,
-                exposure_sec: exposure_for(layer_index, transition_count, material),
+                exposure_sec,
                 wait_before_cure_sec: waits.before_cure_sec,
                 wait_after_cure_sec: waits.after_cure_sec,
                 wait_after_lift_sec: waits.after_lift_sec,
@@ -291,10 +302,15 @@ struct LayerMotion {
 ///
 /// On a printer with a tilting vat only the bottom layers lift: every other
 /// layer is peeled by the tilt, and the platform just steps up by the layer
-/// height, which the layer's own height carries.
-fn motion_for(layer_index: u32, material: &MaterialResolved, tilting_vat: bool) -> LayerMotion {
+/// height, which the layer's own height carries. A printer whose bottom
+/// layers tilt too (the Prusa SL1 and SL1S) lifts none.
+fn motion_for(
+    layer_index: u32,
+    material: &MaterialResolved,
+    capabilities: &PrinterCapabilities,
+) -> LayerMotion {
     let bottom = layer_index < material.bottom_layer_count;
-    if tilting_vat && !bottom {
+    if capabilities.tilting_vat && (!bottom || capabilities.tilts_bottom_layers) {
         return LayerMotion {
             lift: None,
             retract: None,
@@ -364,6 +380,24 @@ fn light_pwm_for(layer_index: u32, material: &MaterialResolved) -> LightPwm {
     } else {
         material.light_pwm
     }
+}
+
+/// How deep, in millimetres, one more e-fold of light cures in the vendors'
+/// own tables: across 741 pairs of profiles of one resin on one printer,
+/// 0.1 mm layers take a median 1.357 times the exposure of 0.05 mm ones,
+/// and 0.025 mm layers 0.857 times; `exp(Δh / 0.164)` gives both (#60).
+/// Jacobs' working curve has the same form, `E = Ec·exp(Cd/Dp)`.
+const EXPOSURE_DEPTH_MM: f64 = 0.164;
+
+/// `exposure` for a layer `height_mm` high, from the one the resin states
+/// for layers `nominal_mm` high (#60).
+fn exposure_for_height(
+    exposure: PositiveFiniteSec,
+    height_mm: f64,
+    nominal_mm: f64,
+) -> PositiveFiniteSec {
+    let factor = ((height_mm - nominal_mm) / EXPOSURE_DEPTH_MM).exp();
+    PositiveFiniteSec::new(exposure.value() * factor).unwrap_or(exposure)
 }
 
 /// Pick 1 layer's exposure: the bottom layers hold the bottom exposure, the
