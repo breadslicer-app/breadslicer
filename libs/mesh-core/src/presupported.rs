@@ -1421,6 +1421,11 @@ fn cut_loops(mesh: &IndexedMesh, z: f64) -> Vec<CutLoop> {
         .collect()
 }
 
+#[path = "presupported_routes.rs"]
+mod routes;
+
+pub use routes::{ImportedRoute, support_routes};
+
 #[cfg(test)]
 #[path = "tests_presupported.rs"]
 mod tests;

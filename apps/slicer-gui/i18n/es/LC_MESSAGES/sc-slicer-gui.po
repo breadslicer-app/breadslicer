@@ -5836,6 +5836,21 @@ msgid "other supports hang from it"
 msgstr "otros soportes cuelgan de él"
 
 #: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the shaft would lean too far to print"
+msgstr "el tronco quedaría demasiado inclinado para imprimirse"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "an elbow stays between the parts below and above it"
+msgstr "un codo tiene que quedar entre la parte de abajo y la de arriba"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the tip would be wider than its shaft"
+msgstr "la punta quedaría más ancha que su tronco"
+
+#: src/df_support_run.rs
 #, rust-format
 msgctxt "DfSupportDialog"
 msgid "Cannot move it there: {}."
@@ -9626,10 +9641,10 @@ msgstr "varios"
 
 #: src/df_support_run.rs
 msgctxt "Inspector"
-msgid "{n} support picked: the numbers below draw it again."
-msgid_plural "{n} supports picked: the numbers below draw them again."
-msgstr[0] "{n} soporte elegido: los números de abajo lo dibujan de nuevo."
-msgstr[1] "{n} soportes elegidos: los números de abajo los dibujan de nuevo."
+msgid "{n} support picked: the numbers below draw it again; drag its trunk or an elbow to move it."
+msgid_plural "{n} supports picked: the numbers below draw them again; drag a trunk or an elbow to move it."
+msgstr[0] "{n} soporte elegido: los números de abajo lo dibujan de nuevo; arrastrá su tronco o un codo para moverlo."
+msgstr[1] "{n} soportes elegidos: los números de abajo los dibujan de nuevo; arrastrá un tronco o un codo para moverlo."
 
 #: src/df_support_run.rs
 msgctxt "Inspector"

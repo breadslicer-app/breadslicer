@@ -22,6 +22,8 @@ pub(crate) enum SupportDragKind {
     Box,
     /// Remove, brush: every tip the brush passes over.
     Brush,
+    /// Select: a picked support's trunk or elbow follows the cursor (#377).
+    MovePart,
 }
 
 /// Where the cursor is during a drag.
