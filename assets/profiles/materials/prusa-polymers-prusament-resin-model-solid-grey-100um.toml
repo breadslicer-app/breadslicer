@@ -1,0 +1,21 @@
+[identity]
+id = "prusa-polymers-prusament-resin-model-solid-grey-100um"
+brand = "Prusa Polymers"
+family = "standard"
+name = "Prusament Resin Model Solid Grey (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 13.0
+bottom_exposure_sec = 45.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 3.1
+bottom_exposure_sec = 8.0

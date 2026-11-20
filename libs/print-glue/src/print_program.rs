@@ -13,7 +13,7 @@ use sc_print_primitives::{
     LightPwm, MassOutOfRange, NegativeDuration, NonEmptyString, NonNegativeFiniteSec,
     PositiveFiniteMm, PositiveFiniteSec, VolumeMm3, VolumeOutOfRange,
 };
-use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
+use sc_print_profiles::{MaterialResolved, PrinterCapabilities, ResolvedPrintConfig};
 use sc_sl1cer::profile::SliceProfile;
 use sc_sla_formats::{CreationTime, LayerProgram, MotionStage, PrintProgram, RasterSetup};
 
@@ -112,11 +112,7 @@ pub(crate) fn project_to_print_program(
                 })
             })?;
             let waits = waits_for(layer_index, material);
-            let motion = motion_for(
-                layer_index,
-                material,
-                config.printer.capabilities.tilting_vat,
-            );
+            let motion = motion_for(layer_index, material, &config.printer.capabilities);
             Ok(LayerProgram {
                 slab_top_mm,
                 exposure_sec: exposure_for(layer_index, transition_count, material),
@@ -291,10 +287,15 @@ struct LayerMotion {
 ///
 /// On a printer with a tilting vat only the bottom layers lift: every other
 /// layer is peeled by the tilt, and the platform just steps up by the layer
-/// height, which the layer's own height carries.
-fn motion_for(layer_index: u32, material: &MaterialResolved, tilting_vat: bool) -> LayerMotion {
+/// height, which the layer's own height carries. A printer whose bottom
+/// layers tilt too (the Prusa SL1 and SL1S) lifts none.
+fn motion_for(
+    layer_index: u32,
+    material: &MaterialResolved,
+    capabilities: &PrinterCapabilities,
+) -> LayerMotion {
     let bottom = layer_index < material.bottom_layer_count;
-    if tilting_vat && !bottom {
+    if capabilities.tilting_vat && (!bottom || capabilities.tilts_bottom_layers) {
         return LayerMotion {
             lift: None,
             retract: None,

@@ -26,6 +26,8 @@ y = false
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+tilting_vat = true
+tilts_bottom_layers = true
 
 [[capabilities.output_formats]]
 format = "sl1"
@@ -34,5 +36,7 @@ version = "sl1"
 [constraints]
 
 [defaults]
+bottom_layer_count = 10
 
 [time_calibration]
+per_layer_overhead_sec = 4.2

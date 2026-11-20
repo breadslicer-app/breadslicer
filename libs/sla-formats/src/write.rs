@@ -134,7 +134,8 @@ pub fn write_printer_file(
         | PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
         | PrinterFileFormat::Cxdlp(_)
         | PrinterFileFormat::AnycubicZip(_)
-        | PrinterFileFormat::AnycubicBinary(_) => {
+        | PrinterFileFormat::AnycubicBinary(_)
+        | PrinterFileFormat::Sl1(_) => {
             let writer = external::writer_for(format)
                 .ok_or(WriterError::PrinterFormatNotImplemented { format })?;
             writer.write(format, program, previews, stack, &mut out)?;

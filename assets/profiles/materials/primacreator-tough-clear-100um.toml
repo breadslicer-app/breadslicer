@@ -1,0 +1,21 @@
+[identity]
+id = "primacreator-tough-clear-100um"
+brand = "PrimaCreator"
+family = "standard"
+name = "Tough Clear (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 13.0
+bottom_exposure_sec = 45.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 2.6
+bottom_exposure_sec = 25.0

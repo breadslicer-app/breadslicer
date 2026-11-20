@@ -1,0 +1,17 @@
+[identity]
+id = "bluecast-kera-master-dental-100um"
+brand = "BlueCast"
+family = "standard"
+name = "Kera Master Dental (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 13.0
+bottom_exposure_sec = 50.0

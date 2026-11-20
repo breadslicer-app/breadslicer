@@ -1,0 +1,17 @@
+[identity]
+id = "siraya-tech-easy-25um"
+brand = "Siraya Tech"
+family = "standard"
+name = "Easy (25 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.025
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 11.0
+bottom_exposure_sec = 15.0

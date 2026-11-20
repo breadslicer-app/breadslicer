@@ -1,0 +1,17 @@
+[identity]
+id = "loctite-ind475-50um"
+brand = "Loctite"
+family = "standard"
+name = "IND475 (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 4.0
+bottom_exposure_sec = 15.0

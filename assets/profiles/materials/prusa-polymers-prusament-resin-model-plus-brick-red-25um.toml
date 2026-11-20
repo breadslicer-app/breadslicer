@@ -1,0 +1,18 @@
+[identity]
+id = "prusa-polymers-prusament-resin-model-plus-brick-red-25um"
+brand = "Prusa Polymers"
+family = "standard"
+name = "Prusament Resin Model+ Brick Red (25 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.025
+
+[defaults]
+
+[physical]
+liquid_density_g_per_cm3 = 1.1
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 1.8
+bottom_exposure_sec = 6.0

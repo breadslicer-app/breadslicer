@@ -5691,6 +5691,11 @@ msgstr "Anycubic (automático)"
 
 #: src/print_format.rs
 msgctxt "SlicePanel"
+msgid "Prusa (automatic)"
+msgstr "Prusa (automático)"
+
+#: src/print_format.rs
+msgctxt "SlicePanel"
 msgid ".cxdlp (v2)"
 msgstr ".cxdlp (v2)"
 

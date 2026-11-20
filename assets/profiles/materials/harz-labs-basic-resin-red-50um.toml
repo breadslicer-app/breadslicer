@@ -1,0 +1,21 @@
+[identity]
+id = "harz-labs-basic-resin-red-50um"
+brand = "Harz Labs"
+family = "standard"
+name = "Basic Resin Red (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 13.0
+bottom_exposure_sec = 20.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 4.3
+bottom_exposure_sec = 16.0

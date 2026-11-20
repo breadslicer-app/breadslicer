@@ -151,6 +151,7 @@ fn automatic_label(format: PrinterFileFormat) -> String {
         PrinterFileFormat::AnycubicZip(_) | PrinterFileFormat::AnycubicBinary(_) => {
             ctr!("SlicePanel", "Anycubic (automatic)")
         }
+        PrinterFileFormat::Sl1(_) => ctr!("SlicePanel", "Prusa (automatic)"),
     }
     .to_string()
 }
@@ -171,8 +172,11 @@ pub(crate) fn format_label(format: PrinterFileFormat) -> String {
         }
         PrinterFileFormat::Cxdlp(CxdlpVersion::V2) => ctr!("SlicePanel", ".cxdlp (v2)"),
         PrinterFileFormat::Cxdlp(CxdlpVersion::V3) => ctr!("SlicePanel", ".cxdlp (v3)"),
-        // Each Anycubic variant has an extension of its own, which says it all.
-        PrinterFileFormat::AnycubicZip(_) | PrinterFileFormat::AnycubicBinary(_) => {
+        // Each Anycubic and Prusa variant has an extension of its own, which
+        // says it all.
+        PrinterFileFormat::AnycubicZip(_)
+        | PrinterFileFormat::AnycubicBinary(_)
+        | PrinterFileFormat::Sl1(_) => {
             return format!(".{}", format.extension());
         }
     }
@@ -236,12 +240,12 @@ mod print_format_tests {
 
     #[test]
     fn a_binding_naming_no_known_format_is_refused_with_the_reason_it_carries() {
-        let model = print_format_model(&declared(&[binding(FormatKind::Sl1, Some("v1"))]), None);
+        let model = print_format_model(&declared(&[binding(FormatKind::Pwmx, Some("v1"))]), None);
 
         assert!(model.options.is_empty());
         assert_eq!(model.selected, -1);
         assert_eq!(model.refusals.len(), 1);
-        assert!(model.refusals[0].starts_with("sl1@v1: "), "{model:?}");
+        assert!(model.refusals[0].starts_with("pwmx@v1: "), "{model:?}");
         assert!(model.refusals[0].contains("unknown format"), "{model:?}");
     }
 

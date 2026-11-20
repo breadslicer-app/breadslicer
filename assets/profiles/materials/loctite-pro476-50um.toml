@@ -1,0 +1,17 @@
+[identity]
+id = "loctite-pro476-50um"
+brand = "Loctite"
+family = "standard"
+name = "PRO476 (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 7.0
+bottom_exposure_sec = 25.0

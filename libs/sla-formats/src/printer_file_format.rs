@@ -39,6 +39,38 @@ pub enum PrinterFileFormat {
     /// Anycubic's binary container, the one Photon Workshop wrote before the
     /// ZIP.
     AnycubicBinary(AnycubicBinaryVariant),
+    /// Prusa's SL1 archive, for the SL1 and the SL1S.
+    Sl1(Sl1Variant),
+}
+
+/// A variant of Prusa's SL1 archive. The 2 are one layout written for
+/// different machines under different extensions, so they are incomparable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sl1Variant {
+    /// `.sl1`, the Original Prusa SL1.
+    Sl1,
+    /// `.sl1s`, the Original Prusa SL1S SPEED.
+    Sl1s,
+}
+
+impl Sl1Variant {
+    /// Every variant.
+    pub const ALL: [Self; 2] = [Self::Sl1, Self::Sl1s];
+
+    /// Reports the extension, which is also the binding's version string.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Sl1 => "sl1",
+            Self::Sl1s => "sl1s",
+        }
+    }
+
+    /// Names the variant an extension is, ignoring case.
+    pub fn from_extension(extension: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|variant| variant.extension().eq_ignore_ascii_case(extension))
+    }
 }
 
 /// A revision of Creality's CXDLP container. The machine's firmware decides
@@ -250,6 +282,7 @@ impl PartialOrd for PrinterFileFormat {
             (Self::AnycubicBinary(variant), Self::AnycubicBinary(other)) => {
                 (variant == other).then_some(Ordering::Equal)
             }
+            (Self::Sl1(variant), Self::Sl1(other)) => (variant == other).then_some(Ordering::Equal),
             _ => None,
         }
     }
@@ -277,7 +310,8 @@ impl fmt::Display for UnresolvedBinding {
                 | FormatKind::Ctb
                 | FormatKind::Cxdlp
                 | FormatKind::Azf
-                | FormatKind::Aff,
+                | FormatKind::Aff
+                | FormatKind::Sl1,
                 Some(version),
             ) => {
                 write!(f, "unknown version \"{version}\" for format \"{family}\"",)
@@ -287,7 +321,8 @@ impl fmt::Display for UnresolvedBinding {
                 | FormatKind::Ctb
                 | FormatKind::Cxdlp
                 | FormatKind::Azf
-                | FormatKind::Aff,
+                | FormatKind::Aff
+                | FormatKind::Sl1,
                 None,
             ) => {
                 write!(
@@ -358,9 +393,13 @@ impl PrinterFileFormat {
     /// ramps from. CXDLP keeps one exposure for the bottom layers and one for
     /// the rest, and the machines that read CTB version 2 take its
     /// file-wide settings: the transition layers print at the normal
-    /// exposure there (#96).
+    /// exposure there (#96). An SL1 archive states only the first and the
+    /// normal exposure.
     pub fn keeps_exposure_ramp(self) -> bool {
-        !matches!(self, Self::Cxdlp(_) | Self::Ctb(CtbVariant::V2))
+        !matches!(
+            self,
+            Self::Cxdlp(_) | Self::Ctb(CtbVariant::V2) | Self::Sl1(_)
+        )
     }
 
     /// Identifies the printer file a profile's declared binding names.
@@ -389,6 +428,11 @@ impl PrinterFileFormat {
                 .ok_or_else(|| UnresolvedBinding {
                     binding: binding.clone(),
                 }),
+            (FormatKind::Sl1, Some(extension)) => Sl1Variant::from_extension(extension)
+                .map(Self::Sl1)
+                .ok_or_else(|| UnresolvedBinding {
+                    binding: binding.clone(),
+                }),
             _ => Err(UnresolvedBinding {
                 binding: binding.clone(),
             }),
@@ -410,6 +454,7 @@ impl PrinterFileFormat {
             Self::Cxdlp(CxdlpVersion::V3) => (FormatKind::Cxdlp, "v3"),
             Self::AnycubicZip(variant) => (FormatKind::Azf, variant.extension()),
             Self::AnycubicBinary(variant) => (FormatKind::Aff, variant.extension()),
+            Self::Sl1(variant) => (FormatKind::Sl1, variant.extension()),
         };
         OutputFormatBinding {
             format,
@@ -491,7 +536,8 @@ impl PrinterFileFormat {
             | Self::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
             | Self::Cxdlp(_)
             | Self::AnycubicZip(_)
-            | Self::AnycubicBinary(_) => {
+            | Self::AnycubicBinary(_)
+            | Self::Sl1(_) => {
                 external::writer_for(self).and_then(|writer| writer.preview_sizes(self))
             }
         }
@@ -509,6 +555,7 @@ impl PrinterFileFormat {
             Self::Cxdlp(_) => "cxdlp",
             Self::AnycubicZip(variant) => variant.extension(),
             Self::AnycubicBinary(variant) => variant.extension(),
+            Self::Sl1(variant) => variant.extension(),
         }
     }
 }
@@ -528,6 +575,7 @@ pub fn printer_file_family_from_path(path: &Path) -> Option<FormatKind> {
         "cxdlp" => Some(FormatKind::Cxdlp),
         other if AnycubicZipVariant::from_extension(other).is_some() => Some(FormatKind::Azf),
         other if AnycubicBinaryVariant::from_extension(other).is_some() => Some(FormatKind::Aff),
+        other if Sl1Variant::from_extension(other).is_some() => Some(FormatKind::Sl1),
         _ => None,
     }
 }
@@ -623,7 +671,6 @@ mod printer_file_format_tests {
     #[test]
     fn every_other_format_kind_is_unknown_here() {
         for format in [
-            FormatKind::Sl1,
             FormatKind::Pwmx,
             FormatKind::PngPerLayer,
             FormatKind::SvgPerLayer,
@@ -641,7 +688,36 @@ mod printer_file_format_tests {
 
     #[test]
     fn a_version_does_not_rescue_an_unknown_format_kind() {
+        assert!(resolve(FormatKind::Pwmx, Some("v1")).is_err());
+    }
+
+    #[test]
+    fn sl1_names_its_machine_by_extension() {
+        assert_eq!(
+            resolve(FormatKind::Sl1, Some("sl1")),
+            Ok(PrinterFileFormat::Sl1(Sl1Variant::Sl1)),
+        );
+        assert_eq!(
+            resolve(FormatKind::Sl1, Some("SL1S")),
+            Ok(PrinterFileFormat::Sl1(Sl1Variant::Sl1s)),
+        );
         assert!(resolve(FormatKind::Sl1, Some("v1")).is_err());
+        let err = resolve(FormatKind::Sl1, None).unwrap_err();
+        assert!(err.contains("needs a version"), "message: {err}");
+        for variant in Sl1Variant::ALL {
+            let format = PrinterFileFormat::Sl1(variant);
+            assert_eq!(
+                PrinterFileFormat::from_binding(&format.binding()),
+                Ok(format)
+            );
+            assert_eq!(format.extension(), variant.extension());
+            assert!(!format.keeps_exposure_ramp());
+            let path = format!("print.{}", variant.extension());
+            assert_eq!(
+                printer_file_family_from_path(Path::new(&path)),
+                Some(FormatKind::Sl1),
+            );
+        }
     }
 
     #[test]

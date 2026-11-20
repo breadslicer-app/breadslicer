@@ -1,0 +1,20 @@
+[identity]
+id = "liqcreate-premium-model-25um"
+brand = "Liqcreate"
+family = "standard"
+name = "Premium Model (25 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.025
+
+[defaults.scale_compensation_pct]
+x = 0.73
+y = 0.73
+z = 0.0
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 2.7
+bottom_exposure_sec = 25.0

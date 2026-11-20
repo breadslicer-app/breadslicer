@@ -3100,3 +3100,70 @@ fn the_transition_layers_come_from_the_resin_then_the_printer_then_five() {
             .any(|record| record.field == ResolvedField::TransitionLayerCount)
     );
 }
+
+/// A resin calibrated with its exposures alone, as Prusa publishes its
+/// SL1 and SL1S settings (#174).
+const RESIN_WITHOUT_TRAVEL: &str = r#"
+[identity]
+id = "testcorp-tilted"
+brand = "TestCorp"
+family = "standard"
+name = "Tilted"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[per_printer.elegoo-saturn-4-ultra]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 20.0
+"#;
+
+fn tilting_printer(bottom_layers_tilt: bool) -> PrinterProfile {
+    let extra = if bottom_layers_tilt {
+        "tilting_vat = true\ntilts_bottom_layers = true"
+    } else {
+        "tilting_vat = true"
+    };
+    toml_edit::de::from_str(
+        &PRINTER_WITH_LIGHT_INTENSITY
+            .replace("two_stage_lift = true", "two_stage_lift = false")
+            .replace(
+                "has_camera = false",
+                &format!("has_camera = false\n{extra}"),
+            ),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_machine_that_never_lifts_resolves_a_resin_stating_no_travel() {
+    let resolved = resolve(
+        &tilting_printer(true),
+        &material(RESIN_WITHOUT_TRAVEL),
+        &SceneOverrides::default(),
+    )
+    .expect("no layer of this machine lifts, so no travel is needed");
+
+    assert_eq!(resolved.material_resolved.normal_exposure_sec.value(), 2.0);
+    assert_eq!(resolved.material_resolved.bottom_exposure_sec.value(), 20.0);
+}
+
+#[test]
+fn a_machine_that_lifts_its_bottom_layers_still_needs_the_travel() {
+    let err = resolve(
+        &tilting_printer(false),
+        &material(RESIN_WITHOUT_TRAVEL),
+        &SceneOverrides::default(),
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ResolveError::MissingRequiredField {
+            field: ResolvedField::LiftDistanceMm,
+        }
+    ));
+}

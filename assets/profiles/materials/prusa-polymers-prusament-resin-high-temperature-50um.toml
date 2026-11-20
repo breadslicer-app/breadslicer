@@ -1,0 +1,17 @@
+[identity]
+id = "prusa-polymers-prusament-resin-high-temperature-50um"
+brand = "Prusa Polymers"
+family = "standard"
+name = "Prusament Resin High Temperature (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 4.0
+bottom_exposure_sec = 8.0

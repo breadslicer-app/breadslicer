@@ -1,0 +1,17 @@
+[identity]
+id = "prusa-polymers-prusament-resin-flex-gingiva-mask-100um"
+brand = "Prusa Polymers"
+family = "standard"
+name = "Prusament Resin Flex Gingiva Mask (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 3.5
+bottom_exposure_sec = 12.0

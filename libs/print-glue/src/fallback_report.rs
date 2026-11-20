@@ -195,8 +195,13 @@ const FALLBACKS: [(ResolvedField, FallbackKind, ResolvedValue); 15] = [
 /// by whoever wrote the resin, so it is not listed here; only the
 /// substitutions the resolver makes on its own are.
 pub fn fallbacks_used(config: &ResolvedPrintConfig) -> Vec<FallbackUsed> {
+    let capabilities = &config.printer.capabilities;
+    let never_lifts = capabilities.tilting_vat && capabilities.tilts_bottom_layers;
     let mut used: Vec<FallbackUsed> = FALLBACKS
         .into_iter()
+        // A machine that never lifts runs no travel and no pause at the top
+        // of one, so what they resolved to is never run (#174).
+        .filter(|(field, _, _)| !(never_lifts && is_travel(*field)))
         .filter(|(field, _, _)| {
             !config
                 .overrides_applied
@@ -213,6 +218,22 @@ pub fn fallbacks_used(config: &ResolvedPrintConfig) -> Vec<FallbackUsed> {
         .collect();
     used.extend(uncalibrated(config));
     used
+}
+
+/// Whether `field` belongs to the platform's travel: a lift, a retract or
+/// the pause at the top of a lift.
+fn is_travel(field: ResolvedField) -> bool {
+    matches!(
+        field,
+        ResolvedField::WaitAfterLiftSec
+            | ResolvedField::BottomWaitAfterLiftSec
+            | ResolvedField::BottomLiftDistanceMm
+            | ResolvedField::BottomLiftSpeedMmMin
+            | ResolvedField::BottomRetractSpeedMmMin
+            | ResolvedField::BottomSecondLiftDistanceMm
+            | ResolvedField::BottomSecondLiftSpeedMmMin
+            | ResolvedField::BottomSecondRetractSpeedMmMin
+    )
 }
 
 /// The values the resolver filled because nothing about the resin

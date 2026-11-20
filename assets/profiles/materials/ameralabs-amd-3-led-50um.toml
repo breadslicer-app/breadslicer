@@ -1,0 +1,21 @@
+[identity]
+id = "ameralabs-amd-3-led-50um"
+brand = "Ameralabs"
+family = "standard"
+name = "AMD 3 LED (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 5.0
+bottom_exposure_sec = 30.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 1.7
+bottom_exposure_sec = 24.0
