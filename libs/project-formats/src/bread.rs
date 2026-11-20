@@ -45,6 +45,11 @@ struct SettingsDoc {
     /// The groups of models (#475), each by its members' rows.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     groups: Vec<Vec<u32>>,
+    /// The hidden and the locked models (#16), by their rows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hidden: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    locked: Vec<u32>,
     #[serde(default)]
     profiles: ProfilesSection,
     #[serde(default, skip_serializing_if = "PrintSection::is_empty")]
@@ -114,6 +119,8 @@ pub(crate) fn serialize_settings(
         plate_names: payload.plate_names.clone(),
         hand_placed: payload.hand_placed.clone(),
         groups: payload.groups.clone(),
+        hidden: payload.hidden.clone(),
+        locked: payload.locked.clone(),
         profiles: ProfilesSection {
             printer: payload.printer.clone(),
             resin: payload.resin.clone(),
@@ -213,6 +220,8 @@ pub(crate) fn parse_settings(
         plate_names: doc.plate_names,
         hand_placed: doc.hand_placed,
         groups: doc.groups,
+        hidden: doc.hidden,
+        locked: doc.locked,
     }))
 }
 

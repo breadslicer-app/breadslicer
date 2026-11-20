@@ -20,6 +20,12 @@ export struct SceneRow {
     index: int,
     text: string,
     active: bool,
+    // An object row (#16): a model's own (it offers the eye and the
+    // padlock), and whether it, or the model it holds up, is hidden or
+    // locked.
+    model: bool,
+    hidden: bool,
+    locked: bool,
 }
 
 // Every row is this tall, so a row's place is its rank times it.
@@ -49,6 +55,51 @@ component RowTool inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         color: touch.has-hover ? Theme.text : Theme.text-muted;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+        changed has-hover => {
+            if self.has-hover {
+                ToolTipState.text = root.label;
+                ToolTipState.button-right = root.absolute-position.x + root.width;
+                ToolTipState.button-top = root.absolute-position.y;
+                ToolTipState.button-height = root.height;
+                ToolTipState.below = false;
+            } else {
+                ToolTipState.text = "";
+            }
+        }
+    }
+}
+
+// The eye or the padlock of an object's row (#16): bright while on.
+component FlagTool inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> on;
+    callback clicked();
+
+    width: 18px;
+    height: 18px;
+    border-radius: Theme.radius-sm;
+    background: touch.has-hover ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: self.label;
+    accessible-checked: self.on;
+    accessible-action-default => {
+        self.clicked();
+    }
+
+    Icon {
+        commands: root.icon;
+        size: 13px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        color: root.on ? Theme.warning : touch.has-hover ? Theme.text : Theme.text-faint;
     }
 
     touch := TouchArea {
@@ -147,6 +198,13 @@ component PlateRow inherits Rectangle {
 component ObjectRow inherits Rectangle {
     in property <string> text;
     in property <bool> selected;
+    // Hide and lock (#16): a model's row has the eye and the padlock; a
+    // support set's row shows its model's state.
+    in property <bool> model;
+    in property <bool> hidden;
+    in property <bool> locked;
+    callback hide-toggled();
+    callback lock-toggled();
     callback clicked();
     // Ctrl+click (#13): one row in or out.
     callback toggled();
@@ -167,7 +225,7 @@ component ObjectRow inherits Rectangle {
 
     HorizontalLayout {
         padding-left: 16px;
-        padding-right: 8px;
+        padding-right: root.model ? 8px + 2 * 18px + 2px : 8px;
         spacing: 7px;
 
         VerticalLayout {
@@ -182,11 +240,22 @@ component ObjectRow inherits Rectangle {
         }
         Text {
             text: root.text;
-            color: root.selected ? Theme.text : Theme.text-soft;
+            color: root.hidden ? Theme.text-faint : root.selected ? Theme.text : Theme.text-soft;
             font-size: Theme.font;
+            font-italic: root.hidden;
             vertical-alignment: center;
             overflow: elide;
             horizontal-stretch: 1;
+        }
+        // A support set's row: its model's state, as a mark.
+        if !root.model && (root.hidden || root.locked): VerticalLayout {
+            alignment: center;
+
+            Icon {
+                commands: root.hidden ? Icons.eye-off : Icons.lock;
+                size: 12px;
+                color: Theme.text-faint;
+            }
         }
     }
 
@@ -208,6 +277,38 @@ component ObjectRow inherits Rectangle {
             }
         }
     }
+
+    // Over the row's own touch area, so a click on them is theirs.
+    if root.model: HorizontalLayout {
+        x: parent.width - self.width - 6px;
+        width: 2 * 18px + 2px;
+        spacing: 2px;
+
+        VerticalLayout {
+            alignment: center;
+
+            FlagTool {
+                icon: root.hidden ? Icons.eye-off : Icons.eye;
+                label: root.hidden ? @tr("Inspector" => "Hidden: not drawn and not sliced. Click to show") : @tr("Inspector" => "Hide: not drawn and not sliced");
+                on: root.hidden;
+                clicked => {
+                    root.hide-toggled();
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+
+            FlagTool {
+                icon: root.locked ? Icons.lock : Icons.unlock;
+                label: root.locked ? @tr("Inspector" => "Locked: not picked or moved in the view. Click to unlock") : @tr("Inspector" => "Lock: not picked or moved in the view");
+                on: root.locked;
+                clicked => {
+                    root.lock-toggled();
+                }
+            }
+        }
+    }
 }
 
 export component ScenePanel inherits Rectangle {
@@ -224,6 +325,9 @@ export component ScenePanel inherits Rectangle {
     callback object-picked(int);
     callback object-toggled(int);
     callback object-ranged(int);
+    // The eye and the padlock of an object's row (#16), by its index.
+    callback object-hide-toggled(int);
+    callback object-lock-toggled(int);
     callback plate-picked(int);
     callback plate-send(int);
     callback plate-remove();
@@ -297,6 +401,15 @@ export component ScenePanel inherits Rectangle {
                     if !row.plate: ObjectRow {
                         horizontal-stretch: 1;
                         text: row.text;
+                        model: row.model;
+                        hidden: row.hidden;
+                        locked: row.locked;
+                        hide-toggled => {
+                            root.object-hide-toggled(row.index);
+                        }
+                        lock-toggled => {
+                            root.object-lock-toggled(row.index);
+                        }
                         selected: row.index == root.selected-index || root.selected-rows[row.index];
                         clicked => {
                             root.object-picked(row.index);

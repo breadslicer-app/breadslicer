@@ -557,6 +557,7 @@ impl SliceRun {
         let volume = self.ctrl.build_volume();
         let plates = self.document.plates();
         let sessions = self.document.support_sessions();
+        let hidden = self.document.hidden_leaves();
         let past = self
             .document
             .with_scene(|spatial| {
@@ -571,6 +572,8 @@ impl SliceRun {
                 );
                 let names = object_names_by_leaf(spatial.graph());
                 past.iter()
+                    // A hidden model is not sliced (#16).
+                    .filter(|id| !hidden.contains(id))
                     .map(|id| names.get(id).cloned().unwrap_or_default())
                     .collect::<Vec<String>>()
             })

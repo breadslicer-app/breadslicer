@@ -481,6 +481,8 @@ mod scene_save_tests {
             plate_names: Vec::new(),
             hand_placed: Vec::new(),
             groups: Vec::new(),
+            hidden: Vec::new(),
+            locked: Vec::new(),
         }
     }
 

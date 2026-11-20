@@ -30,6 +30,9 @@ pub(crate) struct Readout {
     pub position: [f64; 3],
     pub rotation_deg: [f64; 3],
     pub scale_pct: f64,
+    /// Scale along each of the object's own axes against the file's size,
+    /// percent (#14).
+    pub axis_scale_pct: [f64; 3],
 }
 
 /// An edit typed into the inspector.
@@ -52,6 +55,14 @@ pub(crate) enum NumericEdit {
     DropToPlate,
     /// Footprint centre on the plate's centre.
     Center([f64; 2]),
+    /// One world dimension to `mm`, the others as they are (#14).
+    AxisSize { axis: usize, mm: f64 },
+    /// One dimension along the object's own axes to `mm`, the others as
+    /// they are (#14).
+    AxisModelSize { axis: usize, mm: f64 },
+    /// Scale along one of the object's own axes, percent of the file's
+    /// size (#14).
+    AxisScalePct { axis: usize, pct: f64 },
 }
 
 impl NumericEdit {
@@ -82,6 +93,19 @@ impl NumericEdit {
             12..=14 => NumericEdit::ModelSize {
                 axis: (code - 12) as usize,
                 mm: value,
+            },
+            // With the Size card's uniform lock off (#14).
+            15..=17 => NumericEdit::AxisSize {
+                axis: (code - 15) as usize,
+                mm: value,
+            },
+            18..=20 => NumericEdit::AxisModelSize {
+                axis: (code - 18) as usize,
+                mm: value,
+            },
+            21..=23 => NumericEdit::AxisScalePct {
+                axis: (code - 21) as usize,
+                pct: value,
             },
             _ => return None,
         })
@@ -140,6 +164,15 @@ fn mat_mul(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
         for (j, cell) in row.iter_mut().enumerate() {
             *cell = (0..3).map(|k| a[i][k] * b[k][j]).sum();
         }
+    }
+    out
+}
+
+/// `m` with its column `axis` (the object's own axis) times `f`.
+fn scaled_column(m: &[[f64; 3]; 3], axis: usize, f: f64) -> [[f64; 3]; 3] {
+    let mut out = *m;
+    for row in out.iter_mut() {
+        row[axis] *= f;
     }
     out
 }
@@ -211,6 +244,7 @@ pub(crate) fn cheap_readout(world: Transform3D) -> Readout {
         position: [0.0; 3],
         rotation_deg: euler_deg(&m),
         scale_pct: det.abs().cbrt() * 100.0,
+        axis_scale_pct: column_norms(&m).map(|s| s * 100.0),
     }
 }
 
@@ -256,6 +290,30 @@ pub(crate) fn apply(query: &ObjectQuery<'_>, edit: NumericEdit) -> Option<Transf
             }
             let f = mm / now;
             Some(m.map(|row| row.map(|v| v * f)))
+        }
+        NumericEdit::AxisSize { axis, mm } => {
+            let now = max[axis] - min[axis];
+            if mm <= 0.0 || now <= 1e-9 {
+                return None;
+            }
+            // Along the world axis: that row of the matrix.
+            let mut linear = m;
+            linear[axis] = linear[axis].map(|v| v * mm / now);
+            Some(linear)
+        }
+        NumericEdit::AxisModelSize { axis, mm } => {
+            let now = model_size(query, world)?[axis];
+            if mm <= 0.0 || now <= 1e-9 {
+                return None;
+            }
+            Some(scaled_column(&m, axis, mm / now))
+        }
+        NumericEdit::AxisScalePct { axis, pct } => {
+            let now = column_norms(&m)[axis] * 100.0;
+            if pct <= 0.0 || now <= 1e-9 {
+                return None;
+            }
+            Some(scaled_column(&m, axis, pct / now))
         }
         _ => None,
     };

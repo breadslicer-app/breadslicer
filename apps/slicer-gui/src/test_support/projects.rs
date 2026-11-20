@@ -135,6 +135,8 @@ pub(crate) fn project_with_in_sync_slices() -> (Vec<u8>, String) {
         plate_names: Vec::new(),
         hand_placed: Vec::new(),
         groups: Vec::new(),
+        hidden: Vec::new(),
+        locked: Vec::new(),
     };
 
     let mut bytes = Vec::new();

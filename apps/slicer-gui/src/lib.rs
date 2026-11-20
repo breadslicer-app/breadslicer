@@ -47,6 +47,7 @@ mod i18n;
 mod import_notes;
 mod imported_supports;
 mod island_paint;
+mod lay_on_face;
 mod measure;
 mod mirror;
 mod language;
@@ -150,6 +151,8 @@ mod tests_pick_timing;
 mod tests_presupported_import;
 #[cfg(test)]
 mod tests_scene_dirty;
+#[cfg(test)]
+mod tests_scene_flags;
 #[cfg(test)]
 mod tests_scene_loader;
 #[cfg(test)]

@@ -9966,3 +9966,198 @@ msgstr "{} mm² de ventosa"
 msgctxt "LayerTimeline"
 msgid "Hardest peel: layer {}"
 msgstr "Despegue más fuerte: capa {}"
+
+#, rust-format
+msgctxt "MeshViewer"
+msgid "X Y Z lock an axis · type a number · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels"
+msgstr "X Y Z fijan un eje · escribí un número · Ctrl imanta · Shift fino · {} o Enter confirma · Esc cancela"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "LAY ON FACE · Click a flat face of a model to lay it on the plate · Esc cancels"
+msgstr "APOYAR EN CARA · Hacé clic en una cara plana de un modelo para apoyarlo en la placa · Esc cancela"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Lay on face"
+msgstr "Apoyar en cara"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pick a face…"
+msgstr "Elegí una cara…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Scale X"
+msgstr "Escala X"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Scale Y"
+msgstr "Escala Y"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Scale Z"
+msgstr "Escala Z"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Uniform scale"
+msgstr "Escala uniforme"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Each size and scale changes its own axis alone."
+msgstr "Cada tamaño y escala cambia solo su propio eje."
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Hidden: not drawn and not sliced. Click to show"
+msgstr "Oculto: no se dibuja ni se lamina. Clic para mostrarlo"
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Hide: not drawn and not sliced"
+msgstr "Ocultar: no se dibuja ni se lamina"
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Locked: not picked or moved in the view. Click to unlock"
+msgstr "Bloqueado: no se elige ni se mueve en la vista. Clic para desbloquearlo"
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Lock: not picked or moved in the view"
+msgstr "Bloquear: no se elige ni se mueve en la vista"
+
+#: src/viewport/controller.rs
+msgctxt "SlicePanel"
+msgid "{} hidden model(s) left out of the slice. Show them in the scene panel to print them."
+msgstr "{} modelo(s) oculto(s) quedan fuera del laminado. Mostralos en el panel de escena para imprimirlos."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Joints"
+msgstr "Uniones"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pins"
+msgstr "Pernos"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnets"
+msgstr "Imanes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pin shape"
+msgstr "Forma del perno"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Round"
+msgstr "Redondo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Square"
+msgstr "Cuadrado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnet"
+msgstr "Imán"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pin size"
+msgstr "Tamaño del perno"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnet diameter"
+msgstr "Diámetro del imán"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pin depth"
+msgstr "Largo del perno"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnet height"
+msgstr "Alto del imán"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Clearance"
+msgstr "Holgura"
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Joints added: {}."
+msgstr "Uniones agregadas: {}."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Joints left out: {} (too near the edge of the cut, or too deep for the part)."
+msgstr "Uniones que no entran: {} (muy cerca del borde del corte, o muy profundas para la pieza)."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Cut by"
+msgstr "Cortar con"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Plane"
+msgstr "Plano"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Stroke"
+msgstr "Trazo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Drag over the model in the view: a stroke from one side to the other cuts it along the stroke, through the model as seen; a loop round a part cuts that part off. Then press Cut."
+msgstr "Arrastrá sobre el modelo en la vista: un trazo de un lado al otro lo corta siguiendo el trazo, a través del modelo tal como se ve; un lazo alrededor de una parte la separa. Después tocá Cortar."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Draw across the model to cut it along the stroke, or draw a loop round a part to cut it off."
+msgstr "Dibujá a través del modelo para cortarlo siguiendo el trazo, o un lazo alrededor de una parte para separarla."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "The loop cuts nothing off: draw it round a part that stands out of the model."
+msgstr "El lazo no separa nada: dibujalo alrededor de una parte que sobresalga del modelo."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "The stroke does not cut the model in two: draw it from one side of the model to the other, without crossing itself."
+msgstr "El trazo no corta el modelo en dos: dibujalo de un lado del modelo al otro, sin que se cruce."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Working out the cut…"
+msgstr "Calculando el corte…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Suggest"
+msgstr "Sugerir"
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "No narrowing found to suggest: the model is about as wide all the way up."
+msgstr "No hay un estrechamiento para sugerir: el modelo tiene más o menos el mismo ancho de abajo arriba."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Suggested: a narrowing of the model ({}). Suggest again for the next."
+msgstr "Sugerido: un estrechamiento del modelo ({}). Volvé a tocar Sugerir para el siguiente."

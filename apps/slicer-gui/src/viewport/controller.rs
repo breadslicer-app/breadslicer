@@ -165,6 +165,8 @@ pub(crate) struct ViewportController {
             crate::mesh_render::Overlay,
         )>,
     >,
+    /// Lay on face (#15): the next click on a model lays it on that face.
+    lay_face: Cell<bool>,
     /// The overhang map's box, and the self-support angle it paints by.
     overhang_map_on: Cell<bool>,
     /// The Supports tab's box (#492): whether the rafts fade out with the
@@ -339,6 +341,7 @@ impl ViewportController {
             repair_marks: Default::default(),
             measure: Default::default(),
             measured: RefCell::new(None),
+            lay_face: Cell::new(false),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
             estimate_listener: RefCell::new(Vec::new()),
@@ -419,6 +422,7 @@ impl ViewportController {
             repair_marks: Default::default(),
             measure: Default::default(),
             measured: RefCell::new(None),
+            lay_face: Cell::new(false),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
             estimate_listener: RefCell::new(Vec::new()),
@@ -1178,14 +1182,20 @@ impl ViewportController {
         let plates = document.plates();
         let volume = self.build_volume();
         let sessions = document.support_sessions();
+        // Hidden models and their supports are not sliced (#16).
+        let hidden = document.hidden_leaves();
         document.with_scene(|spatial| {
-            if plates.count() > 1 {
+            let (mut scene, origin) = if plates.count() > 1 {
                 crate::plate_layout::plate_scene(spatial, &volume, plates, plate, &|leaf| {
                     crate::support_persist::model_of(&sessions, leaf)
                 })
             } else {
                 (spatial.graph().clone(), [0.0; 2])
+            };
+            for &leaf in &hidden {
+                let _ = scene.remove_leaf(leaf);
             }
+            (scene, origin)
         })
     }
 
@@ -1414,6 +1424,9 @@ impl ViewportController {
         }
         if !self.allows_transform_gizmo() {
             self.cancel_transform_gestures();
+        }
+        if !self.allows_layout_tools() && self.lay_face.get() {
+            self.set_lay_on_face(false);
         }
         if !self.supports_selectable() {
             let kept = document
@@ -2793,6 +2806,12 @@ impl ViewportController {
                         ModalOp::Move => "XY",
                         ModalOp::Rotate => "View",
                     });
+                    // A typed number shows where the axis does (#14).
+                    let axis = if g.typed.is_empty() {
+                        axis.to_string()
+                    } else {
+                        format!("{axis} = {}_", g.typed.text())
+                    };
                     if !several || g.op == ModalOp::Move {
                         // The keys in plain sight (#620).
                         return format!(
@@ -2801,7 +2820,7 @@ impl ViewportController {
                             axis,
                             ctr!(
                                 "MeshViewer",
-                                "X Y Z lock an axis · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels",
+                                "X Y Z lock an axis · type a number · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels",
                                 g.op.key()
                             )
                         );
@@ -2919,6 +2938,7 @@ impl ViewportController {
                     modifiers: Default::default(),
                     factor: 1.0,
                     individual: false,
+                    typed: Default::default(),
                 })
             })
             .flatten();
@@ -2943,6 +2963,25 @@ impl ViewportController {
         self.input.modal.set(Some(gesture));
         self.mirror_modal_to_ui();
         self.update_modal(ScreenPoint::new(x, y), gesture.modifiers);
+    }
+
+    /// A key typed during G, R or S (#14): a digit, a decimal point, a
+    /// minus or Backspace builds the number that takes the cursor's place.
+    /// Whether the key was the number's.
+    pub(crate) fn on_modal_transform_type(&self, key: &str) -> bool {
+        let Some(mut gesture) = self.input.modal.get() else {
+            return false;
+        };
+        if !gesture.typed.push(key) {
+            return false;
+        }
+        self.input.modal.set(Some(gesture));
+        self.mirror_modal_to_ui();
+        self.update_modal(
+            ScreenPoint::new(gesture.cursor[0], gesture.cursor[1]),
+            gesture.modifiers,
+        );
+        true
     }
 
     fn update_modal(&self, cursor: ScreenPoint, modifiers: gizmo::modifiers::DragModifiers) {
@@ -3221,7 +3260,7 @@ impl ViewportController {
         // keeping its selection box) is a click until it moves.
         let drag = self
             .drag_tool_armed()
-            .filter(|_| !self.measure.on())
+            .filter(|_| !self.measure.on() && !self.lay_face.get())
             .filter(|kind| !(modifiers.shift && *kind != SupportDragKind::MoveTip));
         self.support_drag.set(match drag {
             Some(kind) => DragPhase::Pressed([cursor.x, cursor.y], kind),
@@ -3229,13 +3268,14 @@ impl ViewportController {
         });
         // Nothing is selected in the Slice tab (#140): Shift draws no box.
         // Measuring (#652), a click is a point and Shift chains it.
-        if !self.selectable() || self.measure.on() {
+        if !self.selectable() || self.measure.on() || self.lay_face.get() {
             modifiers.shift = false;
         }
         // A plain press on empty space boxes (#622), unless a tool owns the
         // press or the plate's tools are under it.
         let empty_boxes = self.selectable()
             && !self.measure.on()
+            && !self.lay_face.get()
             && drag.is_none()
             && !self.shift_click_tool_armed()
             && self.plate_tool_hovered.get().is_none();
@@ -3245,7 +3285,10 @@ impl ViewportController {
             self.render.viewport(),
             cursor,
             modifiers,
-            self.allows_transform_gizmo() && !self.cut_on() && !self.measure.on(),
+            self.allows_transform_gizmo()
+                && !self.cut_on()
+                && !self.measure.on()
+                && !self.lay_face.get(),
             self.supports_selectable(),
             empty_boxes,
         );
@@ -3270,7 +3313,11 @@ impl ViewportController {
             self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
         }
-        if !self.allows_transform_gizmo() || self.cut_on() || self.measure.on() {
+        if !self.allows_transform_gizmo()
+            || self.cut_on()
+            || self.measure.on()
+            || self.lay_face.get()
+        {
             return;
         }
         if self.input.on_pointer_move(
@@ -3311,6 +3358,10 @@ impl ViewportController {
             PointerUpOutcome::Click(cursor) => {
                 if self.measure.on() {
                     self.measure_click(cursor, modifiers.shift);
+                    return;
+                }
+                if self.lay_face.get() {
+                    self.lay_on_face_click(cursor);
                     return;
                 }
                 if let Some(plate) = self.plate_name_under(cursor) {
@@ -3912,8 +3963,135 @@ impl ViewportController {
 
     /// Turns the Measure tool on or off (#652); off forgets its points.
     pub(crate) fn set_measuring(&self, on: bool) {
+        if on && self.lay_face.get() {
+            self.set_lay_on_face(false);
+        }
         self.measure.set_on(on);
         self.show_measure();
+    }
+
+    /// The scene panel's eye (`lock` false) or padlock (`lock` true) on
+    /// the row of object `index` (#16): hides or shows, locks or unlocks
+    /// its model, as one step of history. A support set's row has neither.
+    pub(crate) fn toggle_row_flag(&self, index: i32, lock: bool) {
+        let document = self.session.document();
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let model = document
+            .with_scene(|spatial| {
+                let id = spatial.leaf_id_at_index(index)?;
+                (!shows_supports(spatial, id)).then_some(id)
+            })
+            .flatten();
+        let Some(model) = model else {
+            return;
+        };
+        if lock {
+            document.set_locked(&[model], !document.is_locked(model));
+        } else {
+            document.set_hidden(&[model], !document.is_hidden(model));
+        }
+        self.mark_dirty();
+    }
+
+    /// Whether the next click lays a model on a face (#15).
+    #[cfg(test)]
+    pub(crate) fn laying_on_face(&self) -> bool {
+        self.lay_face.get()
+    }
+
+    /// Arms or disarms Lay on face (#15); arming it ends Measure.
+    pub(crate) fn set_lay_on_face(&self, on: bool) {
+        let on = on && self.allows_layout_tools();
+        if on && self.measure.on() {
+            self.set_measuring(false);
+        }
+        self.lay_face.set(on);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_lay_face_on(on);
+        }
+        self.mark_dirty();
+    }
+
+    /// A click while Lay on face is armed (#15): the model under `cursor`
+    /// turns so the flat face clicked lies on the plate, in one Undo step,
+    /// and becomes the selection. Supports follow the usual rules (#153): a
+    /// tilt makes them again. The tool disarms either way. Whether a model
+    /// moved.
+    pub(crate) fn lay_on_face_click(&self, cursor: ScreenPoint) -> bool {
+        self.set_lay_on_face(false);
+        let Some(vp) = self.render.viewport() else {
+            return false;
+        };
+        let Some(camera) = self.camera.camera_cell().borrow().as_ref().cloned() else {
+            return false;
+        };
+        let fov = crate::mesh_render::default_fov_y();
+        let ray =
+            picking::ray_from_pixel(&camera, fov, vp.width(), vp.height(), cursor.x, cursor.y);
+        let document = self.session.document();
+        let hit = document
+            .with_scene(|spatial| {
+                let hit =
+                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id))?;
+                let query = spatial.leaf(hit.leaf)?;
+                let local = crate::lay_on_face::flat_normal(query.mesh(), hit.face as usize)?;
+                let world = match query.world_transform() {
+                    Transform3D::Identity => sc_mesh_core::transform::AffineTransform3D::identity(),
+                    Transform3D::Affine(a) => a,
+                };
+                let normal = crate::lay_on_face::world_normal(&world, local)?;
+                Some((
+                    hit.leaf,
+                    spatial.graph().leaf_mesh_arc(hit.leaf)?.clone(),
+                    world,
+                    query.local_transform(),
+                    query.parent_world().inverse().ok()?,
+                    normal,
+                ))
+            })
+            .flatten();
+        let Some((leaf, mesh, world, before, parent_inverse, normal)) = hit else {
+            return false;
+        };
+        let volume = self.build_volume();
+        let plate = self.plate_of_leaf(leaf).map(|on| {
+            let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+            let at = crate::plates::offset(&volume, on);
+            (
+                [f64::from(lo.x + at.x), f64::from(lo.y + at.y)],
+                [f64::from(hi.x + at.x), f64::from(hi.y + at.y)],
+            )
+        });
+        // A model on supports keeps its lift for the new ones; any other
+        // ends on the plate.
+        let drop = document.with_their_supports(vec![leaf]).len() == 1;
+        document.set_selection(Selection::One(LeafId(leaf)));
+        let Some(laid) = crate::lay_on_face::laid_pose(&mesh, &world, normal, plate, drop) else {
+            return false;
+        };
+        let after = parent_inverse.compose(&Transform3D::Affine(laid));
+        if after == before {
+            return false;
+        }
+        let edit = SceneEdit::SetLocalTransform {
+            node_id: leaf,
+            before,
+            after,
+        };
+        match document.apply_edit(edit.clone()) {
+            Ok(()) => document.push_edit(edit),
+            Err(EditNotApplied::Rejected(reason)) => {
+                self.show_edit_rejected(reason);
+                return false;
+            }
+            Err(_) => return false,
+        }
+        crate::breadcrumbs::note("lay on face");
+        self.readout_owed.set(true);
+        self.mark_dirty();
+        true
     }
 
     /// Esc while measuring: forgets the points, or with none, turns the
@@ -5061,8 +5239,43 @@ impl ViewportController {
                 (objects, on_plate)
             })
             .unwrap_or_default();
-        let (rows, row_of) =
+        let (mut rows, row_of) =
             scene_rows(&names, plates.count(), plates.active(), &objects, &on_plate);
+        // Hidden and locked models (#16): their rows, and their supports',
+        // say so; only a model's own row offers the eye and the padlock.
+        let hidden = document.hidden_leaves();
+        let flags = document.unpickable_leaves();
+        let leaves: Vec<(sc_scene::NodeId, bool)> = document
+            .with_scene(|spatial| {
+                (0..)
+                    .map_while(|i| spatial.leaf_id_at_index(i))
+                    .map(|id| (id, !shows_supports(spatial, id)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let left_out = document.hidden_models().len();
+        ui.set_slice_hidden_note(if left_out == 0 {
+            slint::SharedString::default()
+        } else {
+            ctr!(
+                "SlicePanel",
+                "{} hidden model(s) left out of the slice. Show them in the scene panel to print them.",
+                left_out
+            )
+            .into()
+        });
+        for row in rows.iter_mut().filter(|r| !r.plate) {
+            let Some(&(id, model)) = usize::try_from(row.index).ok().and_then(|i| leaves.get(i))
+            else {
+                continue;
+            };
+            row.model = model;
+            row.hidden = hidden.contains(&id);
+            row.locked = flags.contains(&id) && !row.hidden;
+            if model {
+                row.locked = document.is_locked(id);
+            }
+        }
         ui.set_scene_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
         ui.set_object_row_of(slint::ModelRc::new(slint::VecModel::from(row_of)));
     }
@@ -5241,6 +5454,9 @@ impl ViewportController {
         ui.set_selection_rot_y(r.rotation_deg[1] as f32);
         ui.set_selection_rot_z(r.rotation_deg[2] as f32);
         ui.set_selection_scale(r.scale_pct as f32);
+        ui.set_selection_scale_x(r.axis_scale_pct[0] as f32);
+        ui.set_selection_scale_y(r.axis_scale_pct[1] as f32);
+        ui.set_selection_scale_z(r.axis_scale_pct[2] as f32);
     }
 
     /// The viewport aids of a gesture in flight (BS-69): what it has done so
@@ -5804,6 +6020,7 @@ impl ViewportController {
         renderer.set_support_lines(shown_up_to, lines.as_ref());
         renderer.set_supports_hidden(self.supports_hidden());
         renderer.set_support_view_fade(self.support_view_fade());
+        renderer.set_hidden_nodes(&self.session.document().hidden_leaves());
         renderer.set_plates(self.session.document().plates());
         renderer.set_dim_all(self.dims_off_plate());
         renderer.set_plate_tools(
@@ -7854,6 +8071,7 @@ pub(crate) fn scene_rows(
             index: plate as i32,
             text: name.into(),
             active: plate == active,
+            ..Default::default()
         });
         for (i, name) in objects.iter().enumerate() {
             if on_plate.get(i).copied().flatten() == Some(plate) {
@@ -7863,6 +8081,7 @@ pub(crate) fn scene_rows(
                     index: i as i32,
                     text: name.as_str().into(),
                     active: false,
+                    ..Default::default()
                 });
             }
         }
@@ -7884,6 +8103,7 @@ pub(crate) fn scene_rows(
             index: -1,
             text: ctr!("Inspector", "Off the plates").into(),
             active: false,
+            ..Default::default()
         });
         for i in off {
             row_of[i] = rows.len() as i32;
@@ -7892,6 +8112,7 @@ pub(crate) fn scene_rows(
                 index: i as i32,
                 text: objects[i].as_str().into(),
                 active: false,
+                ..Default::default()
             });
         }
     }

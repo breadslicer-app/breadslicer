@@ -148,6 +148,173 @@ fn a_cut_leaves_two_pieces_in_one_undo_step() {
     });
 }
 
+/// The volumes of the scene's pieces, lowest piece first.
+fn piece_volumes(f: &Fixture) -> Vec<f64> {
+    let mut pieces: Vec<(f64, f64)> = f
+        .document
+        .with_scene(|spatial| {
+            (0..)
+                .map_while(|i| spatial.leaf_id_at_index(i))
+                .filter_map(|id| {
+                    let mesh = spatial.graph().leaf_mesh_arc(id)?;
+                    let low = mesh
+                        .vertices()
+                        .iter()
+                        .map(|v| v.coords()[2])
+                        .fold(f32::INFINITY, f32::min);
+                    Some((f64::from(low), sc_cut::volume(mesh)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    pieces.sort_by(|a, b| a.0.total_cmp(&b.0));
+    pieces.into_iter().map(|p| p.1).collect()
+}
+
+/// #109, #442: pins put a pin on the part below and a socket in the part
+/// above; magnets a pocket in each. The card says so before the cut, and
+/// the cut is one Undo step as any.
+#[test]
+fn a_cut_with_pins_or_magnets_joins_the_parts() {
+    on_fresh_slint_thread(|| {
+        let f = fixture(cube());
+        opened(&f);
+        f.run.on_option(8, 1.0);
+        assert_eq!(f.window.get_cut_joint_kind(), 1);
+        f.run.on_option(-1, 0.0);
+        land(&f.run);
+        assert!(
+            f.window.get_cut_status().contains("Joints added: 1"),
+            "{}",
+            f.window.get_cut_status()
+        );
+        f.run.apply();
+        assert_eq!(leaves(&f), 2);
+        let half = 4000.0;
+        let v = piece_volumes(&f);
+        assert!(v[0] > half + 15.0, "the pin is on the part below: {v:?}");
+        assert!(v[1] < half - 15.0, "the socket is in the part above: {v:?}");
+        assert!(f.document.undo().unwrap());
+        assert_eq!(leaves(&f), 1);
+
+        // Magnets: a pocket on each side, the 5 x 2 mm preset. The model
+        // is ready already: the tool opens on it at once.
+        f.document.set_selection(Selection::One(LeafId(f.leaf)));
+        f.run.toggle();
+        assert!(f.window.get_cut_open());
+        f.run.on_option(8, 2.0);
+        f.run.on_option(13, 2.0);
+        assert_eq!(f.window.get_cut_joint_size(), 5.0);
+        assert_eq!(f.window.get_cut_joint_preset(), 2);
+        f.run.on_option(-1, 0.0);
+        land(&f.run);
+        f.run.apply();
+        let v = piece_volumes(&f);
+        let pocket = std::f64::consts::PI * 2.6 * 2.6 * 2.1;
+        for piece in &v {
+            assert!((half - pocket - piece).abs() < pocket * 0.05, "{v:?}");
+        }
+    });
+}
+
+/// #440, #441: in Stroke mode a drag across the model cuts it along the
+/// stroke, and a loop round a corner cuts that corner off; each a cut as
+/// the plane's, one Undo step.
+#[test]
+fn a_stroke_across_the_model_cuts_it_along_the_stroke() {
+    on_fresh_slint_thread(|| {
+        let f = fixture(cube());
+        opened(&f);
+        f.run.on_option(14, 1.0);
+        assert!(f.window.get_cut_stroke_mode());
+        assert!(!f.window.get_cut_can_cut(), "nothing drawn yet");
+        // From above, straight across the cube (x 0 to 20, y -10 to 10)
+        // along y = 3.
+        assert!(f.run.press(&above(-10.0, 3.0)));
+        for k in 1..=10 {
+            f.run.drag(&above(-10.0 + f64::from(k) * 4.0, 3.0));
+        }
+        f.run.release(Some(&above(32.0, 3.0)), true);
+        land(&f.run);
+        assert!(f.window.get_cut_can_cut(), "{}", f.window.get_cut_warning());
+        f.run.apply();
+        assert_eq!(leaves(&f), 2);
+        let mut v = piece_volumes(&f);
+        v.sort_by(f64::total_cmp);
+        assert!((v[0] - 20.0 * 20.0 * 7.0).abs() < 1e-2, "{v:?}");
+        assert!((v[1] - 20.0 * 20.0 * 13.0).abs() < 1e-2, "{v:?}");
+        assert!(f.document.undo().unwrap());
+        assert_eq!(leaves(&f), 1);
+
+        f.document.set_selection(Selection::One(LeafId(f.leaf)));
+        f.run.toggle();
+        f.run.on_option(14, 1.0);
+        // From above, a loop round the cube's corner at x 20, y 10: the
+        // ring lies on the top face, so the loop cuts off nothing and says
+        // so.
+        let ring = [
+            [14.0, 4.0],
+            [26.0, 4.0],
+            [26.0, 16.0],
+            [14.0, 16.0],
+            [14.0, 4.5],
+        ];
+        assert!(f.run.press(&above(ring[0][0], ring[0][1])));
+        for p in &ring[1..] {
+            f.run.drag(&above(p[0], p[1]));
+        }
+        f.run.release(Some(&above(14.0, 4.2)), true);
+        land(&f.run);
+        assert!(!f.window.get_cut_can_cut());
+        assert!(!f.window.get_cut_warning().is_empty());
+    });
+}
+
+/// #443: Suggest puts the plane, level, at the model's narrowest place; it
+/// cuts nothing.
+#[test]
+fn suggest_puts_the_plane_at_the_neck() {
+    on_fresh_slint_thread(|| {
+        // Two 20 mm cubes stacked on a thin 4 mm neck, z 0 to 20, 26 to 46.
+        let mut mesh = cube();
+        for v in &mut mesh.vertices {
+            let p = v.as_array();
+            *v = Vertex::new([p[0], p[1], p[2] + 10.0]);
+        }
+        let mut neck = sc_mesh_fixtures::unit_cube_mesh();
+        for v in &mut neck.vertices {
+            let p = v.as_array();
+            *v = Vertex::new([p[0] * 4.0, p[1] * 4.0, p[2] * 8.0 + 23.0]);
+        }
+        let mut top = cube();
+        for v in &mut top.vertices {
+            let p = v.as_array();
+            *v = Vertex::new([p[0], p[1], p[2] + 36.0]);
+        }
+        let mut vertices = Vec::new();
+        let mut faces = Vec::new();
+        for part in [mesh, neck, top] {
+            let n = vertices.len() as u32;
+            vertices.extend(part.vertices.iter().copied());
+            faces.extend(part.faces.iter().map(|f| {
+                sc_mesh_core::IndexedTriangle::from_raw_indices(f.vertices.map(|v| v.get() + n))
+            }));
+        }
+        let f = fixture(IndexedMesh::new(None, vertices, faces));
+        opened(&f);
+        let undo = f.document.undo_len();
+        f.run.on_option(15, 0.0);
+        let h = f.window.get_cut_height();
+        assert!(h > 20.0 && h < 26.0, "at the neck: {h}");
+        assert!(
+            f.window.get_cut_status().contains("Suggested"),
+            "{}",
+            f.window.get_cut_status()
+        );
+        assert_eq!(f.document.undo_len(), undo, "nothing cut");
+    });
+}
+
 #[test]
 fn a_click_on_a_part_of_the_cut_leaves_it_whole() {
     on_fresh_slint_thread(|| {

@@ -28,8 +28,14 @@
 //!   area jumps between layers. A mesh that is not closed has no
 //!   cross-section: the search runs without T3 and says so
 //!   ([`Note::OpenMesh`]).
-//! - **T4, cups:** hollows open towards the film add their suction to the
-//!   layer's force (coarse voxels; the Full mode, #185, refines it).
+//! - **T4, cups:** hollows open towards the film, and the sealed cavity of a
+//!   hollowed model, add their suction to the layer's force (coarse voxels;
+//!   the Full verdict, #185, measures them about a millimetre fine).
+//! - **T6, supports on the model (#185, Full verdict):** rays straight
+//!   down from the overhangs; one that meets the model before the plate is
+//!   a support that marks two surfaces, and costs a tip more.
+//! - **D3, supports on the paint (#185, Full verdict):** those of T6 that
+//!   land on painted detail count as tips on it.
 //! - **T5, support length:** overhang area times its height above the plate,
 //!   plus the lift.
 //! - **T7, height:** from the convex hull.
@@ -65,8 +71,9 @@
 //!    with the peel on the full mesh.
 //!
 //! [`SearchMode::Full`] searches a denser sphere and refines many more
-//! finalists before the verdict; the expensive terms of #185 (suction cups
-//! at full resolution, model-to-model supports) join it there.
+//! finalists before the verdict; the expensive terms of #185 join its
+//! verdict: the cups on fine voxels, the peak force at the print's real
+//! layer height, and the supports that land on the model (T6, D3).
 //!
 //! The model only turns when the best option beats its current pose by more
 //! than [`KEEP_MARGIN`]: re-orienting an oriented model leaves it where it
@@ -78,6 +85,7 @@ mod cups;
 mod histogram;
 mod hull;
 mod islands;
+mod landings;
 mod peel;
 mod pose;
 mod search;
@@ -87,6 +95,8 @@ mod vec;
 mod tests;
 #[cfg(test)]
 mod tests_detail;
+#[cfg(test)]
+mod tests_full;
 #[cfg(test)]
 mod tests_shapes;
 
@@ -344,6 +354,9 @@ pub struct DetailCost {
     pub islands: usize,
     /// How much the painted detail faces up: 1 straight up, 0 straight down.
     pub facing_up: f64,
+    /// Tips whose support lands on painted detail (D3, #185): measured by a
+    /// Full verdict, 0 otherwise.
+    pub landings: f64,
 }
 
 /// Painted overhang below this many tips is too little to take a tip: a
@@ -353,14 +366,17 @@ const DETAIL_TIP_SLACK: f64 = 0.05;
 impl DetailCost {
     /// The tips the detail gets, as the overhang and the islands add up.
     pub fn total_tips(&self) -> f64 {
-        self.tips + self.islands as f64
+        self.tips + self.landings + self.islands as f64
     }
 
     /// The whole tips the detail gets, what the search minimizes first: any
     /// overhang worth a tip counts as one, so a pose is never excused for
     /// putting less than a tip's worth on the detail.
     pub fn whole_tips(&self) -> usize {
-        (self.tips - DETAIL_TIP_SLACK).max(0.0).ceil() as usize + self.islands
+        (self.tips + self.landings - DETAIL_TIP_SLACK)
+            .max(0.0)
+            .ceil() as usize
+            + self.islands
     }
 }
 
@@ -383,6 +399,11 @@ pub struct CostBreakdown {
     pub peel_measured: bool,
     /// The largest cup area under the film at one layer, mm² (T4).
     pub cup_area_mm2: f64,
+    /// The suction of that cup at its peak, N (T4, #185).
+    pub cup_force_n: f64,
+    /// Tips whose support lands on the model instead of the plate (T6,
+    /// #185): measured by a Full verdict, 0 otherwise.
+    pub model_landings: f64,
     /// Height above the plate, without the lift, mm (T7).
     pub height_mm: f64,
     /// Layers at the context's layer height, with the lift.

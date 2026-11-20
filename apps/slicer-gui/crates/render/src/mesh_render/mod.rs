@@ -430,6 +430,8 @@ pub struct Renderer {
     /// Leaves the support meshes out of the view, as the Hollow tab's lasso
     /// does to keep the model clear (#512).
     supports_hidden: bool,
+    /// The leaves hidden in the scene panel (#16), sorted.
+    hidden_nodes: Vec<NodeId>,
     /// What stays lit while something is selected, sorted (#523): the
     /// selection with its supports or its model. Empty dims nothing.
     focus: Vec<NodeId>,
@@ -534,6 +536,7 @@ impl Renderer {
             supports_shown_up_to_mm: f32::MAX,
             supports_hidden: false,
             support_view_fade: 0.0,
+            hidden_nodes: Vec::new(),
             focus: Vec::new(),
             support_lines: support_lines::LinesSlot::default(),
             target_manager: TargetManager {
@@ -1091,6 +1094,15 @@ impl Renderer {
         self.support_view_fade = fade.clamp(0.0, 1.0);
     }
 
+    /// Leaves the leaves `nodes` out of the frames to come (#16): hidden
+    /// models and their supports.
+    pub fn set_hidden_nodes(&mut self, nodes: &[NodeId]) {
+        if self.hidden_nodes.as_slice() != nodes {
+            self.hidden_nodes = nodes.to_vec();
+            self.hidden_nodes.sort_unstable();
+        }
+    }
+
     /// The scene's plates for the frames to come (#545).
     pub fn set_plates(&mut self, plates: crate::plates::Plates) {
         self.plates = plates;
@@ -1576,8 +1588,31 @@ impl Renderer {
                 self.record_plate_names(&mut pass, false);
             }
 
+            // The leaves hidden in the scene panel (#16): not drawn, and no
+            // cut or fade of their supports either.
+            let node_hidden: Vec<bool> = match installed {
+                Some(inst) if !self.hidden_nodes.is_empty() => inst
+                    .gpu
+                    .objects()
+                    .iter()
+                    .map(|o| self.hidden_nodes.binary_search(&o.node_id()).is_ok())
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let hidden_mask: Vec<bool> = node_hidden
+                .iter()
+                .enumerate()
+                .map(|(i, h)| {
+                    *h || (supports_hidden && support_objects.get(i).copied().unwrap_or(false))
+                })
+                .collect();
+            for (s, h) in support_objects.iter_mut().zip(&node_hidden) {
+                *s &= !*h;
+            }
             if scene_for_draws && let Some(inst) = installed {
-                let hidden: &[bool] = if supports_hidden {
+                let hidden: &[bool] = if !hidden_mask.is_empty() {
+                    &hidden_mask
+                } else if supports_hidden {
                     &support_objects
                 } else {
                     &[]

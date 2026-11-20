@@ -51,6 +51,11 @@ pub struct ProjectPayload {
     /// The groups of models (#475): each group's members, by their row in
     /// the scene's list of leaves.
     pub groups: Vec<Vec<u32>>,
+    /// The hidden models (#16), by their row in the scene's list of leaves:
+    /// not drawn and not sliced.
+    pub hidden: Vec<u32>,
+    /// The locked models (#16), by their row: never picked in the view.
+    pub locked: Vec<u32>,
 }
 
 /// A finding of the review the person chose to ignore, by kind and place, so

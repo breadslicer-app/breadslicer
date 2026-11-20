@@ -137,6 +137,9 @@ pub trait MeshRenderer {
 
     /// How far the supports fade at any camera height (#137).
     fn set_support_view_fade(&mut self, _fade: f32) {}
+    /// Leaves the leaves `nodes` out of the view (#16): the models hidden
+    /// in the scene panel, and their supports.
+    fn set_hidden_nodes(&mut self, _nodes: &[sc_scene::node::NodeId]) {}
 
     /// The scene's plates (#545): each drawn where it stands, the active one
     /// marked.
@@ -298,6 +301,10 @@ impl MeshRenderer for Renderer {
 
     fn set_support_view_fade(&mut self, fade: f32) {
         Renderer::set_support_view_fade(self, fade);
+    }
+
+    fn set_hidden_nodes(&mut self, nodes: &[sc_scene::node::NodeId]) {
+        Renderer::set_hidden_nodes(self, nodes);
     }
 
     fn set_plates(&mut self, plates: crate::plates::Plates) {

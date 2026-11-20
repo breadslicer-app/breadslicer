@@ -86,6 +86,8 @@ pub(super) fn full_payload() -> ProjectPayload {
         plate_names: Vec::new(),
         hand_placed: Vec::new(),
         groups: Vec::new(),
+        hidden: Vec::new(),
+        locked: Vec::new(),
     }
 }
 

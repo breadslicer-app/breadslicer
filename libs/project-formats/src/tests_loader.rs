@@ -81,6 +81,8 @@ fn payload_with_ids() -> ProjectPayload {
         plate_names: Vec::new(),
         hand_placed: Vec::new(),
         groups: Vec::new(),
+        hidden: Vec::new(),
+        locked: Vec::new(),
     }
 }
 
