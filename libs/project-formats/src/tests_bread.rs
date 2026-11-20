@@ -62,6 +62,8 @@ fn payload() -> ProjectPayload {
         plate_names: Vec::new(),
         hand_placed: Vec::new(),
         groups: Vec::new(),
+        hidden: Vec::new(),
+        locked: Vec::new(),
     }
 }
 
@@ -341,6 +343,28 @@ fn the_models_placed_by_hand_come_back_with_the_settings() {
     assert_eq!(parsed.hand_placed, vec![pose]);
     let none = serialize_settings(&ProjectPayload::default(), EmbedProfiles::No).expect("written");
     assert!(!none.contains("hand_placed"), "{none}");
+}
+
+/// The hidden and the locked models come back with the settings (#16), and
+/// nothing is written when there are none.
+#[test]
+fn hidden_and_locked_models_come_back_with_the_settings() {
+    let payload = ProjectPayload {
+        hidden: vec![1, 3],
+        locked: vec![0],
+        ..ProjectPayload::default()
+    };
+    let text = serialize_settings(&payload, EmbedProfiles::No).expect("serialized");
+    let parsed = parse_settings(text.as_bytes(), &mut Vec::new())
+        .expect("parsed")
+        .expect("this version");
+    assert_eq!(parsed.hidden, vec![1, 3]);
+    assert_eq!(parsed.locked, vec![0]);
+    let none = serialize_settings(&ProjectPayload::default(), EmbedProfiles::No).expect("written");
+    assert!(
+        !none.contains("hidden") && !none.contains("locked"),
+        "{none}"
+    );
 }
 
 /// The conformance files of the format (`test-data/bread-conformance`).

@@ -172,6 +172,9 @@ export component MainWindow inherits Window {
     // and where each object's row stands. Whether it is open is
     // `show-object-list`, kept in the settings.
     in property <[SceneRow]> scene-rows: [];
+    // The scene panel's eye and padlock (#16), by the object's index.
+    callback object-hide-toggled(int);
+    callback object-lock-toggled(int);
     in property <[int]> object-row-of: [];
     in-out property <int> selected-object-index: -1;
     // Every selected row (#13), indexed like `object-list`, and how many
@@ -739,6 +742,8 @@ export component MainWindow inherits Window {
     in-out property <bool> slice-setup-open: true;
     // What Slice every plate did, line by line, until the next slice (#547).
     in property <string> slice-every-plate-note;
+    // The hidden models the slice leaves out (#16), said.
+    in property <string> slice-hidden-note;
     // Slice control panel geometry (per-window live state). Same
     // anchor/offset model as the object-list panel; the defaults hug the
     // top-left corner, clear of the top-right object-list panel. Height
@@ -1909,6 +1914,12 @@ export component MainWindow inherits Window {
                         root.object-list-range(i);
                         mv.focus-viewport();
                     }
+                    object-hide-toggled(i) => {
+                        root.object-hide-toggled(i);
+                    }
+                    object-lock-toggled(i) => {
+                        root.object-lock-toggled(i);
+                    }
                     plate-picked(i) => {
                         root.plate-picked(i);
                     }
@@ -2695,6 +2706,7 @@ export component MainWindow inherits Window {
                                 slicing: root.slicing-in-progress;
                                 up-to-date: root.slice-up-to-date;
                                 every-plate-note: root.slice-every-plate-note;
+                                hidden-note: root.slice-hidden-note;
                                 layer-count: root.slice-layer-count;
                                 selected-layer: root.selected-layer-index;
                                 layer-image: root.slice-view-image;

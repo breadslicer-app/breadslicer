@@ -102,6 +102,8 @@ pub struct MockRendererState {
     /// What the last `set_support_lines` asked for (#493).
     pub supports_shown_up_to_mm: f32,
     pub supports_hidden: bool,
+    /// What the last `set_hidden_nodes` asked for (#16).
+    pub hidden_nodes: Vec<NodeId>,
     pub support_lines: Option<std::sync::Arc<super::SupportLines>>,
 }
 
@@ -124,6 +126,7 @@ impl MockRendererState {
             support_tips: Vec::new(),
             supports_shown_up_to_mm: f32::MAX,
             supports_hidden: false,
+            hidden_nodes: Vec::new(),
             support_lines: None,
         }))
     }
@@ -154,6 +157,10 @@ impl MeshRenderer for MockRenderer {
 
     fn set_supports_hidden(&mut self, hidden: bool) {
         self.state.borrow_mut().supports_hidden = hidden;
+    }
+
+    fn set_hidden_nodes(&mut self, nodes: &[NodeId]) {
+        self.state.borrow_mut().hidden_nodes = nodes.to_vec();
     }
 
     fn set_support_lines(

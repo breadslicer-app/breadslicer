@@ -135,6 +135,10 @@ pub trait MeshRenderer {
     /// Leaves the support meshes out of the view, lines and all (#512).
     fn set_supports_hidden(&mut self, _hidden: bool) {}
 
+    /// Leaves the leaves `nodes` out of the view (#16): the models hidden
+    /// in the scene panel, and their supports.
+    fn set_hidden_nodes(&mut self, _nodes: &[sc_scene::node::NodeId]) {}
+
     /// The scene's plates (#545): each drawn where it stands, the active one
     /// marked.
     fn set_plates(&mut self, _plates: crate::plates::Plates) {}
@@ -291,6 +295,10 @@ impl MeshRenderer for Renderer {
 
     fn set_supports_hidden(&mut self, hidden: bool) {
         Renderer::set_supports_hidden(self, hidden);
+    }
+
+    fn set_hidden_nodes(&mut self, nodes: &[sc_scene::node::NodeId]) {
+        Renderer::set_hidden_nodes(self, nodes);
     }
 
     fn set_plates(&mut self, plates: crate::plates::Plates) {

@@ -3128,6 +3128,9 @@ export component SliceInspector inherits VerticalLayout {
     // and what it did.
     callback slice-every-plate();
     in property <string> every-plate-note;
+    // How many hidden models the slice leaves out (#16), said; empty with
+    // none.
+    in property <string> hidden-note;
     // The printer file, written from here once the slice is up to date
     // (#578): its format, why it may not be written, and the action that
     // takes the place of Slice.
@@ -3355,6 +3358,9 @@ export component SliceInspector inherits VerticalLayout {
             clicked => {
                 root.export-every-plate();
             }
+        }
+        if root.hidden-note != "": WarningNote {
+            text: root.hidden-note;
         }
         if root.up-to-date: Note {
             text: @tr("SlicePanel" => "Slice is up to date.");

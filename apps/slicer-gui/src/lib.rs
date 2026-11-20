@@ -150,6 +150,8 @@ mod tests_presupported_import;
 #[cfg(test)]
 mod tests_scene_dirty;
 #[cfg(test)]
+mod tests_scene_flags;
+#[cfg(test)]
 mod tests_scene_loader;
 #[cfg(test)]
 mod tests_slice_result;

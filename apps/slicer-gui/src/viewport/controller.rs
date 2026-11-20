@@ -1160,14 +1160,20 @@ impl ViewportController {
         let plates = document.plates();
         let volume = self.build_volume();
         let sessions = document.support_sessions();
+        // Hidden models and their supports are not sliced (#16).
+        let hidden = document.hidden_leaves();
         document.with_scene(|spatial| {
-            if plates.count() > 1 {
+            let (mut scene, origin) = if plates.count() > 1 {
                 crate::plate_layout::plate_scene(spatial, &volume, plates, plate, &|leaf| {
                     crate::support_persist::model_of(&sessions, leaf)
                 })
             } else {
                 (spatial.graph().clone(), [0.0; 2])
+            };
+            for &leaf in &hidden {
+                let _ = scene.remove_leaf(leaf);
             }
+            (scene, origin)
         })
     }
 
@@ -3877,6 +3883,31 @@ impl ViewportController {
         self.show_measure();
     }
 
+    /// The scene panel's eye (`lock` false) or padlock (`lock` true) on
+    /// the row of object `index` (#16): hides or shows, locks or unlocks
+    /// its model, as one step of history. A support set's row has neither.
+    pub(crate) fn toggle_row_flag(&self, index: i32, lock: bool) {
+        let document = self.session.document();
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let model = document
+            .with_scene(|spatial| {
+                let id = spatial.leaf_id_at_index(index)?;
+                (!shows_supports(spatial, id)).then_some(id)
+            })
+            .flatten();
+        let Some(model) = model else {
+            return;
+        };
+        if lock {
+            document.set_locked(&[model], !document.is_locked(model));
+        } else {
+            document.set_hidden(&[model], !document.is_hidden(model));
+        }
+        self.mark_dirty();
+    }
+
     /// Whether the next click lays a model on a face (#15).
     #[cfg(test)]
     pub(crate) fn laying_on_face(&self) -> bool {
@@ -5079,8 +5110,43 @@ impl ViewportController {
                 (objects, on_plate)
             })
             .unwrap_or_default();
-        let (rows, row_of) =
+        let (mut rows, row_of) =
             scene_rows(&names, plates.count(), plates.active(), &objects, &on_plate);
+        // Hidden and locked models (#16): their rows, and their supports',
+        // say so; only a model's own row offers the eye and the padlock.
+        let hidden = document.hidden_leaves();
+        let flags = document.unpickable_leaves();
+        let leaves: Vec<(sc_scene::NodeId, bool)> = document
+            .with_scene(|spatial| {
+                (0..)
+                    .map_while(|i| spatial.leaf_id_at_index(i))
+                    .map(|id| (id, !shows_supports(spatial, id)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let left_out = document.hidden_models().len();
+        ui.set_slice_hidden_note(if left_out == 0 {
+            slint::SharedString::default()
+        } else {
+            ctr!(
+                "SlicePanel",
+                "{} hidden model(s) left out of the slice. Show them in the scene panel to print them.",
+                left_out
+            )
+            .into()
+        });
+        for row in rows.iter_mut().filter(|r| !r.plate) {
+            let Some(&(id, model)) = usize::try_from(row.index).ok().and_then(|i| leaves.get(i))
+            else {
+                continue;
+            };
+            row.model = model;
+            row.hidden = hidden.contains(&id);
+            row.locked = flags.contains(&id) && !row.hidden;
+            if model {
+                row.locked = document.is_locked(id);
+            }
+        }
         ui.set_scene_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
         ui.set_object_row_of(slint::ModelRc::new(slint::VecModel::from(row_of)));
     }
@@ -5824,6 +5890,7 @@ impl ViewportController {
         let (shown_up_to, lines) = self.under_plate_supports();
         renderer.set_support_lines(shown_up_to, lines.as_ref());
         renderer.set_supports_hidden(self.supports_hidden());
+        renderer.set_hidden_nodes(&self.session.document().hidden_leaves());
         renderer.set_plates(self.session.document().plates());
         renderer.set_dim_all(self.dims_off_plate());
         renderer.set_plate_tools(
@@ -7874,6 +7941,7 @@ pub(crate) fn scene_rows(
             index: plate as i32,
             text: name.into(),
             active: plate == active,
+            ..Default::default()
         });
         for (i, name) in objects.iter().enumerate() {
             if on_plate.get(i).copied().flatten() == Some(plate) {
@@ -7883,6 +7951,7 @@ pub(crate) fn scene_rows(
                     index: i as i32,
                     text: name.as_str().into(),
                     active: false,
+                    ..Default::default()
                 });
             }
         }
@@ -7904,6 +7973,7 @@ pub(crate) fn scene_rows(
             index: -1,
             text: ctr!("Inspector", "Off the plates").into(),
             active: false,
+            ..Default::default()
         });
         for i in off {
             row_of[i] = rows.len() as i32;
@@ -7912,6 +7982,7 @@ pub(crate) fn scene_rows(
                 index: i as i32,
                 text: objects[i].as_str().into(),
                 active: false,
+                ..Default::default()
             });
         }
     }

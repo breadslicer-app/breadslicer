@@ -9643,3 +9643,28 @@ msgstr "Escala uniforme"
 msgctxt "Inspector"
 msgid "Each size and scale changes its own axis alone."
 msgstr "Cada tamaño y escala cambia solo su propio eje."
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Hidden: not drawn and not sliced. Click to show"
+msgstr "Oculto: no se dibuja ni se lamina. Clic para mostrarlo"
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Hide: not drawn and not sliced"
+msgstr "Ocultar: no se dibuja ni se lamina"
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Locked: not picked or moved in the view. Click to unlock"
+msgstr "Bloqueado: no se elige ni se mueve en la vista. Clic para desbloquearlo"
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Lock: not picked or moved in the view"
+msgstr "Bloquear: no se elige ni se mueve en la vista"
+
+#: src/viewport/controller.rs
+msgctxt "SlicePanel"
+msgid "{} hidden model(s) left out of the slice. Show them in the scene panel to print them."
+msgstr "{} modelo(s) oculto(s) quedan fuera del laminado. Mostralos en el panel de escena para imprimirlos."

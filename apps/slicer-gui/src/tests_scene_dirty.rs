@@ -498,6 +498,8 @@ mod unsaved_project_state_tests {
                 plate_names: Vec::new(),
                 hand_placed: Vec::new(),
                 groups: Vec::new(),
+                hidden: Vec::new(),
+                locked: Vec::new(),
             }
         );
     }
@@ -533,6 +535,8 @@ mod unsaved_project_state_tests {
             plate_names: Vec::new(),
             hand_placed: Vec::new(),
             groups: Vec::new(),
+            hidden: Vec::new(),
+            locked: Vec::new(),
         };
         let doc = SceneDocument::new();
         doc.install_project_graph(

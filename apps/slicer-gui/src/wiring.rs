@@ -225,6 +225,14 @@ pub(crate) fn wire_viewport_input(
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_object_hide_toggled(move |i| ctrl.toggle_row_flag(i, false));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_object_lock_toggled(move |i| ctrl.toggle_row_flag(i, true));
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_toggle_projection_requested(move || {
             remember_projection(&prefs, ctrl.on_toggle_projection())
         });
