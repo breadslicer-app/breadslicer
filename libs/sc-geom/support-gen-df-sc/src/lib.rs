@@ -53,6 +53,7 @@ pub use support_gen_df::native::overhang::{
 };
 pub use support_gen_df::pipeline::{KeepOut, ScanCache};
 pub use support_gen_df::supports::auto_bracing::auto_brace::HandBraceRefusal;
+pub use support_gen_df::supports::auto_bracing::settings::{AutoBracingPattern, GridDiagonal};
 pub use support_gen_df::supports::auto_support::zone_rules::{
     AreaBand, BaseTip, OverhangRule, StabilizationRule, SupportSize, ZoneRules,
 };

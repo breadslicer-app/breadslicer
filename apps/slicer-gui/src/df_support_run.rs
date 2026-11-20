@@ -1384,6 +1384,18 @@ fn preset_cards() -> Vec<(slint::SharedString, &'static str)> {
 }
 
 /// A zone's name and what it covers, as a row of the shape panel lists it.
+/// What a bracing preset is called on the panel (#363).
+fn bracing_preset_name(id: &str) -> slint::SharedString {
+    match id {
+        "auto support" => ctr!("Inspector", "Auto support"),
+        "default" => ctr!("Inspector", "Default"),
+        "small object" => ctr!("Inspector", "Small object"),
+        "tall object" => ctr!("Inspector", "Tall object"),
+        "strong" => ctr!("Inspector", "Strong"),
+        other => other.into(),
+    }
+}
+
 fn zone_texts(
     zones: &ZonePreset,
     zone: crate::support_shape_edit::Zone,
@@ -1979,6 +1991,10 @@ impl DfSupportRun {
         {
             let run = run.clone();
             ui.on_support_shape_value(move |code, v| run.on_shape_value(code, v));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_shape_choice(move |code, v| run.on_shape_choice(code, v));
         }
         {
             let run = run.clone();
@@ -3857,6 +3873,19 @@ impl DfSupportRun {
             self.draw_shape(ui, &zones.rules.sizes[size]);
             return;
         }
+        // The whole preset's choices (#363), and what they go back to.
+        ui.set_support_shape_choices(slint::ModelRc::new(slint::VecModel::from(
+            edit::choices(zones).to_vec(),
+        )));
+        ui.set_support_shape_choice_defaults(slint::ModelRc::new(slint::VecModel::from(
+            base.as_ref()
+                .map_or(vec![-1; edit::CHOICES], |b| edit::choices(b).to_vec()),
+        )));
+        let bracing_names: Vec<slint::SharedString> = edit::bracing_preset_names()
+            .into_iter()
+            .map(bracing_preset_name)
+            .collect();
+        ui.set_support_bracing_presets(slint::ModelRc::new(slint::VecModel::from(bracing_names)));
         let size_names: Vec<slint::SharedString> = names.iter().map(|n| n.into()).collect();
         ui.set_support_zone_size_names(slint::ModelRc::new(slint::VecModel::from(size_names)));
         let rows: Vec<crate::ZoneRow> = edit::zones_of(zones)
@@ -4126,6 +4155,21 @@ impl DfSupportRun {
             return;
         };
         crate::support_shape_edit::set_value(zones, size, code, f64::from(value));
+        self.set_options(o);
+    }
+
+    /// A choice of the whole preset changed (#363): a bracing pattern, the
+    /// rings' diagonal, a bracing preset to start from, or ignoring small
+    /// islands. The preset takes it, as any other option.
+    fn on_shape_choice(&self, code: i32, value: i32) {
+        let Ok(code) = usize::try_from(code) else {
+            return;
+        };
+        let mut o = self.options.borrow().clone();
+        let Some(zones) = o.zones.as_mut() else {
+            return;
+        };
+        crate::support_shape_edit::set_choice(zones, code, value);
         self.set_options(o);
     }
 

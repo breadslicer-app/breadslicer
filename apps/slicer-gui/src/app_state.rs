@@ -3365,8 +3365,32 @@ mod window_wiring_tests {
                     .map(|r| r.spacing),
                 Some(2.5)
             );
+            // The whole preset (#363): bracing from another preset, a
+            // pattern, small islands and how far a trunk looks for the plate.
+            let choices =
+                |w: &MainWindow| -> Vec<i32> { w.get_support_shape_choices().iter().collect() };
+            assert_eq!(choices(&window)[4], 0, "Miniatures braces as auto support");
+            assert_eq!(window.get_support_bracing_presets().row_count(), 5);
+            window.invoke_support_shape_choice(4, 3);
+            assert_eq!(choices(&window)[4], 3);
+            assert_eq!(values(&window)[9], 2.0, "the tall object's braces");
+            window.invoke_support_shape_choice(1, 2);
+            assert_eq!(choices(&window)[1], 2);
+            assert_eq!(choices(&window)[4], -1, "no longer one of them");
+            window.invoke_support_shape_choice(5, 0);
+            assert_eq!(choices(&window)[5], 0);
+            window.invoke_support_shape_value(18, 12.0);
+            assert_eq!(values(&window)[18], 12.0);
+            assert_eq!(defaults(&window)[18], 30.0);
+            // Kept as the preset's own change, across another preset.
+            window.invoke_support_preset_picked(1);
+            window.invoke_support_preset_picked(0);
+            assert_eq!(values(&window)[18], 12.0);
+            assert_eq!(choices(&window)[1], 2);
 
             window.invoke_support_preset_revert();
+            assert_eq!(choices(&window)[4], 0);
+            assert_eq!(values(&window)[18], 30.0);
             assert_eq!(window.get_support_preset_card_index(), 0);
             assert_eq!(
                 window.get_support_based_on().as_str(),

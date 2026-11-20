@@ -2156,6 +2156,13 @@ export component SupportsInspector inherits VerticalLayout {
     // bracing start.
     in property <[float]> shape-values;
     callback shape-value(int, float);
+    // The whole preset's choices (#363): bottom, middle and top pattern
+    // (simple, double, zigzag), the rings' diagonal (none, simple, double),
+    // the bracing preset it is (-1 none), ignore small islands (0 or 1).
+    in property <[int]> shape-choices;
+    in property <[int]> shape-choice-defaults;
+    in property <[string]> bracing-presets;
+    callback shape-choice(int, int);
     in property <[ZoneRow]> zone-rows;
     in property <[string]> zone-size-names;
     in property <float> zone-angle;
@@ -2591,6 +2598,144 @@ export component SupportsInspector inherits VerticalLayout {
             enabled: root.bracing;
             edited(v) => { root.shape-value(10, v); }
         }
+        if root.page == 0 && root.braces-open: LabeledRow {
+            label: @tr("Inspector" => "Start from");
+
+            bracing-start-combo := ComboBox {
+                model: root.bracing-presets;
+                // Follows the preset after a pick broke the binding.
+                property <int> wanted: root.shape-choices.length > 4 ? root.shape-choices[4] : 0;
+                changed wanted => {
+                    self.current-index = self.wanted;
+                }
+                current-index: self.wanted;
+                enabled: root.bracing;
+                selected => {
+                    root.shape-choice(4, bracing-start-combo.current-index);
+                }
+            }
+        }
+        if root.page == 0 && root.braces-open: ShapeField {
+            label: @tr("Inspector" => "Gap between links");
+            unit: "mm";
+            value: root.shape-values.length > 11 ? root.shape-values[11] : 0;
+            default-value: root.shape-defaults.length > 11 ? root.shape-defaults[11] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(11, v); }
+        }
+        if root.page == 0 && root.braces-open: LabeledRow {
+            label: @tr("Inspector" => "Bottom pattern");
+
+            bottom-pattern-combo := ComboBox {
+                model: [@tr("Inspector" => "Simple"), @tr("Inspector" => "Double"), @tr("Inspector" => "Zigzag")];
+                // Follows the preset after a pick broke the binding.
+                property <int> wanted: root.shape-choices.length > 0 ? root.shape-choices[0] : 0;
+                changed wanted => {
+                    self.current-index = self.wanted;
+                }
+                current-index: self.wanted;
+                enabled: root.bracing;
+                selected => {
+                    root.shape-choice(0, bottom-pattern-combo.current-index);
+                }
+            }
+        }
+        if root.page == 0 && root.braces-open: ShapeField {
+            label: @tr("Inspector" => "Bottom links");
+            unit: "";
+            value: root.shape-values.length > 12 ? root.shape-values[12] : 0;
+            default-value: root.shape-defaults.length > 12 ? root.shape-defaults[12] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(12, v); }
+        }
+        if root.page == 0 && root.braces-open: LabeledRow {
+            label: @tr("Inspector" => "Middle pattern");
+
+            middle-pattern-combo := ComboBox {
+                model: [@tr("Inspector" => "Simple"), @tr("Inspector" => "Double"), @tr("Inspector" => "Zigzag")];
+                // Follows the preset after a pick broke the binding.
+                property <int> wanted: root.shape-choices.length > 1 ? root.shape-choices[1] : 0;
+                changed wanted => {
+                    self.current-index = self.wanted;
+                }
+                current-index: self.wanted;
+                enabled: root.bracing;
+                selected => {
+                    root.shape-choice(1, middle-pattern-combo.current-index);
+                }
+            }
+        }
+        if root.page == 0 && root.braces-open: LabeledRow {
+            label: @tr("Inspector" => "Top pattern");
+
+            top-pattern-combo := ComboBox {
+                model: [@tr("Inspector" => "Simple"), @tr("Inspector" => "Double"), @tr("Inspector" => "Zigzag")];
+                // Follows the preset after a pick broke the binding.
+                property <int> wanted: root.shape-choices.length > 2 ? root.shape-choices[2] : 0;
+                changed wanted => {
+                    self.current-index = self.wanted;
+                }
+                current-index: self.wanted;
+                enabled: root.bracing;
+                selected => {
+                    root.shape-choice(2, top-pattern-combo.current-index);
+                }
+            }
+        }
+        if root.page == 0 && root.braces-open: ShapeField {
+            label: @tr("Inspector" => "Top links");
+            unit: "";
+            value: root.shape-values.length > 13 ? root.shape-values[13] : 0;
+            default-value: root.shape-defaults.length > 13 ? root.shape-defaults[13] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(13, v); }
+        }
+        if root.page == 0 && root.braces-open: ShapeField {
+            label: @tr("Inspector" => "First ring at");
+            unit: "mm";
+            value: root.shape-values.length > 14 ? root.shape-values[14] : 0;
+            default-value: root.shape-defaults.length > 14 ? root.shape-defaults[14] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(14, v); }
+        }
+        if root.page == 0 && root.braces-open: ShapeField {
+            label: @tr("Inspector" => "Second ring at");
+            unit: "mm";
+            value: root.shape-values.length > 15 ? root.shape-values[15] : 0;
+            default-value: root.shape-defaults.length > 15 ? root.shape-defaults[15] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(15, v); }
+        }
+        if root.page == 0 && root.braces-open: LabeledRow {
+            label: @tr("Inspector" => "Ring diagonal");
+
+            ring-diagonal-combo := ComboBox {
+                model: [@tr("Inspector" => "None"), @tr("Inspector" => "Simple"), @tr("Inspector" => "Double")];
+                // Follows the preset after a pick broke the binding.
+                property <int> wanted: root.shape-choices.length > 3 ? root.shape-choices[3] : 0;
+                changed wanted => {
+                    self.current-index = self.wanted;
+                }
+                current-index: self.wanted;
+                enabled: root.bracing;
+                selected => {
+                    root.shape-choice(3, ring-diagonal-combo.current-index);
+                }
+            }
+        }
+        if root.page == 0 && root.braces-open: Note {
+            text: @tr("Inspector" => "Links from the bottom and the top take their pattern, the rest the middle one. A ring is a cross between every pair at that height; 0 leaves it out.");
+        }
     }
 
     if root.page == 1 && root.hand-changed: HorizontalLayout {
@@ -2636,6 +2781,56 @@ export component SupportsInspector inherits VerticalLayout {
         }
         Note {
             text: @tr("Inspector" => "Each zone places the size picked, this many mm apart.");
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Ignore small islands");
+            checked: root.shape-choices.length > 5 && root.shape-choices[5] != 0;
+            toggled => {
+                root.shape-choice(5, self.checked ? 1 : 0);
+            }
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Smaller than");
+            unit: "mm³";
+            value: root.shape-values.length > 16 ? root.shape-values[16] : 0;
+            default-value: root.shape-defaults.length > 16 ? root.shape-defaults[16] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.shape-choices.length > 5 && root.shape-choices[5] != 0;
+            edited(v) => { root.shape-value(16, v); }
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Shorter than");
+            unit: "mm";
+            value: root.shape-values.length > 17 ? root.shape-values[17] : 0;
+            default-value: root.shape-defaults.length > 17 ? root.shape-defaults[17] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.shape-choices.length > 5 && root.shape-choices[5] != 0;
+            edited(v) => { root.shape-value(17, v); }
+        }
+        Note {
+            text: @tr("Inspector" => "An island that joins the rest before gathering this much resin, within this height, gets no support of its own.");
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Look for the plate up to");
+            unit: "mm";
+            value: root.shape-values.length > 18 ? root.shape-values[18] : 0;
+            default-value: root.shape-defaults.length > 18 ? root.shape-defaults[18] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: true;
+            edited(v) => { root.shape-value(18, v); }
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Model stands above the plate");
+            unit: "mm";
+            value: root.shape-values.length > 19 ? root.shape-values[19] : 0;
+            default-value: root.shape-defaults.length > 19 ? root.shape-defaults[19] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: true;
+            edited(v) => { root.shape-value(19, v); }
         }
         CheckBox {
             text: @tr("Inspector" => "Pillars on a grid");

@@ -14,8 +14,8 @@
 //! size made thicker on purpose, as the Statues' overhang one, keeps its
 //! own.
 
-use sc_geom::df_supports::zone_presets::ZonePreset;
-use sc_geom::df_supports::{BaseTip, SupportSize};
+use sc_geom::df_supports::zone_presets::{ZonePreset, bracing_presets};
+use sc_geom::df_supports::{AutoBracingPattern, BaseTip, GridDiagonal, SupportSize};
 
 /// The sizes a hand click picks with keys 1 to 4, smallest first: always
 /// shown, so the sizes read the same in every preset.
@@ -103,8 +103,91 @@ pub(crate) fn shown_sizes(zones: &ZonePreset) -> Vec<usize> {
 }
 
 /// Fields of the panel, by code: the tip is the size's own, the next eight
-/// are shared with the sizes of the same value, the last two the bracing's.
-pub(crate) const FIELDS: usize = 11;
+/// are shared with the sizes of the same value; from 9 on they are the whole
+/// preset's (#363): 9 brace diameter, 10 bracing start, 11 gap between
+/// links, 12 links with the bottom pattern, 13 links with the top pattern,
+/// 14 and 15 the heights of the two reinforcement rings (0 = none), 16 and
+/// 17 the volume and height of an island small enough to ignore, 18 how far
+/// a trunk looks sideways for the plate, 19 how high the model stands.
+pub(crate) const FIELDS: usize = 20;
+
+/// The first field that belongs to the whole preset, not to a size.
+const WHOLE_PRESET: usize = 9;
+
+/// The choices of the panel, by code (#363): 0 bottom, 1 middle and 2 top
+/// pattern (simple, double, zigzag), 3 the reinforcement rings' diagonal
+/// (none, simple, double), 4 the bracing preset the bracing is (-1 when it
+/// is none of them), 5 ignore small islands (0 or 1).
+pub(crate) const CHOICES: usize = 6;
+
+fn pattern_index(p: AutoBracingPattern) -> i32 {
+    match p {
+        AutoBracingPattern::SingleDiagonal => 0,
+        AutoBracingPattern::CrossDiagonal => 1,
+        AutoBracingPattern::ZigZag => 2,
+    }
+}
+
+fn pattern_of(i: i32) -> AutoBracingPattern {
+    match i {
+        1 => AutoBracingPattern::CrossDiagonal,
+        2 => AutoBracingPattern::ZigZag,
+        _ => AutoBracingPattern::SingleDiagonal,
+    }
+}
+
+/// Every choice of the preset, in code order.
+pub(crate) fn choices(zones: &ZonePreset) -> [i32; CHOICES] {
+    let chain = &zones.bracing.chain;
+    [
+        pattern_index(chain.bottom_pattern),
+        pattern_index(chain.middle_pattern),
+        pattern_index(chain.top_pattern),
+        match chain.reinforcement_diagonal {
+            GridDiagonal::None => 0,
+            GridDiagonal::Single => 1,
+            GridDiagonal::Cross => 2,
+        },
+        bracing_presets()
+            .iter()
+            .position(|(_, b)| *b == zones.bracing)
+            .map_or(-1, |i| i as i32),
+        i32::from(zones.rules.ignore_small_islands.enabled),
+    ]
+}
+
+/// Sets choice `code` to `v`. Picking a bracing preset takes all of it:
+/// diameter, start and chain.
+pub(crate) fn set_choice(zones: &mut ZonePreset, code: usize, v: i32) {
+    let chain = &mut zones.bracing.chain;
+    match code {
+        0 => chain.bottom_pattern = pattern_of(v),
+        1 => chain.middle_pattern = pattern_of(v),
+        2 => chain.top_pattern = pattern_of(v),
+        3 => {
+            chain.reinforcement_diagonal = match v {
+                1 => GridDiagonal::Single,
+                2 => GridDiagonal::Cross,
+                _ => GridDiagonal::None,
+            }
+        }
+        4 => {
+            if let Some((_, b)) = usize::try_from(v)
+                .ok()
+                .and_then(|i| bracing_presets().into_iter().nth(i))
+            {
+                zones.bracing = b;
+            }
+        }
+        5 => zones.rules.ignore_small_islands.enabled = v != 0,
+        _ => {}
+    }
+}
+
+/// The names of the bracing presets, in the order code 4 counts them.
+pub(crate) fn bracing_preset_names() -> Vec<&'static str> {
+    bracing_presets().into_iter().map(|(n, _)| n).collect()
+}
 
 /// The number of field `code` for the size at `size`.
 fn read(zones: &ZonePreset, size: &SupportSize, code: usize) -> f64 {
@@ -120,8 +203,21 @@ fn read(zones: &ZonePreset, size: &SupportSize, code: usize) -> f64 {
         8 => size.base_tip.map_or(size.tip_length_mm, |t| t.length_mm),
         9 => zones.bracing.diameter_mm,
         10 => zones.bracing.start_mm,
+        11 => zones.bracing.chain.gap_mm,
+        12 => f64::from(zones.bracing.chain.bottom_repeat),
+        13 => f64::from(zones.bracing.chain.top_repeat),
+        14 | 15 => read_ring(zones, code - 14),
+        16 => zones.rules.ignore_small_islands.volume_mm3,
+        17 => zones.rules.ignore_small_islands.height_mm,
+        18 => zones.rules.search_ground_mm,
+        19 => zones.auto_lift_mm,
         _ => 0.0,
     }
+}
+
+fn read_ring(zones: &ZonePreset, i: usize) -> f64 {
+    let rings = &zones.bracing.chain.reinforcement_heights_mm;
+    rings.get(i).copied().unwrap_or(0.0)
 }
 
 /// Every field of the size at `index`, in code order.
@@ -180,7 +276,7 @@ pub(crate) fn defaults(
         .and_then(|s| base.rules.sizes.iter().position(|b| b.id == s.id));
     for (code, slot) in out.iter_mut().enumerate() {
         *slot = match (code, own) {
-            (9 | 10, _) => Some(values(base, 0)[code]),
+            (c, _) if c >= WHOLE_PRESET => Some(values(base, 0)[code]),
             (_, Some(j)) => Some(values(base, j)[code]),
             (_, None) => None,
         };
@@ -226,9 +322,25 @@ pub(crate) fn closest_base(bases: &[&ZonePreset], zones: &ZonePreset) -> Option<
 /// its own numbers); the bracing's two for the whole preset. Values go
 /// through the engine's bounds.
 pub(crate) fn set_value(zones: &mut ZonePreset, index: usize, code: usize, v: f64) {
+    let count = |v: f64| v.round().clamp(0.0, 20.0) as u32;
     match code {
         9 => zones.bracing.diameter_mm = v.clamp(0.1, 10.0),
         10 => zones.bracing.start_mm = v.clamp(0.0, 100.0),
+        11 => zones.bracing.chain.gap_mm = v.clamp(0.0, 20.0),
+        12 => zones.bracing.chain.bottom_repeat = count(v),
+        13 => zones.bracing.chain.top_repeat = count(v),
+        14 | 15 => {
+            // Two rings at most; 0 takes one out. Kept low to high.
+            let mut rings = [read_ring(zones, 0), read_ring(zones, 1)];
+            rings[code - 14] = v.clamp(0.0, 500.0);
+            let mut kept: Vec<f64> = rings.into_iter().filter(|&h| h > 0.0).collect();
+            kept.sort_by(f64::total_cmp);
+            zones.bracing.chain.reinforcement_heights_mm = kept;
+        }
+        16 => zones.rules.ignore_small_islands.volume_mm3 = v.clamp(0.0, 1000.0),
+        17 => zones.rules.ignore_small_islands.height_mm = v.clamp(0.0, 10.0),
+        18 => zones.rules.search_ground_mm = v.clamp(0.0, 200.0),
+        19 => zones.auto_lift_mm = v.clamp(0.0, 50.0),
         _ => {
             if let Some(size) = zones.rules.sizes.get_mut(index) {
                 write(size, code, v);
@@ -457,6 +569,51 @@ mod tests {
         set_value(&mut z, small, 9, 1.5);
         assert_eq!(values(&z, small)[9], 1.5);
         assert_eq!(z.bracing.diameter_mm, 1.5);
+    }
+
+    /// The whole preset's numbers and choices (#363) read back what was
+    /// set, and a bracing preset picked brings all of it.
+    #[test]
+    fn the_bracing_islands_and_global_options_read_back() {
+        let base = minis_30();
+        let mut z = base.clone();
+        let small = index(&z, "small");
+        for (code, v) in [
+            (11, 2.0),
+            (12, 3.0),
+            (13, 2.0),
+            (16, 0.4),
+            (17, 0.15),
+            (18, 12.0),
+            (19, 3.5),
+        ] {
+            set_value(&mut z, small, code, v);
+            assert_eq!(values(&z, small)[code], v, "field {code}");
+        }
+        set_value(&mut z, small, 12, 2.6);
+        assert_eq!(z.bracing.chain.bottom_repeat, 3);
+        set_value(&mut z, small, 14, 10.0);
+        set_value(&mut z, small, 15, 40.0);
+        let rings = values(&z, small);
+        assert_eq!((rings[14], rings[15]), (10.0, 40.0));
+        set_value(&mut z, small, 15, 0.0);
+        assert_eq!(z.bracing.chain.reinforcement_heights_mm, vec![10.0]);
+        let d = defaults(&base, &z, small);
+        assert_eq!(d[18], Some(base.rules.search_ground_mm));
+        set_choice(&mut z, 0, 2);
+        set_choice(&mut z, 3, 2);
+        set_choice(&mut z, 5, 1);
+        let c = choices(&z);
+        assert_eq!(c[0], 2);
+        assert_eq!(c[3], 2);
+        assert_eq!(c[4], -1);
+        assert!(z.rules.ignore_small_islands.enabled);
+        let names = bracing_preset_names();
+        let tall = names.iter().position(|n| *n == "tall object").unwrap();
+        set_choice(&mut z, 4, tall as i32);
+        assert_eq!(choices(&z)[4], tall as i32);
+        assert_eq!(z.bracing.diameter_mm, 2.0);
+        assert_eq!(choices(&base)[4], 0);
     }
 
     /// Every zone that places supports is a row, and a row's size and

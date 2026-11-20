@@ -317,6 +317,13 @@ export component MainWindow inherits Window {
     callback support-shape-size-picked(int);
     in property <[float]> support-shape-values;
     callback support-shape-value(int, float);
+    // The whole preset's choices (#363): bottom, middle and top pattern,
+    // the rings' diagonal, the bracing preset it is (-1 none), ignore small
+    // islands; what the built-in preset has, and the bracing presets.
+    in property <[int]> support-shape-choices;
+    in property <[int]> support-shape-choice-defaults;
+    in property <[string]> support-bracing-presets;
+    callback support-shape-choice(int, int);
     in property <[ZoneRow]> support-zone-rows;
     in property <[string]> support-zone-size-names;
     in property <float> support-zone-angle;
@@ -3083,6 +3090,12 @@ export component MainWindow inherits Window {
                                     shape-values: root.support-shape-values;
                                     shape-value(code, v) => {
                                         root.support-shape-value(code, v);
+                                    }
+                                    shape-choices: root.support-shape-choices;
+                                    shape-choice-defaults: root.support-shape-choice-defaults;
+                                    bracing-presets: root.support-bracing-presets;
+                                    shape-choice(code, v) => {
+                                        root.support-shape-choice(code, v);
                                     }
                                     zone-rows: root.support-zone-rows;
                                     zone-size-names: root.support-zone-size-names;
