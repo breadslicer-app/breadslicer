@@ -68,7 +68,7 @@ pub(crate) fn held(island: &Hint, paint: &Paint, contacts: &[[f64; 3]], fallback
 
 /// The point of triangle `t` nearest `p` (Ericson, Real-Time Collision
 /// Detection, 5.1.5).
-fn closest_on_triangle(p: Vec3, [a, b, c]: [Vec3; 3]) -> Vec3 {
+pub(crate) fn closest_on_triangle(p: Vec3, [a, b, c]: [Vec3; 3]) -> Vec3 {
     let (ab, ac, ap) = (b - a, c - a, p - a);
     let (d1, d2) = (ab.dot(ap), ac.dot(ap));
     if d1 <= 0.0 && d2 <= 0.0 {

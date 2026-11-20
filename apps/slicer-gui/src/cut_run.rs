@@ -1427,14 +1427,47 @@ impl CutRun {
         }
         let leaf = target.leaf;
         let sessions = self.document.support_sessions();
-        let Some((name, meta, supports)) = self
+        let Some((name, meta, supports, imported_gone)) = self
             .document
             .with_scene(|spatial| {
                 let graph = spatial.graph();
+                // Imported supports (#651): each body goes with the piece it
+                // holds up; those holding a piece other than the one most of
+                // them hold (the one that keeps standing on them) go, as the
+                // model's own supports do, instead of floating where it was.
+                let imported = crate::imported_supports::imported_of(spatial, leaf, None);
+                let tops = crate::imported_supports::body_tops(spatial, &imported);
+                let points: Vec<[f64; 3]> = tops.iter().map(|(_, top)| *top).collect();
+                let held = held_pieces(&trial.pieces, &target.world, &points);
+                let mut counts = vec![0usize; trial.pieces.len()];
+                for piece in held.iter().flatten() {
+                    counts[*piece] += 1;
+                }
+                // On a tie, the lowest piece: the one nearest the plate.
+                let low: Vec<f64> = trial
+                    .pieces
+                    .iter()
+                    .map(|piece| {
+                        piece
+                            .vertices()
+                            .iter()
+                            .map(|v| target.world.apply(v.coords().map(f64::from))[2])
+                            .fold(f64::INFINITY, f64::min)
+                    })
+                    .collect();
+                let main = (0..counts.len())
+                    .max_by(|&a, &b| counts[a].cmp(&counts[b]).then(low[b].total_cmp(&low[a])));
+                let gone: Vec<crate::imported_supports::ImportedBody> = tops
+                    .into_iter()
+                    .zip(&held)
+                    .filter(|(_, held)| held.is_some() && **held != main)
+                    .map(|((body, _), _)| body)
+                    .collect();
                 Some((
                     leaf_name(graph, leaf),
                     graph.node(leaf)?.meta.clone(),
                     sets_of_model(spatial, &sessions, leaf),
+                    gone,
                 ))
             })
             .flatten()
@@ -1465,6 +1498,11 @@ impl CutRun {
                 if let Some(remove) = removal_edit(graph, &supports) {
                     edits.push(remove);
                 }
+                let gone: Vec<&crate::imported_supports::ImportedBody> =
+                    imported_gone.iter().collect();
+                if let Some(remove) = crate::imported_supports::removal_of_bodies(spatial, &gone) {
+                    edits.push(remove);
+                }
                 Some(SceneEdit::Compound(edits))
             })
             .flatten()
@@ -1488,6 +1526,15 @@ impl CutRun {
                         notice.push_str(&ctr!(
                             "CutRun",
                             "Its supports were removed: generate supports for the pieces."
+                        ));
+                    }
+                    if !imported_gone.is_empty() {
+                        notice.push(' ');
+                        notice.push_str(&ctr!(
+                            "CutRun",
+                            "{n} imported support held a piece cut off and was removed.",
+                            "{n} imported supports held pieces cut off and were removed.",
+                            imported_gone.len()
                         ));
                     }
                     ui.set_status_notice(notice.into());
@@ -1573,6 +1620,85 @@ impl CutHandles for Handles {
             .upgrade()
             .is_some_and(|run| run.click(pointer.origin, pointer.direction))
     }
+}
+
+/// How far from a piece's surface, mm, the top of an imported support may be
+/// and still hold it.
+const HOLDS_WITHIN_MM: f64 = 1.5;
+
+/// For each point of `tops` (world mm), the piece of `pieces` (in the mesh's
+/// frame, `world` to the world) whose surface is nearest it, within
+/// [`HOLDS_WITHIN_MM`]; `None` near none (#651).
+fn held_pieces(pieces: &[IndexedMesh], world: &Affine, tops: &[[f64; 3]]) -> Vec<Option<usize>> {
+    use glam::Vec3;
+    let reach = HOLDS_WITHIN_MM;
+    let cell = |c: f64| (c / reach).floor() as i64;
+    let at = |p: [f64; 3]| p.map(cell);
+    // The cells each top looks in, and which tops look in each.
+    let mut wanted: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
+    for (t, &top) in tops.iter().enumerate() {
+        let c = at(top);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    wanted
+                        .entry([c[0] + dx, c[1] + dy, c[2] + dz])
+                        .or_default()
+                        .push(t);
+                }
+            }
+        }
+    }
+    let mut best: Vec<Option<(f64, usize)>> = vec![None; tops.len()];
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    for (k, piece) in pieces.iter().enumerate() {
+        let corners: Vec<[f64; 3]> = piece
+            .vertices()
+            .iter()
+            .map(|v| world.apply(v.coords().map(f64::from)))
+            .collect();
+        for face in piece.faces() {
+            let [a, b, c] = face.vertices.map(|v| corners[v.get() as usize]);
+            let lo = [0, 1, 2].map(|i| cell(a[i].min(b[i]).min(c[i])));
+            let hi = [0, 1, 2].map(|i| cell(a[i].max(b[i]).max(c[i])));
+            let span = (0..3).map(|i| (hi[i] - lo[i] + 1) as u64).product::<u64>();
+            let mut near: Vec<usize> = Vec::new();
+            if span as usize > wanted.len() {
+                for (key, ts) in &wanted {
+                    if (0..3).all(|i| lo[i] <= key[i] && key[i] <= hi[i]) {
+                        near.extend(ts);
+                    }
+                }
+            } else {
+                for x in lo[0]..=hi[0] {
+                    for y in lo[1]..=hi[1] {
+                        for z in lo[2]..=hi[2] {
+                            if let Some(ts) = wanted.get(&[x, y, z]) {
+                                near.extend(ts);
+                            }
+                        }
+                    }
+                }
+            }
+            if near.is_empty() {
+                continue;
+            }
+            near.sort_unstable();
+            near.dedup();
+            let tri = [a, b, c].map(|p| Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32));
+            for t in near {
+                let q = tops[t];
+                let q = Vec3::new(q[0] as f32, q[1] as f32, q[2] as f32);
+                let d = f64::from(crate::island_paint::closest_on_triangle(q, tri).distance(q));
+                if d <= reach && best[t].is_none_or(|(b, _)| d < b) {
+                    best[t] = Some((d, k));
+                }
+            }
+        }
+    }
+    best.into_iter().map(|b| b.map(|(_, k)| k)).collect()
 }
 
 #[cfg(test)]

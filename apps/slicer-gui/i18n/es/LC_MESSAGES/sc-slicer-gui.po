@@ -9566,3 +9566,10 @@ msgstr "Cada modelo ya está en la mejor posición que encontré ({} s). No se m
 msgctxt "Inspector"
 msgid "Oriented {} models; the others already stood best. Undo puts them back."
 msgstr "Orientados {} modelos; los demás ya estaban en su mejor posición. Deshacer los devuelve."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "{n} imported support held a piece cut off and was removed."
+msgid_plural "{n} imported supports held pieces cut off and were removed."
+msgstr[0] "{n} soporte importado sostenía una pieza cortada y se quitó."
+msgstr[1] "{n} soportes importados sostenían piezas cortadas y se quitaron."

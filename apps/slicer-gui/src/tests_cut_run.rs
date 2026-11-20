@@ -315,3 +315,71 @@ fn a_drag_on_the_plane_moves_the_shape_and_a_press_without_one_clicks() {
         assert!(!f.run.press(&above(80.0, 80.0)));
     });
 }
+
+/// A box from `lo` to `hi`, world mm.
+fn block(lo: [f32; 3], hi: [f32; 3]) -> IndexedMesh {
+    let mut b = sc_mesh_fixtures::unit_cube_mesh();
+    for v in &mut b.vertices {
+        let u = v.as_array();
+        *v = Vertex::new([0, 1, 2].map(|i| lo[i] + (u[i] + 0.5) * (hi[i] - lo[i])));
+    }
+    b
+}
+
+/// The boxes `parts` as one mesh named as imported supports.
+fn imported(parts: &[IndexedMesh]) -> IndexedMesh {
+    let mut vertices = Vec::new();
+    let mut faces = Vec::new();
+    for part in parts {
+        let n = vertices.len() as u32;
+        vertices.extend(part.vertices.iter().copied());
+        faces.extend(part.faces.iter().map(|f| {
+            sc_mesh_core::IndexedTriangle::from_raw_indices(f.vertices.map(|v| v.get() + n))
+        }));
+    }
+    let meta = sc_mesh_core::MeshMetadata {
+        name: Some(sc_mesh_core::presupported::IMPORTED_SUPPORTS_NAME.to_owned()),
+        header_comment: None,
+        declared_facet_normals: None,
+    };
+    IndexedMesh::new(Some(meta), vertices, faces)
+}
+
+#[test]
+fn imported_supports_of_a_piece_cut_off_go_with_the_cut() {
+    on_fresh_slint_thread(|| {
+        let f = fixture(cube());
+        // The cube spans x 0 to 20, y and z -10 to 10. Two supports stand
+        // under it; a column beside it holds its top half alone (#651).
+        let supports = imported(&[
+            block([4.0, -1.0, -15.0], [6.0, 1.0, -10.0]),
+            block([14.0, -1.0, -15.0], [16.0, 1.0, -10.0]),
+            block([20.5, -1.0, -15.0], [21.5, 1.0, 9.0]),
+        ]);
+        let mut graph = f.document.with_scene(|s| s.graph().clone()).unwrap();
+        let set = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(supports)),
+            )
+            .unwrap();
+        graph.add_root(set).unwrap();
+        f.document.install_graph(graph, PathBuf::from("cube.stl"));
+        f.document.set_selection(Selection::One(LeafId(f.leaf)));
+        let faces = || {
+            f.document
+                .with_scene(|s| s.graph().leaf_mesh_arc(set).map(|m| m.faces().len()))
+                .flatten()
+                .unwrap_or(0)
+        };
+        assert_eq!(faces(), 36);
+        opened(&f);
+        assert!(f.window.get_cut_can_cut(), "{}", f.window.get_cut_warning());
+        f.run.apply();
+        // The two under the bottom half stay; the column goes.
+        assert_eq!(faces(), 24, "the column holding the top half went");
+        assert!(f.document.undo().unwrap());
+        assert_eq!(faces(), 36, "undo brings it back");
+    });
+}
