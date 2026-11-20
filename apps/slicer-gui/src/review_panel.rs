@@ -92,6 +92,13 @@
 //! it back the same way. No leaves the list as it is. An island that never
 //! gets as wide as a tip offers nothing, and its row says so.
 //!
+//! A small island no support can reach (#462), one the engine refused a tip
+//! or that never gets as wide as one, offers to be deleted from the print:
+//! never on its own, and never by Fix All. The choice is a decision kept
+//! with the project ([`ReviewMarks::toggle_delete`]) and one step of Undo;
+//! the next slice takes the island's pixels off the layers, up to where it
+//! joins the rest, and its row becomes a note that can bring it back.
+//!
 //! Everything else stays as it is: a hollow, a suction cup or a large cavity,
 //! which only drain holes open, the output checks, a model in the raft and
 //! the supports' own findings. On the review that follows, each finding left
@@ -122,8 +129,10 @@ use crate::hollow_run::HollowRun;
 use crate::i18n::ctr;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::review::{ReviewOutcome, TipHold};
-use crate::review_marks::{FindingKey, ReviewMarks, SlicePatches};
-use crate::scene_document::{SceneDocument, SceneEvent, SceneRevision, SceneSubscription};
+use crate::review_marks::{FindingKey, ReviewMarks, SlicePatches, deleted_islands};
+use crate::scene_document::{
+    MarksStep, SceneDocument, SceneEvent, SceneRevision, SceneSubscription,
+};
 use crate::selection::{LeafId, Selection};
 use crate::slice_result::SliceResult;
 use crate::viewport::ViewportController;
@@ -291,6 +300,8 @@ pub(crate) struct ReviewPanel {
     bus: Rc<PreferencesBus>,
     repeat_pref: RefCell<Option<Subscription>>,
     scene_events: RefCell<Option<SceneSubscription>>,
+    /// The islands the held slice deleted (#462).
+    deletes_in_slice: RefCell<Vec<FindingKey>>,
 }
 
 /// What a run does.
@@ -409,6 +420,7 @@ impl ReviewPanel {
             bus,
             repeat_pref: RefCell::new(None),
             scene_events: RefCell::new(None),
+            deletes_in_slice: RefCell::new(Vec::new()),
         });
         *panel.me.borrow_mut() = Rc::downgrade(&panel);
         {
@@ -469,6 +481,12 @@ impl ReviewPanel {
         ui.on_review_leave_requested(move |id| {
             if let Some(panel) = weak.upgrade() {
                 panel.leave(id);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        ui.on_review_delete_toggled(move |id| {
+            if let Some(panel) = weak.upgrade() {
+                panel.toggle_delete(id);
             }
         });
         let weak = Rc::downgrade(self);
@@ -584,6 +602,28 @@ impl ReviewPanel {
         self.marks.borrow_mut().landed(ids);
     }
 
+    /// The islands the next slice deletes (#462): the decisions the scene
+    /// keeps, so a project reopened deletes them before its first review.
+    /// Decisions made on models that have changed since are dropped first.
+    pub(crate) fn deletes_for_slice(&self) -> Vec<FindingKey> {
+        self.follow_models(SceneEvent::Mutated);
+        deleted_islands(&self.document.review_decisions())
+    }
+
+    /// Whether a Slice press must re-slice for the islands to delete: they
+    /// differ from those the held slice deleted.
+    pub(crate) fn deletes_pending(&self) -> bool {
+        let asked = self.deletes_for_slice();
+        let done = self.deletes_in_slice.borrow();
+        asked.len() != done.len() || asked.iter().any(|key| !done.contains(key))
+    }
+
+    /// Records that the slice about to be shown deleted the islands
+    /// `deleted`.
+    pub(crate) fn deletes_landed(&self, deleted: Vec<FindingKey>) {
+        *self.deletes_in_slice.borrow_mut() = deleted;
+    }
+
     /// Drops the marks when the models are no longer those they were made
     /// on, and shows the left findings again once the scene changed.
     fn follow_models(&self, event: SceneEvent) {
@@ -648,6 +688,69 @@ impl ReviewPanel {
         } else {
             ctr!("Review", "The cavity will not be filled.")
         }));
+    }
+
+    /// Marks the small island of finding `id` to delete from the print, or
+    /// brings it back (#462), as one step of Undo. Its note, once a slice
+    /// deleted it, brings it back too.
+    fn toggle_delete(self: &Rc<Self>, id: i32) {
+        if self.fixing() {
+            return;
+        }
+        let Some(finding) = self.finding(id).filter(|finding| finding.removal.is_some()) else {
+            return;
+        };
+        let Some(models) = self.markable_models() else {
+            return;
+        };
+        let key = FindingKey::of(&finding).as_island();
+        let deleted = !self.marks.borrow().is_deleted(&key);
+        let put = |on: bool| -> Rc<dyn Fn()> {
+            let weak = Rc::downgrade(self);
+            let models = models.clone();
+            Rc::new(move || {
+                if let Some(panel) = weak.upgrade() {
+                    panel.put_delete(key, &models, on);
+                }
+            })
+        };
+        let step = MarksStep {
+            label: if deleted {
+                "delete an island"
+            } else {
+                "bring an island back"
+            },
+            undo: put(!deleted),
+            redo: put(deleted),
+        };
+        self.put_delete(key, &models, deleted);
+        self.document.push_marks_step(step);
+        self.push(Some(if deleted {
+            ctr!(
+                "Review",
+                "The next slice deletes this island from the print. Undo brings it back."
+            )
+        } else {
+            ctr!("Review", "The island stays in the print.")
+        }));
+    }
+
+    /// Marks the island of `key` to delete (`on`) or not, on `models`, and
+    /// keeps the choice with the scene. Nothing happens once the models
+    /// have changed: their decisions went with the change.
+    fn put_delete(&self, key: FindingKey, models: &[ModelPose], on: bool) {
+        if self.current_models().as_deref() != Some(models) {
+            return;
+        }
+        {
+            let mut marks = self.marks.borrow_mut();
+            if marks.is_deleted(&key) != on {
+                marks.toggle_delete(key, &models.to_vec());
+            }
+        }
+        self.document
+            .change_review_decisions(self.marks.borrow().decisions());
+        self.push(None);
     }
 
     /// Marks every resin trap that offers a fill.
@@ -727,6 +830,7 @@ impl ReviewPanel {
             held.fixed.contains(&i)
                 || marks.is_left(&key)
                 || marks.is_marked(&key)
+                || marks.is_deleted(&key)
                 || support_held_back(&findings[i], &marks, now)
         })
     }
@@ -1949,8 +2053,24 @@ impl ReviewPanel {
         ui.set_review_fix_all(fix_all as i32);
         ui.set_review_fixing(self.fixing());
         self.show_fix_progress();
+        let deletes = if sliced {
+            deletes_note(
+                deleted_islands(&self.document.review_decisions()),
+                &self.deletes_in_slice.borrow(),
+            )
+        } else {
+            String::new()
+        };
         ui.set_review_fills_note(
-            fills_note(marks.fill_count(), marks.cured_count(), marks.pending()).into(),
+            [
+                fills_note(marks.fill_count(), marks.cured_count(), marks.pending()),
+                deletes,
+            ]
+            .into_iter()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .into(),
         );
         ui.set_review_fills_clearable(marks.fill_count() > 0);
         ui.set_review_fills_clear_label(ctr!("Review", "Clear fills"));
@@ -2304,6 +2424,9 @@ fn review_rows(
             fill_resin: SharedString::default(),
             leave: false,
             lift_label,
+            // Offered by `mark_rows`, which knows the marks (#462).
+            delete: 0,
+            delete_size: SharedString::default(),
             remains: if after_fix_all {
                 fix_all_leaves(finding, hollow_drains(hollows, i))
             } else {
@@ -2776,6 +2899,9 @@ struct RowMarks {
     too_small: BTreeSet<usize>,
     /// Islands that never get as wide as a tip: none goes on them (#437).
     no_tip: BTreeSet<usize>,
+    /// Small islands marked to delete, and the notes of those deleted that
+    /// still are (#462).
+    deleted: BTreeSet<usize>,
     /// What the regions that grew at once have and want.
     growth_tips: BTreeMap<usize, GrowthTips>,
     /// How many layers below an island a tip that does not reach it ends.
@@ -2806,6 +2932,9 @@ impl RowMarks {
             }
             if marks.is_left(&key) {
                 row_marks.left.insert(i);
+            }
+            if finding.removal.is_some() && marks.is_deleted(&key.as_island()) {
+                row_marks.deleted.insert(i);
             }
             if let Some(why) = marks.refusal(&key) {
                 row_marks.refused.insert(i, why.into());
@@ -2865,6 +2994,11 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
                         | CheckKind::SuctionCup
                         | CheckKind::SurfaceGrowth
                 );
+            (row.delete, row.delete_size) = delete_offer(finding, i, marks);
+            // An island marked to delete wants no support (#462).
+            if row.delete == 2 && row.fix == FixKind::AddSupport as i32 {
+                row.fix = FixKind::None as i32;
+            }
             let growth = marks.growth_tips.get(&i);
             if (marks.held_back.contains(&i)
                 || marks.no_tip.contains(&i)
@@ -2951,6 +3085,39 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
         .collect()
 }
 
+/// What the row of finding `i` offers to delete (#462), with the size it
+/// says: 0 nothing; 1 deleting a small island no support reaches, while the
+/// models stand as sliced; 2 keeping one marked; 3 bringing back one a
+/// slice deleted (its note), or 1 again once brought back.
+fn delete_offer(finding: &Finding, i: usize, marks: &RowMarks) -> (i32, SharedString) {
+    if !marks.fixable || finding.removal.is_none() {
+        return (0, SharedString::default());
+    }
+    let marked = marks.deleted.contains(&i);
+    let state = match finding.check {
+        CheckKind::CleanUp if marked => 3,
+        CheckKind::CleanUp => 1,
+        CheckKind::Island if marked => 2,
+        CheckKind::Island
+            if (marks.held_back.contains(&i) && marks.refused.contains_key(&i))
+                || marks.no_tip.contains(&i) =>
+        {
+            1
+        }
+        _ => 0,
+    };
+    if state == 0 {
+        return (0, SharedString::default());
+    }
+    let layers = finding.last_layer - finding.first_layer + 1;
+    let size = format!(
+        "{} · {:.2} mm²",
+        ctr!("Review", "{n} layer", "{n} layers", layers),
+        finding.largest_mm2.unwrap_or(0.0)
+    );
+    (state, size.into())
+}
+
 /// The indices of the traps that offer a fill: those "Fill all small traps"
 /// marks. Only a small sealed trap has one ([`sc_review::checks::traps`]).
 fn small_traps<'f>(
@@ -3032,6 +3199,24 @@ fn fills_note(marked: usize, cured: usize, pending: bool) -> String {
         .to_string(),
         _ => String::new(),
     }
+}
+
+/// The line about the islands to delete (#462), while the held slice has
+/// not deleted those `asked`: it deleted `done`.
+fn deletes_note(asked: Vec<FindingKey>, done: &[FindingKey]) -> String {
+    if asked.len() == done.len() && asked.iter().all(|key| done.contains(key)) {
+        return String::new();
+    }
+    if asked.is_empty() {
+        return ctr!("Review", "The islands come back. Slice again to apply.").to_string();
+    }
+    ctr!(
+        "Review",
+        "One island will be deleted. Slice again to apply.",
+        "{n} islands will be deleted. Slice again to apply.",
+        asked.len()
+    )
+    .to_string()
 }
 
 /// The heading of a severity's group.

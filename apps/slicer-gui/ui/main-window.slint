@@ -591,6 +591,7 @@ export component MainWindow inherits Window {
     callback review-fix-requested(int);
     callback review-fill-toggled(int);
     callback review-leave-requested(int);
+    callback review-delete-toggled(int);
     callback review-fill-small-requested();
     callback review-fills-cleared();
     callback review-notes-toggled();
@@ -2354,6 +2355,9 @@ export component MainWindow inherits Window {
                         }
                         review-leave-requested(id) => {
                             root.review-leave-requested(id);
+                        }
+                        review-delete-toggled(id) => {
+                            root.review-delete-toggled(id);
                         }
                         review-fill-small-requested => {
                             root.review-fill-small-requested();

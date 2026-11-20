@@ -124,6 +124,17 @@ pub const MIN_TIP_SHARE: f64 = 0.0;
 /// touch it, in millimetres: 0.07, a tip beside a part's edge cures into it.
 pub const TIP_REACH_MM: f64 = 0.07;
 
+/// The largest section of an island that can be deleted, in square
+/// millimetres (#462): 1, the size under which an island no support reaches
+/// is only a note. A piece of a miniature that hangs below the body and no
+/// tip fits under grew to 0.003 to 0.80 mm² on real scenes.
+pub const REMOVABLE_MM2: f64 = 1.0;
+
+/// The most layers an island that can be deleted lasts before it joins the
+/// rest (#462): [`MAX_FOOTPRINT_LAYERS`], 3.2 mm at 0.05 mm, the layers
+/// whose pixels the review keeps for it.
+pub const REMOVABLE_LAYERS: usize = MAX_FOOTPRINT_LAYERS;
+
 /// How close the ends of two cones are to be the same tip, in millimetres: a
 /// neck and the cone above it.
 const SAME_TIP_MM: f64 = 0.05;
@@ -543,7 +554,10 @@ pub fn run(ctx: &ReviewContext<'_>, options: &IslandOptions, sweep: &SweepOption
     let mut reported = Vec::with_capacity(islands.len());
     for (part, runs) in islands.iter().zip(pixels.iter()) {
         let footprint = CavityFill::from_runs(input, runs.clone());
-        let finding = island_finding(input, regions, part).with_footprint(Arc::new(footprint));
+        let mut finding = island_finding(input, regions, part).with_footprint(Arc::new(footprint));
+        if removable(input, part) {
+            finding = finding.with_removal(Arc::new(removal_pixels(input, runs)));
+        }
         reported.push(island_of(
             input, regions, part, &finding, runs, &tips, options,
         ));
@@ -1015,6 +1029,53 @@ fn gained_pixels(input: &ReviewInput<'_>, gained: &[GainedLayer]) -> IslandPixel
         })
         .collect();
     island_pixels(input, &layers)
+}
+
+/// Whether island `part` is small enough to be deleted (#462): it never
+/// grows past [`REMOVABLE_MM2`] and joins the rest, or ends, within
+/// [`REMOVABLE_LAYERS`].
+fn removable(input: &ReviewInput<'_>, part: &Part) -> bool {
+    part.layers() <= REMOVABLE_LAYERS
+        && part.largest_px() as f64 * input.pixel_area_mm2() <= REMOVABLE_MM2 + 1e-12
+}
+
+/// The pixels deleting an island takes off, its `layers` with their runs:
+/// a pixel around them, as debris goes. The island stands alone on each of
+/// its layers until it joins the rest, so that pixel is air or stray.
+fn removal_pixels(input: &ReviewInput<'_>, layers: &[(usize, Vec<Run>)]) -> CavityFill {
+    let (width_px, height_px) = (input.width_px(), input.height_px());
+    CavityFill::from_runs(
+        input,
+        layers
+            .iter()
+            .map(|(layer, runs)| (*layer, dilate_square(runs, 1, width_px, height_px)))
+            .collect(),
+    )
+}
+
+/// The note that takes the place of `island`, a small island the person
+/// chose to delete (#462), once its pixels are off the layers: the same
+/// layers and place, and the pixels it took.
+pub fn deleted_island_note(island: &Finding) -> Finding {
+    let layers = island.last_layer - island.first_layer + 1;
+    let largest_mm2 = island.largest_mm2.unwrap_or(0.0);
+    let mut note = Finding::new(
+        CheckKind::CleanUp,
+        Severity::Info,
+        island.first_layer,
+        island.last_layer,
+        island.focus,
+        RoleScope::Model,
+        "Island deleted",
+        format!(
+            "An island of up to {largest_mm2:.3} mm² over {} that no support could reach was taken off the layers, as chosen.",
+            plural(layers, "layer", "layers"),
+        ),
+    )
+    .with_largest_mm2(largest_mm2);
+    note.footprint = island.footprint.clone();
+    note.removal = island.removal.clone();
+    note
 }
 
 /// The one note about the debris erased from the layers.

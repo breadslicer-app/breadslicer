@@ -732,7 +732,7 @@ mod fix_all {
     use crate::error_dialog::MessageClass;
     use crate::hollow_run::HollowRun;
     use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
-    use crate::review::{ReviewOutcome, erased_stack, review_bare_for_test, review_slices};
+    use crate::review::{ReviewOutcome, erased_stack, review_deleting_for_test, review_slices};
     use crate::slice_result::{SliceParams, SliceResult};
     use crate::slint_ui::{MessageAnswer, MessageKind};
     use crate::support_persist::review_sets;
@@ -959,7 +959,9 @@ mod fix_all {
             .with_scene(|spatial| review_sets(spatial, &sessions))
             .unwrap_or_default();
         let bare = BARE_PLANS.get().then(|| panel.born_tip_mm());
-        let mut outcome = review_bare_for_test(&leaves, filled.as_ref(), profile, &sets, bare);
+        let deleted = panel.deletes_for_slice();
+        let mut outcome =
+            review_deleting_for_test(&leaves, filled.as_ref(), profile, &sets, bare, &deleted);
         let erased = match &outcome {
             ReviewOutcome::Reviewed { erased, .. } => erased_stack(
                 &leaves,
@@ -998,6 +1000,7 @@ mod fix_all {
         });
         panel.slice_replaced(replaced);
         panel.fills_landed(patches.ids);
+        panel.deletes_landed(deleted);
         panel.show(outcome);
     }
 
@@ -1293,6 +1296,167 @@ mod fix_all {
         assert_eq!(decisions[0].check, "island");
         assert!(!titles(&reopened).contains(&island), "{reopened:?}");
         assert!(titles(&moved).contains(&island), "{moved:?}");
+    }
+
+    /// The net area of the held slice's rings on `layer` around the cube in
+    /// mid air of [`plate`], in mm²: what its pixels light there.
+    fn mid_air_area_mm2(document: &SceneDocument, layer: usize) -> f64 {
+        let slice = document.held_slice().expect("a slice");
+        let polygons = slice.contours.stack().layers()[layer].polygons().to_vec();
+        polygons
+            .iter()
+            .flat_map(|polygon| std::iter::once(polygon.outer()).chain(polygon.holes()))
+            .filter(|ring| {
+                let v = ring.vertices();
+                let n = v.len() as f64;
+                let (x, y) = (
+                    v.iter().map(|p| p.x).sum::<f64>() / n,
+                    v.iter().map(|p| p.y).sum::<f64>() / n,
+                );
+                (3.0..5.0).contains(&x) && (-1.0..1.0).contains(&y)
+            })
+            .map(|ring| {
+                let v = ring.vertices();
+                (0..v.len())
+                    .map(|i| {
+                        let (a, b) = (v[i], v[(i + 1) % v.len()]);
+                        a.x * b.y - b.x * a.y
+                    })
+                    .sum::<f64>()
+                    * 0.5
+            })
+            .sum::<f64>()
+            .abs()
+    }
+
+    /// The row of the card titled `title`.
+    fn row_titled(window: &MainWindow, title: &str) -> Option<ReviewRow> {
+        window
+            .get_review_rows()
+            .iter()
+            .find(|row| row.title.as_str() == title)
+    }
+
+    /// The row of the card of finding `id`.
+    fn row_of(window: &MainWindow, id: i32) -> Option<ReviewRow> {
+        window.get_review_rows().iter().find(|row| row.id == id)
+    }
+
+    /// #462: a small island no support reaches offers to be deleted; the
+    /// choice is one Undo step and a decision of the project, the next slice
+    /// takes its pixels off the layers and its note brings it back.
+    #[test]
+    fn a_small_island_no_support_reaches_can_be_deleted_and_brought_back() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            document.install_graph(plate(), PathBuf::from("plate.bread"));
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
+            let hollow =
+                HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
+            panel.set_reslice(|| true);
+            // An island too small to be worth a support is a note (#163).
+            window.invoke_review_notes_toggled();
+            slice(&document, &panel, false);
+            // The 1 mm cube in mid air: 1 mm² over its 20 layers.
+            assert!((mid_air_area_mm2(&document, 35) - 1.0).abs() < 1e-6);
+            let island = row_titled(&window, "Unsupported island").expect("the island's row");
+            // Nothing tried yet: a support is what it offers.
+            assert_eq!(island.delete, 0);
+
+            // The engine refuses its tip: no support reaches it.
+            let finding = panel.finding(island.id).expect("its finding");
+            let models = panel.markable_models().expect("the models as sliced");
+            panel.marks.borrow_mut().refuse(
+                FindingKey::of(&finding),
+                "no room",
+                document.scene_revision(),
+                &models,
+            );
+            panel.push(None);
+            let island = row_titled(&window, "No support fits here").expect("the island's row");
+            assert_eq!(island.delete, 1);
+            assert_eq!(island.delete_size.as_str(), "20 layers · 1.00 mm²");
+
+            let undo_before = document.undo_len();
+            window.invoke_review_delete_toggled(island.id);
+            assert_eq!(document.undo_len(), undo_before + 1);
+            let decisions = document.review_decisions();
+            assert_eq!(decisions.len(), 1, "{decisions:?}");
+            assert_eq!(decisions[0].check, "island-deleted");
+            assert!(document.is_dirty());
+            assert!(panel.deletes_pending());
+            // The step is a new scene revision: the refusal no longer holds
+            // it back, but marked to delete it wants no support.
+            let island = row_of(&window, island.id).expect("still listed");
+            assert_eq!(island.delete, 2);
+            assert_eq!(island.fix, FixKind::None as i32);
+            assert!(
+                window
+                    .get_review_fills_note()
+                    .contains("One island will be deleted")
+            );
+            // No Fix All support for it.
+            assert!(
+                panel
+                    .fix_all_plan()
+                    .row_points()
+                    .all(|(i, _)| i != island.id as usize)
+            );
+
+            // One Undo brings it back, Redo deletes it again.
+            assert!(document.undo().expect("the undo lands"));
+            assert!(document.review_decisions().is_empty());
+            assert!(!panel.deletes_pending());
+            assert!(document.redo().expect("the redo lands"));
+            assert_eq!(document.review_decisions(), decisions);
+
+            // The next slice takes it off the layers: a note says so.
+            slice(&document, &panel, false);
+            assert!(mid_air_area_mm2(&document, 35) < 1e-6);
+            assert!(!panel.deletes_pending());
+            assert!(row_titled(&window, "No support fits here").is_none());
+            assert!(row_titled(&window, "Unsupported island").is_none());
+            let note = row_titled(&window, "Island deleted").expect("the note of the deletion");
+            assert_eq!(note.delete, 3);
+
+            // The same scene from its file deletes it on its first slice.
+            document.install_project_graph(
+                plate(),
+                PathBuf::from("plate.bread"),
+                sc_project_formats::ProjectPayload {
+                    review_decisions: decisions.clone(),
+                    ..Default::default()
+                },
+            );
+            slice(&document, &panel, false);
+            assert!(mid_air_area_mm2(&document, 35) < 1e-6);
+            let note = row_titled(&window, "Island deleted").expect("the note of the deletion");
+
+            // Its note brings it back.
+            window.invoke_review_delete_toggled(note.id);
+            assert!(document.review_decisions().is_empty());
+            assert!(panel.deletes_pending());
+            slice(&document, &panel, false);
+            assert!((mid_air_area_mm2(&document, 35) - 1.0).abs() < 1e-6);
+            assert!(row_titled(&window, "Unsupported island").is_some());
+        });
     }
 
     #[test]

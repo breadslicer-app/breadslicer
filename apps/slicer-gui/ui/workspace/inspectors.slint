@@ -41,6 +41,11 @@ export struct ReviewRow {
     leave: bool,
     // The lift button of fix 4 ("Lift 17 layers").
     lift-label: string,
+    // A small island no support reaches (#462): 0 nothing, 1 can be deleted
+    // from the print, 2 marked to delete, 3 deleted by this slice (its note).
+    delete: int,
+    // What deleting it takes: "12 layers · 0.70 mm²".
+    delete-size: string,
     // After Fix All (#156): why it left this finding, else empty.
     remains: string,
 }
@@ -143,6 +148,8 @@ component FindingRow inherits VerticalLayout {
     callback leave();
     // The second fix of fix 4: turn the raft off.
     callback fix-alt();
+    // Delete a small island from the print, or bring it back (#462).
+    callback delete-toggled();
 
     spacing: 4px;
 
@@ -265,6 +272,19 @@ component FindingRow inherits VerticalLayout {
                 }
             }
         }
+        if root.finding.delete > 0: HorizontalLayout {
+            alignment: start;
+
+            ScButton {
+                text: root.finding.delete == 2 ? @tr("Review" => "Keep it in the print")
+                    : root.finding.delete == 3 ? @tr("Review" => "Bring it back")
+                    : @tr("Review" => "Delete from the print ({})", root.finding.delete-size);
+                kind: root.finding.delete == 1 ? ButtonKind.normal : ButtonKind.ghost;
+                clicked => {
+                    root.delete-toggled();
+                }
+            }
+        }
         if root.finding.leave: HorizontalLayout {
             alignment: start;
 
@@ -280,6 +300,10 @@ component FindingRow inherits VerticalLayout {
     if root.selected && root.finding.fill == 2: FindingNote {
         text: @tr("Review" => "Marked: the next slice cures this cavity solid.");
         tint: Theme.success;
+    }
+    if root.selected && root.finding.delete == 2: FindingNote {
+        text: @tr("Review" => "Marked: the next slice takes this island off the layers, up to where it joins the model.");
+        tint: Theme.warning;
     }
 }
 
@@ -3828,6 +3852,7 @@ export component ReviewCard inherits Rectangle {
     callback review-fix-requested(int);
     callback review-fill-toggled(int);
     callback review-leave-requested(int);
+    callback review-delete-toggled(int);
     callback review-fill-small-requested();
     callback review-fills-cleared();
     callback review-notes-toggled();
@@ -3964,6 +3989,9 @@ export component ReviewCard inherits Rectangle {
                             }
                             leave => {
                                 root.review-leave-requested(row.id);
+                            }
+                            delete-toggled => {
+                                root.review-delete-toggled(row.id);
                             }
                             fix-alt => {
                                 root.review-raft-off-requested(row.id);
