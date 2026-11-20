@@ -50,7 +50,8 @@ use sc_geom::df_supports::zone_presets::{
 use sc_geom::df_supports::{
     AddNote, AddOptions, BraceEnd, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
     DfSupportSession, EditError, EditPreview, HandBraceRefusal, HandEditKind, KeptEdits, LostEdit,
-    LostWhy, RaftMode, ScanCache, scene_model_leaves, start_df_prescan, start_df_supports,
+    LostWhy, PartSizes, RaftMode, ScanCache, scene_model_leaves, start_df_prescan,
+    start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
@@ -494,6 +495,12 @@ fn note_text(note: AddNote) -> slint::SharedString {
             "DfSupportDialog",
             "the surface there faces up; nothing below can reach it"
         ),
+        AddNote::Leans => ctr!("DfSupportDialog", "the shaft would lean too far to print"),
+        AddNote::OutOfOrder => ctr!(
+            "DfSupportDialog",
+            "an elbow stays between the parts below and above it"
+        ),
+        AddNote::TipOverShaft => ctr!("DfSupportDialog", "the tip would be wider than its shaft"),
     }
 }
 
@@ -667,6 +674,43 @@ enum EditOp {
     /// Routes these supports again from their tips (#377): on routes of
     /// their own, or hung from the nearest support.
     Reroute(Vec<String>, bool),
+    /// Moves a part of this support (#377): its trunk across the plate, or
+    /// an elbow.
+    MovePart(String, PartMove),
+    /// Gives these supports' parts these widths, their routes as they are
+    /// (#377).
+    Resize(Vec<String>, PartSizes),
+}
+
+/// A part of a support moved by a drag of the Select tool (#377).
+#[derive(Clone, Debug, PartialEq)]
+enum PartMove {
+    /// Its trunk, by this much across the plate (mm).
+    Trunk([f64; 2]),
+    /// This elbow, to this point (world mm).
+    Elbow(String, [f64; 3]),
+}
+
+impl PartMove {
+    /// Makes the move on `session`.
+    fn make(&self, session: &mut DfSupportSession, id: &str) -> Result<(), EditError> {
+        match self {
+            PartMove::Trunk(delta) => session.move_trunk(id, *delta),
+            PartMove::Elbow(elbow, to) => session.move_elbow(id, elbow, *to),
+        }
+    }
+
+    /// What the move would do on `session`.
+    fn preview(
+        &self,
+        session: &DfSupportSession,
+        id: &str,
+    ) -> Result<(EditPreview, Option<DfSupportSession>), EditError> {
+        match self {
+            PartMove::Trunk(delta) => session.preview_move_trunk(id, *delta),
+            PartMove::Elbow(elbow, to) => session.preview_move_elbow(id, elbow, *to),
+        }
+    }
 }
 
 /// One set's share of a hand edit: where it starts and what it does.
@@ -759,7 +803,9 @@ fn compute_edit(
         | EditOp::MoveTip(..)
         | EditOp::Brace(..)
         | EditOp::Reshape(_)
-        | EditOp::Reroute(..) => 0,
+        | EditOp::Reroute(..)
+        | EditOp::MovePart(..)
+        | EditOp::Resize(..) => 0,
     };
     watch
         .total
@@ -897,6 +943,16 @@ fn compute_job(
                     }
                 }
             }
+            (EditOp::MovePart(id, part), false) => {
+                took = one(part.make(&mut edited, id));
+            }
+            (EditOp::Resize(ids, sizes), false) => {
+                for id in ids {
+                    if one(edited.resize_parts(id, *sizes)) {
+                        took = true;
+                    }
+                }
+            }
         }
         if let (EditOp::Points(points), false) = (&op, from_preview) {
             for (i, point) in points {
@@ -1029,6 +1085,16 @@ enum DragState {
         drawn: DrawnSet,
         tip: String,
         to: Option<[f32; 3]>,
+    },
+    /// The Select tool's drag of a picked support's part (#377): the
+    /// support, the point grabbed, the elbow grabbed (none: the trunk), and
+    /// the move last asked for.
+    MovePart {
+        drawn: DrawnSet,
+        id: String,
+        grab: [f64; 3],
+        elbow: Option<String>,
+        to: Option<PartMove>,
     },
     /// Remove's box or brush: the set it removes from, its supports as
     /// points along each (tip and shaft), the ones picked so far and, for
@@ -1204,6 +1270,91 @@ fn along_supports(paths: Vec<(String, Vec<[f64; 3]>)>) -> Vec<(String, Vec<[f32;
 const GRAB_REACH_MM: f64 = 3.0;
 
 /// Distance from `p` to the segment `a`-`b`, on screen.
+/// How near an elbow of a picked support a drag of the Select tool takes
+/// that elbow rather than the trunk, mm (#377).
+const ELBOW_GRAB_MM: f64 = 1.5;
+/// The farthest a drag moves a part in one go, mm: past it the cursor is
+/// near the horizon of the plane it moves on.
+const PART_REACH_MM: f64 = 200.0;
+
+/// Where a drag of the Select tool puts the part grabbed at `grab` (world
+/// mm) with the cursor at `cursor` (#377): a trunk moves across the plate,
+/// on the level plane through `grab`; an elbow on the plane through it that
+/// faces the eye. The point of that plane `project` puts under the cursor,
+/// by Newton's steps; `None` where none is.
+fn part_target(
+    grab: [f64; 3],
+    elbow: Option<&str>,
+    cursor: [f32; 2],
+    project: Project<'_>,
+) -> Option<PartMove> {
+    let screen = |p: [f64; 3]| {
+        project
+            .project(p.map(|c| c as f32))
+            .map(|q| [f64::from(q[0]), f64::from(q[1])])
+    };
+    let along =
+        |p: [f64; 3], d: [f64; 3], t: f64| -> [f64; 3] { std::array::from_fn(|k| p[k] + d[k] * t) };
+    const H: f64 = 0.05;
+    let s0 = screen(grab)?;
+    let pull = |d: [f64; 3]| -> Option<[f64; 2]> {
+        let q = screen(along(grab, d, H))?;
+        Some([(q[0] - s0[0]) / H, (q[1] - s0[1]) / H])
+    };
+    let unit = |d: [f64; 3]| -> Option<[f64; 3]> {
+        let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        (n > 1e-9).then(|| d.map(|c| c / n))
+    };
+    let dirs = match elbow {
+        None => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        Some(_) => {
+            // The ways that move the elbow most across and up the screen.
+            let (x, y, z) = (
+                pull([1.0, 0.0, 0.0])?,
+                pull([0.0, 1.0, 0.0])?,
+                pull([0.0, 0.0, 1.0])?,
+            );
+            [unit([x[0], y[0], z[0]])?, unit([x[1], y[1], z[1]])?]
+        }
+    };
+    let at = |uv: [f64; 2]| along(along(grab, dirs[0], uv[0]), dirs[1], uv[1]);
+    let goal = [f64::from(cursor[0]), f64::from(cursor[1])];
+    let mut uv = [0.0f64; 2];
+    for _ in 0..16 {
+        let p = at(uv);
+        let s = screen(p)?;
+        let r = [goal[0] - s[0], goal[1] - s[1]];
+        if r[0].hypot(r[1]) < 0.05 {
+            break;
+        }
+        let a = screen(along(p, dirs[0], H))?;
+        let b = screen(along(p, dirs[1], H))?;
+        let (ja, jb) = (
+            [(a[0] - s[0]) / H, (a[1] - s[1]) / H],
+            [(b[0] - s[0]) / H, (b[1] - s[1]) / H],
+        );
+        let det = ja[0] * jb[1] - jb[0] * ja[1];
+        if det.abs() < 1e-12 {
+            return None;
+        }
+        uv[0] += (r[0] * jb[1] - jb[0] * r[1]) / det;
+        uv[1] += (ja[0] * r[1] - r[0] * ja[1]) / det;
+        if uv[0].hypot(uv[1]) > PART_REACH_MM {
+            return None;
+        }
+    }
+    let p = at(uv);
+    if !p.iter().all(|c| c.is_finite()) {
+        return None;
+    }
+    // Hundredths of a millimetre: a hair of the cursor asks nothing new.
+    let round = |c: f64| (c * 100.0).round() / 100.0;
+    Some(match elbow {
+        None => PartMove::Trunk([round(p[0] - grab[0]), round(p[1] - grab[1])]),
+        Some(e) => PartMove::Elbow(e.to_owned(), p.map(round)),
+    })
+}
+
 fn screen_segment_distance(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
     let ab = [b[0] - a[0], b[1] - a[1]];
     let len2 = ab[0] * ab[0] + ab[1] * ab[1];
@@ -1235,6 +1386,9 @@ struct HoverAsk {
     others: Vec<Arc<DfSupportSession>>,
     /// For the brace tool's second support (`tool` 7): the first end.
     brace_from: Option<BraceEnd>,
+    /// For a part of a support moved (`tool` 10, #377): what moves where;
+    /// `tip` is the support.
+    part: Option<PartMove>,
 }
 
 /// What tells a drawing's session apart for the hover preview: its leaf
@@ -1252,6 +1406,7 @@ struct HoverAnswer {
     how: AddOptions,
     tip: Option<String>,
     brace_from: Option<BraceEnd>,
+    part: Option<PartMove>,
     preview: Option<EditPreview>,
     /// The preview shows only what the tool holds (the brace tool's first
     /// support, the cursor off any other): drawn as pending.
@@ -1319,6 +1474,10 @@ impl HoverWorker {
                             },
                             (1, _) => ask.base.preview_add_with(p, &ask.how),
                             (3, Some(tip)) => ask.base.preview_move_tip(tip, p, &ask.how),
+                            (10, Some(id)) => match &ask.part {
+                                Some(part) => part.preview(&ask.base, id),
+                                None => Err(EditError::NothingThere),
+                            },
                             // Move tip's hover: what a press there grabs.
                             (4, _) => ask
                                 .base
@@ -1342,6 +1501,7 @@ impl HoverWorker {
                         how: ask.how,
                         tip: ask.tip,
                         brace_from: ask.brace_from,
+                        part: ask.part,
                         preview,
                         pending,
                         edited,
@@ -4253,6 +4413,31 @@ impl DfSupportRun {
             // With supports picked, the number is theirs (#567), each keeping
             // its other numbers.
             if self.chosen_shapes(&ui).is_some() {
+                // The widths of the tip, the trunk and the foot are given in
+                // place (#377): the route stays, and a support others hang
+                // from takes them too.
+                let mm = Some(f64::from(value));
+                let sizes = match code {
+                    0 => Some(PartSizes {
+                        tip_mm: mm,
+                        ..PartSizes::default()
+                    }),
+                    1 => Some(PartSizes {
+                        trunk_mm: mm,
+                        ..PartSizes::default()
+                    }),
+                    3 => Some(PartSizes {
+                        foot_mm: mm,
+                        ..PartSizes::default()
+                    }),
+                    _ => None,
+                };
+                if let Some(sizes) = sizes {
+                    for (drawn, ids) in self.chosen_now() {
+                        self.start_gesture(&ui, drawn, EditOp::Resize(ids, sizes), None);
+                    }
+                    return;
+                }
                 if let Ok(code) = usize::try_from(code)
                     && code < 9
                 {
@@ -5397,6 +5582,7 @@ impl DfSupportRun {
             tips: Arc::from([]),
             others: Vec::new(),
             brace_from,
+            part: None,
         })
     }
 
@@ -5421,6 +5607,7 @@ impl DfSupportRun {
                     tips: Arc::from([]),
                     others: Vec::new(),
                     brace_from: None,
+                    part: None,
                 });
             }
             let (hand, how) = self.click_tool(&ui, tool, shift);
@@ -5441,6 +5628,7 @@ impl DfSupportRun {
                 tips: Arc::from([]),
                 others: Vec::new(),
                 brace_from: None,
+                part: None,
             })
         })
     }
@@ -5615,8 +5803,8 @@ impl DfSupportRun {
             (
                 ctr!(
                     "Inspector",
-                    "{n} support picked: the numbers below draw it again.",
-                    "{n} supports picked: the numbers below draw them again.",
+                    "{n} support picked: the numbers below draw it again; drag its trunk or an elbow to move it.",
+                    "{n} supports picked: the numbers below draw them again; drag a trunk or an elbow to move it.",
                     count
                 ),
                 false,
@@ -5737,6 +5925,37 @@ impl DfSupportRun {
         );
     }
 
+    /// What a press of the Select tool at `press` grabs to drag (#377): an
+    /// elbow of a picked support near it, else the trunk of the picked
+    /// support there. Nothing off the picked supports, or on one that hangs
+    /// away from its elbows.
+    fn part_grab(&self, press: &DragPoint) -> Option<DragState> {
+        let at = press.support?.map(f64::from);
+        for (drawn, ids) in self.chosen_now() {
+            let Some(id) = drawn.session.support_near(at, SELECT_REACH_MM) else {
+                continue;
+            };
+            if !ids.contains(&id) {
+                continue;
+            }
+            let parts = drawn.session.parts_of(&id)?;
+            let elbow = drawn.session.elbow_near(&id, at, ELBOW_GRAB_MM);
+            let grab = match &elbow {
+                Some(e) => parts.elbows.iter().find(|(x, _)| x == e)?.1,
+                None if parts.foot.is_some() => at,
+                None => return None,
+            };
+            return Some(DragState::MovePart {
+                drawn,
+                id,
+                grab,
+                elbow,
+                to: None,
+            });
+        }
+        None
+    }
+
     /// The supports picked are routed again from their tips (#377): each on
     /// a route of its own (`own`), or hung from the nearest support. One
     /// Undo step for each set.
@@ -5839,7 +6058,7 @@ impl DfSupportRun {
         }
         match (&answer.preview, answer.tool) {
             (Some(preview), 1) => self.show_add_note(preview_line(preview, answer.how.attach)),
-            (Some(preview), 3) => self.show_add_note(move_line(preview)),
+            (Some(preview), 3 | 10) => self.show_add_note(move_line(preview)),
             (Some(preview), 7) if !answer.pending => self.show_add_note(brace_line(preview)),
             (_, 6 | 7) if self.brace_from.borrow().is_some() => {
                 self.show_add_note(brace_first_line());
@@ -5883,6 +6102,7 @@ impl DfSupportRun {
             tips: Arc::from([]),
             others: sets.map(|drawn| drawn.session).collect(),
             brace_from: None,
+            part: None,
         });
     }
 
@@ -8203,6 +8423,7 @@ impl DfSupportRun {
             tips,
             others: Vec::new(),
             brace_from: None,
+            part: None,
         });
     }
 
@@ -8470,6 +8691,13 @@ impl SupportDragHandler for DfSupportRun {
                     to: None,
                 }
             }
+            SupportDragKind::MovePart => {
+                let Some(state) = run.part_grab(press) else {
+                    return false;
+                };
+                crate::breadcrumbs::note("supports: move part started");
+                state
+            }
             SupportDragKind::Box | SupportDragKind::Brush if imported.is_some() => {
                 imported.take().expect("the guard saw it")
             }
@@ -8575,6 +8803,39 @@ impl SupportDragHandler for DfSupportRun {
                     tips: Arc::from([]),
                     others: Vec::new(),
                     brace_from: None,
+                    part: None,
+                });
+            }
+            Some(DragState::MovePart {
+                drawn,
+                id,
+                grab,
+                elbow,
+                to,
+            }) => {
+                let Some(part) = part_target(*grab, elbow.as_deref(), at.cursor, project) else {
+                    return;
+                };
+                if to.as_ref() == Some(&part) {
+                    return;
+                }
+                *to = Some(part.clone());
+                let base = drawn.session.clone();
+                let from = session_key(drawn);
+                let tip = Some(id.clone());
+                drop(drag);
+                run.ask_drag_preview(move |generation| HoverAsk {
+                    generation,
+                    base,
+                    from,
+                    point: [0.0; 3],
+                    tool: 10,
+                    how: AddOptions::default(),
+                    tip,
+                    tips: Arc::from([]),
+                    others: Vec::new(),
+                    brace_from: None,
+                    part: Some(part),
                 });
             }
             Some(DragState::Remove {
@@ -8767,6 +9028,31 @@ impl SupportDragHandler for DfSupportRun {
                 let edited = previewed.and_then(|answer| answer.edited);
                 self.show_add_note(Default::default());
                 run.start_gesture(&ui, drawn, EditOp::MoveTip(tip, to), edited);
+            }
+            DragState::MovePart { drawn, id, to, .. } => {
+                let Some(to) = to else {
+                    drop_it();
+                    return;
+                };
+                let previewed = newest.filter(|answer| {
+                    answer.tool == 10
+                        && answer.part.as_ref() == Some(&to)
+                        && answer.tip.as_deref() == Some(id.as_str())
+                        && answer.from == session_key(&drawn)
+                });
+                if let Some(answer) = &previewed
+                    && let Some(preview) = &answer.preview
+                    && !preview.valid
+                {
+                    drop_it();
+                    let (why, _) = move_line(preview);
+                    ui.set_supports_last_run(ctr!("DfSupportDialog", "Left where it was. {}", why));
+                    self.show_add_note(Default::default());
+                    return;
+                }
+                let edited = previewed.and_then(|answer| answer.edited);
+                self.show_add_note(Default::default());
+                run.start_gesture(&ui, drawn, EditOp::MovePart(id, to), edited);
             }
             DragState::Remove { drawn, picked, .. } => {
                 self.show_add_note(Default::default());
@@ -13191,6 +13477,80 @@ mod hand_edit_tests {
                 assert!(window.get_supports_last_run().contains("Left where it was"));
                 assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
             }
+        });
+    }
+
+    /// #377: with the Select tool, a picked support's trunk dragged across
+    /// the plate moves there as one undo, previewed first; a press off the
+    /// picked supports takes no drag.
+    #[test]
+    fn a_picked_trunk_dragged_across_the_plate_moves() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            // A trunk that moves 2 mm over, as the engine itself tells it.
+            let (id, delta) = generated
+                .tips()
+                .into_iter()
+                .filter(|(id, _)| generated.parts_of(id).is_some_and(|p| p.foot.is_some()))
+                .find_map(|(id, _)| {
+                    [[-2.0, 0.0], [2.0, 0.0], [0.0, -2.0], [0.0, 2.0]]
+                        .into_iter()
+                        .find(|d| {
+                            generated
+                                .preview_move_trunk(&id, *d)
+                                .is_ok_and(|(p, _)| p.valid)
+                        })
+                        .map(|d| (id, d))
+                })
+                .expect("a trunk that moves");
+            let parts = generated.parts_of(&id).unwrap();
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            let press_off = DragPoint {
+                cursor: [0.0, 0.0],
+                model: None,
+                support: Some([-50.0, -50.0, 1.0]),
+            };
+            assert!(!run.drag_start(SupportDragKind::MovePart, &press_off, &FROM_ABOVE));
+            run.on_tool_click_with(parts.tip.map(|c| c as f32), false);
+            assert_eq!(window.get_support_picked_count(), 1);
+            // On the shaft, just over its root, away from its elbows.
+            let grab = [parts.anchor[0], parts.anchor[1], parts.anchor[2] + 0.2];
+            let press = DragPoint {
+                cursor: [grab[0] as f32 * 10.0, grab[1] as f32 * 10.0],
+                model: None,
+                support: Some(grab.map(|c| c as f32)),
+            };
+            assert!(run.drag_start(SupportDragKind::MovePart, &press, &FROM_ABOVE));
+            let to = DragPoint {
+                cursor: [
+                    (grab[0] + delta[0]) as f32 * 10.0,
+                    (grab[1] + delta[1]) as f32 * 10.0,
+                ],
+                model: None,
+                support: None,
+            };
+            run.drag_move(&to, &FROM_ABOVE);
+            wait_preview(&run);
+            run.drag_end(true);
+            settle_click(&run);
+            let moved = in_force_session(&run).unwrap();
+            let id = moved.tip_near(parts.tip, 0.05).expect("its tip stays");
+            let foot = moved.parts_of(&id).unwrap().foot.unwrap();
+            let was = parts.foot.unwrap();
+            assert!(
+                (foot[0] - was[0] - delta[0]).abs() < 0.05,
+                "{foot:?} from {was:?}"
+            );
+            assert!(
+                (foot[1] - was[1] - delta[1]).abs() < 0.05,
+                "{foot:?} from {was:?}"
+            );
+            assert!(document.undo().unwrap(), "one undo");
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
         });
     }
 

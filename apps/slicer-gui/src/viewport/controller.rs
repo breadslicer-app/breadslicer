@@ -3521,11 +3521,8 @@ impl ViewportController {
                 Some(SupportDragKind::Brush)
             }
             TabTool::RemoveSupport => Some(SupportDragKind::Box),
-            TabTool::AddSupport
-            | TabTool::Brace
-            | TabTool::SelectSupport
-            | TabTool::SupportLine
-            | TabTool::Drain => None,
+            TabTool::SelectSupport => Some(SupportDragKind::MovePart),
+            TabTool::AddSupport | TabTool::Brace | TabTool::SupportLine | TabTool::Drain => None,
         }
     }
 
