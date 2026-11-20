@@ -644,3 +644,47 @@ fn the_pictures_of_the_printer_wall_are_written_when_asked() {
         });
     }
 }
+
+/// The ruler that shows progress (#562), large at the bottom of the window
+/// and small in a card, and the card of keyboard shortcuts (#49).
+#[test]
+fn the_pictures_of_the_progress_and_the_shortcuts_are_written_when_asked() {
+    let Some(dir) = std::env::var_os(SHOTS_ENV).map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("the folder is made");
+    for language in ["en", "es"] {
+        for (name, section, slicing) in [
+            ("progress-slice", WorkspaceSection::Slice, true),
+            ("progress-supports-tab", WorkspaceSection::Supports, false),
+            ("progress-supports-bar", WorkspaceSection::Transform, false),
+            ("shortcuts", WorkspaceSection::Transform, false),
+        ] {
+            let dir = dir.clone();
+            on_fresh_slint_thread(move || {
+                let window = MainWindow::new().expect("a main window");
+                slint::select_bundled_translation(language).expect("bundled language");
+                window.show().expect("the window shows");
+                window
+                    .window()
+                    .set_size(slint::LogicalSize::new(1600.0, 1000.0));
+                window.set_has_scene(true);
+                window.set_selection_valid(true);
+                window.set_workspace_section(section);
+                if name == "shortcuts" {
+                    window.set_shortcuts_open(true);
+                } else if slicing {
+                    window.set_slicing_in_progress(true);
+                    window.set_slice_total(1203);
+                    window.set_slice_completed(517);
+                    window.set_slice_progress(517.0 / 1203.0);
+                } else {
+                    window.set_support_gen_in_progress(true);
+                    window.set_support_gen_cancelable(true);
+                    window.set_support_gen_progress(0.68);
+                }
+                write(window.window(), &dir, &format!("{language}-{name}"));
+            });
+        }
+    }
+}

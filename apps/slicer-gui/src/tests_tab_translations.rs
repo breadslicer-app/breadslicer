@@ -914,6 +914,11 @@ const DIALOG_SLINT: &[(&str, &str)] = &[
     ("inspectors.slint", INSPECTORS),
     ("start-dialog.slint", START_DIALOG),
     ("layer-view.slint", LAYER_VIEW),
+    ("controls.slint", include_str!("../ui/kit/controls.slint")),
+    (
+        "shortcuts-card.slint",
+        include_str!("../ui/workspace/shortcuts-card.slint"),
+    ),
     (
         "layer-timeline.slint",
         include_str!("../ui/workspace/layer-timeline.slint"),
