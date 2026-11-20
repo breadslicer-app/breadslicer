@@ -3660,6 +3660,12 @@ export component SliceInspector inherits VerticalLayout {
     in property <[string]> resin-options;
     in-out property <int> resin-current-index: -1;
     in-out property <string> first-layer-height-text;
+    // Adaptive layer heights (#60): on or off, the thinnest and the thickest
+    // layer in millimetres, and what the format picked does with them.
+    in-out property <bool> adaptive-on;
+    in property <float> adaptive-min;
+    in property <float> adaptive-max;
+    in property <string> adaptive-note;
     in property <bool> slicing;
     in property <bool> up-to-date;
     in property <int> layer-count;
@@ -3709,6 +3715,7 @@ export component SliceInspector inherits VerticalLayout {
     callback printer-picked(int);
     callback resin-picked(int);
     callback first-layer-height-edited(string);
+    callback adaptive-layers-changed(bool, float, float);
     callback slice-requested();
 
     // The LineEdit's text binding breaks the first time the user types, so
@@ -3778,6 +3785,34 @@ export component SliceInspector inherits VerticalLayout {
                     root.first-layer-height-edited(t);
                 }
             }
+        }
+        CheckBox {
+            text: @tr("SlicePanel" => "Adaptive layers");
+            checked <=> root.adaptive-on;
+            toggled => {
+                root.adaptive-layers-changed(self.checked, root.adaptive-min, root.adaptive-max);
+            }
+        }
+        if root.adaptive-on: NumberField {
+            label: @tr("SlicePanel" => "Thinnest layer");
+            unit: "mm";
+            decimals: 3;
+            value: root.adaptive-min;
+            committed(value) => {
+                root.adaptive-layers-changed(true, value, root.adaptive-max);
+            }
+        }
+        if root.adaptive-on: NumberField {
+            label: @tr("SlicePanel" => "Thickest layer");
+            unit: "mm";
+            decimals: 3;
+            value: root.adaptive-max;
+            committed(value) => {
+                root.adaptive-layers-changed(true, root.adaptive-min, value);
+            }
+        }
+        if root.adaptive-on && root.adaptive-note != "": Note {
+            text: root.adaptive-note;
         }
     }
 

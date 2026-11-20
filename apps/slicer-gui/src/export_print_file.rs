@@ -252,7 +252,7 @@ fn export_job(
         layer_height_request: None,
         first_layer_height: held.params.first_layer_height,
         aa_level: held.params.aa_level,
-        adaptive: None,
+        adaptive: held.params.adaptive_layers,
     };
     let schedule = schedule_for_selection(scene, printer, material, &params)
         .map_err(|err| ExportFailure::Prepare(Box::new(SliceFailure::from(err))))?;
@@ -716,6 +716,7 @@ mod export_button_enabled_tests {
             printer: PrinterId::new("elegoo-mars-5").expect("valid id"),
             resin: MaterialId::new("standard-405").expect("valid id"),
             first_layer_height: None,
+            adaptive_layers: None,
             aa_level: AaLevel::Off,
             geometry: SceneRevision::from_top_edit_id(Some(3)),
             plate: 0,
@@ -810,7 +811,7 @@ mod export_button_enabled_tests {
 #[cfg(test)]
 mod export_job_tests {
     use sc_print_glue::PlateContours;
-    use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
+    use sc_print_primitives::{AaLevel, AdaptiveLayers, MaterialId, PositiveFiniteMm, PrinterId};
     use sc_print_profiles::MaterialProfile;
     use sc_sl1cer::contour::{ContourLayer, ContourStack};
     use sc_sl1cer::profile::LayerSchedule;
@@ -932,6 +933,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
                 printer: PrinterId::new("elegoo-mars-5").expect("valid id"),
                 resin: MaterialId::new("sirayatech-blu").expect("valid id"),
                 first_layer_height: None,
+                adaptive_layers: None,
                 aa_level: AaLevel::Off,
                 geometry: SceneRevision::from_top_edit_id(None),
                 plate: 0,
@@ -1082,6 +1084,122 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
             .expect_err("an unresolvable configuration cannot be written");
 
         assert!(matches!(err, ExportFailure::Resolve(_)), "{err}");
+    }
+
+    /// A 4 mm cube standing on the plate: upright walls and a flat top.
+    fn standing_cube() -> Scene {
+        use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+        use sc_scene::node::LeafPayload;
+
+        let place = AffineTransform3D::from_translation([0.0, 0.0, 2.0])
+            .compose(&AffineTransform3D::from_uniform_scale(4.0));
+        let mut scene = Scene::new();
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Affine(place),
+                LeafPayload::Mesh(std::sync::Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+            )
+            .expect("inline-mesh leaf");
+        scene.add_root(leaf).expect("fresh leaf becomes a root");
+        scene
+    }
+
+    fn adaptive() -> AdaptiveLayers {
+        AdaptiveLayers::new(
+            PositiveFiniteMm::new(0.03).expect("a length"),
+            PositiveFiniteMm::new(0.1).expect("a length"),
+        )
+    }
+
+    /// The scene sliced as the Slice tab slices it, held with the inputs it
+    /// ran with.
+    fn sliced(
+        scene: &Scene,
+        printer: &PrinterProfile,
+        material: &EffectiveMaterial,
+        adaptive_layers: Option<AdaptiveLayers>,
+    ) -> SliceResult {
+        let params = SlicingParams {
+            layer_height_request: None,
+            first_layer_height: None,
+            aa_level: AaLevel::Off,
+            adaptive: adaptive_layers,
+        };
+        let run = sc_print_glue::slice_plate(
+            scene,
+            printer,
+            material,
+            &params,
+            &sc_print_glue::SupportOwners::new(),
+            &sc_sl1cer::CancelToken::new(),
+            |_| {},
+        )
+        .expect("the cube slices");
+        let sc_print_glue::SliceRun::Completed(plate) = run else {
+            panic!("an uncancelled run completes");
+        };
+        let mut held = held_slice(
+            LayerSchedule::uniform(0.05, 0.05, 1).expect("a schedule"),
+            Some(layer_values(printer, material)),
+        );
+        held.contours = plate.merge().expect("one run merges");
+        held.params.adaptive_layers = adaptive_layers;
+        held
+    }
+
+    #[test]
+    fn an_adaptive_slice_exports_and_estimates_on_the_schedule_it_was_cut_on() {
+        let (printer, material) = profiles(MATERIAL_TOML);
+        let scene = standing_cube();
+        let held = sliced(&scene, &printer, &material, Some(adaptive()));
+        let schedule = held.contours.schedule().clone();
+        assert!(!schedule.is_uniform());
+        let tops: Vec<f64> = schedule.iter_slab_tops().collect();
+
+        let job = export_job(held, &scene, &printer, &material).expect("the export prepares");
+
+        let program = job.program();
+        let written: Vec<f64> = program
+            .layers
+            .iter()
+            .map(|layer| layer.slab_top_mm.value())
+            .collect();
+        assert_eq!(written, tops);
+        assert!(program.varies_layer_height());
+        // What the panel shows: the time adds up from the layers, and the resin
+        // is the 4 mm cube, each layer at its own height.
+        let times: f64 = sc_print_glue::layer_times_sec(program).iter().sum();
+        assert!((times - program.print_time_sec.value()).abs() < 1e-6);
+        assert!(
+            (program.volume_mm3.value() - 64.0).abs() < 1.5,
+            "{}",
+            program.volume_mm3.value()
+        );
+    }
+
+    #[test]
+    fn a_uniform_slice_is_stale_once_adaptive_layers_are_asked_for() {
+        let (printer, material) = profiles(MATERIAL_TOML);
+        let scene = standing_cube();
+        let mut held = sliced(&scene, &printer, &material, None);
+        held.params.adaptive_layers = Some(adaptive());
+
+        let err = export_job(held, &scene, &printer, &material).expect_err("cut uniform");
+
+        assert!(matches!(err, ExportFailure::Stale), "{err}");
+    }
+
+    #[test]
+    fn an_adaptive_slice_is_stale_once_adaptive_layers_are_off() {
+        let (printer, material) = profiles(MATERIAL_TOML);
+        let scene = standing_cube();
+        let mut held = sliced(&scene, &printer, &material, Some(adaptive()));
+        held.params.adaptive_layers = None;
+
+        let err = export_job(held, &scene, &printer, &material).expect_err("cut adaptive");
+
+        assert!(matches!(err, ExportFailure::Stale), "{err}");
     }
 }
 
@@ -1267,6 +1385,7 @@ mod prepare_export_tests {
                 printer: PrinterId::new("elegoo-mars-5").expect("valid id"),
                 resin: MaterialId::new("sirayatech-blu").expect("valid id"),
                 first_layer_height: None,
+                adaptive_layers: None,
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
                 plate: 0,

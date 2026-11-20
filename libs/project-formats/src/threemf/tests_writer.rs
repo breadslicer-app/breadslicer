@@ -100,6 +100,7 @@ mod package_shape_tests {
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
                 output_format: None,
+                adaptive_layers: None,
                 slice_fingerprint: None,
             },
         );
@@ -119,6 +120,7 @@ mod package_shape_tests {
                 resin: None,
                 first_layer_height: None,
                 output_format: None,
+                adaptive_layers: None,
                 slice_fingerprint: None,
             },
         );
@@ -235,6 +237,7 @@ mod embed_flag_tests {
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
                 output_format: None,
+                adaptive_layers: None,
                 slice_fingerprint: None,
             },
         );

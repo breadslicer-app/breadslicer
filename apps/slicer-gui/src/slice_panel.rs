@@ -13,7 +13,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{
+    AdaptiveLayers, MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId,
+};
 use sc_sla_formats::PrinterFileFormat;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
@@ -102,6 +104,12 @@ impl SlicePanelBridge {
             let bridge = bridge.clone();
             ui.on_slice_first_layer_height_edited(move |text| {
                 bridge.on_first_layer_height_edited(&text)
+            });
+        }
+        {
+            let bridge = bridge.clone();
+            ui.on_slice_adaptive_layers_changed(move |on, min, max| {
+                bridge.on_adaptive_layers_changed(on, min, max)
             });
         }
 
@@ -200,6 +208,15 @@ impl SlicePanelBridge {
         ui.set_slice_first_layer_height_text(
             format_first_layer_height(view.first_layer_height()).into(),
         );
+        let adaptive = self.document.print_selection().adaptive_layers;
+        let shown = adaptive.unwrap_or(AdaptiveLayers::DEFAULT);
+        ui.set_slice_adaptive_on(adaptive.is_some());
+        ui.set_slice_adaptive_min(shown.min_mm.value() as f32);
+        ui.set_slice_adaptive_max(shown.max_mm.value() as f32);
+        ui.set_slice_adaptive_note(adaptive_note(selected_format).into());
+        // A slice takes the adaptive layers only for a format that keeps
+        // them (#60): the runs read the format shown here.
+        self.document.set_print_format(selected_format);
 
         *self.printer_ids.borrow_mut() = printer.options.iter().map(|o| o.id.clone()).collect();
         *self.resin_ids.borrow_mut() = resin.options.iter().map(|o| o.id.clone()).collect();
@@ -230,6 +247,7 @@ impl SlicePanelBridge {
             &selection,
             snapshot.aa_level,
             self.document.scene_revision(),
+            *self.selected_format.borrow(),
         )
         .map(|params| SliceParams {
             plate: self.document.slice_plate(),
@@ -373,6 +391,29 @@ impl SlicePanelBridge {
         }
     }
 
+    /// Applies the adaptive layers switch or one of its heights to the
+    /// document (#60): off clears them; on keeps the two heights, the thinner
+    /// first, and a height that is not a length keeps the one held.
+    fn on_adaptive_layers_changed(&self, on: bool, min: f32, max: f32) {
+        let layers = on.then(|| {
+            let held = self
+                .document
+                .print_selection()
+                .adaptive_layers
+                .unwrap_or(AdaptiveLayers::DEFAULT);
+            // The field shows micrometres; the float it hands over is rounded
+            // back to them.
+            let length = |value: f32, fallback: PositiveFiniteMm| {
+                PositiveFiniteMm::new((f64::from(value) * 1000.0).round() / 1000.0)
+                    .unwrap_or(fallback)
+            };
+            AdaptiveLayers::new(length(min, held.min_mm), length(max, held.max_mm))
+        });
+        if self.document.set_selected_adaptive_layers(layers) {
+            self.refresh();
+        }
+    }
+
     /// Applies a first-layer-height edit to the document: an empty field clears
     /// the scene's own height, a valid millimetre value sets it, and other text
     /// leaves the value as it is, so the user can finish typing a number.
@@ -509,6 +550,19 @@ impl PanelUpdate {
     }
 }
 
+/// What the adaptive layers do in `format` (#60): nothing to say for one
+/// that keeps a height per layer, or before one is picked.
+fn adaptive_note(format: Option<PrinterFileFormat>) -> String {
+    match format {
+        Some(format) if !format.keeps_layer_heights() => crate::i18n::ctr!(
+            "SlicePanel",
+            "This format keeps one layer height: the print is sliced with every layer at the layer height."
+        )
+        .to_string(),
+        _ => String::new(),
+    }
+}
+
 /// What a format that cannot keep the exposure stepping down over the
 /// transition layers prints them at (#96), or `None` for one that keeps it.
 fn ramp_note(format: PrinterFileFormat) -> Option<String> {
@@ -624,6 +678,7 @@ mod layer_values_cache_tests {
             printer: PrinterId::new("elegoo-mars-5").expect("valid id"),
             resin: MaterialId::new(resin).expect("valid id"),
             first_layer_height: None,
+            adaptive_layers: None,
             aa_level: AaLevel::Off,
             geometry: SceneRevision::from_top_edit_id(None),
             plate: 0,
@@ -714,6 +769,69 @@ mod bridge_tests {
         assert_eq!(shown, (true, false));
     }
 
+    /// The adaptive layers switch and its heights reach the document's own
+    /// choices (#60), the thinner first; the note tells when the format
+    /// shown keeps one layer height, and the document learns that format.
+    #[test]
+    fn the_adaptive_layers_switch_sets_the_document_and_tells_what_the_format_does() {
+        use sc_print_primitives::{FormatKind, NonEmptyString, OutputFormatBindings};
+        use sc_sla_formats::{CtbVariant, GooVersion};
+
+        let shown = on_fresh_slint_thread(|| {
+            let printer = PrinterId::new("listed-printer").expect("valid printer id");
+            let bus = PreferencesBus::new(PreferencesSnapshot {
+                default_printer: Some(printer.clone()),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let catalog = |format: FormatKind, version: &str| {
+                let entry = crate::profile_catalog::PrinterCatalogEntry {
+                    output_formats: OutputFormatBindings::new(OutputFormatBinding {
+                        format,
+                        version: Some(NonEmptyString::new(version).expect("a version")),
+                    }),
+                    ..printer_entry(printer.clone(), "Alpha", [120.0, 68.0, 150.0])
+                };
+                Rc::new(ProfileCatalog::from_entries(vec![entry], Vec::new()))
+            };
+            let catalogs = Rc::new(RefCell::new(catalog(FormatKind::Goo, "v3.0")));
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let document = SceneDocument::new();
+            let bridge =
+                SlicePanelBridge::install(&window, catalogs.clone(), bus.clone(), document.clone());
+            let off = (window.get_slice_adaptive_on(), document.print_format());
+
+            window.invoke_slice_adaptive_layers_changed(true, 0.2, 0.05);
+            let on = (
+                window.get_slice_adaptive_on(),
+                document.print_selection().adaptive_layers,
+                window.get_slice_adaptive_note().to_string(),
+            );
+
+            *catalogs.borrow_mut() = catalog(FormatKind::Ctb, "v5");
+            bridge.apply(PanelUpdate::Profiles);
+            let ctb = (
+                document.print_format(),
+                window.get_slice_adaptive_note().to_string(),
+            );
+
+            window.invoke_slice_adaptive_layers_changed(false, 0.05, 0.2);
+            let cleared = (
+                window.get_slice_adaptive_on(),
+                document.print_selection().adaptive_layers,
+            );
+            (off, on, ctb, cleared)
+        });
+        let (off, on, ctb, cleared) = shown;
+        let mm = |value| PositiveFiniteMm::new(value).expect("a length");
+        assert_eq!(off, (false, Some(PrinterFileFormat::Goo(GooVersion::V3_0))));
+        assert!(on.0);
+        assert_eq!(on.1, Some(AdaptiveLayers::new(mm(0.05), mm(0.2))));
+        assert!(on.2.contains("one layer height"), "{}", on.2);
+        assert_eq!(ctb.0, Some(PrinterFileFormat::Ctb(CtbVariant::PlainV5)));
+        assert_eq!(ctb.1, "");
+        assert_eq!(cleared, (false, None));
+    }
+
     #[test]
     fn a_language_change_pushes_the_format_labels_again() {
         let (labels, expected) = on_fresh_slint_thread(|| {
@@ -783,6 +901,7 @@ mod bridge_tests {
                 printer,
                 resin,
                 first_layer_height: None,
+                adaptive_layers: None,
                 aa_level,
                 geometry: document.scene_revision(),
                 plate: 0,

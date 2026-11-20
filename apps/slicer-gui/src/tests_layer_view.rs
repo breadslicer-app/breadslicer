@@ -616,6 +616,7 @@ fn controller_with_2_layers() -> ViewportController {
             printer: PrinterId::new("elegoo-saturn-4-ultra").expect("valid id"),
             resin: MaterialId::new("standard-405").expect("valid id"),
             first_layer_height: None,
+            adaptive_layers: None,
             aa_level: AaLevel::Off,
             geometry,
             plate: 0,

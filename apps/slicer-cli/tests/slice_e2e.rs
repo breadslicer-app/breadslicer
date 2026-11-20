@@ -809,6 +809,7 @@ fn project_bytes(scene: &Scene) -> Vec<u8> {
         printer: Some(PrinterId::new("slicer-cli-e2e-test").expect("valid slug")),
         resin: Some(MaterialId::new("slicer-cli-e2e-test-resin").expect("valid slug")),
         first_layer_height: None,
+        adaptive_layers: None,
         output_format: None,
         embedded: Vec::new(),
         review_decisions: Vec::new(),

@@ -67,6 +67,7 @@ fn sample_result(geometry: SceneRevision) -> SliceResult {
             printer: PrinterId::new("elegoo-saturn-4-ultra").expect("valid id"),
             resin: MaterialId::new("standard-405").expect("valid id"),
             first_layer_height: None,
+            adaptive_layers: None,
             aa_level: AaLevel::Off,
             geometry,
             plate: 0,
@@ -334,4 +335,26 @@ fn slices_for_persist_is_none_when_the_schedule_differs_by_value() {
     // whatever profile identity, must withhold the slices.
     let thicker = LayerSchedule::uniform(0.10, 0.05, 1).expect("a positive, non-empty schedule");
     assert!(doc.slices_for_persist(&thicker).is_none());
+}
+
+/// The layer view cuts at each layer's own top on a variable schedule (#60).
+#[test]
+fn slice_layer_top_z_follows_a_variable_schedule() {
+    use sc_print_primitives::PositiveFiniteMm;
+    use sc_sl1cer::profile::VariableSchedule;
+
+    let (doc, _) = loaded_document();
+    let rev = doc.scene_revision();
+    let mm = |value| PositiveFiniteMm::new(value).expect("a length");
+    let schedule = LayerSchedule::Variable(
+        VariableSchedule::new(vec![mm(0.05), mm(0.1), mm(0.2), mm(0.23)], mm(0.05))
+            .expect("rising tops"),
+    );
+    doc.set_slice_result(SliceResult {
+        contours: contours_on(schedule),
+        ..sample_result(rev)
+    });
+    assert_eq!(doc.slice_layer_count(), Some(4));
+    assert_eq!(doc.slice_layer_top_z(2), Some(0.2));
+    assert_eq!(doc.slice_layer_top_z(3), Some(0.23));
 }

@@ -9324,6 +9324,26 @@ msgctxt "SlicePanel"
 msgid "This format keeps one exposure for the bottom layers and one for the rest: the transition layers print at the normal exposure."
 msgstr "Este formato guarda una exposición para las capas de base y otra para el resto: las capas de transición se imprimen con la exposición normal."
 
+#: src/slice_panel.rs
+msgctxt "SlicePanel"
+msgid "This format keeps one layer height: the print is sliced with every layer at the layer height."
+msgstr "Este formato guarda un solo alto de capa: se lamina con todas las capas al alto de capa."
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Adaptive layers"
+msgstr "Capas adaptativas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Thinnest layer"
+msgstr "Capa más fina"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Thickest layer"
+msgstr "Capa más gruesa"
+
 #: ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
 msgid "Done"

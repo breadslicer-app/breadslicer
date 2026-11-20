@@ -16,6 +16,7 @@
 //! calibrated for it.
 
 use sc_mesh_core::IndexedMesh;
+pub use sc_print_primitives::AdaptiveLayers;
 use sc_print_primitives::PositiveFiniteMm;
 use sc_scene::Scene;
 use sc_scene::bake::bake_leaf_to_world;
@@ -24,15 +25,6 @@ use crate::api::sliceable_leaves;
 use crate::error::{SliceError, SliceSceneError};
 use crate::plane_intersect::on_plane_band_mm;
 use crate::profile::{LayerSchedule, VariableSchedule};
-
-/// The range an adaptive schedule's layers keep to.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct AdaptiveLayers {
-    /// The thinnest layer, which a flat face takes.
-    pub min_mm: PositiveFiniteMm,
-    /// The thickest layer, which a wall takes.
-    pub max_mm: PositiveFiniteMm,
-}
 
 /// What the layers below the adaptive ones, and the grid they sit on, are.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -127,7 +119,9 @@ pub fn adaptive_slab_tops(
         loop {
             let nz = flattest(z, z + height);
             let allowed = if nz > 0.0 {
-                ((tolerance / nz / step) as u64).clamp(min, max)
+                // A hair over, so a face baked a last bit off another way
+                // gives the same height (#60).
+                ((tolerance / nz / step + 1e-6) as u64).clamp(min, max)
             } else {
                 max
             };

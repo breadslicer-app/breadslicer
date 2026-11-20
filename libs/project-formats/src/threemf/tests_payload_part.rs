@@ -43,6 +43,7 @@ mod serialize_tests {
             printer: Some(printer_id("test-printer")),
             resin: Some(material_id("test-resin")),
             first_layer_height: None,
+            adaptive_layers: None,
             output_format: None,
             embedded: Vec::new(),
             review_decisions: Vec::new(),
@@ -61,6 +62,7 @@ mod serialize_tests {
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
                 output_format: None,
+                adaptive_layers: None,
                 slice_fingerprint: None,
             },
         );
@@ -81,9 +83,27 @@ mod serialize_tests {
                 resin: None,
                 first_layer_height: Some(mm(0.05)),
                 output_format: None,
+                adaptive_layers: None,
                 slice_fingerprint: None,
             },
         );
+    }
+
+    #[test]
+    fn adaptive_layers_round_trip_through_the_print_section() {
+        let layers = sc_print_primitives::AdaptiveLayers::new(mm(0.025), mm(0.1));
+        let payload = ProjectPayload {
+            adaptive_layers: Some(layers),
+            ..ProjectPayload::default()
+        };
+        let text = serialize_payload(&payload, None).expect("serializes");
+        let PayloadParseOutcome::V1 {
+            adaptive_layers, ..
+        } = parse_payload(&text).expect("parses")
+        else {
+            panic!("a version-1 document");
+        };
+        assert_eq!(adaptive_layers, Some(layers));
     }
 
     #[test]
@@ -104,6 +124,7 @@ mod serialize_tests {
                 resin: None,
                 first_layer_height: None,
                 output_format: Some(goo_v3_0()),
+                adaptive_layers: None,
                 slice_fingerprint: None,
             },
         );
@@ -137,6 +158,7 @@ mod serialize_tests {
                 resin: None,
                 first_layer_height: None,
                 output_format: None,
+                adaptive_layers: None,
                 slice_fingerprint: None,
             },
         );
@@ -148,6 +170,7 @@ mod serialize_tests {
             printer: Some(printer_id("test-printer")),
             resin: None,
             first_layer_height: None,
+            adaptive_layers: None,
             output_format: None,
             embedded: vec![crate::payload::EmbeddedProfile::Printer {
                 id: printer_id("test-printer"),
@@ -177,6 +200,7 @@ mod serialize_tests {
                 resin: None,
                 first_layer_height: None,
                 output_format: None,
+                adaptive_layers: None,
                 slice_fingerprint: Some("cafef00d".to_string()),
             },
         );
@@ -203,6 +227,7 @@ mod parse_tests {
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
                 output_format: None,
+                adaptive_layers: None,
                 slice_fingerprint: None,
             },
         );
@@ -217,6 +242,7 @@ mod parse_tests {
                 resin: None,
                 first_layer_height: Some(mm(0.05)),
                 output_format: Some(goo_v3_0()),
+                adaptive_layers: None,
                 slice_fingerprint: None,
             },
         );
@@ -231,6 +257,7 @@ mod parse_tests {
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
                 output_format: None,
+                adaptive_layers: None,
                 slice_fingerprint: None,
             },
         );
@@ -253,6 +280,7 @@ mod parse_tests {
                 resin: None,
                 first_layer_height: None,
                 output_format: None,
+                adaptive_layers: None,
                 slice_fingerprint: None,
             },
         );

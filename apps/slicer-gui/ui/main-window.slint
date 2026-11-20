@@ -682,6 +682,11 @@ export component MainWindow inherits Window {
     in property <string> slice-print-format-note;
     in property <bool> slice-export-enabled: false;
     in-out property <string> slice-first-layer-height-text;
+    // Adaptive layer heights (#60), as the Slice tab shows them.
+    in-out property <bool> slice-adaptive-on;
+    in property <float> slice-adaptive-min;
+    in property <float> slice-adaptive-max;
+    in property <string> slice-adaptive-note;
     // Send to printer (#630): shown for a printer that takes a print over
     // the network; the printers found, the one picked, a search or a send
     // on its way, how far it got, and what it last said.
@@ -908,6 +913,7 @@ export component MainWindow inherits Window {
     callback slice-resin-picked(int);
     callback slice-print-format-picked(int);
     callback slice-first-layer-height-edited(string);
+    callback slice-adaptive-layers-changed(bool, float, float);
     // The Slice panel's export action: write the held slice as the
     // selected printer file.
     callback slice-export-requested();
@@ -2828,6 +2834,13 @@ export component MainWindow inherits Window {
                                 resin-options: root.slice-resin-options;
                                 resin-current-index <=> root.slice-resin-current-index;
                                 first-layer-height-text <=> root.slice-first-layer-height-text;
+                                adaptive-on <=> root.slice-adaptive-on;
+                                adaptive-min: root.slice-adaptive-min;
+                                adaptive-max: root.slice-adaptive-max;
+                                adaptive-note: root.slice-adaptive-note;
+                                adaptive-layers-changed(on, min, max) => {
+                                    root.slice-adaptive-layers-changed(on, min, max);
+                                }
                                 slicing: root.slicing-in-progress;
                                 up-to-date: root.slice-up-to-date;
                                 every-plate-note: root.slice-every-plate-note;

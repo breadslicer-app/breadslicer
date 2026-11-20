@@ -37,7 +37,7 @@ use crate::print_selection::PrintDefaults;
 use crate::project_profiles::complete_embedded_documents;
 use crate::save_progress::SavePhase;
 use crate::scene_document::{SaveStamp, SceneDocument};
-use crate::slice_projection::resolve_current_schedule;
+use crate::slice_projection::{project_adaptive_layers, resolve_current_schedule};
 use crate::support_persist::{SupportsAsMesh, support_documents};
 
 /// The format a project is saved in.
@@ -382,8 +382,14 @@ fn persist_slices(
 ) -> Option<(PlateSlices, String)> {
     let printer = payload.printer.clone()?;
     let resin = payload.resin.clone()?;
-    let schedule =
-        resolve_current_schedule(&printer, &resin, payload.first_layer_height, scene).ok()?;
+    let schedule = resolve_current_schedule(
+        &printer,
+        &resin,
+        payload.first_layer_height,
+        project_adaptive_layers(payload),
+        scene,
+    )
+    .ok()?;
     doc.slices_for_persist(&schedule)
 }
 
@@ -484,6 +490,7 @@ mod scene_save_tests {
             printer: Some(printer_id("held-printer")),
             resin: Some(material_id("held-resin")),
             first_layer_height: None,
+            adaptive_layers: None,
             output_format: None,
             embedded: vec![EmbeddedProfile::Printer {
                 id: printer_id("held-printer"),
@@ -980,6 +987,37 @@ mod scene_save_tests {
         }
 
         #[test]
+        fn adaptive_layers_go_into_the_bread_and_come_back_to_the_document() {
+            use sc_print_primitives::{AdaptiveLayers, PositiveFiniteMm};
+
+            let mm = |value| PositiveFiniteMm::new(value).expect("a length");
+            let layers = AdaptiveLayers::new(mm(0.03), mm(0.08));
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
+            assert!(doc.set_selected_adaptive_layers(Some(layers)));
+            assert!(doc.is_dirty());
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("widget.bread");
+            save_project_to(
+                &doc,
+                &target,
+                &defaults(printer_id("global-printer"), material_id("global-resin")),
+            )
+            .expect("the bread project saves");
+
+            let loaded = read_project(
+                &mut fs::File::open(&target).unwrap(),
+                ProjectFileType::Bread,
+            )
+            .expect("the file reads back as a .bread project");
+            let payload = loaded.payload.expect("a payload");
+            assert_eq!(payload.adaptive_layers, Some(layers));
+            let reopened = SceneDocument::new();
+            reopened.install_project_graph(one_object_graph(), target, payload);
+            assert_eq!(reopened.print_selection().adaptive_layers, Some(layers));
+        }
+
+        #[test]
         fn a_bread_save_writes_a_readable_project_and_updates_the_document() {
             let doc = SceneDocument::new();
             doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
@@ -1090,7 +1128,7 @@ mod scene_save_tests {
                 .with_scene(|s| s.graph().clone())
                 .expect("the scene is installed");
 
-            let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
+            let schedule = resolve_current_schedule(&printer, &resin, None, None, &scene)
                 .expect("the bundled default profiles resolve a schedule");
             let token =
                 slice_input_fingerprint(&scene, &schedule, resolved_scale(&printer, &resin))
@@ -1107,6 +1145,7 @@ mod scene_save_tests {
                     printer: printer.clone(),
                     resin: resin.clone(),
                     first_layer_height: None,
+                    adaptive_layers: None,
                     aa_level: AaLevel::Off,
                     geometry: doc.scene_revision(),
                     plate: 0,
@@ -1153,7 +1192,7 @@ mod scene_save_tests {
                 .with_scene(|s| s.graph().clone())
                 .expect("the scene is installed");
 
-            let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
+            let schedule = resolve_current_schedule(&printer, &resin, None, None, &scene)
                 .expect("the bundled profiles resolve a schedule");
             let token =
                 slice_input_fingerprint(&scene, &schedule, resolved_scale(&printer, &resin))
@@ -1170,6 +1209,7 @@ mod scene_save_tests {
                     printer: printer.clone(),
                     resin: resin.clone(),
                     first_layer_height: None,
+                    adaptive_layers: None,
                     aa_level: AaLevel::Off,
                     geometry: doc.scene_revision(),
                     plate: 0,
@@ -1225,7 +1265,7 @@ mod scene_save_tests {
                 .with_scene(|s| s.graph().clone())
                 .expect("the scene is installed");
 
-            let schedule = resolve_current_schedule(&printer, &resin, Some(height), &scene)
+            let schedule = resolve_current_schedule(&printer, &resin, Some(height), None, &scene)
                 .expect("the bundled profiles resolve a schedule");
             let token =
                 slice_input_fingerprint(&scene, &schedule, resolved_scale(&printer, &resin))
@@ -1242,6 +1282,7 @@ mod scene_save_tests {
                     printer: printer.clone(),
                     resin: resin.clone(),
                     first_layer_height: Some(height),
+                    adaptive_layers: None,
                     aa_level: AaLevel::Off,
                     geometry: doc.scene_revision(),
                     plate: 0,

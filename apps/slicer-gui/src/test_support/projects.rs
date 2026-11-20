@@ -94,7 +94,7 @@ pub(crate) fn project_with_in_sync_slices() -> (Vec<u8>, String) {
         .expect("add leaf");
     scene.add_root(leaf).expect("leaf becomes the scene root");
 
-    let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
+    let schedule = resolve_current_schedule(&printer, &resin, None, None, &scene)
         .expect("the bundled default profiles resolve a schedule");
     let token = slice_input_fingerprint(&scene, &schedule, resolved_scale(&printer, &resin))
         .expect("the scene has sliceable geometry")
@@ -128,6 +128,7 @@ pub(crate) fn project_with_in_sync_slices() -> (Vec<u8>, String) {
         printer: Some(printer.clone()),
         resin: Some(resin.clone()),
         first_layer_height: None,
+        adaptive_layers: None,
         output_format: None,
         embedded: Vec::new(),
         review_decisions: Vec::new(),
