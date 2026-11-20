@@ -12,6 +12,69 @@ target_layer_height_mm = 0.05
 
 [physical]
 
+[per_printer.phrozen-shuffle]
+normal_exposure_sec = 7.5
+bottom_exposure_sec = 65.0
+bottom_layer_count = 6
+wait_before_cure_sec = 1.0
+bottom_wait_before_cure_sec = 1.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-shuffle-4k]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 55.0
+bottom_layer_count = 6
+wait_before_cure_sec = 1.0
+bottom_wait_before_cure_sec = 1.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-shuffle-lite]
+normal_exposure_sec = 7.5
+bottom_exposure_sec = 65.0
+bottom_layer_count = 6
+wait_before_cure_sec = 1.0
+bottom_wait_before_cure_sec = 1.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-shuffle-xl]
+normal_exposure_sec = 7.5
+bottom_exposure_sec = 65.0
+bottom_layer_count = 6
+wait_before_cure_sec = 1.0
+bottom_wait_before_cure_sec = 1.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-shuffle-xl-lite]
+normal_exposure_sec = 7.5
+bottom_exposure_sec = 65.0
+bottom_layer_count = 6
+lift_distance_mm = 8.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
 [per_printer.phrozen-sonic-mega-8k]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 37.5
@@ -23,6 +86,45 @@ lift_speed_mm_min = 45.0
 retract_speed_mm_min = 150.0
 bottom_lift_distance_mm = 8.0
 bottom_lift_speed_mm_min = 45.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mega-8k-s]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 22.5
+bottom_layer_count = 8
+wait_before_cure_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mega-8k-v2]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 27.5
+bottom_layer_count = 8
+wait_before_cure_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mighty-12k-upgrade]
+normal_exposure_sec = 2.3
+bottom_exposure_sec = 35.0
+bottom_layer_count = 6
+wait_before_cure_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
 bottom_retract_speed_mm_min = 150.0
 
 [per_printer.phrozen-sonic-mighty-4k]
@@ -55,6 +157,19 @@ bottom_exposure_sec = 30.0
 bottom_layer_count = 6
 wait_before_cure_sec = 2.0
 bottom_wait_before_cure_sec = 2.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-sonic-mighty-revo-16k]
+normal_exposure_sec = 1.5
+bottom_exposure_sec = 15.0
+bottom_layer_count = 6
+wait_before_cure_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
 lift_distance_mm = 8.0
 lift_speed_mm_min = 60.0
 retract_speed_mm_min = 150.0
@@ -96,5 +211,18 @@ lift_distance_mm = 6.0
 lift_speed_mm_min = 60.0
 retract_speed_mm_min = 150.0
 bottom_lift_distance_mm = 6.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-transform]
+normal_exposure_sec = 9.5
+bottom_exposure_sec = 85.0
+bottom_layer_count = 10
+wait_before_cure_sec = 1.0
+bottom_wait_before_cure_sec = 1.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 10.0
 bottom_lift_speed_mm_min = 60.0
 bottom_retract_speed_mm_min = 150.0

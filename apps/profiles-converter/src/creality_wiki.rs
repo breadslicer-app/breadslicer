@@ -10,8 +10,9 @@
 //! resin-parameters`, the model in the page's `og:url`), with one small
 //! Parameter / Value table per resin under the resin's heading, named
 //! `<brand>-<resin>` (Creality's own resins and its PioCreat line). The
-//! inputs are the pages saved as HTML. The X1 Max page is an image and the
-//! Mage series has none; pages for printers we do not ship are noted.
+//! inputs are the pages saved as HTML. The X1 Neo's and X1 Max's pages name
+//! their resins in numbered sections instead ([`SECTIONS`]). The Mage
+//! series has no page; pages for printers we do not ship are noted.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -25,10 +26,11 @@ use sc_print_profiles::{
     CalibrationTarget, MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialPerPrinter,
     MaterialPhysical, MaterialProfile,
 };
+use scraper::{Html, Selector};
 use semver::Version;
 
 use crate::elegoo_settings::{microns, slug};
-use crate::html_tables::{Table, tables_of};
+use crate::html_tables::{Table, tables_of, text_of};
 use crate::profile::ConvertedProfile;
 use crate::reader::{ProfileReader, SourceReading};
 use crate::source_note::SourceNote;
@@ -60,10 +62,89 @@ fn empty_block() -> MaterialPerPrinter {
 }
 
 /// Each wiki model the pages are for, against the printer we ship for it.
-const MODELS: [(&str, Option<&str>); 3] = [
+const MODELS: [(&str, Option<&str>); 4] = [
     ("halot-x1", Some("creality-halot-x1")),
-    ("x1-neo", None),
+    ("x1-neo", Some("creality-halot-x1-neo")),
+    ("x1-max", Some("creality-halot-x1-max")),
     ("halot-sky-2025", None),
+];
+
+/// The X1 Neo's and X1 Max's pages name a resin in a numbered section
+/// heading, not as `<brand>-<resin>` above its table, and give its brand
+/// apart, if at all: each section heading, against the brand and resin
+/// its profile is filed under. A resin the Halot X1's page also tunes
+/// takes that page's name, so one profile calibrates both machines; the
+/// X1 Max's High Precision Resin comes in the colours (gray, skin tone,
+/// blue) of the High Fidelity Model Resin and is filed as it. The X1
+/// Neo's page names no brand: its resins are Creality's own lines.
+const SECTIONS: [(&str, &str, &str, &str); 12] = [
+    (
+        "x1-neo",
+        "1. Standard Resin",
+        "Creality",
+        "Standard Rigid Resin",
+    ),
+    (
+        "x1-neo",
+        "2. Water-washable Resin",
+        "Creality",
+        "Water Washable Resin",
+    ),
+    ("x1-neo", "3. ABS-like Resin", "Creality", "ABS-Like Resin"),
+    (
+        "x1-max",
+        "1. High Precision Resin",
+        "Creality",
+        "High Fidelity Model Resin",
+    ),
+    (
+        "x1-max",
+        "2.1 Rigid Gray / White / Camel (Brand: PioCreat)",
+        "PioCreat",
+        "standard rigid resin",
+    ),
+    (
+        "x1-max",
+        "2.2 Rigid Black (Brand: PioCreat)",
+        "PioCreat",
+        "standard rigid resin Black",
+    ),
+    (
+        "x1-max",
+        "3. PioCreat 16K Standard Resin_Sea Mist Gray",
+        "PioCreat",
+        "16K standard resin - sea mist gray",
+    ),
+    (
+        "x1-max",
+        "4. PioCreat 16K Standard Resin_Sunset Red",
+        "PioCreat",
+        "16K standard resin - sunset red",
+    ),
+    (
+        "x1-max",
+        "5.1 ABS-like White (Brand: PioCreat)",
+        "PioCreat",
+        "ABS Resin-White",
+    ),
+    (
+        "x1-max",
+        "5.2 ABS-like Black (Brand: PioCreat)",
+        "PioCreat",
+        "ABS Resin-Black",
+    ),
+    (
+        "x1-max",
+        "6.1 Red Wax Resin – Clay Red (Brand: CREALITY)",
+        "Creality",
+        "Red Wax Resin Clay Red",
+    ),
+    (
+        "x1-max",
+        "6.2 High Toughness Resin Gray (Brand: CREALITY)",
+        "Creality",
+        "High Toughness Resin Gray",
+    ),
 ];
 
 /// Reads Creality's wiki pages of resin settings.
@@ -184,6 +265,66 @@ fn block_of(table: &Table) -> Option<MaterialPerPrinter> {
     Some(block)
 }
 
+/// The tables of a page whose resins are named by [`SECTIONS`], each with
+/// the brand and resin of the section it sits in. A section shows one
+/// table per slicer: the HALOT BOX one is read, and the Chitubox copy of
+/// the same settings is not.
+fn section_tables(html: &str, model: &str) -> Vec<(Option<(String, String)>, Table)> {
+    let page = Html::parse_document(html);
+    let blocks = Selector::parse("h1, h2, h3, h4, table").expect("a constant selector");
+    let rows = Selector::parse("tr").expect("a constant selector");
+    let cells = Selector::parse("th, td").expect("a constant selector");
+    let mut section: Option<(String, String)> = None;
+    let mut heading = String::new();
+    let mut tables = Vec::new();
+    for block in page.select(&blocks) {
+        if block.value().name() != "table" {
+            heading = text_of(block);
+            if let Some((_, _, brand, resin)) = SECTIONS
+                .iter()
+                .find(|(m, h, ..)| *m == model && *h == heading)
+            {
+                section = Some(((*brand).to_owned(), (*resin).to_owned()));
+            }
+            continue;
+        }
+        if heading.starts_with("Chitubox") {
+            continue;
+        }
+        tables.push((
+            section.clone(),
+            Table {
+                heading: heading.clone(),
+                rows: block
+                    .select(&rows)
+                    .map(|row| row.select(&cells).map(text_of).collect())
+                    .collect(),
+            },
+        ));
+    }
+    tables
+}
+
+/// The layer height a page states once for all its resins ("All resins
+/// are low-speed models with a layer thickness of 0.05mm").
+fn page_layer_height(html: &str) -> Option<f64> {
+    let lower = Html::parse_document(html)
+        .root_element()
+        .text()
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let at = lower.find("layer thickness of ")? + "layer thickness of ".len();
+    let number: String = lower[at..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    lower[at + number.len()..]
+        .trim_start()
+        .starts_with("mm")
+        .then(|| number.parse().ok())
+        .flatten()
+}
+
 /// `Creality-HALOT Rigid Resin 2.0-Gray` as its brand and its resin.
 fn brand_and_resin(heading: &str) -> Option<(String, String)> {
     let heading = heading.trim_start_matches(|c: char| !c.is_alphanumeric());
@@ -206,7 +347,17 @@ impl ProfileReader for CrealityWikiReader {
             let model = model_of(&html).ok_or_else(|| CrealityWikiError::UnknownPage {
                 path: path.to_path_buf(),
             })?;
-            let tables = tables_of(&html);
+            let sectioned = SECTIONS.iter().any(|(m, ..)| *m == model);
+            let tables = if sectioned {
+                section_tables(&html, model)
+            } else {
+                tables_of(&html)
+                    .into_iter()
+                    .map(|table| (brand_and_resin(&table.heading), table))
+                    .collect()
+            };
+            // A page may state the layer height once for every resin.
+            let page_height = page_layer_height(&html);
             let ours = MODELS
                 .iter()
                 .find(|(m, _)| *m == model)
@@ -219,11 +370,12 @@ impl ProfileReader for CrealityWikiReader {
                 continue;
             };
             let printer = PrinterId::new(printer).expect("the map holds only ids we ship");
-            for table in &tables {
+            for (named, table) in tables {
                 let (Some((brand, resin)), Some(block), Some(height)) = (
-                    brand_and_resin(&table.heading),
-                    block_of(table),
-                    number(table, &["layer thickness", "layer height"])
+                    named,
+                    block_of(&table),
+                    number(&table, &["layer thickness", "layer height"])
+                        .or(page_height)
                         .and_then(|h| PositiveFiniteMm::new(h).ok()),
                 ) else {
                     notes.push(SourceNote::RowsWeCannotRead {
@@ -355,9 +507,84 @@ mod creality_wiki_tests {
 
     #[test]
     fn a_page_for_a_printer_we_do_not_ship_is_noted() {
-        let reading = read(&[("neo.html", page("x1-neo", X1_TABLE))]);
+        let reading = read(&[("sky.html", page("halot-sky-2025", X1_TABLE))]);
         assert!(reading.profiles.is_empty());
         assert_eq!(reading.notes.len(), 1);
+    }
+
+    const NEO_SECTION: &str = "<h2>\u{b6} 3. ABS-like Resin</h2>\
+        <h3>\u{b6} HALOT BOX Printing Parameters</h3><table>\
+        <tr><th>Parameter</th><th>Value</th></tr>\
+        <tr><td>Layer Height (mm)</td><td>0.05</td></tr>\
+        <tr><td>Initial Exposure (s)</td><td>40</td></tr>\
+        <tr><td>Print Exposure (s)</td><td>2.2</td></tr>\
+        <tr><td>Lift Height (mm)</td><td>5</td></tr>\
+        <tr><td>Motor Speed (mm/min)</td><td>240</td></tr>\
+        <tr><td>Light-off Delay (s)</td><td>2</td></tr>\
+        <tr><td>Bottom Exposure Layers</td><td>5</td></tr></table>\
+        <h3>\u{b6} Chitubox Printing Parameters</h3><table>\
+        <tr><td>Layer Height (mm)</td><td>0.05</td></tr>\
+        <tr><td>Initial Exposure (s)</td><td>40</td></tr>\
+        <tr><td>Print Exposure (s)</td><td>9</td></tr>\
+        <tr><td>Lift Height (mm)</td><td>5</td></tr>\
+        <tr><td>Motor Speed (mm/min)</td><td>240</td></tr></table>";
+
+    #[test]
+    fn a_section_s_halot_box_table_calibrates_the_x1_neo() {
+        let reading = read(&[("neo.html", page("x1-neo", NEO_SECTION))]);
+        assert!(reading.notes.is_empty(), "{:?}", reading.notes);
+        let [ConvertedProfile::Material(profile)] = reading.profiles.as_slice() else {
+            panic!("one material");
+        };
+        assert_eq!(profile.identity.id.as_str(), "creality-abs-like-resin-50um");
+        let printer = PrinterId::new("creality-halot-x1-neo").unwrap();
+        let b = profile.per_printer[&CalibrationTarget::from_printer(&printer)];
+        // The HALOT BOX table, not the Chitubox one.
+        assert_eq!(b.normal_exposure_sec.unwrap().value(), 2.2);
+        assert_eq!(b.bottom_exposure_sec.unwrap().value(), 40.0);
+        assert_eq!(b.lift_distance_mm.unwrap().value(), 5.0);
+    }
+
+    #[test]
+    fn the_x1_max_takes_the_page_s_layer_height_and_the_section_s_brand() {
+        let body = "<p>Device: HALOT-X1 MAX All resins are low-speed models with a \
+            layer thickness of 0.05mm</p>\
+            <h2>\u{b6} 5. ABS-like Resin</h2>\
+            <h3>\u{b6} 5.2 ABS-like Black (Brand: PioCreat)</h3><table>\
+            <tr><th>Parameter</th><th>Value</th></tr>\
+            <tr><td>Initial Exposure Time (s)</td><td>40</td></tr>\
+            <tr><td>Exposure Time (s)</td><td>2.3</td></tr>\
+            <tr><td>Rising Height (mm)</td><td>10</td></tr>\
+            <tr><td>Motor Speed (mm/min)</td><td>300</td></tr>\
+            <tr><td>Light-off Delay (s)</td><td>3</td></tr>\
+            <tr><td>Bottom Exposure Layers</td><td>5</td></tr>\
+            <tr><td>Buffer Layer Height</td><td>5</td></tr>\
+            <tr><td>Buffer Layer Motor Speed (mm/min)</td><td>120</td></tr>\
+            <tr><td>Buffer Layer Light-off Delay</td><td>3</td></tr></table>";
+        let reading = read(&[("max.html", page("x1-max", body))]);
+        let [ConvertedProfile::Material(profile)] = reading.profiles.as_slice() else {
+            panic!("one material");
+        };
+        // The Halot X1's page names this resin so.
+        assert_eq!(
+            profile.identity.id.as_str(),
+            "piocreat-abs-resin-black-50um"
+        );
+        let printer = PrinterId::new("creality-halot-x1-max").unwrap();
+        let b = profile.per_printer[&CalibrationTarget::from_printer(&printer)];
+        assert_eq!(b.normal_exposure_sec.unwrap().value(), 2.3);
+        assert_eq!(b.bottom_lift_distance_mm.unwrap().value(), 5.0);
+        assert_eq!(b.bottom_wait_before_cure_sec.unwrap().value(), 3.0);
+    }
+
+    #[test]
+    fn a_page_layer_height_is_read_only_in_millimetres() {
+        assert_eq!(
+            page_layer_height("<p>with a layer thickness of <strong>0.05mm</strong></p>"),
+            Some(0.05)
+        );
+        assert_eq!(page_layer_height("a layer thickness of 50 um"), None);
+        assert_eq!(page_layer_height("nothing"), None);
     }
 
     #[test]
