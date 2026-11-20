@@ -161,7 +161,7 @@ impl Voxels {
                 start / strides[2],
             ];
             let at = [0, 1, 2].map(|a| origin[a] + (c[a] as f64 + 0.5) * size);
-            if crossings_along_x(pos, tri, at) % 2 == 0 {
+            if crossings_along_x(pos, tri, at).is_multiple_of(2) {
                 for i in region {
                     cavity[i] = true;
                     outside[i] = true;

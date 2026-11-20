@@ -54,8 +54,11 @@ struct PlateWork {
 /// A raft drawn in the background, for the scene at `revision`.
 struct Job {
     revision: SceneRevision,
-    done: mpsc::Receiver<Vec<(PlateWork, Vec<Option<Arc<IndexedMesh>>>)>>,
+    done: mpsc::Receiver<Vec<DrawnPlate>>,
 }
+
+/// A plate's work and the raft drawn for each of its sets.
+type DrawnPlate = (PlateWork, Vec<Option<Arc<IndexedMesh>>>);
 
 #[derive(Default)]
 pub(crate) struct PlateRafts {

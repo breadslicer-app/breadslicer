@@ -25,8 +25,11 @@ pub(crate) struct Measure {
     on: Cell<bool>,
     points: RefCell<Vec<[f64; 3]>>,
     /// The overlay last drawn, and what it was drawn from.
-    drawn: RefCell<Option<(Vec<[f64; 3]>, u32, Overlay)>>,
+    drawn: RefCell<Option<Drawn>>,
 }
+
+/// The points measured, how many, and the overlay drawn from them.
+type Drawn = (Vec<[f64; 3]>, u32, Overlay);
 
 impl Measure {
     pub(crate) fn on(&self) -> bool {

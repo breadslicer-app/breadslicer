@@ -1119,6 +1119,7 @@ mod construction_contract {
 
     /// Builds a scene with 1 subtree reference: a registered single-leaf
     /// subtree plus 1 reference under the group root.
+    #[cfg(debug_assertions)]
     fn graph_with_a_subtree_reference() -> Scene {
         let (mut graph, root) = graph_with_group_root();
         let sub_leaf = graph

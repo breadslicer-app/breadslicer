@@ -145,7 +145,7 @@ pub fn joint_points(section: &Section, chosen: &[bool]) -> Vec<[f64; 3]> {
         let mut sum = [0.0; 3];
         let mut area = 0.0;
         let mut widest: Option<(f64, [f64; 3])> = None;
-        for t in indices.chunks_exact(3) {
+        for t in indices.as_chunks::<3>().0 {
             let [a, b, c] = [t[0], t[1], t[2]].map(|i| points[i as usize].map(f64::from));
             let n = cross(sub(b, a), sub(c, a));
             let twice = dot(n, n).sqrt();
@@ -396,7 +396,7 @@ fn boolean(mesh: &IndexedMesh, tool: &Manifold, join: bool) -> Result<IndexedMes
 /// surface an odd number of times.
 fn inside(mesh: &IndexedMesh, p: [f64; 3]) -> bool {
     // Off the axes, so it never runs along an edge.
-    let dir = normalize([0.577_215, 0.326_141, 0.748_683]);
+    let dir = normalize([0.578_9, 0.326_141, 0.748_683]);
     crossings(mesh, p, dir).len() % 2 == 1
 }
 

@@ -120,6 +120,12 @@ pub(crate) const UNDO_STACK_CAP: usize = 256;
 /// hold, or the scene shows, counts once.
 pub(crate) const HISTORY_BYTE_BUDGET: usize = 2 << 30;
 
+/// The groups before an edit and after it (#475).
+type GroupsChange = (Vec<Vec<NodeId>>, Vec<Vec<NodeId>>);
+
+/// What draws a `.bread` thumbnail (#203).
+type Thumbnailer = Rc<dyn Fn() -> Option<Vec<u8>>>;
+
 /// Coarse-grained dispatch hint for document listeners.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SceneEvent {
@@ -185,7 +191,7 @@ struct HistoryEntry {
     plates: Option<(Vec<String>, Vec<String>)>,
     /// The groups of models before the entry and after it (#475): Undo and
     /// Redo set them back.
-    groups: Option<(Vec<Vec<NodeId>>, Vec<Vec<NodeId>>)>,
+    groups: Option<GroupsChange>,
     /// The hidden and locked models before the entry and after it (#16).
     flags: Option<(SceneFlags, SceneFlags)>,
 }
@@ -410,7 +416,7 @@ pub(crate) struct SceneDocument {
     live_preview: RefCell<Option<Rc<dyn Fn()>>>,
     /// Draws the scene as a `.bread` thumbnail (#203): installed by the
     /// window's viewport, which holds the renderer.
-    thumbnailer: RefCell<Option<Rc<dyn Fn() -> Option<Vec<u8>>>>>,
+    thumbnailer: RefCell<Option<Thumbnailer>>,
     /// Whether each stored mesh slices, for the Transform tab's MESH CHECK
     /// card.
     mesh_check: MeshCheck,
@@ -1848,7 +1854,7 @@ impl SceneDocument {
         edit: SceneEdit,
         wanting: &[NodeId],
         plates: Option<(Vec<String>, Vec<String>)>,
-        groups: Option<(Vec<Vec<NodeId>>, Vec<Vec<NodeId>>)>,
+        groups: Option<GroupsChange>,
     ) {
         let mut committed = crate::support_follow::commit(self, edit);
         for model in wanting {

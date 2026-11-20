@@ -64,6 +64,7 @@ pub(crate) fn default_export_extension(doc: &SceneDocument) -> &'static str {
 /// The clone shares mesh payloads through `Arc`, so it is cheap relative to the
 /// write, and taking it releases the scene borrow so the document stays usable
 /// while a worker writes the clone. Returns `None` when no scene is loaded.
+#[cfg(test)]
 pub(crate) fn prepare_export(doc: &SceneDocument) -> Option<Scene> {
     prepare_export_of(doc, false)
 }

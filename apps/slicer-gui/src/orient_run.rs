@@ -863,18 +863,15 @@ impl OrientRun {
                 targets
                     .par_iter()
                     .map(|target| {
-                        let worked = work(target, None, Some(ctx.clone()), &cancel, &mut |_| {});
+                        let worked = work(target, None, Some(ctx), &cancel, &mut |_| {});
                         let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                         let _ = ui_weak.upgrade_in_event_loop(move |ui| {
                             ui.set_orient_progress(n as f32 / total as f32);
-                            ui.set_orient_status(
-                                ctr!(
-                                    "Inspector",
-                                    "Orienting each model: {}…",
-                                    format!("{n}/{total}")
-                                )
-                                .into(),
-                            );
+                            ui.set_orient_status(ctr!(
+                                "Inspector",
+                                "Orienting each model: {}…",
+                                format!("{n}/{total}")
+                            ));
                         });
                         match worked.found {
                             Some(Ok(found)) if !found.outcome.keep_current => {
