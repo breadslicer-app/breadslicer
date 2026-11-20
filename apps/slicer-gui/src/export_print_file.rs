@@ -252,6 +252,7 @@ fn export_job(
         layer_height_request: None,
         first_layer_height: held.params.first_layer_height,
         aa_level: held.params.aa_level,
+        adaptive: None,
     };
     let schedule = schedule_for_selection(scene, printer, material, &params)
         .map_err(|err| ExportFailure::Prepare(Box::new(SliceFailure::from(err))))?;
@@ -902,6 +903,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
             layer_height_request: None,
             first_layer_height: None,
             aa_level: AaLevel::Off,
+            adaptive: None,
         };
         schedule_for_selection(scene, printer, material, &params).expect("the cube schedules")
     }
@@ -1013,10 +1015,13 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
             layer_height_request: None,
             first_layer_height: Some(first),
             aa_level: AaLevel::Off,
+            adaptive: None,
         };
         let schedule = schedule_for_selection(&cube_scene(), &printer, &material, &params)
             .expect("the cube schedules");
-        let LayerSchedule::Uniform(uniform) = schedule;
+        let LayerSchedule::Uniform(uniform) = schedule else {
+            panic!("no adaptive layers were asked for")
+        };
 
         let values =
             LayerValues::resolve(&printer, &material, Some(first)).expect("the values resolve");

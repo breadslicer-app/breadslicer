@@ -111,6 +111,7 @@ fn projection_uses_resolved_layer_height_and_passed_scene_params() {
             assert_eq!(uniform.first_layer_height().value(), 0.15);
             assert_eq!(uniform.total_layers().get(), 20);
         }
+        LayerSchedule::Variable(_) => panic!("a uniform schedule"),
     }
 }
 
@@ -152,5 +153,6 @@ fn hardware_projection_builds_from_hardware_and_layer_height_alone() {
             assert_eq!(uniform.first_layer_height().value(), 0.1);
             assert_eq!(uniform.total_layers().get(), 10);
         }
+        LayerSchedule::Variable(_) => panic!("a uniform schedule"),
     }
 }

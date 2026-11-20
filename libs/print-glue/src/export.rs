@@ -16,14 +16,14 @@ use sc_print_profiles::{
     EffectiveMaterial, PrinterProfile, ResolveError, ResolvedPrintConfig, SceneOverrides, resolve,
     snap_to_z_step,
 };
-use sc_sl1cer::profile::{LayerSchedule, PackingMode};
+use sc_sl1cer::profile::PackingMode;
 use sc_sla_formats::layer_images::lit_layer_count;
 use sc_sla_formats::{
     PrintPreviews, PrintProgram, PrinterFileFormat, RasterSetup, WriterError, write_printer_file,
 };
 
 use crate::print_program::{UnprojectablePrint, creation_time_now, project_to_print_program};
-use crate::projection::project_hardware_to_slice_profile;
+use crate::projection::project_hardware_to_slice_profile_on;
 use crate::slice_plate::PlateContours;
 
 /// A printer-file export ready to write: the contours, the print configuration
@@ -142,14 +142,11 @@ pub fn export_raster(
     printer: &PrinterProfile,
     aa_level: AaLevel,
 ) -> RasterSetup {
-    let LayerSchedule::Uniform(grid) = *contours.schedule();
-    let profile = project_hardware_to_slice_profile(
+    let profile = project_hardware_to_slice_profile_on(
         &printer.hardware,
-        grid.layer_height(),
+        contours.schedule().clone(),
         aa_level,
         PackingMode::None,
-        grid.first_layer_height(),
-        grid.total_layers(),
     );
     RasterSetup::from_profile(&profile).with_panel_rotation(printer.hardware.panel_rotation())
 }
@@ -183,13 +180,13 @@ pub fn prepare_export(
     slicer_version: &'static str,
 ) -> Result<ExportJob, UnexportableSlice> {
     let config = resolve(printer, material, overrides).map_err(UnexportableSlice::Configuration)?;
-    let LayerSchedule::Uniform(grid) = *contours.schedule();
-    let sliced = grid.layer_height();
+    let schedule = contours.schedule().clone();
+    let sliced = schedule.nominal_layer_height();
     let resolved = config.material_resolved.layer_height_mm;
     if sliced != resolved {
         return Err(UnexportableSlice::LayerHeightMismatch { sliced, resolved });
     }
-    let first_layer = grid.first_layer_height();
+    let first_layer = schedule.first_layer_height();
     let nearest = snap_to_z_step(&printer.constraints, first_layer);
     if nearest != first_layer {
         return Err(UnexportableSlice::FirstLayerOffZStep {
@@ -198,19 +195,18 @@ pub fn prepare_export(
         });
     }
     let profile_for = |layers: NonZeroU32| {
-        project_hardware_to_slice_profile(
+        project_hardware_to_slice_profile_on(
             &printer.hardware,
-            sliced,
+            schedule.truncated(layers),
             aa_level,
             PackingMode::None,
-            first_layer,
-            layers,
         )
     };
-    let mut profile = profile_for(grid.total_layers());
+    let total = NonZeroU32::new(schedule.total_layers()).unwrap_or(NonZeroU32::MIN);
+    let mut profile = profile_for(total);
     let lit = lit_layer_count(contours.stack(), &RasterSetup::from_profile(&profile));
     let contours = match u32::try_from(lit).ok().and_then(NonZeroU32::new) {
-        Some(lit) if lit < grid.total_layers() => {
+        Some(lit) if lit < total => {
             profile = profile_for(lit);
             contours.truncated(lit)
         }

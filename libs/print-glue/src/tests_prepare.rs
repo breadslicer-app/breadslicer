@@ -165,6 +165,7 @@ fn uniform_schedule(profile: &SliceProfile) -> (f64, f64, u32) {
             uniform.first_layer_height().value(),
             uniform.total_layers().get(),
         ),
+        LayerSchedule::Variable(_) => panic!("a uniform schedule"),
     }
 }
 

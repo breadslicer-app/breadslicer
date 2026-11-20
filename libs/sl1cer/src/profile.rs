@@ -12,6 +12,7 @@
 
 use std::fmt;
 use std::num::NonZeroU32;
+use std::sync::Arc;
 
 pub use sc_print_primitives::{
     AaLevel, AxisOutOfRange, BuildVolume, LengthOutOfRange, Mirror, ParseLengthError,
@@ -115,8 +116,91 @@ impl UniformSchedule {
     }
 }
 
-/// How the layer-by-layer slicing planes are positioned along Z.
+/// Validated payload of [`LayerSchedule::Variable`]: each slab's top, in
+/// millimetres above the build plate, strictly increasing and at least one,
+/// held behind a private field so no raw-float state can bypass it. Slab 0
+/// starts at the plate; slab `k` starts at the top of slab `k - 1` (#60).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VariableSchedule {
+    tops: Arc<[PositiveFiniteMm]>,
+    nominal: PositiveFiniteMm,
+}
+
+/// Why [`VariableSchedule::new`] rejected its slab tops.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvalidSlabTops {
+    /// There are none.
+    Empty,
+    /// A top does not lie above the one before it.
+    NotIncreasing {
+        /// The position of the offending top.
+        index: usize,
+    },
+}
+
+impl fmt::Display for InvalidSlabTops {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("a variable schedule needs at least one slab"),
+            Self::NotIncreasing { index } => {
+                write!(f, "slab {index} does not top out above the slab below it")
+            }
+        }
+    }
+}
+
+impl std::error::Error for InvalidSlabTops {}
+
+impl VariableSchedule {
+    /// Takes each slab's top, which must rise from one slab to the next, and
+    /// the print's own layer height, which the slabs vary around and which
+    /// the bottom layers keep.
+    pub fn new(
+        tops: Vec<PositiveFiniteMm>,
+        nominal: PositiveFiniteMm,
+    ) -> Result<Self, InvalidSlabTops> {
+        if tops.is_empty() {
+            return Err(InvalidSlabTops::Empty);
+        }
+        if let Some(index) = tops
+            .windows(2)
+            .position(|pair| pair[1].value() <= pair[0].value())
+        {
+            return Err(InvalidSlabTops::NotIncreasing { index: index + 1 });
+        }
+        Ok(Self {
+            tops: tops.into(),
+            nominal,
+        })
+    }
+
+    /// Each slab's top, from the plate up.
+    #[inline]
+    pub fn tops(&self) -> &[PositiveFiniteMm] {
+        &self.tops
+    }
+
+    /// The print's own layer height.
+    #[inline]
+    pub fn nominal_layer_height(&self) -> PositiveFiniteMm {
+        self.nominal
+    }
+
+    /// The first `layers` slabs, or all of them when there are fewer.
+    pub fn truncated(&self, layers: NonZeroU32) -> Self {
+        let kept = usize::try_from(layers.get()).unwrap_or(usize::MAX);
+        if kept >= self.tops.len() {
+            return self.clone();
+        }
+        Self {
+            tops: self.tops[..kept].into(),
+            nominal: self.nominal,
+        }
+    }
+}
+
+/// How the layer-by-layer slicing planes are positioned along Z.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LayerSchedule {
     /// Uniform layer height with an optionally distinct first-layer
     /// height. Slab layout in absolute Z above the build plate:
@@ -131,6 +215,10 @@ pub enum LayerSchedule {
     /// `(k + 0.5) * h` formula. Total print height is
     /// `h0 + (n - 1) * h`.
     Uniform(UniformSchedule),
+    /// A height of its own for each slab (#60): slab `k` covers the span
+    /// between the tops of slabs `k - 1` and `k`, the plate below slab 0,
+    /// and is cut at the middle of that span.
+    Variable(VariableSchedule),
 }
 
 impl LayerSchedule {
@@ -160,28 +248,90 @@ impl LayerSchedule {
     /// arithmetic. The typed non-zero value sits on the variant
     /// payload.
     pub fn total_layers(&self) -> u32 {
-        match *self {
+        match self {
             Self::Uniform(uniform) => uniform.total_layers().get(),
+            Self::Variable(variable) => u32::try_from(variable.tops().len()).unwrap_or(u32::MAX),
         }
+    }
+
+    /// Whether every slab above the first is as high as the others.
+    pub fn is_uniform(&self) -> bool {
+        matches!(self, Self::Uniform(_))
+    }
+
+    /// The print's own layer height: every slab's above the first in a
+    /// uniform schedule, the one a variable schedule varies around.
+    pub fn nominal_layer_height(&self) -> PositiveFiniteMm {
+        match self {
+            Self::Uniform(uniform) => uniform.layer_height(),
+            Self::Variable(variable) => variable.nominal_layer_height(),
+        }
+    }
+
+    /// The first slab's height.
+    pub fn first_layer_height(&self) -> PositiveFiniteMm {
+        match self {
+            Self::Uniform(uniform) => uniform.first_layer_height(),
+            Self::Variable(variable) => variable.tops()[0],
+        }
+    }
+
+    /// The first `layers` slabs of the schedule, or all of them when it has
+    /// fewer.
+    pub fn truncated(&self, layers: NonZeroU32) -> Self {
+        match self {
+            Self::Uniform(uniform) => Self::Uniform(UniformSchedule::new(
+                uniform.layer_height(),
+                uniform.first_layer_height(),
+                layers.min(uniform.total_layers()),
+            )),
+            Self::Variable(variable) => Self::Variable(variable.truncated(layers)),
+        }
+    }
+
+    /// Each slab's height, from the plate up.
+    pub fn iter_slab_heights(&self) -> impl Iterator<Item = f64> + '_ {
+        let mut below = 0.0;
+        self.iter_slab_tops().map(move |top| {
+            let height = top - below;
+            below = top;
+            height
+        })
     }
 
     /// Iterator of absolute Z values (millimetres above the build
     /// plate) where each layer slab should be sampled. Always strictly
     /// monotonically increasing: the payload's heights are strictly
     /// positive by type.
-    pub fn iter_z(&self) -> impl Iterator<Item = f64> {
-        match *self {
-            Self::Uniform(uniform) => {
-                let h = uniform.layer_height().value();
-                let h0 = uniform.first_layer_height().value();
-                (0..uniform.total_layers().get()).map(move |k| {
-                    if k == 0 {
-                        h0 * 0.5
-                    } else {
-                        (f64::from(k) - 0.5).mul_add(h, h0)
-                    }
-                })
-            }
+    pub fn iter_z(&self) -> impl Iterator<Item = f64> + '_ {
+        let (uniform, variable) = self.parts();
+        let uniform = uniform.into_iter().flat_map(|uniform| {
+            let h = uniform.layer_height().value();
+            let h0 = uniform.first_layer_height().value();
+            (0..uniform.total_layers().get()).map(move |k| {
+                if k == 0 {
+                    h0 * 0.5
+                } else {
+                    (f64::from(k) - 0.5).mul_add(h, h0)
+                }
+            })
+        });
+        let variable = variable.into_iter().flat_map(|variable| {
+            let mut below = 0.0;
+            variable.tops().iter().map(move |top| {
+                let middle = (below + top.value()) * 0.5;
+                below = top.value();
+                middle
+            })
+        });
+        uniform.chain(variable)
+    }
+
+    /// The payload, one side or the other.
+    fn parts(&self) -> (Option<UniformSchedule>, Option<&VariableSchedule>) {
+        match self {
+            Self::Uniform(uniform) => (Some(*uniform), None),
+            Self::Variable(variable) => (None, Some(variable)),
         }
     }
 
@@ -191,14 +341,17 @@ impl LayerSchedule {
     /// [`iter_z`](Self::iter_z). Writers that record cured-layer
     /// extents (e.g. slice-file formats) want these values, not the
     /// centred sampling planes.
-    pub fn iter_slab_tops(&self) -> impl Iterator<Item = f64> {
-        match *self {
-            Self::Uniform(uniform) => {
-                let h = uniform.layer_height().value();
-                let h0 = uniform.first_layer_height().value();
-                (0..uniform.total_layers().get()).map(move |k| f64::from(k).mul_add(h, h0))
-            }
-        }
+    pub fn iter_slab_tops(&self) -> impl Iterator<Item = f64> + '_ {
+        let (uniform, variable) = self.parts();
+        let uniform = uniform.into_iter().flat_map(|uniform| {
+            let h = uniform.layer_height().value();
+            let h0 = uniform.first_layer_height().value();
+            (0..uniform.total_layers().get()).map(move |k| f64::from(k).mul_add(h, h0))
+        });
+        let variable = variable
+            .into_iter()
+            .flat_map(|variable| variable.tops().iter().map(|top| top.value()));
+        uniform.chain(variable)
     }
 }
 
@@ -303,6 +456,41 @@ mod profile_tests {
     fn layer_schedule_uniform_rejects_zero_total_layers() {
         let err = LayerSchedule::uniform(0.05, 0.05, 0).unwrap_err();
         assert!(matches!(err, InvalidLayerSchedule::ZeroTotalLayers));
+    }
+
+    #[test]
+    fn a_variable_schedule_cuts_each_slab_at_its_middle() {
+        let mm = |v| PositiveFiniteMm::new(v).unwrap();
+        let schedule = LayerSchedule::Variable(
+            VariableSchedule::new(vec![mm(0.05), mm(0.1), mm(0.2), mm(0.225)], mm(0.05)).unwrap(),
+        );
+        assert_eq!(schedule.nominal_layer_height(), mm(0.05));
+        assert_eq!(schedule.first_layer_height(), mm(0.05));
+        assert_eq!(schedule.total_layers(), 4);
+        assert!(!schedule.is_uniform());
+        let z: Vec<f64> = schedule.iter_z().collect();
+        for (got, want) in z.iter().zip([0.025, 0.075, 0.15, 0.2125]) {
+            assert!((got - want).abs() < 1e-12, "{z:?}");
+        }
+        let heights: Vec<f64> = schedule.iter_slab_heights().collect();
+        for (got, want) in heights.iter().zip([0.05, 0.05, 0.1, 0.025]) {
+            assert!((got - want).abs() < 1e-12, "{heights:?}");
+        }
+        let kept = schedule.truncated(NonZeroU32::new(2).unwrap());
+        assert_eq!(kept.iter_slab_tops().collect::<Vec<_>>(), vec![0.05, 0.1]);
+    }
+
+    #[test]
+    fn a_variable_schedule_refuses_tops_that_do_not_rise() {
+        let mm = |v| PositiveFiniteMm::new(v).unwrap();
+        assert_eq!(
+            VariableSchedule::new(vec![], mm(0.05)),
+            Err(InvalidSlabTops::Empty)
+        );
+        assert_eq!(
+            VariableSchedule::new(vec![mm(0.1), mm(0.1)], mm(0.05)),
+            Err(InvalidSlabTops::NotIncreasing { index: 1 })
+        );
     }
 
     #[test]
@@ -416,7 +604,7 @@ mod profile_tests {
         let profile = SliceProfile::new(
             bv,
             res,
-            sched,
+            sched.clone(),
             Mirror::default(),
             AaLevel::Off,
             PackingMode::None,

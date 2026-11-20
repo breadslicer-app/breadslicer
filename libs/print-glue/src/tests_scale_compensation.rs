@@ -81,6 +81,7 @@ fn params() -> SlicingParams {
         layer_height_request: Some(PositiveFiniteMm::new(0.5).expect("positive")),
         first_layer_height: None,
         aa_level: AaLevel::Off,
+        adaptive: None,
     }
 }
 

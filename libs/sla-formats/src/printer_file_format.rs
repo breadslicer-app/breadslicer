@@ -402,6 +402,23 @@ impl PrinterFileFormat {
         )
     }
 
+    /// Whether the machine moves each layer by the height the file gives
+    /// it, so a print can vary its layer height (#60). CTB from version 3
+    /// on states each layer's height and lets a layer override the file's
+    /// settings. The machines that read CTB version 2, CXDLP and the SL1
+    /// archive move by the file's one layer height; GOO and the Anycubic
+    /// files carry a height per layer, but UVtools counts their per-layer
+    /// settings among the ones machines are known to mishandle, so a print
+    /// for them keeps one height until one prints right.
+    pub fn keeps_layer_heights(self) -> bool {
+        matches!(
+            self,
+            Self::Ctb(
+                CtbVariant::V3 | CtbVariant::V4 | CtbVariant::PlainV5 | CtbVariant::EncryptedV5
+            )
+        )
+    }
+
     /// Identifies the printer file a profile's declared binding names.
     ///
     /// Both halves are required: revisions within a family produce different
@@ -712,12 +729,42 @@ mod printer_file_format_tests {
             );
             assert_eq!(format.extension(), variant.extension());
             assert!(!format.keeps_exposure_ramp());
+            assert!(!format.keeps_layer_heights());
             let path = format!("print.{}", variant.extension());
             assert_eq!(
                 printer_file_family_from_path(Path::new(&path)),
                 Some(FormatKind::Sl1),
             );
         }
+    }
+
+    #[test]
+    fn only_ctb_from_version_3_keeps_a_height_per_layer() {
+        let keeps: Vec<PrinterFileFormat> = [
+            PrinterFileFormat::Goo(GooVersion::V3_0),
+            PrinterFileFormat::Goo(GooVersion::V5_1),
+            PrinterFileFormat::Ctb(CtbVariant::V2),
+            PrinterFileFormat::Ctb(CtbVariant::V3),
+            PrinterFileFormat::Ctb(CtbVariant::V4),
+            PrinterFileFormat::Ctb(CtbVariant::PlainV5),
+            PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
+            PrinterFileFormat::Cxdlp(CxdlpVersion::V2),
+            PrinterFileFormat::AnycubicZip(AnycubicZipVariant::Pwsz),
+            PrinterFileFormat::AnycubicBinary(AnycubicBinaryVariant::Pwmx),
+            PrinterFileFormat::Sl1(Sl1Variant::Sl1s),
+        ]
+        .into_iter()
+        .filter(|format| format.keeps_layer_heights())
+        .collect();
+        assert_eq!(
+            keeps,
+            [
+                PrinterFileFormat::Ctb(CtbVariant::V3),
+                PrinterFileFormat::Ctb(CtbVariant::V4),
+                PrinterFileFormat::Ctb(CtbVariant::PlainV5),
+                PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
+            ]
+        );
     }
 
     #[test]

@@ -61,6 +61,17 @@ anti-aliasing to `off` (the default), `x2`, `x4` or `x8`; it only affects
 raster output. The layer count stops at the last layer cut below the scene's
 top, so no empty layer is left at the end.
 
+`--adaptive-layers MIN:MAX` (in millimetres, such as `0.025:0.1`) gives each
+layer a height of its own in that range: the thinnest where the surface lies
+flat, up to the thickest on upright walls, so the steps a shallow slope shows
+stay as deep as the thinnest layer shows them on a flat face. The bottom and
+transition layers keep the layer height. Each thicker or thinner layer is
+exposed for its height, scaled as the resin makers' own tables scale it
+between layer heights (`exp((h - h0) / 0.164 mm)`). It is not a promise of a
+shorter print: a scene of shallow slopes takes more layers. Of the printer
+files, CTB from version 3 on carries a height per layer; any other printer
+file is sliced at the fixed layer height, with a warning.
+
 By default the scene is auto-placed: centred on the build plate with its
 lowest point at Z = 0. `--no-auto-place` slices at the file's own coordinates
 instead. A multi-model scene keeps its relative layout either way. What lies

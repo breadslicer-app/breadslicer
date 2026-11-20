@@ -11,11 +11,13 @@ use std::fmt;
 
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
-    EffectiveMaterial, PrinterHardware, PrinterProfile, ResolveError, resolve_layer_height,
-    snap_to_z_step,
+    EffectiveMaterial, PrinterHardware, PrinterProfile, ResolveError, SceneOverrides,
+    UNCALIBRATED_BOTTOM_LAYER_COUNT, UNCALIBRATED_TRANSITION_LAYER_COUNT, resolve,
+    resolve_layer_height, snap_to_z_step,
 };
 use sc_scene::Scene;
 use sc_scene::error::SceneError;
+use sc_sl1cer::adaptive::{AdaptiveBase, AdaptiveLayers, adaptive_layer_schedule};
 use sc_sl1cer::profile::{AaLevel, PackingMode, SliceProfile};
 
 use crate::projection::{
@@ -133,6 +135,83 @@ pub(crate) fn slice_profile_for_selection(
         packing_mode,
     )
     .map_err(UnsliceableSelection::Scene)
+}
+
+/// The Z step slab tops sit on when the printer states none: a micrometre,
+/// the finest step the printer files keep.
+const FINEST_Z_STEP_MM: f64 = 0.001;
+
+/// `profile`, with its uniform schedule replaced by an adaptive one for
+/// `scene` (#60): each layer between `layers.min_mm` and `layers.max_mm`, as
+/// thin as the shallowest face it crosses needs.
+///
+/// The bottom and transition layers keep the print's own height, which the
+/// resin's bottom exposure is calibrated for; they are counted from the
+/// resin's settings for this printer, or from this slicer's defaults when
+/// those do not resolve. Slab tops sit on the printer's Z step. The range is
+/// kept inside the layer heights the printer declares. A scene the schedule
+/// cannot be worked out for keeps `profile` as it is; slicing it reports why.
+pub(crate) fn adaptive_profile(
+    scene: &Scene,
+    printer: &PrinterProfile,
+    material: &EffectiveMaterial,
+    profile: SliceProfile,
+    layers: AdaptiveLayers,
+) -> SliceProfile {
+    let Some(z_max) = scene
+        .tight_aabb()
+        .ok()
+        .flatten()
+        .map(|aabb| f64::from(aabb.max().coords()[2]))
+    else {
+        return profile;
+    };
+    let fixed_layers = match resolve(printer, material, &SceneOverrides::default()) {
+        Ok(config) => config
+            .material_resolved
+            .bottom_layer_count
+            .saturating_add(config.material_resolved.transition_layer_count),
+        Err(_) => UNCALIBRATED_BOTTOM_LAYER_COUNT + UNCALIBRATED_TRANSITION_LAYER_COUNT,
+    };
+    let step_mm = printer.constraints.z_step_mm.unwrap_or_else(|| {
+        PositiveFiniteMm::new(FINEST_Z_STEP_MM).expect("a micrometre is a length")
+    });
+    let layers = match printer.constraints.layer_height_range_mm {
+        Some(range) => {
+            let clamp = |value: PositiveFiniteMm| {
+                if value.value() < range.min().value() {
+                    range.min()
+                } else if value.value() > range.max().value() {
+                    range.max()
+                } else {
+                    value
+                }
+            };
+            AdaptiveLayers {
+                min_mm: clamp(layers.min_mm),
+                max_mm: clamp(layers.max_mm),
+            }
+        }
+        None => layers,
+    };
+    let schedule = profile.layer_schedule();
+    let base = AdaptiveBase {
+        layer_height_mm: schedule.nominal_layer_height(),
+        first_layer_height_mm: schedule.first_layer_height(),
+        fixed_layers,
+        step_mm,
+    };
+    match adaptive_layer_schedule(scene, z_max, base, layers) {
+        Ok(schedule) => SliceProfile::new(
+            *profile.build_volume(),
+            *profile.pixel_resolution(),
+            schedule,
+            profile.mirror(),
+            profile.aa_level(),
+            profile.packing_mode(),
+        ),
+        Err(_) => profile,
+    }
 }
 
 /// Build a [`SliceProfile`] for `scene` from the printer hardware plus the

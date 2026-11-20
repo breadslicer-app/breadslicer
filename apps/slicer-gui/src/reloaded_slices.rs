@@ -270,7 +270,7 @@ mod reloaded_slices_tests {
         let first_layer_height = Some(PositiveFiniteMm::new(0.05).expect("valid length"));
 
         let reloaded = ReloadedSlices {
-            contours: PlateContours::new(empty_layers_at(schedule.iter_z()), schedule)
+            contours: PlateContours::new(empty_layers_at(schedule.iter_z()), schedule.clone())
                 .expect("1 layer for each scheduled layer"),
             token: token.clone(),
             printer: printer.clone(),

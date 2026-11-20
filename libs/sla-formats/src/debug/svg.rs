@@ -153,13 +153,24 @@ fn emit_metadata(writer: &mut impl Write, options: &WriterOptions) -> io::Result
 }
 
 fn emit_layer_schedule(writer: &mut impl Write, schedule: &LayerSchedule) -> io::Result<()> {
-    match *schedule {
+    match schedule {
         LayerSchedule::Uniform(uniform) => writeln!(
             writer,
             "      <sc:layer-schedule kind=\"uniform\" layer-height-mm=\"{}\" first-layer-height-mm=\"{}\" total-layers=\"{}\"/>",
             uniform.layer_height().value(),
             uniform.first_layer_height().value(),
             uniform.total_layers().get(),
+        ),
+        LayerSchedule::Variable(variable) => writeln!(
+            writer,
+            "      <sc:layer-schedule kind=\"variable\" slab-tops-mm=\"{}\" total-layers=\"{}\"/>",
+            variable
+                .tops()
+                .iter()
+                .map(|top| top.value().to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+            variable.tops().len(),
         ),
     }
 }

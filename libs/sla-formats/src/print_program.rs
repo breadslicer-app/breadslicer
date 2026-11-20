@@ -83,3 +83,14 @@ pub struct PrintProgram {
     pub created_at: CreationTime,
     pub slicer_version: &'static str,
 }
+
+impl PrintProgram {
+    /// Whether a layer above the first is not [`Self::layer_height_mm`]
+    /// high, to a tenth of a micrometre (#60).
+    pub fn varies_layer_height(&self) -> bool {
+        let nominal = self.layer_height_mm.value();
+        self.layers.windows(2).any(|pair| {
+            ((pair[1].slab_top_mm.value() - pair[0].slab_top_mm.value()) - nominal).abs() > 1e-4
+        })
+    }
+}
