@@ -1,0 +1,17 @@
+[identity]
+id = "druckwege-type-d-dental-model-50um"
+brand = "DruckWege"
+family = "standard"
+name = "Type D Dental Model (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 1.4
+bottom_exposure_sec = 15.0

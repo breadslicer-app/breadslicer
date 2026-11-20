@@ -54,7 +54,7 @@ pub fn narrowings(mesh: &IndexedMesh, up: [f64; 3]) -> Vec<Narrowing> {
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &h| {
             (a.min(h), b.max(h))
         });
-    if !(hi > lo) {
+    if hi.partial_cmp(&lo) != Some(std::cmp::Ordering::Greater) {
         return Vec::new();
     }
     let step = (hi - lo) / LAYERS as f64;
@@ -71,6 +71,7 @@ pub fn narrowings(mesh: &IndexedMesh, up: [f64; 3]) -> Vec<Narrowing> {
         if last < first as isize {
             continue;
         }
+        #[allow(clippy::needless_range_loop)]
         for k in first..=last as usize {
             let z = lo + (k as f64 + 0.5) * step;
             // Where the layer crosses the triangle's edges.

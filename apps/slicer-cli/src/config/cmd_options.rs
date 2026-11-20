@@ -34,6 +34,39 @@ impl FromStr for ListKind {
     }
 }
 
+/// The `MIN:MAX` range of `--adaptive-layers`, in millimetres (#60).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct AdaptiveRange {
+    pub min_mm: PositiveFiniteMm,
+    pub max_mm: PositiveFiniteMm,
+}
+
+impl FromStr for AdaptiveRange {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let Some((min, max)) = value.split_once(':') else {
+            return Err(format!(
+                "expected the thinnest and the thickest layer as MIN:MAX, got '{value}'"
+            ));
+        };
+        let parse = |s: &str| {
+            s.trim()
+                .parse::<f64>()
+                .ok()
+                .and_then(|mm| PositiveFiniteMm::new(mm).ok())
+                .ok_or_else(|| format!("'{s}' is not a positive length in millimetres"))
+        };
+        let (min_mm, max_mm) = (parse(min)?, parse(max)?);
+        if min_mm.value() > max_mm.value() {
+            return Err(format!(
+                "the thinnest layer ({min}) is thicker than the thickest ({max})"
+            ));
+        }
+        Ok(Self { min_mm, max_mm })
+    }
+}
+
 /// A `X,Y,Z` triple of `f64`s, parsed from 1 CLI argument. Used by
 /// `support-gen` for gravity, boundary corners, and anchor points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -71,6 +104,7 @@ pub(crate) struct PlateOptions {
     pub material_profile: MaterialProfileRef,
     pub layer_height: Option<PositiveFiniteMm>,
     pub first_layer_height: Option<PositiveFiniteMm>,
+    pub adaptive_layers: Option<AdaptiveRange>,
     pub aa: AaLevel,
     pub verbose: bool,
     pub no_auto_place: bool,
@@ -365,6 +399,13 @@ fn get_plate_options() -> impl Parser<PlateOptions> {
         .argument::<PositiveFiniteMm>("MM")
         .optional();
 
+    let adaptive_layers = long("adaptive-layers")
+        .help(
+            "Adaptive layer heights between MIN and MAX millimetres (e.g. 0.025:0.1): thin layers where the surface lies shallow, thick ones on steep walls. The bottom and transition layers keep the layer height. A printer file that keeps one layer height is sliced at a fixed height instead, with a warning.",
+        )
+        .argument::<AdaptiveRange>("MIN:MAX")
+        .optional();
+
     let aa = long("aa")
         .help("Per-pixel anti-aliasing: off, x2, x4 or x8 (default: off)")
         .argument::<AaLevel>("AA")
@@ -412,6 +453,7 @@ fn get_plate_options() -> impl Parser<PlateOptions> {
         material_profile,
         layer_height,
         first_layer_height,
+        adaptive_layers,
         aa,
         verbose,
         no_auto_place,
@@ -608,4 +650,19 @@ pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
         .footer("Add `--help` after any of the subcommands to learn more about them.")
         .fallback_to_usage()
         .version(env!("CARGO_PKG_VERSION"))
+}
+
+#[cfg(test)]
+mod adaptive_range_tests {
+    use super::*;
+
+    #[test]
+    fn the_range_reads_as_min_colon_max() {
+        let range: AdaptiveRange = "0.025:0.1".parse().unwrap();
+        assert_eq!(range.min_mm.value(), 0.025);
+        assert_eq!(range.max_mm.value(), 0.1);
+        for wrong in ["0.1", "0.1:0.025", "0:0.1", "a:0.1", "0.025:"] {
+            assert!(wrong.parse::<AdaptiveRange>().is_err(), "{wrong}");
+        }
+    }
 }

@@ -21,15 +21,17 @@ use sc_print_glue::{
     SliceInputFingerprintError, SlicePlateError, SlicingParams, UnschedulableHeight,
     UnsliceableScene, UnsliceableSelection, schedule_for_selection,
 };
-use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{AaLevel, AdaptiveLayers, MaterialId, PositiveFiniteMm, PrinterId};
 use sc_print_profiles::{
     EffectiveMaterial, LoadMaterialProfileByIdError, LoadPrinterProfileByIdError, PrinterProfile,
     ProfileLibraries, ResolveError,
 };
+use sc_project_formats::ProjectPayload;
 use sc_scene::Scene;
 use sc_scene::error::SceneError;
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::LayerSchedule;
+use sc_sla_formats::PrinterFileFormat;
 
 use crate::i18n::ctr;
 use crate::slice_result::{LayerValues, SliceParams};
@@ -187,16 +189,36 @@ pub(crate) fn current_layer_values(params: &SliceParams) -> Option<LayerValues> 
     LayerValues::resolve(&printer, &resin, params.first_layer_height)
 }
 
-/// Resolve the layer schedule that slicing `scene` with `printer`, `resin`, and
-/// `first_layer_height` would use.
+/// The adaptive layers a project's slices were cut with (#60): its own,
+/// when the printer file it records keeps a height per layer. A project that
+/// records no file, or one this build does not name, is taken at its word;
+/// if that was not what the slice did, its fingerprint tells, and the slices
+/// are left out.
+pub(crate) fn project_adaptive_layers(payload: &ProjectPayload) -> Option<AdaptiveLayers> {
+    let keeps = payload.output_format.as_ref().is_none_or(|binding| {
+        PrinterFileFormat::from_binding(binding)
+            .map_or(true, PrinterFileFormat::keeps_layer_heights)
+    });
+    payload.adaptive_layers.filter(|_| keeps)
+}
+
+/// Resolve the layer schedule that slicing `scene` with `printer`, `resin`,
+/// `first_layer_height` and `adaptive_layers` would use.
 pub(crate) fn resolve_current_schedule(
     printer: &PrinterId,
     resin: &MaterialId,
     first_layer_height: Option<PositiveFiniteMm>,
+    adaptive_layers: Option<AdaptiveLayers>,
     scene: &Scene,
 ) -> Result<LayerSchedule, SliceFailure> {
     let (printer_profile, resin_profile) = load_selected_profiles(printer, resin)?;
-    schedule_for_profiles(&printer_profile, &resin_profile, first_layer_height, scene)
+    schedule_for_profiles(
+        &printer_profile,
+        &resin_profile,
+        first_layer_height,
+        adaptive_layers,
+        scene,
+    )
 }
 
 /// [`resolve_current_schedule`] for profiles already loaded.
@@ -204,6 +226,7 @@ pub(crate) fn schedule_for_profiles(
     printer: &PrinterProfile,
     resin: &EffectiveMaterial,
     first_layer_height: Option<PositiveFiniteMm>,
+    adaptive_layers: Option<AdaptiveLayers>,
     scene: &Scene,
 ) -> Result<LayerSchedule, SliceFailure> {
     let params = SlicingParams {
@@ -211,6 +234,7 @@ pub(crate) fn schedule_for_profiles(
         first_layer_height,
         // AA does not affect the schedule; any value serves.
         aa_level: AaLevel::Off,
+        adaptive: adaptive_layers,
     };
     schedule_for_selection(scene, printer, resin, &params).map_err(SliceFailure::from)
 }

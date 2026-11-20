@@ -8,7 +8,7 @@
  * UVtools.Core/FileFormats/AnycubicZipFile.cs and
  * UVtools.Core/FileFormats/AnycubicFile.cs (with BitPlaneRle.cs for its PWS
  * layers) and UVtools.Core/FileFormats/ChituboxFile.cs (with CtbRleCodec.cs
- * for its layers), UVtools v7.1.1, commit
+ * for its layers) and UVtools.Core/FileFormats/SL1File.cs, UVtools v7.1.1, commit
  * 8b5c91fd41b60bd6265ba1c1f2b2b64636b873e8, modified for Breadslicer: they
  * read only what the writers here produce, for tests and file checks.
  *
@@ -32,6 +32,7 @@ use crate::anycubic_binary::{FILE_MARK, VERSION_516, VERSION_517, VERSION_518, u
 use crate::anycubic_zip::{LAYERS_FILE, SCENE_FILE, SCENE_MAGIC, SETTINGS_FILE, layer_entry};
 use crate::ctb_legacy::{MAGIC_CTB, MAGIC_CTB_V4};
 use crate::cxdlp::{LINE_BYTES, MAGIC, PAGE_BREAK, PREVIEW_SIZES, crc32_zero_start};
+use crate::sl1::{CONFIG_FILE, PRUSASLICER_FILE};
 use crate::{pw0, pws};
 
 /// Why a file could not be read back.
@@ -430,6 +431,109 @@ pub fn read_anycubic_zip(reader: impl Read + Seek) -> Result<AnycubicZipFile, Re
         settings,
         layers_manifest,
         scene_layers,
+        layers,
+        entries,
+    })
+}
+
+/// An SL1 archive, decoded.
+#[derive(Clone, Debug)]
+pub struct Sl1File {
+    /// `config.ini`, each key with its value, in file order.
+    pub config: Vec<(String, String)>,
+    /// `prusaslicer.ini`, likewise.
+    pub prusaslicer: Vec<(String, String)>,
+    /// Each layer image's width and height, from its PNG.
+    pub layer_sizes: Vec<(u32, u32)>,
+    /// Each layer image, width x height greys, rows first.
+    pub layers: Vec<Vec<u8>>,
+    /// Every entry's name, in archive order.
+    pub entries: Vec<String>,
+}
+
+impl Sl1File {
+    /// The value `config.ini` states for `key`.
+    pub fn config_value(&self, key: &str) -> Option<&str> {
+        lookup(&self.config, key)
+    }
+
+    /// The value `prusaslicer.ini` states for `key`.
+    pub fn prusaslicer_value(&self, key: &str) -> Option<&str> {
+        lookup(&self.prusaslicer, key)
+    }
+}
+
+fn lookup<'a>(lines: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    lines
+        .iter()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.as_str())
+}
+
+fn ini_lines(bytes: &[u8], name: &str) -> Result<Vec<(String, String)>, ReadError> {
+    let text = std::str::from_utf8(bytes).map_err(|err| error(format!("{name}: {err}")))?;
+    Ok(text
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(key, value)| (key.trim().to_owned(), value.trim().to_owned()))
+        .collect())
+}
+
+fn grey_png(bytes: &[u8], name: &str) -> Result<((u32, u32), Vec<u8>), ReadError> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|err| error(format!("{name} is not a PNG: {err}")))?;
+    let info = reader.info();
+    if info.color_type != png::ColorType::Grayscale || info.bit_depth != png::BitDepth::Eight {
+        return Err(error(format!("{name} is not 8-bit grey")));
+    }
+    let size = (info.width, info.height);
+    let mut pixels = vec![0; reader.output_buffer_size().unwrap_or_default()];
+    reader
+        .next_frame(&mut pixels)
+        .map_err(|err| error(format!("{name} does not decode: {err}")))?;
+    Ok((size, pixels))
+}
+
+/// Decodes an SL1 archive: the 2 INI files and the layers `config.ini`
+/// counts, named after its `jobDir`.
+///
+/// # Errors
+///
+/// [`ReadError`] when the archive is not one this crate could have written.
+pub fn read_sl1(reader: impl Read + Seek) -> Result<Sl1File, ReadError> {
+    let mut archive =
+        zip::ZipArchive::new(reader).map_err(|err| error(format!("not a ZIP archive: {err}")))?;
+    let entries = archive
+        .file_names()
+        .map(|name| name.map(std::borrow::Cow::into_owned))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| error(format!("an entry is unreadable: {err}")))?;
+    let config = ini_lines(&read_entry(&mut archive, CONFIG_FILE)?, CONFIG_FILE)?;
+    let prusaslicer = ini_lines(
+        &read_entry(&mut archive, PRUSASLICER_FILE)?,
+        PRUSASLICER_FILE,
+    )?;
+    let count = |key: &str| -> Result<usize, ReadError> {
+        lookup(&config, key)
+            .and_then(|value| value.parse().ok())
+            .ok_or_else(|| error(format!("{CONFIG_FILE} states no {key}")))
+    };
+    let layer_count = count("numSlow")? + count("numFast")?;
+    let job = lookup(&config, "jobDir").unwrap_or_default().to_owned();
+    let mut layer_sizes = Vec::with_capacity(layer_count);
+    let mut layers = Vec::with_capacity(layer_count);
+    for index in 0..layer_count {
+        let name = format!("{job}{index:05}.png");
+        let (size, pixels) = grey_png(&read_entry(&mut archive, &name)?, &name)?;
+        layer_sizes.push(size);
+        layers.push(pixels);
+    }
+    Ok(Sl1File {
+        config,
+        prusaslicer,
+        layer_sizes,
         layers,
         entries,
     })

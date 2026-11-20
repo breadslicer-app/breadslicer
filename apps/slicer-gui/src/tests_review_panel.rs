@@ -985,12 +985,14 @@ mod fix_all {
         )
         .expect("one schedule");
         let replaced = document.set_slice_result(SliceResult {
-            contours: PlateContours::new(stack, *profile.layer_schedule()).expect("one schedule"),
+            contours: PlateContours::new(stack, profile.layer_schedule().clone())
+                .expect("one schedule"),
             token: "fix-all".to_owned(),
             params: SliceParams {
                 printer: PrinterId::new("elegoo-saturn-4-ultra").expect("valid id"),
                 resin: MaterialId::new("standard-405").expect("valid id"),
                 first_layer_height: None,
+                adaptive_layers: None,
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
                 plate: 0,
@@ -2020,6 +2022,7 @@ mod fix_all {
             layer_height_request: None,
             first_layer_height: None,
             aa_level: AaLevel::Off,
+            adaptive: None,
         };
         let run = sc_print_glue::slice_plate(
             &scene,
@@ -2075,6 +2078,7 @@ mod fix_all {
                 printer: printer.clone(),
                 resin: resin.clone(),
                 first_layer_height: None,
+                adaptive_layers: None,
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
                 plate: 0,

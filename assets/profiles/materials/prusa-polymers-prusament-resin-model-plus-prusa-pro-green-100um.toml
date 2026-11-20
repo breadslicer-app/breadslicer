@@ -1,0 +1,18 @@
+[identity]
+id = "prusa-polymers-prusament-resin-model-plus-prusa-pro-green-100um"
+brand = "Prusa Polymers"
+family = "standard"
+name = "Prusament Resin Model+ Prusa Pro Green (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+liquid_density_g_per_cm3 = 1.1
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 3.2
+bottom_exposure_sec = 10.0

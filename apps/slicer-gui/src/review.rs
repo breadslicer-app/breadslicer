@@ -203,6 +203,7 @@ pub(crate) struct PlateReading {
 /// filled on this slice, as model; and what is known of its supports as
 /// data, standing on a raft whose top is `raft_top_mm` above the plate, or
 /// on none (#131). `on_layer` hears every layer swept, and `cancel` stops it.
+#[cfg(test)]
 pub(crate) fn review_slices(
     plate: &SlicedPlate,
     filled: Option<&ContourStack>,

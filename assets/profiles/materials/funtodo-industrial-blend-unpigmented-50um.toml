@@ -1,0 +1,21 @@
+[identity]
+id = "funtodo-industrial-blend-unpigmented-50um"
+brand = "FunToDo"
+family = "standard"
+name = "Industrial Blend Unpigmented (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 4.0
+bottom_exposure_sec = 35.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 1.3
+bottom_exposure_sec = 28.0

@@ -50,7 +50,9 @@ use std::time::Duration;
 use sc_print_glue::{
     PlateContours, SlicingParams, SupportOwners, slice_input_fingerprint, slice_plate,
 };
-use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId, ScaleCompensation};
+use sc_print_primitives::{
+    AaLevel, AdaptiveLayers, MaterialId, PositiveFiniteMm, PrinterId, ScaleCompensation,
+};
 use sc_review::{CavityFill, fill_stack};
 use sc_scene::{NodeId, Scene};
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
@@ -399,6 +401,7 @@ impl SliceRun {
             &selection,
             snapshot.aa_level,
             self.document.scene_revision(),
+            self.document.print_format(),
         )
         .map(|params| SliceParams { plate, ..params });
         let still = kept.params.plate_key.is_some()
@@ -455,6 +458,7 @@ impl SliceRun {
             &selection,
             snapshot.aa_level,
             self.document.scene_revision(),
+            self.document.print_format(),
         )
         .is_none()
         {
@@ -487,6 +491,7 @@ impl SliceRun {
             &selection,
             snapshot.aa_level,
             self.document.scene_revision(),
+            self.document.print_format(),
         ) else {
             self.dialogs.show_error(missing_selection_texts);
             return false;
@@ -806,6 +811,7 @@ impl SliceRun {
                 printer: current.printer,
                 resin: current.resin,
                 first_layer_height: current.first_layer_height,
+                adaptive_layers: current.adaptive_layers,
                 aa_level: current.aa_level,
                 raft_top_mm,
                 bare_tip_mm,
@@ -1222,6 +1228,8 @@ struct SliceInputs {
     printer: PrinterId,
     resin: MaterialId,
     first_layer_height: Option<PositiveFiniteMm>,
+    /// The adaptive layer heights to slice with (#60).
+    adaptive_layers: Option<AdaptiveLayers>,
     aa_level: AaLevel,
     /// The top of the raft the scene's supports stand on, for the review
     /// (#131).
@@ -1257,6 +1265,7 @@ fn run_slice(
         layer_height_request: None,
         first_layer_height: inputs.first_layer_height,
         aa_level: inputs.aa_level,
+        adaptive: inputs.adaptive_layers,
     };
     let run = slice_plate(
         scene,
@@ -1633,6 +1642,7 @@ mod progress_tests {
             printer: PrinterId::new("elegoo-saturn-4-ultra").expect("valid id"),
             resin: MaterialId::new("standard-405").expect("valid id"),
             first_layer_height: None,
+            adaptive_layers: None,
             aa_level: AaLevel::Off,
             raft_top_mm: None,
             bare_tip_mm: None,
@@ -1658,6 +1668,59 @@ mod progress_tests {
         cell.record_review(3);
         assert_eq!(cell.completed.load(Ordering::Relaxed), 7);
         assert_eq!(cell.total.load(Ordering::Relaxed), 100);
+    }
+
+    /// A slice with adaptive layers (#60) is cut, reviewed and held on one
+    /// variable schedule: the one the selection resolves again, which the
+    /// export and a saved project check it against.
+    #[test]
+    fn an_adaptive_slice_is_reviewed_and_held_on_the_schedule_it_resolves_to() {
+        use sc_mesh_core::transform::AffineTransform3D;
+        use sc_print_primitives::AdaptiveLayers;
+
+        let place = AffineTransform3D::from_translation([0.0, 0.0, 2.0])
+            .compose(&AffineTransform3D::from_uniform_scale(4.0));
+        let mut scene = Scene::new();
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Affine(place),
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+            )
+            .expect("inline-mesh leaf");
+        scene.add_root(leaf).expect("fresh leaf becomes a root");
+        let inputs = SliceInputs {
+            adaptive_layers: Some(AdaptiveLayers::DEFAULT),
+            ..inputs()
+        };
+
+        let outcome = run_slice(
+            &scene,
+            &inputs,
+            &CancelToken::new(),
+            &SliceProgressCell::default(),
+        )
+        .expect("the cube slices");
+
+        let SliceRunOutcome::Completed(completed) = outcome else {
+            panic!("not cancelled");
+        };
+        let schedule = completed.contours.schedule();
+        assert!(!schedule.is_uniform());
+        assert!(
+            matches!(completed.review, ReviewOutcome::Reviewed { .. }),
+            "{:?}",
+            completed.review
+        );
+        let resolved = crate::slice_projection::resolve_current_schedule(
+            &inputs.printer,
+            &inputs.resin,
+            None,
+            inputs.adaptive_layers,
+            &scene,
+        )
+        .expect("the selection resolves");
+        assert_eq!(&resolved, schedule);
     }
 
     /// The modal counts the plate's layers, the count the Result card shows,

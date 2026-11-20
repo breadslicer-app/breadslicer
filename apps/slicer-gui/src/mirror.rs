@@ -99,7 +99,10 @@ pub(crate) fn mirror(document: &SceneDocument, models: &[NodeId], axis: MirrorAx
             lo = lo.min(f64::from(aabb.min().coords()[i]));
             hi = hi.max(f64::from(aabb.max().coords()[i]));
         }
-        if !(lo <= hi) {
+        if !matches!(
+            lo.partial_cmp(&hi),
+            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+        ) {
             return None;
         }
         let flip = reflection(axis, (lo + hi) / 2.0);
@@ -121,10 +124,10 @@ pub(crate) fn mirror(document: &SceneDocument, models: &[NodeId], axis: MirrorAx
             edits.push(edit);
         }
         for &set in &gone {
-            if let Some(edit) = SceneEdit::remove_leaf_with_gc(&scratch, set) {
-                if edit.apply_to_scene(&mut scratch).is_ok() {
-                    edits.push(edit);
-                }
+            if let Some(edit) = SceneEdit::remove_leaf_with_gc(&scratch, set)
+                && edit.apply_to_scene(&mut scratch).is_ok()
+            {
+                edits.push(edit);
             }
         }
         let wanting: Vec<NodeId> = models

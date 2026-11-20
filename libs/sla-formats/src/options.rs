@@ -37,7 +37,7 @@ impl WriterOptions {
     pub fn from_profile(profile: &SliceProfile, slicer_version: &'static str) -> Self {
         Self {
             raster: RasterSetup::from_profile(profile),
-            layer_schedule: *profile.layer_schedule(),
+            layer_schedule: profile.layer_schedule().clone(),
             slicer_version,
         }
     }

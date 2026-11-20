@@ -1,0 +1,21 @@
+[identity]
+id = "nextdent-model-2-0-grey-50um"
+brand = "NextDent"
+family = "standard"
+name = "Model 2.0 Grey (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 12.0
+bottom_exposure_sec = 35.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 4.0
+bottom_exposure_sec = 28.0

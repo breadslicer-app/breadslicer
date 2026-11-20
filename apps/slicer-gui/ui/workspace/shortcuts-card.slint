@@ -1,0 +1,223 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// Every keyboard shortcut on one card (#49): Help > Keyboard shortcuts, or
+// F1 anywhere. Esc, F1 again or a click outside closes it. The lists follow
+// the keys the window and the 3D view really take.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "../kit/theme.slint";
+import { ScButton } from "../kit/controls.slint";
+
+struct ShortcutRow {
+    keys: string,
+    action: string,
+}
+
+component KeyChip inherits Rectangle {
+    in property <string> keys;
+    background: Theme.card;
+    border-color: Theme.border-strong;
+    border-width: 1px;
+    border-radius: 2px;
+    width: chip-text.preferred-width + 10px;
+    height: 20px;
+    chip-text := Text {
+        text: root.keys;
+        font-family: Theme.mono;
+        font-size: Theme.font-xs;
+        color: Theme.text;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+}
+
+component ShortcutSection inherits VerticalLayout {
+    in property <string> title;
+    in property <[ShortcutRow]> rows;
+    spacing: 4px;
+
+    Text {
+        text: root.title;
+        font-size: Theme.font-xs;
+        letter-spacing: 1.2px;
+        color: Theme.text-muted;
+    }
+    Rectangle {
+        height: 1px;
+        background: Theme.border;
+    }
+    for row in root.rows: HorizontalLayout {
+        spacing: 10px;
+        Rectangle {
+            width: 112px;
+            HorizontalLayout {
+                alignment: start;
+                KeyChip {
+                    keys: row.keys;
+                }
+            }
+        }
+        Text {
+            text: row.action;
+            font-size: Theme.font-sm;
+            color: Theme.text-soft;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+export component ShortcutsCard inherits Rectangle {
+    callback close();
+
+    // The dim behind takes the click that closes the card.
+    background: Theme.ground.transparentize(0.35);
+    TouchArea {
+        clicked => {
+            root.close();
+        }
+    }
+    FocusScope {
+        init => {
+            self.focus();
+        }
+        key-pressed(event) => {
+            if (event.text == Key.Escape || event.text == Key.F1) {
+                root.close();
+            }
+            return accept;
+        }
+    }
+
+    card := Rectangle {
+        width: Math.min(root.width - 48px, 1000px);
+        height: Math.min(root.height - 48px, card-layout.preferred-height);
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        background: Theme.panel;
+        border-color: Theme.border;
+        border-width: 1px;
+        border-radius: 4px;
+        // Clicks on the card stay on it.
+        TouchArea { }
+
+        card-layout := VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+
+            HorizontalLayout {
+                Text {
+                    text: @tr("Keyboard shortcuts");
+                    font-size: 15px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                ScButton {
+                    text: @tr("Close");
+                    clicked => {
+                        root.close();
+                    }
+                }
+            }
+
+            ScrollView {
+                min-height: 120px;
+                preferred-height: columns.preferred-height;
+                // The content keeps its own height: squeezed, the sections
+                // would lose the space between them.
+                viewport-height: columns.preferred-height;
+                columns := HorizontalLayout {
+                    spacing: 28px;
+
+                    VerticalLayout {
+                        spacing: 16px;
+                        alignment: start;
+                        horizontal-stretch: 1;
+                        ShortcutSection {
+                            title: @tr("GENERAL");
+                            rows: [
+                                { keys: "Ctrl+O", action: @tr("Open a project") },
+                                { keys: "Ctrl+I", action: @tr("Import models into the scene") },
+                                { keys: "Ctrl+S", action: @tr("Save") },
+                                { keys: "Ctrl+Shift+S", action: @tr("Save as") },
+                                { keys: "Ctrl+Shift+E", action: @tr("Export the models as a mesh") },
+                                { keys: "Ctrl+Z", action: @tr("Undo") },
+                                { keys: "Ctrl+Shift+Z", action: @tr("Redo") },
+                                { keys: "Ctrl+1 … 4", action: @tr("Prepare, Hollow, Supports, Slice") },
+                                { keys: "Ctrl+,", action: @tr("Preferences") },
+                                { keys: "L", action: @tr("Layer view") },
+                                { keys: "F1", action: @tr("This list") },
+                            ];
+                        }
+                        ShortcutSection {
+                            title: @tr("VIEW");
+                            rows: [
+                                { keys: "F", action: @tr("Frame the scene (also Home)") },
+                                { keys: "1 · 3 · 7", action: @tr("Front, right, top; Ctrl, the other side") },
+                                { keys: "2 · 4 · 6 · 8", action: @tr("Turn the view 15°") },
+                                { keys: "5", action: @tr("Perspective or orthographic") },
+                                { keys: "+ / −", action: @tr("Zoom") },
+                            ];
+                        }
+                        ShortcutSection {
+                            title: @tr("SLICE");
+                            rows: [
+                                { keys: "↑ / ↓", action: @tr("One layer; held, 5 a second") },
+                                { keys: "Shift+↑ / ↓", action: @tr("20 layers a second") },
+                                { keys: "Home / End", action: @tr("First or last layer") },
+                            ];
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 16px;
+                        alignment: start;
+                        horizontal-stretch: 1;
+                        ShortcutSection {
+                            title: @tr("OBJECTS");
+                            rows: [
+                                { keys: "G · R · S", action: @tr("Move, rotate, scale") },
+                                { keys: "X · Y · Z", action: @tr("During G, R or S: one axis; then a number, Enter") },
+                                { keys: "Ctrl / Shift", action: @tr("While moving: snap / fine") },
+                                { keys: @tr("Alt+drag"), action: @tr("Duplicate and move the copy") },
+                                { keys: @tr("Shift+click"), action: @tr("Add to the selection; Shift+drag, a box") },
+                                { keys: "Ctrl+A / Alt+A", action: @tr("Select all / nothing") },
+                                { keys: "Ctrl+I", action: @tr("Invert the selection (over the view)") },
+                                { keys: "Tab", action: @tr("Next object") },
+                                { keys: "Ctrl+C / Ctrl+V", action: @tr("Copy / paste") },
+                                { keys: "Ctrl+D", action: @tr("Duplicate") },
+                                { keys: "Ctrl+G", action: @tr("Group; Ctrl+Shift+G ungroups") },
+                                { keys: @tr("Del"), action: @tr("Delete") },
+                                { keys: "O · K · A", action: @tr("Orient, cut, arrange") },
+                            ];
+                        }
+                        ShortcutSection {
+                            title: @tr("HOLLOW");
+                            rows: [
+                                { keys: "D", action: @tr("Drain holes") },
+                                { keys: "M", action: @tr("Solid zones (lasso)") },
+                            ];
+                        }
+                        ShortcutSection {
+                            title: @tr("SUPPORTS");
+                            rows: [
+                                { keys: "E · A · X", action: @tr("Select, add, remove") },
+                                { keys: "M · C", action: @tr("Move tip, brace") },
+                                { keys: "N · P", action: @tr("Line, area") },
+                                { keys: "1 … 4", action: @tr("Tip size while adding") },
+                                { keys: @tr("Shift+click"), action: @tr("Add a support where the rules would not") },
+                                { keys: "B · [ ]", action: @tr("Remove: box or brush, brush size") },
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

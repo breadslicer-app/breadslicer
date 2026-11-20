@@ -32,6 +32,7 @@
 //!   `.pws` and the rest Photon Workshop wrote before the ZIP).
 //! - [`ctb_legacy`]: ChiTuBox CTB versions 2 to 4 (version 5 is written by
 //!   `sc-sla-formats` itself).
+//! - [`sl1`]: Prusa's SL1 archive (`.sl1` for the SL1, `.sl1s` for the SL1S).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
@@ -45,6 +46,7 @@ mod pw0;
 mod pws;
 pub mod read;
 mod resample;
+pub mod sl1;
 
 use sc_sl1cer::contour::ContourStack;
 use sc_sla_formats::{
@@ -66,6 +68,7 @@ impl PrinterFileWriter for UvtoolsWriters {
                 | PrinterFileFormat::Cxdlp(_)
                 | PrinterFileFormat::AnycubicZip(_)
                 | PrinterFileFormat::AnycubicBinary(_)
+                | PrinterFileFormat::Sl1(_)
         )
     }
 
@@ -77,6 +80,7 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::Cxdlp(_) => Some(cxdlp::PREVIEW_SIZES),
             PrinterFileFormat::AnycubicZip(_) => Some(anycubic_zip::PREVIEW_SIZES),
             PrinterFileFormat::AnycubicBinary(_) => Some(anycubic_binary::PREVIEW_SIZES),
+            PrinterFileFormat::Sl1(_) => Some(sl1::PREVIEW_SIZES),
             _ => None,
         }
     }
@@ -118,6 +122,9 @@ impl PrinterFileWriter for UvtoolsWriters {
             }
             PrinterFileFormat::AnycubicBinary(variant) => {
                 anycubic_binary::write_file(variant, program, previews, stack, out)
+            }
+            PrinterFileFormat::Sl1(variant) => {
+                sl1::write_file(variant, program, previews, stack, out)
             }
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"

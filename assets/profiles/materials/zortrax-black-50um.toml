@@ -1,0 +1,17 @@
+[identity]
+id = "zortrax-black-50um"
+brand = "Zortrax"
+family = "standard"
+name = "Black (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 7.0
+bottom_exposure_sec = 35.0

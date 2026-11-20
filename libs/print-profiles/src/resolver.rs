@@ -389,6 +389,19 @@ fn apply_physical(
 /// property of the resin and the machine together.
 pub const UNCALIBRATED_BOTTOM_LAYER_COUNT: u32 = 5;
 
+/// The lift distance a machine that never lifts resolves to: no layer of
+/// its program travels, so the figure is never run.
+const UNUSED_LIFT_DISTANCE: PositiveFiniteMm = match PositiveFiniteMm::new(1.0) {
+    Ok(distance) => distance,
+    Err(_) => panic!("1 mm is a length"),
+};
+
+/// The travel speeds a machine that never lifts resolves to, never run
+/// either.
+fn unused_travel_speed() -> PositiveFiniteMmPerMin {
+    PositiveFiniteMmPerMin::new(60.0).expect("60 mm/min is a speed")
+}
+
 /// The transition layers of a resin and printer that name none: five
 /// layers step the exposure down from the bottom one (#96).
 pub const UNCALIBRATED_TRANSITION_LAYER_COUNT: u32 = 5;
@@ -1096,22 +1109,38 @@ fn assemble(
     let bottom_layer_count = picked
         .bottom_layer_count
         .unwrap_or(UNCALIBRATED_BOTTOM_LAYER_COUNT);
-    let lift_distance_mm = picked
-        .lift_distance_mm
-        .ok_or(ResolveError::MissingRequiredField {
-            field: ResolvedField::LiftDistanceMm,
-        })?;
-    let lift_speed_mm_min = picked
-        .lift_speed_mm_min
-        .ok_or(ResolveError::MissingRequiredField {
-            field: ResolvedField::LiftSpeedMmMin,
-        })?;
-    let retract_speed_mm_min =
-        picked
-            .retract_speed_mm_min
-            .ok_or(ResolveError::MissingRequiredField {
-                field: ResolvedField::RetractSpeedMmMin,
-            })?;
+    // A machine whose vat tilts on every layer never lifts its platform, so
+    // a resin calibrated for it states no travel (#174). It still resolves,
+    // with a nominal travel no layer of its program runs.
+    let never_lifts = printer.capabilities.tilting_vat && printer.capabilities.tilts_bottom_layers;
+    let unstated = |field| {
+        if never_lifts {
+            Ok(())
+        } else {
+            Err(ResolveError::MissingRequiredField { field })
+        }
+    };
+    let lift_distance_mm = match picked.lift_distance_mm {
+        Some(value) => value,
+        None => {
+            unstated(ResolvedField::LiftDistanceMm)?;
+            UNUSED_LIFT_DISTANCE
+        }
+    };
+    let lift_speed_mm_min = match picked.lift_speed_mm_min {
+        Some(value) => value,
+        None => {
+            unstated(ResolvedField::LiftSpeedMmMin)?;
+            unused_travel_speed()
+        }
+    };
+    let retract_speed_mm_min = match picked.retract_speed_mm_min {
+        Some(value) => value,
+        None => {
+            unstated(ResolvedField::RetractSpeedMmMin)?;
+            unused_travel_speed()
+        }
+    };
     // Never missing: an unstated compensation resolves to none.
     let scale_compensation_pct = picked
         .scale_compensation_pct

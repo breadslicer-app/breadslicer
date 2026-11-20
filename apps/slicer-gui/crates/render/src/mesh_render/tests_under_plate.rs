@@ -1235,7 +1235,7 @@ fn the_support_view_mode_fades_the_supports_from_above() {
     graph.add_child(root, leaf).expect("attach leaf");
     let empty = scene_of(Vec::new());
     renderer.set_support_lines(-1.0, None);
-    let mut frame = |renderer: &mut Renderer, graph: &Scene| {
+    let frame = |renderer: &mut Renderer, graph: &Scene| {
         renderer.upload_scene(graph).expect("upload the scene");
         renderer
             .workspace_pixels_for_test(
@@ -1254,7 +1254,7 @@ fn the_support_view_mode_fades_the_supports_from_above() {
             .expect("a sized frame")
     };
     // How far the middle of the frame is from the bare plate, summed.
-    let mut shown = |renderer: &mut Renderer, fade: f32| {
+    let shown = |renderer: &mut Renderer, fade: f32| {
         renderer.set_support_view_fade(fade);
         let bare = frame(renderer, &empty);
         let drawn = frame(renderer, &graph);

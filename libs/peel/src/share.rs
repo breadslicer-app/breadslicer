@@ -99,7 +99,7 @@ fn pseudo_inverse(a: f64, b: f64, c: f64) -> [[f64; 2]; 2] {
     let half_trace = 0.5 * (a + c);
     let radius = (0.5 * (a - c)).hypot(b);
     let (large, small) = (half_trace + radius, half_trace - radius);
-    if !(large > 1e-12) {
+    if large.is_nan() || large <= 1e-12 {
         return [[0.0; 2]; 2];
     }
     if small > RANK_TOLERANCE * large {

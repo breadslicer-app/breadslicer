@@ -25,7 +25,7 @@ use sc_print_profiles::{
 };
 use sc_sla_formats::{
     AnycubicBinaryVariant, AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion,
-    PrinterFileFormat,
+    PrinterFileFormat, Sl1Variant,
 };
 use semver::Version;
 
@@ -378,6 +378,7 @@ pub(crate) fn build_printer(
         transition_layers: from_base.and_then(|b| b.capabilities.transition_layers),
         has_camera: false,
         tilting_vat: from_base.is_some_and(|b| b.capabilities.tilting_vat),
+        tilts_bottom_layers: from_base.is_some_and(|b| b.capabilities.tilts_bottom_layers),
         network_protocol: None,
     };
     let family = base
@@ -472,6 +473,7 @@ pub(crate) fn writable_formats() -> Vec<PrinterFileFormat> {
     ];
     all.extend(AnycubicZipVariant::ALL.map(PrinterFileFormat::AnycubicZip));
     all.extend(AnycubicBinaryVariant::ALL.map(PrinterFileFormat::AnycubicBinary));
+    all.extend(Sl1Variant::ALL.map(PrinterFileFormat::Sl1));
     all.retain(|format| format.has_writer());
     all
 }

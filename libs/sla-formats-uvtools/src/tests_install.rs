@@ -6,10 +6,10 @@
 use sc_print_primitives::{AaLevel, Mirror};
 use sc_sla_formats::{
     AnycubicBinaryVariant, AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion,
-    PrinterFileFormat, write_printer_file,
+    PrinterFileFormat, Sl1Variant, write_printer_file,
 };
 
-use crate::read::{read_anycubic_binary, read_anycubic_zip, read_ctb, read_cxdlp};
+use crate::read::{read_anycubic_binary, read_anycubic_zip, read_ctb, read_cxdlp, read_sl1};
 use crate::test_fixture::{program, ramp_exposure, ramped_program, raster, stack};
 
 fn ported() -> Vec<PrinterFileFormat> {
@@ -22,6 +22,7 @@ fn ported() -> Vec<PrinterFileFormat> {
     ];
     formats.extend(AnycubicZipVariant::ALL.map(PrinterFileFormat::AnycubicZip));
     formats.extend(AnycubicBinaryVariant::ALL.map(PrinterFileFormat::AnycubicBinary));
+    formats.extend(Sl1Variant::ALL.map(PrinterFileFormat::Sl1));
     formats
 }
 
@@ -81,6 +82,12 @@ fn the_exposure_ramp_reads_back_from_every_format_that_keeps_it() {
                     );
                 }
             }
+            PrinterFileFormat::Sl1(_) => {
+                assert!(!keeps, "{format}");
+                let read = read_sl1(std::io::Cursor::new(bytes)).unwrap();
+                assert_eq!(read.config_value("expTimeFirst"), Some("35"), "{format}");
+                assert_eq!(read.config_value("expTime"), Some("2.5"), "{format}");
+            }
             other => unreachable!("{other} is not ported"),
         }
     }
@@ -124,6 +131,9 @@ fn the_dispatcher_writes_every_ported_format_to_disk() {
             PrinterFileFormat::Ctb(_) => read_ctb(&bytes).unwrap().layers.len(),
             PrinterFileFormat::AnycubicBinary(variant) => {
                 read_anycubic_binary(&bytes, variant).unwrap().layers.len()
+            }
+            PrinterFileFormat::Sl1(_) => {
+                read_sl1(std::io::Cursor::new(bytes)).unwrap().layers.len()
             }
             other => unreachable!("{other} is not ported"),
         };

@@ -1,0 +1,17 @@
+[identity]
+id = "prusa-polymers-prusament-resin-model-bright-magenta-50um"
+brand = "Prusa Polymers"
+family = "standard"
+name = "Prusament Resin Model Bright Magenta (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 2.4
+bottom_exposure_sec = 6.0

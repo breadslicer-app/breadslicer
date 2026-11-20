@@ -29,6 +29,11 @@ pub struct PrinterCapabilities {
     /// steps up by the layer height after the bottom layers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tilting_vat: bool,
+    /// With [`Self::tilting_vat`], the bottom layers tilt too: the platform
+    /// never lifts, so a resin states no lift for this machine (the Prusa
+    /// SL1 and SL1S).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tilts_bottom_layers: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_protocol: Option<NetworkProtocol>,
 }

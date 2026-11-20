@@ -1,0 +1,21 @@
+[identity]
+id = "monocure-3d-black-rapid-resin-50um"
+brand = "Monocure 3D"
+family = "standard"
+name = "Black Rapid Resin (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 6.0
+bottom_exposure_sec = 35.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 28.0

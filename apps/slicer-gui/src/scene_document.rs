@@ -25,7 +25,9 @@ use std::sync::Arc;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_spatial::{PrimedMesh, SceneSpatial};
-use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{
+    AaLevel, AdaptiveLayers, MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId,
+};
 use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload, ReviewDecision};
 use sc_scene::Scene;
 use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind};
@@ -35,6 +37,7 @@ use sc_scene::{
 use sc_scene_edit::SceneFragment;
 use sc_sl1cer::contour::ContourLayer;
 use sc_sl1cer::profile::LayerSchedule;
+use sc_sla_formats::PrinterFileFormat;
 
 pub(crate) use sc_scene_edit::SceneEdit;
 
@@ -117,6 +120,12 @@ pub(crate) const UNDO_STACK_CAP: usize = 256;
 /// hold, or the scene shows, counts once.
 pub(crate) const HISTORY_BYTE_BUDGET: usize = 2 << 30;
 
+/// The groups before an edit and after it (#475).
+type GroupsChange = (Vec<Vec<NodeId>>, Vec<Vec<NodeId>>);
+
+/// What draws a `.bread` thumbnail (#203).
+type Thumbnailer = Rc<dyn Fn() -> Option<Vec<u8>>>;
+
 /// Coarse-grained dispatch hint for document listeners.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SceneEvent {
@@ -182,7 +191,7 @@ struct HistoryEntry {
     plates: Option<(Vec<String>, Vec<String>)>,
     /// The groups of models before the entry and after it (#475): Undo and
     /// Redo set them back.
-    groups: Option<(Vec<Vec<NodeId>>, Vec<Vec<NodeId>>)>,
+    groups: Option<GroupsChange>,
     /// The hidden and locked models before the entry and after it (#16).
     flags: Option<(SceneFlags, SceneFlags)>,
 }
@@ -267,6 +276,7 @@ fn split_payload(
         printer,
         resin,
         first_layer_height,
+        adaptive_layers,
         output_format,
         embedded,
         review_decisions,
@@ -282,6 +292,7 @@ fn split_payload(
             printer,
             resin,
             first_layer_height,
+            adaptive_layers,
             output_format,
         },
         embedded,
@@ -363,6 +374,10 @@ pub(crate) struct SceneDocument {
     /// its cached texture on this plus the layer index, so a re-slice
     /// invalidates the cap.
     slice_generation: Cell<u64>,
+    /// The printer file the Slice tab exports as, as it shows it: a slice
+    /// takes adaptive layers only for one that keeps a height per layer
+    /// (#60). Not part of the project; the tab sets it.
+    print_format: Cell<Option<PrinterFileFormat>>,
     /// Bumped by every install and clear, so a save prepared against a scene
     /// can tell it is completing against another.
     scene_generation: Cell<u64>,
@@ -401,7 +416,7 @@ pub(crate) struct SceneDocument {
     live_preview: RefCell<Option<Rc<dyn Fn()>>>,
     /// Draws the scene as a `.bread` thumbnail (#203): installed by the
     /// window's viewport, which holds the renderer.
-    thumbnailer: RefCell<Option<Rc<dyn Fn() -> Option<Vec<u8>>>>>,
+    thumbnailer: RefCell<Option<Thumbnailer>>,
     /// Whether each stored mesh slices, for the Transform tab's MESH CHECK
     /// card.
     mesh_check: MeshCheck,
@@ -557,6 +572,7 @@ impl SceneDocument {
             slice_result: RefCell::new(None),
             evicted_since_slice: Cell::new(false),
             slice_generation: Cell::new(0),
+            print_format: Cell::new(None),
             scene_generation: Cell::new(0),
             project_state_generation: Cell::new(0),
             review_decisions: RefCell::default(),
@@ -811,6 +827,7 @@ impl SceneDocument {
             printer,
             resin,
             first_layer_height,
+            adaptive_layers,
             output_format,
         } = self
             .print_selection
@@ -821,6 +838,7 @@ impl SceneDocument {
             printer,
             resin,
             first_layer_height,
+            adaptive_layers,
             output_format,
             embedded: self.embedded_profiles.borrow().clone(),
             review_decisions: self.review_decisions.borrow().clone(),
@@ -1204,6 +1222,10 @@ impl SceneDocument {
 
     /// Sets the scene's own first-layer height. Marks the document save-dirty
     /// only when the value actually changes. Returns whether it changed.
+    pub(crate) fn set_selected_adaptive_layers(&self, layers: Option<AdaptiveLayers>) -> bool {
+        self.set_selection_field(|selection| &mut selection.adaptive_layers, layers)
+    }
+
     pub(crate) fn set_selected_first_layer_height(&self, height: Option<PositiveFiniteMm>) -> bool {
         self.set_selection_field(|selection| &mut selection.first_layer_height, height)
     }
@@ -1330,6 +1352,16 @@ impl SceneDocument {
     /// callers caching per-slice data can tell a re-slice happened.
     pub(crate) fn slice_generation(&self) -> u64 {
         self.slice_generation.get()
+    }
+
+    /// Records the printer file the Slice tab exports as (#60).
+    pub(crate) fn set_print_format(&self, format: Option<PrinterFileFormat>) {
+        self.print_format.set(format);
+    }
+
+    /// The printer file the Slice tab exports as, `None` before it shows one.
+    pub(crate) fn print_format(&self) -> Option<PrinterFileFormat> {
+        self.print_format.get()
     }
 
     /// Runs `f` against the held slice's layer at `index`, or returns `None`
@@ -1822,7 +1854,7 @@ impl SceneDocument {
         edit: SceneEdit,
         wanting: &[NodeId],
         plates: Option<(Vec<String>, Vec<String>)>,
-        groups: Option<(Vec<Vec<NodeId>>, Vec<Vec<NodeId>>)>,
+        groups: Option<GroupsChange>,
     ) {
         let mut committed = crate::support_follow::commit(self, edit);
         for model in wanting {

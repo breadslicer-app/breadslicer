@@ -1081,23 +1081,177 @@ export component ScSlider inherits Rectangle {
     }
 }
 
-// How far a job has got, 0 to 1.
+// How far a job has got, 0 to 1, drawn as a technical ruler like the
+// plate's (#562): a dark track that fills from the left, a tick every
+// 10 % (5 % and 1 % in the large form), a pointer at the value and, in the
+// large form, a dashed guide above and the numbers every 10 %. Work with no
+// known end sweeps along the track. The one progress bar of the app: cards
+// use the small form, the bottom bar of the window the large one.
 export component ScProgress inherits Rectangle {
     in property <float> progress;
     in property <bool> indeterminate;
+    // The large form, for the bottom bar of the window.
+    in property <bool> large;
 
-    height: 4px;
+    property <float> shown: Math.clamp(root.progress, 0, 1);
+    property <length> guide-y: 2px;
+    property <length> track-y: root.large ? 12px : 3px;
+    property <length> track-h: root.large ? 10px : 5px;
+    property <length> ticks-y: root.track-y + root.track-h + 2px;
+    property <int> steps: root.large ? 100 : 20;
+
+    height: root.large ? 46px : 15px;
     horizontal-stretch: 1;
-    border-radius: 2px;
-    background: Theme.border;
     accessible-role: progress-indicator;
-    accessible-value: self.progress;
+    accessible-value: root.indeterminate ? "" : Math.floor(root.shown * 100) + " %";
 
-    Rectangle {
-        x: 0;
-        width: (root.indeterminate ? 0.3 : Math.clamp(root.progress, 0, 1)) * parent.width;
-        border-radius: 2px;
-        background: Theme.indicator;
+    // The dashed guide above, as on the plate's rulers.
+    if root.large: Rectangle {
+        y: root.guide-y;
+        height: 1px;
+        for dash in Math.floor(root.width / 7px): Rectangle {
+            x: dash * 7px;
+            width: 3px;
+            height: 1px;
+            background: Theme.border-strong;
+        }
+    }
+
+    track := Rectangle {
+        y: root.track-y;
+        height: root.track-h;
+        background: Theme.ground;
+        border-color: Theme.border-strong;
+        border-width: 1px;
+
+        if !root.indeterminate: Rectangle {
+            x: 0;
+            width: root.shown * parent.width;
+            background: Theme.indicator;
+        }
+        if root.indeterminate: Rectangle {
+            property <float> phase: Math.mod(animation-tick() / 1ms, 1600) / 1600;
+            x: (root.phase-start(self.phase)) * parent.width;
+            width: Math.max(0, Math.min(root.phase-start(self.phase) + 0.25, 1) - Math.max(root.phase-start(self.phase), 0)) * parent.width;
+            background: Theme.indicator;
+        }
+    }
+
+    // Ticks: every 1 % (large) or 5 % (small), longer every 5 % and 10 %.
+    for k in root.steps + 1: Rectangle {
+        property <int> per: root.large ? 1 : 5;
+        property <int> at: k * self.per;
+        property <bool> major: Math.mod(self.at, 10) == 0;
+        property <bool> mid: Math.mod(self.at, 5) == 0;
+        property <bool> passed: !root.indeterminate && self.at <= root.shown * 100;
+        x: Math.min(k / root.steps * root.width, root.width - 1px);
+        y: root.ticks-y;
+        width: 1px;
+        height: root.large ? (self.major ? 10px : self.mid ? 7px : 4px) : (self.major ? 5px : 3px);
+        background: self.passed ? Theme.text-soft : Theme.border-strong;
+    }
+
+    // The pointer at the value.
+    if !root.indeterminate: Path {
+        x: root.shown * root.width - self.width / 2;
+        y: root.track-y - self.height - 1px;
+        width: root.large ? 10px : 6px;
+        height: root.large ? 7px : 3px;
+        viewbox-width: 10;
+        viewbox-height: 7;
+        commands: "M 0 0 L 10 0 L 5 7 Z";
+        fill: Theme.indicator;
+        stroke-width: 0;
+    }
+
+    // The numbers every 10 %.
+    if root.large: Rectangle {
+        y: root.ticks-y + 12px;
+        height: 12px;
+        for n in 11: Text {
+            x: Math.max(0, Math.min(n / 10 * root.width - self.width / 2, root.width - self.width));
+            text: n * 10;
+            font-family: Theme.mono;
+            font-size: 10px;
+            color: Theme.text-faint;
+        }
+    }
+
+    // Where the sweep of work with no known end starts, -0.25 to 1.
+    pure function phase-start(p: float) -> float {
+        return p * 1.25 - 0.25;
+    }
+}
+
+// The bar at the bottom centre of the window while the app works (#562):
+// what it does, the percentage, the ruler, the detail (layer N of M) and
+// Cancel. No veil: the scene stays as it is.
+export component ProgressGauge inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <float> progress;
+    in property <bool> indeterminate;
+    in property <bool> cancelable;
+    callback cancel();
+
+    background: Theme.panel;
+    border-color: Theme.border;
+    border-width: 1px;
+    border-radius: 3px;
+    height: gauge-layout.preferred-height;
+
+    gauge-layout := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 12px;
+            Text {
+                text: root.title;
+                font-size: Theme.font-xs;
+                letter-spacing: 1.4px;
+                color: Theme.text-soft;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            if !root.indeterminate: Text {
+                text: Math.floor(Math.clamp(root.progress, 0, 1) * 100) + " %";
+                font-family: Theme.mono;
+                font-size: 18px;
+                font-weight: 600;
+                color: Theme.text;
+                vertical-alignment: center;
+            }
+        }
+
+        ScProgress {
+            large: true;
+            progress: root.progress;
+            indeterminate: root.indeterminate;
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+            Text {
+                text: root.detail;
+                font-family: Theme.mono;
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            if root.cancelable: ScButton {
+                text: @tr("Cancel");
+                clicked => {
+                    root.cancel();
+                }
+            }
+        }
     }
 }
 

@@ -19,14 +19,14 @@ use std::str::FromStr;
 use sc_print_primitives::{FormatKind, OutputFormatBinding, OutputFormatBindings};
 use sc_sla_formats::format::format_from_path;
 use sc_sla_formats::{
-    AnycubicBinaryVariant, AnycubicZipVariant, Format, PrinterFileFormat, UnwritableFamily,
-    printer_file_family_from_path,
+    AnycubicBinaryVariant, AnycubicZipVariant, Format, PrinterFileFormat, Sl1Variant,
+    UnwritableFamily, printer_file_family_from_path,
 };
 
 /// Every spelling the flag accepts, in help-text order. A family name may also
 /// carry the revision a profile would declare, as in `ctb@v5`.
 pub(crate) const ACCEPTED_TARGET_FORMATS: &str =
-    "svg-per-layer, svg-combined, png-per-layer, 3mf, goo, ctb, cxdlp, azf, aff";
+    "svg-per-layer, svg-combined, png-per-layer, 3mf, goo, ctb, cxdlp, azf, aff, sl1";
 
 /// A `--target-format` flag value: a slice output, a printer file, or the
 /// family of one whose revision the printer still has to name.
@@ -42,8 +42,8 @@ impl TargetFormat {
     ///
     /// A printer file's extension names only its family, since 1 extension
     /// covers every revision of a container, except in Anycubic's ZIP and
-    /// binary families, where each variant has its own extension and the
-    /// extension names it.
+    /// binary families and Prusa's SL1, where each variant has its own
+    /// extension and the extension names it.
     pub(crate) fn from_path(path: &Path) -> Option<Self> {
         if let Some(format) = anycubic_format_from_path(path) {
             return Some(Self::PrinterFile(format));
@@ -62,7 +62,8 @@ impl TargetFormat {
     }
 }
 
-/// Names the Anycubic ZIP or binary variant an output path's extension is.
+/// Names the Anycubic ZIP or binary variant, or the Prusa SL1 one, an output
+/// path's extension is.
 fn anycubic_format_from_path(path: &Path) -> Option<PrinterFileFormat> {
     let extension = path.extension()?.to_str()?;
     AnycubicZipVariant::from_extension(extension)
@@ -70,6 +71,7 @@ fn anycubic_format_from_path(path: &Path) -> Option<PrinterFileFormat> {
         .or_else(|| {
             AnycubicBinaryVariant::from_extension(extension).map(PrinterFileFormat::AnycubicBinary)
         })
+        .or_else(|| Sl1Variant::from_extension(extension).map(PrinterFileFormat::Sl1))
 }
 
 impl fmt::Display for TargetFormat {
@@ -206,6 +208,7 @@ impl FromStr for TargetFormat {
                     | FormatKind::Cxdlp
                     | FormatKind::Azf
                     | FormatKind::Aff
+                    | FormatKind::Sl1
             ) =>
             {
                 Ok(Self::PrinterFamily(binding.format))
@@ -281,6 +284,16 @@ mod target_format_tests {
         assert_eq!(
             TargetFormat::from_str("aff"),
             Ok(TargetFormat::PrinterFamily(FormatKind::Aff)),
+        );
+        assert_eq!(
+            TargetFormat::from_str("sl1"),
+            Ok(TargetFormat::PrinterFamily(FormatKind::Sl1)),
+        );
+        assert_eq!(
+            TargetFormat::from_path(&PathBuf::from("plate.sl1s")),
+            Some(TargetFormat::PrinterFile(PrinterFileFormat::Sl1(
+                Sl1Variant::Sl1s
+            ))),
         );
     }
 
@@ -359,7 +372,7 @@ mod target_format_tests {
 
     #[test]
     fn a_family_this_build_has_no_container_for_is_refused() {
-        for name in ["sl1", "lumen", "pwmx"] {
+        for name in ["lumen", "pwmx"] {
             assert!(TargetFormat::from_str(name).is_err(), "{name}");
         }
     }

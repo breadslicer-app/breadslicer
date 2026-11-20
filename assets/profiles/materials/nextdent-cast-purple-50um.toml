@@ -1,0 +1,21 @@
+[identity]
+id = "nextdent-cast-purple-50um"
+brand = "NextDent"
+family = "castable"
+name = "Cast Purple (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 20.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 16.0

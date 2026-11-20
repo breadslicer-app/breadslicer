@@ -633,8 +633,11 @@ pub(crate) struct HollowRun {
     /// Whether the drain tool shows where a drain works best (#455).
     drain_map_on: Cell<bool>,
     /// Told of each model a drain landed in (#128).
-    drained: RefCell<Option<Rc<dyn Fn(NodeId)>>>,
+    drained: RefCell<Option<DrainedHook>>,
 }
+
+/// What is told of each model a drain landed in (#128).
+type DrainedHook = Rc<dyn Fn(NodeId)>;
 
 /// What a probe is of: a mesh (by identity) and the stretch of its pose.
 type ProbeKey = (usize, [i64; 9]);

@@ -1,0 +1,17 @@
+[identity]
+id = "peopoly-deft-white-25um"
+brand = "Peopoly"
+family = "standard"
+name = "Deft White (25 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.025
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 1.8
+bottom_exposure_sec = 25.0

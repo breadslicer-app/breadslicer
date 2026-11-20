@@ -1,0 +1,17 @@
+[identity]
+id = "bluecast-s-plus-50um"
+brand = "BlueCast"
+family = "standard"
+name = "S+ (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 45.0

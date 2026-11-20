@@ -11,6 +11,7 @@
 //! (validated positive-finite millimetre lengths and their parse errors).
 
 pub mod aa_level;
+pub mod adaptive_layers;
 pub mod build_volume;
 pub mod energy_density;
 pub mod format;
@@ -32,6 +33,7 @@ pub mod volume;
 pub mod wall;
 
 pub use aa_level::{AaLevel, UnknownAaLevel};
+pub use adaptive_layers::AdaptiveLayers;
 pub use build_volume::{AxisOutOfRange, BuildVolume};
 pub use energy_density::{MjPerCm2OutOfRange, PositiveFiniteMjPerCm2};
 pub use format::{EmptyBindingPart, FormatKind, OutputFormatBinding, OutputFormatBindings};

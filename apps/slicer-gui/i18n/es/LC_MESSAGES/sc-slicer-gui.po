@@ -5691,6 +5691,11 @@ msgstr "Anycubic (automático)"
 
 #: src/print_format.rs
 msgctxt "SlicePanel"
+msgid "Prusa (automatic)"
+msgstr "Prusa (automático)"
+
+#: src/print_format.rs
+msgctxt "SlicePanel"
 msgid ".cxdlp (v2)"
 msgstr ".cxdlp (v2)"
 
@@ -5829,6 +5834,21 @@ msgstr "Arrastrá un recuadro: se va cada soporte que toque, solo de los soporte
 msgctxt "DfSupportDialog"
 msgid "other supports hang from it"
 msgstr "otros soportes cuelgan de él"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the shaft would lean too far to print"
+msgstr "el tronco quedaría demasiado inclinado para imprimirse"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "an elbow stays between the parts below and above it"
+msgstr "un codo tiene que quedar entre la parte de abajo y la de arriba"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the tip would be wider than its shaft"
+msgstr "la punta quedaría más ancha que su tronco"
 
 #: src/df_support_run.rs
 #, rust-format
@@ -9304,6 +9324,26 @@ msgctxt "SlicePanel"
 msgid "This format keeps one exposure for the bottom layers and one for the rest: the transition layers print at the normal exposure."
 msgstr "Este formato guarda una exposición para las capas de base y otra para el resto: las capas de transición se imprimen con la exposición normal."
 
+#: src/slice_panel.rs
+msgctxt "SlicePanel"
+msgid "This format keeps one layer height: the print is sliced with every layer at the layer height."
+msgstr "Este formato guarda un solo alto de capa: se lamina con todas las capas al alto de capa."
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Adaptive layers"
+msgstr "Capas adaptativas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Thinnest layer"
+msgstr "Capa más fina"
+
+#: ui/workspace/inspectors.slint
+msgctxt "SlicePanel"
+msgid "Thickest layer"
+msgstr "Capa más gruesa"
+
 #: ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
 msgid "Done"
@@ -9621,10 +9661,10 @@ msgstr "varios"
 
 #: src/df_support_run.rs
 msgctxt "Inspector"
-msgid "{n} support picked: the numbers below draw it again."
-msgid_plural "{n} supports picked: the numbers below draw them again."
-msgstr[0] "{n} soporte elegido: los números de abajo lo dibujan de nuevo."
-msgstr[1] "{n} soportes elegidos: los números de abajo los dibujan de nuevo."
+msgid "{n} support picked: the numbers below draw it again; drag its trunk or an elbow to move it."
+msgid_plural "{n} supports picked: the numbers below draw them again; drag a trunk or an elbow to move it."
+msgstr[0] "{n} soporte elegido: los números de abajo lo dibujan de nuevo; arrastrá su tronco o un codo para moverlo."
+msgstr[1] "{n} soportes elegidos: los números de abajo los dibujan de nuevo; arrastrá un tronco o un codo para moverlo."
 
 #: src/df_support_run.rs
 msgctxt "Inspector"
@@ -10169,3 +10209,223 @@ msgstr "Exportar selección…"
 msgctxt "ErrorDialog"
 msgid "Nothing to export: pick the models to export first. Hidden models are left out."
 msgstr "No hay nada para exportar: primero elegí los modelos. Los modelos ocultos quedan afuera."
+
+msgctxt "ProgressGauge"
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgctxt "ShortcutsCard"
+msgid "Keyboard shortcuts"
+msgstr "Atajos de teclado"
+
+msgctxt "ShortcutsCard"
+msgid "Close"
+msgstr "Cerrar"
+
+msgctxt "ShortcutsCard"
+msgid "GENERAL"
+msgstr "GENERAL"
+
+msgctxt "ShortcutsCard"
+msgid "Open a project"
+msgstr "Abrir un proyecto"
+
+msgctxt "ShortcutsCard"
+msgid "Import models into the scene"
+msgstr "Importar modelos a la escena"
+
+msgctxt "ShortcutsCard"
+msgid "Save"
+msgstr "Guardar"
+
+msgctxt "ShortcutsCard"
+msgid "Save as"
+msgstr "Guardar como"
+
+msgctxt "ShortcutsCard"
+msgid "Export the models as a mesh"
+msgstr "Exportar los modelos como malla"
+
+msgctxt "ShortcutsCard"
+msgid "Undo"
+msgstr "Deshacer"
+
+msgctxt "ShortcutsCard"
+msgid "Redo"
+msgstr "Rehacer"
+
+msgctxt "ShortcutsCard"
+msgid "Prepare, Hollow, Supports, Slice"
+msgstr "Preparar, Ahuecar, Soportes, Laminar"
+
+msgctxt "ShortcutsCard"
+msgid "Preferences"
+msgstr "Preferencias"
+
+msgctxt "ShortcutsCard"
+msgid "Layer view"
+msgstr "Vista de capas"
+
+msgctxt "ShortcutsCard"
+msgid "This list"
+msgstr "Esta lista"
+
+msgctxt "ShortcutsCard"
+msgid "VIEW"
+msgstr "VISTA"
+
+msgctxt "ShortcutsCard"
+msgid "Frame the scene (also Home)"
+msgstr "Encuadrar la escena (también Inicio)"
+
+msgctxt "ShortcutsCard"
+msgid "Turn the view 15°"
+msgstr "Girar la vista 15°"
+
+msgctxt "ShortcutsCard"
+msgid "Perspective or orthographic"
+msgstr "Perspectiva u ortográfica"
+
+msgctxt "ShortcutsCard"
+msgid "Zoom"
+msgstr "Acercar y alejar"
+
+msgctxt "ShortcutsCard"
+msgid "SLICE"
+msgstr "LAMINAR"
+
+msgctxt "ShortcutsCard"
+msgid "20 layers a second"
+msgstr "20 capas por segundo"
+
+msgctxt "ShortcutsCard"
+msgid "First or last layer"
+msgstr "Primera o última capa"
+
+msgctxt "ShortcutsCard"
+msgid "OBJECTS"
+msgstr "OBJETOS"
+
+msgctxt "ShortcutsCard"
+msgid "While moving: snap / fine"
+msgstr "Mientras movés: imán / fino"
+
+msgctxt "ShortcutsCard"
+msgid "Duplicate and move the copy"
+msgstr "Duplicar y mover la copia"
+
+msgctxt "ShortcutsCard"
+msgid "Add to the selection; Shift+drag, a box"
+msgstr "Sumar a la selección; Shift+arrastrar, un recuadro"
+
+msgctxt "ShortcutsCard"
+msgid "Select all / nothing"
+msgstr "Elegir todo / nada"
+
+msgctxt "ShortcutsCard"
+msgid "Invert the selection (over the view)"
+msgstr "Invertir la selección (sobre la vista)"
+
+msgctxt "ShortcutsCard"
+msgid "Next object"
+msgstr "Objeto siguiente"
+
+msgctxt "ShortcutsCard"
+msgid "Copy / paste"
+msgstr "Copiar / pegar"
+
+msgctxt "ShortcutsCard"
+msgid "Duplicate"
+msgstr "Duplicar"
+
+msgctxt "ShortcutsCard"
+msgid "Group; Ctrl+Shift+G ungroups"
+msgstr "Agrupar; Ctrl+Shift+G desagrupa"
+
+msgctxt "ShortcutsCard"
+msgid "Delete"
+msgstr "Eliminar"
+
+msgctxt "ShortcutsCard"
+msgid "Orient, cut, arrange"
+msgstr "Orientar, cortar, acomodar"
+
+msgctxt "ShortcutsCard"
+msgid "HOLLOW"
+msgstr "AHUECAR"
+
+msgctxt "ShortcutsCard"
+msgid "Drain holes"
+msgstr "Agujeros de drenaje"
+
+msgctxt "ShortcutsCard"
+msgid "Solid zones (lasso)"
+msgstr "Zonas macizas (lazo)"
+
+msgctxt "ShortcutsCard"
+msgid "SUPPORTS"
+msgstr "SOPORTES"
+
+msgctxt "ShortcutsCard"
+msgid "Select, add, remove"
+msgstr "Elegir, agregar, quitar"
+
+msgctxt "ShortcutsCard"
+msgid "Move tip, brace"
+msgstr "Mover punta, riostra"
+
+msgctxt "ShortcutsCard"
+msgid "Line, area"
+msgstr "Línea, área"
+
+msgctxt "ShortcutsCard"
+msgid "Tip size while adding"
+msgstr "Tamaño de punta al agregar"
+
+msgctxt "ShortcutsCard"
+msgid "Add a support where the rules would not"
+msgstr "Poner un soporte donde las reglas no lo pondrían"
+
+msgctxt "ShortcutsCard"
+msgid "Remove: box or brush, brush size"
+msgstr "Quitar: recuadro o pincel, tamaño del pincel"
+
+msgctxt "MenuBar"
+msgid "Keyboard Shortcuts"
+msgstr "Atajos de teclado"
+
+msgctxt "Workspace"
+msgid "Keyboard shortcuts (F1)"
+msgstr "Atajos de teclado (F1)"
+
+msgctxt "Workspace"
+msgid "F1 shortcuts"
+msgstr "F1 atajos"
+
+msgctxt "ShortcutsCard"
+msgid "Alt+drag"
+msgstr "Alt+arrastrar"
+
+msgctxt "ShortcutsCard"
+msgid "Shift+click"
+msgstr "Shift+clic"
+
+msgctxt "ShortcutsCard"
+msgid "Move, rotate, scale"
+msgstr "Mover, rotar, escalar"
+
+msgctxt "ShortcutsCard"
+msgid "During G, R or S: one axis; then a number, Enter"
+msgstr "Durante G, R o S: un eje; después un número, Enter"
+
+msgctxt "ShortcutsCard"
+msgid "Front, right, top; Ctrl, the other side"
+msgstr "Frente, derecha, arriba; con Ctrl, el otro lado"
+
+msgctxt "ShortcutsCard"
+msgid "One layer; held, 5 a second"
+msgstr "Una capa; mantenida, 5 por segundo"
+
+msgctxt "ShortcutsCard"
+msgid "Del"
+msgstr "Supr"

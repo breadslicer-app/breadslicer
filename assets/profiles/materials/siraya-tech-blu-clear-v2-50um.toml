@@ -1,0 +1,21 @@
+[identity]
+id = "siraya-tech-blu-clear-v2-50um"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu Clear V2 (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 10.0
+bottom_exposure_sec = 30.0
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 3.3
+bottom_exposure_sec = 24.0

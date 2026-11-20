@@ -124,8 +124,12 @@ const NUDGE_UP_MM: [f64; 2] = [0.05, 0.10];
 /// underside lands on the tip it was nudged from.
 const SAME_TIP_MM: f64 = 1e-6;
 
+#[path = "part_edit.rs"]
+mod part_edit;
 #[path = "pieces.rs"]
 mod pieces;
+
+pub use part_edit::{ImportedPlan, PartSizes, SupportParts};
 
 pub use pieces::{SupportContact, SupportJoint, SupportPiece, SupportPieceKind};
 
@@ -519,6 +523,13 @@ pub enum AddNote {
     CarriesOthers,
     /// The surface there faces up: a support from below cannot reach it.
     FacesUp,
+    /// A shaft moved by hand would lean too far to print (#377).
+    Leans,
+    /// An elbow moved by hand would go under the part below it or over the
+    /// one above it (#377).
+    OutOfOrder,
+    /// A tip would be as wide as its shaft or wider (#377).
+    TipOverShaft,
 }
 
 impl AddNote {
@@ -3336,7 +3347,7 @@ impl DfSupportSession {
 }
 
 #[cfg(test)]
-mod session_tests {
+pub(crate) mod session_tests {
     use super::*;
 
     #[test]
@@ -3478,7 +3489,7 @@ mod session_tests {
     /// A slab 50 × 10 × 2 mm whose underside is `z` mm above the plate, run
     /// with `request`, its supports then cleared: the hand tools start from
     /// nothing.
-    fn bare_slab(z: f64, request: crate::DfSupportRequest) -> DfSupportSession {
+    pub(crate) fn bare_slab(z: f64, request: crate::DfSupportRequest) -> DfSupportSession {
         let mut session = crate::start_df_supports(&slab_scene(z), request)
             .unwrap()
             .join()
@@ -3492,7 +3503,7 @@ mod session_tests {
     }
 
     /// A slab 50 × 10 × 2 mm whose underside is `z` mm above the plate.
-    fn slab_scene(z: f64) -> sc_scene::Scene {
+    pub(crate) fn slab_scene(z: f64) -> sc_scene::Scene {
         use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
         use sc_mesh_core::{IndexedTriangle, MeshMetadata, Vertex};
         use sc_scene::{LeafPayload, Scene};

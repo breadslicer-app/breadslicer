@@ -118,6 +118,42 @@ impl Builder {
         self
     }
 
+    /// A closed frustum along any axis, from `a` (radius `r0`) to `b`
+    /// (radius `r1`), with `n` sides.
+    fn tube(&mut self, a: [f64; 3], b: [f64; 3], [r0, r1]: [f64; 2], n: usize) -> &mut Self {
+        let axis = sub(b, a);
+        let l = norm(axis);
+        let w = scale(axis, 1.0 / l);
+        let other = if w[2].abs() < 0.9 {
+            [0.0, 0.0, 1.0]
+        } else {
+            [1.0, 0.0, 0.0]
+        };
+        let u = cross(w, other);
+        let u = scale(u, 1.0 / norm(u));
+        let v = cross(w, u);
+        let ring = |bd: &mut Self, c: [f64; 3], r: f64| -> Vec<u32> {
+            (0..n)
+                .map(|i| {
+                    let t = std::f64::consts::TAU * i as f64 / n as f64;
+                    bd.vertex(add(c, add(scale(u, r * t.cos()), scale(v, r * t.sin()))))
+                })
+                .collect()
+        };
+        let bottom = ring(self, a, r0);
+        let top = ring(self, b, r1);
+        let cb = self.vertex(a);
+        let ct = self.vertex(b);
+        for i in 0..n {
+            let j = (i + 1) % n;
+            self.face([bottom[i], bottom[j], top[j]]);
+            self.face([bottom[i], top[j], top[i]]);
+            self.face([cb, bottom[j], bottom[i]]);
+            self.face([ct, top[i], top[j]]);
+        }
+        self
+    }
+
     fn mesh(&self) -> IndexedMesh {
         IndexedMesh::new(None, self.vertices.clone(), self.faces.clone())
     }
@@ -337,4 +373,44 @@ fn supports_fused_into_the_model_are_told_by_the_pillars_above_its_base() {
     b.cuboid([-15.0, -15.0, 0.0], [15.0, 15.0, 4.0]);
     b.sphere([0.0, 0.0, 14.0], 10.0, 24, 16);
     assert!(!fused_supports(&b.mesh()));
+}
+
+/// #261: a support followed from its tip down: the bend at its joint ball,
+/// its widths, and its foot on the raft; one hung from its shaft has no foot
+/// of its own.
+#[test]
+fn imported_supports_are_followed_from_their_tips_down() {
+    let mut b = Builder::default();
+    b.cuboid([-15.0, -15.0, 0.0], [15.0, 15.0, 1.0]);
+    // Foot, shaft up to a ball, a shaft leaning to the tip's cone.
+    b.frustum([0.0, 0.0], [1.0, 1.3], [1.2, 1.2], 16);
+    b.frustum([0.0, 0.0], [1.3, 6.0], [0.4, 0.4], 12);
+    b.sphere([0.0, 0.0, 6.0], 0.45, 12, 8);
+    b.tube([0.0, 0.0, 6.0], [2.0, 0.0, 8.0], [0.4, 0.4], 12);
+    b.tube([2.0, 0.0, 8.0], [2.0, 0.0, 10.0], [0.4, 0.15], 12);
+    // A second tip whose shaft ends in the first one's.
+    b.tube([0.0, 0.0, 3.0], [-2.0, 0.0, 6.0], [0.3, 0.3], 12);
+    b.tube([-2.0, 0.0, 6.0], [-2.0, 0.0, 8.0], [0.3, 0.12], 12);
+    let routes = support_routes(&b.mesh());
+    assert_eq!(routes.len(), 2, "{routes:#?}");
+    let first = routes
+        .iter()
+        .find(|r| (r.tip.contact[0] - 2.0).abs() < 0.05)
+        .expect("the first tip");
+    assert!((first.tip.contact[2] - 10.0).abs() < 0.05, "{first:?}");
+    assert!((first.tip.diameter_mm - 0.3).abs() < 0.05, "{first:?}");
+    assert!((first.tip_length_mm - 2.0).abs() < 0.05, "{first:?}");
+    assert!((first.shaft_mm.unwrap() - 0.8).abs() < 0.05, "{first:?}");
+    assert_eq!(first.elbows.len(), 1, "{first:?}");
+    let elbow = first.elbows[0];
+    assert!(norm(sub(elbow, [0.0, 0.0, 6.0])) < 0.1, "{first:?}");
+    let (foot, width) = first.foot.expect("it stands on the raft");
+    assert!(foot[0].abs() < 0.05 && foot[1].abs() < 0.05, "{first:?}");
+    assert!(foot[2] < 1.5, "{first:?}");
+    assert!((width - 2.4).abs() < 0.1, "{first:?}");
+    let second = routes
+        .iter()
+        .find(|r| (r.tip.contact[0] + 2.0).abs() < 0.05)
+        .expect("the second tip");
+    assert!(second.foot.is_none(), "it hangs: {second:?}");
 }

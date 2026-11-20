@@ -62,6 +62,17 @@ const UNRESEARCHED: [fn(&str) -> bool; 7] = [
 /// stores states one or carries a specification table.
 const NO_PUBLISHED_DENSITY: [fn(&str) -> bool; 1] = [|id| id.starts_with("elegoo-")];
 
+/// Say whether a resin is calibrated for the Prusa SL1 and SL1S alone: it
+/// comes from Prusa's PrusaSlicer vendor bundle, which states the liquid
+/// density only, and nobody has gone looking for the cured one yet.
+fn calibrated_for_prusa_alone(profile: &MaterialProfile) -> bool {
+    !profile.per_printer.is_empty()
+        && profile
+            .per_printer
+            .keys()
+            .all(|target| target.as_str().starts_with("prusa-"))
+}
+
 /// Say whether a resin may ship with no entry in the curation.
 fn exempt_from_curation(id: &str) -> bool {
     UNRESEARCHED
@@ -141,6 +152,7 @@ fn the_curation_we_ship_covers_every_resin_but_the_ones_with_no_sheet() {
     let mut uncurated: Vec<String> = bundled_materials()
         .iter()
         .filter(|profile| curation.of(&profile.identity.id).is_none())
+        .filter(|profile| !calibrated_for_prusa_alone(profile))
         .map(|profile| profile.identity.id.as_str().to_owned())
         .filter(|id| !exempt_from_curation(id))
         .collect();

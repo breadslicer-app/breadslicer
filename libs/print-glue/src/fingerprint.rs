@@ -200,6 +200,20 @@ fn hash_schedule(hasher: &mut Sha384, schedule: &LayerSchedule) {
             hasher.update(uniform.first_layer_height().value().to_bits().to_le_bytes());
             hasher.update(uniform.total_layers().get().to_le_bytes());
         }
+        LayerSchedule::Variable(variable) => {
+            hasher.update([1u8]);
+            hasher.update(
+                variable
+                    .nominal_layer_height()
+                    .value()
+                    .to_bits()
+                    .to_le_bytes(),
+            );
+            hasher.update((variable.tops().len() as u64).to_le_bytes());
+            for top in variable.tops() {
+                hasher.update(top.value().to_bits().to_le_bytes());
+            }
+        }
     }
 }
 

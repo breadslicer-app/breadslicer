@@ -115,6 +115,24 @@ pub fn project_hardware_to_slice_profile(
     )
 }
 
+/// Build a [`SliceProfile`] from the printer hardware and a layer schedule
+/// already worked out, uniform or not (#60).
+pub fn project_hardware_to_slice_profile_on(
+    hardware: &PrinterHardware,
+    layer_schedule: LayerSchedule,
+    aa_level: AaLevel,
+    packing_mode: PackingMode,
+) -> SliceProfile {
+    SliceProfile::new(
+        hardware.build_volume(),
+        hardware.pixel_resolution(),
+        layer_schedule,
+        hardware.mirror(),
+        aa_level,
+        packing_mode,
+    )
+}
+
 /// The number of layers that print something of a model up to `z_max`
 /// millimetres: those cut below its top. Slab 0 spans
 /// `[0, first_layer_height]`; slab `k >= 1` spans

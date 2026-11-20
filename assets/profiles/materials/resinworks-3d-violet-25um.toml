@@ -1,0 +1,17 @@
+[identity]
+id = "resinworks-3d-violet-25um"
+brand = "Resinworks 3D"
+family = "standard"
+name = "Violet (25 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.025
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1]
+normal_exposure_sec = 15.0
+bottom_exposure_sec = 30.0

@@ -203,6 +203,7 @@ fn slices(document: &SceneDocument) -> Vec<(NodeId, ContourStack)> {
         layer_height_request: None,
         first_layer_height: None,
         aa_level: sc_print_primitives::AaLevel::Off,
+        adaptive: None,
     };
     let run = sc_print_glue::slice_plate(
         &scene,

@@ -1,0 +1,17 @@
+[identity]
+id = "liqcreate-strong-x-25um"
+brand = "Liqcreate"
+family = "standard"
+name = "Strong X (25 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.025
+
+[defaults]
+
+[physical]
+
+[per_printer.prusa-sl1s-speed]
+normal_exposure_sec = 7.0
+bottom_exposure_sec = 40.0

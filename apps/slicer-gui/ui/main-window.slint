@@ -5,7 +5,8 @@
 
 import { Palette, ScrollView } from "std-widgets.slint";
 import { ScButton as Button } from "kit/controls.slint";
-import { ScProgress as ProgressIndicator } from "./kit/controls.slint";
+import { ProgressGauge } from "./kit/controls.slint";
+import { ShortcutsCard } from "./workspace/shortcuts-card.slint";
 import { AboutWindow } from "about-window.slint";
 import { AxisView, MeshViewer, NavMap, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
@@ -681,6 +682,11 @@ export component MainWindow inherits Window {
     in property <string> slice-print-format-note;
     in property <bool> slice-export-enabled: false;
     in-out property <string> slice-first-layer-height-text;
+    // Adaptive layer heights (#60), as the Slice tab shows them.
+    in-out property <bool> slice-adaptive-on;
+    in property <float> slice-adaptive-min;
+    in property <float> slice-adaptive-max;
+    in property <string> slice-adaptive-note;
     // Send to printer (#630): shown for a printer that takes a print over
     // the network; the printers found, the one picked, a search or a send
     // on its way, how far it got, and what it last said.
@@ -876,6 +882,8 @@ export component MainWindow inherits Window {
     callback scene-load-finished();
     callback import-notes-requested();
     callback show-about-requested();
+    // The card with every keyboard shortcut (#49): Help menu or F1.
+    in-out property <bool> shortcuts-open;
     // Help > Export Diagnostics (#74).
     callback export-diagnostics-requested();
     // The top bar's links to support the project; Rust opens the page.
@@ -905,6 +913,7 @@ export component MainWindow inherits Window {
     callback slice-resin-picked(int);
     callback slice-print-format-picked(int);
     callback slice-first-layer-height-edited(string);
+    callback slice-adaptive-layers-changed(bool, float, float);
     // The Slice panel's export action: write the held slice as the
     // selected printer file.
     callback slice-export-requested();
@@ -1457,6 +1466,13 @@ export component MainWindow inherits Window {
             }
 
             MenuItem {
+                title: @tr("MenuBar" => "Keyboard Shortcuts");
+                activated => {
+                    root.shortcuts-open = true;
+                }
+            }
+
+            MenuItem {
                 title: @tr("MenuBar" => "Export Diagnostics…");
                 activated => {
                     root.export-diagnostics-requested();
@@ -1494,6 +1510,11 @@ export component MainWindow inherits Window {
         focus-on-click: false;
         focus-on-tab-navigation: false;
         capture-key-pressed(event) => {
+            // F1: every keyboard shortcut (#49).
+            if (event.text == Key.F1 && !event.repeat) {
+                root.shortcuts-open = true;
+                return accept;
+            }
             // Ctrl+1 to Ctrl+4: the workflow tabs (#583). The window takes
             // them before the view, whose plain digits turn the camera.
             if (event.modifiers.control && !event.modifiers.alt && !event.modifiers.shift
@@ -2813,6 +2834,13 @@ export component MainWindow inherits Window {
                                 resin-options: root.slice-resin-options;
                                 resin-current-index <=> root.slice-resin-current-index;
                                 first-layer-height-text <=> root.slice-first-layer-height-text;
+                                adaptive-on <=> root.slice-adaptive-on;
+                                adaptive-min: root.slice-adaptive-min;
+                                adaptive-max: root.slice-adaptive-max;
+                                adaptive-note: root.slice-adaptive-note;
+                                adaptive-layers-changed(on, min, max) => {
+                                    root.slice-adaptive-layers-changed(on, min, max);
+                                }
                                 slicing: root.slicing-in-progress;
                                 up-to-date: root.slice-up-to-date;
                                 every-plate-note: root.slice-every-plate-note;
@@ -3493,6 +3521,25 @@ export component MainWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
+                    // Where every shortcut is (#49), always at hand.
+                    TouchArea {
+                        width: keys-text.preferred-width;
+                        mouse-cursor: pointer;
+                        accessible-role: button;
+                        accessible-label: @tr("Workspace" => "Keyboard shortcuts (F1)");
+                        accessible-action-default => {
+                            root.shortcuts-open = true;
+                        }
+                        clicked => {
+                            root.shortcuts-open = true;
+                        }
+                        keys-text := Text {
+                            text: @tr("Workspace" => "F1 shortcuts");
+                            font-size: Theme.font-xs;
+                            color: parent.has-hover ? Theme.text : Theme.text-faint;
+                            vertical-alignment: center;
+                        }
+                    }
                     if root.has-scene: Text {
                         text: @tr("Workspace" => "{} object(s)", root.object-list.length);
                         font-size: Theme.font-xs;
@@ -3747,6 +3794,13 @@ export component MainWindow inherits Window {
                 }
 
                 MenuItem {
+                    title: @tr("MenuBar" => "Keyboard Shortcuts");
+                    activated => {
+                        root.shortcuts-open = true;
+                    }
+                }
+
+                MenuItem {
                     title: @tr("MenuBar" => "Export Diagnostics…");
                     activated => {
                         root.export-diagnostics-requested();
@@ -3819,126 +3873,15 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Floating load-progress panel: bottom-centered, visible only
-    // while a file load is actually in flight. A plain Rectangle
-    // without a TouchArea, so pointer events pass through to the
-    // viewport underneath.
-    if root.load-in-progress: Rectangle {
-        width: Math.max(240px, Math.min(parent.width * 50%, 420px));
-        height: progress-panel-layout.preferred-height;
-        x: (parent.width - self.width) / 2;
-        y: parent.height - self.height - Theme.statusbar-height - 16px;
-        background: Theme.panel;
-        border-color: Theme.border;
-        border-width: 1px;
-        border-radius: 6px;
-
-        progress-panel-layout := VerticalLayout {
-            padding: 12px;
-            spacing: 8px;
-
-            Text {
-                text: root.load-phase == LoadPhase.ReadingFile
-                    ? @tr("Reading file…")
-                    : root.load-phase == LoadPhase.PreparingGeometry
-                    ? @tr("Preparing geometry…")
-                    : @tr("Uploading to GPU…");
-                color: Theme.text;
-            }
-
-            ProgressIndicator {
-                progress: root.load-progress;
-            }
-        }
-    }
-
-    // Floating support generator progress panel: same placement/style as the
-    // load panel. `support-gen-phase` is passed straight through from
-    // the Rust-side `JobProgress.phase` string rather than mapped
-    // through an enum, since it is purely informational here.
-    // The Supports tab shows the run in its inspector instead.
-    if root.support-gen-in-progress && root.workspace-section != WorkspaceSection.Supports: Rectangle {
-        width: Math.max(240px, Math.min(parent.width * 50%, 420px));
-        height: support-gen-progress-panel-layout.preferred-height;
-        x: (parent.width - self.width) / 2;
-        y: parent.height - self.height - Theme.statusbar-height - 16px;
-        background: Theme.panel;
-        border-color: Theme.border;
-        border-width: 1px;
-        border-radius: 6px;
-
-        support-gen-progress-panel-layout := VerticalLayout {
-            padding: 12px;
-            spacing: 8px;
-
-            Text {
-                text: root.support-gen-phase == ""
-                    ? @tr("Generating support structure…")
-                    : root.support-gen-phase;
-                color: Theme.text;
-            }
-
-            ProgressIndicator {
-                progress: root.support-gen-progress;
-            }
-
-            if root.support-gen-cancelable: Button {
-                text: @tr("Cancel");
-                clicked => {
-                    root.support-gen-cancel-requested();
-                }
-            }
-        }
-    }
-
-    // Floating save-progress panel: same placement as the load panel
-    // (they never run at once, since saving is disabled while loading
-    // and vice versa). A plain Rectangle without a TouchArea, so pointer
-    // events pass through to the viewport underneath.
-    if root.saving-in-progress: Rectangle {
-        width: Math.max(240px, Math.min(parent.width * 50%, 420px));
-        height: save-progress-panel-layout.preferred-height;
-        x: (parent.width - self.width) / 2;
-        y: parent.height - self.height - Theme.statusbar-height - 16px;
-        background: Theme.panel;
-        border-color: Theme.border;
-        border-width: 1px;
-        border-radius: 6px;
-
-        save-progress-panel-layout := VerticalLayout {
-            padding: 12px;
-            spacing: 8px;
-
-            Text {
-                text: root.save-phase == SavePhase.Flattening
-                    ? @tr("Preparing geometry…")
-                    : root.save-phase == SavePhase.Serializing
-                    ? @tr("Serializing model…")
-                    : root.save-phase == SavePhase.Compressing
-                    ? @tr("Compressing…")
-                    : @tr("Writing file…");
-                color: Theme.text;
-            }
-
-            ProgressIndicator {
-                progress: root.save-progress;
-            }
-        }
-    }
-
-    // Input-capturing slice modal: a full-window dim that swallows
-    // pointer and keyboard events so the scene can't be edited mid-slice,
-    // with a centered progress card and a Cancel button. Last child, so
-    // it renders on top of everything. Shown only while a slice runs.
+    // While a slice runs the scene can't be edited: an invisible layer over
+    // the window swallows pointer and keyboard events (Escape cancels). No
+    // veil (#562): the progress is the bar at the bottom.
     if root.slicing-in-progress && !root.slice-quiet: Rectangle {
         width: parent.width;
         height: parent.height;
-        background: #000000cc;
 
-        // Swallow pointer events targeted at the scene underneath.
         TouchArea { }
 
-        // Grab the keyboard: Escape cancels, other keys are swallowed.
         modal-focus := FocusScope {
             init => {
                 self.focus();
@@ -3950,54 +3893,61 @@ export component MainWindow inherits Window {
                 return accept;
             }
         }
+    }
 
-        Rectangle {
-            width: Math.min(parent.width * 60%, 360px);
-            height: slice-card.preferred-height;
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            background: Theme.panel;
-            border-color: Theme.border;
-            border-width: 1px;
-            border-radius: 8px;
-
-            slice-card := VerticalLayout {
-                padding: 20px;
-                spacing: 12px;
-
-                Text {
-                    text: @tr("SlicePanel" => "Slicing...");
-                    font-weight: 600;
-                    color: Theme.text;
-                    horizontal-alignment: center;
-                }
-                if root.slice-fix-pass != "": Text {
-                    text: root.slice-fix-pass;
-                    color: Theme.text.transparentize(0.3);
-                    horizontal-alignment: center;
-                }
-                Text {
-                    text: root.slice-reviewing
-                        ? @tr("SlicePanel" => "Checking layers: {} / {}", root.slice-completed, root.slice-total)
-                        : root.slice-total > 0
-                        ? @tr("SlicePanel" => "{} / {} layers", root.slice-completed, root.slice-total)
-                        : @tr("SlicePanel" => "Preparing...");
-                    color: Theme.text.transparentize(0.3);
-                    horizontal-alignment: center;
-                }
-                ProgressIndicator {
-                    progress: root.slice-progress;
-                }
-                HorizontalLayout {
-                    alignment: center;
-                    Button {
-                        text: @tr("SlicePanel" => "Cancel");
-                        clicked => {
-                            root.slice-cancel-requested();
-                        }
-                    }
-                }
+    // The one progress bar of the window (#562): a ruler at the bottom
+    // centre for slicing, generating supports (outside the Supports tab,
+    // which shows the run in its card), saving and opening. Only the
+    // gauge itself takes the pointer; the scene around it stays usable.
+    property <bool> gauge-slice: root.slicing-in-progress && !root.slice-quiet;
+    property <bool> gauge-supports: root.support-gen-in-progress && root.workspace-section != WorkspaceSection.Supports;
+    if root.gauge-slice || root.gauge-supports || root.saving-in-progress || root.load-in-progress: ProgressGauge {
+        width: Math.max(320px, Math.min(parent.width * 60%, 680px));
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - Theme.statusbar-height - 16px;
+        title: root.gauge-slice
+            ? (root.slice-fix-pass != "" ? root.slice-fix-pass : @tr("SlicePanel" => "Slicing..."))
+            : root.gauge-supports
+            ? @tr("Generating support structure…")
+            : root.saving-in-progress
+            ? (root.save-phase == SavePhase.Flattening
+                ? @tr("Preparing geometry…")
+                : root.save-phase == SavePhase.Serializing
+                ? @tr("Serializing model…")
+                : root.save-phase == SavePhase.Compressing
+                ? @tr("Compressing…")
+                : @tr("Writing file…"))
+            : (root.load-phase == LoadPhase.ReadingFile
+                ? @tr("Reading file…")
+                : root.load-phase == LoadPhase.PreparingGeometry
+                ? @tr("Preparing geometry…")
+                : @tr("Uploading to GPU…"));
+        detail: root.gauge-slice
+            ? (root.slice-reviewing
+                ? @tr("SlicePanel" => "Checking layers: {} / {}", root.slice-completed, root.slice-total)
+                : root.slice-total > 0
+                ? @tr("SlicePanel" => "{} / {} layers", root.slice-completed, root.slice-total)
+                : @tr("SlicePanel" => "Preparing..."))
+            : root.gauge-supports ? root.support-gen-phase : "";
+        progress: root.gauge-slice
+            ? root.slice-progress
+            : root.gauge-supports ? root.support-gen-progress
+            : root.saving-in-progress ? root.save-progress : root.load-progress;
+        cancelable: root.gauge-slice || (root.gauge-supports && root.support-gen-cancelable);
+        cancel => {
+            if (root.gauge-slice) {
+                root.slice-cancel-requested();
+            } else {
+                root.support-gen-cancel-requested();
             }
+        }
+    }
+
+    if root.shortcuts-open: ShortcutsCard {
+        width: parent.width;
+        height: parent.height;
+        close => {
+            root.shortcuts-open = false;
         }
     }
 

@@ -229,3 +229,35 @@ fn an_empty_program_writes_a_header_and_a_footer() {
 
     assert_eq!(fs::metadata(&out).unwrap().len() as usize, HEADER_SIZE + 11);
 }
+
+/// [`program`] with its third layer half as high again as the others.
+fn varied_program(layer_count: usize) -> PrintProgram {
+    let mut program = program(layer_count);
+    for layer in &mut program.layers[2..] {
+        layer.slab_top_mm = mm(layer.slab_top_mm.value() + 0.05);
+    }
+    program
+}
+
+#[test]
+fn a_format_that_keeps_one_layer_height_refuses_layers_that_vary_it() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("job.goo");
+    assert!(!program(4).varies_layer_height());
+    assert!(varied_program(4).varies_layer_height());
+    let err = write_printer_file(&stack(4), &out, GOO_V3_0, &varied_program(4), None).unwrap_err();
+    assert!(
+        matches!(&err, WriterError::PrinterFileUnencodable { reason } if reason.contains("one layer height")),
+        "{err}"
+    );
+    assert!(!out.exists());
+}
+
+#[test]
+fn ctb_v5_writes_layers_that_vary_their_height() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("job.ctb");
+    let format = PrinterFileFormat::Ctb(CtbVariant::PlainV5);
+    write_printer_file(&stack(4), &out, format, &varied_program(4), None).unwrap();
+    assert!(out.exists());
+}
