@@ -1099,3 +1099,24 @@ fn a_tilting_vat_spends_a_tilt_where_it_lifted() {
     assert!(tilting.print_time_sec.value() < lifting.print_time_sec.value());
     assert!(tilting.print_time_sec.value() > 0.0);
 }
+
+#[test]
+fn layer_times_add_up_to_the_reported_print_time() {
+    let calibrated = format!(
+        "{PRINTER_WITHOUT_TRANSITION_LAYERS_TOML}\n[time_calibration]\nprint_time_multiplier = 1.5\nprint_time_offset_sec = 30.0\n",
+    );
+    for program in [
+        timed_program(PRINTER_WITHOUT_TRANSITION_LAYERS_TOML),
+        timed_program(&calibrated),
+    ] {
+        let times = crate::layer_times_sec(&program);
+        assert_eq!(times.len(), program.layers.len());
+        let total: f64 = times.iter().sum();
+        assert!((total - program.print_time_sec.value()).abs() < 1e-9);
+        // The bottom layer's long light takes longer than the normal one.
+        assert!(times[0] > times[1]);
+    }
+    let speeds = crate::layer_lift_speeds_mm_min(&timed_program(PRINTER_WITHOUT_TRANSITION_LAYERS_TOML));
+    assert_eq!(speeds.len(), 2);
+    assert!(speeds.iter().all(|speed| speed.is_some_and(|v| v > 0.0)));
+}

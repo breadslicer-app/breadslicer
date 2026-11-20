@@ -11,4 +11,5 @@
 pub mod islands;
 pub mod output;
 pub mod raft;
+pub mod tip_load;
 pub mod traps;

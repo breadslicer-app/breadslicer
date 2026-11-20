@@ -241,6 +241,8 @@ struct WindowDrivers {
     _layer_pixels: Rc<crate::layer_pixels::LayerPixels>,
     /// The Slice tab's resin cost (#101).
     _resin_cost: Rc<crate::resin_cost::ResinCostPanel>,
+    /// The Slice tab's layer timeline (#94).
+    _layer_timeline: Rc<crate::layer_timeline::LayerTimeline>,
     _cut_run: Rc<CutRun>,
     /// Asks about the supports a file came with (#258).
     _presupported_import: Rc<crate::presupported_import::PresupportedImport>,
@@ -872,10 +874,13 @@ impl AppState {
             ctrl.document(),
             ctrl.clone(),
         );
+        let layer_timeline =
+            crate::layer_timeline::LayerTimeline::install(ui, ctrl.clone(), review_panel.clone());
         WindowDrivers {
             _send_to_printer: send_to_printer,
             _layer_pixels: layer_pixels,
             _resin_cost: resin_cost,
+            _layer_timeline: layer_timeline,
             _hollow_run: hollow_run,
             _split_bodies: split_bodies,
             _presupported_import: presupported_import,

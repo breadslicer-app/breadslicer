@@ -46,6 +46,7 @@ pub mod checks;
 pub mod fill;
 pub mod finding;
 pub mod input;
+pub mod loads;
 pub mod regions;
 pub mod runner;
 pub mod runs;
@@ -63,6 +64,7 @@ pub use finding::{
     CheckKind, Finding, MAX_FOOTPRINT_LAYERS, PlatePoint, RoleScope, Severity, SuggestedFix,
 };
 pub use input::{LayerSpan, ReviewInput, ReviewInputError, ReviewLeaf};
+pub use loads::{BodyPeak, CupLoad, LoadOptions, PlateLoads, TipLoad, plate_loads};
 pub use regions::{
     AIR_CONNECTIVITY, Connectivity, DEFAULT_MIN_LINK_MM2, LayerLinks, LayerPixels, LayerRegions,
     Overlap, PartStart, PixelBox, PlateRegions, Region, SOLID_CONNECTIVITY, SweepOptions,

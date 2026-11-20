@@ -9916,3 +9916,51 @@ msgstr "No se encontró ningún modelo alrededor de esta ventosa."
 msgctxt "Review"
 msgid "Drain drilled. Slice again to check the result."
 msgstr "Drenaje perforado. Laminá de nuevo para revisar el resultado."
+
+msgid "LAYERS"
+msgstr "CAPAS"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "Force"
+msgstr "Fuerza"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "Area"
+msgstr "Área"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "Perimeter"
+msgstr "Perímetro"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "Time"
+msgstr "Tiempo"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "Layers, along the print"
+msgstr "Capas, a lo largo de la impresión"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "The force is an estimate of the peel, not yet calibrated with prints: it compares layers, not whether a support holds."
+msgstr "La fuerza es una estimación del despegue, todavía sin calibrar con impresiones: sirve para comparar capas, no para saber si un soporte aguanta."
+
+#: src/layer_timeline.rs
+msgctxt "LayerTimeline"
+msgid "Layer {}"
+msgstr "Capa {}"
+
+#: src/layer_timeline.rs
+msgctxt "LayerTimeline"
+msgid "{} mm² of suction cup"
+msgstr "{} mm² de ventosa"
+
+#: src/layer_timeline.rs
+msgctxt "LayerTimeline"
+msgid "Hardest peel: layer {}"
+msgstr "Despegue más fuerte: capa {}"

@@ -24,7 +24,7 @@ use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile, UniformSchedule};
 use sc_sl1cer::{CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_scene_with_progress};
 use sc_sla_formats::RasterSetup;
-use sc_sla_formats::layer_images::lit_areas_mm2;
+use sc_sla_formats::layer_images::{LitMeasure, lit_measures};
 
 use crate::prepare::{UnsliceableSelection, slice_profile_for_selection};
 use crate::scale_compensation::{
@@ -253,6 +253,8 @@ pub struct PlateContours {
 struct LitAreas {
     raster: RasterSetup,
     areas_mm2: Arc<[f64]>,
+    /// Each layer's area with its perimeter, from the same pixels (#240).
+    measures: Arc<[LitMeasure]>,
 }
 
 impl PlateContours {
@@ -299,20 +301,36 @@ impl PlateContours {
     /// the same area, at a 30th of the time (Worm, 3536 layers on the M7 Pro:
     /// 329.944 ml in 0.9 s; with 4× anti-aliasing 329.942 ml in 26.6 s).
     pub fn lit_areas_mm2(&self, raster: &RasterSetup) -> Arc<[f64]> {
+        self.lit(raster, |known| Arc::clone(&known.areas_mm2))
+    }
+
+    /// Return the area and the perimeter each layer lights on `raster`'s
+    /// pixels (#240, #94), measured with [`Self::lit_areas_mm2`] and kept
+    /// with it: the peel of each layer grows with them.
+    pub fn lit_measures(&self, raster: &RasterSetup) -> Arc<[LitMeasure]> {
+        self.lit(raster, |known| Arc::clone(&known.measures))
+    }
+
+    /// What `read` takes of the layers' lit areas on `raster`, measured
+    /// the first time.
+    fn lit<T>(&self, raster: &RasterSetup, read: impl FnOnce(&LitAreas) -> T) -> T {
         let raster = raster
             .clone()
             .with_panel_rotation(PanelRotation::None)
             .with_aa(AaLevel::Off);
         let mut lit = self.lit.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(known) = lit.as_ref().filter(|known| known.raster == raster) {
-            return Arc::clone(&known.areas_mm2);
+            return read(known);
         }
-        let areas_mm2: Arc<[f64]> = lit_areas_mm2(&self.stack, &raster).into();
-        *lit = Some(LitAreas {
+        let measures: Arc<[LitMeasure]> = lit_measures(&self.stack, &raster).into();
+        let known = LitAreas {
             raster,
-            areas_mm2: Arc::clone(&areas_mm2),
-        });
-        areas_mm2
+            areas_mm2: measures.iter().map(|measure| measure.area_mm2).collect(),
+            measures,
+        };
+        let value = read(&known);
+        *lit = Some(known);
+        value
     }
 
     /// Return the resin the layers cure with `raster`'s settings, in cubic
@@ -349,6 +367,7 @@ impl PlateContours {
             .map(|known| LitAreas {
                 raster: known.raster.clone(),
                 areas_mm2: known.areas_mm2[..kept.min(known.areas_mm2.len())].into(),
+                measures: known.measures[..kept.min(known.measures.len())].into(),
             });
         Self {
             lit: Arc::new(Mutex::new(lit)),

@@ -914,6 +914,10 @@ const DIALOG_SLINT: &[(&str, &str)] = &[
     ("inspectors.slint", INSPECTORS),
     ("start-dialog.slint", START_DIALOG),
     ("layer-view.slint", LAYER_VIEW),
+    (
+        "layer-timeline.slint",
+        include_str!("../ui/workspace/layer-timeline.slint"),
+    ),
 ];
 
 /// Every Rust file with texts: the dialogs, the messages and the rest (#48).
@@ -966,6 +970,7 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
     ("import_notes.rs", include_str!("import_notes.rs")),
     ("language.rs", include_str!("language.rs")),
     ("layer_pixels.rs", include_str!("layer_pixels.rs")),
+    ("layer_timeline.rs", include_str!("layer_timeline.rs")),
     ("lib.rs", include_str!("lib.rs")),
     ("mesh_check.rs", include_str!("mesh_check.rs")),
     ("mesh_loader.rs", include_str!("mesh_loader.rs")),

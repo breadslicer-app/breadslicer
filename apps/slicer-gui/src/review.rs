@@ -76,6 +76,8 @@ pub(crate) enum ReviewOutcome {
         frame: PlateFrame,
         /// How long the review took, the sweep included.
         took: Duration,
+        /// What the models pull on the film with, layer by layer (#94).
+        loads: Arc<sc_review::PlateLoads>,
     },
     /// Cancel stopped it: the run is cancelled with it.
     Cancelled,
@@ -310,6 +312,7 @@ fn review_stacks(
                     erased: report.erased,
                     islands: report.islands,
                     took: report.timings.total,
+                    loads: Arc::new(report.loads),
                 },
             },
         )

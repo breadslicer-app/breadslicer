@@ -35,6 +35,8 @@ import "../assets/fonts/NotoSans-Variable.ttf";
 import { SetupLayer, Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout } from "setup-layer.slint";
 export { Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout }
 export { FrameState } from "kit/framed-window.slint";
+import { TimelineMark } from "workspace/layer-timeline.slint";
+export { TimelineMark }
 export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, PrinterDialog, ProfileViewDialog, RecentFileRow, StartOpen, Theme, ThemePreference }
 
 // Load-pipeline phase shown by the floating progress panel. Values
@@ -571,6 +573,18 @@ export component MainWindow inherits Window {
     in property <string> slice-estimate-volume;
     in property <string> slice-estimate-mass;
     in property <string> slice-estimate-note;
+    // The layer timeline of the Slice tab (#94), driven by Rust
+    // (`layer_timeline`).
+    in property <bool> slice-timeline-valid: false;
+    in property <string> slice-timeline-force;
+    in property <string> slice-timeline-area;
+    in property <string> slice-timeline-perimeter;
+    in property <string> slice-timeline-time;
+    in property <[TimelineMark]> slice-timeline-spikes: [];
+    in property <string> slice-timeline-peak;
+    in-out property <int> slice-timeline-generation: 0;
+    in-out property <int> slice-timeline-figure: 0;
+    pure callback slice-timeline-readout(int, int) -> string;
     // What the print costs in resin (#101), and the price of its resin.
     in property <string> slice-cost;
     in property <string> slice-cost-note;
@@ -2747,6 +2761,22 @@ export component MainWindow inherits Window {
                                 estimate-volume: root.slice-estimate-volume;
                                 estimate-mass: root.slice-estimate-mass;
                                 estimate-note: root.slice-estimate-note;
+                                timeline-valid: root.slice-timeline-valid;
+                                timeline-force: root.slice-timeline-force;
+                                timeline-area: root.slice-timeline-area;
+                                timeline-perimeter: root.slice-timeline-perimeter;
+                                timeline-time: root.slice-timeline-time;
+                                timeline-spikes: root.slice-timeline-spikes;
+                                timeline-peak: root.slice-timeline-peak;
+                                timeline-generation: root.slice-timeline-generation;
+                                timeline-figure <=> root.slice-timeline-figure;
+                                timeline-readout(layer, generation) => {
+                                    return root.slice-timeline-readout(layer, generation);
+                                }
+                                timeline-layer-picked(layer) => {
+                                    root.selected-layer-index = layer;
+                                    root.selected-layer-changed();
+                                }
                                 cost: root.slice-cost;
                                 cost-note: root.slice-cost-note;
                                 cost-rows: root.slice-cost-rows;

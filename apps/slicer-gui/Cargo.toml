@@ -33,6 +33,7 @@ sc-printer-link.workspace = true
 serde_json.workspace = true
 sc-print-profiles = { workspace = true }
 sc-project-formats = { workspace = true }
+sc-peel = { workspace = true }
 sc-review = { workspace = true }
 sc-scene = { workspace = true }
 sc-scene-edit = { workspace = true }

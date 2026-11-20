@@ -153,6 +153,75 @@ pub fn lit_areas_mm2(stack: &ContourStack, raster: &RasterSetup) -> Vec<f64> {
         .collect()
 }
 
+/// What one layer lights: its area, as [`lit_areas_mm2`] counts it, and the
+/// length of its edges, in millimetres (#240, #94).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LitMeasure {
+    /// The area lit, every pixel counted by its grey, mm².
+    pub area_mm2: f64,
+    /// The length of the edges of the pixels lit at all, mm, measured so a
+    /// diagonal edge is not the length of its stair steps
+    /// ([`sc_peel::PerimeterMeter`]).
+    pub perimeter_mm: f64,
+}
+
+/// The area and the perimeter each layer of `stack` lights with `raster`'s
+/// settings, from one rasterisation of each, on every core. A layer without
+/// contours lights nothing.
+pub fn lit_measures(stack: &ContourStack, raster: &RasterSetup) -> Vec<LitMeasure> {
+    let layers = stack.layers();
+    let frames = Frames::new(layers, raster, 1);
+    let plate = raster.build_volume();
+    let pixel_mm = [
+        plate.x().value() / f64::from(frames.width.max(1)),
+        plate.y().value() / f64::from(frames.height.max(1)),
+    ];
+    layers
+        .par_iter()
+        .map(|layer| {
+            if layer.polygons().is_empty() {
+                return LitMeasure::default();
+            }
+            let pixels = rasterize_layer(
+                layer,
+                &frames.pixel_map,
+                raster.aa(),
+                raster.min_alpha_pct(),
+            );
+            measure_pixels(&pixels, frames.width, pixel_mm)
+        })
+        .collect()
+}
+
+/// The area and perimeter of `pixels`, rows `width` pixels wide.
+fn measure_pixels(pixels: &LayerRaster, width: u32, pixel_mm: [f64; 2]) -> LitMeasure {
+    let width = u64::from(width.max(1));
+    let mut meter = sc_peel::PerimeterMeter::new(pixel_mm);
+    let mut grey = 0u64;
+    let mut at = 0u64;
+    for run in pixels.runs() {
+        let length = u64::from(run.length);
+        if run.value > 0 {
+            grey += u64::from(run.value) * length;
+            // A run may go on past the end of its row.
+            let (mut from, end) = (at, at + length);
+            while from < end {
+                let row = from / width;
+                let to = end.min((row + 1) * width);
+                let x0 = (from - row * width) as u32;
+                let x1 = (to - row * width) as u32;
+                meter.push_row(row as u32, [(x0, x1)]);
+                from = to;
+            }
+        }
+        at += length;
+    }
+    LitMeasure {
+        area_mm2: grey as f64 / f64::from(u8::MAX) * pixel_mm[0] * pixel_mm[1],
+        perimeter_mm: meter.finish(),
+    }
+}
+
 /// The projection a printer file's layer images are rasterised with:
 /// `raster`'s plate and pixels, rows from the plate's minimum Y (front)
 /// edge, and columns from its maximum X edge unless the printer mirrors X

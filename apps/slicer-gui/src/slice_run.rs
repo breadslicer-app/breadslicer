@@ -1415,6 +1415,7 @@ mod capture_tests {
             took: Duration::ZERO,
             frame: Default::default(),
             growths: Vec::new(),
+            loads: Default::default(),
         }
     }
 
