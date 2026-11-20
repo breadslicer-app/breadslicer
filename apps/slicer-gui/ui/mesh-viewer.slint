@@ -731,6 +731,22 @@ export component MeshViewer inherits Rectangle {
                         root.edit-key("ungroup", root.context-anchor-x, root.context-anchor-y);
                     }
                 }
+                // Mirror (#648): the selection turned over in place.
+                if (root.context-can-copy): Menu {
+                    title: @tr("MeshViewer" => "Mirror");
+                    MenuItem {
+                        title: @tr("MeshViewer" => "Left to right (X)");
+                        activated => {
+                            root.edit-key("mirror-x", root.context-anchor-x, root.context-anchor-y);
+                        }
+                    }
+                    MenuItem {
+                        title: @tr("MeshViewer" => "Front to back (Y)");
+                        activated => {
+                            root.edit-key("mirror-y", root.context-anchor-x, root.context-anchor-y);
+                        }
+                    }
+                }
                 // A copy next to it, with its hollow and supports (#613).
                 if (root.context-can-copy): MenuItem {
                     title: @tr("MeshViewer" => "Duplicate");

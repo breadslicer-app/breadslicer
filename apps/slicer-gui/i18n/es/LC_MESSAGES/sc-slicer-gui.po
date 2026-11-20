@@ -7843,6 +7843,11 @@ msgctxt "Inspector"
 msgid "Send the selection here"
 msgstr "Mandar la selección acá"
 
+#: src/viewport/controller.rs
+msgctxt "Inspector"
+msgid "Off the plates"
+msgstr "Fuera de las camas"
+
 #: src/ui
 msgctxt "Inspector"
 msgid "Remove this plate: its models go to the plate that takes its place"
@@ -9511,3 +9516,33 @@ msgstr "Refuerzos según el tronco"
 msgctxt "Inspector"
 msgid "A brace is 0.8 of the thinner trunk it joins, instead of the preset's diameter."
 msgstr "Un refuerzo mide 0,8 del tronco más fino que une, en vez del diámetro del preset."
+
+#: ui/mesh-viewer.slint
+msgctxt "MeshViewer"
+msgid "Mirror"
+msgstr "Espejar"
+
+#: ui/mesh-viewer.slint
+msgctxt "MeshViewer"
+msgid "Left to right (X)"
+msgstr "De izquierda a derecha (X)"
+
+#: ui/mesh-viewer.slint
+msgctxt "MeshViewer"
+msgid "Front to back (Y)"
+msgstr "De adelante hacia atrás (Y)"
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Mirrored left to right."
+msgstr "Espejado de izquierda a derecha."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Mirrored front to back."
+msgstr "Espejado de adelante hacia atrás."
+
+#: src/viewport/controller.rs
+msgctxt "Workspace"
+msgid "Pick a model to mirror it."
+msgstr "Elegí un modelo para espejarlo."

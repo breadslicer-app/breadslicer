@@ -94,9 +94,16 @@ pub(crate) fn past_on(
         let Some((min, max)) = reached else {
             continue;
         };
+        let owner = model_of(leaf).unwrap_or(leaf);
         let Some(plate) =
             crate::plate_layout::plate_holding(spatial, volume, plates, leaf, model_of)
         else {
+            // Past every plate: on none of several, so no plate's slice
+            // holds it; with one plate the whole scene is sliced, and it
+            // sticks out of it.
+            if (only.is_none() || plates.count() <= 1) && !past.contains(&owner) {
+                past.push(owner);
+            }
             continue;
         };
         if only.is_some_and(|only| only != plate) {
@@ -110,7 +117,6 @@ pub(crate) fn past_on(
         if reach == Reach::Everything {
             out |= max[2] > top + PAST_MM;
         }
-        let owner = model_of(leaf).unwrap_or(leaf);
         if out && !past.contains(&owner) {
             past.push(owner);
         }

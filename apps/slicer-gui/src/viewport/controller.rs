@@ -4444,8 +4444,34 @@ impl ViewportController {
             "duplicate-move" => self.duplicate_selection(Some(ScreenPoint::new(x, y))),
             "group" => self.group_selection(true),
             "ungroup" => self.group_selection(false),
+            "mirror-x" => self.mirror_selection(crate::mirror::MirrorAxis::X),
+            "mirror-y" => self.mirror_selection(crate::mirror::MirrorAxis::Y),
             _ => {}
         }
+    }
+
+    /// Mirror (#648): the selected models flipped along `axis`, together,
+    /// about the middle of the box they take; the status bar says so.
+    pub(crate) fn mirror_selection(&self, axis: crate::mirror::MirrorAxis) {
+        let document = self.session.document();
+        let models: Vec<sc_scene::NodeId> = document
+            .selection()
+            .leaves()
+            .iter()
+            .map(|l| l.node_id())
+            .collect();
+        let text = if crate::mirror::mirror(&document, &models, axis) {
+            match axis {
+                crate::mirror::MirrorAxis::X => ctr!("Workspace", "Mirrored left to right."),
+                crate::mirror::MirrorAxis::Y => ctr!("Workspace", "Mirrored front to back."),
+            }
+        } else {
+            ctr!("Workspace", "Pick a model to mirror it.")
+        };
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_status_notice(text);
+        }
+        self.mark_dirty();
     }
 
     /// Ctrl+G / Ctrl+Shift+G (#475): the selected models become a group, or
@@ -4729,18 +4755,14 @@ impl ViewportController {
             .with_scene(|spatial| {
                 let graph = spatial.graph();
                 let objects = build_object_list_names(graph);
-                let on_plate: Vec<u32> = graph
+                let on_plate: Vec<Option<u32>> = graph
                     .reachable_leaves(
                         sc_scene::CsgPolicy::Descend,
                         sc_scene::ReferencePolicy::Skip,
                     )
                     .unwrap_or_default()
                     .into_iter()
-                    .map(|leaf| {
-                        crate::plate_layout::plate_of_leaf(spatial, &volume, plates, leaf)
-                            .unwrap_or(0)
-                            .min(plates.count().saturating_sub(1))
-                    })
+                    .map(|leaf| crate::plate_layout::plate_of_leaf(spatial, &volume, plates, leaf))
                     .collect();
                 (objects, on_plate)
             })
@@ -7522,7 +7544,7 @@ pub(crate) fn scene_rows(
     plate_count: u32,
     active: u32,
     objects: &[String],
-    on_plate: &[u32],
+    on_plate: &[Option<u32>],
 ) -> (Vec<crate::SceneRow>, Vec<i32>) {
     let mut rows = Vec::with_capacity(plate_count as usize + objects.len());
     let mut row_of = vec![0; objects.len()];
@@ -7538,7 +7560,7 @@ pub(crate) fn scene_rows(
             active: plate == active,
         });
         for (i, name) in objects.iter().enumerate() {
-            if on_plate.get(i).copied().unwrap_or(0) == plate {
+            if on_plate.get(i).copied().flatten() == Some(plate) {
                 row_of[i] = rows.len() as i32;
                 rows.push(crate::SceneRow {
                     plate: false,
@@ -7549,5 +7571,63 @@ pub(crate) fn scene_rows(
             }
         }
     }
+    // What stands past every plate is on none of them (#649): under a heading of
+    // its own, which picks no plate (index -1), and only when there is any.
+    let off: Vec<usize> = (0..objects.len())
+        .filter(|&i| {
+            on_plate
+                .get(i)
+                .copied()
+                .flatten()
+                .is_none_or(|p| p >= plate_count.max(1))
+        })
+        .collect();
+    if !off.is_empty() {
+        rows.push(crate::SceneRow {
+            plate: true,
+            index: -1,
+            text: ctr!("Inspector", "Off the plates").into(),
+            active: false,
+        });
+        for i in off {
+            row_of[i] = rows.len() as i32;
+            rows.push(crate::SceneRow {
+                plate: false,
+                index: i as i32,
+                text: objects[i].as_str().into(),
+                active: false,
+            });
+        }
+    }
     (rows, row_of)
+}
+
+#[cfg(test)]
+mod scene_rows_tests {
+    use super::scene_rows;
+
+    /// An object past every plate is on none: it is listed under a heading
+    /// of its own after the plates, not under the first plate.
+    #[test]
+    fn an_object_past_every_plate_is_listed_off_the_plates() {
+        let names = ["Plate 1".to_owned(), "Plate 2".to_owned()];
+        let objects = ["a".to_owned(), "b".to_owned(), "c".to_owned()];
+        let (rows, row_of) = scene_rows(&names, 2, 0, &objects, &[Some(0), None, Some(1)]);
+        let seen: Vec<(bool, i32)> = rows.iter().map(|r| (r.plate, r.index)).collect();
+        assert_eq!(
+            seen,
+            vec![
+                (true, 0),
+                (false, 0),
+                (true, 1),
+                (false, 2),
+                (true, -1),
+                (false, 1)
+            ]
+        );
+        assert_eq!(row_of, vec![1, 5, 3]);
+        // With every object on a plate, no such heading.
+        let (rows, _) = scene_rows(&names, 2, 0, &objects, &[Some(0), Some(0), Some(1)]);
+        assert!(rows.iter().all(|r| r.index >= 0));
+    }
 }
