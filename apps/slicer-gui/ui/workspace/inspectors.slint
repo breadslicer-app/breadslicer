@@ -12,6 +12,7 @@ import { ScCheckBox as CheckBox, ScComboBox as ComboBox, ScLineEdit as LineEdit,
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
 import { HandToolButton, OwnPresets, PageTabs, PartHead, PresetCard, PresetCards, ScopeBox, ShapeCallout, ShapeField, ShapeSize, ShapeViewer, SizeChips, ZoneRow, ZoneRowView } from "support-shape.slint";
+import { LayerTimeline, TimelineMark } from "layer-timeline.slint";
 import { ButtonKind, Card, DisclosureChevron, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile, WarningNote } from "../kit/controls.slint";
 
 // One finding of the slice review (#90), as Rust lays it out.
@@ -41,6 +42,13 @@ export struct ReviewRow {
     leave: bool,
     // The lift button of fix 4 ("Lift 17 layers").
     lift-label: string,
+    // A small island no support reaches (#462): 0 nothing, 1 can be deleted
+    // from the print, 2 marked to delete, 3 deleted by this slice (its note).
+    delete: int,
+    // What deleting it takes: "12 layers · 0.70 mm²".
+    delete-size: string,
+    // A suction cup: its model can be turned with the Orient tool (#128).
+    turn: bool,
     // After Fix All (#156): why it left this finding, else empty.
     remains: string,
 }
@@ -143,6 +151,10 @@ component FindingRow inherits VerticalLayout {
     callback leave();
     // The second fix of fix 4: turn the raft off.
     callback fix-alt();
+    // Delete a small island from the print, or bring it back (#462).
+    callback delete-toggled();
+    // Turn the model of a suction cup with the Orient tool (#128).
+    callback turn();
 
     spacing: 4px;
 
@@ -265,6 +277,25 @@ component FindingRow inherits VerticalLayout {
                 }
             }
         }
+        if root.finding.turn: ScButton {
+            text: @tr("Review" => "Turn the model…");
+            clicked => {
+                root.turn();
+            }
+        }
+        if root.finding.delete > 0: HorizontalLayout {
+            alignment: start;
+
+            ScButton {
+                text: root.finding.delete == 2 ? @tr("Review" => "Keep it in the print")
+                    : root.finding.delete == 3 ? @tr("Review" => "Bring it back")
+                    : @tr("Review" => "Delete from the print ({})", root.finding.delete-size);
+                kind: root.finding.delete == 1 ? ButtonKind.normal : ButtonKind.ghost;
+                clicked => {
+                    root.delete-toggled();
+                }
+            }
+        }
         if root.finding.leave: HorizontalLayout {
             alignment: start;
 
@@ -280,6 +311,10 @@ component FindingRow inherits VerticalLayout {
     if root.selected && root.finding.fill == 2: FindingNote {
         text: @tr("Review" => "Marked: the next slice cures this cavity solid.");
         tint: Theme.success;
+    }
+    if root.selected && root.finding.delete == 2: FindingNote {
+        text: @tr("Review" => "Marked: the next slice takes this island off the layers, up to where it joins the model.");
+        tint: Theme.warning;
     }
 }
 
@@ -443,7 +478,8 @@ export component OrientCard inherits Card {
     // 0 preparing the model, 1 searching, 2 refining, 3 judging the best.
     in property <int> phase;
     in property <float> progress;
-    // 0 Balanced, 1 Fewer supports, 2 Lower force, 3 Faster.
+    // 0 Balanced, 1 Fewer supports, 2 Lower force, 3 Faster, 4 No suction
+    // cups (#128).
     in property <int> preset;
     in property <float> max-tilt;
     in property <bool> align;
@@ -613,6 +649,7 @@ export component OrientCard inherits Card {
                 @tr("Inspector" => "Fewer supports"),
                 @tr("Inspector" => "Lower force"),
                 @tr("Inspector" => "Faster"),
+                @tr("Inspector" => "No suction cups"),
             ];
             current-index: root.preset;
             enabled: !root.running;
@@ -837,8 +874,19 @@ export component CutCard inherits Card {
     in property <string> status;
     in property <string> warning;
     in property <bool> can-cut;
+    // The joints across the cut (#109, #442): 0 none, 1 pin, 2 magnet.
+    in property <int> joint-kind;
+    in property <bool> joint-square;
+    in property <float> joint-size;
+    in property <float> joint-depth;
+    in property <float> joint-clearance;
+    in property <int> joint-preset: -1;
+    // Strokes drawn over the model in place of the plane (#440, #441).
+    in property <bool> stroke-mode;
     // 0 height, 1 tilt about x, 2 tilt about y, 3 bounded (0/1), 4 width,
-    // 5 depth, 6 offset along the plane, 7 offset across it.
+    // 5 depth, 6 offset along the plane, 7 offset across it; the joints:
+    // 8 kind, 9 square (0/1), 10 size, 11 depth, 12 clearance, 13 magnet
+    // preset.
     callback option-changed(int, float);
     callback apply();
     callback close();
@@ -847,10 +895,25 @@ export component CutCard inherits Card {
     note: "K";
     highlighted: true;
 
-    Note {
+    LabeledRow {
+        label: @tr("Inspector" => "Cut by");
+        Segmented {
+            width: 190px;
+            options: [@tr("Inspector" => "Plane"), @tr("Inspector" => "Stroke")];
+            current: root.stroke-mode ? 1 : 0;
+            enabled: root.enabled;
+            picked(i) => {
+                root.option-changed(14, i);
+            }
+        }
+    }
+    if root.stroke-mode: Note {
+        text: @tr("Inspector" => "Drag over the model in the view: a stroke from one side to the other cuts it along the stroke, through the model as seen; a loop round a part cuts that part off. Then press Cut.");
+    }
+    if !root.stroke-mode: Note {
         text: @tr("Inspector" => "Cuts the selected model with a plane and closes the pieces. In the scene, the arrow moves the plane, the rings tilt it, the corners shape it and a drag on it moves it along. Click a part of the cut to take it or leave it.");
     }
-    NumberField {
+    if !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Height");
         unit: "mm";
         decimals: 2;
@@ -860,7 +923,7 @@ export component CutCard inherits Card {
             root.option-changed(0, v);
         }
     }
-    Slider {
+    if !root.stroke-mode: Slider {
         minimum: root.height-min;
         maximum: root.height-max;
         value: root.plane-height;
@@ -869,7 +932,7 @@ export component CutCard inherits Card {
             root.option-changed(0, v);
         }
     }
-    NumberField {
+    if !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Tilt front to back");
         unit: "°";
         decimals: 1;
@@ -879,7 +942,7 @@ export component CutCard inherits Card {
             root.option-changed(1, v);
         }
     }
-    NumberField {
+    if !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Tilt side to side");
         unit: "°";
         decimals: 1;
@@ -889,7 +952,7 @@ export component CutCard inherits Card {
             root.option-changed(2, v);
         }
     }
-    CheckBox {
+    if !root.stroke-mode: CheckBox {
         text: @tr("Inspector" => "Limit the plane");
         checked: root.bounded;
         enabled: root.enabled;
@@ -899,7 +962,7 @@ export component CutCard inherits Card {
     }
     // Each one under its own `if`: a wrapped Note inside a nested layout
     // under an `if` is measured as one line, and the card came out short.
-    if root.bounded: NumberField {
+    if root.bounded && !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Width");
         unit: "mm";
         decimals: 1;
@@ -909,7 +972,7 @@ export component CutCard inherits Card {
             root.option-changed(4, v);
         }
     }
-    if root.bounded: NumberField {
+    if root.bounded && !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Depth");
         unit: "mm";
         decimals: 1;
@@ -919,7 +982,7 @@ export component CutCard inherits Card {
             root.option-changed(5, v);
         }
     }
-    if root.bounded: NumberField {
+    if root.bounded && !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Move along X");
         unit: "mm";
         decimals: 1;
@@ -929,7 +992,7 @@ export component CutCard inherits Card {
             root.option-changed(6, v);
         }
     }
-    if root.bounded: NumberField {
+    if root.bounded && !root.stroke-mode: NumberField {
         label: @tr("Inspector" => "Move along Y");
         unit: "mm";
         decimals: 1;
@@ -937,6 +1000,73 @@ export component CutCard inherits Card {
         enabled: root.enabled;
         committed(v) => {
             root.option-changed(7, v);
+        }
+    }
+    // Joints across the cut (#109, #442), in the middle of each part cut.
+    if !root.stroke-mode: LabeledRow {
+        label: @tr("Inspector" => "Joints");
+        Segmented {
+            width: 190px;
+            options: [@tr("Inspector" => "None"), @tr("Inspector" => "Pins"), @tr("Inspector" => "Magnets")];
+            current: root.joint-kind;
+            enabled: root.enabled;
+            picked(i) => {
+                root.option-changed(8, i);
+            }
+        }
+    }
+    if root.joint-kind == 1 && !root.stroke-mode: LabeledRow {
+        label: @tr("Inspector" => "Pin shape");
+        Segmented {
+            width: 190px;
+            options: [@tr("Inspector" => "Round"), @tr("Inspector" => "Square")];
+            current: root.joint-square ? 1 : 0;
+            enabled: root.enabled;
+            picked(i) => {
+                root.option-changed(9, i);
+            }
+        }
+    }
+    if root.joint-kind == 2 && !root.stroke-mode: LabeledRow {
+        label: @tr("Inspector" => "Magnet");
+        Segmented {
+            width: 190px;
+            options: ["2 × 1", "3 × 2", "5 × 2"];
+            current: root.joint-preset;
+            enabled: root.enabled;
+            picked(i) => {
+                root.option-changed(13, i);
+            }
+        }
+    }
+    if root.joint-kind != 0 && !root.stroke-mode: NumberField {
+        label: root.joint-kind == 1 ? @tr("Inspector" => "Pin size") : @tr("Inspector" => "Magnet diameter");
+        unit: "mm";
+        decimals: 2;
+        value: root.joint-size;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(10, v);
+        }
+    }
+    if root.joint-kind != 0 && !root.stroke-mode: NumberField {
+        label: root.joint-kind == 1 ? @tr("Inspector" => "Pin depth") : @tr("Inspector" => "Magnet height");
+        unit: "mm";
+        decimals: 2;
+        value: root.joint-depth;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(11, v);
+        }
+    }
+    if root.joint-kind != 0 && !root.stroke-mode: NumberField {
+        label: @tr("Inspector" => "Clearance");
+        unit: "mm";
+        decimals: 2;
+        value: root.joint-clearance;
+        enabled: root.enabled;
+        committed(v) => {
+            root.option-changed(12, v);
         }
     }
     if root.status != "": Note {
@@ -956,6 +1086,14 @@ export component CutCard inherits Card {
             enabled: root.enabled && root.can-cut;
             clicked => {
                 root.apply();
+            }
+        }
+        if !root.stroke-mode: ScButton {
+            text: @tr("Inspector" => "Suggest");
+            kind: ButtonKind.ghost;
+            enabled: root.enabled;
+            clicked => {
+                root.option-changed(15, 0);
             }
         }
         ScButton {
@@ -1168,6 +1306,12 @@ export component TransformInspector inherits VerticalLayout {
     in property <float> rot-y;
     in property <float> rot-z;
     in property <float> scale;
+    // Scale along each of the object's own axes, percent, and whether the
+    // Size card scales all three together (#14; on by default).
+    in property <float> scale-x;
+    in property <float> scale-y;
+    in property <float> scale-z;
+    in-out property <bool> size-uniform: true;
     callback object-picked(int);
     // Shift+click or Ctrl+click on a row.
     callback object-toggled(int);
@@ -1214,6 +1358,9 @@ export component TransformInspector inherits VerticalLayout {
     callback arrange-option-changed(int, float);
     // The Auto-orient button of the ROTATE card opens the Orient tool (#182).
     callback orient-requested();
+    // Lay on face (#15): armed, and the button that arms or disarms it.
+    in property <bool> lay-face-on;
+    callback lay-face-requested(bool);
 
     spacing: 12px;
 
@@ -1463,12 +1610,25 @@ export component TransformInspector inherits VerticalLayout {
                 root.numeric-edit(5, v);
             }
         }
-        ScButton {
-            text: @tr("Inspector" => "Auto-orient");
-            icon: Icons.orient;
-            kind: ButtonKind.ghost;
-            clicked => {
-                root.orient-requested();
+        HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Auto-orient");
+                icon: Icons.orient;
+                kind: ButtonKind.ghost;
+                horizontal-stretch: 1;
+                clicked => {
+                    root.orient-requested();
+                }
+            }
+            ScButton {
+                text: root.lay-face-on ? @tr("Inspector" => "Pick a face…") : @tr("Inspector" => "Lay on face");
+                kind: root.lay-face-on ? ButtonKind.primary : ButtonKind.ghost;
+                horizontal-stretch: 1;
+                clicked => {
+                    root.lay-face-requested(!root.lay-face-on);
+                }
             }
         }
     }
@@ -1505,10 +1665,10 @@ export component TransformInspector inherits VerticalLayout {
             world: root.size-x;
             model: root.model-x;
             world-committed(v) => {
-                root.numeric-edit(7, v);
+                root.numeric-edit(root.size-uniform ? 7 : 15, v);
             }
             model-committed(v) => {
-                root.numeric-edit(12, v);
+                root.numeric-edit(root.size-uniform ? 12 : 18, v);
             }
         }
         SizeRow {
@@ -1518,10 +1678,10 @@ export component TransformInspector inherits VerticalLayout {
             world: root.size-y;
             model: root.model-y;
             world-committed(v) => {
-                root.numeric-edit(8, v);
+                root.numeric-edit(root.size-uniform ? 8 : 16, v);
             }
             model-committed(v) => {
-                root.numeric-edit(13, v);
+                root.numeric-edit(root.size-uniform ? 13 : 19, v);
             }
         }
         SizeRow {
@@ -1531,15 +1691,15 @@ export component TransformInspector inherits VerticalLayout {
             world: root.size-z;
             model: root.model-z;
             world-committed(v) => {
-                root.numeric-edit(9, v);
+                root.numeric-edit(root.size-uniform ? 9 : 17, v);
             }
             model-committed(v) => {
-                root.numeric-edit(14, v);
+                root.numeric-edit(root.size-uniform ? 14 : 20, v);
             }
         }
         // With two columns, Scale spans from the middle of World to the
         // middle of Model, centred under both (BS-393).
-        HorizontalLayout {
+        if root.size-uniform: HorizontalLayout {
             spacing: 0px;
 
             NumberField {
@@ -1557,8 +1717,40 @@ export component TransformInspector inherits VerticalLayout {
                 width: 88px / 2;
             }
         }
+        // Scale per axis (#14): the uniform lock off, each axis on its own.
+        if !root.size-uniform: NumberField {
+            label: @tr("Inspector" => "Scale X");
+            unit: "%";
+            decimals: 1;
+            value: root.scale-x;
+            committed(v) => {
+                root.numeric-edit(21, v);
+            }
+        }
+        if !root.size-uniform: NumberField {
+            label: @tr("Inspector" => "Scale Y");
+            unit: "%";
+            decimals: 1;
+            value: root.scale-y;
+            committed(v) => {
+                root.numeric-edit(22, v);
+            }
+        }
+        if !root.size-uniform: NumberField {
+            label: @tr("Inspector" => "Scale Z");
+            unit: "%";
+            decimals: 1;
+            value: root.scale-z;
+            committed(v) => {
+                root.numeric-edit(23, v);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Uniform scale");
+            checked <=> root.size-uniform;
+        }
         Note {
-            text: @tr("Inspector" => "Sizes scale uniformly, keeping proportions.");
+            text: root.size-uniform ? @tr("Inspector" => "Sizes scale uniformly, keeping proportions.") : @tr("Inspector" => "Each size and scale changes its own axis alone.");
         }
         if root.tilted: Note {
             text: @tr("Inspector" => "Tilted: World is the box it takes on the plate; Model is its size along its own axes.");
@@ -2113,6 +2305,8 @@ export component SupportsInspector inherits VerticalLayout {
     in property <int> imported-bodies;
     callback remove-imported();
     callback replace-imported();
+    // Made editable at the same contacts (#261).
+    callback editable-imported();
     // The islands an analysis found (#525): how many no tip covers yet, -1
     // with no analysis of the models as they stand; whether a slice or Fix
     // All is busy; and the ways to find them and to support them all.
@@ -2156,6 +2350,24 @@ export component SupportsInspector inherits VerticalLayout {
     // bracing start.
     in property <[float]> shape-values;
     callback shape-value(int, float);
+    // The whole preset's choices (#363): bottom, middle and top pattern
+    // (simple, double, zigzag), the rings' diagonal (none, simple, double),
+    // the bracing preset it is (-1 none), ignore small islands (0 or 1).
+    // The line tool's spacing between supports, mm (#178).
+    in property <float> line-spacing: 2;
+    callback line-spacing-edited(float);
+    // The Area tool (#177): its brush, and filling or clearing the paint.
+    in property <float> area-brush: 3;
+    callback area-brush-edited(float);
+    callback area-fill();
+    callback area-clear();
+    // The supports picked routed again (#377), and how many there are.
+    callback picked-reroute(bool);
+    in property <int> picked-count;
+    in property <[int]> shape-choices;
+    in property <[int]> shape-choice-defaults;
+    in property <[string]> bracing-presets;
+    callback shape-choice(int, int);
     in property <[ZoneRow]> zone-rows;
     in property <[string]> zone-size-names;
     in property <float> zone-angle;
@@ -2201,6 +2413,13 @@ export component SupportsInspector inherits VerticalLayout {
             enabled: !root.running;
             clicked => {
                 root.replace-imported();
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Make editable at the same contacts");
+            enabled: !root.running;
+            clicked => {
+                root.editable-imported();
             }
         }
         ScButton {
@@ -2268,6 +2487,16 @@ export component SupportsInspector inherits VerticalLayout {
             spacing: 6px;
 
             HandToolButton {
+                icon: Icons.select;
+                label: @tr("Inspector" => "Select");
+                shortcut: "E";
+                active: root.tool == 5;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 5 ? 0 : 5);
+                }
+            }
+            HandToolButton {
                 icon: Icons.add-support;
                 label: @tr("Inspector" => "Add");
                 shortcut: "A";
@@ -2275,6 +2504,26 @@ export component SupportsInspector inherits VerticalLayout {
                 enabled: root.has-scene && !root.running;
                 clicked => {
                     root.tool-picked(root.tool == 1 ? 0 : 1);
+                }
+            }
+            HandToolButton {
+                icon: Icons.support-line;
+                label: @tr("Inspector" => "Line");
+                shortcut: "N";
+                active: root.tool == 6;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 6 ? 0 : 6);
+                }
+            }
+            HandToolButton {
+                icon: Icons.support-area;
+                label: @tr("Inspector" => "Area");
+                shortcut: "P";
+                active: root.tool == 7;
+                enabled: root.has-scene && !root.running;
+                clicked => {
+                    root.tool-picked(root.tool == 7 ? 0 : 7);
                 }
             }
             HandToolButton {
@@ -2317,8 +2566,81 @@ export component SupportsInspector inherits VerticalLayout {
         if root.tool == 3: Note {
             text: @tr("Inspector" => "Drag a support by its tip over the model; it is routed again where you let go.");
         }
+        if root.tool == 5 && root.picked-count > 0: HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Own trunk");
+                enabled: !root.running;
+                clicked => {
+                    root.picked-reroute(true);
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Hang from nearest");
+                enabled: !root.running;
+                clicked => {
+                    root.picked-reroute(false);
+                }
+            }
+        }
+        if root.tool == 5: Note {
+            text: @tr("Inspector" => "Click a support to pick it, Shift+click to pick more. The numbers below then draw the picked supports again; a size chip gives them that size. Esc lets go.");
+        }
         if root.tool == 4: Note {
             text: @tr("Inspector" => "Click a support where the brace starts, then the support it goes to.");
+        }
+        if root.tool == 6: Note {
+            text: @tr("Inspector" => "Click the model where the row starts, then where it ends: a support at every dot, along the surface. Keys 1–4 pick the size. Esc drops the first point.");
+        }
+        if root.tool == 7: Note {
+            text: @tr("Inspector" => "Paint the faces where supports go; Shift+click takes the connected faces of the same plane, Alt erases. Then place a support on every node of a grid over the paint.");
+        }
+        if root.tool == 7: NumberField {
+            label: @tr("Inspector" => "Brush");
+            unit: "mm";
+            decimals: 1;
+            value: root.area-brush;
+            committed(v) => {
+                root.area-brush-edited(v);
+            }
+        }
+        if root.tool == 7: NumberField {
+            label: @tr("Inspector" => "Supports apart");
+            unit: "mm";
+            decimals: 1;
+            value: root.line-spacing;
+            committed(v) => {
+                root.line-spacing-edited(v);
+            }
+        }
+        if root.tool == 7: HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Place supports on the paint");
+                kind: ButtonKind.primary;
+                enabled: !root.running;
+                clicked => {
+                    root.area-fill();
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Clear paint");
+                kind: ButtonKind.ghost;
+                clicked => {
+                    root.area-clear();
+                }
+            }
+        }
+        if root.tool == 6: NumberField {
+            label: @tr("Inspector" => "Supports apart");
+            unit: "mm";
+            decimals: 1;
+            value: root.line-spacing;
+            committed(v) => {
+                root.line-spacing-edited(v);
+            }
         }
         if root.tool == 2: LabeledRow {
             label: @tr("Inspector" => "Drag");
@@ -2578,6 +2900,144 @@ export component SupportsInspector inherits VerticalLayout {
             enabled: root.bracing;
             edited(v) => { root.shape-value(10, v); }
         }
+        if root.page == 0 && root.braces-open: LabeledRow {
+            label: @tr("Inspector" => "Start from");
+
+            bracing-start-combo := ComboBox {
+                model: root.bracing-presets;
+                // Follows the preset after a pick broke the binding.
+                property <int> wanted: root.shape-choices.length > 4 ? root.shape-choices[4] : 0;
+                changed wanted => {
+                    self.current-index = self.wanted;
+                }
+                current-index: self.wanted;
+                enabled: root.bracing;
+                selected => {
+                    root.shape-choice(4, bracing-start-combo.current-index);
+                }
+            }
+        }
+        if root.page == 0 && root.braces-open: ShapeField {
+            label: @tr("Inspector" => "Gap between links");
+            unit: "mm";
+            value: root.shape-values.length > 11 ? root.shape-values[11] : 0;
+            default-value: root.shape-defaults.length > 11 ? root.shape-defaults[11] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(11, v); }
+        }
+        if root.page == 0 && root.braces-open: LabeledRow {
+            label: @tr("Inspector" => "Bottom pattern");
+
+            bottom-pattern-combo := ComboBox {
+                model: [@tr("Inspector" => "Simple"), @tr("Inspector" => "Double"), @tr("Inspector" => "Zigzag")];
+                // Follows the preset after a pick broke the binding.
+                property <int> wanted: root.shape-choices.length > 0 ? root.shape-choices[0] : 0;
+                changed wanted => {
+                    self.current-index = self.wanted;
+                }
+                current-index: self.wanted;
+                enabled: root.bracing;
+                selected => {
+                    root.shape-choice(0, bottom-pattern-combo.current-index);
+                }
+            }
+        }
+        if root.page == 0 && root.braces-open: ShapeField {
+            label: @tr("Inspector" => "Bottom links");
+            unit: "";
+            value: root.shape-values.length > 12 ? root.shape-values[12] : 0;
+            default-value: root.shape-defaults.length > 12 ? root.shape-defaults[12] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(12, v); }
+        }
+        if root.page == 0 && root.braces-open: LabeledRow {
+            label: @tr("Inspector" => "Middle pattern");
+
+            middle-pattern-combo := ComboBox {
+                model: [@tr("Inspector" => "Simple"), @tr("Inspector" => "Double"), @tr("Inspector" => "Zigzag")];
+                // Follows the preset after a pick broke the binding.
+                property <int> wanted: root.shape-choices.length > 1 ? root.shape-choices[1] : 0;
+                changed wanted => {
+                    self.current-index = self.wanted;
+                }
+                current-index: self.wanted;
+                enabled: root.bracing;
+                selected => {
+                    root.shape-choice(1, middle-pattern-combo.current-index);
+                }
+            }
+        }
+        if root.page == 0 && root.braces-open: LabeledRow {
+            label: @tr("Inspector" => "Top pattern");
+
+            top-pattern-combo := ComboBox {
+                model: [@tr("Inspector" => "Simple"), @tr("Inspector" => "Double"), @tr("Inspector" => "Zigzag")];
+                // Follows the preset after a pick broke the binding.
+                property <int> wanted: root.shape-choices.length > 2 ? root.shape-choices[2] : 0;
+                changed wanted => {
+                    self.current-index = self.wanted;
+                }
+                current-index: self.wanted;
+                enabled: root.bracing;
+                selected => {
+                    root.shape-choice(2, top-pattern-combo.current-index);
+                }
+            }
+        }
+        if root.page == 0 && root.braces-open: ShapeField {
+            label: @tr("Inspector" => "Top links");
+            unit: "";
+            value: root.shape-values.length > 13 ? root.shape-values[13] : 0;
+            default-value: root.shape-defaults.length > 13 ? root.shape-defaults[13] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(13, v); }
+        }
+        if root.page == 0 && root.braces-open: ShapeField {
+            label: @tr("Inspector" => "First ring at");
+            unit: "mm";
+            value: root.shape-values.length > 14 ? root.shape-values[14] : 0;
+            default-value: root.shape-defaults.length > 14 ? root.shape-defaults[14] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(14, v); }
+        }
+        if root.page == 0 && root.braces-open: ShapeField {
+            label: @tr("Inspector" => "Second ring at");
+            unit: "mm";
+            value: root.shape-values.length > 15 ? root.shape-values[15] : 0;
+            default-value: root.shape-defaults.length > 15 ? root.shape-defaults[15] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.bracing;
+            edited(v) => { root.shape-value(15, v); }
+        }
+        if root.page == 0 && root.braces-open: LabeledRow {
+            label: @tr("Inspector" => "Ring diagonal");
+
+            ring-diagonal-combo := ComboBox {
+                model: [@tr("Inspector" => "None"), @tr("Inspector" => "Simple"), @tr("Inspector" => "Double")];
+                // Follows the preset after a pick broke the binding.
+                property <int> wanted: root.shape-choices.length > 3 ? root.shape-choices[3] : 0;
+                changed wanted => {
+                    self.current-index = self.wanted;
+                }
+                current-index: self.wanted;
+                enabled: root.bracing;
+                selected => {
+                    root.shape-choice(3, ring-diagonal-combo.current-index);
+                }
+            }
+        }
+        if root.page == 0 && root.braces-open: Note {
+            text: @tr("Inspector" => "Links from the bottom and the top take their pattern, the rest the middle one. A ring is a cross between every pair at that height; 0 leaves it out.");
+        }
     }
 
     if root.page == 1 && root.hand-changed: HorizontalLayout {
@@ -2623,6 +3083,56 @@ export component SupportsInspector inherits VerticalLayout {
         }
         Note {
             text: @tr("Inspector" => "Each zone places the size picked, this many mm apart.");
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Ignore small islands");
+            checked: root.shape-choices.length > 5 && root.shape-choices[5] != 0;
+            toggled => {
+                root.shape-choice(5, self.checked ? 1 : 0);
+            }
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Smaller than");
+            unit: "mm³";
+            value: root.shape-values.length > 16 ? root.shape-values[16] : 0;
+            default-value: root.shape-defaults.length > 16 ? root.shape-defaults[16] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.shape-choices.length > 5 && root.shape-choices[5] != 0;
+            edited(v) => { root.shape-value(16, v); }
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Shorter than");
+            unit: "mm";
+            value: root.shape-values.length > 17 ? root.shape-values[17] : 0;
+            default-value: root.shape-defaults.length > 17 ? root.shape-defaults[17] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: root.shape-choices.length > 5 && root.shape-choices[5] != 0;
+            edited(v) => { root.shape-value(17, v); }
+        }
+        Note {
+            text: @tr("Inspector" => "An island that joins the rest before gathering this much resin, within this height, gets no support of its own.");
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Look for the plate up to");
+            unit: "mm";
+            value: root.shape-values.length > 18 ? root.shape-values[18] : 0;
+            default-value: root.shape-defaults.length > 18 ? root.shape-defaults[18] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: true;
+            edited(v) => { root.shape-value(18, v); }
+        }
+        ShapeField {
+            label: @tr("Inspector" => "Model stands above the plate");
+            unit: "mm";
+            value: root.shape-values.length > 19 ? root.shape-values[19] : 0;
+            default-value: root.shape-defaults.length > 19 ? root.shape-defaults[19] : -1;
+            part: 0;
+            hot: root.shape-hot;
+            enabled: true;
+            edited(v) => { root.shape-value(19, v); }
         }
         CheckBox {
             text: @tr("Inspector" => "Pillars on a grid");
@@ -3074,6 +3584,9 @@ export component SliceInspector inherits VerticalLayout {
     // and what it did.
     callback slice-every-plate();
     in property <string> every-plate-note;
+    // How many hidden models the slice leaves out (#16), said; empty with
+    // none.
+    in property <string> hidden-note;
     // The printer file, written from here once the slice is up to date
     // (#578): its format, why it may not be written, and the action that
     // takes the place of Slice.
@@ -3158,6 +3671,19 @@ export component SliceInspector inherits VerticalLayout {
     in property <string> estimate-volume;
     in property <string> estimate-mass;
     in property <string> estimate-note;
+    // The layer timeline (#94): see `LayerTimeline`.
+    in property <bool> timeline-valid;
+    in property <string> timeline-force;
+    in property <string> timeline-area;
+    in property <string> timeline-perimeter;
+    in property <string> timeline-time;
+    in property <[TimelineMark]> timeline-spikes;
+    in property <string> timeline-peak;
+    in property <int> timeline-generation;
+    in-out property <int> timeline-figure;
+    in-out property <bool> timeline-open: true;
+    pure callback timeline-readout(int, int) -> string;
+    callback timeline-layer-picked(int);
     // What the print costs in resin (#101): the cost, why there is none,
     // each model's share with several, and the price of the slice's resin
     // as typed (0 price, 1 currency, 2 bottle content, 3 losses %, 4 grams
@@ -3301,6 +3827,9 @@ export component SliceInspector inherits VerticalLayout {
             clicked => {
                 root.export-every-plate();
             }
+        }
+        if root.hidden-note != "": WarningNote {
+            text: root.hidden-note;
         }
         if root.up-to-date: Note {
             text: @tr("SlicePanel" => "Slice is up to date.");
@@ -3680,6 +4209,33 @@ export component SliceInspector inherits VerticalLayout {
         }
     }
 
+    // LAYERS (#94): each layer's force, area, perimeter and time.
+    if root.layer-count > 0 && root.timeline-valid: Card {
+        title: @tr("Inspector" => "LAYERS");
+        vertical-stretch: 0;
+        collapsible: true;
+        expanded <=> root.timeline-open;
+
+        if root.timeline-open: LayerTimeline {
+            layer-count: root.layer-count;
+            selected-layer: root.selected-layer;
+            force-path: root.timeline-force;
+            area-path: root.timeline-area;
+            perimeter-path: root.timeline-perimeter;
+            time-path: root.timeline-time;
+            spikes: root.timeline-spikes;
+            peak: root.timeline-peak;
+            generation: root.timeline-generation;
+            figure <=> root.timeline-figure;
+            readout(layer, generation) => {
+                return root.timeline-readout(layer, generation);
+            }
+            layer-picked(layer) => {
+                root.timeline-layer-picked(layer);
+            }
+        }
+    }
+
     // COST (#101): the resin the print takes, at the user's price.
     if root.layer-count > 0 && root.estimate-valid: Card {
         title: @tr("Inspector" => "COST");
@@ -3828,6 +4384,8 @@ export component ReviewCard inherits Rectangle {
     callback review-fix-requested(int);
     callback review-fill-toggled(int);
     callback review-leave-requested(int);
+    callback review-delete-toggled(int);
+    callback review-turn-requested(int);
     callback review-fill-small-requested();
     callback review-fills-cleared();
     callback review-notes-toggled();
@@ -3964,6 +4522,12 @@ export component ReviewCard inherits Rectangle {
                             }
                             leave => {
                                 root.review-leave-requested(row.id);
+                            }
+                            delete-toggled => {
+                                root.review-delete-toggled(row.id);
+                            }
+                            turn => {
+                                root.review-turn-requested(row.id);
                             }
                             fix-alt => {
                                 root.review-raft-off-requested(row.id);

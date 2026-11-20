@@ -1,0 +1,146 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// The Slice tab's layer timeline (#94): one figure of every layer (the
+// estimated peel force, the area, the perimeter or the time) as a small
+// chart along the layers, the layer on show marked, the force's spikes
+// marked above it. A click or a drag on the chart goes to that layer, as
+// a click on a spike does. Rust (`layer_timeline`) gives the paths, in a
+// 1000 x 100 box, and the line under the chart.
+
+import { Theme } from "../kit/theme.slint";
+import { Note, Segmented } from "../kit/controls.slint";
+
+// A layer the chart marks, and where it lies along the chart (0 to 1).
+export struct TimelineMark {
+    at: float,
+    layer: int,
+}
+
+export component LayerTimeline inherits VerticalLayout {
+    in property <int> layer-count;
+    in property <float> selected-layer;
+    in property <string> force-path;
+    in property <string> area-path;
+    in property <string> perimeter-path;
+    in property <string> time-path;
+    in property <[TimelineMark]> spikes;
+    in property <string> peak;
+    // Moves with each new timeline, so the readout reads it again.
+    in property <int> generation;
+    // 0 force, 1 area, 2 perimeter, 3 time.
+    in-out property <int> figure: 0;
+    pure callback readout(int, int) -> string;
+    callback layer-picked(int);
+
+    spacing: 6px;
+
+    // The layer at `x` along the chart.
+    function layer-at(x: length) -> int {
+        return Math.round(clamp(x / max(1px, chart.width), 0, 1) * max(0, root.layer-count - 1));
+    }
+
+    Segmented {
+        options: [
+            @tr("LayerTimeline" => "Force"),
+            @tr("LayerTimeline" => "Area"),
+            @tr("LayerTimeline" => "Perimeter"),
+            @tr("LayerTimeline" => "Time"),
+        ];
+        current: root.figure;
+        picked(i) => {
+            root.figure = i;
+        }
+    }
+
+    chart := Rectangle {
+        height: 84px;
+        background: Theme.well;
+        border-width: 1px;
+        border-color: Theme.border-soft;
+        border-radius: Theme.radius;
+        clip: true;
+        accessible-role: slider;
+        accessible-label: @tr("LayerTimeline" => "Layers, along the print");
+        accessible-value: Math.round(root.selected-layer) + 1;
+
+        Path {
+            x: 0;
+            y: 10px;
+            width: parent.width;
+            height: parent.height - 10px;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: 1000;
+            viewbox-height: 100;
+            fit: fill;
+            commands: root.figure == 0 ? root.force-path
+                : root.figure == 1 ? root.area-path
+                : root.figure == 2 ? root.perimeter-path
+                : root.time-path;
+            fill: Theme.hover;
+            stroke: Theme.text-muted;
+            stroke-width: 1px;
+        }
+
+        // The force's spikes, along the top.
+        for mark in root.spikes: Rectangle {
+            x: mark.at * (parent.width - 1px) - 3px;
+            y: 1px;
+            width: 7px;
+            height: 7px;
+            border-radius: 1px;
+            background: Theme.warning;
+            spike-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.layer-picked(mark.layer);
+                }
+            }
+        }
+
+        // The layer on show.
+        Rectangle {
+            x: (root.layer-count > 1 ? root.selected-layer / (root.layer-count - 1) : 0.5) * (parent.width - 1px);
+            y: 0;
+            width: 1px;
+            height: parent.height;
+            background: Theme.indicator;
+        }
+
+        TouchArea {
+            y: 10px;
+            height: parent.height - 10px;
+            mouse-cursor: pointer;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                    root.layer-picked(root.layer-at(self.mouse-x));
+                }
+            }
+            moved => {
+                if self.pressed {
+                    root.layer-picked(root.layer-at(self.mouse-x));
+                }
+            }
+        }
+    }
+
+    Text {
+        text: root.readout(Math.round(root.selected-layer), root.generation);
+        font-family: Theme.mono;
+        font-size: Theme.font-xs;
+        color: Theme.text-soft;
+        wrap: word-wrap;
+    }
+    if root.peak != "": Text {
+        text: root.peak;
+        font-family: Theme.mono;
+        font-size: Theme.font-xs;
+        color: Theme.text-muted;
+    }
+    Note {
+        text: @tr("LayerTimeline" => "The force is an estimate of the peel, not yet calibrated with prints: it compares layers, not whether a support holds.");
+    }
+}

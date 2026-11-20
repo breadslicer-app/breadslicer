@@ -9603,3 +9603,569 @@ msgstr "Distancia {} mm"
 msgctxt "Measure"
 msgid "Total {} mm"
 msgstr "Total {} mm"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Select"
+msgstr "Elegir"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Click a support to pick it, Shift+click to pick more. The numbers below then draw the picked supports again; a size chip gives them that size. Esc lets go."
+msgstr "Hacé clic en un soporte para elegirlo, Shift+clic para elegir más. Los números de abajo dibujan de nuevo los soportes elegidos; una ficha de tamaño les da ese tamaño. Esc los suelta."
+
+#: ui/workspace/support-shape.slint
+msgctxt "Inspector"
+msgid "various"
+msgstr "varios"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "{n} support picked: the numbers below draw it again."
+msgid_plural "{n} supports picked: the numbers below draw them again."
+msgstr[0] "{n} soporte elegido: los números de abajo lo dibujan de nuevo."
+msgstr[1] "{n} soportes elegidos: los números de abajo los dibujan de nuevo."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Picked supports"
+msgstr "Soportes elegidos"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Picked"
+msgstr "Elegidos"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "{n} picked support holds others up and stays as it is: pick the ones at the ends."
+msgid_plural "{n} picked supports hold others up and stay as they are: pick the ones at the ends."
+msgstr[0] "{n} soporte elegido sostiene a otros y queda como está: elegí los de las puntas."
+msgstr[1] "{n} soportes elegidos sostienen a otros y quedan como están: elegí los de las puntas."
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "SUPPORTS"
+msgstr "SOPORTES"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Whole"
+msgstr "Completos"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Contacts"
+msgstr "Contactos"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "See-through"
+msgstr "Translúcidos"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "A dot where each support touches the model, the rest as lines."
+msgstr "Un punto donde cada soporte toca el modelo, el resto como líneas."
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "The supports see-through, to look at the model behind them."
+msgstr "Los soportes translúcidos, para ver el modelo detrás."
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "The supports drawn as they print."
+msgstr "Los soportes dibujados como se imprimen."
+
+msgctxt "Inspector"
+msgid "Auto support"
+msgstr "Auto soporte"
+
+msgctxt "Inspector"
+msgid "Default"
+msgstr "Predeterminado"
+
+msgctxt "Inspector"
+msgid "Small object"
+msgstr "Objeto chico"
+
+msgctxt "Inspector"
+msgid "Tall object"
+msgstr "Objeto alto"
+
+msgctxt "Inspector"
+msgid "Strong"
+msgstr "Fuerte"
+
+msgctxt "Inspector"
+msgid "Start from"
+msgstr "Partir de"
+
+msgctxt "Inspector"
+msgid "Gap between links"
+msgstr "Espacio entre tramos"
+
+msgctxt "Inspector"
+msgid "Bottom pattern"
+msgstr "Patrón de abajo"
+
+msgctxt "Inspector"
+msgid "Bottom links"
+msgstr "Tramos de abajo"
+
+msgctxt "Inspector"
+msgid "Middle pattern"
+msgstr "Patrón del medio"
+
+msgctxt "Inspector"
+msgid "Top pattern"
+msgstr "Patrón de arriba"
+
+msgctxt "Inspector"
+msgid "Top links"
+msgstr "Tramos de arriba"
+
+msgctxt "Inspector"
+msgid "First ring at"
+msgstr "Primer anillo a"
+
+msgctxt "Inspector"
+msgid "Second ring at"
+msgstr "Segundo anillo a"
+
+msgctxt "Inspector"
+msgid "Ring diagonal"
+msgstr "Diagonal de los anillos"
+
+msgctxt "Inspector"
+msgid "None"
+msgstr "Ninguna"
+
+msgctxt "Inspector"
+msgid "Simple"
+msgstr "Simple"
+
+msgctxt "Inspector"
+msgid "Double"
+msgstr "Doble"
+
+msgctxt "Inspector"
+msgid "Zigzag"
+msgstr "Zigzag"
+
+msgctxt "Inspector"
+msgid "Links from the bottom and the top take their pattern, the rest the middle one. A ring is a cross between every pair at that height; 0 leaves it out."
+msgstr "Los tramos de abajo y de arriba llevan su patrón, el resto el del medio. Un anillo es una cruz entre cada par a esa altura; 0 lo saca."
+
+msgctxt "Inspector"
+msgid "Ignore small islands"
+msgstr "Ignorar islas chicas"
+
+msgctxt "Inspector"
+msgid "Smaller than"
+msgstr "Menos de"
+
+msgctxt "Inspector"
+msgid "Shorter than"
+msgstr "Más bajas que"
+
+msgctxt "Inspector"
+msgid "An island that joins the rest before gathering this much resin, within this height, gets no support of its own."
+msgstr "Una isla que se une al resto antes de juntar esta resina, dentro de esta altura, no lleva soporte propio."
+
+msgctxt "Inspector"
+msgid "Look for the plate up to"
+msgstr "Buscar la plataforma hasta"
+
+msgctxt "Inspector"
+msgid "Model stands above the plate"
+msgstr "Altura del modelo sobre la plataforma"
+
+msgctxt "Inspector"
+msgid "Line"
+msgstr "Línea"
+
+msgctxt "Inspector"
+msgid "Click the model where the row starts, then where it ends: a support at every dot, along the surface. Keys 1–4 pick the size. Esc drops the first point."
+msgstr "Hacé clic en el modelo donde empieza la fila y después donde termina: un soporte en cada punto, siguiendo la superficie. Las teclas 1–4 eligen el tamaño. Esc suelta el primer punto."
+
+msgctxt "Inspector"
+msgid "Supports apart"
+msgstr "Separación entre soportes"
+
+msgctxt "DfSupportDialog"
+msgid "Click where the row ends."
+msgstr "Hacé clic donde termina la fila."
+
+msgctxt "DfSupportDialog"
+msgid "Click where the row ends: {n} support."
+msgid_plural "Click where the row ends: {n} supports."
+msgstr[0] "Hacé clic donde termina la fila: {n} soporte."
+msgstr[1] "Hacé clic donde termina la fila: {n} soportes."
+
+msgctxt "Inspector"
+msgid "Area"
+msgstr "Área"
+
+msgctxt "Inspector"
+msgid "Paint the faces where supports go; Shift+click takes the connected faces of the same plane, Alt erases. Then place a support on every node of a grid over the paint."
+msgstr "Pintá las caras donde van soportes; Shift+clic toma las caras unidas del mismo plano, Alt borra. Después poné un soporte en cada punto de una grilla sobre lo pintado."
+
+msgctxt "Inspector"
+msgid "Place supports on the paint"
+msgstr "Poner soportes en lo pintado"
+
+msgctxt "Inspector"
+msgid "Clear paint"
+msgstr "Borrar la pintura"
+
+msgctxt "DfSupportDialog"
+msgid "Paint where the supports go first, or Shift+click a face to take its plane."
+msgstr "Primero pintá donde van los soportes, o hacé Shift+clic en una cara para tomar su plano."
+
+msgctxt "DfSupportDialog"
+msgid "{n} tip on painted detail could not be kept off it; it takes the finest tip."
+msgid_plural "{n} tips on painted detail could not be kept off it; they take the finest tip."
+msgstr[0] "{n} punta sobre detalle pintado no se pudo sacar de ahí; lleva la punta más fina."
+msgstr[1] "{n} puntas sobre detalle pintado no se pudieron sacar de ahí; llevan la punta más fina."
+
+msgctxt "Inspector"
+msgid "Own trunk"
+msgstr "Tronco propio"
+
+msgctxt "Inspector"
+msgid "Hang from nearest"
+msgstr "Colgar del más cercano"
+
+msgctxt "Inspector"
+msgid "Make editable at the same contacts"
+msgstr "Hacerlos editables en los mismos contactos"
+
+msgctxt "DfSupportDialog"
+msgid "No contact tips were found in these imported supports; they stay as they are."
+msgstr "No se encontraron puntas de contacto en estos soportes importados; quedan como están."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The next slice deletes this island from the print. Undo brings it back."
+msgstr "El próximo laminado borra esta isla de la impresión. Deshacer la trae de vuelta."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The island stays in the print."
+msgstr "La isla queda en la impresión."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The islands come back. Slice again to apply."
+msgstr "Las islas vuelven. Laminá de nuevo para aplicar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One island will be deleted. Slice again to apply."
+msgid_plural "{n} islands will be deleted. Slice again to apply."
+msgstr[0] "Se va a borrar una isla. Laminá de nuevo para aplicar."
+msgstr[1] "Se van a borrar {n} islas. Laminá de nuevo para aplicar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} layer"
+msgid_plural "{n} layers"
+msgstr[0] "{n} capa"
+msgstr[1] "{n} capas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Keep it in the print"
+msgstr "Dejarla en la impresión"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Bring it back"
+msgstr "Traerla de vuelta"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Delete from the print ({})"
+msgstr "Borrar de la impresión ({})"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Marked: the next slice takes this island off the layers, up to where it joins the model."
+msgstr "Marcada: el próximo laminado saca esta isla de las capas, hasta donde se une al modelo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "No suction cups"
+msgstr "Sin ventosas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Turn the model…"
+msgstr "Girar el modelo…"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "No model was found around this suction cup."
+msgstr "No se encontró ningún modelo alrededor de esta ventosa."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Drain drilled. Slice again to check the result."
+msgstr "Drenaje perforado. Laminá de nuevo para revisar el resultado."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "LAYERS"
+msgstr "CAPAS"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "Force"
+msgstr "Fuerza"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "Area"
+msgstr "Área"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "Perimeter"
+msgstr "Perímetro"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "Time"
+msgstr "Tiempo"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "Layers, along the print"
+msgstr "Capas, a lo largo de la impresión"
+
+#: ui/workspace/layer-timeline.slint
+msgctxt "LayerTimeline"
+msgid "The force is an estimate of the peel, not yet calibrated with prints: it compares layers, not whether a support holds."
+msgstr "La fuerza es una estimación del despegue, todavía sin calibrar con impresiones: sirve para comparar capas, no para saber si un soporte aguanta."
+
+#: src/layer_timeline.rs
+msgctxt "LayerTimeline"
+msgid "Layer {}"
+msgstr "Capa {}"
+
+#: src/layer_timeline.rs
+msgctxt "LayerTimeline"
+msgid "{} mm² of suction cup"
+msgstr "{} mm² de ventosa"
+
+#: src/layer_timeline.rs
+msgctxt "LayerTimeline"
+msgid "Hardest peel: layer {}"
+msgstr "Despegue más fuerte: capa {}"
+
+#, rust-format
+msgctxt "MeshViewer"
+msgid "X Y Z lock an axis · type a number · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels"
+msgstr "X Y Z fijan un eje · escribí un número · Ctrl imanta · Shift fino · {} o Enter confirma · Esc cancela"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "LAY ON FACE · Click a flat face of a model to lay it on the plate · Esc cancels"
+msgstr "APOYAR EN CARA · Hacé clic en una cara plana de un modelo para apoyarlo en la placa · Esc cancela"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Lay on face"
+msgstr "Apoyar en cara"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pick a face…"
+msgstr "Elegí una cara…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Scale X"
+msgstr "Escala X"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Scale Y"
+msgstr "Escala Y"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Scale Z"
+msgstr "Escala Z"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Uniform scale"
+msgstr "Escala uniforme"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Each size and scale changes its own axis alone."
+msgstr "Cada tamaño y escala cambia solo su propio eje."
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Hidden: not drawn and not sliced. Click to show"
+msgstr "Oculto: no se dibuja ni se lamina. Clic para mostrarlo"
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Hide: not drawn and not sliced"
+msgstr "Ocultar: no se dibuja ni se lamina"
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Locked: not picked or moved in the view. Click to unlock"
+msgstr "Bloqueado: no se elige ni se mueve en la vista. Clic para desbloquearlo"
+
+#: ui/workspace/scene-panel.slint
+msgctxt "Inspector"
+msgid "Lock: not picked or moved in the view"
+msgstr "Bloquear: no se elige ni se mueve en la vista"
+
+#: src/viewport/controller.rs
+msgctxt "SlicePanel"
+msgid "{} hidden model(s) left out of the slice. Show them in the scene panel to print them."
+msgstr "{} modelo(s) oculto(s) quedan fuera del laminado. Mostralos en el panel de escena para imprimirlos."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Joints"
+msgstr "Uniones"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pins"
+msgstr "Pernos"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnets"
+msgstr "Imanes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pin shape"
+msgstr "Forma del perno"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Round"
+msgstr "Redondo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Square"
+msgstr "Cuadrado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnet"
+msgstr "Imán"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pin size"
+msgstr "Tamaño del perno"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnet diameter"
+msgstr "Diámetro del imán"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pin depth"
+msgstr "Largo del perno"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Magnet height"
+msgstr "Alto del imán"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Clearance"
+msgstr "Holgura"
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Joints added: {}."
+msgstr "Uniones agregadas: {}."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Joints left out: {} (too near the edge of the cut, or too deep for the part)."
+msgstr "Uniones que no entran: {} (muy cerca del borde del corte, o muy profundas para la pieza)."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Cut by"
+msgstr "Cortar con"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Plane"
+msgstr "Plano"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Stroke"
+msgstr "Trazo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Drag over the model in the view: a stroke from one side to the other cuts it along the stroke, through the model as seen; a loop round a part cuts that part off. Then press Cut."
+msgstr "Arrastrá sobre el modelo en la vista: un trazo de un lado al otro lo corta siguiendo el trazo, a través del modelo tal como se ve; un lazo alrededor de una parte la separa. Después tocá Cortar."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Draw across the model to cut it along the stroke, or draw a loop round a part to cut it off."
+msgstr "Dibujá a través del modelo para cortarlo siguiendo el trazo, o un lazo alrededor de una parte para separarla."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "The loop cuts nothing off: draw it round a part that stands out of the model."
+msgstr "El lazo no separa nada: dibujalo alrededor de una parte que sobresalga del modelo."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "The stroke does not cut the model in two: draw it from one side of the model to the other, without crossing itself."
+msgstr "El trazo no corta el modelo en dos: dibujalo de un lado del modelo al otro, sin que se cruce."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Working out the cut…"
+msgstr "Calculando el corte…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Suggest"
+msgstr "Sugerir"
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "No narrowing found to suggest: the model is about as wide all the way up."
+msgstr "No hay un estrechamiento para sugerir: el modelo tiene más o menos el mismo ancho de abajo arriba."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Suggested: a narrowing of the model ({}). Suggest again for the next."
+msgstr "Sugerido: un estrechamiento del modelo ({}). Volvé a tocar Sugerir para el siguiente."
+
+msgctxt "MenuBar"
+msgid "Export Selection…"
+msgstr "Exportar selección…"
+
+msgctxt "ErrorDialog"
+msgid "Nothing to export: pick the models to export first. Hidden models are left out."
+msgstr "No hay nada para exportar: primero elegí los modelos. Los modelos ocultos quedan afuera."

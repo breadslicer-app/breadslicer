@@ -133,6 +133,58 @@ pub struct Presupported {
     pub raft: bool,
 }
 
+/// A contact tip of an imported support (#261): the narrow end of a cone
+/// that holds something from below.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImportedTip {
+    /// Where the tip touches, in the mesh's frame.
+    pub contact: [f64; 3],
+    /// The way the support leaves the contact, down its cone.
+    pub away: [f64; 3],
+    /// How wide the tip is where it touches, mm.
+    pub diameter_mm: f64,
+}
+
+/// The narrowest a tip read off a cone is taken as, mm: a pointed cone's
+/// end has no width of its own.
+const MIN_TIP_DIAMETER_MM: f64 = 0.15;
+
+/// The contact tips of `supports`, a mesh of imported supports (#261): every
+/// piece that is a cone narrowing upward to a point, as a tip touches what
+/// it holds from below.
+pub fn support_tips(supports: &IndexedMesh) -> Vec<ImportedTip> {
+    let (piece_of_face, pieces) = edge_pieces(supports.faces());
+    let (order, starts) = grouped(&piece_of_face, pieces);
+    let mut tips: Vec<ImportedTip> = (0..pieces)
+        .into_par_iter()
+        .filter_map(|p| {
+            let faces = &order[starts[p]..starts[p + 1]];
+            if faces.is_empty() || faces.len() > MAX_FITTED_PIECE_FACES {
+                return None;
+            }
+            let fit = revolution_fit(&vertices_of(supports, faces))?;
+            if primitive_kind(&fit)? != Primitive::Cone {
+                return None;
+            }
+            let cone = Segment::of(Primitive::Cone, &fit);
+            let k = (0..2).find(|&k| cone.tip[k])?;
+            let (at, other) = (cone.ends[k], cone.ends[1 - k]);
+            if at[2] <= other[2] {
+                return None;
+            }
+            let along = sub(other, at);
+            let length = norm(along);
+            (length > 1e-9).then(|| ImportedTip {
+                contact: at,
+                away: scale(along, 1.0 / length),
+                diameter_mm: (2.0 * cone.radii[k]).max(MIN_TIP_DIAMETER_MM),
+            })
+        })
+        .collect();
+    tips.sort_by(|a, b| a.contact.partial_cmp(&b.contact).unwrap_or(Ordering::Equal));
+    tips
+}
+
 /// The model and the supports of `mesh`, when it is a pre-supported file
 /// whose pieces are separate shells; `None` when no supports are found.
 pub fn find_supports(mesh: &IndexedMesh) -> Option<Presupported> {

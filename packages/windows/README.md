@@ -53,3 +53,19 @@ shared SVG logo. Regenerate it after the logo changes:
 ```
 cargo run --manifest-path apps\icon-gen\Cargo.toml
 ```
+
+## Portable zip (releases)
+
+`portable/package.py` builds the portable zip a release ships: the two
+release executables, the bundled profiles under `slicer/profiles`, the licence
+and the notices, the read-me files (`portable/README.txt` and `LEEME.txt`, with
+the version filled in) and `SHA256SUMS.txt`; nothing else of the checkout goes
+in. The `Release` workflow (`.github/workflows/release.yml`) runs it on a clean
+checkout when a `v*` tag is pushed and attaches the zip to a draft release, for
+a person to check and publish. By hand:
+
+```
+cargo build --release -p sc-slicer-gui --bin breadslicer
+cargo build --release -p sc-slicer-cli
+python packages/windows/portable/package.py --version 0.4.0 --bin-dir target/release --out dist
+```

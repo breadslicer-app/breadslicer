@@ -448,10 +448,14 @@ fn printer_entry(
     let network = profile.capabilities.network_protocol;
     let identity = profile.identity;
     // Keep the image path only when the file exists.
-    let image_path = identity.image_asset_path.as_ref().and_then(|reference| {
-        let path = reference.resolve_in(root);
-        path.is_file().then_some(path)
-    });
+    let image_path = identity
+        .image_asset_path
+        .as_ref()
+        .and_then(|reference| {
+            let path = reference.resolve_in(root);
+            path.is_file().then_some(path)
+        })
+        .or_else(|| photo_named_for(root, source, &identity.id));
 
     PrinterCatalogEntry {
         id: identity.id,
@@ -463,6 +467,22 @@ fn printer_entry(
         source,
         network,
     }
+}
+
+/// A bundled printer whose profile names no photo still shows
+/// `images/<id>.png` when the library ships one, so a photo is added
+/// to the library by copying the file in, without touching the
+/// profiles the converter generates.
+fn photo_named_for(
+    root: &Path,
+    source: ProfileSource,
+    id: &PrinterId,
+) -> Option<PathBuf> {
+    if source != ProfileSource::Bundled {
+        return None;
+    }
+    let path = root.join("images").join(format!("{}.png", id.as_str()));
+    path.is_file().then_some(path)
 }
 
 fn material_entry(source: ProfileSource, profile: MaterialProfile) -> MaterialCatalogEntry {

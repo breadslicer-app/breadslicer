@@ -45,6 +45,11 @@ struct SettingsDoc {
     /// The groups of models (#475), each by its members' rows.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     groups: Vec<Vec<u32>>,
+    /// The hidden and the locked models (#16), by their rows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hidden: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    locked: Vec<u32>,
     #[serde(default)]
     profiles: ProfilesSection,
     #[serde(default, skip_serializing_if = "PrintSection::is_empty")]
@@ -114,6 +119,8 @@ pub(crate) fn serialize_settings(
         plate_names: payload.plate_names.clone(),
         hand_placed: payload.hand_placed.clone(),
         groups: payload.groups.clone(),
+        hidden: payload.hidden.clone(),
+        locked: payload.locked.clone(),
         profiles: ProfilesSection {
             printer: payload.printer.clone(),
             resin: payload.resin.clone(),
@@ -213,6 +220,8 @@ pub(crate) fn parse_settings(
         plate_names: doc.plate_names,
         hand_placed: doc.hand_placed,
         groups: doc.groups,
+        hidden: doc.hidden,
+        locked: doc.locked,
     }))
 }
 
@@ -225,18 +234,24 @@ pub(crate) fn parse_settings(
 ///
 /// The container is written in one pass, so `progress` reports the serialize
 /// phase as begun and the compress phase as done.
+///
+/// `thumbnail` is a PNG of the scene as it is now (#203), or `None`: never
+/// the one a file was opened with. Supports go in as their data alone: no
+/// support mesh, not even as a preview (#204).
+#[allow(clippy::too_many_arguments)]
 pub fn write_bread_project_with_progress<W: Write>(
     scene: &Scene,
     payload: &ProjectPayload,
     embed: EmbedProfiles,
     supports: &[SupportDocument],
     hollows: &[HollowDocument],
+    thumbnail: Option<Vec<u8>>,
     writer: &mut W,
     mut progress: impl FnMut(WriteProgress),
 ) -> Result<(), WriteBreadProjectError> {
     progress(WriteProgress::Serialize { done: 0, total: 1 });
     let settings = serialize_settings(payload, embed)?.into_bytes();
-    let file = bread_file::to_file(scene, Some(settings), supports, hollows)?;
+    let file = bread_file::to_file(scene, Some(settings), supports, hollows, thumbnail)?;
     progress(WriteProgress::Serialize { done: 1, total: 1 });
     bread_format::write_file(&file, writer).map_err(WriteBreadProjectError::Container)?;
     progress(WriteProgress::Compress { done: 1, total: 1 });

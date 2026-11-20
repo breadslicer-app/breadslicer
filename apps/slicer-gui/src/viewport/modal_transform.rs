@@ -3,6 +3,10 @@
 //! Ctrl snaps the gesture to steps and Shift slows it down (#275), as in the
 //! gizmo drags. With several objects selected, pressing R or S again turns or
 //! scales each object about its own pivot instead of the shared one (#218).
+//! A number typed during the gesture (`G X 10`, `R Z 45`, `S 2`) takes the
+//! place of the cursor (#14): millimetres along the axis for G (X without
+//! one), degrees about the axis for R (the view's without one), a factor for
+//! S; Enter applies it.
 use glam::Vec3;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
@@ -59,7 +63,78 @@ pub(super) struct ModalGesture {
     /// With several objects selected, whether each one turns or scales
     /// about its own pivot (R R, S S) rather than the shared one (#218).
     pub individual: bool,
+    /// The number typed so far (#14); empty, the cursor drives.
+    pub typed: Typed,
 }
+
+/// A number typed during G, R or S (#14): digits, one decimal point (a
+/// comma reads as one), and a minus that negates it wherever it is pressed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Typed {
+    chars: [u8; 12],
+    len: u8,
+    negative: bool,
+}
+
+impl Typed {
+    /// Takes a key; Backspace (`\u{8}`) takes the last one back. Whether
+    /// the number changed: any other key is not the number's.
+    pub(super) fn push(&mut self, key: &str) -> bool {
+        let digits = &self.chars[..usize::from(self.len)];
+        match key {
+            "-" => self.negative = !self.negative,
+            "\u{8}" | "\u{7f}" => {
+                if self.len > 0 {
+                    self.len -= 1;
+                } else if self.negative {
+                    self.negative = false;
+                } else {
+                    return false;
+                }
+            }
+            "." | "," => {
+                if digits.contains(&b'.') || usize::from(self.len) >= self.chars.len() {
+                    return false;
+                }
+                self.chars[usize::from(self.len)] = b'.';
+                self.len += 1;
+            }
+            _ => {
+                let [c] = key.as_bytes() else {
+                    return false;
+                };
+                if !c.is_ascii_digit() || usize::from(self.len) >= self.chars.len() {
+                    return false;
+                }
+                self.chars[usize::from(self.len)] = *c;
+                self.len += 1;
+            }
+        }
+        true
+    }
+
+    /// Whether nothing is typed.
+    pub(super) fn is_empty(&self) -> bool {
+        self.len == 0 && !self.negative
+    }
+
+    /// The number typed; `None` until a digit is.
+    pub(super) fn value(&self) -> Option<f64> {
+        let digits = std::str::from_utf8(&self.chars[..usize::from(self.len)]).ok()?;
+        if !digits.bytes().any(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let v: f64 = digits.trim_end_matches('.').parse().ok()?;
+        Some(if self.negative { -v } else { v })
+    }
+
+    /// As typed, for the status line: `-10.5`.
+    pub(super) fn text(&self) -> String {
+        let digits = std::str::from_utf8(&self.chars[..usize::from(self.len)]).unwrap_or("");
+        format!("{}{digits}", if self.negative { "-" } else { "" })
+    }
+}
+
 impl ModalGesture {
     /// The turn an R gesture has applied so far, in radians, right-handed
     /// about [`Self::turn_axis`] (snapped as the rotation is).
@@ -68,8 +143,14 @@ impl ModalGesture {
     }
 
     /// [`Self::applied_turn`] in double precision, as the turn is made:
-    /// rounded in degrees (#576).
+    /// rounded in degrees (#576). A typed number is the turn in degrees,
+    /// right-handed about [`Self::turn_axis`] (#14).
     fn applied_turn_exact(&self) -> f64 {
+        if self.op == ModalOp::Rotate
+            && let Some(deg) = self.typed.value()
+        {
+            return deg.to_radians();
+        }
         let axis = self.turn_axis();
         let sign = if axis.dot(self.view_axis) >= 0.0 {
             -1.0
@@ -170,6 +251,9 @@ impl ModalGesture {
         }
         self.cursor = cursor;
         self.modifiers = modifiers;
+        if let Some(value) = self.typed.value() {
+            return self.typed_transform(value);
+        }
         let cursor = self.precision.map(cursor, modifiers.fine);
         let dx = cursor[0] - self.start[0];
         let dy = cursor[1] - self.start[1];
@@ -243,6 +327,44 @@ impl ModalGesture {
         }
     }
 }
+impl ModalGesture {
+    /// The transform a typed `value` gives (#14): G moves that many mm
+    /// along the axis (X without one), R turns that many degrees about it,
+    /// S scales by that factor (along the axis, or uniformly).
+    fn typed_transform(&mut self, value: f64) -> Option<Transform3D> {
+        match self.op {
+            ModalOp::Move => {
+                let unit = axis_vector(self.axis.unwrap_or(0));
+                self.world_translation(self.original, unit * value as f32)
+            }
+            ModalOp::Rotate => {
+                let rotation = AffineTransform3D::from_axis_angle(
+                    self.turn_axis().to_array().map(f64::from),
+                    value.to_radians(),
+                )
+                .ok()?;
+                self.about_pivot(rotation)
+            }
+            ModalOp::Scale => {
+                if value <= 0.0 {
+                    return None;
+                }
+                let factor = value.clamp(0.001, 1000.0);
+                self.factor = factor as f32;
+                let scale = match self.axis {
+                    Some(axis) => {
+                        let mut factors = [1.0; 3];
+                        factors[axis] = factor;
+                        AffineTransform3D::from_non_uniform_scale(factors)
+                    }
+                    None => AffineTransform3D::from_uniform_scale(factor),
+                };
+                self.about_pivot(scale)
+            }
+        }
+    }
+}
+
 /// A G without an axis slides on the plate (#620): lifting a model is rare
 /// in resin and has its own field, and a move in the camera's plane drifted
 /// in Z from any slanted view. `moved`, a move in the camera's plane, is
@@ -339,6 +461,7 @@ mod tests {
             modifiers: DragModifiers::default(),
             factor: 1.0,
             individual: false,
+            typed: Typed::default(),
         }
     }
 

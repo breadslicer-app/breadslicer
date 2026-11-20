@@ -122,6 +122,7 @@ pub(crate) fn to_file(
     settings: Option<Vec<u8>>,
     supports: &[SupportDocument],
     hollows: &[HollowDocument],
+    thumbnail: Option<Vec<u8>>,
 ) -> Result<bf::BreadFile, WriteBreadProjectError> {
     let emptied: HashSet<NodeId> = supports.iter().map(|s| s.leaf).collect();
     let mut encoder = Encoder {
@@ -181,7 +182,8 @@ pub(crate) fn to_file(
         settings,
         supports,
         hollows,
-        thumbnail: None,
+        thumbnail,
+        // Supports go in as their data alone, never as a mesh (#204).
         support_previews: Vec::new(),
         surface,
     })

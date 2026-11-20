@@ -1,0 +1,26 @@
+[identity]
+id = "piocreat-standard-rigid-resin-black-50um"
+brand = "PioCreat"
+family = "standard"
+name = "standard rigid resin Black (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.creality-halot-x1-max]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 40.0
+bottom_layer_count = 5
+wait_before_cure_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 300.0
+retract_speed_mm_min = 300.0
+bottom_lift_distance_mm = 5.0
+bottom_lift_speed_mm_min = 120.0
+bottom_retract_speed_mm_min = 120.0

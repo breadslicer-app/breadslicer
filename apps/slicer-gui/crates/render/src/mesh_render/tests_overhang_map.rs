@@ -152,6 +152,7 @@ fn draw(
                 raft_top_mm: 0.0,
                 supports_shown_up_to_mm: f32::MAX,
                 supports_hidden: false,
+                support_view_fade: 0.0,
             },
         )
         .expect("the frame is not refused")
@@ -811,6 +812,7 @@ fn by_facet_then_by_surface(
             raft_top_mm: 0.0,
             supports_shown_up_to_mm: f32::MAX,
             supports_hidden: false,
+            support_view_fade: 0.0,
         };
         let texture = renderer
             .render_frame(Some(scene_render), BV, camera, SIDE, SIDE, look)
@@ -1012,6 +1014,7 @@ fn surface_of_a_real_model() {
                 raft_top_mm: 0.0,
                 supports_shown_up_to_mm: f32::MAX,
                 supports_hidden: false,
+                support_view_fade: 0.0,
             };
             let texture = renderer
                 .render_frame(Some(scene_render), BV, &camera, 1100, 900, look)

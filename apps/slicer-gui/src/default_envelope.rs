@@ -270,6 +270,7 @@ mod default_envelope_tests {
             PreferencesChange::Controls,
             PreferencesChange::HideRaftsUnderPlate,
             PreferencesChange::SupportLinesUnderPlate,
+            PreferencesChange::SupportView,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,

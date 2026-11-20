@@ -13,6 +13,7 @@ mod bench_support_job;
 mod cavity_and_sizes;
 mod df_support_document;
 mod df_support_follow;
+mod detail_paint;
 mod df_supports_scene;
 mod raft_shapes;
 

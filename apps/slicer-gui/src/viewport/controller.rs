@@ -134,7 +134,7 @@ pub(crate) struct ViewportController {
     /// The held slice's estimate as last shown, and who is told each time it
     /// is worked out again (the resin's cost, #101).
     last_estimate: Cell<Option<crate::export_print_file::PrintEstimate>>,
-    estimate_listener: RefCell<Option<EstimateListener>>,
+    estimate_listener: RefCell<Vec<EstimateListener>>,
     /// The name of the printer whose plate the viewport shows, drawn under
     /// the word on the plate's front tab; `None` for the placeholder plate.
     plate_printer_name: RefCell<Option<String>>,
@@ -165,6 +165,8 @@ pub(crate) struct ViewportController {
             crate::mesh_render::Overlay,
         )>,
     >,
+    /// Lay on face (#15): the next click on a model lays it on that face.
+    lay_face: Cell<bool>,
     /// The overhang map's box, and the self-support angle it paints by.
     overhang_map_on: Cell<bool>,
     /// The Supports tab's box (#492): whether the rafts fade out with the
@@ -176,6 +178,9 @@ pub(crate) struct ViewportController {
     /// change.
     support_lines_on: Cell<bool>,
     support_lines: crate::support_lines::LinesCache,
+    /// How the supports are drawn at any camera height (#137): 0 whole, 1
+    /// their contacts and lines, 2 translucent.
+    support_view: Cell<u8>,
     overhang_angle_deg: Cell<f32>,
     /// The support tips the map leaves what they hold plain by (#484), and
     /// the reach of the Supports tab's options, for a set that records none.
@@ -210,6 +215,10 @@ pub(crate) struct ViewportController {
     drag_tool_for_test: Cell<Option<SupportDragKind>>,
     /// The brush that paints faces (#183), once a tool installs it.
     surface_brush: RefCell<Option<Rc<SurfaceBrush>>>,
+    /// The brush that paints where supports go (#177), on any model.
+    support_brush: RefCell<Option<Rc<SurfaceBrush>>>,
+    /// Which paint shows.
+    paint_kind: Cell<sc_scene::PaintKind>,
     /// Whether the paint shows, and that what the renderer holds is old.
     paint_shown: Cell<bool>,
     paint_owed: Cell<bool>,
@@ -269,8 +278,17 @@ enum TabTool {
     MoveTip,
     /// The brace tool (#3): a click on a support, then on another.
     Brace,
+    /// The Select tool (#567): a click picks a support, Shift+click more.
+    SelectSupport,
+    /// The line tool (#178): a click on the model, then another, places a
+    /// row of supports along the surface between them.
+    SupportLine,
     Drain,
 }
+
+/// How far the supports fade in the translucent view mode (#137): what of
+/// the model behind them shows through.
+const SUPPORT_TRANSLUCENT_FADE: f32 = 0.7;
 
 impl ViewportController {
     pub(crate) fn new(
@@ -323,12 +341,14 @@ impl ViewportController {
             repair_marks: Default::default(),
             measure: Default::default(),
             measured: RefCell::new(None),
+            lay_face: Cell::new(false),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
-            estimate_listener: RefCell::new(None),
+            estimate_listener: RefCell::new(Vec::new()),
             hide_rafts_under_plate: Cell::new(true),
             support_lines_on: Cell::new(false),
             support_lines: Default::default(),
+            support_view: Cell::new(0),
             overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
             overhang_tips: Default::default(),
             tab_tip_reach_mm: Cell::new(default_tip_reach_mm()),
@@ -345,6 +365,8 @@ impl ViewportController {
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
+            support_brush: RefCell::new(None),
+            paint_kind: Cell::new(sc_scene::PaintKind::Detail),
             paint_shown: Cell::new(false),
             paint_owed: Cell::new(false),
             brush_press: Cell::new(false),
@@ -400,12 +422,14 @@ impl ViewportController {
             repair_marks: Default::default(),
             measure: Default::default(),
             measured: RefCell::new(None),
+            lay_face: Cell::new(false),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
-            estimate_listener: RefCell::new(None),
+            estimate_listener: RefCell::new(Vec::new()),
             hide_rafts_under_plate: Cell::new(true),
             support_lines_on: Cell::new(false),
             support_lines: Default::default(),
+            support_view: Cell::new(0),
             overhang_angle_deg: Cell::new(default_overhang_angle_deg()),
             overhang_tips: Default::default(),
             tab_tip_reach_mm: Cell::new(default_tip_reach_mm()),
@@ -422,6 +446,8 @@ impl ViewportController {
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
+            support_brush: RefCell::new(None),
+            paint_kind: Cell::new(sc_scene::PaintKind::Detail),
             paint_shown: Cell::new(false),
             paint_owed: Cell::new(false),
             brush_press: Cell::new(false),
@@ -834,14 +860,14 @@ impl ViewportController {
     }
 
     /// Calls `listener` each time the held slice's estimate is worked out
-    /// again (one listener; a later call replaces it).
+    /// again, after those already listening.
     pub(crate) fn on_estimate(&self, listener: impl Fn() + 'static) {
-        *self.estimate_listener.borrow_mut() = Some(Rc::new(listener));
+        self.estimate_listener.borrow_mut().push(Rc::new(listener));
     }
 
     fn tell_estimate(&self) {
-        let listener = self.estimate_listener.borrow().clone();
-        if let Some(listener) = listener {
+        let listeners = self.estimate_listener.borrow().clone();
+        for listener in listeners {
             listener();
         }
     }
@@ -1156,14 +1182,20 @@ impl ViewportController {
         let plates = document.plates();
         let volume = self.build_volume();
         let sessions = document.support_sessions();
+        // Hidden models and their supports are not sliced (#16).
+        let hidden = document.hidden_leaves();
         document.with_scene(|spatial| {
-            if plates.count() > 1 {
+            let (mut scene, origin) = if plates.count() > 1 {
                 crate::plate_layout::plate_scene(spatial, &volume, plates, plate, &|leaf| {
                     crate::support_persist::model_of(&sessions, leaf)
                 })
             } else {
                 (spatial.graph().clone(), [0.0; 2])
+            };
+            for &leaf in &hidden {
+                let _ = scene.remove_leaf(leaf);
             }
+            (scene, origin)
         })
     }
 
@@ -1263,6 +1295,37 @@ impl ViewportController {
     ///
     /// `None` when the format carries no previews, when no scene is loaded, or
     /// when the device cannot draw them.
+    /// Lets the document draw its `.bread` thumbnail through this window's
+    /// renderer (#203).
+    pub(crate) fn install_thumbnailer(self: &Rc<Self>) {
+        let me = Rc::downgrade(self);
+        self.session
+            .document()
+            .set_thumbnailer(Rc::new(move || me.upgrade()?.thumbnail_png()));
+    }
+
+    /// The `.bread` thumbnail: the whole scene from the previews' camera,
+    /// 256 x 256 (#203).
+    pub(crate) fn thumbnail_png(&self) -> Option<Vec<u8>> {
+        const SIDE: u32 = 256;
+        let build_volume = self.build_volume();
+        let mut cell = self.render.renderer_cell().borrow_mut();
+        let renderer = cell.as_mut()?;
+        let rgba = self
+            .session
+            .document()
+            .with_scene(|spatial| {
+                print_file_preview::render_thumbnail(
+                    renderer.as_mut(),
+                    spatial.graph(),
+                    build_volume,
+                    SIDE,
+                )
+            })
+            .flatten()?;
+        thumbnail_png_of(&rgba, SIDE)
+    }
+
     pub(crate) fn print_file_previews(&self, format: PrinterFileFormat) -> Option<PrintPreviews> {
         // TODO: this draws 2 frames and waits for the GPU to hand them back,
         // all on the UI thread, so the window stops repainting for as long as
@@ -1392,6 +1455,9 @@ impl ViewportController {
         }
         if !self.allows_transform_gizmo() {
             self.cancel_transform_gestures();
+        }
+        if !self.allows_layout_tools() && self.lay_face.get() {
+            self.set_lay_on_face(false);
         }
         if !self.supports_selectable() {
             let kept = document
@@ -1537,6 +1603,23 @@ impl ViewportController {
         }
     }
 
+    /// How the supports are drawn at any camera height (#137): 0 whole, 1
+    /// their contacts and lines, 2 translucent.
+    pub(crate) fn set_support_view(&self, view: u8) {
+        if self.support_view.replace(view.min(2)) != view.min(2) {
+            self.mark_dirty();
+        }
+    }
+
+    /// How far the supports fade for the view mode (#137).
+    fn support_view_fade(&self) -> f32 {
+        match self.support_view.get() {
+            1 => 1.0,
+            2 => SUPPORT_TRANSLUCENT_FADE,
+            _ => 0.0,
+        }
+    }
+
     /// Whether `camera` sees past the rafts: under the plate, with the
     /// Supports tab's box on (#481, #492).
     fn sees_past_rafts(&self, camera: &crate::camera::OrbitCamera) -> bool {
@@ -1609,17 +1692,25 @@ impl ViewportController {
     /// and the lines drawn in their place. Kept as they are with the box off
     /// or the camera above the plate.
     fn under_plate_supports(&self) -> (f32, Option<Arc<crate::mesh_render::SupportLines>>) {
-        if !self.support_lines_on.get() || !self.under_plate() {
+        let view = self.support_view.get();
+        let under = self.under_plate();
+        let lines_under = self.support_lines_on.get() && under;
+        if view == 0 && !lines_under {
             return (f32::MAX, None);
         }
+        // The raft stays as the supports above it go, unless the view from
+        // under the plate hides it too.
         let raft_top = self.raft_top();
-        let shown_up_to = if self.hide_rafts_under_plate.get() || raft_top <= 0.0 {
+        let shown_up_to = if raft_top <= 0.0 || (under && self.hide_rafts_under_plate.get()) {
             -1.0
         } else {
             hidden_below_mm(raft_top)
         };
-        let lines = self.support_lines.lines(self.session.document());
-        (shown_up_to, Some(lines))
+        // Contacts draw the lines at any height (#137); translucent supports
+        // only from under the plate, with the box on.
+        let lines =
+            (view == 1 || lines_under).then(|| self.support_lines.lines(self.session.document()));
+        (shown_up_to, lines)
     }
 
     /// Whether the supports are left out of the view: while the Hollow tab's
@@ -2746,6 +2837,12 @@ impl ViewportController {
                         ModalOp::Move => "XY",
                         ModalOp::Rotate => "View",
                     });
+                    // A typed number shows where the axis does (#14).
+                    let axis = if g.typed.is_empty() {
+                        axis.to_string()
+                    } else {
+                        format!("{axis} = {}_", g.typed.text())
+                    };
                     if !several || g.op == ModalOp::Move {
                         // The keys in plain sight (#620).
                         return format!(
@@ -2754,7 +2851,7 @@ impl ViewportController {
                             axis,
                             ctr!(
                                 "MeshViewer",
-                                "X Y Z lock an axis · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels",
+                                "X Y Z lock an axis · type a number · Ctrl snaps · Shift fine · {} or Enter confirms · Esc cancels",
                                 g.op.key()
                             )
                         );
@@ -2872,6 +2969,7 @@ impl ViewportController {
                     modifiers: Default::default(),
                     factor: 1.0,
                     individual: false,
+                    typed: Default::default(),
                 })
             })
             .flatten();
@@ -2896,6 +2994,25 @@ impl ViewportController {
         self.input.modal.set(Some(gesture));
         self.mirror_modal_to_ui();
         self.update_modal(ScreenPoint::new(x, y), gesture.modifiers);
+    }
+
+    /// A key typed during G, R or S (#14): a digit, a decimal point, a
+    /// minus or Backspace builds the number that takes the cursor's place.
+    /// Whether the key was the number's.
+    pub(crate) fn on_modal_transform_type(&self, key: &str) -> bool {
+        let Some(mut gesture) = self.input.modal.get() else {
+            return false;
+        };
+        if !gesture.typed.push(key) {
+            return false;
+        }
+        self.input.modal.set(Some(gesture));
+        self.mirror_modal_to_ui();
+        self.update_modal(
+            ScreenPoint::new(gesture.cursor[0], gesture.cursor[1]),
+            gesture.modifiers,
+        );
+        true
     }
 
     fn update_modal(&self, cursor: ScreenPoint, modifiers: gizmo::modifiers::DragModifiers) {
@@ -3167,14 +3284,14 @@ impl ViewportController {
         }
         // Shift+click with Add armed hangs the support from the nearest one
         // (#3): the press is the tool's, not the start of a selection box.
-        if modifiers.shift && self.add_support_armed() {
+        if modifiers.shift && self.shift_click_tool_armed() {
             modifiers.shift = false;
         }
         // A press of a drag tool (Move tip; Remove's box or brush, Shift
         // keeping its selection box) is a click until it moves.
         let drag = self
             .drag_tool_armed()
-            .filter(|_| !self.measure.on())
+            .filter(|_| !self.measure.on() && !self.lay_face.get())
             .filter(|kind| !(modifiers.shift && *kind != SupportDragKind::MoveTip));
         self.support_drag.set(match drag {
             Some(kind) => DragPhase::Pressed([cursor.x, cursor.y], kind),
@@ -3182,15 +3299,16 @@ impl ViewportController {
         });
         // Nothing is selected in the Slice tab (#140): Shift draws no box.
         // Measuring (#652), a click is a point and Shift chains it.
-        if !self.selectable() || self.measure.on() {
+        if !self.selectable() || self.measure.on() || self.lay_face.get() {
             modifiers.shift = false;
         }
         // A plain press on empty space boxes (#622), unless a tool owns the
         // press or the plate's tools are under it.
         let empty_boxes = self.selectable()
             && !self.measure.on()
+            && !self.lay_face.get()
             && drag.is_none()
-            && !self.add_support_armed()
+            && !self.shift_click_tool_armed()
             && self.plate_tool_hovered.get().is_none();
         let boxing = self.input.on_pointer_down(
             self.session.document(),
@@ -3198,7 +3316,10 @@ impl ViewportController {
             self.render.viewport(),
             cursor,
             modifiers,
-            self.allows_transform_gizmo() && !self.cut_on() && !self.measure.on(),
+            self.allows_transform_gizmo()
+                && !self.cut_on()
+                && !self.measure.on()
+                && !self.lay_face.get(),
             self.supports_selectable(),
             empty_boxes,
         );
@@ -3223,7 +3344,11 @@ impl ViewportController {
             self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
         }
-        if !self.allows_transform_gizmo() || self.cut_on() || self.measure.on() {
+        if !self.allows_transform_gizmo()
+            || self.cut_on()
+            || self.measure.on()
+            || self.lay_face.get()
+        {
             return;
         }
         if self.input.on_pointer_move(
@@ -3266,6 +3391,10 @@ impl ViewportController {
                     self.measure_click(cursor, modifiers.shift);
                     return;
                 }
+                if self.lay_face.get() {
+                    self.lay_on_face_click(cursor);
+                    return;
+                }
                 if let Some(plate) = self.plate_name_under(cursor) {
                     self.plate_name_clicked(plate);
                     return;
@@ -3274,7 +3403,7 @@ impl ViewportController {
                     self.run_plate_tool(tool, modifiers.shift);
                     return;
                 }
-                let forced = modifiers.shift && self.add_support_armed();
+                let forced = modifiers.shift && self.shift_click_tool_armed();
                 if modifiers.shift && !forced {
                     self.run_toggle_pick_at(cursor);
                 } else if self.cut_click(cursor) {
@@ -3392,7 +3521,11 @@ impl ViewportController {
                 Some(SupportDragKind::Brush)
             }
             TabTool::RemoveSupport => Some(SupportDragKind::Box),
-            TabTool::AddSupport | TabTool::Brace | TabTool::Drain => None,
+            TabTool::AddSupport
+            | TabTool::Brace
+            | TabTool::SelectSupport
+            | TabTool::SupportLine
+            | TabTool::Drain => None,
         }
     }
 
@@ -3564,11 +3697,15 @@ impl ViewportController {
         }
     }
 
-    /// Whether the Supports tab's Add tool is armed.
-    fn add_support_armed(&self) -> bool {
-        self.ui
-            .upgrade()
-            .is_some_and(|ui| self.tab_tool(&ui) == Some(TabTool::AddSupport))
+    /// Whether a tool that takes Shift+click as its own is armed: Add hangs
+    /// the support from the nearest one (#3), Select picks one more (#567).
+    fn shift_click_tool_armed(&self) -> bool {
+        self.ui.upgrade().is_some_and(|ui| {
+            matches!(
+                self.tab_tool(&ui),
+                Some(TabTool::AddSupport | TabTool::SelectSupport)
+            )
+        })
     }
 
     /// The tab tool armed in the current section, if any.
@@ -3580,6 +3717,8 @@ impl ViewportController {
                 2 => Some(TabTool::RemoveSupport),
                 3 => Some(TabTool::MoveTip),
                 4 => Some(TabTool::Brace),
+                5 => Some(TabTool::SelectSupport),
+                6 => Some(TabTool::SupportLine),
                 _ => None,
             },
             _ => None,
@@ -3614,7 +3753,10 @@ impl ViewportController {
             .with_scene(|spatial| {
                 let on_supports = matches!(
                     tool,
-                    TabTool::RemoveSupport | TabTool::MoveTip | TabTool::Brace
+                    TabTool::RemoveSupport
+                        | TabTool::MoveTip
+                        | TabTool::Brace
+                        | TabTool::SelectSupport
                 );
                 // Remove and Move tip take only a support in sight (#3): the
                 // nearest hit among every leaf, model or supports, is one;
@@ -3708,18 +3850,33 @@ impl ViewportController {
 
     /// Shows the paint on the models, or hides it. The ring goes with it.
     pub(crate) fn show_paint(&self, on: bool) {
-        if self.paint_shown.replace(on) != on {
+        self.show_paint_of(sc_scene::PaintKind::Detail, on);
+    }
+
+    /// [`Self::show_paint`] for the paint of `kind` (#177).
+    pub(crate) fn show_paint_of(&self, kind: sc_scene::PaintKind, on: bool) {
+        let kind_changed = self.paint_kind.replace(kind) != kind;
+        if self.paint_shown.replace(on) != on || (on && kind_changed) {
             self.paint_owed.set(true);
             self.mark_dirty();
         }
     }
 
+    /// Installs the brush that paints where supports go (#177).
+    pub(crate) fn set_support_brush(&self, brush: Rc<SurfaceBrush>) {
+        *self.support_brush.borrow_mut() = Some(brush);
+    }
+
     fn armed_brush(&self) -> Option<Rc<SurfaceBrush>> {
-        self.surface_brush
-            .borrow()
-            .as_ref()
-            .filter(|brush| brush.armed())
-            .cloned()
+        // The support brush works in the Supports tab alone (#177).
+        let supports = self.session.section() == WorkspaceSection::Supports;
+        let slots = [(&self.surface_brush, true), (&self.support_brush, supports)];
+        slots.into_iter().find_map(|(slot, here)| {
+            slot.borrow()
+                .as_ref()
+                .filter(|b| here && b.armed())
+                .cloned()
+        })
     }
 
     /// Whether the brush is on: it takes the left button, and the gizmo goes.
@@ -3730,7 +3887,12 @@ impl ViewportController {
     /// Where the pixel `at` lands on the model the brush works on.
     fn brush_aim(&self, at: [f32; 2]) -> Option<BrushAim> {
         let vp = self.render.viewport()?;
-        let target = self.session.document().selection_primary_node_id()?;
+        // Where supports go is painted on any model (#177); the detail, on
+        // the one picked.
+        let anywhere = self
+            .armed_brush()
+            .is_some_and(|b| b.kind() == sc_scene::PaintKind::SupportEnforce);
+        let selected = self.session.document().selection_primary_node_id();
         let (ray, view) = {
             let camera_slot = self.camera.camera_cell().borrow();
             let camera = camera_slot.as_ref()?;
@@ -3752,6 +3914,11 @@ impl ViewportController {
         self.session
             .document()
             .with_scene(|spatial| {
+                let target = if anywhere {
+                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id))?.leaf
+                } else {
+                    selected?
+                };
                 aim(spatial, &ray, &view, target, |id| {
                     !shows_supports(spatial, id)
                 })
@@ -3810,8 +3977,10 @@ impl ViewportController {
             return false;
         }
         self.brush_waiting.set(None);
-        if let Some(brush) = self.surface_brush.borrow().as_ref() {
-            brush.end(true);
+        for slot in [&self.surface_brush, &self.support_brush] {
+            if let Some(brush) = slot.borrow().as_ref() {
+                brush.end(true);
+            }
         }
         self.mark_dirty();
         true
@@ -3825,8 +3994,135 @@ impl ViewportController {
 
     /// Turns the Measure tool on or off (#652); off forgets its points.
     pub(crate) fn set_measuring(&self, on: bool) {
+        if on && self.lay_face.get() {
+            self.set_lay_on_face(false);
+        }
         self.measure.set_on(on);
         self.show_measure();
+    }
+
+    /// The scene panel's eye (`lock` false) or padlock (`lock` true) on
+    /// the row of object `index` (#16): hides or shows, locks or unlocks
+    /// its model, as one step of history. A support set's row has neither.
+    pub(crate) fn toggle_row_flag(&self, index: i32, lock: bool) {
+        let document = self.session.document();
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let model = document
+            .with_scene(|spatial| {
+                let id = spatial.leaf_id_at_index(index)?;
+                (!shows_supports(spatial, id)).then_some(id)
+            })
+            .flatten();
+        let Some(model) = model else {
+            return;
+        };
+        if lock {
+            document.set_locked(&[model], !document.is_locked(model));
+        } else {
+            document.set_hidden(&[model], !document.is_hidden(model));
+        }
+        self.mark_dirty();
+    }
+
+    /// Whether the next click lays a model on a face (#15).
+    #[cfg(test)]
+    pub(crate) fn laying_on_face(&self) -> bool {
+        self.lay_face.get()
+    }
+
+    /// Arms or disarms Lay on face (#15); arming it ends Measure.
+    pub(crate) fn set_lay_on_face(&self, on: bool) {
+        let on = on && self.allows_layout_tools();
+        if on && self.measure.on() {
+            self.set_measuring(false);
+        }
+        self.lay_face.set(on);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_lay_face_on(on);
+        }
+        self.mark_dirty();
+    }
+
+    /// A click while Lay on face is armed (#15): the model under `cursor`
+    /// turns so the flat face clicked lies on the plate, in one Undo step,
+    /// and becomes the selection. Supports follow the usual rules (#153): a
+    /// tilt makes them again. The tool disarms either way. Whether a model
+    /// moved.
+    pub(crate) fn lay_on_face_click(&self, cursor: ScreenPoint) -> bool {
+        self.set_lay_on_face(false);
+        let Some(vp) = self.render.viewport() else {
+            return false;
+        };
+        let Some(camera) = self.camera.camera_cell().borrow().as_ref().cloned() else {
+            return false;
+        };
+        let fov = crate::mesh_render::default_fov_y();
+        let ray =
+            picking::ray_from_pixel(&camera, fov, vp.width(), vp.height(), cursor.x, cursor.y);
+        let document = self.session.document();
+        let hit = document
+            .with_scene(|spatial| {
+                let hit =
+                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id))?;
+                let query = spatial.leaf(hit.leaf)?;
+                let local = crate::lay_on_face::flat_normal(query.mesh(), hit.face as usize)?;
+                let world = match query.world_transform() {
+                    Transform3D::Identity => sc_mesh_core::transform::AffineTransform3D::identity(),
+                    Transform3D::Affine(a) => a,
+                };
+                let normal = crate::lay_on_face::world_normal(&world, local)?;
+                Some((
+                    hit.leaf,
+                    spatial.graph().leaf_mesh_arc(hit.leaf)?.clone(),
+                    world,
+                    query.local_transform(),
+                    query.parent_world().inverse().ok()?,
+                    normal,
+                ))
+            })
+            .flatten();
+        let Some((leaf, mesh, world, before, parent_inverse, normal)) = hit else {
+            return false;
+        };
+        let volume = self.build_volume();
+        let plate = self.plate_of_leaf(leaf).map(|on| {
+            let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+            let at = crate::plates::offset(&volume, on);
+            (
+                [f64::from(lo.x + at.x), f64::from(lo.y + at.y)],
+                [f64::from(hi.x + at.x), f64::from(hi.y + at.y)],
+            )
+        });
+        // A model on supports keeps its lift for the new ones; any other
+        // ends on the plate.
+        let drop = document.with_their_supports(vec![leaf]).len() == 1;
+        document.set_selection(Selection::One(LeafId(leaf)));
+        let Some(laid) = crate::lay_on_face::laid_pose(&mesh, &world, normal, plate, drop) else {
+            return false;
+        };
+        let after = parent_inverse.compose(&Transform3D::Affine(laid));
+        if after == before {
+            return false;
+        }
+        let edit = SceneEdit::SetLocalTransform {
+            node_id: leaf,
+            before,
+            after,
+        };
+        match document.apply_edit(edit.clone()) {
+            Ok(()) => document.push_edit(edit),
+            Err(EditNotApplied::Rejected(reason)) => {
+                self.show_edit_rejected(reason);
+                return false;
+            }
+            Err(_) => return false,
+        }
+        crate::breadcrumbs::note("lay on face");
+        self.readout_owed.set(true);
+        self.mark_dirty();
+        true
     }
 
     /// Esc while measuring: forgets the points, or with none, turns the
@@ -3854,6 +4150,45 @@ impl ViewportController {
 
     /// A click while measuring: the point of the model under `cursor`, on
     /// a corner of its face when one is within [`crate::measure::SNAP_PX`].
+    /// The model's surface between `from` and `to` (world mm, on it) as it
+    /// is seen (#178): a point where each pixel or two of the straight line
+    /// between them on the screen meets a model, looking through the
+    /// supports. A stretch where the line leaves the models has no points.
+    pub(crate) fn surface_path(&self, from: [f32; 3], to: [f32; 3]) -> Vec<[f32; 3]> {
+        let Some(vp) = self.render.viewport() else {
+            return Vec::new();
+        };
+        let Some(camera) = self.camera.camera_cell().borrow().as_ref().cloned() else {
+            return Vec::new();
+        };
+        let fov = crate::mesh_render::default_fov_y();
+        let (w, h) = (vp.width(), vp.height());
+        let screen =
+            |p: [f32; 3]| picking::project_world_to_screen(&camera, fov, w, h, glam::Vec3::from(p));
+        let (Some(a), Some(b)) = (screen(from), screen(to)) else {
+            return vec![from, to];
+        };
+        // One sample every 1.5 px, at most 2000.
+        let steps = (((b.0 - a.0).hypot(b.1 - a.1) / 1.5).ceil() as usize).clamp(1, 2000);
+        let mut out = Vec::with_capacity(steps + 1);
+        out.push(from);
+        self.session.document().with_scene(|spatial| {
+            for i in 1..steps {
+                let t = i as f32 / steps as f32;
+                let (x, y) = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
+                let ray = picking::ray_from_pixel(&camera, fov, w, h, x, y);
+                if let Some(hit) =
+                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id))
+                {
+                    let p = ray.origin + ray.direction * hit.t;
+                    out.push([p.x, p.y, p.z]);
+                }
+            }
+        });
+        out.push(to);
+        out
+    }
+
     pub(crate) fn measure_click(&self, cursor: ScreenPoint, chain: bool) {
         let Some(vp) = self.render.viewport() else {
             return;
@@ -4216,7 +4551,10 @@ impl ViewportController {
 
     /// Drops a stroke in flight: Esc or a right press. Whether there was one.
     pub(crate) fn cancel_brush_stroke(&self) -> bool {
-        let Some(brush) = self.surface_brush.borrow().clone() else {
+        let stroking = [&self.surface_brush, &self.support_brush]
+            .into_iter()
+            .find_map(|slot| slot.borrow().as_ref().filter(|b| b.stroking()).cloned());
+        let Some(brush) = stroking else {
             return false;
         };
         if !brush.stroking() {
@@ -4932,8 +5270,43 @@ impl ViewportController {
                 (objects, on_plate)
             })
             .unwrap_or_default();
-        let (rows, row_of) =
+        let (mut rows, row_of) =
             scene_rows(&names, plates.count(), plates.active(), &objects, &on_plate);
+        // Hidden and locked models (#16): their rows, and their supports',
+        // say so; only a model's own row offers the eye and the padlock.
+        let hidden = document.hidden_leaves();
+        let flags = document.unpickable_leaves();
+        let leaves: Vec<(sc_scene::NodeId, bool)> = document
+            .with_scene(|spatial| {
+                (0..)
+                    .map_while(|i| spatial.leaf_id_at_index(i))
+                    .map(|id| (id, !shows_supports(spatial, id)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let left_out = document.hidden_models().len();
+        ui.set_slice_hidden_note(if left_out == 0 {
+            slint::SharedString::default()
+        } else {
+            ctr!(
+                "SlicePanel",
+                "{} hidden model(s) left out of the slice. Show them in the scene panel to print them.",
+                left_out
+            )
+            .into()
+        });
+        for row in rows.iter_mut().filter(|r| !r.plate) {
+            let Some(&(id, model)) = usize::try_from(row.index).ok().and_then(|i| leaves.get(i))
+            else {
+                continue;
+            };
+            row.model = model;
+            row.hidden = hidden.contains(&id);
+            row.locked = flags.contains(&id) && !row.hidden;
+            if model {
+                row.locked = document.is_locked(id);
+            }
+        }
         ui.set_scene_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
         ui.set_object_row_of(slint::ModelRc::new(slint::VecModel::from(row_of)));
     }
@@ -5112,6 +5485,9 @@ impl ViewportController {
         ui.set_selection_rot_y(r.rotation_deg[1] as f32);
         ui.set_selection_rot_z(r.rotation_deg[2] as f32);
         ui.set_selection_scale(r.scale_pct as f32);
+        ui.set_selection_scale_x(r.axis_scale_pct[0] as f32);
+        ui.set_selection_scale_y(r.axis_scale_pct[1] as f32);
+        ui.set_selection_scale_z(r.axis_scale_pct[2] as f32);
     }
 
     /// The viewport aids of a gesture in flight (BS-69): what it has done so
@@ -5674,6 +6050,8 @@ impl ViewportController {
         let (shown_up_to, lines) = self.under_plate_supports();
         renderer.set_support_lines(shown_up_to, lines.as_ref());
         renderer.set_supports_hidden(self.supports_hidden());
+        renderer.set_support_view_fade(self.support_view_fade());
+        renderer.set_hidden_nodes(&self.session.document().hidden_leaves());
         renderer.set_plates(self.session.document().plates());
         renderer.set_dim_all(self.dims_off_plate());
         renderer.set_plate_tools(
@@ -5949,7 +6327,7 @@ impl ViewportController {
                 spatial
                     .graph()
                     .surface_tags_iter()
-                    .filter(|(_, kind, _)| *kind == sc_scene::PaintKind::Detail)
+                    .filter(|(_, kind, _)| *kind == self.paint_kind.get())
                     .map(|(leaf, _, tags)| crate::mesh_render::PaintLayer {
                         leaf,
                         tags: tags.clone(),
@@ -5970,6 +6348,16 @@ impl ViewportController {
         }
         self.on_paint();
     }
+}
+
+/// `rgba`, a `side` x `side` picture, as a PNG (#203).
+fn thumbnail_png_of(rgba: &[u8], side: u32) -> Option<Vec<u8>> {
+    use image::ImageEncoder;
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(rgba, side, side, image::ExtendedColorType::Rgba8)
+        .ok()?;
+    Some(png)
 }
 
 /// The colour of painted faces, from the theme; its alpha is how much it
@@ -7724,6 +8112,7 @@ pub(crate) fn scene_rows(
             index: plate as i32,
             text: name.into(),
             active: plate == active,
+            ..Default::default()
         });
         for (i, name) in objects.iter().enumerate() {
             if on_plate.get(i).copied().flatten() == Some(plate) {
@@ -7733,6 +8122,7 @@ pub(crate) fn scene_rows(
                     index: i as i32,
                     text: name.as_str().into(),
                     active: false,
+                    ..Default::default()
                 });
             }
         }
@@ -7754,6 +8144,7 @@ pub(crate) fn scene_rows(
             index: -1,
             text: ctr!("Inspector", "Off the plates").into(),
             active: false,
+            ..Default::default()
         });
         for i in off {
             row_of[i] = rows.len() as i32;
@@ -7762,6 +8153,7 @@ pub(crate) fn scene_rows(
                 index: i as i32,
                 text: objects[i].as_str().into(),
                 active: false,
+                ..Default::default()
             });
         }
     }

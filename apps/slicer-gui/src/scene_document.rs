@@ -45,6 +45,10 @@ use crate::selection::{Selection, SelectionState};
 use crate::slice_result::{LayerValues, SliceParams, SliceResult};
 use crate::support_persist::SupportSessions;
 
+#[path = "scene_flags.rs"]
+mod flags;
+pub(crate) use flags::SceneFlags;
+
 /// An opaque marker of which scene is installed and of its committed-edit
 /// state, taken by [`SceneDocument::scene_revision`] and compared by
 /// [`SceneDocument::slice_geometry_changed`] to tell whether the geometry
@@ -179,6 +183,8 @@ struct HistoryEntry {
     /// The groups of models before the entry and after it (#475): Undo and
     /// Redo set them back.
     groups: Option<(Vec<Vec<NodeId>>, Vec<Vec<NodeId>>)>,
+    /// The hidden and locked models before the entry and after it (#16).
+    flags: Option<(SceneFlags, SceneFlags)>,
 }
 
 impl HistoryEntry {
@@ -268,6 +274,8 @@ fn split_payload(
         plate_names: _,
         hand_placed: _,
         groups: _,
+        hidden: _,
+        locked: _,
     } = payload;
     (
         PrintSelection {
@@ -378,6 +386,8 @@ pub(crate) struct SceneDocument {
     /// The groups of models (#475): models that are picked, moved and
     /// arranged as one, and stand on one raft. Each holds two or more.
     groups: RefCell<Vec<Vec<NodeId>>>,
+    /// The hidden and the locked models (#16).
+    flags: RefCell<SceneFlags>,
     /// The editable DragonFruit support sessions, one set per model, shared
     /// with the support driver: a save keeps each set's session in force as
     /// data, and opening a `.bread` puts the rebuilt ones here.
@@ -389,6 +399,9 @@ pub(crate) struct SceneDocument {
     /// Puts back what a live preview shows (the Orient tool's options,
     /// #182), while one is up.
     live_preview: RefCell<Option<Rc<dyn Fn()>>>,
+    /// Draws the scene as a `.bread` thumbnail (#203): installed by the
+    /// window's viewport, which holds the renderer.
+    thumbnailer: RefCell<Option<Rc<dyn Fn() -> Option<Vec<u8>>>>>,
     /// Whether each stored mesh slices, for the Transform tab's MESH CHECK
     /// card.
     mesh_check: MeshCheck,
@@ -552,10 +565,12 @@ impl SceneDocument {
             plate_names: RefCell::new(default_plate_names(1)),
             placements: RefCell::default(),
             groups: RefCell::default(),
+            flags: RefCell::default(),
             support_sessions: Rc::default(),
             support_follow: Cell::new(None),
             hollows: Rc::default(),
             live_preview: RefCell::new(None),
+            thumbnailer: RefCell::new(None),
             mesh_check: MeshCheck::default(),
             paint_report: RefCell::new(Vec::new()),
         })
@@ -566,6 +581,18 @@ impl SceneDocument {
     /// pointer (#182). `restore` puts back what the history has; Undo, Redo
     /// and a save run it first, so neither the history nor a file ever takes
     /// the preview for the scene.
+    /// Installs what draws the `.bread` thumbnail (#203).
+    pub(crate) fn set_thumbnailer(&self, draw: Rc<dyn Fn() -> Option<Vec<u8>>>) {
+        *self.thumbnailer.borrow_mut() = Some(draw);
+    }
+
+    /// A PNG of the scene as it is now, for the `.bread` thumbnail (#203);
+    /// `None` without a window to draw it, or when it cannot be drawn.
+    pub(crate) fn thumbnail(&self) -> Option<Vec<u8>> {
+        let draw = self.thumbnailer.borrow().clone()?;
+        draw()
+    }
+
     pub(crate) fn set_live_preview(&self, restore: Option<Rc<dyn Fn()>>) {
         *self.live_preview.borrow_mut() = restore;
     }
@@ -670,6 +697,10 @@ impl SceneDocument {
             .map(|p| p.groups.clone())
             .unwrap_or_default();
         *self.groups.borrow_mut() = self.groups_of_rows(&rows);
+        match project_payload.as_ref() {
+            Some(p) => self.load_flag_rows(&p.hidden, &p.locked),
+            None => self.clear_flags(),
+        }
         let (selection, embedded, decisions) = match project_payload {
             Some(payload) => {
                 self.origin.set(DocumentOrigin::Project);
@@ -715,6 +746,7 @@ impl SceneDocument {
         *self.plate_names.borrow_mut() = default_plate_names(1);
         self.placements.borrow_mut().clear();
         self.groups.borrow_mut().clear();
+        self.clear_flags();
         self.selection.set(Selection::None);
         let stacks_changed = self.clear_history();
         self.save_point.set(None);
@@ -807,6 +839,8 @@ impl SceneDocument {
             },
             hand_placed: self.hand_placed_poses(),
             groups: self.group_rows(),
+            hidden: self.flag_rows().0,
+            locked: self.flag_rows().1,
         }
     }
 
@@ -926,10 +960,13 @@ impl SceneDocument {
     pub(crate) fn plate_key(&self, plate: u32) -> Option<u64> {
         use std::hash::{Hash, Hasher};
         let leaves = self.plate_leaves(plate)?;
+        // A model hidden or shown again changes what the plate prints (#16).
+        let hidden = self.hidden_leaves();
         self.with_scene(|spatial| {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             for leaf in leaves {
                 leaf.hash(&mut hasher);
+                hidden.contains(&leaf).hash(&mut hasher);
                 if let Some(query) = spatial.leaf(leaf) {
                     format!("{:?}", query.world_transform()).hash(&mut hasher);
                     (std::ptr::from_ref(query.mesh()) as usize).hash(&mut hasher);
@@ -1055,6 +1092,16 @@ impl SceneDocument {
     /// Keeps `decisions` with the project: the next save writes them.
     pub(crate) fn set_review_decisions(&self, decisions: Vec<ReviewDecision>) {
         *self.review_decisions.borrow_mut() = decisions;
+    }
+
+    /// Keeps `decisions` with the project as a change of the print, which
+    /// leaves the project unsaved: an island deleted from it (#462).
+    pub(crate) fn change_review_decisions(&self, decisions: Vec<ReviewDecision>) {
+        if *self.review_decisions.borrow() == decisions {
+            return;
+        }
+        self.set_review_decisions(decisions);
+        self.mark_project_state_unsaved();
     }
 
     /// Reports whether this document is a project: it was opened from a project
@@ -1438,8 +1485,9 @@ impl SceneDocument {
     }
 
     pub(crate) fn set_selection(&self, sel: Selection) {
-        // A group's member brings its group (#475).
-        let sel = self.with_groups(sel);
+        // A group's member brings its group (#475); hidden and locked
+        // models are never picked (#16).
+        let sel = self.without_unpickable(self.with_groups(sel));
         if self.selection.is(&sel) {
             return;
         }
@@ -1815,6 +1863,7 @@ impl SceneDocument {
                 marks: None,
                 plates,
                 groups,
+                flags: None,
             });
         }
         self.redo_stack.borrow_mut().clear();
@@ -1866,6 +1915,7 @@ impl SceneDocument {
                 marks: Some(step),
                 plates: None,
                 groups: None,
+                flags: None,
             });
         }
         self.redo_stack.borrow_mut().clear();
@@ -2825,6 +2875,9 @@ impl SceneDocument {
         if let Some((before, _)) = &entry.groups {
             self.put_groups(before.clone());
         }
+        if let Some((before, _)) = &entry.flags {
+            self.put_flags(before.clone());
+        }
         let mut redo = self.redo_stack.borrow_mut();
         if redo.len() == UNDO_STACK_CAP {
             redo.pop_front();
@@ -2872,6 +2925,9 @@ impl SceneDocument {
         }
         if let Some((_, after)) = &entry.groups {
             self.put_groups(after.clone());
+        }
+        if let Some((_, after)) = &entry.flags {
+            self.put_flags(after.clone());
         }
         let mut undo = self.undo_stack.borrow_mut();
         if undo.len() == UNDO_STACK_CAP
@@ -2926,6 +2982,13 @@ impl SceneDocument {
             .iter()
             .rev()
             .find_map(|entry| entry.groups.as_ref().map(|(_, after)| after.clone()));
+        let flags_before = tail
+            .iter()
+            .find_map(|entry| entry.flags.as_ref().map(|(before, _)| before.clone()));
+        let flags_after = tail
+            .iter()
+            .rev()
+            .find_map(|entry| entry.flags.as_ref().map(|(_, after)| after.clone()));
         let mut edits = Vec::with_capacity(tail.len());
         let mut last = None;
         for entry in tail {
@@ -2943,6 +3006,7 @@ impl SceneDocument {
             marks: None,
             plates: before.zip(after),
             groups: groups_before.zip(groups_after),
+            flags: flags_before.zip(flags_after),
         });
         drop(undo);
         self.notify(SceneEvent::UndoStackChanged);

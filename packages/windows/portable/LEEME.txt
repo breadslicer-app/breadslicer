@@ -1,0 +1,28 @@
+Breadslicer {version} (versión preliminar, Windows)
+
+Un laminador para resina (MSLA). Es una alfa temprana: funciona, pero puede tener errores.
+
+Cómo usarlo
+- Descomprimí la carpeta entera donde quieras y abrí breadslicer.exe. No hace falta instalar nada.
+- La carpeta "slicer/profiles" tiene que quedar al lado del exe: ahí están las impresoras
+  y las resinas.
+- El exe todavía no está firmado, así que Windows puede mostrar "Windows protegió tu PC".
+  Hacé clic en "Más información" y después en "Ejecutar de todos modos".
+- sc-slicer-cli.exe es el laminador por línea de comandos (probá con --help).
+
+Antes de una impresión grande
+- La impresora probada con impresiones reales es la Anycubic Photon Mono M7 Pro.
+  En cualquier otra, mirá bien la primera impresión: que el modelo salga en el lugar
+  correcto de la placa, que el texto no salga espejado y que la exposición sea la correcta.
+
+Si algo falla
+- Ayuda > Exportar diagnóstico... arma un .zip que ayuda a entender el problema
+  (sin tus carpetas ni tu nombre de usuario). No se manda nada solo: lo mandás vos si querés.
+- Reportes: https://github.com/breadslicer-app/breadslicer/issues
+
+Código fuente y licencias
+- Breadslicer es software libre bajo la licencia AGPL-3.0 (LICENSE.md). Incluye código de
+  SoulCrafted Slicer, DragonFruit y UVtools, entre otros; sus avisos están en los archivos NOTICE.
+- El código fuente de esta versión exacta:
+  https://github.com/breadslicer-app/breadslicer/tree/v{version}
+- SHA256SUMS.txt tiene la suma de cada archivo de esta carpeta.

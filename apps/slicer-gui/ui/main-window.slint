@@ -14,7 +14,7 @@ import { CaptionButton, CaptionKind, DisclosureChevron, Icon, LayerRuler, Suppor
 import { CutCard, HollowInspector, OrientCard, OrientOption, OverhangCard, ReviewCard, ReviewRow, SliceInspector, SupportsFooter, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { ScenePanel, SceneRow } from "./workspace/scene-panel.slint";
 import { PrinterTile, PrinterWall } from "./workspace/printer-wall.slint";
-import { Card, Note, ScCheckBox } from "./kit/controls.slint";
+import { Card, Note, ScCheckBox, Segmented } from "./kit/controls.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { PresetCard, ShapeCallout, ShapeSize, ShareItem, SharePicker, ZoneRow } from "./workspace/support-shape.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
@@ -35,6 +35,8 @@ import "../assets/fonts/NotoSans-Variable.ttf";
 import { SetupLayer, Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout } from "setup-layer.slint";
 export { Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout }
 export { FrameState } from "kit/framed-window.slint";
+import { TimelineMark } from "workspace/layer-timeline.slint";
+export { TimelineMark }
 export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, PrinterDialog, ProfileViewDialog, RecentFileRow, StartOpen, Theme, ThemePreference }
 
 // Load-pipeline phase shown by the floating progress panel. Values
@@ -172,6 +174,9 @@ export component MainWindow inherits Window {
     // and where each object's row stands. Whether it is open is
     // `show-object-list`, kept in the settings.
     in property <[SceneRow]> scene-rows: [];
+    // The scene panel's eye and padlock (#16), by the object's index.
+    callback object-hide-toggled(int);
+    callback object-lock-toggled(int);
     in property <[int]> object-row-of: [];
     in-out property <int> selected-object-index: -1;
     // Every selected row (#13), indexed like `object-list`, and how many
@@ -247,6 +252,10 @@ export component MainWindow inherits Window {
     in property <float> selection-rot-y;
     in property <float> selection-rot-z;
     in property <float> selection-scale;
+    // Scale along each of the object's own axes, percent (#14).
+    in property <float> selection-scale-x;
+    in property <float> selection-scale-y;
+    in property <float> selection-scale-z;
     // A value typed into the Transform inspector: its field code and value.
     callback numeric-edit(int, float);
     // Gesture aids (BS-69): what the gesture in flight has done so far, and
@@ -317,6 +326,24 @@ export component MainWindow inherits Window {
     callback support-shape-size-picked(int);
     in property <[float]> support-shape-values;
     callback support-shape-value(int, float);
+    // The whole preset's choices (#363): bottom, middle and top pattern,
+    // the rings' diagonal, the bracing preset it is (-1 none), ignore small
+    // islands; what the built-in preset has, and the bracing presets.
+    in property <[int]> support-shape-choices;
+    in property <[int]> support-shape-choice-defaults;
+    in property <[string]> support-bracing-presets;
+    callback support-shape-choice(int, int);
+    // The line tool's spacing between supports, mm (#178).
+    in property <float> support-line-spacing: 2;
+    callback support-line-spacing-edited(float);
+    // The Area tool (#177): its brush, and filling or clearing the paint.
+    in property <float> support-area-brush: 3;
+    callback support-area-brush-edited(float);
+    callback support-area-fill();
+    callback support-area-clear();
+    // The supports picked routed again (#377): on their own, or hung from
+    // the nearest.
+    callback support-picked-reroute(bool);
     in property <[ZoneRow]> support-zone-rows;
     in property <[string]> support-zone-size-names;
     in property <float> support-zone-angle;
@@ -349,6 +376,10 @@ export component MainWindow inherits Window {
     in property <bool> support-lift-on-plate;
     in property <string> support-lift-on-plate-label;
     callback support-lift-on-plate-toggled(bool);
+    // How the supports are drawn at any camera height (#137): 0 whole, 1
+    // their contacts and lines, 2 translucent.
+    in property <int> support-view;
+    callback support-view-picked(int);
     // The Supports tab's FROM BELOW card: "Hide the raft" (#492) and
     // "Supports as dotted lines" (#493).
     in property <bool> support-hide-rafts-under-plate: true;
@@ -366,6 +397,9 @@ export component MainWindow inherits Window {
     callback support-islands-add-requested();
     callback support-islands-go-requested();
     callback imported-supports-replace-requested();
+    // The selected model's imported supports made editable at the same
+    // contacts (#261).
+    callback imported-supports-editable-requested();
     callback support-raft-off-requested();
     callback support-raft-ignore-requested();
     // The Supports tab manual tool: 0 none, 1 add a support where the model
@@ -428,6 +462,10 @@ export component MainWindow inherits Window {
     // whether that line warns.
     in property <string> support-tip-label;
     in property <string> support-add-note;
+    // How many supports the Select tool picked (#567), and Esc letting go
+    // of them.
+    in property <int> support-picked-count;
+    callback support-picked-clear();
     in property <bool> support-add-note-warns;
     // Remove's drag (#3): 0 a box, 1 a brush of this radius (logical px).
     in-out property <int> support-remove-mode: 0;
@@ -542,6 +580,18 @@ export component MainWindow inherits Window {
     in property <string> slice-estimate-volume;
     in property <string> slice-estimate-mass;
     in property <string> slice-estimate-note;
+    // The layer timeline of the Slice tab (#94), driven by Rust
+    // (`layer_timeline`).
+    in property <bool> slice-timeline-valid: false;
+    in property <string> slice-timeline-force;
+    in property <string> slice-timeline-area;
+    in property <string> slice-timeline-perimeter;
+    in property <string> slice-timeline-time;
+    in property <[TimelineMark]> slice-timeline-spikes: [];
+    in property <string> slice-timeline-peak;
+    in-out property <int> slice-timeline-generation: 0;
+    in-out property <int> slice-timeline-figure: 0;
+    pure callback slice-timeline-readout(int, int) -> string;
     // What the print costs in resin (#101), and the price of its resin.
     in property <string> slice-cost;
     in property <string> slice-cost-note;
@@ -591,6 +641,8 @@ export component MainWindow inherits Window {
     callback review-fix-requested(int);
     callback review-fill-toggled(int);
     callback review-leave-requested(int);
+    callback review-delete-toggled(int);
+    callback review-turn-requested(int);
     callback review-fill-small-requested();
     callback review-fills-cleared();
     callback review-notes-toggled();
@@ -735,6 +787,8 @@ export component MainWindow inherits Window {
     in-out property <bool> slice-setup-open: true;
     // What Slice every plate did, line by line, until the next slice (#547).
     in property <string> slice-every-plate-note;
+    // The hidden models the slice leaves out (#16), said.
+    in property <string> slice-hidden-note;
     // Slice control panel geometry (per-window live state). Same
     // anchor/offset model as the object-list panel; the defaults hug the
     // top-left corner, clear of the top-right object-list panel. Height
@@ -817,6 +871,8 @@ export component MainWindow inherits Window {
     callback save-as-3mf-requested();
     callback previous-versions-requested();
     callback export-as-requested();
+    // The models picked and their supports, alone (#40).
+    callback export-selection-requested();
     callback scene-load-finished();
     callback import-notes-requested();
     callback show-about-requested();
@@ -926,6 +982,10 @@ export component MainWindow inherits Window {
     in property <string> measure-text;
     callback measure-toggled(bool);
     callback measure-escape();
+    // Lay on face (#15): armed, the next click on a model lays it on that
+    // face.
+    in-out property <bool> lay-face-on: false;
+    callback lay-face-toggled(bool);
     // Arrange (#180), the Transform tab's Arrange card: a run in flight, what
     // the last one did, and the card's settings (Rust keeps them).
     in property <bool> arranging: false;
@@ -1000,6 +1060,16 @@ export component MainWindow inherits Window {
     in property <string> cut-status;
     in property <string> cut-warning;
     in property <bool> cut-can-cut: false;
+    // The joints across a cut (#109, #442): 0 none, 1 pin, 2 magnet; the
+    // sizes of the kind on show; the magnet preset (-1: none of them).
+    in property <int> cut-joint-kind: 0;
+    in property <bool> cut-joint-square: false;
+    in property <float> cut-joint-size: 3;
+    in property <float> cut-joint-depth: 3;
+    in property <float> cut-joint-clearance: 0.15;
+    in property <int> cut-joint-preset: -1;
+    // The Cut tool draws strokes in place of the plane (#440, #441).
+    in property <bool> cut-stroke-mode: false;
     // Opens the tool, or closes it when open (the rail button, K).
     callback cut-toggle-requested();
     callback cut-close-requested();
@@ -1072,6 +1142,7 @@ export component MainWindow inherits Window {
     callback modal-transform-start(int, length, length);
     callback modal-transform-axis(int, length, length);
     callback modal-transform-finish(bool);
+    callback modal-transform-type(string);
     in property <bool> gizmo-keyboard-focus-active: false;
     callback gizmo-focus-translate-pressed();
     callback gizmo-focus-rotate-pressed();
@@ -1226,6 +1297,14 @@ export component MainWindow inherits Window {
                 enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                 activated => {
                     root.export-as-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Export Selection…");
+                enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                activated => {
+                    root.export-selection-requested();
                 }
             }
         }
@@ -1900,6 +1979,12 @@ export component MainWindow inherits Window {
                         root.object-list-range(i);
                         mv.focus-viewport();
                     }
+                    object-hide-toggled(i) => {
+                        root.object-hide-toggled(i);
+                    }
+                    object-lock-toggled(i) => {
+                        root.object-lock-toggled(i);
+                    }
                     plate-picked(i) => {
                         root.plate-picked(i);
                     }
@@ -1950,6 +2035,15 @@ export component MainWindow inherits Window {
                                 root.measure-escape();
                                 return true;
                             }
+                            if root.workspace-section == WorkspaceSection.Supports && root.support-tool == 5
+                                && root.support-picked-count > 0 {
+                                root.support-picked-clear();
+                                return true;
+                            }
+                            if root.lay-face-on {
+                                root.lay-face-toggled(false);
+                                return true;
+                            }
                             if root.workspace-section == WorkspaceSection.Hollow && root.hollow-lasso-tool {
                                 root.hollow-lasso-tool = false;
                                 return true;
@@ -1996,6 +2090,18 @@ export component MainWindow inherits Window {
                                     root.arm-support-tool(4);
                                     return true;
                                 }
+                                if key == "e" || key == "E" {
+                                    root.arm-support-tool(5);
+                                    return true;
+                                }
+                                if key == "n" || key == "N" {
+                                    root.arm-support-tool(6);
+                                    return true;
+                                }
+                                if key == "p" || key == "P" {
+                                    root.arm-support-tool(7);
+                                    return true;
+                                }
                                 // Remove: B a box or a brush; [ and ] the brush.
                                 if root.support-tool == 2 && (key == "b" || key == "B") {
                                     root.support-remove-mode = root.support-remove-mode == 1 ? 0 : 1;
@@ -2007,7 +2113,7 @@ export component MainWindow inherits Window {
                                 }
                                 // The tip size while Add is armed; the view keys
                                 // otherwise.
-                                if root.support-tool == 1 && (key == "1" || key == "2" || key == "3" || key == "4") {
+                                if (root.support-tool == 1 || root.support-tool == 6) && (key == "1" || key == "2" || key == "3" || key == "4") {
                                     root.support-tip-size = key.to-float();
                                     return true;
                                 }
@@ -2045,6 +2151,7 @@ export component MainWindow inherits Window {
                         edit-key(key, x, y) => { root.edit-key(key, x, y); }
                         modal-transform-axis(axis,x,y) => { root.modal-transform-axis(axis,x,y); }
                         modal-transform-finish(confirm) => { root.modal-transform-finish(confirm); }
+                        modal-transform-type(key) => { root.modal-transform-type(key); }
                         gizmo-keyboard-focus-active: root.gizmo-keyboard-focus-active;
                         // Tab cycles selection while a scene is loaded; without a
                         // scene there's nothing to cycle, so Tab returns to its
@@ -2355,6 +2462,12 @@ export component MainWindow inherits Window {
                         review-leave-requested(id) => {
                             root.review-leave-requested(id);
                         }
+                        review-delete-toggled(id) => {
+                            root.review-delete-toggled(id);
+                        }
+                        review-turn-requested(id) => {
+                            root.review-turn-requested(id);
+                        }
                         review-fill-small-requested => {
                             root.review-fill-small-requested();
                         }
@@ -2420,6 +2533,25 @@ export component MainWindow inherits Window {
                         text: @tr("Inspector" => "Scene settings") + " ▾";
                         font-size: 11px;
                         font-family: "Consolas";
+                    }
+                    // Lay on face (#15): what the next click does, while armed.
+                    if root.has-scene && root.lay-face-on: Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        y: 12px;
+                        width: min(parent.width - 24px, lay-face-text.preferred-width + 28px);
+                        height: lay-face-text.preferred-height + 16px;
+                        border-radius: 2px;
+                        background: #171a1d;
+                        border-color: Theme.border-strong;
+                        border-width: 1px;
+
+                        lay-face-text := Text {
+                            text: @tr("Inspector" => "LAY ON FACE · Click a flat face of a model to lay it on the plate · Esc cancels");
+                            color: Theme.text;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
                     if root.has-scene && root.measure-on: Rectangle {
                         x: (parent.width - self.width) / 2;
@@ -2507,6 +2639,28 @@ export component MainWindow inherits Window {
                                         limit: root.overhang-map-limit;
                                         toggled(on) => {
                                             root.overhang-map-toggled(on);
+                                        }
+                                    }
+                                    Card {
+                                        title: @tr("Inspector" => "SUPPORTS");
+
+                                        Segmented {
+                                            options: [
+                                                @tr("Inspector" => "Whole"),
+                                                @tr("Inspector" => "Contacts"),
+                                                @tr("Inspector" => "See-through")
+                                            ];
+                                            current: root.support-view;
+                                            picked(i) => {
+                                                root.support-view-picked(i);
+                                            }
+                                        }
+                                        Note {
+                                            text: root.support-view == 1
+                                                ? @tr("Inspector" => "A dot where each support touches the model, the rest as lines.")
+                                                : root.support-view == 2
+                                                ? @tr("Inspector" => "The supports see-through, to look at the model behind them.")
+                                                : @tr("Inspector" => "The supports drawn as they print.");
                                         }
                                     }
                                     Card {
@@ -2662,6 +2816,7 @@ export component MainWindow inherits Window {
                                 slicing: root.slicing-in-progress;
                                 up-to-date: root.slice-up-to-date;
                                 every-plate-note: root.slice-every-plate-note;
+                                hidden-note: root.slice-hidden-note;
                                 layer-count: root.slice-layer-count;
                                 selected-layer: root.selected-layer-index;
                                 layer-image: root.slice-view-image;
@@ -2671,6 +2826,22 @@ export component MainWindow inherits Window {
                                 estimate-volume: root.slice-estimate-volume;
                                 estimate-mass: root.slice-estimate-mass;
                                 estimate-note: root.slice-estimate-note;
+                                timeline-valid: root.slice-timeline-valid;
+                                timeline-force: root.slice-timeline-force;
+                                timeline-area: root.slice-timeline-area;
+                                timeline-perimeter: root.slice-timeline-perimeter;
+                                timeline-time: root.slice-timeline-time;
+                                timeline-spikes: root.slice-timeline-spikes;
+                                timeline-peak: root.slice-timeline-peak;
+                                timeline-generation: root.slice-timeline-generation;
+                                timeline-figure <=> root.slice-timeline-figure;
+                                timeline-readout(layer, generation) => {
+                                    return root.slice-timeline-readout(layer, generation);
+                                }
+                                timeline-layer-picked(layer) => {
+                                    root.selected-layer-index = layer;
+                                    root.selected-layer-changed();
+                                }
                                 cost: root.slice-cost;
                                 cost-note: root.slice-cost-note;
                                 cost-rows: root.slice-cost-rows;
@@ -2732,6 +2903,13 @@ export component MainWindow inherits Window {
                                     status: root.cut-status;
                                     warning: root.cut-warning;
                                     can-cut: root.cut-can-cut;
+                                    joint-kind: root.cut-joint-kind;
+                                    joint-square: root.cut-joint-square;
+                                    joint-size: root.cut-joint-size;
+                                    joint-depth: root.cut-joint-depth;
+                                    joint-clearance: root.cut-joint-clearance;
+                                    joint-preset: root.cut-joint-preset;
+                                    stroke-mode: root.cut-stroke-mode;
                                     option-changed(code, value) => {
                                         root.cut-option-changed(code, value);
                                     }
@@ -2859,6 +3037,9 @@ export component MainWindow inherits Window {
                                     rot-y: root.selection-rot-y;
                                     rot-z: root.selection-rot-z;
                                     scale: root.selection-scale;
+                                    scale-x: root.selection-scale-x;
+                                    scale-y: root.selection-scale-y;
+                                    scale-z: root.selection-scale-z;
                                     numeric-edit(code, value) => {
                                         root.numeric-edit(code, value);
                                     }
@@ -2908,6 +3089,11 @@ export component MainWindow inherits Window {
                                         if !root.orient-open {
                                             root.orient-toggle-requested();
                                         }
+                                    }
+                                    lay-face-on: root.lay-face-on;
+                                    lay-face-requested(on) => {
+                                        root.lay-face-toggled(on);
+                                        mv.focus-viewport();
                                     }
                                 }
                                 if root.workspace-section == WorkspaceSection.Hollow: HollowInspector {
@@ -3045,6 +3231,30 @@ export component MainWindow inherits Window {
                                     shape-value(code, v) => {
                                         root.support-shape-value(code, v);
                                     }
+                                    shape-choices: root.support-shape-choices;
+                                    shape-choice-defaults: root.support-shape-choice-defaults;
+                                    bracing-presets: root.support-bracing-presets;
+                                    shape-choice(code, v) => {
+                                        root.support-shape-choice(code, v);
+                                    }
+                                    line-spacing: root.support-line-spacing;
+                                    line-spacing-edited(v) => {
+                                        root.support-line-spacing-edited(v);
+                                    }
+                                    area-brush: root.support-area-brush;
+                                    area-brush-edited(v) => {
+                                        root.support-area-brush-edited(v);
+                                    }
+                                    area-fill => {
+                                        root.support-area-fill();
+                                    }
+                                    picked-reroute(own) => {
+                                        root.support-picked-reroute(own);
+                                    }
+                                    picked-count: root.support-picked-count;
+                                    area-clear => {
+                                        root.support-area-clear();
+                                    }
                                     zone-rows: root.support-zone-rows;
                                     zone-size-names: root.support-zone-size-names;
                                     zone-angle: root.support-zone-angle;
@@ -3117,6 +3327,9 @@ export component MainWindow inherits Window {
                                     }
                                     replace-imported => {
                                         root.imported-supports-replace-requested();
+                                    }
+                                    editable-imported => {
+                                        root.imported-supports-editable-requested();
                                     }
                                     raft-lift => {
                                         root.support-raft-lift-requested();
@@ -3389,6 +3602,14 @@ export component MainWindow inherits Window {
                     enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                     activated => {
                         root.export-as-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Export Selection…");
+                    enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                    activated => {
+                        root.export-selection-requested();
                     }
                 }
             }

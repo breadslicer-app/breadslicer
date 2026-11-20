@@ -221,6 +221,18 @@ pub(crate) fn wire_viewport_input(
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_lay_face_toggled(move |on| ctrl.set_lay_on_face(on));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_object_hide_toggled(move |i| ctrl.toggle_row_flag(i, false));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_object_lock_toggled(move |i| ctrl.toggle_row_flag(i, true));
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_toggle_projection_requested(move || {
             remember_projection(&prefs, ctrl.on_toggle_projection())
         });
@@ -357,6 +369,12 @@ pub(crate) fn wire_viewport_input(
     {
         let ctrl = ctrl.clone();
         ui.on_modal_transform_finish(move |confirm| ctrl.on_modal_transform_finish(confirm));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_modal_transform_type(move |key| {
+            ctrl.on_modal_transform_type(&key);
+        });
     }
     ui.on_selection_cleared(move || ctrl.on_clear_selection());
 }
@@ -829,6 +847,8 @@ async fn save_to_target(
         // no scene means nothing to write.
         return SaveOutcome::NotSaved;
     };
+    // A save by hand draws the scene's thumbnail (#203); autosave does not.
+    let bundle = bundle.with_thumbnail(doc);
 
     let supports_as_mesh = bundle.supports_as_mesh();
     let paint_left_out = bundle.leaves_paint_out();
@@ -1046,7 +1066,7 @@ fn save_error_texts(target: &Path, err: &anyhow::Error) -> ErrorTexts {
 }
 
 fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
-    ui.on_export_as_requested(move || {
+    let export = move |selection_only: bool| {
         ctrl.on_modal_transform_finish(false);
         let doc = ctrl.document();
         let dialogs = ctrl.dialogs();
@@ -1054,18 +1074,26 @@ fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         let default_stem = scene_export::default_export_stem(&doc);
         let default_extension = scene_export::default_export_extension(&doc);
         if let Err(err) = slint::spawn_local(async move {
-            let _ = run_export_as_flow(
+            let _ = run_export_flow(
                 doc,
                 dialogs,
                 export_progress,
                 default_stem,
                 default_extension,
+                selection_only,
             )
             .await;
         }) {
             eprintln!("Failed to spawn export dialog task: {err}");
         }
-    });
+    };
+    let export = Rc::new(export);
+    {
+        let export = export.clone();
+        ui.on_export_as_requested(move || export(false));
+    }
+    // The models picked, with their supports (#40).
+    ui.on_export_selection_requested(move || export(true));
 }
 
 /// Orchestrates 1 "Export As" command: show the file-save dialog, infer the
@@ -1082,6 +1110,38 @@ pub(crate) async fn run_export_as_flow(
     default_stem: Option<String>,
     default_extension: &'static str,
 ) -> bool {
+    run_export_flow(
+        doc,
+        dialogs,
+        export_progress,
+        default_stem,
+        default_extension,
+        false,
+    )
+    .await
+}
+
+/// [`run_export_as_flow`]; with `selection_only`, the models picked and
+/// their supports alone (#40).
+pub(crate) async fn run_export_flow(
+    doc: Rc<SceneDocument>,
+    dialogs: Rc<DialogManager>,
+    export_progress: Rc<ExportProgressPanel>,
+    default_stem: Option<String>,
+    default_extension: &'static str,
+    selection_only: bool,
+) -> bool {
+    if selection_only && scene_export::prepare_export_of(&doc, true).is_none() {
+        dialogs.show_error(|| ErrorTexts {
+            heading: ctr!("ErrorDialog", "Failed to export"),
+            context: None,
+            message: scene_export::ExportRefusal::NothingPicked
+                .to_string()
+                .into(),
+            details: Default::default(),
+        });
+        return false;
+    }
     // rfd 0.17 doesn't expose the filter the user actually picked, so the
     // path's extension is the portable source of truth for the format. `.stl`
     // -> binary, `.stla` -> ASCII, `.obj` -> OBJ. The dialog seeds the active
@@ -1102,8 +1162,12 @@ pub(crate) async fn run_export_as_flow(
             // worker owns outright, so the written bytes match the on-screen
             // scene at this instant. The menu gates exports without a scene,
             // but a stale callback could still race the close path.
-            let Some(scene) = scene_export::prepare_export(&doc) else {
-                let err = anyhow::Error::new(scene_export::ExportRefusal::NoScene);
+            let Some(scene) = scene_export::prepare_export_of(&doc, selection_only) else {
+                let err = anyhow::Error::new(if selection_only {
+                    scene_export::ExportRefusal::NothingPicked
+                } else {
+                    scene_export::ExportRefusal::NoScene
+                });
                 show_export_error(&dialogs, &target, err);
                 return false;
             };

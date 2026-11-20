@@ -816,6 +816,8 @@ fn project_bytes(scene: &Scene) -> Vec<u8> {
         plate_names: Vec::new(),
         hand_placed: Vec::new(),
         groups: Vec::new(),
+        hidden: Vec::new(),
+        locked: Vec::new(),
     };
     let mut bytes = Vec::new();
     write_project(

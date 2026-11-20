@@ -404,8 +404,10 @@ impl InputDispatch {
             cursor.x,
             cursor.y,
         );
+        // Hidden and locked models are never picked (#16).
+        let blocked = document.unpickable_leaves();
         document
-            .with_scene(|spatial| selected_where(&ray, spatial, supports_selectable))
+            .with_scene(|spatial| selected_where(&ray, spatial, supports_selectable, &blocked))
             .flatten()
     }
 
@@ -576,7 +578,9 @@ impl InputDispatch {
             cursor.x,
             cursor.y,
         );
-        document.with_scene(|spatial| selected_by(&ray, spatial, supports_selectable))
+        // Hidden and locked models are never picked (#16).
+        let blocked = document.unpickable_leaves();
+        document.with_scene(|spatial| selected_by(&ray, spatial, supports_selectable, &blocked))
     }
 
     /// Aborts any in-progress drag (reverts the affected object's
@@ -676,8 +680,9 @@ fn selected_by(
     ray: &picking::Ray,
     spatial: &SceneSpatial,
     supports_selectable: bool,
+    blocked: &[NodeId],
 ) -> Option<NodeId> {
-    selected_where(ray, spatial, supports_selectable).map(|(id, _)| id)
+    selected_where(ray, spatial, supports_selectable, blocked).map(|(id, _)| id)
 }
 
 /// [`selected_by`], with the world point the ray hit.
@@ -685,13 +690,17 @@ fn selected_where(
     ray: &picking::Ray,
     spatial: &SceneSpatial,
     supports_selectable: bool,
+    blocked: &[NodeId],
 ) -> Option<(NodeId, glam::Vec3)> {
-    let (hit, t) = picking::pick_object_where(ray, spatial, |_| true)?;
+    // The ray passes through what no pick may take (#16).
+    let (hit, t) = picking::pick_object_where(ray, spatial, |id| !blocked.contains(&id))?;
     let at = ray.origin + ray.direction * t;
     if supports_selectable || !shows_supports(spatial, hit) {
         return Some((hit, at));
     }
-    nearest_model(spatial, at.x, at.y).map(|id| (id, at))
+    nearest_model(spatial, at.x, at.y)
+        .filter(|id| !blocked.contains(id))
+        .map(|id| (id, at))
 }
 
 /// The model whose footprint on the plate is nearest `(x, y)`; between

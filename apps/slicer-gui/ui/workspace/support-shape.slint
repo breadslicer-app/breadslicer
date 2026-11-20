@@ -411,7 +411,7 @@ export component ShapeField inherits HorizontalLayout {
     callback edited(float);
     callback pointed(int);
 
-    property <bool> off-default: root.enabled && root.default-value >= 0 && Math.abs(root.default-value - root.value) > 0.0005;
+    property <bool> off-default: root.enabled && root.value >= 0 && root.default-value >= 0 && Math.abs(root.default-value - root.value) > 0.0005;
 
     // Dragging the number left or right turns it down or up, as in
     // Blender; a click without a drag types into it. Shift goes ten times
@@ -421,8 +421,9 @@ export component ShapeField inherits HorizontalLayout {
     property <float> scrub-start;
     property <bool> scrubbing;
 
+    // Below 0: the picked supports differ there (#567).
     function shown() -> string {
-        return round(root.value * 100) / 100;
+        return root.value < 0 ? @tr("Inspector" => "various") : round(root.value * 100) / 100;
     }
     changed value => {
         if !input.has-focus {
@@ -545,8 +546,8 @@ export component ShapeField inherits HorizontalLayout {
             pointer-event(event) => {
                 if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
                     root.scrub-x = self.mouse-x;
-                    root.scrub-value = root.value;
-                    root.scrub-start = root.value;
+                    root.scrub-value = Math.max(0, root.value);
+                    root.scrub-start = Math.max(0, root.value);
                     root.scrubbing = false;
                 } else if event.kind == PointerEventKind.move && self.pressed {
                     let dx = (self.mouse-x - root.scrub-x) / 1px;

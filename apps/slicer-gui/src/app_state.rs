@@ -241,6 +241,8 @@ struct WindowDrivers {
     _layer_pixels: Rc<crate::layer_pixels::LayerPixels>,
     /// The Slice tab's resin cost (#101).
     _resin_cost: Rc<crate::resin_cost::ResinCostPanel>,
+    /// The Slice tab's layer timeline (#94).
+    _layer_timeline: Rc<crate::layer_timeline::LayerTimeline>,
     _cut_run: Rc<CutRun>,
     /// Asks about the supports a file came with (#258).
     _presupported_import: Rc<crate::presupported_import::PresupportedImport>,
@@ -382,6 +384,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_controls_layout(snap.controls_layout);
     settings.set_hide_rafts_under_plate(snap.hide_rafts_under_plate);
     settings.set_support_lines_under_plate(snap.support_lines_under_plate);
+    settings.set_support_view(snap.support_view);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
@@ -552,6 +555,7 @@ impl AppState {
             controls_layout: settings.controls_layout(),
             hide_rafts_under_plate: settings.hide_rafts_under_plate(),
             support_lines_under_plate: settings.support_lines_under_plate(),
+            support_view: settings.support_view(),
             // Never stored: the log runs until the app closes and every launch
             // starts with it off (#74).
             diagnostic_log: false,
@@ -684,6 +688,7 @@ impl AppState {
             &self.prefs,
         ));
         ctrl.register_document_listener();
+        ctrl.install_thumbnailer();
         crate::startup_timing::mark("viewport controller");
         // Bus listeners run on `update` only, so the window gets the current
         // build volume here, and the subscription below delivers each later
@@ -834,6 +839,8 @@ impl AppState {
             df_support_run.clone(),
             hollow_run.clone(),
         );
+        // A suction cup's row turns the model with the Orient tool (#128).
+        review_panel.set_orient(orient_run.clone());
         let slice_run = SliceRun::install(
             ui,
             self.prefs.clone(),
@@ -868,10 +875,13 @@ impl AppState {
             ctrl.document(),
             ctrl.clone(),
         );
+        let layer_timeline =
+            crate::layer_timeline::LayerTimeline::install(ui, ctrl.clone(), review_panel.clone());
         WindowDrivers {
             _send_to_printer: send_to_printer,
             _layer_pixels: layer_pixels,
             _resin_cost: resin_cost,
+            _layer_timeline: layer_timeline,
             _hollow_run: hollow_run,
             _split_bodies: split_bodies,
             _presupported_import: presupported_import,
@@ -2789,6 +2799,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::Controls,
             PreferencesChange::HideRaftsUnderPlate,
             PreferencesChange::SupportLinesUnderPlate,
+            PreferencesChange::SupportView,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,
@@ -3362,8 +3373,32 @@ mod window_wiring_tests {
                     .map(|r| r.spacing),
                 Some(2.5)
             );
+            // The whole preset (#363): bracing from another preset, a
+            // pattern, small islands and how far a trunk looks for the plate.
+            let choices =
+                |w: &MainWindow| -> Vec<i32> { w.get_support_shape_choices().iter().collect() };
+            assert_eq!(choices(&window)[4], 0, "Miniatures braces as auto support");
+            assert_eq!(window.get_support_bracing_presets().row_count(), 5);
+            window.invoke_support_shape_choice(4, 3);
+            assert_eq!(choices(&window)[4], 3);
+            assert_eq!(values(&window)[9], 2.0, "the tall object's braces");
+            window.invoke_support_shape_choice(1, 2);
+            assert_eq!(choices(&window)[1], 2);
+            assert_eq!(choices(&window)[4], -1, "no longer one of them");
+            window.invoke_support_shape_choice(5, 0);
+            assert_eq!(choices(&window)[5], 0);
+            window.invoke_support_shape_value(18, 12.0);
+            assert_eq!(values(&window)[18], 12.0);
+            assert_eq!(defaults(&window)[18], 30.0);
+            // Kept as the preset's own change, across another preset.
+            window.invoke_support_preset_picked(1);
+            window.invoke_support_preset_picked(0);
+            assert_eq!(values(&window)[18], 12.0);
+            assert_eq!(choices(&window)[1], 2);
 
             window.invoke_support_preset_revert();
+            assert_eq!(choices(&window)[4], 0);
+            assert_eq!(values(&window)[18], 30.0);
             assert_eq!(window.get_support_preset_card_index(), 0);
             assert_eq!(
                 window.get_support_based_on().as_str(),

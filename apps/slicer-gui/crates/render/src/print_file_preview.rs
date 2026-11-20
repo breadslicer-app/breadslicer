@@ -37,6 +37,23 @@ pub fn render_previews(
     })
 }
 
+/// The `.bread` thumbnail (#203): the models in a `side` x `side` RGBA
+/// picture, framed as a printer file's previews are, the background left as
+/// the renderer draws it. `None` with no models, or when the device cannot
+/// draw it.
+pub fn render_thumbnail(
+    renderer: &mut dyn MeshRenderer,
+    graph: &Scene,
+    build_volume: BuildVolume,
+    side: u32,
+) -> Option<Vec<u8>> {
+    let camera = camera_framing(renderer.scene_bounds()?);
+    let frame = renderer
+        .preview_pixels(graph, build_volume, &camera, side, side)
+        .ok()??;
+    (frame.width == side && frame.height == side).then_some(frame.rgba)
+}
+
 /// Look at the whole model, so the picture does not depend on where
 /// the user happened to leave the viewport's camera.
 fn camera_framing(bounds: (Vec3, Vec3)) -> OrbitCamera {

@@ -86,6 +86,9 @@ pub(crate) struct PreferencesSnapshot {
     /// Whether the supports are drawn as lines when the camera goes under
     /// the plate (#493), the Supports tab's box. Shared by every open window.
     pub support_lines_under_plate: bool,
+    /// How the supports are drawn at any camera height (#137): 0 whole, 1
+    /// their contacts and lines, 2 translucent. Shared by every window.
+    pub support_view: u8,
     /// Whether the diagnostic log writes the session's events to disk, for
     /// the box in Preferences > Privacy, which starts and stops the log
     /// itself. Not stored in the settings: it stays on until the app closes,
@@ -193,6 +196,7 @@ impl PreferencesSnapshot {
             controls_layout: crate::controls_layout::ControlsLayout::Breadslicer,
             hide_rafts_under_plate: true,
             support_lines_under_plate: false,
+            support_view: 0,
             diagnostic_log: false,
             silenced_messages: BTreeSet::new(),
             object_list_visible: true,
@@ -254,6 +258,8 @@ pub(crate) enum PreferencesChange {
     HideRaftsUnderPlate,
     /// The Supports tab's "Supports as dotted lines" (#493).
     SupportLinesUnderPlate,
+    /// How the supports are drawn at any height, in Scene settings (#137).
+    SupportView,
     DiagnosticLog,
     SilencedMessages,
     ObjectListPanel,

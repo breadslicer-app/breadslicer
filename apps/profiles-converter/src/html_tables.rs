@@ -48,7 +48,7 @@ pub fn tables_of(html: &str) -> Vec<Table> {
 
 /// The text of an element on one line, without the anchor mark a wiki
 /// puts before each heading.
-fn text_of(element: ElementRef<'_>) -> String {
+pub(crate) fn text_of(element: ElementRef<'_>) -> String {
     element
         .text()
         .collect::<String>()

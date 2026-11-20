@@ -11,10 +11,12 @@ use std::time::{Duration, Instant};
 use crate::checks::islands::{self, Growth, Island, IslandOptions, Part};
 use crate::checks::output::{self, OutputOptions};
 use crate::checks::raft::{self, RaftOptions};
+use crate::checks::tip_load::{self, TipLoadOptions};
 use crate::checks::traps::{self, TrapOptions};
 use crate::fill::CavityFill;
 use crate::finding::{Finding, sort_findings};
 use crate::input::ReviewInput;
+use crate::loads::{self, LoadOptions, PlateLoads};
 use crate::regions::{PlateRegions, SweepOptions, SweepWatch};
 
 /// What every check receives: the input and the tables swept from it.
@@ -54,6 +56,10 @@ pub struct ReviewOptions {
     pub output: OutputOptions,
     /// Models inside the supports' raft (#131).
     pub raft: RaftOptions,
+    /// The peel loads (#240).
+    pub loads: LoadOptions,
+    /// Parts pulled harder than their tips hold (#129).
+    pub tip_load: TipLoadOptions,
 }
 
 /// Wall-clock time spent in each part of a review.
@@ -90,6 +96,8 @@ pub struct ReviewReport {
     pub parts: Vec<Part>,
     /// Where the time went.
     pub timings: ReviewTimings,
+    /// What the models pull on the film with, layer by layer (#240).
+    pub loads: PlateLoads,
 }
 
 /// Reviews `input` with the default options and returns the findings in
@@ -124,6 +132,7 @@ pub fn check_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Review
         || timed(|| traps::run(ctx, &options.traps, &options.sweep)),
     );
     let (output, output_time) = timed(|| output::run(ctx, &options.output, &options.sweep));
+    let plate_loads = loads::plate_loads(ctx, &options.loads);
     // A model in the raft explains the islands it starts there (#131).
     let clashes = raft::clashes(ctx, &options.raft);
     let mut findings: Vec<Finding> = islands
@@ -134,6 +143,13 @@ pub fn check_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Review
     findings.extend(clashes.into_iter().map(|clash| clash.finding));
     findings.extend(traps);
     findings.extend(output);
+    findings.extend(tip_load::run(ctx, &plate_loads, &options.tip_load));
+    tip_load::grade_cups(
+        &mut findings,
+        &plate_loads,
+        &options.loads.model,
+        &options.tip_load,
+    );
     sort_findings(&mut findings);
     let timings = ReviewTimings {
         sweep: ctx.regions.elapsed(),
@@ -150,6 +166,7 @@ pub fn check_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Review
         growths: islands.growths,
         parts: islands.parts,
         timings,
+        loads: plate_loads,
     }
 }
 

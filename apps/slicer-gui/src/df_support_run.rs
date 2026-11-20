@@ -90,6 +90,14 @@ use crate::{MainWindow, WorkspaceSection};
 /// How much around an island a jump to it frames (#538), in mm.
 const ISLAND_VIEW_RADIUS_MM: f32 = 12.0;
 
+/// How far from a click on a support, in mm, the Select tool takes it
+/// (#567): a click lands on its surface, a trunk's radius off its line.
+const SELECT_REACH_MM: f64 = 2.5;
+
+/// How near a picked support's tip stays to where it was picked, in mm:
+/// drawn again with other numbers, it touches the model in the same place.
+const CHOSEN_TIP_MM: f64 = 0.05;
+
 /// An overlay piece of a mesh in world coordinates.
 pub(crate) fn overlay_of(mesh: &sc_mesh_core::IndexedMesh, tint: OverlayTint) -> OverlayMesh {
     OverlayMesh {
@@ -197,6 +205,7 @@ pub(crate) struct DfSupportRun {
     /// Keeps the Supports tab's support-lines box (#493) following the
     /// shared setting.
     lines_under_plate_pref: RefCell<Option<Subscription>>,
+    support_view_pref: RefCell<Option<Subscription>>,
     /// For the run in flight that regenerates supports (#153): the scene
     /// revision that left its models waiting, and the models.
     regenerating: RefCell<Option<(SceneRevision, SupportsWanted)>>,
@@ -245,6 +254,10 @@ pub(crate) struct DfSupportRun {
     /// The preset last picked from the list: of presets with the same
     /// numbers, the one the person clicked is the one marked (#564).
     picked: Cell<Option<usize>>,
+    /// The supports the Select tool picked (#567): each by its set's leaf and
+    /// where its tip touches the model, which a redraw keeps.
+    chosen: RefCell<Vec<(NodeId, [f64; 3])>>,
+    chosen_events: RefCell<Option<SceneSubscription>>,
     /// The empty set a model with none would start, kept while the scene
     /// and the options stay as they were: Add previews on it before the
     /// first click (#564: a model with no supports showed no preview).
@@ -286,6 +299,13 @@ pub(crate) struct DfSupportRun {
     /// The brace tool's first end (#3), with the set it is on: the next
     /// click on a support lays the brace.
     brace_from: RefCell<Option<(DrawnSet, BraceEnd)>>,
+    /// The line tool's first point (#178): the next click places the row.
+    line_from: Cell<Option<[f32; 3]>>,
+    /// The line tool's spacing between supports, mm; the Area tool's grid
+    /// too (#177).
+    line_spacing: Cell<f64>,
+    /// The Area tool's brush (#177): it paints where supports go.
+    area_brush: Rc<crate::surface_brush::SurfaceBrush>,
     box_poll: slint::Timer,
     /// This driver, for what a drag starts from the viewport's side.
     me: RefCell<std::rc::Weak<DfSupportRun>>,
@@ -639,8 +659,14 @@ enum EditOp {
     RemoveTips(Vec<String>),
     /// Moves this support's tip to this point (#3).
     MoveTip(String, [f32; 3]),
+    /// Draws these supports again with these numbers, each in its contact
+    /// (#567).
+    Reshape(Vec<(String, sc_geom::df_supports::SupportSize)>),
     /// Lays a brace from this end to the support at this point (#3).
     Brace(BraceEnd, [f32; 3]),
+    /// Routes these supports again from their tips (#377): on routes of
+    /// their own, or hung from the nearest support.
+    Reroute(Vec<String>, bool),
 }
 
 /// One set's share of a hand edit: where it starts and what it does.
@@ -729,7 +755,11 @@ fn compute_edit(
 ) -> Computed {
     let points = |job: &EditJob| match &job.op {
         EditOp::Points(points) => points.len(),
-        EditOp::RemoveTips(_) | EditOp::MoveTip(..) | EditOp::Brace(..) => 0,
+        EditOp::RemoveTips(_)
+        | EditOp::MoveTip(..)
+        | EditOp::Brace(..)
+        | EditOp::Reshape(_)
+        | EditOp::Reroute(..) => 0,
     };
     watch
         .total
@@ -853,6 +883,20 @@ fn compute_job(
             (EditOp::Brace(from, to), false) => {
                 took = one(edited.add_brace(from, to.map(f64::from)));
             }
+            (EditOp::Reshape(shapes), false) => {
+                for (id, shape) in shapes {
+                    if one(edited.reshape(id, shape)) {
+                        took = true;
+                    }
+                }
+            }
+            (EditOp::Reroute(ids, own), false) => {
+                for id in ids {
+                    if one(edited.reroute(id, *own)) {
+                        took = true;
+                    }
+                }
+            }
         }
         if let (EditOp::Points(points), false) = (&op, from_preview) {
             for (i, point) in points {
@@ -970,6 +1014,12 @@ enum QueuedClick {
     },
     /// A drag's edit of the set its leaf shows.
     Gesture { leaf: NodeId, op: EditOp },
+    /// A row of the line tool (#178): every point in one edit.
+    Points {
+        tool: HandTool,
+        points: Vec<[f32; 3]>,
+        how: AddOptions,
+    },
 }
 
 /// A drag of a Supports tab tool in flight (#3).
@@ -1359,6 +1409,90 @@ fn preset_cards() -> Vec<(slint::SharedString, &'static str)> {
 }
 
 /// A zone's name and what it covers, as a row of the shape panel lists it.
+/// The line tool's spacing between supports, mm, until one is typed (#178).
+const LINE_SPACING_MM: f64 = 2.0;
+
+/// The supports of a row along `path` (points on the surface, in order),
+/// `spacing` mm apart along it (#178): evenly over each stretch, ends
+/// included. Where the path jumps (it left the model), a new stretch starts.
+fn line_points(path: &[[f32; 3]], spacing: f64) -> Vec<[f32; 3]> {
+    let spacing = spacing.max(0.1);
+    let gap = |a: [f32; 3], b: [f32; 3]| {
+        (0..3)
+            .map(|k| f64::from(b[k] - a[k]).powi(2))
+            .sum::<f64>()
+            .sqrt()
+    };
+    let mut stretches: Vec<Vec<[f32; 3]>> = Vec::new();
+    for &p in path {
+        match stretches.last_mut() {
+            Some(run)
+                if gap(*run.last().expect("a stretch has a point"), p) <= spacing.max(1.0) =>
+            {
+                run.push(p)
+            }
+            _ => stretches.push(vec![p]),
+        }
+    }
+    let mut out = Vec::new();
+    for run in stretches {
+        let lengths: Vec<f64> = std::iter::once(0.0)
+            .chain(run.windows(2).scan(0.0, |sum, w| {
+                *sum += gap(w[0], w[1]);
+                Some(*sum)
+            }))
+            .collect();
+        let total = *lengths.last().expect("a stretch has a point");
+        let n = (total / spacing).round() as usize;
+        if n == 0 {
+            out.push(run[0]);
+            continue;
+        }
+        for i in 0..=n {
+            let at = total * i as f64 / n as f64;
+            let k = lengths.partition_point(|&l| l < at).clamp(1, run.len() - 1);
+            let (a, b) = (run[k - 1], run[k]);
+            let span = lengths[k] - lengths[k - 1];
+            let t = if span > 0.0 {
+                ((at - lengths[k - 1]) / span) as f32
+            } else {
+                0.0
+            };
+            out.push([0, 1, 2].map(|c| a[c] + (b[c] - a[c]) * t));
+        }
+    }
+    out
+}
+
+/// A dot at each of `row`, for the line tool's preview.
+fn line_dots(row: &[[f32; 3]]) -> Option<crate::mesh_render::Overlay> {
+    use crate::mesh_render::{OverlayMesh, OverlayTint};
+    if row.is_empty() {
+        return None;
+    }
+    let mut piece = OverlayMesh {
+        positions: Vec::new(),
+        indices: Vec::new(),
+        tint: OverlayTint::Picked,
+    };
+    for &p in row {
+        crate::repair_marks::push_bar(&mut piece, p, p, 0.3);
+    }
+    Some(Arc::from(vec![Arc::new(piece)]))
+}
+
+/// What a bracing preset is called on the panel (#363).
+fn bracing_preset_name(id: &str) -> slint::SharedString {
+    match id {
+        "auto support" => ctr!("Inspector", "Auto support"),
+        "default" => ctr!("Inspector", "Default"),
+        "small object" => ctr!("Inspector", "Small object"),
+        "tall object" => ctr!("Inspector", "Tall object"),
+        "strong" => ctr!("Inspector", "Strong"),
+        other => other.into(),
+    }
+}
+
 fn zone_texts(
     zones: &ZonePreset,
     zone: crate::support_shape_edit::Zone,
@@ -1691,6 +1825,11 @@ impl DfSupportRun {
             }
         });
         let sessions = document.support_sessions();
+        let area_brush = crate::surface_brush::SurfaceBrush::new(
+            document.clone(),
+            sc_scene::PaintKind::SupportEnforce,
+        );
+        ctrl.set_support_brush(area_brush.clone());
         let run = Rc::new(Self {
             ui: ui.as_weak(),
             bus,
@@ -1704,6 +1843,7 @@ impl DfSupportRun {
             overhang_pref: RefCell::new(None),
             raft_under_plate_pref: RefCell::new(None),
             lines_under_plate_pref: RefCell::new(None),
+            support_view_pref: RefCell::new(None),
             regenerating: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
@@ -1725,6 +1865,8 @@ impl DfSupportRun {
             based_on: Cell::new(None),
             editing: Cell::new(None),
             picked: Cell::new(None),
+            chosen: RefCell::new(Vec::new()),
+            chosen_events: RefCell::new(None),
             unborn_hover: RefCell::new(None),
             hand: RefCell::new(load_hand_sizes()),
             share: RefCell::new(Vec::new()),
@@ -1740,6 +1882,9 @@ impl DfSupportRun {
             pending_click: RefCell::new(None),
             drag: RefCell::new(None),
             brace_from: RefCell::new(None),
+            line_from: Cell::new(None),
+            line_spacing: Cell::new(LINE_SPACING_MM),
+            area_brush,
             box_poll: slint::Timer::default(),
             me: RefCell::new(std::rc::Weak::new()),
             queued_clicks: RefCell::new(std::collections::VecDeque::new()),
@@ -1791,6 +1936,40 @@ impl DfSupportRun {
             });
         }
         *run.me.borrow_mut() = Rc::downgrade(&run);
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_picked_clear(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.clear_chosen();
+                }
+            });
+        }
+        {
+            // An edit, an Undo or a new scene: the picked supports are shown
+            // as they stand (#567).
+            let weak = Rc::downgrade(&run);
+            let sub = run.document.subscribe(move |event| {
+                if matches!(
+                    event,
+                    SceneEvent::Installed
+                        | SceneEvent::Cleared
+                        | SceneEvent::Mutated
+                        | SceneEvent::Restructured
+                ) && let Some(run) = weak.upgrade()
+                {
+                    let weak = Rc::downgrade(&run);
+                    // After the event: the sessions in force follow it.
+                    slint::Timer::single_shot(Duration::from_millis(0), move || {
+                        if let Some(run) = weak.upgrade()
+                            && let Some(ui) = run.ui.upgrade()
+                        {
+                            run.show_chosen(&ui);
+                        }
+                    });
+                }
+            });
+            run.chosen_events.borrow_mut().replace(sub);
+        }
         {
             let weak = Rc::downgrade(&run);
             let sub = run.document.subscribe(move |event| {
@@ -1917,6 +2096,34 @@ impl DfSupportRun {
         {
             let run = run.clone();
             ui.on_support_shape_value(move |code, v| run.on_shape_value(code, v));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_shape_choice(move |code, v| run.on_shape_choice(code, v));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_line_spacing_edited(move |v| run.on_line_spacing(v));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_area_fill(move || run.fill_painted());
+        }
+        {
+            let run = run.clone();
+            ui.on_support_picked_reroute(move |own| run.reroute_chosen(own));
+        }
+        {
+            let run = run.clone();
+            ui.on_imported_supports_editable_requested(move || run.imported_to_editable());
+        }
+        {
+            let run = run.clone();
+            ui.on_support_area_clear(move || run.clear_painted());
+        }
+        {
+            let run = run.clone();
+            ui.on_support_area_brush_edited(move |v| run.on_area_brush_size(v));
         }
         {
             let run = run.clone();
@@ -2105,7 +2312,37 @@ impl DfSupportRun {
             *run.lines_under_plate_pref.borrow_mut() = Some(subscription);
         }
         run.support_lines_under_plate(run.bus.snapshot().support_lines_under_plate);
+        {
+            let bus = run.bus.clone();
+            ui.on_support_view_picked(move |view| {
+                bus.update(move |snap| {
+                    snap.support_view = u8::try_from(view.clamp(0, 2)).unwrap_or(0);
+                    PreferencesChange::SupportView
+                });
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            let subscription = run.bus.subscribe(move |snap, change| {
+                if matches!(change, PreferencesChange::SupportView)
+                    && let Some(run) = weak.upgrade()
+                {
+                    run.support_view(snap.support_view);
+                }
+            });
+            *run.support_view_pref.borrow_mut() = Some(subscription);
+        }
+        run.support_view(run.bus.snapshot().support_view);
         run
+    }
+
+    /// How the supports are drawn at any camera height in this window
+    /// (#137).
+    fn support_view(&self, view: u8) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_view(i32::from(view));
+        }
+        self.ctrl.set_support_view(view);
     }
 
     /// Whether the supports are drawn as lines from under the plate in this
@@ -3696,6 +3933,10 @@ impl DfSupportRun {
         let manual = Self::on_hand_page(ui);
         let hand = self.hand.borrow().clone();
         ui.set_support_hand_changed(hand != edit::hand_factory());
+        if manual && let Some(shapes) = self.chosen_shapes(ui) {
+            self.push_chosen_shape(ui, &hand, &shapes);
+            return;
+        }
         let (zones, size) = if manual {
             (&hand, self.hand_size_index(ui))
         } else {
@@ -3761,6 +4002,19 @@ impl DfSupportRun {
             self.draw_shape(ui, &zones.rules.sizes[size]);
             return;
         }
+        // The whole preset's choices (#363), and what they go back to.
+        ui.set_support_shape_choices(slint::ModelRc::new(slint::VecModel::from(
+            edit::choices(zones).to_vec(),
+        )));
+        ui.set_support_shape_choice_defaults(slint::ModelRc::new(slint::VecModel::from(
+            base.as_ref()
+                .map_or(vec![-1; edit::CHOICES], |b| edit::choices(b).to_vec()),
+        )));
+        let bracing_names: Vec<slint::SharedString> = edit::bracing_preset_names()
+            .into_iter()
+            .map(bracing_preset_name)
+            .collect();
+        ui.set_support_bracing_presets(slint::ModelRc::new(slint::VecModel::from(bracing_names)));
         let size_names: Vec<slint::SharedString> = names.iter().map(|n| n.into()).collect();
         ui.set_support_zone_size_names(slint::ModelRc::new(slint::VecModel::from(size_names)));
         let rows: Vec<crate::ZoneRow> = edit::zones_of(zones)
@@ -3790,6 +4044,61 @@ impl DfSupportRun {
         ui.set_support_zone_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
         ui.set_support_zone_angle(zones.rules.overhang.angle_deg as f32);
         self.draw_shape(ui, &zones.rules.sizes[size]);
+    }
+
+    /// The shape panel for the picked supports (#567): the numbers they
+    /// share, "various" (below 0) where they differ, the hand size chip
+    /// they all match, and the first one drawn.
+    fn push_chosen_shape(
+        &self,
+        ui: &MainWindow,
+        hand: &ZonePreset,
+        shapes: &[sc_geom::df_supports::SupportSize],
+    ) {
+        use crate::support_shape_edit as edit;
+        let numbers = |shape: &sc_geom::df_supports::SupportSize| {
+            let mut one = hand.clone();
+            one.rules.sizes = vec![shape.clone()];
+            edit::values(&one, 0)
+        };
+        let first = numbers(&shapes[0]);
+        let mut values: Vec<f32> = first.iter().map(|&v| v as f32).collect();
+        for shape in &shapes[1..] {
+            for (k, v) in numbers(shape).iter().enumerate().take(9) {
+                if (v - first[k]).abs() > 1e-6 {
+                    values[k] = -1.0;
+                }
+            }
+        }
+        let shown = edit::shown_sizes(hand);
+        let chips: Vec<crate::ShapeSize> = shown
+            .iter()
+            .map(|&i| crate::ShapeSize {
+                name: edit::short_name(&hand.rules.sizes[i].id).into(),
+                tip: hand.rules.sizes[i].tip_diameter_mm as f32,
+                trunk: hand.rules.sizes[i].trunk_diameter_mm as f32,
+                length: hand.rules.sizes[i].tip_length_mm as f32,
+            })
+            .collect();
+        ui.set_support_shape_sizes(slint::ModelRc::new(slint::VecModel::from(chips)));
+        let matched = shown.iter().position(|&i| {
+            let size = edit::values(hand, i);
+            shapes
+                .iter()
+                .all(|s| (0..9).all(|k| (numbers(s)[k] - size[k]).abs() < 1e-6))
+        });
+        ui.set_support_shape_size(matched.map_or(-1, |i| i as i32));
+        ui.set_support_shape_scope(ctr!("Inspector", "Picked supports"));
+        ui.set_support_shape_size_name(match matched {
+            Some(i) => edit::short_name(&hand.rules.sizes[shown[i]].id).into(),
+            None => ctr!("Inspector", "Picked"),
+        });
+        ui.set_support_shape_defaults(slint::ModelRc::new(slint::VecModel::from(vec![
+            -1.0f32;
+            edit::FIELDS
+        ])));
+        ui.set_support_shape_values(slint::ModelRc::new(slint::VecModel::from(values)));
+        self.draw_shape(ui, &shapes[0]);
     }
 
     /// The zones of the built-in preset the options were made from: what
@@ -3892,10 +4201,23 @@ impl DfSupportRun {
     }
 
     /// A size chip picked: the panel shows that size.
-    fn on_shape_size_picked(&self, chip: i32) {
+    fn on_shape_size_picked(self: &Rc<Self>, chip: i32) {
         if let Some(ui) = self.ui.upgrade()
             && Self::on_hand_page(&ui)
         {
+            // With supports picked, a size chip draws them all with it.
+            if self.chosen_shapes(&ui).is_some() {
+                let size = {
+                    let hand = self.hand.borrow();
+                    crate::support_shape_edit::shown_sizes(&hand)
+                        .get(usize::try_from(chip).unwrap_or(usize::MAX))
+                        .map(|&i| hand.rules.sizes[i].clone())
+                };
+                if let Some(size) = size {
+                    self.reshape_chosen(&ui, |_| size.clone());
+                }
+                return;
+            }
             // The chips are the Add tool's tip sizes, as keys 1 to 4 are.
             if (0..4).contains(&chip) {
                 ui.set_support_tip_size(chip + 1);
@@ -3928,6 +4250,22 @@ impl DfSupportRun {
         if let Some(ui) = self.ui.upgrade()
             && Self::on_hand_page(&ui)
         {
+            // With supports picked, the number is theirs (#567), each keeping
+            // its other numbers.
+            if self.chosen_shapes(&ui).is_some() {
+                if let Ok(code) = usize::try_from(code)
+                    && code < 9
+                {
+                    let hand = self.hand.borrow().clone();
+                    self.reshape_chosen(&ui, |shape| {
+                        let mut one = hand.clone();
+                        one.rules.sizes = vec![shape.clone()];
+                        crate::support_shape_edit::set_value(&mut one, 0, code, f64::from(value));
+                        one.rules.sizes.remove(0)
+                    });
+                }
+                return;
+            }
             let (Some(size), Ok(code)) = (self.hand_size_index(&ui), usize::try_from(code)) else {
                 return;
             };
@@ -3946,6 +4284,21 @@ impl DfSupportRun {
             return;
         };
         crate::support_shape_edit::set_value(zones, size, code, f64::from(value));
+        self.set_options(o);
+    }
+
+    /// A choice of the whole preset changed (#363): a bracing pattern, the
+    /// rings' diagonal, a bracing preset to start from, or ignoring small
+    /// islands. The preset takes it, as any other option.
+    fn on_shape_choice(&self, code: i32, value: i32) {
+        let Ok(code) = usize::try_from(code) else {
+            return;
+        };
+        let mut o = self.options.borrow().clone();
+        let Some(zones) = o.zones.as_mut() else {
+            return;
+        };
+        crate::support_shape_edit::set_choice(zones, code, value);
         self.set_options(o);
     }
 
@@ -4720,6 +5073,22 @@ impl DfSupportRun {
     /// worker; the UI never waits for it. With Shift, Add previews hanging
     /// the support from the nearest one (#3).
     fn on_tool_hover_with(self: &Rc<Self>, point: Option<[f32; 3]>, shift: bool) {
+        // The Select tool shows what it picked, not what a click would do.
+        if self
+            .ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_support_tool() == 5)
+        {
+            return;
+        }
+        if self
+            .ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_support_tool() == 6)
+        {
+            self.line_hover(point);
+            return;
+        }
         self.hover_at.set(point.map(|p| (p, shift)));
         let generation = self.hover_generation.get() + 1;
         self.hover_generation.set(generation);
@@ -5097,9 +5466,288 @@ impl DfSupportRun {
     fn on_tool_changed(&self) {
         self.hover_at.set(None);
         self.brace_from.borrow_mut().take();
+        self.line_from.set(None);
         self.show_add_note(Default::default());
         if let Some(ui) = self.ui.upgrade() {
+            // The Area tool paints where supports go, and its paint shows
+            // while it is armed (#177).
+            let area = ui.get_support_tool() == 7;
+            if area != self.area_brush.armed() {
+                self.area_brush.set_armed(area, None);
+                self.ctrl
+                    .show_paint_of(sc_scene::PaintKind::SupportEnforce, area);
+            }
             self.refresh_tip_label(&ui, None);
+            // The supports picked go with the Select tool.
+            if ui.get_support_tool() != 5 {
+                self.chosen.borrow_mut().clear();
+                self.last_ghost.borrow_mut().clear();
+                self.ctrl.set_preview_overlay(None);
+                ui.set_support_picked_count(0);
+            }
+            self.show_chosen(&ui);
+        }
+    }
+
+    /// A click of the Select tool at `point` (#567): the support there is
+    /// picked, alone, or with `add` (Shift) joins the picked ones or leaves
+    /// them. A click on no support lets go of them all, a Shift+click
+    /// leaves them.
+    fn select_click(&self, ui: &MainWindow, point: [f32; 3], add: bool) {
+        let p = point.map(f64::from);
+        let found = self
+            .sets_in_force()
+            .into_iter()
+            .filter_map(|drawn| Some((drawn.session.remove_distance(p)?, drawn)))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .and_then(|(_, drawn)| {
+                let id = drawn.session.support_near(p, SELECT_REACH_MM)?;
+                Some((drawn.leaf, drawn.session.tip_point(&id)?))
+            });
+        {
+            let mut chosen = self.chosen.borrow_mut();
+            let same = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-6);
+            match found {
+                Some(one) if add => {
+                    match chosen.iter().position(|c| c.0 == one.0 && same(c.1, one.1)) {
+                        Some(k) => {
+                            chosen.remove(k);
+                        }
+                        None => chosen.push(one),
+                    }
+                }
+                Some(one) => *chosen = vec![one],
+                None if !add => chosen.clear(),
+                None => {}
+            }
+        }
+        self.show_chosen(ui);
+    }
+
+    /// Lets go of every picked support (Esc with the Select tool).
+    fn clear_chosen(&self) {
+        self.chosen.borrow_mut().clear();
+        if let Some(ui) = self.ui.upgrade() {
+            self.show_chosen(&ui);
+        }
+    }
+
+    /// The picked supports as they stand now: each set in force with the
+    /// ids of its picked supports. One no set holds any more is let go.
+    fn chosen_now(&self) -> Vec<(DrawnSet, Vec<String>)> {
+        let sets = self.sets_in_force();
+        let wanted: Vec<(NodeId, [f64; 3])> = self.chosen.borrow().clone();
+        let mut kept = Vec::new();
+        let mut out: Vec<(DrawnSet, Vec<String>)> = Vec::new();
+        for (leaf, tip) in wanted {
+            let Some(drawn) = sets.iter().find(|d| d.leaf == leaf) else {
+                continue;
+            };
+            let Some(id) = drawn.session.tip_near(tip, CHOSEN_TIP_MM) else {
+                continue;
+            };
+            kept.push((leaf, tip));
+            match out.iter_mut().find(|(d, _)| d.leaf == leaf) {
+                Some((_, ids)) => {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+                None => out.push((drawn.clone(), vec![id])),
+            }
+        }
+        *self.chosen.borrow_mut() = kept;
+        out
+    }
+
+    /// The numbers each picked support was drawn with, on the Manual page
+    /// with the Select tool armed; `None` with none picked.
+    fn chosen_shapes(&self, ui: &MainWindow) -> Option<Vec<sc_geom::df_supports::SupportSize>> {
+        if ui.get_support_tool() != 5 {
+            return None;
+        }
+        let shapes: Vec<_> = self
+            .chosen_now()
+            .iter()
+            .flat_map(|(drawn, ids)| ids.iter().filter_map(|id| drawn.session.shape_of(id)))
+            .collect();
+        (!shapes.is_empty()).then_some(shapes)
+    }
+
+    /// Shows the picked supports in the scene (amber), how many there are,
+    /// and their numbers in the panel.
+    fn show_chosen(&self, ui: &MainWindow) {
+        if ui.get_support_tool() != 5 {
+            return;
+        }
+        let now = self.chosen_now();
+        let count: usize = now.iter().map(|(_, ids)| ids.len()).sum();
+        ui.set_support_picked_count(count as i32);
+        let pieces: Vec<Arc<OverlayMesh>> = now
+            .iter()
+            .filter_map(|(drawn, ids)| drawn.session.drawing_of(ids).ok())
+            .filter(|mesh| !mesh.faces().is_empty())
+            .map(|mesh| Arc::new(overlay_of(&mesh, OverlayTint::Picked)))
+            .collect();
+        *self.last_ghost.borrow_mut() = pieces;
+        self.show_hover_overlay();
+        let carrying: usize = now
+            .iter()
+            .map(|(drawn, ids)| {
+                ids.iter()
+                    .filter(|id| drawn.session.carries_others(id))
+                    .count()
+            })
+            .sum();
+        self.show_add_note(if count == 0 {
+            Default::default()
+        } else if carrying > 0 {
+            (
+                ctr!(
+                    "Inspector",
+                    "{n} picked support holds others up and stays as it is: pick the ones at the ends.",
+                    "{n} picked supports hold others up and stay as they are: pick the ones at the ends.",
+                    carrying
+                ),
+                true,
+            )
+        } else {
+            (
+                ctr!(
+                    "Inspector",
+                    "{n} support picked: the numbers below draw it again.",
+                    "{n} supports picked: the numbers below draw them again.",
+                    count
+                ),
+                false,
+            )
+        });
+        let o = self.options.borrow().clone();
+        self.push_shape(ui, &o);
+    }
+
+    /// Draws every picked support again with the numbers `shape_for` gives
+    /// it from its own, each set as one step of Undo (#567).
+    fn reshape_chosen(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        shape_for: impl Fn(&sc_geom::df_supports::SupportSize) -> sc_geom::df_supports::SupportSize,
+    ) {
+        for (drawn, ids) in self.chosen_now() {
+            let shapes: Vec<(String, sc_geom::df_supports::SupportSize)> = ids
+                .iter()
+                .filter_map(|id| Some((id.clone(), shape_for(&drawn.session.shape_of(id)?))))
+                .collect();
+            if !shapes.is_empty() {
+                self.start_gesture(ui, drawn, EditOp::Reshape(shapes), None);
+            }
+        }
+    }
+
+    /// The imported supports of the model picked, made editable at the same
+    /// contacts (#261): the contact tips are read off their cones, the
+    /// imported supports go, and supports made here take every one of those
+    /// contacts, with the hand size nearest their tips' width, in the same
+    /// Undo step. What no route reaches is told, as a click of Add tells it.
+    fn imported_to_editable(self: &Rc<Self>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let Some(leaf) = self.document.selection_primary_node_id() else {
+            return;
+        };
+        let found = self
+            .document
+            .with_scene(|spatial| {
+                let query = spatial.leaf(leaf)?;
+                let model = if sc_mesh_core::presupported::is_imported_supports(query.mesh()) {
+                    crate::imported_supports::owner_of(spatial, leaf, None)?
+                } else if sc_geom::df_supports::is_any_support_mesh(query.mesh()) {
+                    return None;
+                } else {
+                    leaf
+                };
+                let sets = crate::imported_supports::imported_of(spatial, model, None);
+                let mut tips: Vec<([f32; 3], f64)> = Vec::new();
+                for &set in &sets {
+                    let q = spatial.leaf(set)?;
+                    let world = q.world_transform();
+                    for tip in sc_mesh_core::presupported::support_tips(q.mesh()) {
+                        let at = sc_mesh_core::Vertex::new(tip.contact.map(|c| c as f32));
+                        tips.push((world.apply_to_vertex(at).coords(), tip.diameter_mm));
+                    }
+                }
+                let removal = crate::split_bodies::removal_edit(spatial.graph(), &sets)?;
+                Some((tips, removal))
+            })
+            .flatten();
+        let Some((tips, removal)) = found else {
+            return;
+        };
+        if tips.is_empty() {
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "No contact tips were found in these imported supports; they stay as they are."
+            ));
+            return;
+        }
+        let mut widths: Vec<f64> = tips.iter().map(|t| t.1).collect();
+        widths.sort_by(f64::total_cmp);
+        let width = widths[widths.len() / 2];
+        let size = crate::support_shape_edit::hand_factory()
+            .rules
+            .sizes
+            .iter()
+            .min_by(|a, b| {
+                (a.tip_diameter_mm - width)
+                    .abs()
+                    .total_cmp(&(b.tip_diameter_mm - width).abs())
+            })
+            .map(|s| s.id.clone());
+        if self.document.apply_edit(removal.clone()).is_err() {
+            return;
+        }
+        self.document.push_edit(removal);
+        let join = self.document.scene_revision();
+        crate::breadcrumbs::note(&format!(
+            "supports: imported made editable, {} tips",
+            tips.len()
+        ));
+        let how = AddOptions {
+            attach: false,
+            size,
+            shape: None,
+        };
+        let points: Vec<[f32; 3]> = tips.iter().map(|t| t.0).collect();
+        let mut refused = Vec::new();
+        let Ok(Prepared { sets, jobs }) =
+            self.prepare_edit(&ui, HandTool::Add, &points, &how, &mut refused)
+        else {
+            return;
+        };
+        let _ = self.launch_edit(
+            &ui,
+            sets,
+            refused,
+            jobs,
+            HandTool::Add,
+            how,
+            None,
+            Some(join),
+        );
+    }
+
+    /// The supports picked are routed again from their tips (#377): each on
+    /// a route of its own (`own`), or hung from the nearest support. One
+    /// Undo step for each set.
+    fn reroute_chosen(self: &Rc<Self>, own: bool) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        for (drawn, ids) in self.chosen_now() {
+            if !ids.is_empty() {
+                self.start_gesture(&ui, drawn, EditOp::Reroute(ids, own), None);
+            }
         }
     }
 
@@ -5274,6 +5922,14 @@ impl DfSupportRun {
             self.brace_click(&ui, point);
             return;
         }
+        if tool == 5 {
+            self.select_click(&ui, point, forced);
+            return;
+        }
+        if tool == 6 {
+            self.line_click(&ui, point);
+            return;
+        }
         if self.pending_click.borrow().is_none() && self.remove_imported_body(point) {
             return;
         }
@@ -5393,6 +6049,124 @@ impl DfSupportRun {
         self.start_gesture(ui, drawn, EditOp::Brace(from, point), edited);
     }
 
+    /// Drops the line tool's first point, and the dots: whether there was
+    /// one (#178).
+    fn drop_line(&self) -> bool {
+        if self.line_from.take().is_none() {
+            return false;
+        }
+        self.ctrl.set_preview_overlay(None);
+        self.show_add_note(Default::default());
+        true
+    }
+
+    /// Where the supports of a row from the line's first point to `to` go
+    /// (#178): along the model's surface between them, as seen.
+    fn line_row(&self, from: [f32; 3], to: [f32; 3]) -> Vec<[f32; 3]> {
+        line_points(&self.ctrl.surface_path(from, to), self.line_spacing.get())
+    }
+
+    /// The line tool's hover: once the first point is in, a dot where each
+    /// support of the row would go.
+    fn line_hover(&self, point: Option<[f32; 3]>) {
+        self.hover_poll.stop();
+        let (Some(from), Some(to)) = (self.line_from.get(), point) else {
+            if self.line_from.get().is_none() {
+                self.ctrl.set_preview_overlay(None);
+            }
+            return;
+        };
+        let row = self.line_row(from, to);
+        self.ctrl.set_preview_overlay(line_dots(&row));
+        self.show_add_note((
+            ctr!(
+                "DfSupportDialog",
+                "Click where the row ends: {n} support.",
+                "Click where the row ends: {n} supports.",
+                row.len()
+            ),
+            false,
+        ));
+    }
+
+    /// A click of the line tool (#178): the first sets where the row
+    /// starts, the second places a support at every dot, as one edit.
+    fn line_click(self: &Rc<Self>, ui: &MainWindow, point: [f32; 3]) {
+        let Some(from) = self.line_from.get() else {
+            crate::breadcrumbs::note("supports: line started");
+            self.line_from.set(Some(point));
+            self.ctrl.set_preview_overlay(line_dots(&[point]));
+            self.show_add_note((ctr!("DfSupportDialog", "Click where the row ends."), false));
+            return;
+        };
+        let row = self.line_row(from, point);
+        self.line_from.set(None);
+        self.ctrl.set_preview_overlay(None);
+        self.show_add_note(Default::default());
+        self.place_row(ui, row);
+    }
+
+    /// Places a support at each of `row`, one edit, as Add places one.
+    fn place_row(self: &Rc<Self>, ui: &MainWindow, row: Vec<[f32; 3]>) {
+        crate::breadcrumbs::note(&format!("supports: line of {}", row.len()));
+        let (tool, how) = self.click_tool(ui, 1, false);
+        if self.pending_click.borrow().is_some() {
+            self.queued_clicks
+                .borrow_mut()
+                .push_back(QueuedClick::Points {
+                    tool,
+                    points: row,
+                    how,
+                });
+            return;
+        }
+        self.start_points(ui, tool, &row, how);
+    }
+
+    /// Places a support on every node of a grid over each patch painted
+    /// with the Area tool (#177), as one edit, the spacing the field's.
+    fn fill_painted(self: &Rc<Self>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let spacing = self.line_spacing.get();
+        let mut row: Vec<[f32; 3]> = crate::support_area::painted_patches(&self.document)
+            .iter()
+            .flat_map(|(_, patch)| crate::support_area::grid_on(patch, spacing))
+            .collect();
+        if row.is_empty() {
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "Paint where the supports go first, or Shift+click a face to take its plane."
+            ));
+            return;
+        }
+        row.truncate(crate::support_area::MOST_POINTS);
+        self.place_row(&ui, row);
+    }
+
+    /// Takes the Area tool's paint off every model (#177).
+    fn clear_painted(&self) {
+        for leaf in crate::support_area::painted_leaves(&self.document) {
+            self.area_brush.clear(leaf);
+        }
+    }
+
+    fn on_area_brush_size(&self, mm: f32) {
+        self.area_brush.set_radius_mm(mm);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_area_brush(self.area_brush.radius_mm());
+        }
+    }
+
+    fn on_line_spacing(&self, mm: f32) {
+        let mm = f64::from(mm).clamp(0.3, 50.0);
+        self.line_spacing.set(mm);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_line_spacing(mm as f32);
+        }
+    }
+
     /// Drops the brace tool's first end, and what shows it: returns whether
     /// there was one.
     fn drop_brace(&self) -> bool {
@@ -5417,8 +6191,22 @@ impl DfSupportRun {
         point: [f32; 3],
         how: AddOptions,
     ) {
+        self.start_points(ui, tool, &[point], how);
+    }
+
+    /// [`Self::start_click`] for several points at once, one edit (#178).
+    fn start_points(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        tool: HandTool,
+        points: &[[f32; 3]],
+        how: AddOptions,
+    ) {
+        if points.is_empty() {
+            return;
+        }
         let mut refused = Vec::new();
-        let Ok(Prepared { sets, jobs }) = self.prepare_edit(ui, tool, &[point], &how, &mut refused)
+        let Ok(Prepared { sets, jobs }) = self.prepare_edit(ui, tool, points, &how, &mut refused)
         else {
             self.queued_clicks.borrow_mut().clear();
             return;
@@ -5622,6 +6410,9 @@ impl DfSupportRun {
         match next {
             Some(QueuedClick::Click { tool, point, how }) => {
                 self.start_click(&ui, tool, point, how);
+            }
+            Some(QueuedClick::Points { tool, points, how }) => {
+                self.start_points(&ui, tool, &points, how);
             }
             Some(QueuedClick::Gesture { leaf, op }) => {
                 let drawn = self
@@ -6005,7 +6796,7 @@ impl DfSupportRun {
         // takes them out of the scene again.
         if !born.is_empty() {
             let prior = (!edits.is_empty()).then(|| swap.clone());
-            return self.commit_born(ui, born, edits, prior, refused);
+            return self.commit_born(ui, born, edits, prior, refused, join);
         }
         // A Fix All run's later pass joins the run's entry (#163). The
         // scene is still at that revision (the edit is dropped otherwise),
@@ -6076,7 +6867,10 @@ impl DfSupportRun {
         edits: Vec<(DrawnSet, DfSupportSession, Arc<sc_mesh_core::IndexedMesh>)>,
         prior: Option<SceneEdit>,
         refused: &mut Refusals,
+        join: Option<SceneRevision>,
     ) -> HandEdit {
+        // Into the newest undo entry, when the scene is still at it (#261).
+        let joins = join.is_some_and(|revision| self.document.scene_revision() == revision);
         let fragment = SceneFragment::from_leaf_snapshots(
             born.iter()
                 .map(|(_, _, mesh)| (mesh.clone(), Transform3D::Identity)),
@@ -6095,6 +6889,9 @@ impl DfSupportRun {
                 return HandEdit::Failed(why);
             }
         };
+        if joins {
+            self.document.join_last_steps(2);
+        }
         crate::breadcrumbs::note(&format!("supports: {} sets born", leaves.len()));
         let mut roots = 0;
         for (drawn, edited, _) in edits {
@@ -6626,7 +7423,29 @@ impl DfSupportRun {
         let summary = summary_message(&outcome);
         if let Some(ui) = self.ui.upgrade() {
             let seconds = outcome.timings.total.as_secs_f64();
-            ui.set_supports_last_run(format!("{summary} {seconds:.1} s.").into());
+            let mut line = format!("{summary} {seconds:.1} s.");
+            // Painted detail is avoided where it can be (#186); the tips it
+            // could not be are told, with the finest tip.
+            let on_detail: usize = outcome
+                .sets
+                .iter()
+                .filter(|set| set.same_as.is_none())
+                .map(|set| {
+                    let tips: Vec<[f64; 3]> =
+                        set.session.tips().into_iter().map(|(_, p)| p).collect();
+                    crate::support_area::tips_on_detail(&self.document, set.model, &tips)
+                })
+                .sum();
+            if on_detail > 0 {
+                line.push(' ');
+                line.push_str(&ctr!(
+                    "DfSupportDialog",
+                    "{n} tip on painted detail could not be kept off it; it takes the finest tip.",
+                    "{n} tips on painted detail could not be kept off it; they take the finest tip.",
+                    on_detail
+                ));
+            }
+            ui.set_supports_last_run(line.into());
         }
         let mut details = details_message(&outcome);
         // A release build has no console (Windows GUI subsystem): the full
@@ -7891,7 +8710,7 @@ impl SupportDragHandler for DfSupportRun {
     }
 
     fn cancel_pending(&self) -> bool {
-        self.drop_brace()
+        self.drop_brace() || self.drop_line()
     }
 
     fn drag_end(&self, commit: bool) {
@@ -10405,6 +11224,38 @@ mod hand_edit_tests {
         });
     }
 
+    /// #15: laying a supported model on a side face tilts it: its set goes
+    /// in the same Undo step and it waits for new supports (#153); one Undo
+    /// puts the pose and the set back.
+    #[test]
+    fn laying_a_supported_model_on_a_face_makes_its_supports_again() {
+        use crate::camera::{AxisView, OrbitCamera};
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (ctrl, run, leaves) = supported_in(&window, &[[20.0, 20.0, 8.0]]);
+            let document = ctrl.document();
+            let before = leaf_transform(&document, leaves[0]);
+            let (_, mesh) = set_of(&document, &run, leaves[0]);
+            ctrl.set_section(WorkspaceSection::Transform);
+            ctrl.set_viewport_for_test(200.0, 100.0);
+            let mut camera = OrbitCamera::new(glam::Vec3::new(20.0, 20.0, 8.0), 20.0);
+            camera.set_axis_view(AxisView::Front);
+            ctrl.set_camera_for_test(camera);
+            ctrl.set_lay_on_face(true);
+            let centre = crate::viewport::ScreenPoint::new(100.0, 50.0);
+            ctrl.on_pointer_down(centre, crate::PointerModifiers::default());
+            ctrl.on_pointer_up(centre, crate::PointerModifiers::default());
+            assert_ne!(leaf_transform(&document, leaves[0]), before, "laid down");
+            assert!(support_sets(&document).is_empty(), "the old set is gone");
+            let (_, wants) = document.supports_wanted().expect("new supports wanted");
+            assert_eq!(wants.ids(), vec![leaves[0]]);
+
+            assert!(document.undo().unwrap());
+            assert_eq!(leaf_transform(&document, leaves[0]), before);
+            assert!(Arc::ptr_eq(&set_of(&document, &run, leaves[0]).1, &mesh));
+        });
+    }
+
     /// #197: Generate with one model selected regenerates that model's set
     /// alone, in one undoable step; with nothing selected, every set.
     #[test]
@@ -11584,6 +12435,194 @@ mod hand_edit_tests {
         });
     }
 
+    /// The Select tool (#567): a click picks a support, a number of the
+    /// panel draws it again with that number in the same contact, as one
+    /// step of Undo, and it stays picked.
+    /// #261: a pre-supported file's imported supports made editable at the
+    /// same contacts: the imported ones go and supports made here touch the
+    /// model where their tips did, in one Undo step.
+    #[test]
+    fn imported_supports_are_made_editable_at_their_contacts() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            ctrl.dialogs().attach(&window);
+            let import = crate::presupported_import::PresupportedImport::install(
+                &window,
+                document.clone(),
+                ctrl.dialogs(),
+            );
+            let (mesh, _) = crate::tests_presupported_import::presupported_mesh();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::new(mesh)),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("werewolf.stl"));
+            import.settle_for_test();
+            assert!(window.get_message_open(), "the question is up");
+            window.invoke_message_answered(crate::slint_ui::MessageAnswer::Separate);
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let before = document.scene_revision();
+            run.imported_to_editable();
+            settle_click(&run);
+            let imported = document
+                .with_scene(|spatial| crate::imported_supports::imported_leaves(spatial).len())
+                .unwrap();
+            assert_eq!(imported, 0, "the imported supports went");
+            let session = in_force_session(&run).unwrap_or_else(|| {
+                panic!("supports made here: {}", window.get_supports_last_run())
+            });
+            let tips = session.tips();
+            assert_eq!(tips.len(), 6, "{}", window.get_supports_last_run());
+            for (_, tip) in &tips {
+                assert!((tip[2] - 5.0).abs() < 0.3, "under the model: {tip:?}");
+            }
+            assert!(document.undo().unwrap());
+            assert_eq!(document.scene_revision(), before, "one undo step");
+        });
+    }
+
+    /// #377: a picked support is routed again from its tip, on its own or
+    /// hung from the nearest, as one Undo step; the tip stays where it was.
+    #[test]
+    fn a_picked_support_is_routed_again_from_its_tip() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            let session = run.sets_in_force()[0].session.clone();
+            let tip = session
+                .tips()
+                .into_iter()
+                .find(|(id, _)| !session.carries_others(id))
+                .expect("a support at an end")
+                .1;
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(tip.map(|c| c as f32), false);
+            assert_eq!(window.get_support_picked_count(), 1);
+
+            let before = document.scene_revision();
+            run.reroute_chosen(true);
+            settle_click(&run);
+            assert_ne!(
+                document.scene_revision(),
+                before,
+                "routed again: {}",
+                window.get_supports_last_run()
+            );
+            let drawn = run.sets_in_force()[0].clone();
+            let id = drawn.session.tip_near(tip, 0.05).expect("its tip stays");
+            assert!(drawn.session.state().collections.trunks.contains_key(&id));
+            assert!(document.undo().unwrap());
+            assert_eq!(document.scene_revision(), before, "one undo step");
+        });
+    }
+
+    #[test]
+    fn a_picked_support_is_drawn_again_with_the_number_typed() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            // A support no other hangs from: one that can be drawn again.
+            let session = run.sets_in_force()[0].session.clone();
+            let tip = session
+                .tips()
+                .into_iter()
+                .find(|(id, _)| !session.carries_others(id))
+                .expect("a support at an end")
+                .1;
+            let tip_f = tip.map(|c| c as f32);
+
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(tip_f, false);
+            assert_eq!(window.get_support_picked_count(), 1, "the click picks it");
+            let shown = slint::Model::row_data(&window.get_support_shape_values(), 0).unwrap();
+            assert!(shown > 0.0, "the panel shows its tip: {shown}");
+
+            let before = document.scene_revision();
+            run.on_shape_value(0, 0.35);
+            settle_click(&run);
+            assert_ne!(
+                document.scene_revision(),
+                before,
+                "drawn again: {}",
+                window.get_supports_last_run()
+            );
+            let drawn = run.sets_in_force()[0].clone();
+            let id = drawn
+                .session
+                .tip_near(tip, 0.05)
+                .expect("in the same contact");
+            let shape = drawn.session.shape_of(&id).expect("its numbers");
+            assert!((shape.tip_diameter_mm - 0.35).abs() < 1e-6, "{shape:?}");
+            assert_eq!(window.get_support_picked_count(), 1, "still picked");
+
+            assert!(document.undo().unwrap());
+            let drawn = run.sets_in_force()[0].clone();
+            let id = drawn
+                .session
+                .tip_near(tip, 0.05)
+                .expect("back where it was");
+            assert!(
+                (drawn.session.shape_of(&id).unwrap().tip_diameter_mm - 0.35).abs() > 1e-6,
+                "Undo brings the old numbers back"
+            );
+
+            // A click on no support lets go.
+            run.on_tool_click_with([100.0, 100.0, 0.0], false);
+            assert_eq!(window.get_support_picked_count(), 0);
+        });
+    }
+
     /// Waits for the click being made off the UI thread to land.
     fn settle_click(run: &Rc<DfSupportRun>) {
         let started = Instant::now();
@@ -12489,6 +13528,149 @@ mod hand_edit_tests {
         });
     }
 
+    /// The line tool (#178): dots evenly along each stretch of the path,
+    /// a new stretch where the path left the model.
+    #[test]
+    fn a_row_spreads_evenly_and_starts_again_past_a_gap() {
+        let path: Vec<[f32; 3]> = (0..=40).map(|i| [i as f32 * 0.25, 0.0, 5.0]).collect();
+        let row = line_points(&path, 2.0);
+        assert_eq!(row.len(), 6);
+        assert_eq!(row[0], [0.0, 0.0, 5.0]);
+        assert_eq!(row[5], [10.0, 0.0, 5.0]);
+        assert!((row[1][0] - 2.0).abs() < 1e-4);
+        let mut gapped = path.clone();
+        gapped.extend((0..=8).map(|i| [30.0 + i as f32 * 0.25, 0.0, 5.0]));
+        let row = line_points(&gapped, 2.0);
+        assert_eq!(row.len(), 6 + 2);
+        assert_eq!(*row.last().unwrap(), [32.0, 0.0, 5.0]);
+        assert_eq!(line_points(&[[1.0, 2.0, 3.0]], 2.0), vec![[1.0, 2.0, 3.0]]);
+    }
+
+    /// The line tool (#178): two clicks under a bare slab, seen from below,
+    /// place a row of supports along it, as one Undo step.
+    #[test]
+    fn two_clicks_of_the_line_tool_place_a_row_in_one_step() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = wired_viewport(&window);
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    translation([10.0, 20.0, 9.0]),
+                    LeafPayload::Mesh(Arc::new(slab_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("slab.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            ctrl.set_section(WorkspaceSection::Supports);
+            ctrl.set_viewport_for_test(800.0, 600.0);
+            ctrl.set_camera_for_test(camera_at([20.0, 25.0, 9.0], 0.3, -0.7, 50.0));
+            window.set_support_tool(6);
+            run.on_tool_changed();
+
+            run.on_tool_click_with([12.0, 25.0, 9.0], false);
+            assert!(
+                run.support_leaf().is_none(),
+                "the first click places nothing"
+            );
+            run.on_tool_hover_with(Some([28.0, 25.0, 9.0]), false);
+            assert!(
+                window.get_support_add_note().contains("9 supports"),
+                "{}",
+                window.get_support_add_note()
+            );
+            run.on_tool_click_with([28.0, 25.0, 9.0], false);
+            settle_click(&run);
+            let session = in_force_session(&run).expect("the row started a set");
+            let tips: Vec<[f64; 3]> = session.tips().into_iter().map(|t| t.1).collect();
+            assert_eq!(tips.len(), 9, "{tips:?}");
+            for tip in &tips {
+                assert!((tip[1] - 25.0).abs() < 0.3, "on the line: {tip:?}");
+                assert!((tip[2] - 9.0).abs() < 0.3, "on the underside: {tip:?}");
+            }
+            assert!(document.undo().unwrap());
+            assert!(run.support_leaf().is_none(), "one undo takes the row out");
+        });
+    }
+
+    /// The Area tool (#177): the underside of a bare slab painted, one
+    /// action places a support on every node of a 2 mm grid over it, as one
+    /// Undo step; the paint stays until cleared.
+    #[test]
+    fn the_paint_of_the_area_tool_fills_with_a_grid_in_one_step() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = wired_viewport(&window);
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    translation([10.0, 20.0, 9.0]),
+                    LeafPayload::Mesh(Arc::new(slab_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("slab.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            ctrl.set_section(WorkspaceSection::Supports);
+            window.set_support_tool(7);
+            run.on_tool_changed();
+            assert!(run.area_brush.armed());
+
+            run.fill_painted();
+            assert!(
+                run.support_leaf().is_none(),
+                "nothing painted, nothing placed"
+            );
+            let bottom: Vec<u32> = slab_mesh()
+                .faces()
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| {
+                    f.vertices
+                        .iter()
+                        .all(|v| slab_mesh().vertices()[v.get() as usize].as_array()[2] == 0.0)
+                })
+                .map(|(i, _)| i as u32)
+                .collect();
+            assert_eq!(bottom.len(), 2);
+            let edit = SceneEdit::PaintSurface {
+                node_id: leaf,
+                kind: sc_scene::PaintKind::SupportEnforce,
+                changes: sc_scene::PaintChanges::from_faces(
+                    bottom
+                        .iter()
+                        .map(|&f| (f, sc_scene::UNPAINTED, sc_scene::PAINTED))
+                        .collect(),
+                ),
+            };
+            document.apply_edit(edit.clone()).unwrap();
+            document.push_edit(edit);
+
+            run.fill_painted();
+            settle_click(&run);
+            let session = in_force_session(&run).expect("the grid started a set");
+            let tips: Vec<[f64; 3]> = session.tips().into_iter().map(|t| t.1).collect();
+            assert!(tips.len() >= 40, "{} supports", tips.len());
+            for tip in &tips {
+                assert!((tip[2] - 9.0).abs() < 0.3, "on the underside: {tip:?}");
+            }
+            assert_eq!(crate::support_area::painted_leaves(&document), vec![leaf]);
+            assert!(document.undo().unwrap());
+            assert!(run.support_leaf().is_none(), "one undo takes the grid out");
+            run.clear_painted();
+            assert!(crate::support_area::painted_leaves(&document).is_empty());
+        });
+    }
+
     /// A slab 20 x 10 x 2 mm, its corner at the origin.
     fn slab_mesh() -> sc_mesh_core::IndexedMesh {
         let cube = sc_mesh_fixtures::unit_cube_mesh();
@@ -12911,6 +14093,44 @@ mod hand_edit_tests {
             let (off, none) = ctrl.under_plate_supports_for_test();
             assert_eq!(off, f32::MAX);
             assert!(none.is_none());
+        });
+    }
+
+    /// #137: the view mode in Scene settings draws the supports as their
+    /// contacts and lines, or see-through, at any camera height; the raft
+    /// stays. Whole draws them as they print.
+    #[test]
+    fn the_support_view_mode_holds_from_above_the_plate() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let place = AffineTransform3D::from_translation([25.0, 22.0, 12.0]);
+            let mut camera = camera_at([35.0, 27.0, 12.0], 0.4, -1.2, 60.0);
+            camera.pitch = 0.6;
+            let (ctrl, _document, run) =
+                wired_slab(&window, Transform3D::Affine(place), camera);
+            let top = in_force_session(&run).unwrap().raft_top_mm() as f32;
+
+            assert_eq!(window.get_support_view(), 0, "whole by default");
+            assert!(ctrl.under_plate_supports_for_test().1.is_none());
+
+            window.invoke_support_view_picked(1);
+            assert_eq!(window.get_support_view(), 1);
+            let (shown_up_to, lines) = ctrl.under_plate_supports_for_test();
+            assert!(lines.is_some(), "contacts draw the lines from above too");
+            let kept = if top > 0.0 {
+                crate::under_plate::hidden_below_mm(top)
+            } else {
+                -1.0
+            };
+            assert_eq!(shown_up_to, kept, "the raft stays");
+
+            window.invoke_support_view_picked(2);
+            let (see_through, none) = ctrl.under_plate_supports_for_test();
+            assert_eq!(see_through, kept);
+            assert!(none.is_none(), "see-through draws no lines");
+
+            window.invoke_support_view_picked(0);
+            assert_eq!(ctrl.under_plate_supports_for_test().0, f32::MAX);
         });
     }
 

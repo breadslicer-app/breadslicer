@@ -9,7 +9,9 @@ use sc_sl1cer::geom2d::Point2D;
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 use sc_sl1cer::raster::rle::RleRun;
 
-use super::{Frames, PLACEHOLDER_GREY, lit_layer_count, write_layer_images};
+use super::{
+    Frames, PLACEHOLDER_GREY, lit_areas_mm2, lit_layer_count, lit_measures, write_layer_images,
+};
 use crate::raster_setup::RasterSetup;
 
 const PIXELS: u32 = 20;
@@ -48,6 +50,10 @@ fn stack(layers: Vec<Vec<Polygon>>) -> ContourStack {
             .map(|(index, polygons)| ContourLayer::new(0.05 * (index as f64 + 0.5), polygons))
             .collect(),
     )
+}
+
+fn stack_of(layer: Vec<Polygon>) -> ContourStack {
+    stack(vec![layer])
 }
 
 fn block() -> Vec<Polygon> {
@@ -185,4 +191,26 @@ fn the_lit_layer_count_stops_at_the_last_lit_layer() {
     assert_eq!(count(vec![block(), block()]), 2);
     assert_eq!(count(vec![Vec::new(), sliver()]), 0);
     assert_eq!(count(Vec::new()), 0);
+}
+
+#[test]
+fn each_layer_measures_its_area_and_its_edges() {
+    let raster = raster();
+    let stack = stack(vec![block(), Vec::new(), [block(), other_block()].concat()]);
+    let measures = lit_measures(&stack, &raster);
+    let areas = lit_areas_mm2(&stack, &raster);
+    assert_eq!(measures.len(), 3);
+    for (measure, area) in measures.iter().zip(&areas) {
+        assert_eq!(measure.area_mm2, *area);
+    }
+    // A 5 x 3 mm block on 0.5 mm pixels. A shape a few pixels across reads
+    // a little short: its edges are sampled at the pixel centres.
+    assert!((measures[0].area_mm2 - 15.0).abs() < 1e-9);
+    let edges = measures[0].perimeter_mm;
+    assert!((edges - 16.0).abs() < 0.1 * 16.0, "{edges}");
+    assert_eq!(measures[1].perimeter_mm, 0.0);
+    // Two blocks apart: the edges of both.
+    let both = measures[2].perimeter_mm;
+    let other = lit_measures(&stack_of(other_block()), &raster)[0].perimeter_mm;
+    assert!((both - (edges + other)).abs() < 1e-9, "{both}");
 }

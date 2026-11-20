@@ -140,6 +140,9 @@ pub struct PipelineSettings {
     /// Where no tip may land (SoulCrafted, #465): a hollow's drain channels,
     /// in world space.
     pub keep_out: Vec<KeepOut>,
+    /// The faces painted as detail (SoulCrafted, #186), by model id, in the
+    /// order of the model's faces: tips keep off them where they can.
+    pub detail_faces: Vec<(String, Arc<[bool]>)>,
 }
 
 impl PipelineSettings {
@@ -159,6 +162,7 @@ impl PipelineSettings {
             robust_raft_geometry: false,
             raft_apart: false,
             keep_out: Vec::new(),
+            detail_faces: Vec::new(),
         }
     }
 }
@@ -786,6 +790,21 @@ fn run_pipeline(
             blocked: None,
         };
         let ctx = PlanCtx::new(&settings.supports, &bands, Some(plan_mesh), &mut *new_id);
+        // The painted detail, face by face of the tree (#186).
+        let detail: Option<Vec<bool>> = settings
+            .detail_faces
+            .iter()
+            .find(|(id, _)| *id == model.id)
+            .and_then(|(_, painted)| {
+                let tree_of = bvhs[i].faces_of_soup()?;
+                let mut tree = vec![false; tree_of.len()];
+                for (face, &at) in tree_of.iter().enumerate() {
+                    if painted.get(face).copied().unwrap_or(false) {
+                        tree[at as usize] = true;
+                    }
+                }
+                tree.contains(&true).then_some(tree)
+            });
         perf::mark("stage:plan");
         let plan = compute_auto_support_plan(
             &PlanInput {
@@ -798,6 +817,7 @@ fn run_pipeline(
                 brace_meshes: &brace_meshes,
                 zone: Some(ZonePlanInput {
                     keep_out: &settings.keep_out,
+                    detail: detail.as_deref(),
                     steep: &steep,
                     layer_height_mm: settings.layer_height_mm,
                 }),

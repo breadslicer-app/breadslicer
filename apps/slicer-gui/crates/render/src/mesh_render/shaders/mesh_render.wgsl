@@ -264,8 +264,14 @@ const TIP_LOOK_MARGIN: f32 = 0.0005;
 // translucent by `fs_support_fade`, not by the opaque passes: a pattern of
 // dropped pixels flickered, and a selected set's outline ran round every
 // one of them.
+// How far the supports fade: with the plate from under it, or as the view
+// mode has them at any height (#137), packed in thousandths.
+fn support_fade() -> f32 {
+    return f32(u.face_breach_mask.w) / 1000.0;
+}
+
 fn fades_under_plate(supports: u32, cut_z: f32) -> bool {
-    return u.env_min.w > 0.0 && supports == 1u
+    return support_fade() > 0.0 && supports == 1u
         && (cut_z < u.env_max.w || cut_z > u.under_plate.x);
 }
 
@@ -425,7 +431,7 @@ fn fs_support_fade(in: VsOut) -> @location(0) vec4<f32> {
         in.surface,
         in.supports,
     );
-    return vec4<f32>(color, 1.0 - u.env_min.w);
+    return vec4<f32>(color, 1.0 - support_fade());
 }
 
 // The cut a hidden raft leaves in a support mesh (#481). From under the
@@ -496,6 +502,9 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
     } else if (in.tint == 11u) {
         // The dot of an island too small for its paint to read (#542).
         return vec4<f32>(0.96, 0.36, 0.92, 0.95);
+    } else if (in.tint == 14u) {
+        // Supports the Select tool picked (#567): the selection's amber.
+        color = vec4<f32>(1.00, 0.68, 0.28, 0.85);
     } else if (in.tint == 13u) {
         // The Measure tool (#652): a light cyan, unlit, over everything.
         return vec4<f32>(0.38, 0.86, 1.00, 0.95);
@@ -552,7 +561,7 @@ fn vs_support_line(in: LineIn) -> LineOut {
 
 @fragment
 fn fs_support_line(in: LineOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(SUPPORT_LINE_COLOR, u.env_min.w);
+    return vec4<f32>(SUPPORT_LINE_COLOR, support_fade());
 }
 
 // The ball at a support's tip (#493), lit like the models so it reads round.
@@ -561,5 +570,5 @@ fn fs_support_ball(in: VsOut) -> @location(0) vec4<f32> {
     let n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
     let lambert = abs(dot(n, normalize(u.light_dir.xyz)));
     let intensity = 0.45 + 0.55 * lambert;
-    return vec4<f32>(SUPPORT_BALL_COLOR * intensity, u.env_min.w);
+    return vec4<f32>(SUPPORT_BALL_COLOR * intensity, support_fade());
 }

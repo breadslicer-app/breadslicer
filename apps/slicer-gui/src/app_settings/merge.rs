@@ -38,6 +38,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         controls_layout,
         hide_rafts_under_plate,
         support_lines_under_plate,
+        support_view,
         silenced_messages,
         object_list,
         slice_panel,
@@ -108,6 +109,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
             &ours.support_lines_under_plate,
             support_lines_under_plate,
         ),
+        support_view: pick(&base.support_view, &ours.support_view, support_view),
         silenced_messages: merge_set(
             &base.silenced_messages,
             &ours.silenced_messages,

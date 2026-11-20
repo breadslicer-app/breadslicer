@@ -18,13 +18,27 @@
 //! overlap have caps that overlap, as their volumes do. When a cut through
 //! the whole plane does not come out closed (a shell that runs through
 //! itself), it is done again with Manifold's plane split.
+//!
+//! The parts can be joined again across the cut ([`add_joints`]): a pin
+//! and its socket (#109) or a pocket for a magnet on each side (#442).
+//!
+//! A model can also be cut along a stroke drawn over it in the view, or
+//! by a loop round a part ([`stroke_cut`], #440, #441), and the narrowings
+//! of its cross-section suggest where to cut ([`narrowings`], #443).
 
 mod fallback;
+mod joints;
 mod section;
 mod split;
+mod stroke;
+mod suggest;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_joints;
+#[cfg(test)]
+mod tests_stroke;
 
 use std::fmt;
 
@@ -33,6 +47,10 @@ use sc_mesh_core::IndexedMesh;
 pub use section::{CutModel, Fit, Section, SectionPiece};
 
 pub use split::{Cut, volume};
+pub use stroke::{Stroke, stroke_cut};
+pub use suggest::{Narrowing, narrowings};
+
+pub use joints::{Joined, Joint, MAGNET_PRESETS, MIN_WALL_MM, PinShape, add_joints, joint_points};
 
 /// A plane: the points `p` with `normal · p = offset`, `normal` of length 1.
 /// Its positive side is the one `normal` points to.

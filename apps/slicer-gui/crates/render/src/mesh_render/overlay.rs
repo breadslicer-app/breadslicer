@@ -52,6 +52,8 @@ pub enum OverlayTint {
     IslandVisited = 12,
     /// The Measure tool's points and segments (#652), over everything.
     Measure = 13,
+    /// Supports the Select tool picked (#567): the selection's amber.
+    Picked = 14,
 }
 
 /// The overlay as a whole: its pieces, each shared so a piece that did not

@@ -27,6 +27,27 @@
 //!
 //! A model that is not closed is repaired first, on a copy, as Slice asks:
 //! the pieces come from the repaired model.
+//!
+//! **Strokes (#440, #441).** The card's Stroke mode puts the plane aside: a
+//! drag over the model draws a stroke, and the cut follows it, swept along
+//! the view through the model ([`sc_cut::stroke_cut`]). A stroke from one
+//! side of the model to the other cuts it in two along it; a loop drawn
+//! round a part (a head, a hand, a shoulder pad) cuts that part off, flat
+//! at the plane the loop's points on the surface best fit. The stroke shows
+//! as it is drawn, the cut is worked out when it ends, and Cut puts it in
+//! the scene as a plane cut does.
+//!
+//! **Suggestions (#443).** Suggest puts the plane, level, at the narrowest
+//! place of the model's cross-section (a neck, a waist, an ankle:
+//! [`sc_cut::narrowings`]); pressing it again goes to the next one. Nothing
+//! is cut until Cut.
+//!
+//! **Joints (#109, #442).** The card can add a pin on the part below the
+//! plane and its socket on the part above, or a magnet pocket on each side,
+//! in the middle of each part of the cross-section the cut takes. They are
+//! worked out with the cut, so the card says how many fit before anything
+//! changes; one that does not fit (too near the edge of the cut, or too deep
+//! for the part behind it) is left out and said.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -34,7 +55,10 @@ use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use sc_cut::{Cut, CutError, CutModel, Fit, Outline, Plane, Section};
+use sc_cut::{
+    Cut, CutError, CutModel, Fit, Joint, MAGNET_PRESETS, Outline, PinShape, Plane, Section,
+    add_joints, joint_points,
+};
 use sc_geom::df_supports::is_any_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::RepairPasses;
@@ -119,6 +143,89 @@ impl CutSettings {
             c[k] = mid + (c[k] - mid) * size / old;
         }
         corners
+    }
+}
+
+/// The joints the card asks for (#109, #442), each kind keeping its own
+/// sizes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct JointSettings {
+    /// 0 none, 1 pin and socket, 2 magnet pockets.
+    pub(crate) kind: u8,
+    pub(crate) square: bool,
+    /// Pin: its size, depth and clearance, mm.
+    pub(crate) pin: [f64; 3],
+    /// Magnet: its diameter, height and clearance, mm.
+    pub(crate) magnet: [f64; 3],
+}
+
+impl Default for JointSettings {
+    fn default() -> Self {
+        let (
+            Joint::Pin {
+                size_mm,
+                depth_mm,
+                clearance_mm,
+                ..
+            },
+            Joint::Magnet {
+                diameter_mm,
+                height_mm,
+                clearance_mm: magnet_clearance,
+            },
+        ) = (Joint::default_pin(), Joint::default_magnet())
+        else {
+            unreachable!("the defaults are a pin and a magnet")
+        };
+        Self {
+            kind: 0,
+            square: false,
+            pin: [size_mm, depth_mm, clearance_mm],
+            magnet: [diameter_mm, height_mm, magnet_clearance],
+        }
+    }
+}
+
+impl JointSettings {
+    /// The joint to make, if any.
+    pub(crate) fn joint(&self) -> Option<Joint> {
+        match self.kind {
+            1 => Some(Joint::Pin {
+                shape: if self.square {
+                    PinShape::Square
+                } else {
+                    PinShape::Round
+                },
+                size_mm: self.pin[0],
+                depth_mm: self.pin[1],
+                clearance_mm: self.pin[2],
+            }),
+            2 => Some(Joint::Magnet {
+                diameter_mm: self.magnet[0],
+                height_mm: self.magnet[1],
+                clearance_mm: self.magnet[2],
+            }),
+            _ => None,
+        }
+    }
+
+    /// The sizes of the kind on show: size, depth and clearance.
+    fn shown(&self) -> [f64; 3] {
+        if self.kind == 2 {
+            self.magnet
+        } else {
+            self.pin
+        }
+    }
+
+    /// The magnet preset the sizes are, or -1.
+    fn preset(&self) -> i32 {
+        MAGNET_PRESETS
+            .iter()
+            .position(|&(d, h)| {
+                (d - self.magnet[0]).abs() < 1e-6 && (h - self.magnet[1]).abs() < 1e-6
+            })
+            .map_or(-1, |i| i as i32)
     }
 }
 
@@ -492,7 +599,121 @@ struct Ready {
 /// What the worker hands back.
 enum Worked {
     Ready(Result<Ready, String>),
-    Trial(Result<Cut, CutError>),
+    /// The cut, with how many joints it got and how many were left out.
+    Trial(Result<(Cut, [usize; 2]), CutError>),
+    /// A cut along a stroke (#440, #441).
+    Stroke(Result<Cut, CutError>),
+}
+
+/// A stroke cut worked out, or being worked out (#440, #441).
+struct StrokeTrial {
+    target: Target,
+    job: u64,
+    /// A loop, which cuts off what it encloses.
+    closed: bool,
+    cut: Option<Arc<Cut>>,
+    failed: bool,
+}
+
+/// A stroke in the world: its frame across the view and its points in it.
+struct StrokeFrame {
+    origin: [f64; 3],
+    u: [f64; 3],
+    v: [f64; 3],
+    along: [f64; 3],
+    points: Vec<[f64; 2]>,
+    closed: bool,
+}
+
+/// The stroke drawn by the rays `rays` (eye and direction), across the
+/// view through `center`: the mean direction is the view, each ray meets
+/// the plane across it through `center`. A loop when it ends near where it
+/// began.
+fn stroke_frame(rays: &[([f64; 3], [f64; 3])], center: [f64; 3]) -> Option<StrokeFrame> {
+    let sum = rays
+        .iter()
+        .fold([0.0; 3], |a, (_, d)| add(a, normalize(*d)));
+    let along = normalize(sum);
+    if !along.iter().all(|c| c.is_finite()) || dot(along, along) < 0.5 {
+        return None;
+    }
+    let (u, v) = sc_cut::Stroke::frame(along);
+    let points: Vec<[f64; 2]> = rays
+        .iter()
+        .filter_map(|(o, d)| {
+            let k = dot(along, *d);
+            if k.abs() < 1e-9 {
+                return None;
+            }
+            let t = dot(along, sub(center, *o)) / k;
+            let p = sub(add(*o, scale(*d, t)), center);
+            Some([dot(p, u), dot(p, v)])
+        })
+        .collect();
+    if points.len() < 2 {
+        return None;
+    }
+    let length: f64 = points
+        .windows(2)
+        .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+        .sum();
+    let (a, b) = (points[0], points[points.len() - 1]);
+    let closed = points.len() >= 4 && (a[0] - b[0]).hypot(a[1] - b[1]) <= (0.12 * length).max(1.0);
+    Some(StrokeFrame {
+        origin: center,
+        u,
+        v,
+        along,
+        points,
+        closed,
+    })
+}
+
+/// Where up to 48 of `rays` (in the mesh's frame) first meet `mesh`: the
+/// points of a loop on the surface.
+fn surface_points(mesh: &IndexedMesh, rays: &[([f64; 3], [f64; 3])]) -> Vec<[f64; 3]> {
+    let step = (rays.len() / 48).max(1);
+    let vertices = mesh.vertices();
+    rays.iter()
+        .step_by(step)
+        .filter_map(|(o, d)| {
+            let mut best: Option<f64> = None;
+            for f in mesh.faces() {
+                let [a, b, c] = f
+                    .vertices
+                    .map(|v| vertices[v.get() as usize].as_array().map(f64::from));
+                let (e1, e2) = (sub(b, a), sub(c, a));
+                let h = cross(*d, e2);
+                let det = dot(e1, h);
+                if det.abs() < 1e-14 {
+                    continue;
+                }
+                let s = sub(*o, a);
+                let bu = dot(s, h) / det;
+                if !(0.0..=1.0).contains(&bu) {
+                    continue;
+                }
+                let q = cross(s, e1);
+                let bv = dot(*d, q) / det;
+                if bv < 0.0 || bu + bv > 1.0 {
+                    continue;
+                }
+                let t = dot(e2, q) / det;
+                if t > 1e-9 && best.is_none_or(|b| t < b) {
+                    best = Some(t);
+                }
+            }
+            best.map(|t| add(*o, scale(*d, t)))
+        })
+        .collect()
+}
+
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 
 type Slot = Arc<Mutex<Option<(u64, Worked)>>>;
@@ -510,6 +731,8 @@ struct Shown {
     trial: Option<Arc<Cut>>,
     /// The worker job working it out, or 0.
     trial_job: u64,
+    /// The joints the trial got and those left out (#109, #442).
+    joints: [usize; 2],
 }
 
 pub(crate) struct CutRun {
@@ -519,6 +742,19 @@ pub(crate) struct CutRun {
     ctrl: Rc<ViewportController>,
     open: Cell<bool>,
     settings: Cell<CutSettings>,
+    /// The joints across the cut (#109, #442).
+    joint: Cell<JointSettings>,
+    /// Drawing a stroke over the model in place of the plane (#440, #441).
+    stroke_mode: Cell<bool>,
+    /// The rays of the stroke drawn, and the cursor at the last one.
+    stroke: RefCell<Vec<([f64; 3], [f64; 3])>>,
+    stroke_cursor: Cell<[f64; 2]>,
+    drawing: Cell<bool>,
+    stroke_trial: RefCell<Option<StrokeTrial>>,
+    /// The suggested heights for the model on show, world mm, best first,
+    /// and the one on show (#443).
+    suggestions: RefCell<Option<(Target, Vec<f64>)>>,
+    suggested: Cell<usize>,
     target: RefCell<Option<Target>>,
     ready: RefCell<Option<Arc<Ready>>>,
     /// The mesh being made ready.
@@ -582,6 +818,14 @@ impl CutRun {
                     bounded: false,
                     corners: rect_corners([0.0; 2], [10.0; 2]),
                 }),
+                joint: Cell::new(JointSettings::default()),
+                stroke_mode: Cell::new(false),
+                stroke: RefCell::new(Vec::new()),
+                stroke_cursor: Cell::new([0.0; 2]),
+                drawing: Cell::new(false),
+                stroke_trial: RefCell::new(None),
+                suggestions: RefCell::new(None),
+                suggested: Cell::new(0),
                 target: RefCell::new(None),
                 ready: RefCell::new(None),
                 preparing: RefCell::new(None),
@@ -640,6 +884,9 @@ impl CutRun {
         if !self.open.replace(false) {
             return;
         }
+        self.stroke.borrow_mut().clear();
+        self.drawing.set(false);
+        self.stroke_trial.borrow_mut().take();
         self.settle.stop();
         self.waiting.set(0);
         self.apply_when_in.set(false);
@@ -719,6 +966,351 @@ impl CutRun {
         ui.set_cut_depth(d as f32);
         ui.set_cut_offset_u(ou as f32);
         ui.set_cut_offset_v(ov as f32);
+        let j = self.joint.get();
+        let [size, depth, clearance] = j.shown();
+        ui.set_cut_joint_kind(i32::from(j.kind));
+        ui.set_cut_joint_square(j.square);
+        ui.set_cut_joint_size(size as f32);
+        ui.set_cut_joint_depth(depth as f32);
+        ui.set_cut_joint_clearance(clearance as f32);
+        ui.set_cut_joint_preset(j.preset());
+    }
+
+    /// Suggest (#443): the plane, level, to the narrowest place of the
+    /// model's cross-section; again, to the next one.
+    fn suggest(&self) {
+        let Some((_, target)) = self.on_show() else {
+            return;
+        };
+        if self.stroke_mode.get() {
+            self.set_stroke_mode(false);
+        }
+        let known = self
+            .suggestions
+            .borrow()
+            .as_ref()
+            .filter(|(t, _)| t.same(&target))
+            .map(|(_, list)| list.clone());
+        let (list, next) = match known {
+            Some(list) if !list.is_empty() => {
+                let next = (self.suggested.get() + 1) % list.len();
+                (list, next)
+            }
+            _ => {
+                // The model in the world, so heights and areas are the
+                // scene's.
+                let vertices = target
+                    .mesh
+                    .vertices()
+                    .iter()
+                    .map(|v| {
+                        let p = target.world.apply(v.as_array().map(f64::from));
+                        sc_mesh_core::Vertex::new(p.map(|c| c as f32))
+                    })
+                    .collect();
+                let world = IndexedMesh::new(None, vertices, target.mesh.faces().to_vec());
+                let list: Vec<f64> = sc_cut::narrowings(&world, [0.0, 0.0, 1.0])
+                    .into_iter()
+                    .map(|n| n.at)
+                    .collect();
+                *self.suggestions.borrow_mut() = Some((target.clone(), list.clone()));
+                (list, 0)
+            }
+        };
+        let Some(&height) = list.get(next) else {
+            self.say(
+                self.status_line(),
+                ctr!(
+                    "CutRun",
+                    "No narrowing found to suggest: the model is about as wide all the way up."
+                ),
+                self.ui.upgrade().is_some_and(|ui| ui.get_cut_can_cut()),
+            );
+            return;
+        };
+        self.suggested.set(next);
+        let mut s = self.settings.get();
+        s.height = height;
+        s.tilt = [0.0; 2];
+        self.settings.set(s);
+        self.push_settings();
+        self.refresh();
+    }
+
+    /// Which suggestion the plane stands at, as the card says it.
+    fn suggestion_note(&self) -> Option<String> {
+        let s = self.settings.get();
+        let suggestions = self.suggestions.borrow();
+        let (_, list) = suggestions.as_ref()?;
+        let k = self.suggested.get();
+        let at = *list.get(k)?;
+        ((s.height - at).abs() < 1e-6 && s.tilt == [0.0; 2]).then(|| {
+            ctr!(
+                "CutRun",
+                "Suggested: a narrowing of the model ({}). Suggest again for the next.",
+                format!("{} / {}", k + 1, list.len())
+            )
+            .to_string()
+        })
+    }
+
+    /// Draws strokes (`on`) or moves the plane (#440, #441).
+    fn set_stroke_mode(&self, on: bool) {
+        if on == self.stroke_mode.get() {
+            return;
+        }
+        self.stroke_mode.set(on);
+        self.stroke.borrow_mut().clear();
+        self.drawing.set(false);
+        self.stroke_trial.borrow_mut().take();
+        self.grab.borrow_mut().take();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_cut_stroke_mode(on);
+        }
+        if on {
+            self.show_stroke();
+            self.describe_stroke();
+        } else {
+            self.refresh();
+        }
+    }
+
+    fn stroke_press(&self, pointer: &ScenePointer) -> bool {
+        if self.on_show().is_none() {
+            return false;
+        }
+        self.drawing.set(true);
+        *self.stroke.borrow_mut() = vec![(pointer.origin, pointer.direction)];
+        self.stroke_cursor.set(pointer.cursor);
+        self.stroke_trial.borrow_mut().take();
+        self.show_stroke();
+        self.describe_stroke();
+        true
+    }
+
+    fn stroke_drag(&self, pointer: &ScenePointer) {
+        let last = self.stroke_cursor.get();
+        if (pointer.cursor[0] - last[0]).hypot(pointer.cursor[1] - last[1]) < 3.0 {
+            return;
+        }
+        self.stroke_cursor.set(pointer.cursor);
+        self.stroke
+            .borrow_mut()
+            .push((pointer.origin, pointer.direction));
+        self.show_stroke();
+    }
+
+    fn stroke_release(&self, pointer: Option<&ScenePointer>) {
+        self.drawing.set(false);
+        let Some(pointer) = pointer else {
+            // Given up: the stroke goes.
+            self.stroke.borrow_mut().clear();
+            self.show_stroke();
+            self.describe_stroke();
+            return;
+        };
+        self.stroke
+            .borrow_mut()
+            .push((pointer.origin, pointer.direction));
+        self.show_stroke();
+        self.start_stroke_trial();
+    }
+
+    /// Works out the cut along the stroke drawn, on a worker.
+    fn start_stroke_trial(&self) {
+        let Some((_, target)) = self.on_show() else {
+            return;
+        };
+        let Some(ready) = self.ready.borrow().clone() else {
+            return;
+        };
+        let rays = self.stroke.borrow().clone();
+        let (Some(world), Some(back)) =
+            (stroke_frame(&rays, target.center()), target.world.inverse())
+        else {
+            self.describe_stroke();
+            return;
+        };
+        let id = self.job_id();
+        *self.stroke_trial.borrow_mut() = Some(StrokeTrial {
+            target: target.clone(),
+            job: id,
+            closed: world.closed,
+            cut: None,
+            failed: false,
+        });
+        // Into the mesh's own frame: the points stay in world mm along the
+        // frame's directions, which the map takes along.
+        let zero = back.apply([0.0; 3]);
+        let vector = |v: [f64; 3]| sub(back.apply(v), zero);
+        let stroke = sc_cut::Stroke {
+            origin: back.apply(world.origin),
+            u: vector(world.u),
+            v: vector(world.v),
+            along: vector(world.along),
+            points: world.points,
+            surface: Vec::new(),
+            closed: world.closed,
+        };
+        let local: Vec<([f64; 3], [f64; 3])> = rays
+            .iter()
+            .map(|(o, d)| (back.apply(*o), vector(*d)))
+            .collect();
+        let mesh = ready.model.mesh().clone();
+        let slot = self.slot.clone();
+        let ui = self.ui.clone();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_cut_working(true);
+        }
+        std::thread::spawn(move || {
+            let cut = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut stroke = stroke;
+                if stroke.closed {
+                    stroke.surface = surface_points(&mesh, &local);
+                }
+                sc_cut::stroke_cut(&mesh, &stroke)
+            }))
+            .unwrap_or_else(|payload| Err(CutError::Failed(panic_message(&payload))));
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((id, Worked::Stroke(cut)));
+            let _ = ui.upgrade_in_event_loop(|ui| ui.invoke_cut_worked());
+        });
+        self.describe_stroke();
+    }
+
+    /// What the card says in Stroke mode.
+    fn describe_stroke(&self) {
+        let trial = self.stroke_trial.borrow();
+        let (status, warning, can) = match trial.as_ref() {
+            None => (
+                ctr!(
+                    "CutRun",
+                    "Draw across the model to cut it along the stroke, or draw a loop round a part to cut it off."
+                ),
+                Default::default(),
+                false,
+            ),
+            Some(t) => match (&t.cut, t.failed) {
+                (Some(cut), _) => (
+                    ctr!("CutRun", "It leaves {} pieces.", cut.pieces.len()),
+                    Default::default(),
+                    cut.pieces.len() >= 2,
+                ),
+                (None, true) => (
+                    Default::default(),
+                    if t.closed {
+                        ctr!(
+                            "CutRun",
+                            "The loop cuts nothing off: draw it round a part that stands out of the model."
+                        )
+                    } else {
+                        ctr!(
+                            "CutRun",
+                            "The stroke does not cut the model in two: draw it from one side of the model to the other, without crossing itself."
+                        )
+                    },
+                    false,
+                ),
+                (None, false) => (
+                    ctr!("CutRun", "Working out the cut…"),
+                    Default::default(),
+                    false,
+                ),
+            },
+        };
+        drop(trial);
+        self.say(status, warning, can);
+    }
+
+    /// The stroke drawn, as a ribbon across the view through the model's
+    /// middle.
+    fn show_stroke(&self) {
+        let Some((_, target)) = self.on_show() else {
+            return;
+        };
+        let rays = self.stroke.borrow().clone();
+        let mut pieces: Vec<Arc<OverlayMesh>> = Vec::new();
+        if let Some(world) = stroke_frame(&rays, target.center()) {
+            let half = (target.reach() * 0.004).max(0.08);
+            let at = |p: [f64; 2]| {
+                add(
+                    world.origin,
+                    add(scale(world.u, p[0]), scale(world.v, p[1])),
+                )
+            };
+            let mut positions = Vec::new();
+            let mut indices = Vec::new();
+            for w in world.points.windows(2) {
+                let (a, b) = (at(w[0]), at(w[1]));
+                let side = normalize(cross(sub(b, a), world.along));
+                if !side.iter().all(|c| c.is_finite()) {
+                    continue;
+                }
+                let base = positions.len() as u32;
+                for p in [
+                    add(a, scale(side, half)),
+                    add(a, scale(side, -half)),
+                    add(b, scale(side, -half)),
+                    add(b, scale(side, half)),
+                ] {
+                    // A hair towards the eye, so the model does not hide it.
+                    let p = sub(p, scale(world.along, target.reach()));
+                    positions.push(p.map(|x| x as f32));
+                }
+                indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+                indices.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
+            }
+            if !positions.is_empty() {
+                pieces.push(Arc::new(OverlayMesh {
+                    positions,
+                    indices,
+                    tint: if world.closed {
+                        OverlayTint::Drain
+                    } else {
+                        OverlayTint::Valid
+                    },
+                }));
+            }
+        }
+        let overlay: Overlay = pieces.into();
+        self.ctrl.set_preview_overlay(Some(overlay));
+    }
+
+    /// A joint setting (#109, #442): 8 kind (0 none, 1 pin, 2 magnet), 9 a
+    /// square pin (0/1), 10 size, 11 depth, 12 clearance, 13 a magnet
+    /// preset. The cut is worked out again with it.
+    fn on_joint_option(&self, code: i32, value: f64) {
+        let mut j = self.joint.get();
+        let sizes = if j.kind == 2 {
+            &mut j.magnet
+        } else {
+            &mut j.pin
+        };
+        match code {
+            8 => j.kind = (value.round() as u8).min(2),
+            9 => j.square = value != 0.0,
+            10 => sizes[0] = value.max(0.1),
+            11 => sizes[1] = value.max(0.1),
+            12 => sizes[2] = value.clamp(0.0, 2.0),
+            13 => {
+                if let Some(&(d, h)) = MAGNET_PRESETS.get(value.round() as usize) {
+                    j.magnet[0] = d;
+                    j.magnet[1] = h;
+                }
+            }
+            _ => return,
+        }
+        if j == self.joint.get() {
+            return;
+        }
+        self.joint.set(j);
+        self.push_settings();
+        if let Some(shown) = self.shown.borrow_mut().as_mut() {
+            shown.trial = None;
+            shown.trial_job = 0;
+            shown.joints = [0, 0];
+        }
+        self.describe();
+        self.schedule_trial();
     }
 
     /// 0 height, 1 tilt about x, 2 tilt about y, 3 bounded (0/1), 4 width,
@@ -727,6 +1319,18 @@ impl CutRun {
     fn on_option(&self, code: i32, value: f32) {
         if code == -1 {
             self.start_trial();
+            return;
+        }
+        if (8..=13).contains(&code) {
+            self.on_joint_option(code, f64::from(value));
+            return;
+        }
+        if code == 14 {
+            self.set_stroke_mode(value != 0.0);
+            return;
+        }
+        if code == 15 {
+            self.suggest();
             return;
         }
         let mut s = self.settings.get();
@@ -819,6 +1423,11 @@ impl CutRun {
         if !self.open.get() {
             return;
         }
+        if self.stroke_mode.get() {
+            self.show_stroke();
+            self.describe_stroke();
+            return;
+        }
         let Some(target) = self.target.borrow().clone() else {
             return;
         };
@@ -906,6 +1515,7 @@ impl CutRun {
             fills,
             trial: None,
             trial_job: 0,
+            joints: [0, 0],
         });
         self.show_overlay(&target, &world, true);
         self.describe();
@@ -942,10 +1552,12 @@ impl CutRun {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_cut_working(true);
         }
+        let joint = self.joint.get().joint();
         std::thread::spawn(move || {
-            let cut =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| section.cut(&chosen)))
-                    .unwrap_or_else(|payload| Err(CutError::Failed(panic_message(&payload))));
+            let cut = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                with_joints(&section, &chosen, joint)
+            }))
+            .unwrap_or_else(|payload| Err(CutError::Failed(panic_message(&payload))));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((id, Worked::Trial(cut)));
             let _ = ui.upgrade_in_event_loop(|ui| ui.invoke_cut_worked());
         });
@@ -964,6 +1576,11 @@ impl CutRun {
         // Only the job the tool still waits for counts: a model made ready
         // for the model on show, a cut for the section on show.
         let current = match worked {
+            Worked::Stroke(_) => self
+                .stroke_trial
+                .borrow()
+                .as_ref()
+                .is_some_and(|s| s.job == id),
             Worked::Ready(_) => id == self.waiting.get(),
             Worked::Trial(_) => self
                 .shown
@@ -978,6 +1595,15 @@ impl CutRun {
             ui.set_cut_working(false);
         }
         match worked {
+            Worked::Stroke(cut) => {
+                if let Some(trial) = self.stroke_trial.borrow_mut().as_mut() {
+                    match cut {
+                        Ok(cut) => trial.cut = Some(Arc::new(cut)),
+                        Err(_) => trial.failed = true,
+                    }
+                }
+                self.describe_stroke();
+            }
             Worked::Ready(ready) => {
                 self.waiting.set(0);
                 self.preparing.borrow_mut().take();
@@ -994,9 +1620,10 @@ impl CutRun {
                 }
             }
             Worked::Trial(cut) => match cut {
-                Ok(cut) => {
+                Ok((cut, joints)) => {
                     if let Some(shown) = self.shown.borrow_mut().as_mut() {
                         shown.trial = Some(Arc::new(cut));
+                        shown.joints = joints;
                     }
                     self.redraw();
                     self.describe();
@@ -1021,6 +1648,10 @@ impl CutRun {
 
     /// The overlay for what is on show, redrawn.
     fn redraw(&self) {
+        if self.stroke_mode.get() {
+            self.show_stroke();
+            return;
+        }
         let Some((world, target)) = self.on_show() else {
             return;
         };
@@ -1058,7 +1689,7 @@ impl CutRun {
     /// The pointer moved with no button down: the handle under it lights.
     /// Whether that changed.
     fn hover(&self, pointer: Option<&ScenePointer>) -> bool {
-        if self.grab.borrow().is_some() {
+        if self.grab.borrow().is_some() || self.stroke_mode.get() {
             return false;
         }
         let hot = pointer.and_then(|p| self.on_show().and_then(|(at, _)| at.gizmo().pick(p)));
@@ -1067,6 +1698,9 @@ impl CutRun {
 
     /// The gizmo to draw, and a ring's turn in flight.
     fn drawn_gizmo(&self) -> Option<([f64; 3], ToolGizmo, Option<RingTurn>)> {
+        if self.stroke_mode.get() {
+            return None;
+        }
         let grab = self.grab.borrow();
         let (at, _) = self.on_show()?;
         let gizmo = at.gizmo();
@@ -1097,6 +1731,9 @@ impl CutRun {
     fn press(&self, pointer: &ScenePointer) -> bool {
         if !self.editable() {
             return false;
+        }
+        if self.stroke_mode.get() {
+            return self.stroke_press(pointer);
         }
         let Some((at, target)) = self.on_show() else {
             return false;
@@ -1135,6 +1772,10 @@ impl CutRun {
 
     /// The drag goes on: the plane follows the handle.
     fn drag(&self, pointer: &ScenePointer) {
+        if self.drawing.get() {
+            self.stroke_drag(pointer);
+            return;
+        }
         let next = {
             let mut grab = self.grab.borrow_mut();
             let Some(g) = grab.as_mut() else {
@@ -1213,6 +1854,10 @@ impl CutRun {
     /// The press ends: kept, or (no pointer) given up, the plane back where
     /// it was. A press on the plane that did not move is a click on it.
     fn release(&self, pointer: Option<&ScenePointer>, moved: bool) {
+        if self.drawing.get() {
+            self.stroke_release(pointer);
+            return;
+        }
         let Some(grab) = self.grab.borrow_mut().take() else {
             return;
         };
@@ -1298,6 +1943,25 @@ impl CutRun {
                 1 => ctr!("CutRun", "It leaves one piece.").to_string(),
                 n => ctr!("CutRun", "It leaves {} pieces.", n).to_string(),
             });
+            // The joints (#109, #442).
+            let [made, left] = shown.joints;
+            if made > 0 {
+                line.push(' ');
+                line.push_str(&ctr!("CutRun", "Joints added: {}.", made));
+            }
+            if left > 0 {
+                line.push(' ');
+                line.push_str(&ctr!(
+                    "CutRun",
+                    "Joints left out: {} (too near the edge of the cut, or too deep for the part).",
+                    left
+                ));
+            }
+        }
+        // A suggestion on show (#443).
+        if let Some(note) = self.suggestion_note() {
+            line.push(' ');
+            line.push_str(&note);
         }
         line.into()
     }
@@ -1402,12 +2066,23 @@ impl CutRun {
         if !self.open.get() || !self.editable() {
             return;
         }
-        let Some((target, trial)) = self
-            .shown
-            .borrow()
-            .as_ref()
-            .map(|s| (s.target.clone(), s.trial.clone()))
-        else {
+        // A stroke's cut (#440, #441), or the plane's.
+        let picked = if self.stroke_mode.get() {
+            match self.stroke_trial.borrow().as_ref() {
+                Some(StrokeTrial {
+                    target,
+                    cut: Some(cut),
+                    ..
+                }) => Some((target.clone(), Some(cut.clone()))),
+                _ => return,
+            }
+        } else {
+            self.shown
+                .borrow()
+                .as_ref()
+                .map(|s| (s.target.clone(), s.trial.clone()))
+        };
+        let Some((target, trial)) = picked else {
             return;
         };
         let Some(trial) = trial else {
@@ -1704,3 +2379,26 @@ fn held_pieces(pieces: &[IndexedMesh], world: &Affine, tops: &[[f64; 3]]) -> Vec
 #[cfg(test)]
 #[path = "tests_cut_run.rs"]
 mod tests;
+
+/// The cut of `section` at the pieces `chosen` takes, with `joint` at the
+/// middle of each of them (#109, #442), and how many joints it got and how
+/// many were left out. A joint that the booleans could not make leaves the
+/// cut as it is and is counted out.
+fn with_joints(
+    section: &Section,
+    chosen: &[bool],
+    joint: Option<Joint>,
+) -> Result<(Cut, [usize; 2]), CutError> {
+    let mut cut = section.cut(chosen)?;
+    let Some(joint) = joint.filter(|_| cut.pieces.len() >= 2) else {
+        return Ok((cut, [0, 0]));
+    };
+    let at = joint_points(section, chosen);
+    match add_joints(&cut.pieces, section.plane(), &at, joint) {
+        Ok(joined) => {
+            cut.pieces = joined.pieces;
+            Ok((cut, [joined.made, joined.skipped]))
+        }
+        Err(_) => Ok((cut, [0, at.len()])),
+    }
+}

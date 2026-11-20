@@ -21,6 +21,7 @@ use crate::hull::{
     Hull, convex_hull, fit_turn_deg, fits_turned, hull_2d, min_width, square_turn_deg,
 };
 use crate::islands::{ISLAND_CLUSTER_MM, Neighbours, Ring, count_clustered, local_minima_many};
+use crate::landings::landings;
 use crate::peel::{LayerProfile, layer_profile, summarize};
 use crate::pose::{axis_angle, matmul, rotation_between};
 use crate::vec::{V3, add, basis, cross, dot, mul, scale, sub, unit};
@@ -76,6 +77,9 @@ pub struct ModelGeometry {
     simple: Option<(Vec<V3>, Vec<[u32; 3]>)>,
     pub(crate) hull: Hull,
     voxels: Voxels,
+    /// The fine voxels of a Full verdict (#185), built the first time one
+    /// asks for them.
+    fine: std::sync::OnceLock<Voxels>,
     pub(crate) prepare_ms: f64,
 }
 
@@ -90,6 +94,9 @@ struct Detail {
     /// The painted vertices that can be a minimum, with what it takes to be
     /// an island (D2).
     minima: Vec<PaintedVertex>,
+    /// Which triangles of the mesh the landings are measured on (the
+    /// simplified copy, when there is one) are painted (D3, #185).
+    landing_paint: Vec<bool>,
     /// `Σ a·n / Σ a` over the painted faces: its dot with the up direction is
     /// what is left of D4. Not unit: a mask that faces every way has none.
     mean: V3,
@@ -111,6 +118,10 @@ pub(crate) enum Quality {
     Search,
     /// The peel on the full mesh.
     Verdict,
+    /// The verdict of a Full search (#185): with it, the cups on fine
+    /// voxels, the peak force at the real layer height and the supports
+    /// that land on the model.
+    Full,
 }
 
 impl OrientAnalysis {
@@ -196,6 +207,7 @@ impl OrientAnalysis {
                 simple,
                 hull,
                 voxels,
+                fine: std::sync::OnceLock::new(),
                 prepare_ms: start.elapsed().as_secs_f64() * 1e3,
             }),
             detail: None,
@@ -234,7 +246,8 @@ impl OrientAnalysis {
         let mut vertex = vec![false; self.pos.len()];
         let mut sum = [0.0; 3];
         let mut area = 0.0;
-        for (i, t) in self.tri.iter().enumerate().filter(|(i, _)| painted(*i)) {
+        let painted: Vec<bool> = (0..self.tri.len()).map(painted).collect();
+        for (i, t) in self.tri.iter().enumerate().filter(|(i, _)| painted[*i]) {
             let [a, b, c] = t.map(|v| self.pos[v as usize]);
             let n2 = cross(sub(b, a), sub(c, a));
             let Some(n) = unit(n2) else { continue };
@@ -273,11 +286,70 @@ impl OrientAnalysis {
                 })
             })
             .collect();
+        let landing_paint = self.landing_paint(&painted);
         Some(Detail {
             faces,
             bins: histogram(&self.pos, &tri),
             minima,
+            landing_paint,
             mean: scale(sum, 1.0 / area),
+        })
+    }
+
+    /// Which triangles of the mesh the landings are measured on are painted
+    /// (D3, #185): the mesh's own, or for its simplified copy, those whose
+    /// middle falls in a cell of a millimetre-ish grid that holds the
+    /// middle of a painted triangle.
+    fn landing_paint(&self, painted: &[bool]) -> Vec<bool> {
+        let Some((spos, stri)) = &self.simple else {
+            return painted.to_vec();
+        };
+        let centre = |p: &[V3], t: &[u32; 3]| {
+            let [a, b, c] = t.map(|i| p[i as usize]);
+            [0, 1, 2].map(|k| (a[k] + b[k] + c[k]) / 3.0)
+        };
+        let (lo, hi) = self.hull.points.iter().fold(
+            ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]),
+            |(mut lo, mut hi), p| {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+                (lo, hi)
+            },
+        );
+        let longest = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f64::max);
+        let cell = (longest / 200.0).max(1e-3);
+        let key = |p: V3| [0, 1, 2].map(|k| ((p[k] - lo[k]) / cell).floor() as i64);
+        let mut cells = std::collections::HashSet::new();
+        for (t, _) in self.tri.iter().zip(painted).filter(|(_, p)| **p) {
+            cells.insert(key(centre(&self.pos, t)));
+        }
+        stri.iter()
+            .map(|t| {
+                let k = key(centre(spos, t));
+                (-1..=1).any(|x| {
+                    (-1..=1)
+                        .any(|y| (-1..=1).any(|z| cells.contains(&[k[0] + x, k[1] + y, k[2] + z])))
+                })
+            })
+            .collect()
+    }
+
+    /// The fine voxels of a Full verdict (#185), built once.
+    fn fine_voxels(&self) -> &Voxels {
+        self.geometry.fine.get_or_init(|| {
+            let (lo, hi) = self.pos.iter().fold(
+                ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]),
+                |(mut lo, mut hi), p| {
+                    for k in 0..3 {
+                        lo[k] = lo[k].min(p[k]);
+                        hi[k] = hi[k].max(p[k]);
+                    }
+                    (lo, hi)
+                },
+            );
+            Voxels::fine(&self.pos, &self.tri, lo, hi)
         })
     }
 
@@ -381,7 +453,7 @@ impl OrientAnalysis {
     /// quality, with the peel on the full mesh.
     pub fn evaluate(&self, up: [f64; 3], ctx: &OrientContext) -> CostBreakdown {
         let u = unit(up).unwrap_or([0.0, 0.0, 1.0]);
-        self.score_many(&[u], ctx, Quality::Verdict)[0].cost
+        self.score_many(&[u], ctx, Quality::verdict(ctx))[0].cost
     }
 
     /// Scores every pose of `us`: the islands of all of them in passes over
@@ -437,8 +509,13 @@ impl OrientAnalysis {
         let kept = count_clustered(&points, ISLAND_CLUSTER_MM);
         let islands = kept.len();
 
-        // T3 with T4.
-        let cups = self.voxels.cups(u, z0, resting);
+        // T3 with T4; a Full verdict measures the cups on fine voxels (#185).
+        let voxels = if quality == Quality::Full {
+            self.fine_voxels()
+        } else {
+            &self.voxels
+        };
+        let cups = voxels.cups(u, z0, resting);
         let cup_area_mm2 = cups.iter().copied().fold(0.0, f64::max);
         let profile = self.closed.then(|| {
             let (pos, tri) = match (quality, &self.simple) {
@@ -447,7 +524,46 @@ impl OrientAnalysis {
             };
             layer_profile(pos, tri, u, z0, z1, ctx.peel.sample_mm.max(1e-3))
         });
-        let peel = summarize(profile.as_ref(), &ctx.peel, &cups, self.voxels.size);
+        let mut peel = summarize(profile.as_ref(), &ctx.peel, &cups, voxels.size);
+        // A Full verdict also takes the peak at the print's own layers
+        // (#185): a thin flange is a peak a coarse sampling steps over.
+        if quality == Quality::Full && self.closed && ctx.layer_height_mm < ctx.peel.sample_mm {
+            let fine = layer_profile(
+                &self.pos,
+                &self.tri,
+                u,
+                z0,
+                z1,
+                ctx.layer_height_mm.max(1e-3),
+            );
+            let at_layers = summarize(Some(&fine), &ctx.peel, &cups, voxels.size);
+            if at_layers.peak_force_n > peel.peak_force_n {
+                peel.peak_force_n = at_layers.peak_force_n;
+                peel.peak_at_mm = at_layers.peak_at_mm;
+                peel.peak_area_mm2 = peel.peak_area_mm2.max(at_layers.peak_area_mm2);
+            }
+        }
+
+        // T6 and D3 (#185): supports that land on the model, measured on
+        // the copy the search ranks the peel on.
+        let landed = (quality == Quality::Full).then(|| {
+            let (pos, tri) = match &self.simple {
+                Some((p, t)) => (p.as_slice(), t.as_slice()),
+                None => (self.pos.as_slice(), self.tri.as_slice()),
+            };
+            landings(
+                pos,
+                tri,
+                u,
+                c0,
+                ctx.area_per_tip_mm2,
+                self.detail.as_ref().map(|d| d.landing_paint.as_slice()),
+                resting,
+                z0,
+                PLATE_BAND_MM,
+            )
+        });
+        let model_landings = landed.map_or(0.0, |l| l.on_model);
 
         // The shadow, in the axes the model will have after turning.
         let to_current = rotation_between(u, ctx.current_up);
@@ -501,6 +617,7 @@ impl OrientAnalysis {
                 tips: area / ctx.area_per_tip_mm2,
                 islands: self.painted_islands(d, u),
                 facing_up: (1.0 + dot(d.mean, u)) / 2.0,
+                landings: landed.map_or(0.0, |l| l.on_paint),
             }
         });
 
@@ -511,7 +628,9 @@ impl OrientAnalysis {
             + w.area_jump_per_n * peel.jump_force_n
             + w.height_per_mm * height
             + w.slenderness * (slenderness - w.slender_from).max(0.0)
-            + detail.map_or(0.0, |d| w.detail_up * (1.0 - d.facing_up));
+            + w.tip * model_landings
+            + detail.map_or(0.0, |d| w.detail_up * (1.0 - d.facing_up))
+            + w.cup_per_mm2 * cup_area_mm2;
         let layers = ((height + lift) / ctx.layer_height_mm.max(1e-3)).ceil() as usize;
         let cu = unit(ctx.current_up).unwrap_or([0.0, 0.0, 1.0]);
         let rotation = if turn_deg == 0.0 {
@@ -532,6 +651,8 @@ impl OrientAnalysis {
                 peel,
                 peel_measured: profile.is_some(),
                 cup_area_mm2,
+                cup_force_n: ctx.peel.cup_n_per_mm2 * cup_area_mm2,
+                model_landings,
                 height_mm: height,
                 layers,
                 slenderness,
@@ -566,6 +687,7 @@ impl OrientAnalysis {
                 tips: overhang(&d.bins, u, c0, z0).area / ctx.area_per_tip_mm2,
                 islands: self.painted_islands(d, u),
                 facing_up: 0.0,
+                landings: 0.0,
             }
             .whole_tips() as i64
         });
@@ -665,4 +787,15 @@ fn simplify(pos: &[V3], tri: &[[u32; 3]]) -> Option<(Vec<V3>, Vec<[u32; 3]>)> {
         })
         .collect();
     Some((out_pos, out_tri))
+}
+
+impl Quality {
+    /// The verdict's quality for `ctx`: a Full search's has the terms of
+    /// #185.
+    pub(crate) fn verdict(ctx: &OrientContext) -> Self {
+        match ctx.mode {
+            crate::SearchMode::Quick => Quality::Verdict,
+            crate::SearchMode::Full => Quality::Full,
+        }
+    }
 }

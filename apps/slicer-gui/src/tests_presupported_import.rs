@@ -120,7 +120,7 @@ const SPOTS: [[f64; 2]; 6] = [
 /// A pre-supported file as makers export them: a box of a model with a
 /// horn, on 6 supports (shaft and tip cone) over a raft, every piece a closed
 /// shell of its own; and how many faces the model has.
-fn presupported_mesh() -> (IndexedMesh, usize) {
+pub(crate) fn presupported_mesh() -> (IndexedMesh, usize) {
     let mut b = Builder::default();
     b.cuboid([-10.0, -10.0, 5.0], [10.0, 10.0, 25.0]);
     b.frustum(0.0, 0.0, 25.0, 30.0, 1.5, 0.2);

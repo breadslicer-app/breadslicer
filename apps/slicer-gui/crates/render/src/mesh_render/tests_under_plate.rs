@@ -1205,3 +1205,77 @@ fn every_plate_draws_where_it_stands() {
         renderer.set_plate_tools(None);
     }
 }
+
+/// #137: the support view mode fades the supports from above the plate too:
+/// in Contacts they are gone (their lines take their place), see-through
+/// they show at a part of their strength, and Whole draws them as before.
+#[test]
+fn the_support_view_mode_fades_the_supports_from_above() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let target = Vec3::new(0.0, 0.0, 40.0);
+    let mut camera = OrbitCamera::new(target, 50.0);
+    camera.target = target;
+    camera.distance = 50.0;
+    camera.pitch = 0.85f32.asin();
+    camera.yaw = 0.3;
+    assert_eq!(under_plate_fade(&camera), 0.0, "from above");
+    let mut graph = Scene::new();
+    let root = graph.add_group(None, Transform3D::Identity);
+    graph.add_root(root).expect("group root");
+    let leaf = graph
+        .add_leaf(
+            None,
+            Transform3D::Affine(AffineTransform3D::identity()),
+            LeafPayload::Mesh(Arc::new(supports(square(60.0, 40.0)))),
+        )
+        .expect("add leaf");
+    graph.add_child(root, leaf).expect("attach leaf");
+    let empty = scene_of(Vec::new());
+    renderer.set_support_lines(-1.0, None);
+    let mut frame = |renderer: &mut Renderer, graph: &Scene| {
+        renderer.upload_scene(graph).expect("upload the scene");
+        renderer
+            .workspace_pixels_for_test(
+                SceneRender {
+                    graph,
+                    selection: &[],
+                    gizmo: None,
+                    clip_z: None,
+                },
+                BV,
+                &camera,
+                SIZE,
+                SIZE,
+            )
+            .expect("the frame is not refused")
+            .expect("a sized frame")
+    };
+    // How far the middle of the frame is from the bare plate, summed.
+    let mut shown = |renderer: &mut Renderer, fade: f32| {
+        renderer.set_support_view_fade(fade);
+        let bare = frame(renderer, &empty);
+        let drawn = frame(renderer, &graph);
+        let mut diff = 0u64;
+        for y in SIZE / 2 - 8..SIZE / 2 + 8 {
+            for x in SIZE / 2 - 8..SIZE / 2 + 8 {
+                let i = ((y * SIZE + x) * 4) as usize;
+                diff += (0..3)
+                    .map(|k| u64::from(bare.rgba[i + k].abs_diff(drawn.rgba[i + k])))
+                    .sum::<u64>();
+            }
+        }
+        diff
+    };
+    let whole = shown(&mut renderer, 0.0);
+    let see_through = shown(&mut renderer, 0.7);
+    let contacts = shown(&mut renderer, 1.0);
+    assert!(whole > 0, "Whole draws the supports");
+    assert!(
+        see_through > 0 && see_through < whole,
+        "see-through is fainter: {see_through} against {whole}"
+    );
+    assert_eq!(contacts, 0, "Contacts leave the supports out");
+}

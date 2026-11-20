@@ -211,6 +211,11 @@ impl SurfaceBrush {
         self.armed.get()
     }
 
+    /// The paint the brush lays.
+    pub(crate) fn kind(&self) -> PaintKind {
+        self.kind
+    }
+
     /// Turns the brush on or off for the model `leaf`. A stroke in flight
     /// closes, and the first dab finds the model's adjacency ready: a worker
     /// builds it now.

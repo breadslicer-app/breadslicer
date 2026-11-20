@@ -32,6 +32,8 @@ struct Window {
     document: Rc<SceneDocument>,
     slice: Rc<SliceRun>,
     cost: Rc<crate::resin_cost::ResinCostPanel>,
+    /// The layer timeline (#94).
+    timeline: Rc<crate::layer_timeline::LayerTimeline>,
     /// The cube on the first plate and the one on the second.
     cubes: [NodeId; 2],
 }
@@ -93,6 +95,8 @@ fn two_plates() -> Window {
         document.clone(),
         ctrl.clone(),
     );
+    let timeline =
+        crate::layer_timeline::LayerTimeline::install(&window, ctrl.clone(), review.clone());
     let slice = SliceRun::install(
         &window,
         bus,
@@ -109,6 +113,7 @@ fn two_plates() -> Window {
         document,
         slice,
         cost,
+        timeline,
         cubes: [first, other],
     }
 }
@@ -436,4 +441,35 @@ impl Window {
     ) -> std::collections::BTreeMap<MaterialId, crate::resin_cost::ResinPrice> {
         self.cost.prices_for_test()
     }
+}
+
+/// The layer timeline follows the slice held (#94): one row per layer, the
+/// force a cube's section pulls with, and a readout of the layer on show.
+#[test]
+fn the_layer_timeline_shows_each_layer_of_the_slice() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        assert!(!w.window.get_slice_timeline_valid());
+        w.document.set_active_plate(0);
+        w.press_slice();
+        let count = w.document.slice_layer_count().expect("the slice landed") as usize;
+        let shown = w.timeline.shown_for_test();
+        assert_eq!(shown.layers.len(), count);
+        assert!(w.window.get_slice_timeline_valid());
+        assert!(!w.window.get_slice_timeline_force().is_empty());
+        // The 10 mm cube: 100 mm² and 40 mm of edge on a middle layer,
+        // about 1.5 N on FEP.
+        let middle = shown.layers[count / 2];
+        assert!((middle.area_mm2 - 100.0).abs() < 2.0, "{middle:?}");
+        assert!((middle.perimeter_mm - 40.0).abs() < 1.5, "{middle:?}");
+        assert!((middle.force_n - 1.5).abs() < 0.1, "{middle:?}");
+        assert!(middle.time_sec > 0.0);
+        let total: f64 = shown.layers.iter().map(|layer| layer.time_sec).sum();
+        assert!(total > 0.0);
+        let line = w
+            .window
+            .invoke_slice_timeline_readout((count / 2) as i32, 0)
+            .to_string();
+        assert!(line.contains(" N"), "{line}");
+    });
 }

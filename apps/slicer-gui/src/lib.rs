@@ -47,12 +47,14 @@ mod i18n;
 mod import_notes;
 mod imported_supports;
 mod island_paint;
+mod lay_on_face;
 mod measure;
 mod mirror;
 mod language;
 mod launch_files;
 mod layer_keys;
 mod layer_pixels;
+mod layer_timeline;
 mod load_progress;
 #[cfg(target_os = "macos")]
 mod macos_open_documents;
@@ -119,6 +121,7 @@ mod support_gen_run;
 mod support_hints;
 mod support_lines;
 mod support_persist;
+mod support_area;
 mod surface_brush;
 #[cfg(test)]
 mod test_support;
@@ -148,6 +151,8 @@ mod tests_pick_timing;
 mod tests_presupported_import;
 #[cfg(test)]
 mod tests_scene_dirty;
+#[cfg(test)]
+mod tests_scene_flags;
 #[cfg(test)]
 mod tests_scene_loader;
 #[cfg(test)]

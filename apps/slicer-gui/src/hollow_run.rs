@@ -27,7 +27,9 @@
 //!
 //! The Review card (#90) asks which hollow made here holds a resin trap
 //! ([`HollowRun::hollow_at`]), and opens the drain tool on the model holding
-//! a cavity, hollowed here or not ([`HollowRun::model_at`], #158, #431).
+//! a cavity, hollowed here or not ([`HollowRun::model_at`], #158, #431). It
+//! hears of each drain that lands in a model ([`HollowRun::on_drained`],
+//! #128): its row is done only then.
 //!
 //! The hollows made here live in the document
 //! ([`SceneDocument::hollows`]), so a `.bread` save keeps them and an open
@@ -630,6 +632,8 @@ pub(crate) struct HollowRun {
     probe: RefCell<ProbeSlot>,
     /// Whether the drain tool shows where a drain works best (#455).
     drain_map_on: Cell<bool>,
+    /// Told of each model a drain landed in (#128).
+    drained: RefCell<Option<Rc<dyn Fn(NodeId)>>>,
 }
 
 /// What a probe is of: a mesh (by identity) and the stretch of its pose.
@@ -877,6 +881,7 @@ impl HollowRun {
                 repair: RefCell::new(None),
                 probe: RefCell::new(ProbeSlot::default()),
                 drain_map_on: Cell::new(true),
+                drained: RefCell::new(None),
             }
         });
         run.push_options(ui);
@@ -979,6 +984,20 @@ impl HollowRun {
     /// The Repair run that a mesh Hollow cannot use is sent to (#448).
     pub(crate) fn set_repair(&self, repair: Rc<RepairRun>) {
         *self.repair.borrow_mut() = Some(repair);
+    }
+
+    /// Tells `drained` of each model a drain lands in, drilled or hollowed
+    /// with it, once the edit is in the scene (#128). A drain left out, a
+    /// failed or cancelled job tells nothing.
+    pub(crate) fn on_drained(&self, drained: Rc<dyn Fn(NodeId)>) {
+        *self.drained.borrow_mut() = Some(drained);
+    }
+
+    fn tell_drained(&self, leaf: NodeId) {
+        let drained = self.drained.borrow().clone();
+        if let Some(drained) = drained {
+            drained(leaf);
+        }
     }
 
     /// The areas a model keeps solid (#179), in its local frame: a hollow's
@@ -2318,6 +2337,7 @@ impl HollowRun {
         self.hollowed.borrow_mut().push(entry);
         self.refresh_ui();
         self.tick_preview();
+        self.tell_drained(job.leaf);
     }
 
     fn finish(self: &Rc<Self>, job: Job, outcome: Result<Primed<HollowOutcome>, JobError>) {
@@ -2502,6 +2522,7 @@ impl HollowRun {
         // The marks placed before are drilled now and live on the hollow;
         // the solid model keeps them, for when Undo brings it back (#512).
         // The tab already shows the settings this hollow was made with.
+        let drilled = !kept.is_empty();
         self.adopted.set(Some(Arc::as_ptr(&hollow) as usize));
         self.hollowed.borrow_mut().push(Hollowed {
             hollow,
@@ -2515,6 +2536,9 @@ impl HollowRun {
             drilled: false,
         });
         self.refresh_ui();
+        if drilled {
+            self.tell_drained(job.leaf);
+        }
     }
 
     /// The plugs the hollow `mesh` (by identity) put in the scene; none for
@@ -3728,6 +3752,57 @@ mod tests {
         // The two drains placed (#512) and the hollow.
         assert_eq!(undo_steps, 3);
         assert_eq!(after_click, 3, "the left-out drain added no step");
+    }
+
+    /// #128: the Review hears of a drain once it lands in the model, and
+    /// not of one left out.
+    #[test]
+    fn a_landed_drain_is_told_and_a_left_out_one_is_not() {
+        use crate::selection::{LeafId, Selection};
+        use crate::test_support::slint_thread::on_fresh_slint_thread;
+        let (told, leaf) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut cube = sc_mesh_fixtures::unit_cube_mesh();
+            for v in &mut cube.vertices {
+                *v = Vertex::new(v.as_array().map(|c| c * 30.0));
+            }
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([50.0, 50.0, 15.0])),
+                    LeafPayload::Mesh(Arc::new(cube)),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, std::path::PathBuf::from("cube.stl"));
+            document.set_selection(Selection::One(LeafId(leaf)));
+            window.set_workspace_section(WorkspaceSection::Hollow);
+            let run = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let told = Rc::new(RefCell::new(Vec::new()));
+            {
+                let told = told.clone();
+                run.on_drained(Rc::new(move |leaf| told.borrow_mut().push(leaf)));
+            }
+            run.on_option(0, 2.0);
+            let down = [0.0, 0.0, -1.0];
+            // Hollowed with no drain: nothing to tell.
+            run.on_apply();
+            land_job(&run);
+            assert!(told.borrow().is_empty());
+            // A miss on the hollow: left out, nothing told.
+            run.on_drain_click([64.0, 64.0, 0.0], down);
+            land_job(&run);
+            assert!(told.borrow().is_empty());
+            // One under the cavity: told once.
+            run.on_drain_click([50.0, 50.0, 0.0], down);
+            land_job(&run);
+            let told = told.borrow().clone();
+            (told, leaf)
+        });
+        assert_eq!(told, vec![leaf]);
     }
 
     /// The Review's drain button finds the model of any cavity (#431): one

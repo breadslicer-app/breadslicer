@@ -1,0 +1,89 @@
+[identity]
+id = "phrozen-beige-resin-basic-50um"
+brand = "Phrozen"
+family = "standard"
+name = "Beige Resin Basic (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.phrozen-shuffle]
+normal_exposure_sec = 11.5
+bottom_exposure_sec = 65.0
+bottom_layer_count = 6
+wait_before_cure_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-shuffle-4k]
+normal_exposure_sec = 11.0
+bottom_exposure_sec = 55.0
+bottom_layer_count = 6
+wait_before_cure_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-shuffle-lite]
+normal_exposure_sec = 11.5
+bottom_exposure_sec = 65.0
+bottom_layer_count = 6
+wait_before_cure_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-shuffle-xl]
+normal_exposure_sec = 11.5
+bottom_exposure_sec = 65.0
+bottom_layer_count = 6
+wait_before_cure_sec = 3.0
+bottom_wait_before_cure_sec = 3.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-shuffle-xl-lite]
+normal_exposure_sec = 11.5
+bottom_exposure_sec = 65.0
+bottom_layer_count = 6
+lift_distance_mm = 8.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
+
+[per_printer.phrozen-transform]
+normal_exposure_sec = 12.5
+bottom_exposure_sec = 85.0
+bottom_layer_count = 10
+wait_before_cure_sec = 2.0
+bottom_wait_before_cure_sec = 2.0
+lift_distance_mm = 10.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 10.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 150.0
