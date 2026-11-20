@@ -108,7 +108,7 @@ fn contour_points(cells: &[[f32; 2]], spacing: f64, inset: f64) -> Vec<(f64, f64
         .collect();
     // How far in from the edge each cell lies: a cell with a side open is
     // half a cell in; steps between cells cost what they span.
-    #[derive(PartialEq, PartialOrd)]
+    #[derive(PartialEq)]
     struct Far(f64);
     impl Eq for Far {}
     impl Ord for Far {
@@ -116,18 +116,23 @@ fn contour_points(cells: &[[f32; 2]], spacing: f64, inset: f64) -> Vec<(f64, f64
             self.0.total_cmp(&other.0)
         }
     }
+    impl PartialOrd for Far {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
     let n = centres.len();
     let mut dist = vec![f64::INFINITY; n];
     let mut heap = BinaryHeap::new();
     let cell_of = |i: usize| key(centres[i].0, centres[i].1);
-    for i in 0..n {
+    for (i, slot) in dist.iter_mut().enumerate() {
         let (cx, cy) = cell_of(i);
         let open = [(1, 0), (-1, 0), (0, 1), (0, -1)]
             .iter()
             .any(|(dx, dy)| !index.contains_key(&(cx + dx, cy + dy)));
         if open {
-            dist[i] = BODY_CELL_MM * 0.5;
-            heap.push(Reverse((Far(dist[i]), i)));
+            *slot = BODY_CELL_MM * 0.5;
+            heap.push(Reverse((Far(*slot), i)));
         }
     }
     let diagonal = BODY_CELL_MM * std::f64::consts::SQRT_2;
