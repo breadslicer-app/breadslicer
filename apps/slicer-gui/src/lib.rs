@@ -53,6 +53,7 @@ mod language;
 mod launch_files;
 mod layer_keys;
 mod layer_pixels;
+mod layer_timeline;
 mod load_progress;
 #[cfg(target_os = "macos")]
 mod macos_open_documents;

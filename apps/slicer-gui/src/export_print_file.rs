@@ -175,6 +175,33 @@ pub(crate) fn estimate_held_slice(
     })
 }
 
+/// What each layer of the held slice is, as the printer file will carry it
+/// (#94): its lit area and perimeter, its time and its lift speed.
+#[derive(Debug, Clone)]
+pub(crate) struct HeldLayers {
+    pub measures: std::sync::Arc<[sc_sla_formats::layer_images::LitMeasure]>,
+    pub times_sec: Vec<f64>,
+    pub lift_mm_min: Vec<Option<f64>>,
+}
+
+/// The layers of the held slice of `scene`, or why there are none, as
+/// [`estimate_held_slice`] says.
+pub(crate) fn held_slice_layers(
+    document: &SceneDocument,
+    scene: Option<Scene>,
+) -> Result<HeldLayers, String> {
+    let held = document
+        .held_slice()
+        .ok_or_else(|| ExportFailure::NoSlice.to_string())?;
+    let job = prepare_export_of(document, scene).map_err(|err| err.to_string())?;
+    let program = job.program();
+    Ok(HeldLayers {
+        measures: held.contours.lit_measures(&program.raster),
+        times_sec: sc_print_glue::layer_times_sec(program),
+        lift_mm_min: sc_print_glue::layer_lift_speeds_mm_min(program),
+    })
+}
+
 /// `6 h 12 m`, `14 m`, `45 s`.
 pub(crate) fn format_duration(sec: f64) -> String {
     let total = sec.max(0.0).round() as u64;

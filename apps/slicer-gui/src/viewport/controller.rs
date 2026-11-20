@@ -134,7 +134,7 @@ pub(crate) struct ViewportController {
     /// The held slice's estimate as last shown, and who is told each time it
     /// is worked out again (the resin's cost, #101).
     last_estimate: Cell<Option<crate::export_print_file::PrintEstimate>>,
-    estimate_listener: RefCell<Option<EstimateListener>>,
+    estimate_listener: RefCell<Vec<EstimateListener>>,
     /// The name of the printer whose plate the viewport shows, drawn under
     /// the word on the plate's front tab; `None` for the placeholder plate.
     plate_printer_name: RefCell<Option<String>>,
@@ -325,7 +325,7 @@ impl ViewportController {
             measured: RefCell::new(None),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
-            estimate_listener: RefCell::new(None),
+            estimate_listener: RefCell::new(Vec::new()),
             hide_rafts_under_plate: Cell::new(true),
             support_lines_on: Cell::new(false),
             support_lines: Default::default(),
@@ -402,7 +402,7 @@ impl ViewportController {
             measured: RefCell::new(None),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
-            estimate_listener: RefCell::new(None),
+            estimate_listener: RefCell::new(Vec::new()),
             hide_rafts_under_plate: Cell::new(true),
             support_lines_on: Cell::new(false),
             support_lines: Default::default(),
@@ -834,14 +834,14 @@ impl ViewportController {
     }
 
     /// Calls `listener` each time the held slice's estimate is worked out
-    /// again (one listener; a later call replaces it).
+    /// again, after those already listening.
     pub(crate) fn on_estimate(&self, listener: impl Fn() + 'static) {
-        *self.estimate_listener.borrow_mut() = Some(Rc::new(listener));
+        self.estimate_listener.borrow_mut().push(Rc::new(listener));
     }
 
     fn tell_estimate(&self) {
-        let listener = self.estimate_listener.borrow().clone();
-        if let Some(listener) = listener {
+        let listeners = self.estimate_listener.borrow().clone();
+        for listener in listeners {
             listener();
         }
     }

@@ -291,6 +291,8 @@ pub(crate) struct ReviewPanel {
     bus: Rc<PreferencesBus>,
     repeat_pref: RefCell<Option<Subscription>>,
     scene_events: RefCell<Option<SceneSubscription>>,
+    /// Who hears of each review shown (the layer timeline, #94).
+    shown_listeners: RefCell<Vec<Rc<dyn Fn()>>>,
 }
 
 /// What a run does.
@@ -409,6 +411,7 @@ impl ReviewPanel {
             bus,
             repeat_pref: RefCell::new(None),
             scene_events: RefCell::new(None),
+            shown_listeners: RefCell::new(Vec::new()),
         });
         *panel.me.borrow_mut() = Rc::downgrade(&panel);
         {
@@ -1561,6 +1564,10 @@ impl ReviewPanel {
             fixed: BTreeSet::new(),
             after_fix_all,
         });
+        let listeners = self.shown_listeners.borrow().clone();
+        for listener in listeners {
+            listener();
+        }
         if let Some(ui) = self.ui.upgrade() {
             ui.set_review_selected(-1);
         }
@@ -1809,6 +1816,25 @@ impl ReviewPanel {
 
     /// The held review's outcome, for the slice of a plate kept aside while
     /// another plate's is held (#547).
+    /// Calls `listener` each time a review is shown (#94).
+    pub(crate) fn on_shown(&self, listener: impl Fn() + 'static) {
+        self.shown_listeners.borrow_mut().push(Rc::new(listener));
+    }
+
+    /// The peel loads of the review held, while it is of the slice held
+    /// (#94).
+    pub(crate) fn held_loads(&self) -> Option<Arc<sc_review::PlateLoads>> {
+        let held = self.held.borrow();
+        let held = held.as_ref()?;
+        if held.generation != self.document.slice_generation() {
+            return None;
+        }
+        match &held.outcome {
+            ReviewOutcome::Reviewed { loads, .. } => Some(loads.clone()),
+            ReviewOutcome::Cancelled | ReviewOutcome::Failed(_) => None,
+        }
+    }
+
     pub(crate) fn held_outcome(&self) -> Option<ReviewOutcome> {
         self.held.borrow().as_ref().map(|held| held.outcome.clone())
     }
