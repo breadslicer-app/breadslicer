@@ -2250,7 +2250,7 @@ impl SupportSession {
     pub fn tip_contacts(&self) -> Vec<([f64; 3], [f64; 3])> {
         let c = &self.state.collections;
         let of =
-            |k: &support_engine::supports::support_primitives::contact_cone::types::ContactCone| {
+            |k: &support_engine::supports::tips::ContactCone| {
                 // The cone's axis points into the model: the surface normal is
                 // turned to face the other way, out of it.
                 let out = [-k.normal.x, -k.normal.y, -k.normal.z];

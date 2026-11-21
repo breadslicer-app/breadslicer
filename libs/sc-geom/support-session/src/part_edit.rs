@@ -13,7 +13,7 @@
 
 use std::collections::HashSet;
 
-use support_engine::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
+use support_engine::supports::tips::get_final_socket_position;
 use support_engine::supports::types::{Joint, Roots, Segment, SegmentShape};
 use support_engine::geom::Vec3;
 

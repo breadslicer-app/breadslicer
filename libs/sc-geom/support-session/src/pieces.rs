@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use support_engine::features::slicing::support_world_triangles::{
     TipDrawing, contact_disk_size, contact_ends, resolve_support_slice_tessellation, tip_sink_mm,
 };
-use support_engine::supports::support_primitives::contact_cone::types::ContactCone;
+use support_engine::supports::tips::ContactCone;
 use support_engine::supports::types::{ContactDisk, Segment};
 use support_engine::geom::Vec3;
 

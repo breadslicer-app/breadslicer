@@ -14,11 +14,11 @@ use crate::supports::placement_logic::cone_axis_policy::{
     MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG, clamp_cone_axis_deviation_from_surface_normal,
 };
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_socket_position;
-use crate::supports::support_primitives::contact_cone::types::{
+use crate::supports::tips::get_socket_position;
+use crate::supports::tips::{
     ContactCone, SupportTipProfile, TipPrimitive,
 };
-use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
+use crate::supports::tips::nib_length;
 use crate::supports::types::{Joint, LimitationCode, Segment, Stick, SupportEntity, Vec3};
 use crate::geom::math_utils::{js_hypot, js_max, js_min};
 
@@ -159,9 +159,9 @@ pub fn build_stick(
         cone_axis_b = clamp_axis(surface_normal_b, cone_axis_b);
 
         disk_thickness_a =
-            calculate_disk_thickness(surface_normal_a, cone_axis_a, Some(&disk_profile));
+            nib_length(surface_normal_a, cone_axis_a, Some(&disk_profile));
         disk_thickness_b =
-            calculate_disk_thickness(surface_normal_b, cone_axis_b, Some(&disk_profile));
+            nib_length(surface_normal_b, cone_axis_b, Some(&disk_profile));
 
         cone_start_a = a_pos.add_scaled_vector(surface_normal_a, disk_thickness_a);
         cone_start_b = b_pos.add_scaled_vector(surface_normal_b, disk_thickness_b);

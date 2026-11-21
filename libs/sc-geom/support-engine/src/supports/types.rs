@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::support_kinds::{SupportOriginId, SupportTypeId};
-use super::support_primitives::contact_cone::types::{ContactCone, ContactDiskProfile};
+use super::tips::{ContactCone, ContactDiskProfile};
 pub use crate::geom::{Quaternion, Vec3};
 
 /// Why a support could not be placed where it was asked.

@@ -13,5 +13,6 @@ pub mod rendering;
 pub mod settings;
 pub mod support_primitives;
 pub mod support_kinds;
+pub mod tips;
 pub mod support_types;
 pub mod types;

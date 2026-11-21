@@ -22,7 +22,7 @@ use crate::supports::placement_logic::smart_placement_search_utils::{
 };
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
+use crate::supports::tips::get_final_socket_position;
 use crate::supports::support_primitives::knot::knot_utils::calculate_knot_position_on_segment_from_t;
 use crate::supports::support_kinds::{
     CONTACT_OVERRIDE_REGISTRATIONS, HostRef, PlacedSupport, PlacementPrimitive, SupportEntityValue,

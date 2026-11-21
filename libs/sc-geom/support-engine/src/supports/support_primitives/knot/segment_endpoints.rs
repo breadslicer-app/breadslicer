@@ -5,8 +5,8 @@
 //! The declared `lower` endpoint anchors segment 0 -- a root's top, or a parent
 //! knot -- and `upper` says what the shaft ends at.
 
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
-use crate::supports::support_primitives::contact_cone::types::ContactCone;
+use crate::supports::tips::get_final_socket_position;
+use crate::supports::tips::ContactCone;
 use crate::supports::support_kinds::{
     SupportEndpoint, SupportEndpointKind, SupportTypeDescriptor, SupportTypeId,
     get_support_type_descriptor,

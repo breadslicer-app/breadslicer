@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use super::cone_axis_policy::{ConeAngleMode, ConeAxisPolicyInput, resolve_cone_axis_policy};
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_socket_position;
-use crate::supports::support_primitives::contact_cone::types::SupportTipProfile;
-use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
+use crate::supports::tips::get_socket_position;
+use crate::supports::tips::SupportTipProfile;
+use crate::supports::tips::nib_length;
 use crate::supports::types::{LimitationCode, Vec3, WarningCode};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -115,7 +115,7 @@ pub fn calculate_standard_placement(
     let mut disk_thickness = 0.0;
     if tip_profile.is_disk() {
         disk_thickness =
-            calculate_disk_thickness(tip_normal, cone_axis, Some(&tip_profile.as_disk_profile()));
+            nib_length(tip_normal, cone_axis, Some(&tip_profile.as_disk_profile()));
     }
 
     let cone_start_pos = Vec3::new(

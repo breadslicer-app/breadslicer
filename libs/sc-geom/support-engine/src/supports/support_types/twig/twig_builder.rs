@@ -14,7 +14,7 @@ use crate::supports::placement_logic::cone_axis_policy::{
     MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG, clamp_cone_axis_deviation_from_surface_normal,
 };
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::types::{ContactDiskProfile, DiskTag};
+use crate::supports::tips::{ContactDiskProfile, DiskTag};
 use crate::supports::types::{
     ContactDisk, Joint, LimitationCode, Segment, SupportEntity, Twig, Vec3,
 };

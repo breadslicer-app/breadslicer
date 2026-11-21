@@ -117,7 +117,7 @@ use support_engine::supports::auto_support::coverage::{
 };
 use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_engine::supports::rafts::crenelated::raft_types::RaftBottomMode;
-use support_engine::supports::support_primitives::contact_cone::types::ContactCone;
+use support_engine::supports::tips::ContactCone;
 use support_engine::supports::types::{Segment, SupportCollections, SupportState, Vec3};
 use support_engine::volume_analysis::islands::types::DetectedIsland;
 

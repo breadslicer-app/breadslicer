@@ -61,9 +61,9 @@ use crate::supports::placement_logic::standard_placement::{
     TrunkPlacementInput, TrunkPlacementResult, calculate_standard_placement,
 };
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_socket_position;
-use crate::supports::support_primitives::contact_cone::types::SupportTipProfile;
-use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
+use crate::supports::tips::get_socket_position;
+use crate::supports::tips::SupportTipProfile;
+use crate::supports::tips::nib_length;
 use crate::supports::types::{LimitationCode, Vec3};
 use crate::geom::Matrix4;
 use crate::geom::math_utils::{deg_to_rad, js_cos, js_hypot, js_max, js_min, js_round, js_sin};
@@ -420,7 +420,7 @@ impl Gates<'_> {
         let tip_pos = self.tip_pos;
         let tip_profile = self.tip_profile;
         let disk_thickness = if tip_profile.is_disk() {
-            calculate_disk_thickness(
+            nib_length(
                 tip_normal,
                 cone_axis_hint,
                 Some(&tip_profile.as_disk_profile()),

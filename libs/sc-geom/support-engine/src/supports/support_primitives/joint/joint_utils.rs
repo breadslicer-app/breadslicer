@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 
 use crate::supports::constants::get_joint_diameter;
 use crate::supports::curves::bezier_utils::subdivide_cubic_bezier;
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
+use crate::supports::tips::get_final_socket_position;
 use crate::supports::support_primitives::knot::knot_utils::{
     KnotSplitRemap, remap_knot_across_split,
 };

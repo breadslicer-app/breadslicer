@@ -6,10 +6,10 @@
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::types::{
+use crate::supports::tips::{
     ContactCone, SupportTipProfile, TipPrimitive,
 };
-use crate::supports::support_primitives::contact_disk::contact_disk_interaction::recompute_contact_cone_for_moved_disk;
+use crate::supports::tips::recompute_contact_cone_for_moved_disk;
 use crate::supports::support_kinds::SupportTypeId;
 use crate::supports::types::{Knot, Leaf, SupportEntity, Vec3};
 

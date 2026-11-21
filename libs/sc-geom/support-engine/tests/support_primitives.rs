@@ -5,10 +5,10 @@ use indexmap::IndexMap;
 use support_engine::supports::curves::bezier_utils::{
     get_bezier_point_at_t, subdivide_cubic_bezier,
 };
-use support_engine::supports::support_primitives::contact_cone::types::{
+use support_engine::supports::tips::{
     ContactDiskProfile, DiskTag,
 };
-use support_engine::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
+use support_engine::supports::tips::nib_length;
 use support_engine::supports::support_primitives::joint::joint_utils::{
     SplitHosts, split_support_shaft,
 };
@@ -43,7 +43,7 @@ fn nib_profile(contact_diameter_mm: Option<f64>) -> ContactDiskProfile {
 #[test]
 fn a_wide_contact_grows_the_nib_so_the_round_tip_stays_above_the_contact_face() {
     for contact_diameter_mm in [0.3, 0.4, 1.0, 2.0, 4.0] {
-        let thickness = calculate_disk_thickness(
+        let thickness = nib_length(
             FLAT_NORMAL,
             FLAT_NORMAL,
             Some(&nib_profile(Some(contact_diameter_mm))),
@@ -61,8 +61,8 @@ fn a_wide_contact_grows_the_nib_so_the_round_tip_stays_above_the_contact_face() 
 fn a_steep_surface_still_thickens_the_nib_past_the_tip_ball_radius() {
     let profile = nib_profile(Some(0.3));
 
-    let flat_thickness = calculate_disk_thickness(FLAT_NORMAL, FLAT_NORMAL, Some(&profile));
-    let steep_thickness = calculate_disk_thickness(FLAT_NORMAL, steep_axis(), Some(&profile));
+    let flat_thickness = nib_length(FLAT_NORMAL, FLAT_NORMAL, Some(&profile));
+    let steep_thickness = nib_length(FLAT_NORMAL, steep_axis(), Some(&profile));
 
     assert_eq!(
         flat_thickness, 0.15,
@@ -78,7 +78,7 @@ fn a_steep_surface_still_thickens_the_nib_past_the_tip_ball_radius() {
 fn a_profile_that_declares_no_contact_diameter_keeps_the_plain_nib_thickness() {
     let profile = nib_profile(None);
     assert_eq!(
-        calculate_disk_thickness(FLAT_NORMAL, FLAT_NORMAL, Some(&profile)),
+        nib_length(FLAT_NORMAL, FLAT_NORMAL, Some(&profile)),
         profile.disk_thickness_mm.unwrap()
     );
 }

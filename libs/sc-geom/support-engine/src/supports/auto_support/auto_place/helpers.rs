@@ -21,7 +21,7 @@ use crate::supports::placement_logic::placement_utils::calculate_smoothed_normal
 use crate::supports::placement_logic::smart_placement_search_utils::member_departure_angle_from_vertical_deg;
 use crate::supports::placement_logic_v3::smart_placement_v3::RouterStats;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::types::ContactCone;
+use crate::supports::tips::ContactCone;
 use crate::supports::support_kinds::{
     ConeBodyFollows, SHAFT_HOSTED_MEMBER_TYPE_ORDER, SupportEntityValue, SupportOriginId,
     SupportTypeId, get_support_type_descriptor, near_plate_origin,

@@ -30,14 +30,14 @@ use crate::supports::placement_logic_v3::smart_placement_v3::{
 };
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::{
+use crate::supports::tips::{
     get_contact_cone_lowest_z, get_final_socket_position, get_socket_position,
 };
-use crate::supports::support_primitives::contact_cone::types::{
+use crate::supports::tips::{
     ContactCone, SupportTipProfile, TipPrimitive,
 };
-use crate::supports::support_primitives::contact_disk::contact_disk_interaction::recompute_contact_cone_for_moved_disk;
-use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
+use crate::supports::tips::recompute_contact_cone_for_moved_disk;
+use crate::supports::tips::nib_length;
 use crate::supports::support_kinds::SupportTypeId;
 use crate::supports::types::{
     Joint, LimitationCode, Quaternion, Roots, Segment, SupportEntity, Transform, Trunk, Vec3,
@@ -340,7 +340,7 @@ pub fn build_trunk_data_from_placement(
     let effective_cone_axis = placement.cone_axis.unwrap_or(tip_normal);
     let disk_thickness = if tip_profile.is_disk() {
         tip_disk_length_override_mm.unwrap_or_else(|| {
-            calculate_disk_thickness(
+            nib_length(
                 tip_normal,
                 effective_cone_axis,
                 Some(&tip_profile.as_disk_profile()),

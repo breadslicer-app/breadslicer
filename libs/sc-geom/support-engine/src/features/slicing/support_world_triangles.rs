@@ -34,10 +34,10 @@ use crate::supports::rafts::crenelated::geometry::robust_wall::{
 use crate::supports::rafts::crenelated::raft_types::{
     RaftBottomMode, RaftSettings, SupportBaseCircle,
 };
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
-use crate::supports::support_primitives::contact_cone::types::ContactCone;
-use crate::supports::support_primitives::contact_disk::contact_disk_utils::{
-    calculate_disk_thickness, get_disk_center, get_disk_rotation,
+use crate::supports::tips::get_final_socket_position;
+use crate::supports::tips::ContactCone;
+use crate::supports::tips::{
+    nib_length, get_disk_center, get_disk_rotation,
 };
 use crate::supports::support_primitives::knot::segment_endpoints::{
     EndpointHosts, ShaftEntity, resolve_segment_endpoints, root_top,
@@ -516,7 +516,7 @@ pub fn append_contact_disk_with(
 /// [`append_contact_disk_primitive`] draws it.
 pub fn contact_disk_size(disk: &ContactDisk, tip_scale: f64) -> (f64, f64) {
     let thickness = disk.disk_length_override.unwrap_or_else(|| {
-        calculate_disk_thickness(disk.surface_normal, disk.cone_axis, Some(&disk.profile))
+        nib_length(disk.surface_normal, disk.cone_axis, Some(&disk.profile))
     });
     (
         thickness,
