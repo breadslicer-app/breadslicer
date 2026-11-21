@@ -15,7 +15,9 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
+use slint::{
+    ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel,
+};
 
 use sc_print_primitives::MaterialId;
 use sc_print_profiles::{
@@ -352,7 +354,11 @@ fn probe_result_text(result: &ProbeResult) -> SharedString {
     }
 }
 
-fn wire_slicing_and_privacy(prefs: &Prefs, bus: &Rc<PreferencesBus>, weak: &slint::Weak<MainWindow>) {
+fn wire_slicing_and_privacy(
+    prefs: &Prefs,
+    bus: &Rc<PreferencesBus>,
+    weak: &slint::Weak<MainWindow>,
+) {
     prefs.on_aa_level_changed({
         let bus = bus.clone();
         move |index| {
@@ -484,7 +490,9 @@ fn restore_defaults(bus: &PreferencesBus, page: i32) {
                     PreferencesChange::FrameRate
                 });
             }
-            if now.gizmo_style != shipped().gizmo_style() || now.gizmo_size != shipped().gizmo_size() {
+            if now.gizmo_style != shipped().gizmo_style()
+                || now.gizmo_size != shipped().gizmo_size()
+            {
                 bus.update(move |snap| {
                     snap.gizmo_style = shipped().gizmo_style();
                     snap.gizmo_size = shipped().gizmo_size();
@@ -527,18 +535,30 @@ fn searchable() -> Vec<(SharedString, i32)> {
         (ctr!("PreferencesLayer", "Start card"), GENERAL),
         (ctr!("PreferencesLayer", "Messages you silenced"), GENERAL),
         (ctr!("AppearancePreferences", "Theme"), LOOK),
-        (ctr!("AppearancePreferences", "Smooth shading on models"), LOOK),
+        (
+            ctr!("AppearancePreferences", "Smooth shading on models"),
+            LOOK,
+        ),
         (ctr!("AppearancePreferences", "Frame rate"), LOOK),
         (ctr!("AppearancePreferences", "Test performance"), LOOK),
         (ctr!("AppearancePreferences", "Gizmo style"), LOOK),
         (ctr!("AppearancePreferences", "Gizmo size"), LOOK),
         (ctr!("AppearancePreferences", "Mouse controls"), MOUSE),
         (ctr!("PreferencesLayer", "Every shortcut"), MOUSE),
-        (ctr!("PreferencesLayer", "Printer and resin in use"), PRINTERS),
+        (
+            ctr!("PreferencesLayer", "Printer and resin in use"),
+            PRINTERS,
+        ),
         (ctr!("PreferencesLayer", "Your profiles"), PRINTERS),
         (ctr!("PreferencesLayer", "Add a printer by hand"), PRINTERS),
-        (ctr!("PreferencesLayer", "Import a profiles package"), PRINTERS),
-        (ctr!("PreferencesLayer", "Import printer settings"), PRINTERS),
+        (
+            ctr!("PreferencesLayer", "Import a profiles package"),
+            PRINTERS,
+        ),
+        (
+            ctr!("PreferencesLayer", "Import printer settings"),
+            PRINTERS,
+        ),
         (ctr!("PreferencesLayer", "Export your profiles"), PRINTERS),
         (ctr!("PreferencesMenu", "Network printers"), NETWORK),
         (ctr!("SlicingPreferences", "Anti-aliasing"), SLICING),
@@ -897,9 +917,13 @@ async fn confirmed(owner: &slint::Weak<MainWindow>, title: String, description: 
 /// Asks before deleting a printer the person added, then deletes its file.
 /// The printer in use that goes is no longer in use.
 fn spawn_delete_printer(deletion: Deletion) {
-    let Some((id, name)) = deletion.catalog.borrow().printers().get(deletion.at).map(|p| {
-        (p.id.clone(), format!("{} {}", p.manufacturer, p.name))
-    }) else {
+    let Some((id, name)) = deletion
+        .catalog
+        .borrow()
+        .printers()
+        .get(deletion.at)
+        .map(|p| (p.id.clone(), format!("{} {}", p.manufacturer, p.name)))
+    else {
         return;
     };
     if let Err(err) = slint::spawn_local(async move {
@@ -987,7 +1011,11 @@ fn spawn_delete_resin(deletion: Deletion, extension: bool) {
         }
         refresh_catalog(&deletion.catalog);
         let catalog = deletion.catalog.borrow().clone();
-        if default_resin_orphaned(&catalog, deletion.bus.snapshot().default_resin.as_ref(), &id) {
+        if default_resin_orphaned(
+            &catalog,
+            deletion.bus.snapshot().default_resin.as_ref(),
+            &id,
+        ) {
             deletion.bus.update(|snap| {
                 snap.default_resin = None;
                 PreferencesChange::DefaultResin

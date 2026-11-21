@@ -5,10 +5,7 @@
 
 use std::fs;
 
-use sc_print_profiles::{
-    load_material_extension_from_library, load_material_profile_from_library,
-    load_material_profile_from_path,
-};
+use sc_print_profiles::{load_material_profile_from_library, load_material_profile_from_path};
 
 use super::*;
 
@@ -407,32 +404,6 @@ fn saving_a_full_profile_writes_the_materials_file() {
             .join("brand-resin.toml")
             .exists()
     );
-}
-
-#[test]
-fn saving_an_extension_writes_through_the_extension_writer() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut profile = parse_profile(PROFILE_TOML);
-    profile.extension = true;
-
-    save_edited_profile(dir.path(), &profile, EditedProfileKind::Extension).unwrap();
-
-    let loaded = load_material_extension_from_library(dir.path(), &profile.identity.id).unwrap();
-    assert_eq!(loaded, profile);
-    assert!(
-        !dir.path()
-            .join("materials")
-            .join("brand-resin.toml")
-            .exists()
-    );
-}
-
-#[test]
-fn saving_an_unflagged_profile_as_extension_reports_the_writer_error() {
-    let dir = tempfile::tempdir().unwrap();
-    let profile = parse_profile(PROFILE_TOML);
-    let err = save_edited_profile(dir.path(), &profile, EditedProfileKind::Extension).unwrap_err();
-    assert!(err.contains("extension flag"), "err: {err}");
 }
 
 /// #48: a calibration typed with decimal commas reads as with points.

@@ -237,7 +237,6 @@ pub(crate) enum PreferencesChange {
     Language,
     DefaultPrinter,
     DefaultResin,
-    Favourites,
     OutputFormat,
     AaLevel,
     PrescanSupports,

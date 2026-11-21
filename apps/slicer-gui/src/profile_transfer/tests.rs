@@ -55,11 +55,7 @@ fn write_library(dir: &Path) {
 
 #[test]
 fn export_scope_maps_to_the_matching_selection() {
-    assert_eq!(ExportScope::Printers.selection(), ExportSelection::Printers);
-    assert_eq!(
-        ExportScope::Materials.selection(),
-        ExportSelection::Materials
-    );
+    assert_eq!(ExportScope::All.selection(), ExportSelection::All);
 }
 
 #[test]
@@ -104,7 +100,7 @@ fn export_printers_scope_omits_materials() {
     let archive_dir = tempfile::tempdir().unwrap();
     let archive = archive_dir.path().join("printers.zip");
 
-    run_export(source.path(), &ExportScope::Printers.selection(), &archive).unwrap();
+    run_export(source.path(), &ExportSelection::Printers, &archive).unwrap();
 
     let dest = tempfile::tempdir().unwrap();
     run_import(dest.path(), &archive, false).unwrap();

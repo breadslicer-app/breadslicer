@@ -2723,7 +2723,7 @@ mod subscribe_window_preferences_tests {
     }
 
     /// The Preferences card over the window of `subscribed`, sending nowhere.
-    fn test_card(subscribed: &SubscribedWindow) -> crate::preferences_window::WiredPreferences {
+    fn test_card(subscribed: &SubscribedWindow) -> WiredPreferences {
         open_preferences(
             &subscribed.window,
             &subscribed.bus,
@@ -2822,7 +2822,6 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::MenuLayout,
             PreferencesChange::Language,
             PreferencesChange::DefaultResin,
-            PreferencesChange::Favourites,
             PreferencesChange::OutputFormat,
             PreferencesChange::AaLevel,
             PreferencesChange::PrescanSupports,

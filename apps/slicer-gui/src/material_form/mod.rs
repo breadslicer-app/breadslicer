@@ -22,7 +22,7 @@ use sc_print_primitives::{
 };
 use sc_print_profiles::{
     MaterialDefaults, MaterialPerPrinter, MaterialProfile, SecondTravelStage,
-    save_material_extension_to_library, save_material_profile_to_library,
+    save_material_profile_to_library,
 };
 
 use crate::i18n::ctr;
@@ -503,8 +503,6 @@ pub(crate) fn defaults_form_from(defaults: &MaterialDefaults) -> DefaultsFormInp
 pub(crate) enum EditedProfileKind {
     /// A full custom profile: `<library>/materials/<id>.toml`.
     Full,
-    /// An extension: `<library>/materials/extensions/<id>.toml`.
-    Extension,
 }
 
 /// Write an edited profile back through the writer matching its kind. The error
@@ -517,9 +515,6 @@ pub(crate) fn save_edited_profile(
     match kind {
         EditedProfileKind::Full => {
             save_material_profile_to_library(library_dir, profile).map_err(|err| err.to_string())
-        }
-        EditedProfileKind::Extension => {
-            save_material_extension_to_library(library_dir, profile).map_err(|err| err.to_string())
         }
     }
 }

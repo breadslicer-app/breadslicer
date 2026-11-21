@@ -126,7 +126,12 @@ fn the_search_finds_a_setting_by_any_of_its_words() {
                 .map(|h| (h.label.to_string(), h.page))
                 .collect()
         };
-        (pages("frame"), pages("LOG folder"), pages("nothing like it"), pages("  "))
+        (
+            pages("frame"),
+            pages("LOG folder"),
+            pages("nothing like it"),
+            pages("  "),
+        )
     });
     assert_eq!(found.0, [("Frame rate".to_owned(), page::LOOK)]);
     assert_eq!(found.1, [("Open logs folder".to_owned(), page::PRIVACY)]);
@@ -294,7 +299,13 @@ profile_version = \"1.0.0\"
             ));
             own_profiles(&catalog)
                 .into_iter()
-                .map(|p| (p.printer, p.extension, catalog.materials()[p.index as usize].id.clone()))
+                .map(|p| {
+                    (
+                        p.printer,
+                        p.extension,
+                        catalog.materials()[p.index as usize].id.clone(),
+                    )
+                })
                 .collect::<Vec<_>>()
         });
         assert_eq!(names, [(false, false, material_id("mine-resin"))]);
@@ -420,7 +431,7 @@ mod diagnostic_log {
     fn a_log_that_cannot_start_stays_off_and_says_why() {
         let dir = tempfile::tempdir().expect("a temporary folder");
         let not_a_folder = dir.path().join("logs");
-        std::fs::write(&not_a_folder, "").expect("a file where the logs folder should be");
+        fs::write(&not_a_folder, "").expect("a file where the logs folder should be");
         let shown = tick_then(&not_a_folder, Some(MessageAnswer::Confirm));
         assert!(!shown.on && !shown.writing && !shown.asking, "{shown:?}");
         assert!(
@@ -463,7 +474,7 @@ fn the_pictures_of_the_card_are_written_when_asked() {
     let Some(dir) = std::env::var_os("BREADSLICER_UI_SHOTS").map(std::path::PathBuf::from) else {
         return;
     };
-    std::fs::create_dir_all(&dir).expect("the folder");
+    fs::create_dir_all(&dir).expect("the folder");
     for language in ["en", "es"] {
         for page in 0..7 {
             let dir = dir.clone();

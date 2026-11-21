@@ -516,9 +516,7 @@ impl PanelUpdate {
     /// Returns the update that a preference change needs, if any.
     fn for_preferences_change(change: PreferencesChange) -> Option<Self> {
         match change {
-            PreferencesChange::Favourites
-            | PreferencesChange::DefaultPrinter
-            | PreferencesChange::DefaultResin => Some(Self::Full),
+            PreferencesChange::DefaultPrinter | PreferencesChange::DefaultResin => Some(Self::Full),
             // The format labels and the note come from `ctr!`.
             PreferencesChange::Language => Some(Self::Full),
             // The held slice takes the new level (#19) in the export gate's
@@ -623,7 +621,6 @@ mod panel_update_tests {
     #[test]
     fn each_preferences_change_gives_its_update() {
         let expected = [
-            (PreferencesChange::Favourites, Some(PanelUpdate::Full)),
             (PreferencesChange::DefaultPrinter, Some(PanelUpdate::Full)),
             (PreferencesChange::DefaultResin, Some(PanelUpdate::Full)),
             (PreferencesChange::AaLevel, Some(PanelUpdate::ExportGate)),

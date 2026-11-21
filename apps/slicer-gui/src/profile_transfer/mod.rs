@@ -31,16 +31,12 @@ use crate::i18n::ctr;
 pub(crate) enum ExportScope {
     /// Every printer and resin of the person's library (#670).
     All,
-    Printers,
-    Materials,
 }
 
 impl ExportScope {
     pub(crate) fn selection(self) -> ExportSelection {
         match self {
             ExportScope::All => ExportSelection::All,
-            ExportScope::Printers => ExportSelection::Printers,
-            ExportScope::Materials => ExportSelection::Materials,
         }
     }
 
@@ -48,8 +44,6 @@ impl ExportScope {
     pub(crate) fn default_file_name(self) -> &'static str {
         match self {
             ExportScope::All => "breadslicer-profiles.zip",
-            ExportScope::Printers => "printers.zip",
-            ExportScope::Materials => "materials.zip",
         }
     }
 }
