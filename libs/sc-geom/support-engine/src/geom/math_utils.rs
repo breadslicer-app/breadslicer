@@ -62,16 +62,6 @@ pub fn js_acos(x: f64) -> f64 {
 }
 
 #[inline]
-pub fn js_asin(x: f64) -> f64 {
-    x.asin()
-}
-
-#[inline]
-pub fn js_atan(x: f64) -> f64 {
-    x.atan()
-}
-
-#[inline]
 pub fn js_atan2(y: f64, x: f64) -> f64 {
     y.atan2(x)
 }
@@ -87,11 +77,6 @@ pub fn js_cos(x: f64) -> f64 {
 }
 
 #[inline]
-pub fn js_exp(x: f64) -> f64 {
-    x.exp()
-}
-
-#[inline]
 pub fn js_tan(x: f64) -> f64 {
     x.tan()
 }
@@ -99,11 +84,6 @@ pub fn js_tan(x: f64) -> f64 {
 #[inline]
 pub fn js_log(x: f64) -> f64 {
     x.ln()
-}
-
-#[inline]
-pub fn js_cbrt(x: f64) -> f64 {
-    x.cbrt()
 }
 
 #[inline]

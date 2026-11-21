@@ -6,60 +6,6 @@
 use crate::supports::types::Vec3;
 use crate::geom::math_utils::{js_max, js_min};
 
-/// Calculates cubic Bezier control points to maintain C1 continuity (tangent matching).
-///
-/// `tension`: how "tight" the curve follows the tangents (0.1 = loose, 2.0 = tight).
-/// DragonFruit's defaults are `tension = 0.5`, `bias = 0.5`.
-/// Returns the two control points `[cp1, cp2]`.
-pub fn calculate_bezier_control_points(
-    start_pos: Vec3,
-    end_pos: Vec3,
-    start_tangent: Vec3,
-    end_tangent: Vec3,
-    tension: f64,
-    bias: f64,
-) -> [Vec3; 2] {
-    let p0 = start_pos;
-    let p3 = end_pos;
-    let t0 = start_tangent.normalize();
-    let t3 = end_tangent.normalize();
-
-    // Calculate distance between endpoints
-    let dist = p0.distance_to(p3);
-
-    // Map input tension (0.1 - 2.0) to handle scale factor.
-    // High Tension (2.0) = Short Handles = Sharp/Taut (Scale ~0.25)
-    // Low Tension (0.1) = Long Handles = Flowy/Loose (Scale ~0.6)
-
-    // Normalize tension roughly to 0..1 range for calculation, assuming input is 0..2
-    let clamped_tension = js_max(0.0, js_min(tension, 2.0));
-    let t = clamped_tension / 2.0; // 0..1
-
-    // Invert logic: Higher T -> Lower Scale
-    // Range: 0.6 (at t=0) down to 0.25 (at t=1)
-    // Updated: Scaled down by ~30% to prevent overlapping handles (0.42 -> 0.175)
-    let base_scale_factor = (0.6 - (t * 0.35)) * 0.7;
-
-    // Apply Bias (0..1)
-    // Low Bias (0) -> Bottom Tight (Short Handle), Top Loose (Long Handle)
-    // High Bias (1) -> Bottom Loose (Long Handle), Top Tight (Short Handle)
-    // Start Mult = Bias * 2 (0 -> 0, 0.5 -> 1, 1 -> 2)
-    // End Mult = (1-Bias) * 2 (0 -> 2, 0.5 -> 1, 1 -> 0)
-    let start_mult = bias * 2.0;
-    let end_mult = (1.0 - bias) * 2.0;
-
-    let start_handle_length = dist * base_scale_factor * start_mult;
-    let end_handle_length = dist * base_scale_factor * end_mult;
-
-    // Control Point 1: Start + (StartTangent * scale)
-    let p1 = p0.add(t0.multiply_scalar(start_handle_length));
-
-    // Control Point 2: End - (EndTangent * scale)
-    let p2 = p3.sub(t3.multiply_scalar(end_handle_length));
-
-    [p1, p2]
-}
-
 /// Samples a point on a cubic Bezier curve at parameter t [0..1]
 pub fn get_bezier_point_at_t(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f64) -> Vec3 {
     // Cubic Bezier formula:
@@ -131,44 +77,4 @@ pub fn subdivide_cubic_bezier(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f64) ->
     let p0123 = p012.lerp(p123, t);
 
     [[p0, p01, p012, p0123], [p0123, p123, p23, p3]]
-}
-
-/// Converts a Bezier curve into a series of line segments for printing/export/collision.
-pub fn bezier_to_line_segments(
-    p0: Vec3,
-    p1: Vec3,
-    p2: Vec3,
-    p3: Vec3,
-    resolution: Option<f64>,
-) -> Vec<Vec3> {
-    let adaptive_resolution = calculate_adaptive_bezier_resolution(
-        p0,
-        p1,
-        p2,
-        p3,
-        AdaptiveBezierResolutionOptions::default(),
-    );
-    let segments = js_max(2.0, resolution.unwrap_or(adaptive_resolution).floor());
-    // A non-finite count cannot size an array in JavaScript either (RangeError).
-    assert!(segments.is_finite(), "invalid bezier resolution {segments}");
-    let segments = segments as usize;
-    let mut points = Vec::with_capacity(segments + 1);
-
-    for i in 0..=segments {
-        let t = i as f64 / segments as f64;
-        let one_minus_t = 1.0 - t;
-
-        let c0 = one_minus_t * one_minus_t * one_minus_t;
-        let c1 = 3.0 * one_minus_t * one_minus_t * t;
-        let c2 = 3.0 * one_minus_t * t * t;
-        let c3 = t * t * t;
-
-        points.push(Vec3::new(
-            p0.x * c0 + p1.x * c1 + p2.x * c2 + p3.x * c3,
-            p0.y * c0 + p1.y * c1 + p2.y * c2 + p3.y * c3,
-            p0.z * c0 + p1.z * c1 + p2.z * c2 + p3.z * c3,
-        ));
-    }
-
-    points
 }

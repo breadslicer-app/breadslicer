@@ -18,9 +18,8 @@ use i_overlay::float::overlay::{FloatOverlay, OverlayOptions};
 use i_overlay::mesh::float::outline::offset::OutlineOffset;
 use i_overlay::mesh::float::style::{LineJoin, OutlineStyle};
 
-use super::small::signed_area_2d;
+use super::raft_body::signed_area_2d;
 use crate::geom::Vector2;
-use crate::geom::math_utils::{js_hypot, js_max, js_min};
 use crate::geom::shape::{Path as ShapePath, Shape};
 
 /// A failure of a polygon operation. The booleans and offsets cannot fail;
@@ -183,60 +182,53 @@ pub fn offset_polygon_set(
     Ok(union_of(&grown))
 }
 
-/// Distance from a point to a segment, in mm.
+/// The distance from `(x, y)` to the segment `a b` (mm).
 pub fn point_to_segment_mm(x: f64, y: f64, ax: f64, ay: f64, bx: f64, by: f64) -> f64 {
-    let dx = bx - ax;
-    let dy = by - ay;
-    let length_sq = dx * dx + dy * dy;
-    let t = if length_sq <= 1e-12 {
+    let (ux, uy) = (bx - ax, by - ay);
+    let squared = ux * ux + uy * uy;
+    let t = if squared <= 1e-12 {
         0.0
     } else {
-        js_max(
-            0.0,
-            js_min(1.0, ((x - ax) * dx + (y - ay) * dy) / length_sq),
-        )
+        (((x - ax) * ux + (y - ay) * uy) / squared).clamp(0.0, 1.0)
     };
-    js_hypot(&[x - (ax + dx * t), y - (ay + dy * t)])
+    let (dx, dy) = (x - (ax + ux * t), y - (ay + uy * t));
+    (dx * dx + dy * dy).sqrt()
 }
 
-/// Ray-cast `inside` over one ring, toggling the caller's flag.
-fn ring_toggles(ring: &[Vector2], x: f64, y: f64, inside: &mut bool) {
+/// Whether `(x, y)` is inside the ring, by the crossings of a ray toward
+/// `+x`.
+fn ring_holds(ring: &[Vector2], x: f64, y: f64) -> bool {
     let n = ring.len();
-    if n == 0 {
-        return;
-    }
-    let mut j = n - 1;
-    for i in 0..n {
-        let (a, b) = (ring[i], ring[j]);
-        if (a.y > y) != (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x {
-            *inside = !*inside;
-        }
-        j = i;
-    }
+    (0..n)
+        .filter(|&i| {
+            let (a, b) = (ring[i], ring[(i + n - 1) % n]);
+            (a.y > y) != (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x
+        })
+        .count()
+        % 2
+        == 1
 }
 
-/// Ray-cast containment over a polygon set, holes subtracted.
+/// Whether `(x, y)` is inside one of the polygons (its holes left out).
 pub fn polygon_set_contains(polys: &[PolygonWithHoles], x: f64, y: f64) -> bool {
-    for poly in polys {
-        let mut inside = false;
-        ring_toggles(&poly.outer, x, y, &mut inside);
-        for hole in &poly.holes {
-            ring_toggles(hole, x, y, &mut inside);
-        }
-        if inside {
-            return true;
-        }
-    }
-    false
+    polys.iter().any(|poly| {
+        std::iter::once(&poly.outer)
+            .chain(&poly.holes)
+            .filter(|ring| ring_holds(ring, x, y))
+            .count()
+            % 2
+            == 1
+    })
 }
 
-/// A uniform grid over a polygon set's edges.
+/// The edges of a polygon set in a grid of square cells, for asking which
+/// edges lie near a segment.
 #[derive(Debug, Clone)]
 pub struct ClearanceEdgeGrid {
     pub cell_size: f64,
     pub min_x: f64,
     pub min_y: f64,
-    /// `cy * 100000 + cx` to the edges' offsets into `edges`.
+    /// Each cell's edges (as offsets into `edges`), by `row · 100000 + column`.
     pub cells: HashMap<i64, Vec<usize>>,
     /// `[ax, ay, bx, by]` per edge.
     pub edges: Vec<f64>,
@@ -246,49 +238,51 @@ pub struct ClearanceEdgeGrid {
 pub const EDGE_QUERY_EPS_MM: f64 = 0.001;
 
 fn cell_of(value: f64, min: f64, cell_size: f64) -> i64 {
-    js_max(0.0, ((value - min) / cell_size).floor()) as i64
+    ((value - min) / cell_size).floor().max(0.0) as i64
 }
 
+/// Every edge of the set in each cell its box covers; none without edges.
 pub fn build_clearance_edge_grid(
     clearance: &[PolygonWithHoles],
     cell_size: f64,
 ) -> Option<ClearanceEdgeGrid> {
-    let mut edges: Vec<f64> = Vec::new();
-    let mut min_x = f64::INFINITY;
-    let mut min_y = f64::INFINITY;
-    for poly in clearance {
-        for ring in std::iter::once(&poly.outer).chain(&poly.holes) {
-            for i in 0..ring.len() {
-                let a = ring[i];
-                let b = ring[(i + 1) % ring.len()];
-                edges.extend([a.x, a.y, b.x, b.y]);
-                if a.x < min_x {
-                    min_x = a.x;
-                }
-                if a.y < min_y {
-                    min_y = a.y;
-                }
-            }
-        }
-    }
+    let edges: Vec<f64> = clearance
+        .iter()
+        .flat_map(|poly| std::iter::once(&poly.outer).chain(&poly.holes))
+        .flat_map(|ring| {
+            (0..ring.len()).flat_map(move |i| {
+                let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+                [a.x, a.y, b.x, b.y]
+            })
+        })
+        .collect();
     if edges.is_empty() {
         return None;
     }
+    // The grid starts at the edges' first corners' lowest x and y.
+    let min_x = edges
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|e| e[0])
+        .fold(f64::INFINITY, f64::min);
+    let min_y = edges
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|e| e[1])
+        .fold(f64::INFINITY, f64::min);
     let mut cells: HashMap<i64, Vec<usize>> = HashMap::new();
-    let mut e = 0;
-    while e < edges.len() {
-        let x0 = js_min(edges[e], edges[e + 2]);
-        let x1 = js_max(edges[e], edges[e + 2]);
-        let y0 = js_min(edges[e + 1], edges[e + 3]);
-        let y1 = js_max(edges[e + 1], edges[e + 3]);
-        let (cx0, cx1) = (cell_of(x0, min_x, cell_size), cell_of(x1, min_x, cell_size));
-        let (cy0, cy1) = (cell_of(y0, min_y, cell_size), cell_of(y1, min_y, cell_size));
-        for cy in cy0..=cy1 {
-            for cx in cx0..=cx1 {
-                cells.entry(cy * 100000 + cx).or_default().push(e);
+    for (k, e) in edges.as_chunks::<4>().0.iter().enumerate() {
+        let columns =
+            cell_of(e[0].min(e[2]), min_x, cell_size)..=cell_of(e[0].max(e[2]), min_x, cell_size);
+        for row in
+            cell_of(e[1].min(e[3]), min_y, cell_size)..=cell_of(e[1].max(e[3]), min_y, cell_size)
+        {
+            for column in columns.clone() {
+                cells.entry(row * 100000 + column).or_default().push(k * 4);
             }
         }
-        e += 4;
     }
     Some(ClearanceEdgeGrid {
         cell_size,
@@ -299,8 +293,8 @@ pub fn build_clearance_edge_grid(
     })
 }
 
-/// Whether any edge in the cells the query segment's box covers lies within
-/// `epsilon` of it.
+/// Whether an edge in the cells around segment `a b` comes within `epsilon`
+/// of it.
 pub fn grid_segment_blocked(
     grid: &ClearanceEdgeGrid,
     ax: f64,
@@ -309,27 +303,20 @@ pub fn grid_segment_blocked(
     by: f64,
     epsilon: f64,
 ) -> bool {
-    let cx0 = cell_of(js_min(ax, bx) - epsilon, grid.min_x, grid.cell_size);
-    let cx1 = cell_of(js_max(ax, bx) + epsilon, grid.min_x, grid.cell_size);
-    let cy0 = cell_of(js_min(ay, by) - epsilon, grid.min_y, grid.cell_size);
-    let cy1 = cell_of(js_max(ay, by) + epsilon, grid.min_y, grid.cell_size);
-    for cy in cy0..=cy1 {
-        for cx in cx0..=cx1 {
-            let Some(bucket) = grid.cells.get(&(cy * 100000 + cx)) else {
-                continue;
-            };
-            for &e in bucket {
-                let ed = &grid.edges[e..e + 4];
-                if segment_distance_mm(ax, ay, bx, by, ed[0], ed[1], ed[2], ed[3]) <= epsilon {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    let columns = cell_of(ax.min(bx) - epsilon, grid.min_x, grid.cell_size)
+        ..=cell_of(ax.max(bx) + epsilon, grid.min_x, grid.cell_size);
+    let rows = cell_of(ay.min(by) - epsilon, grid.min_y, grid.cell_size)
+        ..=cell_of(ay.max(by) + epsilon, grid.min_y, grid.cell_size);
+    rows.flat_map(|row| columns.clone().map(move |column| row * 100000 + column))
+        .filter_map(|cell| grid.cells.get(&cell))
+        .flatten()
+        .any(|&k| {
+            let e = &grid.edges[k..k + 4];
+            segment_distance_mm(ax, ay, bx, by, e[0], e[1], e[2], e[3]) <= epsilon
+        })
 }
 
-/// Closest approach of two segments, in mm.
+/// How close segments `a b` and `c d` come (mm): 0 when they cross.
 #[allow(clippy::too_many_arguments)]
 pub fn segment_distance_mm(
     ax: f64,
@@ -341,44 +328,39 @@ pub fn segment_distance_mm(
     dx: f64,
     dy: f64,
 ) -> f64 {
-    let d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-    let d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
-    let d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
-    let d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
-    if ((d1 > 0.0) != (d2 > 0.0)) && ((d3 > 0.0) != (d4 > 0.0)) {
+    let side = |px: f64, py: f64, qx: f64, qy: f64, rx: f64, ry: f64| {
+        (qx - px) * (ry - py) - (qy - py) * (rx - px) > 0.0
+    };
+    let crosses = side(ax, ay, bx, by, cx, cy) != side(ax, ay, bx, by, dx, dy)
+        && side(cx, cy, dx, dy, ax, ay) != side(cx, cy, dx, dy, bx, by);
+    if crosses {
         return 0.0;
     }
-    js_min(
-        js_min(
-            point_to_segment_mm(ax, ay, cx, cy, dx, dy),
-            point_to_segment_mm(bx, by, cx, cy, dx, dy),
-        ),
-        js_min(
-            point_to_segment_mm(cx, cy, ax, ay, bx, by),
-            point_to_segment_mm(dx, dy, ax, ay, bx, by),
-        ),
-    )
+    point_to_segment_mm(ax, ay, cx, cy, dx, dy)
+        .min(point_to_segment_mm(bx, by, cx, cy, dx, dy))
+        .min(
+            point_to_segment_mm(cx, cy, ax, ay, bx, by)
+                .min(point_to_segment_mm(dx, dy, ax, ay, bx, by)),
+        )
 }
 
-/// `THREE.Shape` list (with holes) so `ExtrudeGeometry` can consume the set.
+/// The set as shapes to extrude: each polygon with its holes, rings of
+/// fewer than three points left out.
 pub fn polygon_set_to_shapes(polys: &[PolygonWithHoles]) -> Vec<Shape> {
-    let mut shapes = Vec::new();
-    for poly in polys {
-        if poly.outer.len() < 3 {
-            continue;
-        }
-        let mut shape = Shape::new(Some(&poly.outer));
-        for hole in &poly.holes {
-            if hole.len() < 3 {
-                continue;
-            }
-            let mut path = ShapePath::new(Some(hole));
-            path.close_path();
-            shape.holes.push(path);
-        }
-        shapes.push(shape);
-    }
-    shapes
+    polys
+        .iter()
+        .filter(|poly| poly.outer.len() >= 3)
+        .map(|poly| {
+            let mut shape = Shape::new(Some(&poly.outer));
+            shape.holes.extend(
+                poly.holes
+                    .iter()
+                    .filter(|hole| hole.len() >= 3)
+                    .map(|hole| ShapePath::new(Some(hole))),
+            );
+            shape
+        })
+        .collect()
 }
 
 /// Net area of the set in mm² (holes subtracted).

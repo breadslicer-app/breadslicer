@@ -25,11 +25,6 @@ impl Matrix4 {
         elements: DMat4::IDENTITY.to_cols_array(),
     };
 
-    /// From column-major elements.
-    pub const fn from_column_major(elements: [f64; 16]) -> Self {
-        Matrix4 { elements }
-    }
-
     #[inline]
     pub(crate) fn glam(&self) -> DMat4 {
         DMat4::from_cols_array(&self.elements)

@@ -15,7 +15,8 @@ use std::collections::HashSet;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::supports::rafts::crenelated::geometry::convex_hull_2d::{Vec2, convex_hull_2d};
+use crate::geom::Vector2 as Vec2;
+use crate::supports::rafts::crenelated::geometry::raft_body::convex_hull_2d;
 use crate::geom::Matrix4;
 use crate::geom::math_utils::{js_atan2, js_cos, js_hypot, js_max, js_round, js_sin};
 use crate::volume_analysis::islands::voxel_footprint::number_key;

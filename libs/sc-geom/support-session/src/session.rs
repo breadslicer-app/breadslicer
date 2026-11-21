@@ -17,7 +17,10 @@ use std::sync::{Arc, OnceLock};
 
 use sc_mesh_core::IndexedMesh;
 use serde_json::Value;
+use support_engine::bvh::{MeshBvh, Side};
 use support_engine::features::slicing::support_world_triangles::raft_and_feet_top_mm;
+use support_engine::geom::ray::Ray;
+use support_engine::geom::{Matrix4, Vec3};
 use support_engine::pipeline::{ModelInput, PipelineSettings, support_soup};
 use support_engine::supports::auto_bracing::auto_brace::{
     HandBrace, HandBraceRefusal, brace_new_shaft, hand_brace,
@@ -51,9 +54,6 @@ use support_engine::supports::support_types::trunk::trunk_builder::{
 };
 use support_engine::supports::types::LimitationCode;
 use support_engine::supports::types::{Knot, SupportCollections, SupportState};
-use support_engine::geom::ray::Ray;
-use support_engine::geom::{Matrix4, Vec3};
-use support_engine::bvh::{MeshBvh, Side};
 
 use crate::document::ModelPrint;
 use crate::hand_log::{
@@ -2616,7 +2616,7 @@ impl SupportSession {
     /// lines and its wall, each root's disk and its cone. What the view from
     /// under the plate hides (#481); 0 with neither.
     pub fn raft_top_mm(&self) -> f64 {
-        raft_and_feet_top_mm(&self.state.collections, &self.settings.rafts.global)
+        raft_and_feet_top_mm(&self.state.collections, &self.settings.raft)
     }
 
     /// Whether this set stands on one raft for all (#556): its drawing has no
@@ -2635,7 +2635,7 @@ impl SupportSession {
             raft_circle_of, root_shaft_radii,
         };
         let (l, t) = (motion.linear(), motion.translation());
-        let raft = &self.settings.rafts.global;
+        let raft = &self.settings.raft;
         let radii = root_shaft_radii(&self.state.collections);
         self.state
             .collections
@@ -2655,7 +2655,7 @@ impl SupportSession {
     pub(crate) fn raft_settings(
         &self,
     ) -> support_engine::supports::rafts::crenelated::raft_types::RaftSettings {
-        self.settings.rafts.global
+        self.settings.raft
     }
 
     /// The tip diameter of support `id`, when it has one.
@@ -2674,9 +2674,7 @@ impl SupportSession {
     /// draws (a run without sizes scales its tips by the surface).
     fn size_of(&self, id: &str) -> Option<String> {
         let d = self.tip_diameter(id)?;
-        let same = |s: &&SupportSize| {
-            (s.tip_diameter_mm - d).abs() < 1e-6
-        };
+        let same = |s: &&SupportSize| (s.tip_diameter_mm - d).abs() < 1e-6;
         self.settings
             .supports
             .auto_support
@@ -3304,8 +3302,7 @@ impl SupportSession {
     /// `state`'s supports tessellated on their own, without a raft.
     fn draw_alone(&self, state: &SupportState) -> Result<IndexedMesh, EditError> {
         let mut settings = (*self.settings).clone();
-        settings.rafts.global.bottom_mode = RaftBottomMode::Off;
-        settings.rafts.per_model.clear();
+        settings.raft.bottom_mode = RaftBottomMode::Off;
         let models: Vec<ModelInput> = self
             .models
             .iter()
@@ -3690,10 +3687,7 @@ pub(crate) mod session_tests {
     }
 
     /// The knots `edited` holds that `before` does not.
-    fn new_knots<'a>(
-        before: &SupportSession,
-        edited: &'a SupportSession,
-    ) -> Vec<&'a Knot> {
+    fn new_knots<'a>(before: &SupportSession, edited: &'a SupportSession) -> Vec<&'a Knot> {
         edited
             .state
             .collections
@@ -3890,10 +3884,7 @@ pub(crate) mod session_tests {
             "lines"
         );
         assert!(options.one_raft);
-        assert_eq!(
-            session.settings.rafts.global.bottom_mode,
-            RaftBottomMode::Line
-        );
+        assert_eq!(session.settings.raft.bottom_mode, RaftBottomMode::Line);
 
         // Its own drawing: the supports and their feet, no raft.
         let own = session.mesh().unwrap().expect("drawn");
@@ -3948,7 +3939,7 @@ pub(crate) mod session_tests {
             let mut session = bare_slab(12.0, request);
             session.add_trunk_at([25.0, 5.0, 12.0]).expect("a trunk");
             session.add_trunk_at([10.0, 5.0, 12.0]).expect("another");
-            let raft = session.settings.rafts.global;
+            let raft = session.settings.raft;
             assert_eq!(raft.bottom_mode, RaftBottomMode::Line);
             let roots: Vec<_> = session.state.collections.roots.values().collect();
             let disk = roots.iter().map(|r| r.diameter * 0.5).fold(0.0, f64::max);
@@ -3956,8 +3947,7 @@ pub(crate) mod session_tests {
             assert!(disk > foot, "the disk {disk} would be wider");
             let with = support_soup(&session.state, &session.models, &session.settings).unwrap();
             let mut off = (*session.settings).clone();
-            off.rafts.global.bottom_mode = RaftBottomMode::Off;
-            off.rafts.per_model.clear();
+            off.raft.bottom_mode = RaftBottomMode::Off;
             let alone = support_soup(&session.state, &session.models, &off).unwrap();
             // The supports' own pieces, before the raft's: what they draw on
             // the lines reaches no farther from a root than the foot.
@@ -4090,10 +4080,9 @@ pub(crate) mod session_tests {
     fn an_empty_session_takes_its_first_tip() {
         let scene = slab_scene(12.0);
         let model = crate::scene_model_leaves(&scene, None).unwrap()[0].0;
-        let mut session =
-            crate::empty_session(&scene, model, &crate::SupportRequest::default())
-                .unwrap()
-                .expect("a model");
+        let mut session = crate::empty_session(&scene, model, &crate::SupportRequest::default())
+            .unwrap()
+            .expect("a model");
         assert!(session.is_empty());
         session
             .add_tip_among([5.0, 5.0, 12.0], &[], None, &|_| true)
@@ -4256,14 +4245,13 @@ pub(crate) mod session_tests {
     /// of every collection, the models with their geometry.
     #[test]
     fn a_preview_draws_its_pieces_as_the_whole_models_do() {
-        let session =
-            crate::start_supports(&slab_scene(6.0), crate::SupportRequest::default())
-                .unwrap()
-                .join()
-                .unwrap()
-                .sets
-                .remove(0)
-                .session;
+        let session = crate::start_supports(&slab_scene(6.0), crate::SupportRequest::default())
+            .unwrap()
+            .join()
+            .unwrap()
+            .sets
+            .remove(0)
+            .session;
         let c = &session.state.collections;
         let some: HashSet<String> = all_ids(c).into_iter().step_by(3).collect();
         assert!(some.len() > 5);
@@ -4274,8 +4262,7 @@ pub(crate) mod session_tests {
             ..SupportState::default()
         };
         let mut settings = (*session.settings).clone();
-        settings.rafts.global.bottom_mode = RaftBottomMode::Off;
-        settings.rafts.per_model.clear();
+        settings.raft.bottom_mode = RaftBottomMode::Off;
         let sink = support_soup(&state, &session.models, &settings).unwrap();
         let before = weld_parts(&sink.floats, &sink.parts, SUPPORT_MESH_NAME).unwrap();
         let now = session.mesh_of(keep).unwrap();
@@ -5075,12 +5062,7 @@ pub(crate) mod session_tests {
         let (kept, report) = fresh.with_hand_edits_of(&old, &|| false).unwrap();
         assert_eq!(report.lost.len(), 2, "{report:?}");
         assert_eq!(report.kept, 1, "the removal: {report:?}");
-        assert!(
-            report
-                .lost
-                .iter()
-                .all(|l| l.why == LostWhy::SurfaceChanged)
-        );
+        assert!(report.lost.iter().all(|l| l.why == LostWhy::SurfaceChanged));
         assert_eq!(report.lost[1].kind, HandEditKind::Added);
         assert!(dist(report.lost[1].at, added) < 0.05);
         assert_eq!(report.lost[0].kind, HandEditKind::Moved);
@@ -5189,10 +5171,7 @@ pub(crate) mod session_tests {
     fn new_brace<'a>(
         before: &SupportSession,
         edited: &'a SupportSession,
-    ) -> (
-        &'a support_engine::supports::types::Brace,
-        [Vec3; 2],
-    ) {
+    ) -> (&'a support_engine::supports::types::Brace, [Vec3; 2]) {
         let c = &edited.state.collections;
         let brace = c
             .braces
@@ -5428,8 +5407,7 @@ pub(crate) mod session_tests {
             report
                 .lost
                 .iter()
-                .any(|l| l.kind == HandEditKind::Braced
-                    && l.why == LostWhy::BraceEndsGone),
+                .any(|l| l.kind == HandEditKind::Braced && l.why == LostWhy::BraceEndsGone),
             "{report:?}"
         );
     }

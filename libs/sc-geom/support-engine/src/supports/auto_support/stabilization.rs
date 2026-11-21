@@ -15,7 +15,8 @@ use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 
 use super::pose_stability::{measure_pose_stability, needs_topple_coverage, posed_positions};
-use crate::supports::rafts::crenelated::geometry::convex_hull_2d::{Vec2, convex_hull_2d};
+use crate::geom::Vector2 as Vec2;
+use crate::supports::rafts::crenelated::geometry::raft_body::convex_hull_2d;
 use crate::geom::Matrix4;
 use crate::geom::math_utils::{js_cos, js_hypot, js_max, js_min, js_round, js_sin};
 

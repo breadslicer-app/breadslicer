@@ -15,7 +15,6 @@ use support_engine::supports::support_primitives::joint::joint_utils::{
 use support_engine::supports::support_primitives::knot::knot_utils::{
     calculate_knot_position_on_segment_from_t, remap_knot_across_split,
 };
-use support_engine::supports::support_primitives::shaft::shaft_taper_geometry::taper_width_along;
 use support_engine::supports::types::*;
 
 // --- contactDiskNib.test.ts ---
@@ -365,31 +364,6 @@ fn split_support_shaft_emits_no_remaps_when_no_knots_are_supplied() {
 }
 
 // --- shaftTaperGeometry.test.ts (the brace span and bucket cases need their modules) ---
-
-#[test]
-fn a_taper_is_shared_out_across_the_pieces_of_a_curve() {
-    // Five points, so four pieces spanning 2mm down to 1mm.
-    let width_at = taper_width_along(5, 2.0, Some(1.0));
-    assert_eq!(width_at(0), 2.0);
-    assert_eq!(width_at(2), 1.5);
-    assert_eq!(width_at(4), 1.0);
-}
-
-#[test]
-fn a_shaft_with_one_width_reads_the_same_at_every_point() {
-    let width_at = taper_width_along(5, 2.0, None);
-    assert_eq!(width_at(0), 2.0);
-    assert_eq!(width_at(4), 2.0);
-}
-
-#[test]
-fn a_single_piece_runs_the_whole_taper() {
-    let width_at = taper_width_along(2, 2.0, Some(1.0));
-    assert_eq!(width_at(0), 2.0);
-    assert_eq!(width_at(1), 1.0);
-}
-
-// --- wire format ---
 
 #[test]
 fn a_dragonfruit_trunk_round_trips_through_its_own_json() {

@@ -13,8 +13,8 @@
 //! 4. **Support plan** (`computeAutoSupportPlan`, auto-bracing included), on
 //!    the state the previous models left.
 //!
-//! Then **rafts** for every root, as `ExportManager` adds them, cleared of the
-//! visible models standing on the plate.
+//! Then the **support mesh**: every support and its raft, as the slicer reads
+//! it, the rafts cut clear of the visible models standing on the plate.
 //!
 //! Cancellation is checked between stages; a cancelled run returns
 //! [`PipelineError::Cancelled`] and nothing partial. Nothing is global: the
@@ -24,13 +24,15 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
+use crate::bvh::{BvhMesh, MeshBvh, Side};
 use crate::features::slicing::smooth_shafts::ShaftStyle;
 use crate::features::slicing::support_world_triangles::{
     SupportSliceInput, TipDrawing, TriangleSink, build_support_and_raft_world_parts,
 };
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::{Matrix4, Vec3};
 use crate::native::islands::body::IslandBodyScan;
-use crate::native::mesh_core::mesh::IndexedMesh;
+use crate::native::welded::WeldedMesh;
 use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands_with_bodies};
 use crate::native::overhang::{
     OVERHANG_WELD_EPSILON, OverhangScan, classify_overhangs, overhang_and_stability,
@@ -49,15 +51,12 @@ use crate::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use crate::supports::rafts::crenelated::geometry::model_plate_footprint::{
     ModelTransform, PlateFootprintSource, quaternion_from_global_euler,
 };
-use crate::supports::rafts::crenelated::raft_export::{
-    RaftGroup, RaftRoot, RaftSettingsStore, build_export_rafts,
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
+use crate::supports::rafts::crenelated::raft_types::{
+    DEFAULT_RAFT_SETTINGS, RaftBottomMode, RaftSettings,
 };
-use crate::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::types::SupportState;
-use crate::geom::buffer_geometry::BufferGeometry;
-use crate::geom::{Matrix4, Vec3};
-use crate::bvh::{BvhMesh, MeshBvh, Side};
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
 use crate::volume_analysis::islands::use_islands::{
     DerivedIslands, IslandPanelSettings, derive_islands, overhang_region_to_island,
@@ -116,7 +115,8 @@ pub struct PipelineSettings {
     /// The support settings store (`getSettings()`); its `autoSupport` is the
     /// plan's override.
     pub supports: SupportSettings,
-    pub rafts: RaftSettingsStore,
+    /// The raft every set stands on (see [`RaftSettings::settled`]).
+    pub raft: RaftSettings,
     /// The distance-field cell of each model's pooled SDF.
     pub sdf_cell_mm: f64,
     /// `supportTipShrinkPercent` of the slice tessellation.
@@ -149,7 +149,7 @@ impl PipelineSettings {
             scan: IslandScanSettings::default(),
             panel: IslandPanelSettings::defaults(layer_height_mm),
             supports: SupportSettings::default(),
-            rafts: RaftSettingsStore::default(),
+            raft: DEFAULT_RAFT_SETTINGS,
             sdf_cell_mm: 0.5,
             support_tip_shrink_percent: 0.0,
             tip_penetration_mm: 0.0,
@@ -169,7 +169,6 @@ pub enum Stage {
     ScanIslands,
     DeriveIslands,
     PlanSupports,
-    BuildRafts,
     Tessellate,
 }
 
@@ -227,8 +226,6 @@ pub struct PipelineOutput {
     pub models: Vec<ModelSupports>,
     /// The support state after every model's plan.
     pub support: SupportState,
-    /// Empty from [`plan_supports_with`].
-    pub rafts: Vec<RaftGroup>,
     /// What the slicer rasterises (`buildSupportAndRaftWorldTriangles`): every
     /// support and the global-settings raft, nine floats per triangle. Empty
     /// from [`plan_supports_with`].
@@ -428,7 +425,7 @@ fn scan_model(
 ) -> (CombinedIslandScanResult, OverhangScan) {
     let mesh = {
         let _perf = perf::scope("stage:weld-mesh");
-        IndexedMesh::from_triangle_soup(soup, settings.scan.merge_epsilon)
+        WeldedMesh::weld(soup, settings.scan.merge_epsilon)
     };
     let s = &settings.scan;
     // The island scan and the soup's overhang classification are
@@ -539,7 +536,7 @@ pub fn prescan_models(
             return Err(PipelineError::Cancelled);
         }
         let soup = world_soup(model);
-        let has_raft = settings.rafts.for_model(Some(&model.id)).bottom_mode != RaftBottomMode::Off;
+        let has_raft = settings.raft.bottom_mode != RaftBottomMode::Off;
         let key = ScanKey::new(&soup, settings, angle, has_raft);
         if let Some(known) = previous.and_then(|c| c.models.iter().find(|m| m.key == key)) {
             cache.models.push(known.clone());
@@ -603,7 +600,7 @@ pub fn generate_supports_with(
 
 /// [`generate_supports_with`] up to the plans, for a caller that draws each
 /// model's supports and raft itself: the scene-wide rafts and tessellation
-/// are skipped (`rafts`, `support_soup` and `support_parts` come back empty,
+/// are skipped (`support_soup` and `support_parts` come back empty,
 /// and their stages are not reported). Everything else is the same.
 pub fn plan_supports_with(
     models: &[ModelInput],
@@ -706,7 +703,7 @@ fn run_pipeline(
         let soup = &soups[i];
         check()?;
         step(progress, Stage::ScanIslands, i);
-        let has_raft = settings.rafts.for_model(Some(&model.id)).bottom_mode != RaftBottomMode::Off;
+        let has_raft = settings.raft.bottom_mode != RaftBottomMode::Off;
         let key = ScanKey::new(soup, settings, angle, has_raft);
         let (combined, overhang) = match prescanned.and_then(|c| c.scans(&key)) {
             Some(hit) => {
@@ -819,29 +816,19 @@ fn run_pipeline(
         });
     }
 
-    let (rafts, support) = if draw {
-        check()?;
-        step(progress, Stage::BuildRafts, n);
-        let rafts = {
-            let _perf = perf::scope("stage:export-rafts");
-            build_rafts(&current, models, &settings.rafts)?
-        };
+    let support = if draw {
         check()?;
         step(progress, Stage::Tessellate, n);
-        let support = {
-            let _perf = perf::scope("stage:tessellate");
-            support_soup(&current, models, settings)?
-        };
-        (rafts, support)
+        let _perf = perf::scope("stage:tessellate");
+        support_soup(&current, models, settings)?
     } else {
-        (Vec::new(), TriangleSink::default())
+        TriangleSink::default()
     };
     check()?;
     drop(brace_meshes);
     Ok(PipelineOutput {
         models: outputs,
         support: current,
-        rafts,
         support_soup: support.floats,
         support_parts: support.parts,
         timings: PerfFrame::default(),
@@ -876,7 +863,7 @@ pub fn support_soup(
     build_support_and_raft_world_parts(&SupportSliceInput {
         state: &state.collections,
         visible_model_ids: &visible,
-        raft: &settings.rafts.global,
+        raft: &settings.raft,
         plate_clearance_models: &clearance,
         support_tip_shrink_percent: settings.support_tip_shrink_percent,
         tip_penetration_mm: settings.tip_penetration_mm,
@@ -884,42 +871,4 @@ pub fn support_soup(
         shaft_style: settings.shaft_style,
         draw_rafts: !settings.raft_apart,
     })
-}
-
-/// The rafts `ExportManager` adds for `state`'s roots, scoped to the scene's
-/// models, with every visible model as plate clearance (its geometry,
-/// bounding-box centre and transform, as DragonFruit hands them over).
-pub fn build_rafts(
-    state: &SupportState,
-    models: &[ModelInput],
-    store: &RaftSettingsStore,
-) -> Result<Vec<RaftGroup>, PolygonError> {
-    let roots: Vec<RaftRoot> = state
-        .collections
-        .roots
-        .values()
-        .map(|r| RaftRoot {
-            model_id: Some(r.base.model_id.clone()),
-            x: r.transform.pos.x,
-            y: r.transform.pos.y,
-            diameter: r.diameter,
-        })
-        .collect();
-    let sources: Vec<PlateFootprintSource<'_>> = models
-        .iter()
-        .map(|m| PlateFootprintSource {
-            geometry: &m.geometry,
-            center: bounding_box_center(&m.geometry),
-            transform: m.transform,
-            visible: Some(m.visible),
-        })
-        .collect();
-    // The export is scoped to the scene's models.
-    let scope: HashSet<String> = models.iter().map(|m| m.id.clone()).collect();
-    build_export_rafts(
-        &roots,
-        (!scope.is_empty()).then_some(&scope),
-        store,
-        &sources,
-    )
 }
