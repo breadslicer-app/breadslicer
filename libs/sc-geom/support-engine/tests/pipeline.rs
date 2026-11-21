@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use support_engine::bvh::{MeshBvh, Side};
 use support_engine::geom::buffer_geometry::BufferGeometry;
 use support_engine::geom::{Matrix4, Vec3};
-use support_engine::native::mesh_core::mesh::IndexedMesh;
+use support_engine::native::welded::WeldedMesh;
 use support_engine::native::mesh_minima::scan_islands;
 use support_engine::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
 use support_engine::pipeline::{
@@ -166,7 +166,7 @@ fn by_stage(
     for (i, m) in models.iter().enumerate() {
         let soup = &soups[i];
         let has_raft = settings.raft.bottom_mode != RaftBottomMode::Off;
-        let mesh = IndexedMesh::from_triangle_soup(soup, 1e-5);
+        let mesh = WeldedMesh::weld(soup, 1e-5);
         let combined = scan_islands(&mesh, 0.05, 0.05, 0.25, 4, Some(2), Some(angle), Some(0.25));
         let (regions, stability) = overhang_and_stability_from_soup(soup, angle, 0.25, has_raft);
         let derived = derive_islands(

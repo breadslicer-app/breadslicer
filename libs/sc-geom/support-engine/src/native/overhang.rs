@@ -8,7 +8,7 @@ pub use surface_analysis::{
     FootprintMask, OverhangRegion, StabilityReport, is_overhang_normal_z, overhang_normal_z_limit,
 };
 
-use super::mesh_core::mesh::IndexedMesh;
+use super::welded::WeldedMesh;
 
 /// The weld [`overhang_and_stability_from_soup`] applies: a caller holding
 /// the soup welded with this epsilon can pass that mesh to
@@ -25,7 +25,7 @@ pub fn overhang_and_stability_from_soup(
 ) -> (Vec<OverhangRegion>, Option<StabilityReport>) {
     let mesh = {
         let _p = crate::perf::scope("ovh:weld");
-        IndexedMesh::from_triangle_soup(positions, OVERHANG_WELD_EPSILON)
+        WeldedMesh::weld(positions, OVERHANG_WELD_EPSILON)
     };
     overhang_and_stability(&mesh, self_support_angle_deg, px_mm, has_raft)
 }
@@ -33,14 +33,13 @@ pub fn overhang_and_stability_from_soup(
 /// [`overhang_and_stability_from_soup`] on a soup already welded with
 /// [`OVERHANG_WELD_EPSILON`].
 pub fn overhang_and_stability(
-    mesh: &IndexedMesh,
+    mesh: &WeldedMesh,
     self_support_angle_deg: f32,
     px_mm: f32,
     has_raft: bool,
 ) -> (Vec<OverhangRegion>, Option<StabilityReport>) {
-    let positions = corners(mesh);
     let surface = surface_analysis::Surface {
-        positions: &positions,
+        positions: &mesh.positions,
         triangles: &mesh.triangles,
     };
     let regions = {
@@ -56,20 +55,15 @@ pub fn overhang_and_stability(
 
 /// The overhang regions (and steep faces) of an already welded mesh.
 pub fn classify_overhangs(
-    mesh: &IndexedMesh,
+    mesh: &WeldedMesh,
     self_support_angle_deg: f32,
     px_mm: f32,
 ) -> Vec<OverhangRegion> {
-    let positions = corners(mesh);
     let surface = surface_analysis::Surface {
-        positions: &positions,
+        positions: &mesh.positions,
         triangles: &mesh.triangles,
     };
     surface_analysis::overhang_regions(&surface, self_support_angle_deg, px_mm)
-}
-
-fn corners(mesh: &IndexedMesh) -> Vec<[f32; 3]> {
-    mesh.positions.iter().map(|p| [p.x, p.y, p.z]).collect()
 }
 
 /// One scan's answer: the regions, and the stability report for the pose

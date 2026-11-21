@@ -410,13 +410,17 @@ mod tests {
     fn a_square_plate_holds_its_frustum() {
         let square =
             [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)].map(|(x, y)| Vector2::new(x, y));
-        let mut raft = RaftSettings::default();
-        raft.thickness = 1.0;
-        raft.chamfer_angle = 45.0;
+        let raft = RaftSettings {
+            thickness: 1.0,
+            chamfer_angle: 45.0,
+            ..Default::default()
+        };
         let plate = generate_chamfered_base(&square, &raft).to_non_indexed();
         let p = plate.position.unwrap();
         let six: f64 = p
-            .chunks_exact(9)
+            .as_chunks::<9>()
+            .0
+            .iter()
             .map(|t| {
                 let v = |k: usize| {
                     [

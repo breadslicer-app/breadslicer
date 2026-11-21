@@ -32,7 +32,7 @@ use crate::features::slicing::support_world_triangles::{
 use crate::geom::buffer_geometry::BufferGeometry;
 use crate::geom::{Matrix4, Vec3};
 use crate::native::islands::body::IslandBodyScan;
-use crate::native::mesh_core::mesh::IndexedMesh;
+use crate::native::welded::WeldedMesh;
 use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands_with_bodies};
 use crate::native::overhang::{
     OVERHANG_WELD_EPSILON, OverhangScan, classify_overhangs, overhang_and_stability,
@@ -425,7 +425,7 @@ fn scan_model(
 ) -> (CombinedIslandScanResult, OverhangScan) {
     let mesh = {
         let _perf = perf::scope("stage:weld-mesh");
-        IndexedMesh::from_triangle_soup(soup, settings.scan.merge_epsilon)
+        WeldedMesh::weld(soup, settings.scan.merge_epsilon)
     };
     let s = &settings.scan;
     // The island scan and the soup's overhang classification are

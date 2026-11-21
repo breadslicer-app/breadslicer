@@ -261,15 +261,19 @@ pub fn build_clearance_edge_grid(
     }
     // The grid starts at the edges' first corners' lowest x and y.
     let min_x = edges
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|e| e[0])
         .fold(f64::INFINITY, f64::min);
     let min_y = edges
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|e| e[1])
         .fold(f64::INFINITY, f64::min);
     let mut cells: HashMap<i64, Vec<usize>> = HashMap::new();
-    for (k, e) in edges.chunks_exact(4).enumerate() {
+    for (k, e) in edges.as_chunks::<4>().0.iter().enumerate() {
         let columns =
             cell_of(e[0].min(e[2]), min_x, cell_size)..=cell_of(e[0].max(e[2]), min_x, cell_size);
         for row in

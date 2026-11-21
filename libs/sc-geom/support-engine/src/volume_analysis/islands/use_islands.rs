@@ -43,7 +43,7 @@ pub fn ipc32(v: f32) -> f64 {
     }
 }
 
-fn ipc_vec3(v: crate::native::mesh_core::mesh::Vec3) -> Vec3 {
+fn ipc_vec3(v: crate::native::mesh_minima::ScanPoint) -> Vec3 {
     Vec3::new(ipc32(v.x), ipc32(v.y), ipc32(v.z))
 }
 

@@ -5,8 +5,16 @@
 use serde::{Deserialize, Serialize};
 
 use super::islands::body::{IslandBody, IslandBodyScan};
-use super::mesh_core::mesh::{IndexedMesh, Vec3};
 use super::overhang;
+use super::welded::WeldedMesh;
+
+/// A point a scan found, mm.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq)]
+pub struct ScanPoint {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
 
 /// A vertex lower than every vertex near it, whose surface faces down or
 /// which stands outside the model.
@@ -14,7 +22,7 @@ use super::overhang;
 #[serde(rename_all = "camelCase")]
 pub struct LocalMinimum {
     pub vertex_index: u32,
-    pub position: Vec3,
+    pub position: ScanPoint,
     pub seed_triangle_id: u32,
 }
 
@@ -24,7 +32,7 @@ pub struct LocalMinimum {
 pub struct VoxelIsland {
     pub id: String,
     pub source: String,
-    pub contact: Vec3,
+    pub contact: ScanPoint,
     pub base_z: f64,
     pub area_mm2: f32,
     pub layer_span: [u32; 2],
@@ -45,7 +53,7 @@ pub struct CombinedIslandScanResult {
 /// given).
 #[allow(clippy::too_many_arguments)]
 pub fn scan_islands(
-    mesh: &IndexedMesh,
+    mesh: &WeldedMesh,
     layer_height_mm: f64,
     px_mm: f64,
     support_buffer_mm: f64,
@@ -73,7 +81,7 @@ pub fn scan_islands(
 
 /// The island scan without overhang regions.
 pub fn scan_islands_without_overhangs(
-    mesh: &IndexedMesh,
+    mesh: &WeldedMesh,
     layer_height_mm: f64,
     px_mm: f64,
     support_buffer_mm: f64,
@@ -94,7 +102,7 @@ pub fn scan_islands_without_overhangs(
 /// [`scan_islands_without_overhangs`] that also measures every island's
 /// body when `bodies` asks for it (#360).
 pub fn scan_islands_with_bodies(
-    mesh: &IndexedMesh,
+    mesh: &WeldedMesh,
     layer_height_mm: f64,
     px_mm: f64,
     support_buffer_mm: f64,
@@ -102,7 +110,6 @@ pub fn scan_islands_with_bodies(
     k: Option<usize>,
     bodies: Option<IslandBodyScan>,
 ) -> CombinedIslandScanResult {
-    let positions: Vec<[f32; 3]> = mesh.positions.iter().map(|p| [p.x, p.y, p.z]).collect();
     let settings = islands::ScanSettings {
         layer_height_mm,
         px_mm,
@@ -111,8 +118,12 @@ pub fn scan_islands_with_bodies(
         rings: k.unwrap_or(2),
         bodies,
     };
-    let (found, low) = islands::scan(&positions, &mesh.triangles, &settings);
-    let v = |p: [f32; 3]| Vec3::new(p[0], p[1], p[2]);
+    let (found, low) = islands::scan(&mesh.positions, &mesh.triangles, &settings);
+    let v = |p: [f32; 3]| ScanPoint {
+        x: p[0],
+        y: p[1],
+        z: p[2],
+    };
     CombinedIslandScanResult {
         voxel_islands: found
             .into_iter()
