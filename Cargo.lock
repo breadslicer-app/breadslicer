@@ -3086,6 +3086,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "islands"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "serde",
+]
+
+[[package]]
 name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6446,6 +6454,7 @@ dependencies = [
  "i_float",
  "i_overlay",
  "indexmap",
+ "islands",
  "rayon",
  "serde",
  "serde_json",
