@@ -29,7 +29,7 @@ const STUMP_ROOT_HEIGHT_MM: f64 = 1.0;
 const STUMP_JOINT_DIAMETER_MM: f64 = 1.5;
 const ANCHOR_DISK_HEIGHT_MM: f64 = 0.1;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct StumpBuildInput<'a> {
     pub tip_pos: Vec3,
     pub tip_normal: Vec3,

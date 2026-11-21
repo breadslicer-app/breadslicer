@@ -31,12 +31,19 @@ members = [
     "libs/sl1cer",
     "libs/sla-formats",
     "libs/sla-formats-uvtools",
+    "libs/sc-geom",
+    "libs/sc-geom/generic-geom-alg-family-dispatch",
+    "libs/sc-geom/hollow-df",
+    "libs/sc-geom/hollow-df-sc",
+    "libs/sc-geom/sc-geom-transport-inprocess",
+    "libs/sc-geom/support-gen-chalyplex",
+    "libs/sc-geom/support-gen-df",
+    "libs/sc-geom/support-gen-df-sc",
+    "libs/sc-geom/support-gen-family-dispatch",
+    "libs/sc-geom/support-gen-trivial",
 ]
 
-# `sc-geom` (see: `libs/sc-geom/Cargo.toml`) roots its own nested workspace.
-# As a workspace for its sibling crates, so it stays out of the main repo's workspace.
-# If not excluded below, cargo path dependencies ->leads to "multiple workspace roots".
-exclude = ["libs/sc-geom", "libs/vendor/retina"]
+exclude = ["libs/vendor/retina"]
 
 [workspace.package]
 edition      = "2024"

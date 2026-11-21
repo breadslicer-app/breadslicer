@@ -21,7 +21,7 @@ use crate::supports::types::{
 use crate::three::Quaternion;
 use crate::three::math_utils::{clamp, js_acos, js_max, rad_to_deg};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct KickstandBuildInput<'a> {
     pub model_id: &'a str,
     pub root_pos: Vec3,

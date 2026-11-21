@@ -188,6 +188,14 @@ pub struct JobWorker<Out, Partial = ()> {
     state: Arc<JobState<Out, Partial>>,
 }
 
+impl<Out, Partial> fmt::Debug for JobWorker<Out, Partial> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JobWorker")
+            .field("cancelled", &self.cancel.is_cancelled())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<Out, Partial> JobWorker<Out, Partial> {
     #[inline]
     pub fn cancel_token(&self) -> &CancelToken {

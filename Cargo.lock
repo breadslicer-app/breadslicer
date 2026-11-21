@@ -2285,6 +2285,7 @@ dependencies = [
  "ahash",
  "manifold-rust",
  "rayon",
+ "serde_json",
  "smallvec",
 ]
 
@@ -2297,6 +2298,7 @@ dependencies = [
  "sc-geom-transport-inprocess",
  "sc-mesh-core",
  "sc-scene",
+ "sc-sl1cer",
 ]
 
 [[package]]
@@ -6375,6 +6377,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "support-gen-chalyplex"
+version = "0.0.1"
+
+[[package]]
 name = "support-gen-df"
 version = "0.0.1"
 dependencies = [
@@ -6396,6 +6402,7 @@ dependencies = [
  "rayon",
  "sc-geom-transport-inprocess",
  "sc-mesh-core",
+ "sc-mesh-formats",
  "sc-scene",
  "serde",
  "serde_json",
@@ -6418,6 +6425,7 @@ dependencies = [
  "sc-geom-transport-inprocess",
  "sc-mesh-core",
  "sc-mesh-spatial",
+ "sc-scene",
  "sha2",
  "support-gen-family-dispatch",
 ]

@@ -69,6 +69,7 @@ impl FlatNode {
     }
 }
 
+#[derive(Debug)]
 pub struct Bvh {
     nodes: Vec<FlatNode>,
     /// Triangle indices, grouped by leaf.
@@ -79,6 +80,7 @@ pub struct Bvh {
 /// The tree's storage as a GPU sees it. [`Bvh::gpu_layout`] carries the contract
 /// a traversal has to satisfy, and the test below is that traversal written in
 /// Rust — the reference a WGSL port is checked against.
+#[derive(Debug)]
 pub struct BvhGpuLayout<'a> {
     /// 32 bytes per node, [`FlatNode`]'s own layout.
     pub nodes: &'a [FlatNode],

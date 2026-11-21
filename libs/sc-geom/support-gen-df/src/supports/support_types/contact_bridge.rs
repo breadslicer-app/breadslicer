@@ -19,7 +19,7 @@ use crate::supports::settings::types::SupportSettings;
 use crate::supports::support_type_registry::SupportTypeId;
 use crate::supports::types::{LimitationCode, Stick, Twig, Vec3};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ContactBridgeRequest<'a> {
     pub model_id: &'a str,
     pub a_pos: Vec3,

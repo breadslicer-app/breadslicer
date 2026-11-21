@@ -17,6 +17,7 @@ pub struct NumericConstraint {
     pub default_value: f64,
 }
 
+#[derive(Debug)]
 pub struct KickstandLayoutConstraints {
     pub first_joint_height_ratio: NumericConstraint,
     pub second_joint_height_ratio: NumericConstraint,

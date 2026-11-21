@@ -75,6 +75,7 @@ pub struct PoseStability {
 
 /// The advisor's per-triangle inputs, needed to split the resting contact the
 /// same way its cost does.
+#[derive(Debug)]
 pub struct SupportTerms<'a> {
     pub normals: &'a [f64],
     pub areas: &'a [f64],

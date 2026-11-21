@@ -64,14 +64,14 @@ impl MeshBvh {
     /// What the tree holds on the heap, in bytes: its vertices, index,
     /// nodes and triangle bounds.
     pub fn heap_bytes(&self) -> usize {
-        self.positions.capacity() * std::mem::size_of::<[f32; 3]>()
-            + self.index.capacity() * std::mem::size_of::<u32>()
+        self.positions.capacity() * size_of::<[f32; 3]>()
+            + self.index.capacity() * size_of::<u32>()
             + self
                 .roots
                 .iter()
-                .map(|r| r.capacity() * std::mem::size_of::<Node>())
+                .map(|r| r.capacity() * size_of::<Node>())
                 .sum::<usize>()
-            + self.triangle_bounds.capacity() * std::mem::size_of::<[f32; 6]>()
+            + self.triangle_bounds.capacity() * size_of::<[f32; 6]>()
     }
 
     /// `new MeshBVH(geometry)` with DragonFruit's options.

@@ -177,6 +177,7 @@ fn source_as_origin(source: CandidateSource) -> SupportOriginId {
 }
 
 /// The run-wide placement inputs.
+#[derive(Debug)]
 pub struct PlaceArgs<'a> {
     pub grid_host_ids: Option<&'a HashSet<String>>,
     pub sizing_ctx: Option<&'a ModelSizingContext>,

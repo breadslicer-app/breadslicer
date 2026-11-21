@@ -434,7 +434,7 @@ mod options_tests {
     #[test]
     fn a_zone_presets_grid_goes_off_or_takes_its_spacing() {
         let with = |grid_mm| DfSupportOptions {
-            zones: Some(crate::zone_presets::ZonePreset {
+            zones: Some(ZonePreset {
                 grid_mm,
                 ..crate::zone_presets::minis_30()
             }),
@@ -488,7 +488,7 @@ mod options_tests {
     /// of the area each support carries.
     #[test]
     fn a_tip_reaches_as_far_as_its_options_space_overhang_tips() {
-        let zoned = |preset: crate::zone_presets::ZonePreset| DfSupportOptions {
+        let zoned = |preset: ZonePreset| DfSupportOptions {
             zones: Some(preset),
             ..Default::default()
         };

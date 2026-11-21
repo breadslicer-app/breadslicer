@@ -135,6 +135,7 @@ pub fn scope(label: &'static str) -> ScopeGuard {
     }
 }
 
+#[derive(Debug)]
 pub struct ScopeGuard {
     label: &'static str,
     started: Option<Instant>,

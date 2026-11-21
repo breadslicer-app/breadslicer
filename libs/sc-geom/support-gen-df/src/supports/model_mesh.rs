@@ -9,7 +9,7 @@
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::three_mesh_bvh::BvhMesh;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ModelMesh<'a> {
     /// The mesh's pooled distance field, matrix refreshed.
     pub field: &'a dyn CollisionField,

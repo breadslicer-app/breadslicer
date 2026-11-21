@@ -17,7 +17,7 @@ use crate::supports::support_primitives::contact_disk::contact_disk_interaction:
 use crate::supports::support_type_registry::SupportTypeId;
 use crate::supports::types::{Knot, Leaf, SupportEntity, Vec3};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct LeafBuildInput<'a> {
     pub tip_pos: Vec3,
     pub surface_normal: Vec3,

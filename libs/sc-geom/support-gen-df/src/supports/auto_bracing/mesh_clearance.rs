@@ -15,7 +15,7 @@ use crate::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
 
 /// One model as auto-bracing registers it: its BVH and transform. DragonFruit
 /// raycasts it double-sided whatever the model's own material.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct BraceMesh<'a> {
     pub bvh: &'a MeshBvh,
     pub matrix: Matrix4,

@@ -287,3 +287,9 @@ pub fn calculate_safe_offset(
 
     max_offset
 }
+
+impl std::fmt::Debug for dyn CollisionField + '_ {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CollisionField")
+    }
+}

@@ -183,12 +183,8 @@ The main app/cli depends on the one facade crate via a plain `path` dependency:
 sc-geom = { path = "libs/sc-geom" }
 ```
 
-`libs/sc-geom/Cargo.toml` roots its own nested `[workspace]` for its
-sibling crates, so it stays self-contained rather than needing to be
-listed in the main app's own `[workspace] members`. If the interface
-stabilises enough to be worth it, this can be extracted back into its
-own repository later; the main app's dependency line would just move
-from `path` to `git`.
+Its crates are members of the main workspace: `cargo test -p <crate>` runs
+from the repository root, with one `Cargo.lock` for the whole repository.
 
 
 ## Research provenance

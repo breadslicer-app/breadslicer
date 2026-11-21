@@ -22,7 +22,7 @@ use crate::supports::support_primitives::contact_disk::contact_disk_utils::calcu
 use crate::supports::types::{Joint, LimitationCode, Segment, Stick, SupportEntity, Vec3};
 use crate::three::math_utils::{js_hypot, js_max, js_min};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct StickBuildInput<'a> {
     pub model_id: &'a str,
     /// Auto-support tier overrides — absent for manual placement.

@@ -33,6 +33,7 @@ enum Zone {
 }
 
 /// What the zone pass reads.
+#[derive(Debug)]
 pub struct ZoneInput<'a> {
     /// The islands to cover, overhang regions included.
     pub islands: &'a [DetectedIsland],

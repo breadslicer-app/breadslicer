@@ -335,7 +335,7 @@ fn find_best_branch_cone_placement(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct BranchBuildInput<'a> {
     pub tip_pos: Vec3,
     pub tip_normal: Vec3,

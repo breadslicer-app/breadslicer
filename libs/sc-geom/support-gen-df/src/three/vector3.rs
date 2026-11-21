@@ -192,9 +192,9 @@ impl Vec3 {
     #[inline]
     pub fn clamp(self, min: Vec3, max: Vec3) -> Self {
         Vec3::new(
-            super::math_utils::clamp(self.x, min.x, max.x),
-            super::math_utils::clamp(self.y, min.y, max.y),
-            super::math_utils::clamp(self.z, min.z, max.z),
+            clamp(self.x, min.x, max.x),
+            clamp(self.y, min.y, max.y),
+            clamp(self.z, min.z, max.z),
         )
     }
 
@@ -250,7 +250,7 @@ impl Vec3 {
 
     /// `applyAxisAngle(axis, angle)`: rotate about a normalized axis.
     pub fn apply_axis_angle(self, axis: Vec3, angle: f64) -> Self {
-        self.apply_quaternion(super::Quaternion::set_from_axis_angle(axis, angle))
+        self.apply_quaternion(Quaternion::set_from_axis_angle(axis, angle))
     }
 
     #[inline]

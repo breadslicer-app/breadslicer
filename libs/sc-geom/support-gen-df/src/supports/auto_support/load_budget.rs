@@ -40,6 +40,7 @@ pub struct PlacedContact {
     pub preset: SizingPreset,
 }
 
+#[derive(Debug)]
 pub struct LoadBudgetInput<'a> {
     pub islands: &'a [DetectedIsland],
     pub contacts: &'a [PlacedContact],

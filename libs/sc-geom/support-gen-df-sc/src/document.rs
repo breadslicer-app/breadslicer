@@ -410,9 +410,10 @@ impl DfSupportSession {
 /// The sets drawn so far while a file is read (#561), each with what tells
 /// its supports apart in its model's frame, the transform of the leaf it is
 /// drawn in, and the mesh drawn there.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Drawings(Vec<Drawing>);
 
+#[derive(Debug)]
 struct Drawing {
     geometry: Arc<support_gen_df::three::buffer_geometry::BufferGeometry>,
     model: support_gen_df::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform,
