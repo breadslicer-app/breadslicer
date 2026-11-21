@@ -63,6 +63,7 @@ export global Prefs {
     in property <[string]> language-options;
     in-out property <int> current-language-index: 0;
     in-out property <bool> show-start-dialog: true;
+    in-out property <bool> repair-on-import: true;
     in property <int> silenced-message-count: 0;
 
     // Look and feel.
@@ -116,6 +117,7 @@ export global Prefs {
 
     callback language-changed(int);
     callback show-start-dialog-changed(bool);
+    callback repair-on-import-changed(bool);
     callback show-all-messages-again();
 
     callback theme-changed(ThemePreference);
@@ -326,6 +328,22 @@ component GeneralPage inherits VerticalLayout {
             toggled => {
                 Prefs.show-start-dialog = self.checked;
                 Prefs.show-start-dialog-changed(self.checked);
+            }
+        }
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "IMPORTING");
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Repair on import");
+        hint: @tr("PreferencesLayer" => "A model that comes in and cannot be sliced is repaired as it lands, with Caliper when it is installed. Models that slice are left alone.");
+        ScCheckBox {
+            text: "";
+            checked: Prefs.repair-on-import;
+            accessible-label: @tr("PreferencesLayer" => "Repair on import");
+            toggled => {
+                Prefs.repair-on-import = self.checked;
+                Prefs.repair-on-import-changed(self.checked);
             }
         }
     }

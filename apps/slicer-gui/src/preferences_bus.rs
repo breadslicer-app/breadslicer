@@ -154,6 +154,8 @@ pub(crate) struct PreferencesSnapshot {
     /// (#381): its "Don't show at startup" box and Preferences turn it off
     /// and on.
     pub show_start_dialog: bool,
+    /// Whether models that come in and do not slice are repaired (#677).
+    pub repair_on_import: bool,
     /// The files last opened or saved, newest first (`recent_files`).
     pub recent_files: Vec<RecentFile>,
     /// What the user pays for each resin (#101).
@@ -223,6 +225,7 @@ impl PreferencesSnapshot {
             slice_view_minimized: false,
             last_open_dir: None,
             show_start_dialog: true,
+            repair_on_import: true,
             recent_files: Vec::new(),
             resin_prices: BTreeMap::new(),
         }
@@ -267,6 +270,8 @@ pub(crate) enum PreferencesChange {
     LastOpenDir,
     /// Whether the start dialog shows at launch (#381).
     StartDialog,
+    /// Repair on import (#677).
+    RepairOnImport,
     /// A file was opened or saved, or taken off the recent list (#381).
     RecentFiles,
     /// A resin's price (#101).

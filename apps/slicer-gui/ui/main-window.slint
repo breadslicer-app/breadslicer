@@ -780,6 +780,9 @@ export component MainWindow inherits Window {
     // undo/redo (an undo landing mid-run would invalidate the
     // worker's result).
     in-out property <bool> repairing-in-progress: false;
+    // Models that came in are waiting to be repaired on import (#677):
+    // supports wait for them.
+    in property <bool> repair-on-import-pending: false;
     // The run's step and how far it is, polled from Rust (#253); and whether
     // the viewport marks what a run left broken.
     in property <string> repair-phase;
@@ -3931,12 +3934,16 @@ export component MainWindow inherits Window {
     // gauge itself takes the pointer; the scene around it stays usable.
     property <bool> gauge-slice: root.slicing-in-progress && !root.slice-quiet;
     property <bool> gauge-supports: root.support-gen-in-progress && root.workspace-section != WorkspaceSection.Supports;
-    if root.gauge-slice || root.gauge-supports || root.saving-in-progress || root.load-in-progress: ProgressGauge {
+    // Repair, from its card or on its own as models come in (#677).
+    property <bool> gauge-repair: root.repairing-in-progress && !root.gauge-slice;
+    if root.gauge-slice || root.gauge-repair || root.gauge-supports || root.saving-in-progress || root.load-in-progress: ProgressGauge {
         width: Math.max(320px, Math.min(parent.width * 60%, 680px));
         x: (parent.width - self.width) / 2;
         y: parent.height - self.height - Theme.statusbar-height - 16px;
         title: root.gauge-slice
             ? (root.slice-fix-pass != "" ? root.slice-fix-pass : @tr("SlicePanel" => "Slicing..."))
+            : root.gauge-repair
+            ? @tr("Inspector" => "Repairing…")
             : root.gauge-supports
             ? @tr("Generating support structure…")
             : root.saving-in-progress
@@ -3958,15 +3965,19 @@ export component MainWindow inherits Window {
                 : root.slice-total > 0
                 ? @tr("SlicePanel" => "{} / {} layers", root.slice-completed, root.slice-total)
                 : @tr("SlicePanel" => "Preparing..."))
+            : root.gauge-repair ? root.repair-phase
             : root.gauge-supports ? root.support-gen-phase : "";
         progress: root.gauge-slice
             ? root.slice-progress
+            : root.gauge-repair ? root.repair-progress
             : root.gauge-supports ? root.support-gen-progress
             : root.saving-in-progress ? root.save-progress : root.load-progress;
-        cancelable: root.gauge-slice || (root.gauge-supports && root.support-gen-cancelable);
+        cancelable: root.gauge-slice || root.gauge-repair || (root.gauge-supports && root.support-gen-cancelable);
         cancel => {
             if (root.gauge-slice) {
                 root.slice-cancel-requested();
+            } else if (root.gauge-repair) {
+                root.repair-cancel();
             } else {
                 root.support-gen-cancel-requested();
             }

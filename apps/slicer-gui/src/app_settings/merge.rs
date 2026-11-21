@@ -45,6 +45,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         slice_view,
         last_open_dir,
         show_start_dialog,
+        repair_on_import,
         recent_files,
         resin_prices,
     } = theirs;
@@ -123,6 +124,11 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
             &base.show_start_dialog,
             &ours.show_start_dialog,
             show_start_dialog,
+        ),
+        repair_on_import: pick(
+            &base.repair_on_import,
+            &ours.repair_on_import,
+            repair_on_import,
         ),
         recent_files: crate::recent_files::merge(
             &base.recent_files,

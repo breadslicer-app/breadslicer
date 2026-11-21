@@ -244,6 +244,8 @@ struct WindowDrivers {
     _cut_run: Rc<CutRun>,
     /// Asks about the supports a file came with (#258).
     _presupported_import: Rc<crate::presupported_import::PresupportedImport>,
+    /// Repairs the models that come in and do not slice (#677).
+    _repair_on_import: Rc<crate::repair_on_import::RepairOnImport>,
     /// The Slice tab's layer keys (#501).
     _layer_keys: Rc<crate::layer_keys::LayerKeys>,
     /// The Tools > "Generate Support (trivial for test)" action driver. Held so
@@ -408,6 +410,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_slice_view_minimized(snap.slice_view_minimized);
     settings.set_last_open_dir(snap.last_open_dir.clone());
     settings.set_show_start_dialog(snap.show_start_dialog);
+    settings.set_repair_on_import(snap.repair_on_import);
     settings.set_recent_files(snap.recent_files.clone());
     settings.set_resin_prices(snap.resin_prices.clone());
 }
@@ -582,6 +585,7 @@ impl AppState {
             slice_view_minimized: settings.slice_view_minimized(),
             last_open_dir: settings.last_open_dir(),
             show_start_dialog: settings.show_start_dialog(),
+            repair_on_import: settings.repair_on_import(),
             recent_files: settings.recent_files(),
             resin_prices: settings.resin_prices(),
         };
@@ -860,6 +864,13 @@ impl AppState {
             ctrl.document(),
             ctrl.dialogs(),
         );
+        let repair_on_import = crate::repair_on_import::RepairOnImport::install(
+            ctrl.document(),
+            ctrl.dialogs(),
+            self.prefs.clone(),
+            repair_run.clone(),
+            Some(presupported_import.clone()),
+        );
         let layer_keys = crate::layer_keys::LayerKeys::install(ui);
         let layer_pixels = crate::layer_pixels::LayerPixels::install(
             ui,
@@ -883,6 +894,7 @@ impl AppState {
             _hollow_run: hollow_run,
             _split_bodies: split_bodies,
             _presupported_import: presupported_import,
+            _repair_on_import: repair_on_import,
             _layer_keys: layer_keys,
             _slice_panel: slice_panel,
             _slice_run: slice_run,
@@ -2843,6 +2855,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::SliceViewPanel,
             PreferencesChange::LastOpenDir,
             PreferencesChange::StartDialog,
+            PreferencesChange::RepairOnImport,
             PreferencesChange::RecentFiles,
         ] {
             let build_volume = on_fresh_slint_thread(move || {

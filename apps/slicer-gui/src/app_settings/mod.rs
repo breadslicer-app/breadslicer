@@ -432,6 +432,15 @@ fn is_default_show_start_dialog(on: &bool) -> bool {
     *on
 }
 
+/// Models that come in and do not slice are repaired by default (#677).
+fn default_repair_on_import() -> bool {
+    true
+}
+
+fn is_default_repair_on_import(on: &bool) -> bool {
+    *on
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with the
@@ -573,6 +582,13 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_show_start_dialog"
     )]
     show_start_dialog: bool,
+    /// Whether a model that comes in from a file and does not slice is
+    /// repaired as it lands (#677). Omitted in TOML while on (the default).
+    #[serde(
+        default = "default_repair_on_import",
+        skip_serializing_if = "is_default_repair_on_import"
+    )]
+    repair_on_import: bool,
     /// The files last opened or saved, newest first (#381). User data: the
     /// diagnostics file leaves them out. Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -614,6 +630,7 @@ impl Default for AppSettings {
             slice_view: SliceViewSettings::default(),
             last_open_dir: None,
             show_start_dialog: default_show_start_dialog(),
+            repair_on_import: default_repair_on_import(),
             recent_files: Vec::new(),
             resin_prices: BTreeMap::new(),
         }
@@ -1018,6 +1035,14 @@ impl AppSettings {
 
     pub(crate) fn set_show_start_dialog(&mut self, on: bool) {
         self.show_start_dialog = on;
+    }
+
+    pub(crate) fn repair_on_import(&self) -> bool {
+        self.repair_on_import
+    }
+
+    pub(crate) fn set_repair_on_import(&mut self, on: bool) {
+        self.repair_on_import = on;
     }
 
     pub(crate) fn recent_files(&self) -> Vec<RecentFile> {

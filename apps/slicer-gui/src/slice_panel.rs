@@ -533,6 +533,7 @@ impl PanelUpdate {
             | PreferencesChange::SliceViewPanel
             | PreferencesChange::LastOpenDir
             | PreferencesChange::StartDialog
+            | PreferencesChange::RepairOnImport
             | PreferencesChange::RecentFiles
             | PreferencesChange::ResinPrices
             | PreferencesChange::NetworkPrinters
@@ -633,6 +634,7 @@ mod panel_update_tests {
             (PreferencesChange::SliceViewPanel, None),
             (PreferencesChange::LastOpenDir, None),
             (PreferencesChange::StartDialog, None),
+            (PreferencesChange::RepairOnImport, None),
             (PreferencesChange::RecentFiles, None),
             (PreferencesChange::PrescanSupports, None),
             (PreferencesChange::SmoothModels, None),

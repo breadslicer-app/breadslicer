@@ -531,6 +531,7 @@ impl SceneLoader {
     pub(crate) fn note_imported(&self, models: &PreparedModels) {
         for file in &models.files {
             self.import_notes.add(Notes::of_import(file));
+            crate::repair_on_import::note_left_out(&file.spatial, &file.warnings);
         }
     }
 
@@ -627,8 +628,10 @@ impl SceneLoader {
             Ok(Deposit::Scene(prepared)) => {
                 log_load_warnings(&path, &prepared);
                 self.import_notes.set(Notes::of(&path, &prepared));
+                crate::repair_on_import::note_left_out(&prepared.spatial, &prepared.warnings);
                 for file in &prepared.joined.files {
                     self.import_notes.add(Notes::of_import(file));
+                    crate::repair_on_import::note_left_out(&file.spatial, &file.warnings);
                 }
                 self.upload_failures.reset();
                 let failures = &prepared.restored_supports.failures;
@@ -739,6 +742,9 @@ pub(crate) fn describe_stl_warning(warning: &LoadStlWarning) -> String {
     match warning {
         LoadStlWarning::HeaderNotText => {
             "binary STL header is not readable text; no mesh name was taken from it".to_string()
+        }
+        LoadStlWarning::FacetsWithoutCoordinates { count } => {
+            format!("left out {count} triangle(s) whose vertices are not numbers")
         }
     }
 }

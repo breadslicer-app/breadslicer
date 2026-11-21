@@ -178,6 +178,7 @@ pub(crate) fn apply_preferences(prefs: &Prefs, snap: &PreferencesSnapshot) {
     prefs.set_current_controls_index(snap.controls_layout.combo_index());
     prefs.set_controls_summary(snap.controls_layout.summary().into());
     prefs.set_show_start_dialog(snap.show_start_dialog);
+    prefs.set_repair_on_import(snap.repair_on_import);
     prefs.set_current_frame_rate_index(snap.frame_rate.combo_index());
     prefs.set_current_gizmo_style_index(snap.gizmo_style.combo_index());
     prefs.set_current_gizmo_size_index(crate::gizmo::look::size_combo_index(snap.gizmo_size));
@@ -202,6 +203,15 @@ fn wire_general(prefs: &Prefs, bus: &Rc<PreferencesBus>, _weak: &slint::Weak<Mai
             bus.update(move |snap| {
                 snap.show_start_dialog = on;
                 PreferencesChange::StartDialog
+            });
+        }
+    });
+    prefs.on_repair_on_import_changed({
+        let bus = bus.clone();
+        move |on| {
+            bus.update(move |snap| {
+                snap.repair_on_import = on;
+                PreferencesChange::RepairOnImport
             });
         }
     });
@@ -464,6 +474,12 @@ fn restore_defaults(bus: &PreferencesBus, page: i32) {
                     PreferencesChange::Language
                 });
             }
+            if now.repair_on_import != shipped().repair_on_import() {
+                bus.update(move |snap| {
+                    snap.repair_on_import = shipped().repair_on_import();
+                    PreferencesChange::RepairOnImport
+                });
+            }
             if now.show_start_dialog != shipped().show_start_dialog() {
                 bus.update(move |snap| {
                     snap.show_start_dialog = shipped().show_start_dialog();
@@ -533,6 +549,7 @@ fn searchable() -> Vec<(SharedString, i32)> {
     vec![
         (ctr!("AppearancePreferences", "Language"), GENERAL),
         (ctr!("PreferencesLayer", "Start card"), GENERAL),
+        (ctr!("PreferencesLayer", "Repair on import"), GENERAL),
         (ctr!("PreferencesLayer", "Messages you silenced"), GENERAL),
         (ctr!("AppearancePreferences", "Theme"), LOOK),
         (
