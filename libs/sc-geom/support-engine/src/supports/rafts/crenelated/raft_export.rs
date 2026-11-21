@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::geometry::build_line_raft_edge_pairs::{
+use super::geometry::line_raft_graph::{
     BuildLineRaftEdgePairsOptions, build_line_raft_edge_pairs,
 };
 use super::geometry::compute_raft_footprint::{inflate_model_plate_clearance, raft_band_top_mm};

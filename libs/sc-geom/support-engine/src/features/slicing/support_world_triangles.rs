@@ -18,7 +18,7 @@ use super::smooth_shafts::{ChainPoint, ShaftStyle, append_smooth_chain};
 use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
 use crate::supports::curves::bezier_utils::get_bezier_point_at_t;
-use crate::supports::rafts::crenelated::geometry::build_line_raft_edge_pairs::{
+use crate::supports::rafts::crenelated::geometry::line_raft_graph::{
     BuildLineRaftEdgePairsOptions, build_line_raft_edge_pairs,
 };
 use crate::supports::rafts::crenelated::geometry::compute_raft_footprint::{
