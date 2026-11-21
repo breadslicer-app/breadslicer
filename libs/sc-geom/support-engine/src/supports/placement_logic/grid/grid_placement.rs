@@ -512,7 +512,6 @@ fn select_attachment_decision(
                 t: Some(tc),
                 pos,
                 diameter: Some(segment.diameter + 0.1),
-                ..Knot::default()
             };
 
             if let Some(mesh) = ctx.mesh

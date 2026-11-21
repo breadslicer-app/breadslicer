@@ -849,7 +849,6 @@ fn try_merge(
         pos: knot_pos,
         // Renders at exactly the trunk-joint size when unselected.
         diameter: Some(knot_diameter + 0.125),
-        ..Knot::default()
     };
     let leaf_span_mm = ((tip_pos.x - knot_pos.x) * (tip_pos.x - knot_pos.x)
         + (tip_pos.y - knot_pos.y) * (tip_pos.y - knot_pos.y)

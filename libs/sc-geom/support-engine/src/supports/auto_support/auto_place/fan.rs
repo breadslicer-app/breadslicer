@@ -116,7 +116,6 @@ fn knot_for(sp: &FanShaftPoint, id: String) -> Knot {
         t: sp.t,
         pos: sp.pos,
         diameter: Some(sp.diameter + 0.125),
-        ..Knot::default()
     }
 }
 

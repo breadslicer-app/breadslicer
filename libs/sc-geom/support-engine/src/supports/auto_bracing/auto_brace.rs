@@ -667,7 +667,6 @@ impl Ladder<'_> {
             t: Some(a.t),
             pos: a.pos,
             diameter: Some(exact.unwrap_or(a.host_diameter_mm) + JOINT_DIAMETER_OFFSET_MM),
-            ..Knot::default()
         };
         self.generated_knots
             .insert(s_id.clone(), knot(&s_id, &low_anchor));

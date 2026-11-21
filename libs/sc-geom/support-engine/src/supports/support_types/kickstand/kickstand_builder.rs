@@ -272,7 +272,6 @@ pub fn build_kickstand_data(
         t: Some(host_t),
         pos: host.pos,
         diameter: Some(get_kickstand_knot_diameter_mm(host.diameter_mm)),
-        ..Knot::default()
     };
 
     // An authored column is already straight, so it keeps that shape: one
