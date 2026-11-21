@@ -1,0 +1,13 @@
+[package]
+name = "surface-analysis"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "How a posed model's surface faces the plate: overhang regions, large steep faces, and how hard the peel drags the part."
+
+[lints]
+workspace = true
+
+[dependencies]
+rayon = "1.12"
+serde = { version = "1", features = ["derive"] }

@@ -33,6 +33,7 @@ members = [
     "libs/sla-formats-uvtools",
     "libs/sc-geom",
     "libs/sc-geom/engine-base",
+    "libs/sc-geom/surface-analysis",
     "libs/sc-geom/generic-geom-alg-family-dispatch",
     "libs/sc-geom/hollow-engine",
     "libs/sc-geom/hollow-session",
@@ -106,6 +107,7 @@ sc-sla-formats-uvtools = { path = "libs/sla-formats-uvtools", version = "0.1.0" 
 
 sc-geom = { path = "libs/sc-geom", version = "0.0.2" }
 engine-base = { path = "libs/sc-geom/engine-base", version = "0.1.0" }
+surface-analysis = { path = "libs/sc-geom/surface-analysis", version = "0.1.0" }
 
 # The GUI's own crates, split from `apps/slicer-gui` so that an edit rebuilds
 # less of it (#361).
