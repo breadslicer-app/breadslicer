@@ -11,7 +11,7 @@ pub mod placement_logic_v3;
 pub mod rafts;
 pub mod rendering;
 pub mod settings;
-pub mod support_primitives;
+pub mod shafts;
 pub mod support_kinds;
 pub mod tips;
 pub mod support_types;

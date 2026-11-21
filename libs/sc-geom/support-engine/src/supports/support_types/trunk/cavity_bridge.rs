@@ -14,7 +14,7 @@ use crate::supports::placement_logic::collision_utils::{
 };
 use crate::supports::rendering::support_builder::{SupportData, support_data_for_entity};
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::knot::segment_endpoints::ShaftEntity;
+use crate::supports::shafts::ShaftEntity;
 use crate::supports::support_kinds::{
     SupportPlacementMetric, SupportPlacementSettingPath, SupportTypeId, bridge_may_land_sideways,
     get_support_type_descriptor, select_type_for_placement,

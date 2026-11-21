@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::supports::tips::ContactCone;
-use crate::supports::support_primitives::knot::segment_endpoints::{ContactRef, ShaftEntity};
+use crate::supports::shafts::{ContactRef, ShaftEntity};
 use crate::supports::support_kinds::{ContactKind, SupportTypeId, contact_endpoints_for};
 use crate::supports::types::{
     ContactDisk, Knot, LimitationCode, Roots, Segment, Vec3, WarningCode,

@@ -31,8 +31,8 @@ use crate::supports::auto_support::types::js_compare;
 use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
 use crate::supports::placement_logic::grid::grid_math::snap_to_grid_index;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::knot::knot_utils::calculate_knot_position_on_segment_from_t;
-use crate::supports::support_primitives::knot::segment_endpoints::{
+use crate::supports::shafts::calculate_knot_position_on_segment_from_t;
+use crate::supports::shafts::{
     EndpointHosts, ShaftEntity, resolve_segment_endpoints,
 };
 use crate::supports::support_kinds::{

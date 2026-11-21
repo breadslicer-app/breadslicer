@@ -39,7 +39,7 @@ use crate::supports::tips::ContactCone;
 use crate::supports::tips::{
     nib_length, get_disk_center, get_disk_rotation,
 };
-use crate::supports::support_primitives::knot::segment_endpoints::{
+use crate::supports::shafts::{
     EndpointHosts, ShaftEntity, resolve_segment_endpoints, root_top,
 };
 use crate::supports::types::{
@@ -1194,7 +1194,7 @@ fn append_smooth_shaft(
     sink: &mut TriangleSink,
     resolved: &[(
         &Segment,
-        crate::supports::support_primitives::knot::segment_endpoints::SegmentEndpoints,
+        crate::supports::shafts::SegmentEndpoints,
     )],
     cones: (Option<&ContactCone>, Option<&ContactCone>),
     (penetration_mm, tip_scale, drawing): (f64, f64, TipDrawing),

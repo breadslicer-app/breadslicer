@@ -8,8 +8,8 @@ use indexmap::IndexMap;
 
 use crate::supports::constants::get_joint_diameter;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::joint::joint_utils::{SplitHosts, split_support_shaft};
-use crate::supports::support_primitives::knot::segment_endpoints::{
+use crate::supports::shafts::{SplitHosts, split_support_shaft};
+use crate::supports::shafts::{
     EndpointHosts, ShaftEntity, resolve_segment_endpoints,
 };
 use crate::supports::support_kinds::{SupportEntityValue, get_support_type_descriptor};

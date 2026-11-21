@@ -9,10 +9,10 @@ use support_engine::supports::tips::{
     ContactDiskProfile, DiskTag,
 };
 use support_engine::supports::tips::nib_length;
-use support_engine::supports::support_primitives::joint::joint_utils::{
+use support_engine::supports::shafts::{
     SplitHosts, split_support_shaft,
 };
-use support_engine::supports::support_primitives::knot::knot_utils::{
+use support_engine::supports::shafts::{
     calculate_knot_position_on_segment_from_t, remap_knot_across_split,
 };
 use support_engine::supports::types::*;

@@ -22,7 +22,7 @@ use crate::supports::auto_bracing::two_axis_detection::{
 };
 use crate::supports::placement_logic::grid::grid_math::snap_to_grid_index;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::knot::segment_endpoints::{
+use crate::supports::shafts::{
     EndpointHosts, ShaftEntity, resolve_segment_endpoints,
 };
 use crate::supports::support_kinds::is_kickstand_host_type;
