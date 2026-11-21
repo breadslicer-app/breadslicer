@@ -1300,7 +1300,9 @@ impl CutRun {
                         .map(|p| trial.target.world.apply(p.map(f64::from)).map(|x| x as f32))
                         .collect(),
                     indices: indices
-                        .chunks_exact(3)
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
                         .flat_map(|t| [t[0], t[1], t[2], t[0], t[2], t[1]])
                         .collect(),
                     tint: OverlayTint::Valid,

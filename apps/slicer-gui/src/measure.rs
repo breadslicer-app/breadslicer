@@ -44,6 +44,7 @@ impl Measure {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn points(&self) -> Vec<[f64; 3]> {
         self.points.borrow().clone()
     }

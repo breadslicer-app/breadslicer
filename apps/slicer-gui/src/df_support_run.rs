@@ -4771,12 +4771,6 @@ impl DfSupportRun {
         self.regenerating.borrow().is_some() || self.document.supports_wanted().is_some()
     }
 
-    /// Generates supports for every model of the scene with `options`, then
-    /// and there, as a finished run puts them in: what other modules' tests
-    /// start from.
-    /// The Generate button with `options` in the tab, waited for: the lift of
-    /// the models on the plate (#389) and what follows (#606) as pressed.
-    #[cfg(test)]
     /// Supports for every model of the document, made and pasted as a run
     /// ends, with no question in the way: for tests of other tools that
     /// need a supported model.
@@ -4793,6 +4787,9 @@ impl DfSupportRun {
         self.finish(outcome);
     }
 
+    /// The Generate button with `options` in the tab, waited for: the lift of
+    /// the models on the plate (#389) and what follows (#606) as pressed.
+    #[cfg(test)]
     pub(crate) fn press_generate_and_wait(self: &Rc<Self>, options: DfSupportOptions) {
         self.set_options(options);
         self.start();

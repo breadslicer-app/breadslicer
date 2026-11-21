@@ -150,7 +150,9 @@ fn a_stroke_cut_tells_where_its_surface_lies_inside_the_model() {
         assert!(p[0].abs() < 1e-4, "{p:?} off the cut");
     }
     let area: f64 = indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|t| {
             let [a, b, c] = [0, 1, 2].map(|k| positions[t[k] as usize].map(f64::from));
             let (u, v) = (
