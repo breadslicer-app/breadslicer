@@ -66,6 +66,11 @@ const UVTOOLS_OWN_PROFILE: &str = "UVtools ";
 /// machine. A run leaves them as they are, whatever UVtools states.
 const PINNED: [&str; 1] = ["anycubic-photon-mono-m7-pro"];
 
+/// The printers UVtools lists that are not resin printers anyone sells: a
+/// run never adds them. "CT-005 Pro" is Creality's inner name for the CR-5
+/// Pro, a filament printer.
+const LEFT_OUT: [&str; 1] = ["creality-ct-005-pro"];
+
 /// The printers UVtools names differently from the profile we ship for the
 /// machine: UVtools' name, and our id.
 const SHIPPED_UNDER_ANOTHER_NAME: [(&str, &str); 3] = [
@@ -519,6 +524,9 @@ impl<'a> Run<'a> {
             depth: entry.depth,
         };
 
+        if LEFT_OUT.contains(&id.as_str()) {
+            return Ok(());
+        }
         if let Some((first, stated)) = self.seen.get(&id) {
             self.notes.push(if *stated == catalogued {
                 SourceNote::UvtoolsPrintersShareAProfile {
