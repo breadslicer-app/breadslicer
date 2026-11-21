@@ -93,6 +93,8 @@ pub(crate) struct RepairOnImport {
     dialogs: Rc<DialogManager>,
     bus: Rc<PreferencesBus>,
     repair: Rc<RepairRun>,
+    /// Asked about models with supports first, then repaired.
+    presupported: Option<Rc<crate::presupported_import::PresupportedImport>>,
     /// The meshes already looked at, so each is checked once.
     seen: RefCell<Vec<Weak<IndexedMesh>>>,
     /// Checks still running.
@@ -110,12 +112,14 @@ impl RepairOnImport {
         dialogs: Rc<DialogManager>,
         bus: Rc<PreferencesBus>,
         repair: Rc<RepairRun>,
+        presupported: Option<Rc<crate::presupported_import::PresupportedImport>>,
     ) -> Rc<Self> {
         let run = Rc::new(Self {
             document,
             dialogs,
             bus,
             repair,
+            presupported,
             seen: RefCell::new(Vec::new()),
             checks: RefCell::new(Vec::new()),
             waiting: RefCell::new(Vec::new()),
@@ -167,6 +171,7 @@ impl RepairOnImport {
         }
         let slot: CheckSlot = Arc::new(Mutex::new(None));
         self.checks.borrow_mut().push(slot.clone());
+        self.repair.set_import_pending(true);
         std::thread::spawn(move || {
             let checked: Vec<Checked> = new
                 .into_iter()
@@ -219,8 +224,11 @@ impl RepairOnImport {
                 details: Default::default(),
             });
         }
+        // One thing after another: a question about the supports of what came
+        // in, or any card, is answered before the repair starts.
+        let held = self.card_or_question();
         let waiting = self.waiting.borrow().clone();
-        if !waiting.is_empty() {
+        if !waiting.is_empty() && !held {
             let leaves: Vec<NodeId> = waiting.iter().map(|(leaf, _)| *leaf).collect();
             let left_out: usize = waiting.iter().filter_map(|(_, n)| *n).sum();
             let reason = (left_out > 0).then(|| repaired_reason(left_out));
@@ -232,9 +240,15 @@ impl RepairOnImport {
                 self.waiting.borrow_mut().clear();
             }
         }
-        if self.checks.borrow().is_empty() && self.waiting.borrow().is_empty() {
+        let idle = self.checks.borrow().is_empty() && self.waiting.borrow().is_empty();
+        self.repair.set_import_pending(!idle);
+        if idle {
             self.poll.stop();
         }
+    }
+
+    fn card_or_question(&self) -> bool {
+        self.repair.card_open() || self.presupported.as_ref().is_some_and(|p| p.busy())
     }
 
     fn is_seen(&self, mesh: &Arc<IndexedMesh>) -> bool {
@@ -347,7 +361,7 @@ mod tests {
         let dialogs = ctrl.dialogs();
         dialogs.attach(&window);
         let repair = RepairRun::install(&window, document.clone(), dialogs.clone(), ctrl.clone());
-        let run = RepairOnImport::install(document.clone(), dialogs, bus.clone(), repair);
+        let run = RepairOnImport::install(document.clone(), dialogs, bus.clone(), repair, None);
         // The file of the broken model left triangles out; the cube came
         // in whole.
         if let Some(count) = left_out {
@@ -432,5 +446,56 @@ mod tests {
         assert!(Arc::ptr_eq(&before[1].1, &after[1].1));
         assert_eq!(undo, 1);
         assert_eq!(card.as_deref(), Some("Repaired on import"));
+    }
+
+    /// One thing after another (#677): while a card waits for an answer,
+    /// such as the question about the supports of what came in, nothing is
+    /// repaired, and the window tells supports to wait; once it closes, the
+    /// repair runs.
+    #[test]
+    fn the_repair_waits_for_the_card_open() {
+        let (held, pending_while_held, after) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));
+            let document = ctrl.document();
+            let dialogs = ctrl.dialogs();
+            dialogs.attach(&window);
+            let repair =
+                RepairRun::install(&window, document.clone(), dialogs.clone(), ctrl.clone());
+            let run = RepairOnImport::install(document.clone(), dialogs, bus.clone(), repair, None);
+            window.set_message_open(true);
+            document.install_graph(broken_and_clean(), PathBuf::from("mini.stl"));
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_millis(800) {
+                slint::platform::update_timers_and_animations();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let held = !window.get_repairing_in_progress() && !models(&document)[0].0;
+            let pending_while_held = window.get_repair_on_import_pending();
+            window.set_message_open(false);
+            let start = Instant::now();
+            loop {
+                slint::platform::update_timers_and_animations();
+                if window.get_repairing_in_progress() {
+                    window.invoke_repair_finished();
+                }
+                if run.checks.borrow().is_empty()
+                    && run.waiting.borrow().is_empty()
+                    && !window.get_repairing_in_progress()
+                {
+                    break;
+                }
+                assert!(
+                    start.elapsed() < Duration::from_secs(120),
+                    "it never settles"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            (held, pending_while_held, models(&document)[0].0)
+        });
+        assert!(held, "nothing repaired while the card is open");
+        assert!(pending_while_held, "supports are told to wait");
+        assert!(after, "repaired once it closed");
     }
 }

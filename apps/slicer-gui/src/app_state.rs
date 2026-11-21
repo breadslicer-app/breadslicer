@@ -859,16 +859,17 @@ impl AppState {
             slice_run.clone(),
         );
         let split_bodies = SplitBodies::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+        let presupported_import = crate::presupported_import::PresupportedImport::install(
+            ui,
+            ctrl.document(),
+            ctrl.dialogs(),
+        );
         let repair_on_import = crate::repair_on_import::RepairOnImport::install(
             ctrl.document(),
             ctrl.dialogs(),
             self.prefs.clone(),
             repair_run.clone(),
-        );
-        let presupported_import = crate::presupported_import::PresupportedImport::install(
-            ui,
-            ctrl.document(),
-            ctrl.dialogs(),
+            Some(presupported_import.clone()),
         );
         let layer_keys = crate::layer_keys::LayerKeys::install(ui);
         let layer_pixels = crate::layer_pixels::LayerPixels::install(

@@ -461,6 +461,14 @@ impl PresupportedImport {
         }
     }
 
+    /// Whether it is still looking at models that came in, or about to ask
+    /// about them: what comes in is asked about before it is repaired (#677).
+    pub(crate) fn busy(&self) -> bool {
+        self.slot.borrow().is_some()
+            || !self.waiting.borrow().is_empty()
+            || !self.gathered.borrow().is_empty()
+    }
+
     /// Whether `leaf` still shows `mesh`.
     fn still_shows(&self, leaf: NodeId, mesh: &Weak<IndexedMesh>) -> Option<Arc<IndexedMesh>> {
         let mesh = mesh.upgrade()?;

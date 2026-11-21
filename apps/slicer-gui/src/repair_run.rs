@@ -459,6 +459,21 @@ impl RepairRun {
         true
     }
 
+    /// Says on the window whether models that came in wait to be repaired:
+    /// supports are not made while they do (#677).
+    pub(crate) fn set_import_pending(&self, on: bool) {
+        if let Some(ui) = self.ui.upgrade()
+            && ui.get_repair_on_import_pending() != on
+        {
+            ui.set_repair_on_import_pending(on);
+        }
+    }
+
+    /// Whether the window shows a card that waits for an answer.
+    pub(crate) fn card_open(&self) -> bool {
+        self.ui.upgrade().is_some_and(|ui| ui.get_message_open())
+    }
+
     /// Captures the run and spawns its worker over `targets` of `scene`.
     fn launch(
         self: &Rc<Self>,

@@ -1123,38 +1123,15 @@ component RepairControls inherits VerticalLayout {
 
     spacing: 6px;
 
-    if !root.repairing: ScButton {
-        text: @tr("Inspector" => "Repair meshes");
+    // While a run goes, its progress and Cancel are on the window's one
+    // progress bar, at the bottom (#562).
+    ScButton {
+        text: root.repairing ? @tr("Inspector" => "Repairing…") : @tr("Inspector" => "Repair meshes");
         icon: Icons.repair;
         kind: root.primary ? ButtonKind.primary : ButtonKind.normal;
-        enabled: root.enabled;
+        enabled: root.enabled && !root.repairing;
         clicked => {
             root.repair-requested();
-        }
-    }
-    if root.repairing: HorizontalLayout {
-        spacing: 8px;
-
-        VerticalLayout {
-            spacing: 4px;
-            horizontal-stretch: 1;
-            alignment: center;
-
-            Text {
-                text: root.phase == "" ? @tr("Inspector" => "Repairing…") : root.phase;
-                font-size: Theme.font-sm;
-                color: Theme.text-muted;
-                wrap: word-wrap;
-            }
-            ProgressIndicator {
-                progress: root.progress;
-            }
-        }
-        ScButton {
-            text: @tr("Inspector" => "Cancel");
-            clicked => {
-                root.cancel-requested();
-            }
         }
     }
     // Caliper, a separate repair program, is not installed: say so, and its

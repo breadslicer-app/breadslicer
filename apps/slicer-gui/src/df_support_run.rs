@@ -2914,8 +2914,11 @@ impl DfSupportRun {
         let Some((revision, wanted)) = wanted else {
             return;
         };
+        // A model that came in is repaired first (#677).
         if self.handle.borrow().is_some()
             || ui.get_loading()
+            || ui.get_repairing_in_progress()
+            || ui.get_repair_on_import_pending()
             || self.prescan.borrow().run_waiting
             || !stands(&wanted)
         {
