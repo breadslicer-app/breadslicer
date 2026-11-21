@@ -6430,10 +6430,13 @@ impl DfSupportRun {
         self.place_row(ui, row);
     }
 
-    /// Places a support at each of `row`, one edit, as Add places one.
+    /// Places a support at each of `row`, one edit, as Add places one, but
+    /// sized by the preset of the supports they join (the Auto preset picked
+    /// for a model with none yet), never by a hand size.
     fn place_row(self: &Rc<Self>, ui: &MainWindow, row: Vec<[f32; 3]>) {
         crate::breadcrumbs::note(&format!("supports: line of {}", row.len()));
-        let (tool, how) = self.click_tool(ui, 1, false);
+        let (tool, _) = self.click_tool(ui, 1, false);
+        let how = AddOptions::default();
         if self.pending_click.borrow().is_some() {
             self.queued_clicks
                 .borrow_mut()
@@ -14036,6 +14039,12 @@ mod hand_edit_tests {
             ctrl.set_camera_for_test(camera_at([20.0, 25.0, 9.0], 0.3, -0.7, 50.0));
             window.set_support_tool(6);
             run.on_tool_changed();
+            // A hand size with a fat trunk, picked: the row still takes the
+            // preset's sizes.
+            for size in &mut run.hand.borrow_mut().rules.sizes {
+                size.trunk_diameter_mm = 3.26;
+            }
+            window.set_support_tip_size(2);
 
             run.on_tool_click_with([12.0, 25.0, 9.0], false);
             assert!(
@@ -14053,6 +14062,13 @@ mod hand_edit_tests {
             let session = in_force_session(&run).expect("the row started a set");
             let tips: Vec<[f64; 3]> = session.tips().into_iter().map(|t| t.1).collect();
             assert_eq!(tips.len(), 9, "{tips:?}");
+            for (id, _) in session.tips() {
+                let shape = session.shape_of(&id).expect("each support has a shape");
+                assert!(
+                    shape.trunk_diameter_mm < 3.0,
+                    "{id} took the hand size: {shape:?}"
+                );
+            }
             for tip in &tips {
                 assert!((tip[1] - 25.0).abs() < 0.3, "on the line: {tip:?}");
                 assert!((tip[2] - 9.0).abs() < 0.3, "on the underside: {tip:?}");
