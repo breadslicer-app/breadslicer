@@ -26,6 +26,10 @@ export struct SceneRow {
     model: bool,
     hidden: bool,
     locked: bool,
+    // A set of supports listed under the model it holds up, and whether it
+    // is that model's last one (the tree line stops there).
+    child: bool,
+    last: bool,
 }
 
 // Every row is this tall, so a row's place is its rank times it.
@@ -203,6 +207,9 @@ component ObjectRow inherits Rectangle {
     in property <bool> model;
     in property <bool> hidden;
     in property <bool> locked;
+    // Under its model in the tree: indented, with the tree line.
+    in property <bool> child;
+    in property <bool> last;
     callback hide-toggled();
     callback lock-toggled();
     callback clicked();
@@ -223,8 +230,24 @@ component ObjectRow inherits Rectangle {
         self.clicked();
     }
 
+    // The tree line from the model above: down to this row, and across.
+    if root.child: Rectangle {
+        x: 22px;
+        y: 0;
+        width: 1px;
+        height: root.last ? parent.height / 2 : parent.height;
+        background: Theme.border;
+    }
+    if root.child: Rectangle {
+        x: 22px;
+        y: parent.height / 2;
+        width: 8px;
+        height: 1px;
+        background: Theme.border;
+    }
+
     HorizontalLayout {
-        padding-left: 16px;
+        padding-left: root.child ? 30px : 16px;
         padding-right: root.model ? 8px + 2 * 18px + 2px : 8px;
         spacing: 7px;
 
@@ -404,6 +427,8 @@ export component ScenePanel inherits Rectangle {
                         model: row.model;
                         hidden: row.hidden;
                         locked: row.locked;
+                        child: row.child;
+                        last: row.last;
                         hide-toggled => {
                             root.object-hide-toggled(row.index);
                         }

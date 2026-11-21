@@ -145,6 +145,33 @@ fn the_pictures_of_the_app_are_written_when_asked() {
                 &list_dir,
                 &format!("{language}-1-transform-objects-picked"),
             );
+            // The scene panel: supports listed under the model they hold up.
+            let row =
+                |plate: bool, index: i32, text: &str, child: bool, last: bool| crate::SceneRow {
+                    plate,
+                    index,
+                    text: text.into(),
+                    active: plate && index == 0,
+                    model: !plate && !child,
+                    child,
+                    last,
+                    ..Default::default()
+                };
+            window.set_scene_rows(slint::ModelRc::new(slint::VecModel::from(vec![
+                row(true, 0, "Plate 1", false, false),
+                row(false, 0, "Boar", false, false),
+                row(false, 1, "Supports", true, false),
+                row(false, 2, "Imported supports", true, true),
+                row(false, 3, "Wolf", false, false),
+                row(false, 4, "Supports", true, true),
+                row(false, 5, "Raft", false, false),
+            ])));
+            window.set_show_object_list(true);
+            write(
+                window.window(),
+                &list_dir,
+                &format!("{language}-1-scene-panel-tree"),
+            );
         });
         let dir = dir.clone();
         on_fresh_slint_thread(move || {
