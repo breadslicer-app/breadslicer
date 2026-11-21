@@ -23,7 +23,6 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::clipper::ClipperError;
 use crate::features::slicing::smooth_shafts::ShaftStyle;
@@ -44,6 +43,8 @@ use crate::supports::auto_support::auto_place::plan::{
     AutoSupportPlan, PlanInput, ZonePlanInput, compute_auto_support_plan,
 };
 use crate::supports::auto_support::parameter_sizing::SizingBands;
+use crate::supports::auto_support::resting::{RESTING_LAYERS, rests_on_model};
+pub use crate::supports::auto_support::zone_candidates::KeepOut;
 use crate::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use crate::supports::rafts::crenelated::geometry::model_plate_footprint::{
     ModelTransform, PlateFootprintSource, quaternion_from_global_euler,
@@ -56,8 +57,6 @@ use crate::supports::settings::types::SupportSettings;
 use crate::supports::types::SupportState;
 use crate::three::buffer_geometry::BufferGeometry;
 use crate::three::{Matrix4, Vec3};
-use crate::supports::auto_support::resting::{RESTING_LAYERS, rests_on_model};
-pub use crate::supports::auto_support::zone_candidates::KeepOut;
 use crate::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
 use crate::volume_analysis::islands::use_islands::{
@@ -184,23 +183,7 @@ pub struct Progress<'a> {
     pub model_id: Option<&'a str>,
 }
 
-/// A shared cancellation flag; clones observe the same flag.
-#[derive(Debug, Clone, Default)]
-pub struct CancelToken(Arc<AtomicBool>);
-
-impl CancelToken {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn cancel(&self) {
-        self.0.store(true, Ordering::SeqCst);
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
-    }
-}
+pub use engine_base::CancelToken;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PipelineError {

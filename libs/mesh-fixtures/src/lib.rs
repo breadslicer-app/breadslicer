@@ -26,6 +26,7 @@ use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
 use sc_mesh_core::primitives::{TriVertexSlot, VertexIndex};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 
+pub mod engine_scenes;
 pub mod repair_corpus;
 
 #[cfg(test)]

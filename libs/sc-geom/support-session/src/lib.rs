@@ -16,14 +16,13 @@ use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 pub use sc_mesh_core::MeshRole;
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{CsgPolicy, NodeId, Scene, SceneError, bake_mesh_to_world};
 use support_engine::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
 use support_engine::perf::{PerfEntry, PerfFrame};
 use support_engine::pipeline::{
-    CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, plan_supports_with,
-    prescan_models,
+    ModelInput, PipelineError, PipelineSettings, Stage, plan_supports_with, prescan_models,
 };
 use support_engine::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
 use support_engine::supports::support_type_registry::get_support_type_descriptor;
@@ -44,11 +43,11 @@ pub use document::{
     is_support_generator,
 };
 pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
-pub use options::{DEFAULT_SUPPORT_LIFT_MM, SupportOptions, RaftMode, recommended_lift_mm};
+pub use options::{DEFAULT_SUPPORT_LIFT_MM, RaftMode, SupportOptions, recommended_lift_mm};
 pub use session::{
-    AddNote, AddOptions, BraceEnd, COVERED_AGREEMENT, COVERED_SURFACE_MM, SupportSession,
-    EditError, EditPreview, HandShape, ImportedPlan, PartSizes, REVIEW_NUDGE_MM, SupportContact,
-    SupportJoint, SupportParts, SupportPiece, SupportPieceKind,
+    AddNote, AddOptions, BraceEnd, COVERED_AGREEMENT, COVERED_SURFACE_MM, EditError, EditPreview,
+    HandShape, ImportedPlan, PartSizes, REVIEW_NUDGE_MM, SupportContact, SupportJoint,
+    SupportParts, SupportPiece, SupportPieceKind, SupportSession,
 };
 pub use support_engine::native::overhang::{
     is_overhang_normal_z, overhang_and_stability_from_soup, overhang_normal_z_limit,
@@ -82,10 +81,7 @@ pub fn role_of(mesh: &IndexedMesh) -> Option<MeshRole> {
 /// it since its session was drawn), in world space. `None` when none does
 /// or nothing is drawn.
 pub fn plate_raft(
-    sets: &[(
-        &SupportSession,
-        sc_mesh_core::transform::AffineTransform3D,
-    )],
+    sets: &[(&SupportSession, sc_mesh_core::transform::AffineTransform3D)],
 ) -> Option<IndexedMesh> {
     let on: Vec<_> = sets
         .iter()
@@ -1235,7 +1231,7 @@ pub fn start_prescan(scene: &Scene, request: SupportRequest) -> JobHandle<Suppor
                     std::slice::from_ref(model),
                     &settings,
                     previous,
-                    &CancelToken::new(),
+                    worker.cancel_token(),
                 ) {
                     Ok(one) => scans.extend(one),
                     Err(PipelineError::Cancelled) => return Err(JobError::Cancelled),
@@ -1284,7 +1280,8 @@ fn run_supports(
         });
     };
     let place = format!("{}/{}", at + 1, progress.models);
-    let cancel = CancelToken::new();
+    // The job's own token: a cancel reaches the plan at its next poll.
+    let cancel = worker.cancel_token().clone();
     let mut next = 0u64;
     let mut new_id = || {
         next += 1;
@@ -1298,12 +1295,7 @@ fn run_supports(
         &settings,
         request.prescanned.as_deref(),
         &mut new_id,
-        &mut |p| {
-            if worker.is_cancelled() {
-                cancel.cancel();
-            }
-            report(format!("{} ({place})", stage_label(p.stage)));
-        },
+        &mut |p| report(format!("{} ({place})", stage_label(p.stage))),
         &cancel,
     );
     let mut out = match result {
