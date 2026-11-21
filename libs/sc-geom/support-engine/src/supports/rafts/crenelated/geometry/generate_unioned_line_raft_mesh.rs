@@ -1,43 +1,39 @@
-//! DragonFruit `geometry/generateUnionedLineRaftMesh.ts`: the line raft's beam
-//! network unioned into one solid, and the filter that drops beams a model on
-//! the plate is in the way of.
+//! A line raft: its beams (with a round joint at every root they reach) and
+//! an optional rim, unioned into one outline and raised, sloped by the
+//! chamfer; and which beams a model standing on the plate leaves room for.
 
 use std::collections::HashMap;
 
-use super::raft_meshes::generate_chamfered_base_from_polygons;
 use super::polygon_set_2d::{
     PolygonWithHoles, polygon_set_contains, polygon_set_to_shapes, ring_to_polygon,
     segment_distance_mm, union_polygon_sets,
 };
 use super::raft_body::inset_convex_polygon;
-use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
+use super::raft_meshes::generate_chamfered_base_from_polygons;
 use crate::geom::Vector2;
 use crate::geom::buffer_geometry::BufferGeometry;
 use crate::geom::extrude_geometry::{ExtrudeOptions, extrude_geometry};
 use crate::geom::math_utils::js_max;
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 
 /// How many sides the round joint at each end of a beam has.
 const JOINT_SIDES: usize = 24;
 
-/// Beam rectangle from `a` to `b`, ending at them: the round joint at each
-/// end ([`build_joint_ring`]) closes it. Square ends stretched past the ends,
-/// as DragonFruit draws them, stuck out as little corners where several beams
-/// meet (SoulCrafted, #518).
+/// A beam from `a` to `b` as a rectangle `width_mm` wide that ends at
+/// them: the round joints there close it (#518).
 fn build_beam_ring(a: Vector2, b: Vector2, width_mm: f64) -> Vec<Vector2> {
-    let half_width = js_max(0.001, width_mm / 2.0);
-    let dir = b.sub(a);
-    let length = dir.length();
+    let half = (width_mm / 2.0).max(0.001);
+    let along = b.sub(a);
+    let length = along.length();
     if !length.is_finite() || length < 1e-6 {
         return Vec::new();
     }
-    let dir = dir.multiply_scalar(1.0 / length);
-    let (start, end) = (a, b);
-    let normal = Vector2::new(-dir.y, dir.x);
+    let side = Vector2::new(-along.y / length, along.x / length);
     vec![
-        start.add_scaled_vector(normal, half_width),
-        end.add_scaled_vector(normal, half_width),
-        end.add_scaled_vector(normal, -half_width),
-        start.add_scaled_vector(normal, -half_width),
+        a.add_scaled_vector(side, half),
+        b.add_scaled_vector(side, half),
+        b.add_scaled_vector(side, -half),
+        a.add_scaled_vector(side, -half),
     ]
 }
 
@@ -52,7 +48,8 @@ fn build_joint_ring(at: Vector2, width_mm: f64) -> Vec<Vector2> {
         .collect()
 }
 
-/// `filterLineRaftEdges(edges, clearance, beamWidthMm)`.
+/// The beams a model's clearance leaves room for: neither end nor the
+/// middle inside it, and no part closer than half a beam to its outline.
 pub fn filter_line_raft_edges(
     edges: &[(Vector2, Vector2)],
     clearance: Option<&[PolygonWithHoles]>,
@@ -61,29 +58,24 @@ pub fn filter_line_raft_edges(
     let Some(clearance) = clearance.filter(|c| !c.is_empty()) else {
         return edges.to_vec();
     };
-    let margin = js_max(0.0, beam_width_mm) / 2.0;
+    let half = beam_width_mm.max(0.0) / 2.0;
+    let sides: Vec<(Vector2, Vector2)> = clearance
+        .iter()
+        .flat_map(|p| std::iter::once(&p.outer).chain(&p.holes))
+        .flat_map(|ring| (0..ring.len()).map(move |i| (ring[i], ring[(i + 1) % ring.len()])))
+        .collect();
     edges
         .iter()
         .copied()
         .filter(|&(a, b)| {
-            let (mid_x, mid_y) = ((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
-            if polygon_set_contains(clearance, a.x, a.y)
-                || polygon_set_contains(clearance, b.x, b.y)
-                || polygon_set_contains(clearance, mid_x, mid_y)
-            {
-                return false;
-            }
-            for poly in clearance {
-                for ring in std::iter::once(&poly.outer).chain(&poly.holes) {
-                    for i in 0..ring.len() {
-                        let (c, d) = (ring[i], ring[(i + 1) % ring.len()]);
-                        if segment_distance_mm(a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y) <= margin {
-                            return false;
-                        }
-                    }
-                }
-            }
-            true
+            let middle = ((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+            let inside = [(a.x, a.y), (b.x, b.y), middle]
+                .iter()
+                .any(|&(x, y)| polygon_set_contains(clearance, x, y));
+            !inside
+                && sides.iter().all(|(c, d)| {
+                    segment_distance_mm(a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y) > half
+                })
         })
         .collect()
 }
@@ -221,8 +213,9 @@ fn split_at_t_junctions(g: &mut BufferGeometry) {
     g.groups.clear();
 }
 
-/// `generateUnionedLineRaftMesh(edges, { widthMm, heightMm, borderProfile,
-/// chamferAngleDeg })`.
+/// The line raft over `edges`: beams `width_mm` wide (with their joints)
+/// and the rim inside `border_profile`, unioned and raised `height_mm`;
+/// sloped by `chamfer_angle_deg` when it is under 90°.
 pub fn generate_unioned_line_raft_mesh(
     edges: &[(Vector2, Vector2)],
     width_mm: f64,
