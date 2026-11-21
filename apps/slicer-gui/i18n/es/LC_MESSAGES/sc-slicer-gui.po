@@ -10871,3 +10871,18 @@ msgid "Resin, your settings for {n} more printer"
 msgid_plural "Resin, your settings for {n} more printers"
 msgstr[0] "Resina, tus ajustes para {n} impresora más"
 msgstr[1] "Resina, tus ajustes para {n} impresoras más"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "IMPORTING"
+msgstr "AL IMPORTAR"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Repair on import"
+msgstr "Reparar al importar"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "A model that comes in and cannot be sliced is repaired as it lands, with Caliper when it is installed. Models that slice are left alone."
+msgstr "Un modelo que entra y no se puede laminar se repara apenas llega, con Caliper si está instalado. Los que se laminan no se tocan."

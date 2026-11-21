@@ -417,6 +417,40 @@ impl RepairRun {
         true
     }
 
+    /// Repairs the meshes of `leaves`, models that came in and do not slice
+    /// (#677), as the Repair button does, on the tab shown. Returns false,
+    /// starting nothing, while something else runs; true when the scene holds
+    /// none of them any more, as there is nothing left to wait for.
+    pub(crate) fn repair_imported(self: &Rc<Self>, leaves: &[NodeId]) -> bool {
+        let Some(ui) = self.ui.upgrade() else {
+            return true;
+        };
+        if busy(&ui) {
+            return false;
+        }
+        let Some((scene, targets, names)) = self.document.with_scene(|spatial| {
+            let graph = spatial.graph();
+            let asked: Vec<MeshTarget> = leaves
+                .iter()
+                .filter_map(|&leaf| graph.leaf_mesh_target(leaf))
+                .collect();
+            let targets: Vec<MeshTarget> = graph
+                .mesh_targets()
+                .into_iter()
+                .filter(|target| asked.contains(target))
+                .collect();
+            let names = names_in_run_order(graph, &targets);
+            (graph.clone(), targets, names)
+        }) else {
+            return true;
+        };
+        if !targets.is_empty() {
+            self.launch(&ui, scene, targets, names, None);
+            self.follow_caliper();
+        }
+        true
+    }
+
     /// Captures the run and spawns its worker over `targets` of `scene`.
     fn launch(
         self: &Rc<Self>,

@@ -87,6 +87,7 @@ mod recent_files;
 mod reloaded_slices;
 mod repair_marks;
 mod repair_report;
+mod repair_on_import;
 mod repair_run;
 mod review;
 mod review_marks;
