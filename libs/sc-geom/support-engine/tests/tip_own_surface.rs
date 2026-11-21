@@ -17,7 +17,7 @@ use support_engine::supports::auto_support::auto_place::helpers::{
     PlanMesh, contact_cone_crosses_model, resolve_surface_normal,
 };
 use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_engine::supports::support_primitives::contact_cone::types::{
+use support_engine::supports::tips::{
     ContactCone, DEFAULT_TIP_PROFILE,
 };
 use support_engine::geom::buffer_geometry::BufferGeometry;

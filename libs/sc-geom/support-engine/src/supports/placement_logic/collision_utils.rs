@@ -5,8 +5,8 @@
 //! material swapped in for the call (`DOUBLE_SIDED_MATERIAL`). The optional
 //! shared `THREE.Raycaster` argument is only an allocation saver and is gone.
 
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
-use crate::supports::support_primitives::contact_cone::types::ContactCone;
+use crate::supports::tips::get_final_socket_position;
+use crate::supports::tips::ContactCone;
 use crate::supports::types::Vec3;
 use crate::geom::Ray;
 use crate::geom::math_utils::{js_hypot, js_max, js_min};

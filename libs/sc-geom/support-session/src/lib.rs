@@ -27,7 +27,7 @@ use support_engine::pipeline::{
     ModelInput, PipelineError, PipelineSettings, Stage, plan_supports_with, prescan_models,
 };
 use support_engine::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
-use support_engine::supports::support_type_registry::get_support_type_descriptor;
+use support_engine::supports::support_kinds::get_support_type_descriptor;
 use support_engine::supports::types::SupportState;
 
 mod compare;

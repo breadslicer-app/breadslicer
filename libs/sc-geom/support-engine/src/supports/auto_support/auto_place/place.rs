@@ -38,7 +38,7 @@ use crate::supports::placement_logic::grid::grid_placement::{
     decide_grid_placement,
 };
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_type_registry::{
+use crate::supports::support_kinds::{
     CONTACT_OVERRIDE_REGISTRATIONS, EndpointEnd, PlacementPrimitive, SupportEntityValue,
     SupportOriginId, SupportPlacementMetric, SupportPlacementSettingPath, SupportTypeId,
     contact_endpoints_for, get_support_type_descriptor, select_type_for_placement,
@@ -849,7 +849,6 @@ fn try_merge(
         pos: knot_pos,
         // Renders at exactly the trunk-joint size when unselected.
         diameter: Some(knot_diameter + 0.125),
-        ..Knot::default()
     };
     let leaf_span_mm = ((tip_pos.x - knot_pos.x) * (tip_pos.x - knot_pos.x)
         + (tip_pos.y - knot_pos.y) * (tip_pos.y - knot_pos.y)

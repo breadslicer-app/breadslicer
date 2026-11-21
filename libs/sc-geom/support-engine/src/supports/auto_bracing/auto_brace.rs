@@ -31,11 +31,11 @@ use crate::supports::auto_support::types::js_compare;
 use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
 use crate::supports::placement_logic::grid::grid_math::snap_to_grid_index;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::knot::knot_utils::calculate_knot_position_on_segment_from_t;
-use crate::supports::support_primitives::knot::segment_endpoints::{
+use crate::supports::shafts::calculate_knot_position_on_segment_from_t;
+use crate::supports::shafts::{
     EndpointHosts, ShaftEntity, resolve_segment_endpoints,
 };
-use crate::supports::support_type_registry::{
+use crate::supports::support_kinds::{
     SupportTypeId, is_auto_braceable_shaft_type, is_lateral_stabiliser_type,
     lateral_stabiliser_types, parse_prefixed_segment_id,
 };
@@ -667,7 +667,6 @@ impl Ladder<'_> {
             t: Some(a.t),
             pos: a.pos,
             diameter: Some(exact.unwrap_or(a.host_diameter_mm) + JOINT_DIAMETER_OFFSET_MM),
-            ..Knot::default()
         };
         self.generated_knots
             .insert(s_id.clone(), knot(&s_id, &low_anchor));

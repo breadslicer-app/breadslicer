@@ -18,7 +18,6 @@ mod region_folds;
 mod slice_detail;
 mod smooth_shafts;
 mod support_primitives;
-mod support_type_registry;
 mod tight_tip;
 mod tip_own_surface;
 mod wolverine_sdf_scale;

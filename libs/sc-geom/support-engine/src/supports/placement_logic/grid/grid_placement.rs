@@ -22,9 +22,9 @@ use crate::supports::placement_logic::smart_placement_search_utils::{
 };
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
-use crate::supports::support_primitives::knot::knot_utils::calculate_knot_position_on_segment_from_t;
-use crate::supports::support_type_registry::{
+use crate::supports::tips::get_final_socket_position;
+use crate::supports::shafts::calculate_knot_position_on_segment_from_t;
+use crate::supports::support_kinds::{
     CONTACT_OVERRIDE_REGISTRATIONS, HostRef, PlacedSupport, PlacementPrimitive, SupportEntityValue,
     SupportPlacementMetric, SupportPlacementSettingPath, SupportTypeId, grid_host_types,
     placement_of_resolved, select_type_for_placement,
@@ -512,7 +512,6 @@ fn select_attachment_decision(
                 t: Some(tc),
                 pos,
                 diameter: Some(segment.diameter + 0.1),
-                ..Knot::default()
             };
 
             if let Some(mesh) = ctx.mesh

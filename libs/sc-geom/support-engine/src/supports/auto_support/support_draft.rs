@@ -8,7 +8,7 @@
 
 use indexmap::IndexMap;
 
-use crate::supports::support_type_registry::{
+use crate::supports::support_kinds::{
     PlacementPrimitive, SupportCollectionKey, SupportEdgeTarget, SupportEntityValue, SupportTypeId,
     get_support_type_descriptor,
 };

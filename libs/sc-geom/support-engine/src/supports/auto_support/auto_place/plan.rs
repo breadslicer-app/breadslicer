@@ -73,7 +73,7 @@ use crate::supports::auto_support::types::{
 };
 use crate::supports::auto_support::zone_candidates::{ZoneInput, generate_zone_candidates};
 use crate::supports::model_mesh::ModelMesh;
-use crate::supports::support_type_registry::{
+use crate::supports::support_kinds::{
     PlacementPrimitive, SupportEntityValue, SupportOriginId, SupportPlacementMetric, SupportTypeId,
     contact_bridge_types, get_support_type_descriptor, is_auto_placed_type,
     is_origin_convertible_to_tree,

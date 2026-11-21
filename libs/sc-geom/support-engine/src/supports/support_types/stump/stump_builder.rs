@@ -12,13 +12,12 @@ use crate::supports::placement_logic::cone_axis_policy::{
     ConeAxisPolicyInput, resolve_cone_axis_policy,
 };
 use crate::supports::rendering::support_builder::SupportData;
-use crate::supports::settings::support_settings_codec::encode_support_settings_hex;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::types::{
+use crate::supports::tips::{
     ContactCone, SupportTipProfile, TipPrimitive,
 };
-use crate::supports::support_primitives::contact_disk::contact_disk_interaction::recompute_contact_cone_for_moved_disk;
-use crate::supports::support_type_registry::inline_root_id;
+use crate::supports::tips::recompute_contact_cone_for_moved_disk;
+use crate::supports::support_kinds::inline_root_id;
 use crate::supports::types::{Joint, Roots, Stump, SupportEntity, Transform, Vec3};
 use crate::geom::Quaternion;
 use crate::geom::math_utils::{js_max, js_min};
@@ -56,7 +55,6 @@ pub fn build_stump_data(
         mesh,
     } = *input;
 
-    let settings_code_hex = encode_support_settings_hex(settings);
     let cone_angle_mode = settings.tip.cone_angle_mode.unwrap_or_default();
     let adaptive_cone_angle_offset_deg =
         settings.tip.adaptive_cone_angle_offset_deg.unwrap_or(30.0);
@@ -76,7 +74,6 @@ pub fn build_stump_data(
         disk_thickness_mm: Some(0.1),
         max_standoff_mm: Some(1.5),
         standoff_angle_threshold: Some(std::f64::consts::PI / 4.0),
-        sphere_radius_ratio: None,
         break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
     };
 
@@ -162,7 +159,6 @@ pub fn build_stump_data(
         base: SupportEntity {
             id: stump_id.clone(),
             model_id: model_id.to_owned(),
-            settings_code_hex: Some(settings_code_hex),
             ..SupportEntity::default()
         },
         root_pos,

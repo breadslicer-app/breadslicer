@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::supports::support_type_registry::SupportTypeId;
+use crate::supports::support_kinds::SupportTypeId;
 // Declared with the other support types; re-exported so this module stays the
 // import site for everything kickstand-shaped.
 pub use crate::supports::types::Kickstand;

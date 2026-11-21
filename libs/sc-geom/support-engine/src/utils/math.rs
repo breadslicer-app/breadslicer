@@ -1,5 +1,4 @@
-//! DragonFruit `src/utils/math.ts`: the numeric helpers (the viewport helper
-//! is the GUI's).
+//! Clamping and rounding.
 
 use crate::geom::math_utils::{js_max, js_min, js_round, js_to_fixed_number};
 

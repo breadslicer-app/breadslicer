@@ -21,8 +21,8 @@ use crate::supports::placement_logic::placement_utils::calculate_smoothed_normal
 use crate::supports::placement_logic::smart_placement_search_utils::member_departure_angle_from_vertical_deg;
 use crate::supports::placement_logic_v3::smart_placement_v3::RouterStats;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::types::ContactCone;
-use crate::supports::support_type_registry::{
+use crate::supports::tips::ContactCone;
+use crate::supports::support_kinds::{
     ConeBodyFollows, SHAFT_HOSTED_MEMBER_TYPE_ORDER, SupportEntityValue, SupportOriginId,
     SupportTypeId, get_support_type_descriptor, near_plate_origin,
 };
@@ -250,14 +250,12 @@ pub fn apply_zone_size(
     settings.tip.penetration_mm = size.penetration_mm;
     settings.tip.breakpoint_mm = Some(size.break_point_mm);
     settings.shaft.diameter_mm = size.trunk_diameter_mm;
-    settings.shaft.secondary_diameter_mm = Some(size.trunk_diameter_mm);
     settings.roots.diameter_mm = size.base_diameter_mm;
     settings.roots.disk_height_mm = size.base_thickness_mm;
     // The base is a disk; its join cone is drawn on its own (on the raft
     // when there is one).
     settings.roots.cone_height_mm = 0.0;
     settings.roots.join_cone_mm = Some(size.join_cone_mm);
-    settings.roots.neck_diameter_mm = size.trunk_diameter_mm;
     settings.mesh_to_mesh.base_tip = size.base_tip;
     settings.auto_support.sizing_preset = rules.band_id(index);
 }
@@ -472,7 +470,7 @@ pub fn resolve_surface_normal(tip_pos: Vec3, mesh: Option<&PlanMesh<'_>>) -> (Ve
 /// Where every support currently touches the model: every type's declared
 /// contacts (`contactEndpointsFor`, lower end first), in registry order.
 pub fn collect_contact_positions(snapshot: &SupportState) -> Vec<Vec3> {
-    use crate::supports::support_type_registry::contact_endpoints_for;
+    use crate::supports::support_kinds::contact_endpoints_for;
     let c = &snapshot.collections;
     let mut out = Vec::new();
     for field in contact_endpoints_for(SupportTypeId::Trunk)

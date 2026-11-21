@@ -10,7 +10,7 @@ use crate::geom::math_utils::js_max;
 use crate::geom::primitive_geometry::{cylinder_geometry, sphere_geometry};
 use crate::geom::{Matrix4, Quaternion, Vector2};
 use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
-use crate::supports::curves::bezier_utils::get_bezier_point_at_t;
+use crate::supports::bezier::get_bezier_point_at_t;
 use crate::supports::rafts::crenelated::geometry::compute_raft_footprint::{
     inflate_model_plate_clearance, raft_band_top_mm, raft_solid_height_mm, raft_wall_base_height_mm,
 };
@@ -34,12 +34,12 @@ use crate::supports::rafts::crenelated::geometry::robust_wall::{
 use crate::supports::rafts::crenelated::raft_types::{
     RaftBottomMode, RaftSettings, SupportBaseCircle,
 };
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
-use crate::supports::support_primitives::contact_cone::types::ContactCone;
-use crate::supports::support_primitives::contact_disk::contact_disk_utils::{
-    calculate_disk_thickness, get_disk_center, get_disk_rotation,
+use crate::supports::tips::get_final_socket_position;
+use crate::supports::tips::ContactCone;
+use crate::supports::tips::{
+    nib_length, get_disk_center, get_disk_rotation,
 };
-use crate::supports::support_primitives::knot::segment_endpoints::{
+use crate::supports::shafts::{
     EndpointHosts, ShaftEntity, resolve_segment_endpoints, root_top,
 };
 use crate::supports::types::{
@@ -259,7 +259,7 @@ fn append_brace_primitive(
 fn segment_bezier(segment: &Segment) -> Option<&BezierCurve> {
     match &segment.shape {
         SegmentShape::Bezier(curve) => Some(curve),
-        SegmentShape::Straight { .. } => None,
+        SegmentShape::Straight => None,
     }
 }
 
@@ -516,7 +516,7 @@ pub fn append_contact_disk_with(
 /// [`append_contact_disk_primitive`] draws it.
 pub fn contact_disk_size(disk: &ContactDisk, tip_scale: f64) -> (f64, f64) {
     let thickness = disk.disk_length_override.unwrap_or_else(|| {
-        calculate_disk_thickness(disk.surface_normal, disk.cone_axis, Some(&disk.profile))
+        nib_length(disk.surface_normal, disk.cone_axis, Some(&disk.profile))
     });
     (
         thickness,
@@ -1194,7 +1194,7 @@ fn append_smooth_shaft(
     sink: &mut TriangleSink,
     resolved: &[(
         &Segment,
-        crate::supports::support_primitives::knot::segment_endpoints::SegmentEndpoints,
+        crate::supports::shafts::SegmentEndpoints,
     )],
     cones: (Option<&ContactCone>, Option<&ContactCone>),
     (penetration_mm, tip_scale, drawing): (f64, f64, TipDrawing),

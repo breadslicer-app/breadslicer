@@ -79,10 +79,6 @@ impl Matrix4 {
         ))
     }
 
-    pub fn make_rotation_from_quaternion(q: super::Quaternion) -> Matrix4 {
-        Matrix4::compose(Vec3::ZERO, q, Vec3::new(1.0, 1.0, 1.0))
-    }
-
     /// The same transform moved to `v`.
     pub fn set_position(mut self, v: Vec3) -> Matrix4 {
         self.elements[12] = v.x;

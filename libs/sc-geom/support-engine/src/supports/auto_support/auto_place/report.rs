@@ -10,7 +10,7 @@ use super::fan::FanLeafRefusal;
 use super::helpers::{OrphanInfo, collect_host_entities};
 use crate::supports::auto_support::load_budget::LoadBudgetReport;
 use crate::supports::auto_support::settings::SizingPreset;
-use crate::supports::support_type_registry::{
+use crate::supports::support_kinds::{
     SHAFT_HOSTED_MEMBER_TYPE_ORDER, SupportEntityValue, SupportTypeId,
 };
 use crate::supports::support_types::trunk::trunk_replacement::max_connected_diameter::member_diameter_of;

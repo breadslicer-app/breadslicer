@@ -3,9 +3,6 @@
 //! Settings are passed in (DragonFruit's `input.settings ?? getSettings()`),
 //! ids come from `new_id` (`uuidv4()`), and the mesh is its collision field.
 
-use crate::supports::auto_support::parameter_sizing::{
-    SizeOverrides, apply_sizing_overrides_to_settings,
-};
 use crate::supports::constants::get_joint_diameter;
 use crate::supports::placement_logic::collision_avoidance::{
     CollisionField, is_collision_frustum_blocked,
@@ -14,15 +11,14 @@ use crate::supports::placement_logic::cone_axis_policy::{
     ConeAngleMode, ConeAxisPolicyInput, normalize_vector_or_fallback, resolve_cone_axis_policy,
 };
 use crate::supports::rendering::support_builder::SupportData;
-use crate::supports::settings::support_settings_codec::encode_support_settings_hex;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
-use crate::supports::support_primitives::contact_cone::types::{
+use crate::supports::tips::get_final_socket_position;
+use crate::supports::tips::{
     ContactCone, SupportTipProfile, TipPrimitive,
 };
-use crate::supports::support_primitives::contact_disk::contact_disk_interaction::recompute_contact_cone_for_moved_disk;
-use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
-use crate::supports::support_type_registry::SupportTypeId;
+use crate::supports::tips::recompute_contact_cone_for_moved_disk;
+use crate::supports::tips::nib_length;
+use crate::supports::support_kinds::SupportTypeId;
 use crate::supports::types::{Branch, Joint, Knot, Segment, SupportEntity, Vec3};
 use crate::geom::math_utils::{deg_to_rad, js_atan2, js_cos, js_hypot, js_max, js_min, js_sin};
 
@@ -57,7 +53,7 @@ fn get_cone_start_position(cone: &ContactCone) -> Vec3 {
     let surface_normal = cone.surface_normal.unwrap_or(cone.normal);
     let thickness = cone.disk_length_override.unwrap_or_else(|| {
         if cone.profile.is_disk() {
-            calculate_disk_thickness(
+            nib_length(
                 surface_normal,
                 cone.normal,
                 Some(&cone.profile.as_disk_profile()),
@@ -389,15 +385,6 @@ pub fn build_branch_data(
     } = *input;
 
     let settings = input.settings.unwrap_or(live_settings);
-    let settings_code_hex = encode_support_settings_hex(&apply_sizing_overrides_to_settings(
-        settings,
-        Some(&SizeOverrides {
-            shaft_diameter_mm: input.shaft_diameter_mm,
-            tip_contact_diameter_mm: input.tip_contact_diameter_mm,
-            roots_diameter_mm: input.roots_diameter_mm,
-            ..SizeOverrides::default()
-        }),
-    ));
     let cone_angle_mode = settings
         .tip
         .cone_angle_mode
@@ -424,7 +411,6 @@ pub fn build_branch_data(
         disk_thickness_mm: Some(0.1),
         max_standoff_mm: Some(1.5),
         standoff_angle_threshold: Some(std::f64::consts::PI / 4.0),
-        sphere_radius_ratio: None,
         break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
     });
 
@@ -526,7 +512,6 @@ pub fn build_branch_data(
         base: SupportEntity {
             id: branch_id.clone(),
             model_id: model_id.to_owned(),
-            settings_code_hex: Some(settings_code_hex),
             type_id: Some(SupportTypeId::Branch),
             ..SupportEntity::default()
         },

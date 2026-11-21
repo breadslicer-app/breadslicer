@@ -1,7 +1,7 @@
 //! DragonFruit `src/supports/SupportTypes/Twig/twigJointStandoff.ts`.
 
-use crate::supports::support_primitives::contact_cone::types::ContactDiskProfile;
-use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
+use crate::supports::tips::ContactDiskProfile;
+use crate::supports::tips::nib_length;
 use crate::supports::types::Vec3;
 use crate::geom::math_utils::js_max;
 
@@ -22,7 +22,7 @@ pub fn twig_disk_joint_standoff(
     profile: &ContactDiskProfile,
     joint_diameter_mm: f64,
 ) -> f64 {
-    let angle_based = calculate_disk_thickness(surface_normal, cone_axis, Some(profile));
+    let angle_based = nib_length(surface_normal, cone_axis, Some(profile));
     let radius_based = joint_diameter_mm / 2.0 + TWIG_JOINT_SURFACE_CLEARANCE_MM;
     js_max(angle_based, radius_based)
 }

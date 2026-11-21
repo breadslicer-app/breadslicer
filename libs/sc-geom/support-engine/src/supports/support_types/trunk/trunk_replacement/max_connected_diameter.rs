@@ -8,11 +8,11 @@ use indexmap::IndexMap;
 
 use crate::supports::constants::get_joint_diameter;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_primitives::joint::joint_utils::{SplitHosts, split_support_shaft};
-use crate::supports::support_primitives::knot::segment_endpoints::{
+use crate::supports::shafts::{SplitHosts, split_support_shaft};
+use crate::supports::shafts::{
     EndpointHosts, ShaftEntity, resolve_segment_endpoints,
 };
-use crate::supports::support_type_registry::{SupportEntityValue, get_support_type_descriptor};
+use crate::supports::support_kinds::{SupportEntityValue, get_support_type_descriptor};
 use crate::supports::types::{Branch, Knot, Leaf, SupportState, Trunk, Vec3};
 use crate::geom::math_utils::{js_max, js_min};
 
@@ -41,24 +41,24 @@ pub fn member_diameter_of(entity: &SupportEntityValue) -> f64 {
     };
     let type_id = match entity {
         SupportEntityValue::Trunk(_) => {
-            crate::supports::support_type_registry::SupportTypeId::Trunk
+            crate::supports::support_kinds::SupportTypeId::Trunk
         }
         SupportEntityValue::Branch(_) => {
-            crate::supports::support_type_registry::SupportTypeId::Branch
+            crate::supports::support_kinds::SupportTypeId::Branch
         }
-        SupportEntityValue::Leaf(_) => crate::supports::support_type_registry::SupportTypeId::Leaf,
-        SupportEntityValue::Twig(_) => crate::supports::support_type_registry::SupportTypeId::Twig,
+        SupportEntityValue::Leaf(_) => crate::supports::support_kinds::SupportTypeId::Leaf,
+        SupportEntityValue::Twig(_) => crate::supports::support_kinds::SupportTypeId::Twig,
         SupportEntityValue::Stick(_) => {
-            crate::supports::support_type_registry::SupportTypeId::Stick
+            crate::supports::support_kinds::SupportTypeId::Stick
         }
         SupportEntityValue::Brace(_) => {
-            crate::supports::support_type_registry::SupportTypeId::Brace
+            crate::supports::support_kinds::SupportTypeId::Brace
         }
         SupportEntityValue::Stump(_) => {
-            crate::supports::support_type_registry::SupportTypeId::Stump
+            crate::supports::support_kinds::SupportTypeId::Stump
         }
         SupportEntityValue::Kickstand(_) => {
-            crate::supports::support_type_registry::SupportTypeId::Kickstand
+            crate::supports::support_kinds::SupportTypeId::Kickstand
         }
     };
     if get_support_type_descriptor(type_id).has_segments {

@@ -1,6 +1,6 @@
 //! DragonFruit `src/supports/SupportTypes/Kickstand/kickstandRules.ts`.
 
-use crate::supports::support_type_registry::{
+use crate::supports::support_kinds::{
     KICKSTAND_HOST_TYPES, SupportTypeId, is_kickstand_host_type,
 };
 use crate::geom::math_utils::clamp;

@@ -296,7 +296,6 @@ fn apply_zones(zones: &ZonePreset, settings: &mut PipelineSettings, one_raft: bo
     if let Some(i) = rules.default_size_index() {
         apply_zone_size(supports, &rules, i);
     }
-    supports.dev_tools.max_lateral_mm = rules.search_ground_mm;
     if let Some(spacing_mm) = zones.grid_mm.filter(|_| !one_raft) {
         supports.grid.enabled = true;
         supports.grid.spacing_mm = spacing_mm;

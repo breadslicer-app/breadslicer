@@ -14,7 +14,7 @@ use support_engine::supports::placement_logic_v3::smart_placement_v3::{
     RouterStats, SmartPlacementV3Context, SmartPlacementV3Input, calculate_smart_placement_v3,
 };
 use support_engine::supports::settings::types::SupportSettings;
-use support_engine::supports::support_primitives::contact_cone::types::DEFAULT_TIP_PROFILE;
+use support_engine::supports::tips::DEFAULT_TIP_PROFILE;
 use support_engine::supports::types::LimitationCode;
 use support_engine::geom::{Matrix4, Vec3};
 use support_engine::bvh::MeshBvh;

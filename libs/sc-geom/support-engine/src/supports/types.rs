@@ -1,19 +1,18 @@
-//! DragonFruit `src/supports/types.ts`.
+//! The support model: a set's roots, shafts, tips, braces and knots, as the
+//! stages build and edit them and as a project stores them.
 //!
-//! The support data model. Every record serializes with DragonFruit's own field
-//! names, so a DragonFruit snapshot (`DragonfruitImportFormat`, oracle dumps)
-//! reads straight into these types and back out unchanged.
+//! Each record reads and writes its fields in camelCase. Fields a record no
+//! longer has are skipped when an older document is read, so every saved set
+//! still opens.
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use super::support_primitives::contact_cone::types::{ContactCone, ContactDiskProfile};
-use super::support_type_registry::{SupportOriginId, SupportSelectionCategory, SupportTypeId};
-use super::support_types::kickstand::types::KickstandBuildResult;
+use super::support_kinds::{SupportOriginId, SupportTypeId};
+use super::tips::{ContactCone, ContactDiskProfile};
 pub use crate::geom::{Quaternion, Vec3};
 
-// --- Basic Math Types ---
-
+/// Why a support could not be placed where it was asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum LimitationCode {
@@ -25,6 +24,7 @@ pub enum LimitationCode {
     OutOfBounds,
 }
 
+/// A placement that is allowed but worth a warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum WarningCode {
@@ -32,6 +32,7 @@ pub enum WarningCode {
     ShaftAngleTooFlat,
 }
 
+/// Where a root stands, and how it is turned.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Transform {
     pub pos: Vec3,
@@ -40,14 +41,7 @@ pub struct Transform {
     pub scale: Option<Vec3>,
 }
 
-// --- Core Anatomy Entities ---
-
-/// Who created a support.
-///
-/// Absent means a person placed it by hand. A tool that regenerates its own
-/// output filters on this rather than on the support's type -- before it existed,
-/// auto-bracing knew kickstands by an `autoBracingGenerated` flag but had no way
-/// to tell a hand-drawn brace from one of its own, so it removed every brace.
+/// Which pass made a support; none when it was placed by hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SupportGeneratedBy {
@@ -55,102 +49,63 @@ pub enum SupportGeneratedBy {
     AutoBracing,
 }
 
-/// Where an auto-placed support came from. Declared in `support_type_registry`
-/// alongside what each origin implies; re-exported here for entity records.
+/// Which rule placed a support.
 pub type SupportOrigin = SupportOriginId;
 
-/// Base record for all top-level support entities.
-/// Ensures every support element is linked to a specific model.
+/// What every support has: its id, its model, and how it came to be.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SupportEntity {
     pub id: String,
-    /// The model this support belongs to
     pub model_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub settings_code_hex: Option<String>,
-    /// Set when a tool created this; absent when a person did.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generated_by: Option<SupportGeneratedBy>,
-    /// Auto-support origin, for debug origin colouring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<SupportOrigin>,
-    /// Which support type this is.
-    ///
-    /// Optional only for files written before the field existed: those have it
-    /// derived on load from the array they came out of. Everything the store
-    /// hands out carries it.
+    /// Its kind; taken from the collection it is in when a document lacks it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_id: Option<SupportTypeId>,
 }
 
-/// Roots: The anchor point on the build plate or raft.
-/// It does NOT contain the vertical shaft (that's the Trunk).
+/// A support's foot on the plate: a disk, then a cone (or a join cone) up to
+/// where its shaft starts.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Roots {
     #[serde(flatten)]
     pub base: SupportEntity,
-    /// Position on the plate
     pub transform: Transform,
-    /// Base diameter (bottom of cone)
+    /// The disk's width.
     pub diameter: f64,
-    /// Flat disk thickness
     pub disk_height: f64,
-    /// Height of transition cone alone
+    /// The cone's height over the disk.
     pub cone_height: f64,
-    /// Legacy spelling of `coneHeight`, read by `rootTop` when the latter is absent.
+    /// The cone's height in documents that named it so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<f64>,
-    /// SoulCrafted (#360): a 45° join cone this tall from the shaft out,
-    /// standing on the disk or on the raft's plate, whichever is higher.
+    /// A 45° cone this tall from the shaft out, instead of the cone (#360).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub join_cone_mm: Option<f64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum KnotNormalizationHint {
-    Preserve,
-    Project,
-    BraceImported,
-}
-
-/// Knot (Stump): A connection point on a Shaft.
-/// Branches and Braces attach here.
+/// A point on a shaft others hang from: branches, leaves, braces and
+/// kickstands.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Knot {
     pub id: String,
-    /// The shaft this knot belongs to
+    /// The support whose shaft it is on.
     pub parent_shaft_id: String,
-    /// 0-1 position along the shaft segment (preferred representation)
+    /// How far along its segment, 0 to 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub t: Option<f64>,
-    /// World position on the host shaft
     pub pos: Vec3,
-    /// Host shaft diameter + 0.1mm (computed at creation if absent)
+    /// Its host shaft's width plus 0.1 mm.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diameter: Option<f64>,
-    /// Persistent normalization intent that should survive save/load roundtrips.
-    /// Used when imported support geometry needs deterministic preserve/project behavior
-    /// instead of falling back to heuristics on subsequent reloads.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub normalization_hint: Option<KnotNormalizationHint>,
-    /// Import-time hint stamped by converters (e.g. LYS).
-    /// Consumed by normalizeLoadedKnotAndLeafGeometry and promoted into
-    /// `normalizationHint` for roundtrip-stable persistence.
-    /// 'preserve' -> keep authored pos; 'project' -> project to shaft geometry.
-    /// Not present for runtime-created knots.
-    #[serde(
-        rename = "_importHint",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub import_hint: Option<KnotNormalizationHint>,
 }
 
-/// Joint: A spherical articulation point between shaft segments.
+/// A ball where two segments of a shaft meet.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Joint {
     pub id: String,
@@ -158,7 +113,7 @@ pub struct Joint {
     pub diameter: f64,
 }
 
-/// The cubic Bezier a `BezierSegment` (and a brace `curve`) carries.
+/// A cubic curve a segment or a brace follows between its ends.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BezierCurve {
@@ -167,54 +122,40 @@ pub struct BezierCurve {
     pub start_tangent: Vec3,
     pub end_tangent: Vec3,
     pub tension: f64,
-    /// 0..1, 0.5 = balanced
+    /// Where the curve leans, 0 to 1 (0.5: even).
     pub bias: f64,
     pub resolution: f64,
 }
 
-/// What a segment is between its joints: `StraightSegment | BezierSegment`.
+/// What a segment is between its ends.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SegmentShape {
-    /// `type?: 'straight'`; `explicit` records whether the tag was written.
-    /// `stray_bias` is the `bias` DragonFruit leaves on a segment it
-    /// de-curved (`removeSegmentCurve` does not strip it); nothing reads it,
-    /// but it is part of the record DragonFruit writes.
-    Straight {
-        explicit: bool,
-        stray_bias: Option<f64>,
-    },
+    Straight,
     Bezier(BezierCurve),
 }
 
-/// Segment: A section of a support (straight or curved).
+/// A piece of a shaft, with the joints at its ends.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "RawSegment", into = "RawSegment")]
+#[serde(try_from = "StoredSegment", into = "StoredSegment")]
 pub struct Segment {
     pub id: String,
     pub diameter: f64,
-    /// If null, it might be the tip
     pub top_joint: Option<Joint>,
-    /// If null, it connects to Root or Knot
     pub bottom_joint: Option<Joint>,
     pub shape: SegmentShape,
 }
 
 impl Segment {
-    /// A straight segment with no `type` tag, as most builders write them.
     pub fn straight(id: impl Into<String>, diameter: f64) -> Self {
         Segment {
             id: id.into(),
             diameter,
             top_joint: None,
             bottom_joint: None,
-            shape: SegmentShape::Straight {
-                explicit: false,
-                stray_bias: None,
-            },
+            shape: SegmentShape::Straight,
         }
     }
 
-    /// `segment.type === 'bezier'`.
     #[inline]
     pub fn is_bezier(&self) -> bool {
         matches!(self.shape, SegmentShape::Bezier(_))
@@ -224,7 +165,7 @@ impl Segment {
     pub fn bezier(&self) -> Option<&BezierCurve> {
         match &self.shape {
             SegmentShape::Bezier(curve) => Some(curve),
-            SegmentShape::Straight { .. } => None,
+            SegmentShape::Straight => None,
         }
     }
 
@@ -232,15 +173,16 @@ impl Segment {
     pub fn bezier_mut(&mut self) -> Option<&mut BezierCurve> {
         match &mut self.shape {
             SegmentShape::Bezier(curve) => Some(curve),
-            SegmentShape::Straight { .. } => None,
+            SegmentShape::Straight => None,
         }
     }
 }
 
-/// The wire form of a segment: one flat record, `type` deciding the variant.
+/// A segment as stored: one record, a curve's fields present when `type` is
+/// `bezier`.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RawSegment {
+struct StoredSegment {
     id: String,
     diameter: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -265,118 +207,88 @@ struct RawSegment {
     resolution: Option<f64>,
 }
 
-impl TryFrom<RawSegment> for Segment {
+impl TryFrom<StoredSegment> for Segment {
     type Error = String;
 
-    fn try_from(raw: RawSegment) -> Result<Self, Self::Error> {
-        let shape = match raw.kind.as_deref() {
+    fn try_from(s: StoredSegment) -> Result<Self, Self::Error> {
+        let shape = match s.kind.as_deref() {
+            None | Some("straight") => SegmentShape::Straight,
             Some("bezier") => {
-                let missing = |field: &str| format!("bezier segment {} has no {field}", raw.id);
-                SegmentShape::Bezier(BezierCurve {
-                    control_point1: raw.control_point1.ok_or_else(|| missing("controlPoint1"))?,
-                    control_point2: raw.control_point2.ok_or_else(|| missing("controlPoint2"))?,
-                    start_tangent: raw.start_tangent.ok_or_else(|| missing("startTangent"))?,
-                    end_tangent: raw.end_tangent.ok_or_else(|| missing("endTangent"))?,
-                    tension: raw.tension.ok_or_else(|| missing("tension"))?,
-                    bias: raw.bias.ok_or_else(|| missing("bias"))?,
-                    resolution: raw.resolution.ok_or_else(|| missing("resolution"))?,
-                })
+                let curve = (|| {
+                    Some(BezierCurve {
+                        control_point1: s.control_point1?,
+                        control_point2: s.control_point2?,
+                        start_tangent: s.start_tangent?,
+                        end_tangent: s.end_tangent?,
+                        tension: s.tension?,
+                        bias: s.bias?,
+                        resolution: s.resolution?,
+                    })
+                })();
+                SegmentShape::Bezier(
+                    curve.ok_or_else(|| format!("curved segment {} lacks its curve", s.id))?,
+                )
             }
-            Some("straight") => SegmentShape::Straight {
-                explicit: true,
-                stray_bias: raw.bias,
-            },
-            None => SegmentShape::Straight {
-                explicit: false,
-                stray_bias: raw.bias,
-            },
-            Some(other) => return Err(format!("segment {} has unknown type {other:?}", raw.id)),
+            Some(other) => return Err(format!("segment {} is of unknown type {other:?}", s.id)),
         };
         Ok(Segment {
-            id: raw.id,
-            diameter: raw.diameter,
-            top_joint: raw.top_joint,
-            bottom_joint: raw.bottom_joint,
+            id: s.id,
+            diameter: s.diameter,
+            top_joint: s.top_joint,
+            bottom_joint: s.bottom_joint,
             shape,
         })
     }
 }
 
-impl From<Segment> for RawSegment {
+impl From<Segment> for StoredSegment {
     fn from(segment: Segment) -> Self {
-        let mut raw = RawSegment {
+        let curve = segment.bezier().copied();
+        StoredSegment {
             id: segment.id,
             diameter: segment.diameter,
             top_joint: segment.top_joint,
             bottom_joint: segment.bottom_joint,
-            kind: None,
-            control_point1: None,
-            control_point2: None,
-            start_tangent: None,
-            end_tangent: None,
-            tension: None,
-            bias: None,
-            resolution: None,
-        };
-        match segment.shape {
-            SegmentShape::Straight {
-                explicit,
-                stray_bias,
-            } => {
-                if explicit {
-                    raw.kind = Some("straight".to_owned());
-                }
-                raw.bias = stray_bias;
-            }
-            SegmentShape::Bezier(curve) => {
-                raw.kind = Some("bezier".to_owned());
-                raw.control_point1 = Some(curve.control_point1);
-                raw.control_point2 = Some(curve.control_point2);
-                raw.start_tangent = Some(curve.start_tangent);
-                raw.end_tangent = Some(curve.end_tangent);
-                raw.tension = Some(curve.tension);
-                raw.bias = Some(curve.bias);
-                raw.resolution = Some(curve.resolution);
-            }
+            kind: curve.map(|_| "bezier".to_owned()),
+            control_point1: curve.map(|c| c.control_point1),
+            control_point2: curve.map(|c| c.control_point2),
+            start_tangent: curve.map(|c| c.start_tangent),
+            end_tangent: curve.map(|c| c.end_tangent),
+            tension: curve.map(|c| c.tension),
+            bias: curve.map(|c| c.bias),
+            resolution: curve.map(|c| c.resolution),
         }
-        raw
     }
 }
 
-/// Trunk: A vertical column extending from Roots.
+/// A shaft from a root on the plate up to the model.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Trunk {
     #[serde(flatten)]
     pub base: SupportEntity,
-    /// Link to the Roots anchor
     pub root_id: String,
-    /// Baseline shaft diameter captured at creation/promotion
+    /// Its shaft's width when it was made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_diameter_mm: Option<f64>,
     pub segments: Vec<Segment>,
-    /// Terminal piece at model interface
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact_cone: Option<ContactCone>,
 }
 
-/// Branch: A column extending from a Knot on another support.
+/// A shaft from a knot on another shaft up to the model.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Branch {
     #[serde(flatten)]
     pub base: SupportEntity,
-    /// Link to the Knot on the parent
     pub parent_knot_id: String,
     pub segments: Vec<Segment>,
-    /// Terminal piece at model interface
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact_cone: Option<ContactCone>,
 }
 
-/// Leaf: A minimal model -> support connection.
-/// Uses a contact tip on the model and a Knot on a host shaft.
-/// No segments, no joints.
+/// A tip straight off a knot on another shaft, with no shaft of its own.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Leaf {
@@ -386,6 +298,7 @@ pub struct Leaf {
     pub contact_cone: ContactCone,
 }
 
+/// Which side of the model's surface a support stands on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PlacementSurface {
@@ -393,6 +306,7 @@ pub enum PlacementSurface {
     Exterior,
 }
 
+/// A flat contact on the model, a short nib off its surface.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactDisk {
@@ -408,6 +322,7 @@ pub struct ContactDisk {
     pub contact_diameter_mm: f64,
 }
 
+/// A short shaft from the model to the model, a disk at each end.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Twig {
@@ -418,6 +333,7 @@ pub struct Twig {
     pub contact_disk_b: ContactDisk,
 }
 
+/// A longer shaft from the model to the model, a cone at each end.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Stick {
@@ -428,7 +344,7 @@ pub struct Stick {
     pub contact_cone_b: ContactCone,
 }
 
-/// The `type: 'bezier'` tag a brace curve always carries.
+/// The `bezier` tag a brace's curve carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BezierTag {
     #[default]
@@ -436,6 +352,7 @@ pub enum BezierTag {
     Bezier,
 }
 
+/// The curve a brace follows.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BraceCurve {
@@ -445,9 +362,8 @@ pub struct BraceCurve {
     pub curve: BezierCurve,
 }
 
-/// Stump: A minimal near-plate support for contact points below 5mm.
-/// Bypasses grid system entirely. Not a target for branches, leaves, or braces.
-/// Geometry: frustum root -> joint -> single segment -> contact cone.
+/// A short support near the plate: its own root, a joint, one segment and a
+/// tip.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Stump {
@@ -467,6 +383,7 @@ pub struct BraceProfile {
     pub diameter: f64,
 }
 
+/// Which part of a run of braces a brace is: the first, or a repeat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BraceDebugSection {
@@ -474,7 +391,7 @@ pub enum BraceDebugSection {
     Repeating,
 }
 
-/// Brace: A stabilizer bar connecting two supports.
+/// A shaft between knots on two other shafts.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Brace {
@@ -499,7 +416,8 @@ pub struct KickstandProfile {
     pub terminal_end_diameter_mm: f64,
 }
 
-/// Kickstand: A grounded column bracing a shaft it attaches to.
+/// A slanted shaft from its own root on the plate to a knot on another
+/// shaft, holding it sideways.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Kickstand {
@@ -509,33 +427,11 @@ pub struct Kickstand {
     pub host_knot_id: String,
     pub host_segment_id: String,
     pub host_min_t: f64,
-    /// Deprecated: superseded by `generatedBy` on SupportEntity. Kept so scenes
-    /// saved before the change still identify their auto-generated kickstands.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_bracing_generated: Option<bool>,
     pub segments: Vec<Segment>,
     pub profile: KickstandProfile,
 }
 
-// --- Collection State ---
-
-/// The interaction category under the pointer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum HoveredCategory {
-    Model,
-    Support,
-    ContactDisk,
-    Segment,
-    Joint,
-    Knot,
-    Raft,
-    Gizmo,
-    None,
-}
-
-/// Every entity collection, keyed by id in insertion order (a JavaScript
-/// object's key order, which DragonFruit's walks depend on).
+/// A set's supports, each kind by id in the order they were made.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct SupportCollections {
     #[serde(default)]
@@ -560,54 +456,13 @@ pub struct SupportCollections {
     pub knots: IndexMap<String, Knot>,
 }
 
-/// `SupportState`: the collections plus interaction state.
-///
-/// DragonFruit's `supports` field is a non-enumerable by-id view over the named
-/// collections; it is derived, never stored, so it has no field here.
+/// A set's supports, and the one picked when a pass runs (it keeps a picked
+/// brace picked when it is redrawn).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SupportState {
     #[serde(flatten)]
     pub collections: SupportCollections,
-    // Interaction State
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selected_category: Option<SupportSelectionCategory>,
-    pub hovered_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hovered_category: Option<HoveredCategory>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub interaction_warning: Option<WarningCode>,
-}
-
-// --- Import/Export Format ---
-
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DragonfruitImportMeta {
-    pub source: String,
-    pub object_center: Vec3,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<f64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DragonfruitImportFormat {
-    pub version: f64,
-    pub meta: DragonfruitImportMeta,
-    pub roots: Vec<Roots>,
-    pub trunks: Vec<Trunk>,
-    pub branches: Vec<Branch>,
-    pub leaves: Vec<Leaf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub twigs: Option<Vec<Twig>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sticks: Option<Vec<Stick>>,
-    pub braces: Vec<Brace>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stumps: Option<Vec<Stump>>,
-    pub knots: Vec<Knot>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kickstands: Option<Vec<KickstandBuildResult>>,
 }

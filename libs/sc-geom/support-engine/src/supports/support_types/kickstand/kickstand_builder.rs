@@ -272,7 +272,6 @@ pub fn build_kickstand_data(
         t: Some(host_t),
         pos: host.pos,
         diameter: Some(get_kickstand_knot_diameter_mm(host.diameter_mm)),
-        ..Knot::default()
     };
 
     // An authored column is already straight, so it keeps that shape: one
@@ -308,7 +307,6 @@ pub fn build_kickstand_data(
         host_knot_id,
         host_segment_id: host.segment_id.clone(),
         host_min_t,
-        auto_bracing_generated: None,
         segments,
         profile: KickstandProfile {
             body_diameter_mm,
