@@ -10169,8 +10169,8 @@ msgstr "Trazo"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
-msgid "Drag over the model in the view: a stroke from one side to the other cuts it along the stroke, through the model as seen; a loop round a part cuts that part off. Then press Cut."
-msgstr "Arrastrá sobre el modelo en la vista: un trazo de un lado al otro lo corta siguiendo el trazo, a través del modelo tal como se ve; un lazo alrededor de una parte la separa. Después tocá Cortar."
+msgid "Drag over the model in the view: a stroke from one side to the other cuts it along the stroke, through the model as seen; a loop round a part cuts that part off. Then turn the camera and adjust it: the cubes move its points, the arrow and a drag on it move it, the rings tilt it. Then press Cut."
+msgstr "Arrastrá sobre el modelo en la vista: un trazo de un lado al otro lo corta siguiendo el trazo, a través del modelo tal como se ve; un lazo alrededor de una parte la separa. Después girá la cámara y ajustalo: los cubitos mueven sus puntos, la flecha y arrastrarlo lo corren, los aros lo inclinan. Después tocá Cortar."
 
 #: src/cut_run.rs
 msgctxt "CutRun"

@@ -134,8 +134,12 @@ pub(crate) struct Gizmo {
     pub(crate) n: [f64; 3],
     pub(crate) u: [f64; 3],
     pub(crate) v: [f64; 3],
-    /// The four corners of the shape on show, in order around it.
-    pub(crate) corners: [[f64; 3]; 4],
+    /// The corners of the shape on show, in order around it: a plane's
+    /// four, or the points of a stroke (#658).
+    pub(crate) corners: Vec<[f64; 3]>,
+    /// Whether the corners outline a flat shape a press inside of grabs
+    /// (the plane's); a stroke's surface is picked by its owner.
+    pub(crate) flat: bool,
 }
 
 /// How near the cursor a corner cube is picked, logical pixels: half the
@@ -197,7 +201,7 @@ impl Gizmo {
     /// rings, and the plane last.
     pub(crate) fn pick(&self, pointer: &ScenePointer) -> Option<Handle> {
         let at = pointer.cursor;
-        let corner = (0..4)
+        let corner = (0..self.corners.len())
             .filter_map(|k| {
                 let s = (pointer.project)(self.corners[k])?;
                 let d = (s[0] - at[0]).hypot(s[1] - at[1]);
@@ -227,24 +231,28 @@ impl Gizmo {
                 return Some(Handle::Ring(k));
             }
         }
+        if !self.flat {
+            return None;
+        }
         let hit = pointer.on_plane(self.center, self.n)?;
         let flat = |p: [f64; 3]| {
             let d = sub(p, self.center);
             [dot(d, self.u), dot(d, self.v)]
         };
-        let outline = self.corners.map(flat);
+        let outline: Vec<[f64; 2]> = self.corners.iter().map(|&c| flat(c)).collect();
         inside(flat(hit), &outline).then_some(Handle::Plane)
     }
 
     /// The gizmo as the gizmo pass draws it.
     pub(crate) fn drawn(&self, hover: Option<Handle>, active: Option<Handle>) -> ToolGizmo {
         let v3 = |p: [f64; 3]| glam::Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32);
-        ToolGizmo {
-            axes: [v3(self.u), v3(self.v), v3(self.n)],
-            corners: self.corners.map(v3),
-            hover: hover.and_then(Handle::drawn),
-            active: active.and_then(Handle::drawn),
-        }
+        let corners: Vec<glam::Vec3> = self.corners.iter().map(|&c| v3(c)).collect();
+        ToolGizmo::new(
+            [v3(self.u), v3(self.v), v3(self.n)],
+            &corners,
+            hover.and_then(Handle::drawn),
+            active.and_then(Handle::drawn),
+        )
     }
 }
 
@@ -367,12 +375,13 @@ mod tests {
             n: [0.0, 0.0, 1.0],
             u: [1.0, 0.0, 0.0],
             v: [0.0, 1.0, 0.0],
-            corners: [
+            corners: vec![
                 [-20.0, -20.0, 0.0],
                 [20.0, -20.0, 0.0],
                 [20.0, 20.0, 0.0],
                 [-20.0, 20.0, 0.0],
             ],
+            flat: true,
         }
     }
 

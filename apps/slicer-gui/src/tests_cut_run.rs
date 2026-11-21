@@ -270,6 +270,81 @@ fn a_stroke_across_the_model_cuts_it_along_the_stroke() {
     });
 }
 
+/// #658: a stroke once drawn stays as a surface with handles: a drag on
+/// it moves it, a cube moves one of its points, and the cut follows; the
+/// stroke keeps few points, each a handle.
+#[test]
+fn a_drawn_stroke_is_adjusted_before_it_cuts() {
+    on_fresh_slint_thread(|| {
+        let f = fixture(cube());
+        opened(&f);
+        f.run.on_option(14, 1.0);
+        // Across the cube along y = 3, from above, with many little steps.
+        assert!(f.run.press(&above(-10.0, 3.0)));
+        for k in 1..=40 {
+            f.run.drag(&above(-10.0 + f64::from(k), 3.0));
+        }
+        f.run.release(Some(&above(32.0, 3.0)), true);
+        land(&f.run);
+        let world = f
+            .run
+            .stroke_world
+            .borrow()
+            .clone()
+            .expect("the stroke is kept");
+        assert_eq!(world.points.len(), 2, "a straight stroke keeps its ends");
+        let (_, gizmo, _) = f.run.drawn_gizmo().expect("its gizmo shows");
+        assert_eq!(gizmo.corners().len(), 2);
+
+        // A drag on its line, seen edge on, moves it 5 mm across.
+        assert!(f.run.press(&above(26.0, 3.0)));
+        f.run.drag(&above(26.0, 6.0));
+        f.run.drag(&above(26.0, 8.0));
+        f.run.release(Some(&above(26.0, 8.0)), true);
+        land(&f.run);
+        assert!(f.window.get_cut_can_cut(), "{}", f.window.get_cut_warning());
+        let moved = f.run.stroke_world.borrow().clone().unwrap();
+        let ends: Vec<[f64; 3]> = moved.points.iter().map(|&p| moved.world(p)).collect();
+        for e in &ends {
+            assert!((e[1] - 8.0).abs() < 1e-6, "{ends:?}");
+        }
+
+        // Its last point dragged to y = -2 tilts the cut across the cube.
+        let last = ends[1];
+        assert!(f.run.press(&above(last[0], last[1])));
+        f.run.drag(&above(last[0], -2.0));
+        f.run.release(Some(&above(last[0], -2.0)), true);
+        land(&f.run);
+        let bent = f.run.stroke_world.borrow().clone().unwrap();
+        let end = bent.world(bent.points[1]);
+        assert!((end[1] + 2.0).abs() < 1e-6, "{end:?}");
+
+        // Undone by a right click mid drag: back where it was.
+        assert!(f.run.press(&above(end[0], end[1])));
+        f.run.drag(&above(end[0], 5.0));
+        f.run.release(None, true);
+        land(&f.run);
+        assert_eq!(f.run.stroke_world.borrow().clone().unwrap(), bent);
+
+        // The cut follows the surface: y from 8 at x -10 to -2 at x 32.
+        f.run.apply();
+        assert_eq!(leaves(&f), 2);
+        let line = |x: f64| 8.0 + (x + 10.0) * (-10.0 / 42.0);
+        // The cube spans x 0..20, y -10..10: the part above the line.
+        let above_line = 20.0 * ((10.0 - line(0.0)) + (10.0 - line(20.0))) / 2.0 * 20.0;
+        let mut v = piece_volumes(&f);
+        v.sort_by(f64::total_cmp);
+        let want = [
+            above_line.min(8000.0 - above_line),
+            above_line.max(8000.0 - above_line),
+        ];
+        assert!(
+            (v[0] - want[0]).abs() < 1e-2 && (v[1] - want[1]).abs() < 1e-2,
+            "{v:?} {want:?}"
+        );
+    });
+}
+
 /// #443: Suggest puts the plane, level, at the model's narrowest place; it
 /// cuts nothing.
 #[test]

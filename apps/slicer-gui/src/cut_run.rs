@@ -404,7 +404,8 @@ impl Placed {
             n: self.plane.normal(),
             u: self.u,
             v: self.v,
-            corners: self.corners.map(|c| self.world(c)),
+            corners: self.corners.map(|c| self.world(c)).to_vec(),
+            flat: true,
         }
     }
 }
@@ -616,6 +617,7 @@ struct StrokeTrial {
 }
 
 /// A stroke in the world: its frame across the view and its points in it.
+#[derive(Clone, Debug, PartialEq)]
 struct StrokeFrame {
     origin: [f64; 3],
     u: [f64; 3],
@@ -623,6 +625,204 @@ struct StrokeFrame {
     along: [f64; 3],
     points: Vec<[f64; 2]>,
     closed: bool,
+}
+
+/// The most points a stroke keeps once drawn (#658): each one is a handle.
+const STROKE_HANDLES: usize = crate::mesh_render::MAX_TOOL_CORNERS;
+
+impl StrokeFrame {
+    /// The world point at `p` in the frame, at the model's middle depth.
+    fn world(&self, p: [f64; 2]) -> [f64; 3] {
+        add(self.origin, add(scale(self.u, p[0]), scale(self.v, p[1])))
+    }
+
+    /// Where world point `w` lies across the sweep.
+    fn flat(&self, w: [f64; 3]) -> [f64; 2] {
+        let d = sub(w, self.origin);
+        [dot(d, self.u), dot(d, self.v)]
+    }
+
+    /// The gizmo of the stroke's surface (#658): at the middle of its
+    /// points, the arrow across the surface, the rings about the stroke's
+    /// chord (tilting the sweep) and about the sweep (turning the stroke),
+    /// a cube at each point.
+    fn gizmo(&self) -> Gizmo {
+        let corners: Vec<[f64; 3]> = self.points.iter().map(|&p| self.world(p)).collect();
+        let count = corners.len().max(1) as f64;
+        let center = corners
+            .iter()
+            .fold([0.0; 3], |a, p| add(a, *p))
+            .map(|x| x / count);
+        let (first, last) = (corners[0], corners[corners.len() - 1]);
+        let chord = sub(last, first);
+        let chord = sub(chord, scale(self.along, dot(chord, self.along)));
+        let u = if self.closed || dot(chord, chord) < 1e-12 {
+            self.u
+        } else {
+            normalize(chord)
+        };
+        let n = normalize(cross(u, self.along));
+        Gizmo {
+            center,
+            n,
+            u,
+            v: self.along,
+            corners,
+            flat: false,
+        }
+    }
+
+    /// The stroke turned by `angle` about `axis` through `pivot`.
+    fn turned(&self, pivot: [f64; 3], axis: [f64; 3], angle: f64) -> StrokeFrame {
+        StrokeFrame {
+            origin: turned(self.origin, pivot, axis, angle),
+            u: turned_dir(self.u, axis, angle),
+            v: turned_dir(self.v, axis, angle),
+            along: turned_dir(self.along, axis, angle),
+            ..self.clone()
+        }
+    }
+
+    /// The stroke moved by `by`.
+    fn moved(&self, by: [f64; 3]) -> StrokeFrame {
+        StrokeFrame {
+            origin: add(self.origin, by),
+            ..self.clone()
+        }
+    }
+
+    /// Where the ray from `origin` along `direction` meets the swept
+    /// surface, `deep` each way of the middle, nearest the eye.
+    fn surface_hit(&self, origin: [f64; 3], direction: [f64; 3], deep: f64) -> Option<[f64; 3]> {
+        let mut best: Option<f64> = None;
+        for w in self.points.windows(2) {
+            let (a, b) = (self.world(w[0]), self.world(w[1]));
+            let quad = [
+                sub(a, scale(self.along, deep)),
+                add(a, scale(self.along, deep)),
+                add(b, scale(self.along, deep)),
+                sub(b, scale(self.along, deep)),
+            ];
+            for [i, j, k] in [[0, 1, 2], [0, 2, 3]] {
+                if let Some(t) = ray_triangle(origin, direction, [quad[i], quad[j], quad[k]])
+                    && best.is_none_or(|b| t < b)
+                {
+                    best = Some(t);
+                }
+            }
+        }
+        best.map(|t| add(origin, scale(direction, t)))
+    }
+
+    /// Where `pointer` takes hold of the surface: where it meets it, or,
+    /// seen edge on as when it was drawn, the point of its middle line
+    /// within 8 pixels of the cursor.
+    fn grip(&self, pointer: &ScenePointer, deep: f64) -> Option<[f64; 3]> {
+        if let Some(hit) = self.surface_hit(pointer.origin, pointer.direction, deep) {
+            return Some(hit);
+        }
+        let at = pointer.cursor;
+        self.points
+            .windows(2)
+            .filter_map(|w| {
+                let (a, b) = (self.world(w[0]), self.world(w[1]));
+                let (sa, sb) = ((pointer.project)(a)?, (pointer.project)(b)?);
+                let d = [sb[0] - sa[0], sb[1] - sa[1]];
+                let len2 = d[0] * d[0] + d[1] * d[1];
+                let t = if len2 < 1e-12 {
+                    0.0
+                } else {
+                    (((at[0] - sa[0]) * d[0] + (at[1] - sa[1]) * d[1]) / len2).clamp(0.0, 1.0)
+                };
+                let q = [sa[0] + d[0] * t, sa[1] + d[1] * t];
+                let far = (q[0] - at[0]).hypot(q[1] - at[1]);
+                (far <= 8.0).then(|| (far, add(a, scale(sub(b, a), t))))
+            })
+            .min_by(|x, y| x.0.total_cmp(&y.0))
+            .map(|(_, p)| p)
+    }
+
+    /// The stroke with fewer points, at most [`STROKE_HANDLES`]: the
+    /// fewest that keep within `tolerance` mm of the drawn one, the
+    /// tolerance growing until they fit.
+    fn simplified(mut self, tolerance: f64) -> StrokeFrame {
+        let mut tol = tolerance.max(1e-3);
+        loop {
+            let kept = simplify(&self.points, tol);
+            if kept.len() <= STROKE_HANDLES || tol > 1e4 {
+                self.points = kept;
+                return self;
+            }
+            tol *= 1.5;
+        }
+    }
+}
+
+/// The points of `points` the Ramer-Douglas-Peucker rule keeps within
+/// `tol`: both ends always.
+fn simplify(points: &[[f64; 2]], tol: f64) -> Vec<[f64; 2]> {
+    if points.len() <= 2 {
+        return points.to_vec();
+    }
+    let (a, b) = (points[0], points[points.len() - 1]);
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let len = dx.hypot(dy);
+    let off = |p: [f64; 2]| {
+        if len < 1e-12 {
+            (p[0] - a[0]).hypot(p[1] - a[1])
+        } else {
+            ((p[0] - a[0]) * dy - (p[1] - a[1]) * dx).abs() / len
+        }
+    };
+    let (far, at) = points[1..points.len() - 1]
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (off(p), i + 1))
+        .fold((0.0, 0), |m, x| if x.0 > m.0 { x } else { m });
+    if far <= tol {
+        return vec![a, b];
+    }
+    let mut left = simplify(&points[..=at], tol);
+    let right = simplify(&points[at..], tol);
+    left.pop();
+    left.extend(right);
+    left
+}
+
+/// How far along `direction` the ray from `origin` meets triangle `t`.
+fn ray_triangle(origin: [f64; 3], direction: [f64; 3], t: [[f64; 3]; 3]) -> Option<f64> {
+    let (e1, e2) = (sub(t[1], t[0]), sub(t[2], t[0]));
+    let h = cross(direction, e2);
+    let det = dot(e1, h);
+    if det.abs() < 1e-14 {
+        return None;
+    }
+    let s = sub(origin, t[0]);
+    let bu = dot(s, h) / det;
+    if !(0.0..=1.0).contains(&bu) {
+        return None;
+    }
+    let q = cross(s, e1);
+    let bv = dot(direction, q) / det;
+    if bv < 0.0 || bu + bv > 1.0 {
+        return None;
+    }
+    let d = dot(e2, q) / det;
+    (d > 1e-9).then_some(d)
+}
+
+/// A drag of one of a stroke's handles (#658), from where it was pressed.
+struct StrokeGrab {
+    handle: Handle,
+    /// The stroke and its gizmo at the press.
+    from: StrokeFrame,
+    gizmo: Gizmo,
+    /// Where the press met the surface, for a drag of the surface itself.
+    hit: Option<[f64; 3]>,
+    along: Option<f64>,
+    turn: Option<Turn>,
+    start: f64,
+    swept: f64,
 }
 
 /// The stroke drawn by the rays `rays` (eye and direction), across the
@@ -750,6 +950,10 @@ pub(crate) struct CutRun {
     stroke: RefCell<Vec<([f64; 3], [f64; 3])>>,
     stroke_cursor: Cell<[f64; 2]>,
     drawing: Cell<bool>,
+    /// The stroke once drawn, which its handles adjust before cutting
+    /// (#658).
+    stroke_world: RefCell<Option<StrokeFrame>>,
+    stroke_grab: RefCell<Option<StrokeGrab>>,
     stroke_trial: RefCell<Option<StrokeTrial>>,
     /// The suggested heights for the model on show, world mm, best first,
     /// and the one on show (#443).
@@ -823,6 +1027,8 @@ impl CutRun {
                 stroke: RefCell::new(Vec::new()),
                 stroke_cursor: Cell::new([0.0; 2]),
                 drawing: Cell::new(false),
+                stroke_world: RefCell::new(None),
+                stroke_grab: RefCell::new(None),
                 stroke_trial: RefCell::new(None),
                 suggestions: RefCell::new(None),
                 suggested: Cell::new(0),
@@ -885,6 +1091,8 @@ impl CutRun {
             return;
         }
         self.stroke.borrow_mut().clear();
+        self.stroke_world.borrow_mut().take();
+        self.stroke_grab.borrow_mut().take();
         self.drawing.set(false);
         self.stroke_trial.borrow_mut().take();
         self.settle.stop();
@@ -920,6 +1128,11 @@ impl CutRun {
             .as_ref()
             .is_none_or(|t| t.leaf != target.leaf || !Arc::ptr_eq(&t.mesh, &target.mesh));
         if fresh || new_model {
+            // A stroke drawn over another model goes (#658).
+            self.stroke.borrow_mut().clear();
+            self.stroke_world.borrow_mut().take();
+            self.stroke_grab.borrow_mut().take();
+            self.stroke_trial.borrow_mut().take();
             let mut s = self.settings.get();
             s.height = (target.lo[2] + target.hi[2]) / 2.0;
             s.tilt = [0.0; 2];
@@ -1061,6 +1274,8 @@ impl CutRun {
         }
         self.stroke_mode.set(on);
         self.stroke.borrow_mut().clear();
+        self.stroke_world.borrow_mut().take();
+        self.stroke_grab.borrow_mut().take();
         self.drawing.set(false);
         self.stroke_trial.borrow_mut().take();
         self.grab.borrow_mut().take();
@@ -1076,9 +1291,49 @@ impl CutRun {
     }
 
     fn stroke_press(&self, pointer: &ScenePointer) -> bool {
-        if self.on_show().is_none() {
+        let Some((_, target)) = self.on_show() else {
             return false;
+        };
+        // On a handle of the stroke drawn, or on its surface: it is
+        // adjusted (#658). Anywhere else a new stroke starts.
+        let held = self.stroke_world.borrow().clone();
+        if let Some(world) = held {
+            let gizmo = world.gizmo();
+            let handle = gizmo
+                .pick(pointer)
+                .or_else(|| world.grip(pointer, target.reach()).map(|_| Handle::Plane));
+            if let Some(handle) = handle {
+                let hit = match handle {
+                    Handle::Plane => world.grip(pointer, target.reach()),
+                    _ => None,
+                };
+                let along = match handle {
+                    Handle::Arrow => pointer.along_line(gizmo.center, gizmo.n),
+                    _ => None,
+                };
+                let turn = match handle {
+                    Handle::Ring(k) => Turn::start(&gizmo, k, pointer),
+                    _ => None,
+                };
+                let start = match handle {
+                    Handle::Ring(k) => gizmo.ring_point_near(k, pointer).map_or(0.0, |(_, a, _)| a),
+                    _ => 0.0,
+                };
+                *self.stroke_grab.borrow_mut() = Some(StrokeGrab {
+                    handle,
+                    from: world,
+                    gizmo,
+                    hit,
+                    along,
+                    turn,
+                    start,
+                    swept: 0.0,
+                });
+                self.hot.set(Some(handle));
+                return true;
+            }
         }
+        self.stroke_world.borrow_mut().take();
         self.drawing.set(true);
         *self.stroke.borrow_mut() = vec![(pointer.origin, pointer.direction)];
         self.stroke_cursor.set(pointer.cursor);
@@ -1086,6 +1341,61 @@ impl CutRun {
         self.show_stroke();
         self.describe_stroke();
         true
+    }
+
+    /// A drag of one of the stroke's handles (#658): the stroke follows.
+    fn stroke_handle_drag(&self, pointer: &ScenePointer) {
+        let next = {
+            let mut grab = self.stroke_grab.borrow_mut();
+            let Some(g) = grab.as_mut() else {
+                return;
+            };
+            match g.handle {
+                Handle::Arrow => {
+                    let (Some(from), Some(now)) =
+                        (g.along, pointer.along_line(g.gizmo.center, g.gizmo.n))
+                    else {
+                        return;
+                    };
+                    g.from.moved(scale(g.gizmo.n, now - from))
+                }
+                Handle::Ring(k) => {
+                    let Some(turn) = g.turn.as_mut() else {
+                        return;
+                    };
+                    let angle = turn.update(pointer.cursor);
+                    g.swept = angle;
+                    g.from.turned(g.gizmo.center, g.gizmo.ring_axis(k), angle)
+                }
+                Handle::Corner(k) => {
+                    let Some(&point) = g.gizmo.corners.get(k) else {
+                        return;
+                    };
+                    let Some(hit) = pointer.on_plane(point, g.from.along) else {
+                        return;
+                    };
+                    let mut moved = g.from.clone();
+                    moved.points[k] = g.from.flat(hit);
+                    moved
+                }
+                Handle::Plane => {
+                    // Across the screen, through where it was gripped; what
+                    // runs along the sweep changes nothing.
+                    let Some(from) = g.hit else {
+                        return;
+                    };
+                    let Some(now) = pointer.on_plane(from, pointer.direction) else {
+                        return;
+                    };
+                    let by = sub(now, from);
+                    g.from
+                        .moved(sub(by, scale(g.from.along, dot(by, g.from.along))))
+                }
+            }
+        };
+        *self.stroke_world.borrow_mut() = Some(next);
+        self.stroke_trial.borrow_mut().take();
+        self.show_stroke();
     }
 
     fn stroke_drag(&self, pointer: &ScenePointer) {
@@ -1112,8 +1422,40 @@ impl CutRun {
         self.stroke
             .borrow_mut()
             .push((pointer.origin, pointer.direction));
+        // Kept as a surface the handles adjust (#658), with as few points
+        // as keep it within a fiftieth of a millimetre per 10 mm of model.
+        if let Some((_, target)) = self.on_show() {
+            let rays = std::mem::take(&mut *self.stroke.borrow_mut());
+            *self.stroke_world.borrow_mut() = stroke_frame(&rays, target.center())
+                .map(|w| w.simplified((target.reach() * 0.002).max(0.02)));
+        }
         self.show_stroke();
         self.start_stroke_trial();
+    }
+
+    /// A drag of the stroke's handles ends: kept, and the cut worked out
+    /// again, or given up and the stroke back where it was (#658).
+    fn stroke_handle_release(&self, pointer: Option<&ScenePointer>) {
+        let Some(grab) = self.stroke_grab.borrow_mut().take() else {
+            return;
+        };
+        if pointer.is_none() {
+            *self.stroke_world.borrow_mut() = Some(grab.from);
+        } else {
+            crate::breadcrumbs::note(&format!("cut: stroke {:?} dragged", grab.handle));
+        }
+        self.show_stroke();
+        self.start_stroke_trial();
+    }
+
+    /// The handle of the stroke under `pointer`, its surface last.
+    fn stroke_handle_at(&self, pointer: &ScenePointer) -> Option<Handle> {
+        let (_, target) = self.on_show()?;
+        let world = self.stroke_world.borrow().clone()?;
+        world
+            .gizmo()
+            .pick(pointer)
+            .or_else(|| world.grip(pointer, target.reach()).map(|_| Handle::Plane))
     }
 
     /// Works out the cut along the stroke drawn, on a worker.
@@ -1124,13 +1466,19 @@ impl CutRun {
         let Some(ready) = self.ready.borrow().clone() else {
             return;
         };
-        let rays = self.stroke.borrow().clone();
-        let (Some(world), Some(back)) =
-            (stroke_frame(&rays, target.center()), target.world.inverse())
-        else {
+        let held = self.stroke_world.borrow().clone();
+        let (Some(world), Some(back)) = (held, target.world.inverse()) else {
             self.describe_stroke();
             return;
         };
+        // The stroke's rays as its surface runs: from in front of the model
+        // along the sweep, through each point.
+        let deep = target.reach() * 2.0;
+        let rays: Vec<([f64; 3], [f64; 3])> = world
+            .points
+            .iter()
+            .map(|&p| (sub(world.world(p), scale(world.along, deep)), world.along))
+            .collect();
         let id = self.job_id();
         *self.stroke_trial.borrow_mut() = Some(StrokeTrial {
             target: target.clone(),
@@ -1228,8 +1576,9 @@ impl CutRun {
             return;
         };
         let rays = self.stroke.borrow().clone();
+        let held = self.stroke_world.borrow().clone();
         let mut pieces: Vec<Arc<OverlayMesh>> = Vec::new();
-        if let Some(world) = stroke_frame(&rays, target.center()) {
+        if let Some(world) = held.or_else(|| stroke_frame(&rays, target.center())) {
             let half = (target.reach() * 0.004).max(0.08);
             let at = |p: [f64; 2]| {
                 add(
@@ -1739,7 +2088,14 @@ impl CutRun {
     /// The pointer moved with no button down: the handle under it lights.
     /// Whether that changed.
     fn hover(&self, pointer: Option<&ScenePointer>) -> bool {
-        if self.grab.borrow().is_some() || self.stroke_mode.get() {
+        if self.stroke_mode.get() {
+            if self.drawing.get() || self.stroke_grab.borrow().is_some() {
+                return false;
+            }
+            let hot = pointer.and_then(|p| self.stroke_handle_at(p));
+            return self.hot.replace(hot) != hot;
+        }
+        if self.grab.borrow().is_some() {
             return false;
         }
         let hot = pointer.and_then(|p| self.on_show().and_then(|(at, _)| at.gizmo().pick(p)));
@@ -1749,7 +2105,7 @@ impl CutRun {
     /// The gizmo to draw, and a ring's turn in flight.
     fn drawn_gizmo(&self) -> Option<([f64; 3], ToolGizmo, Option<RingTurn>)> {
         if self.stroke_mode.get() {
-            return None;
+            return self.drawn_stroke_gizmo();
         }
         let grab = self.grab.borrow();
         let (at, _) = self.on_show()?;
@@ -1775,6 +2131,35 @@ impl CutRun {
             _ => gizmo,
         };
         Some((gizmo.center, gizmo.drawn(self.hot.get(), active), turn))
+    }
+
+    /// The stroke's gizmo (#658), while one is held and none is drawn.
+    fn drawn_stroke_gizmo(&self) -> Option<([f64; 3], ToolGizmo, Option<RingTurn>)> {
+        if self.drawing.get() {
+            return None;
+        }
+        let grab = self.stroke_grab.borrow();
+        let world = self.stroke_world.borrow().clone()?;
+        let active = grab.as_ref().map(|g| g.handle);
+        let turn = grab.as_ref().and_then(|g| match g.handle {
+            Handle::Ring(k) => {
+                let (right, up) = g.gizmo.ring_plane(k);
+                Some(RingTurn {
+                    right,
+                    up,
+                    start: g.start,
+                    sweep: g.swept,
+                })
+            }
+            _ => None,
+        });
+        // While a ring turns, the gizmo stands as it was grabbed.
+        let gizmo = match grab.as_ref() {
+            Some(g) if matches!(g.handle, Handle::Ring(_)) => g.gizmo.clone(),
+            _ => world.gizmo(),
+        };
+        let hot = self.hot.get().filter(|h| *h != Handle::Plane);
+        Some((gizmo.center, gizmo.drawn(hot, active), turn))
     }
 
     /// A left press: on a handle (or the plane), the drag is the tool's.
@@ -1824,6 +2209,10 @@ impl CutRun {
     fn drag(&self, pointer: &ScenePointer) {
         if self.drawing.get() {
             self.stroke_drag(pointer);
+            return;
+        }
+        if self.stroke_grab.borrow().is_some() {
+            self.stroke_handle_drag(pointer);
             return;
         }
         let next = {
@@ -1906,6 +2295,10 @@ impl CutRun {
     fn release(&self, pointer: Option<&ScenePointer>, moved: bool) {
         if self.drawing.get() {
             self.stroke_release(pointer);
+            return;
+        }
+        if self.stroke_grab.borrow().is_some() {
+            self.stroke_handle_release(pointer);
             return;
         }
         let Some(grab) = self.grab.borrow_mut().take() else {
