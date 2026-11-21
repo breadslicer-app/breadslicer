@@ -102,9 +102,12 @@ use sc_scene::node::{LeafPayload, SceneMetadata};
 use sc_sl1cer::profile::AaLevel;
 use sc_sl1cer::{CancelToken as SliceCancel, sliceable_leaves};
 use serde_json::Value;
+use support_engine::bvh::{MeshBvh, Side};
 use support_engine::features::slicing::support_world_triangles::{
     SupportSliceInput, build_support_and_raft_world_parts,
 };
+use support_engine::geom::Matrix4;
+use support_engine::geom::ray::Ray;
 use support_engine::pipeline::{
     CancelToken, ModelInput, PipelineOutput, PipelineSettings, plan_supports_with, world_soup,
 };
@@ -116,9 +119,6 @@ use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_engine::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use support_engine::supports::support_primitives::contact_cone::types::ContactCone;
 use support_engine::supports::types::{Segment, SupportCollections, SupportState, Vec3};
-use support_engine::geom::Matrix4;
-use support_engine::geom::ray::Ray;
-use support_engine::bvh::{MeshBvh, Side};
 use support_engine::volume_analysis::islands::types::DetectedIsland;
 
 /// The printer and material every scene is measured with.
@@ -1030,7 +1030,7 @@ fn placement(
     }
 
     // Each support tessellated alone, every vertex against every model.
-    let mut raft = settings.rafts.global;
+    let mut raft = settings.raft;
     raft.bottom_mode = RaftBottomMode::Off;
     let tip_tol = settings.tip_penetration_mm + TIP_TOLERANCE_MM;
     let rows: Vec<(bool, bool, bool)> = entities(c)

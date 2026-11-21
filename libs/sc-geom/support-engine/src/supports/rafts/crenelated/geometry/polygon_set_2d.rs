@@ -260,12 +260,21 @@ pub fn build_clearance_edge_grid(
         return None;
     }
     // The grid starts at the edges' first corners' lowest x and y.
-    let min_x = edges.chunks_exact(4).map(|e| e[0]).fold(f64::INFINITY, f64::min);
-    let min_y = edges.chunks_exact(4).map(|e| e[1]).fold(f64::INFINITY, f64::min);
+    let min_x = edges
+        .chunks_exact(4)
+        .map(|e| e[0])
+        .fold(f64::INFINITY, f64::min);
+    let min_y = edges
+        .chunks_exact(4)
+        .map(|e| e[1])
+        .fold(f64::INFINITY, f64::min);
     let mut cells: HashMap<i64, Vec<usize>> = HashMap::new();
     for (k, e) in edges.chunks_exact(4).enumerate() {
-        let columns = cell_of(e[0].min(e[2]), min_x, cell_size)..=cell_of(e[0].max(e[2]), min_x, cell_size);
-        for row in cell_of(e[1].min(e[3]), min_y, cell_size)..=cell_of(e[1].max(e[3]), min_y, cell_size) {
+        let columns =
+            cell_of(e[0].min(e[2]), min_x, cell_size)..=cell_of(e[0].max(e[2]), min_x, cell_size);
+        for row in
+            cell_of(e[1].min(e[3]), min_y, cell_size)..=cell_of(e[1].max(e[3]), min_y, cell_size)
+        {
             for column in columns.clone() {
                 cells.entry(row * 100000 + column).or_default().push(k * 4);
             }
@@ -315,7 +324,9 @@ pub fn segment_distance_mm(
     dx: f64,
     dy: f64,
 ) -> f64 {
-    let side = |px: f64, py: f64, qx: f64, qy: f64, rx: f64, ry: f64| (qx - px) * (ry - py) - (qy - py) * (rx - px) > 0.0;
+    let side = |px: f64, py: f64, qx: f64, qy: f64, rx: f64, ry: f64| {
+        (qx - px) * (ry - py) - (qy - py) * (rx - px) > 0.0
+    };
     let crosses = side(ax, ay, bx, by, cx, cy) != side(ax, ay, bx, by, dx, dy)
         && side(cx, cy, dx, dy, ax, ay) != side(cx, cy, dx, dy, bx, by);
     if crosses {
@@ -323,7 +334,10 @@ pub fn segment_distance_mm(
     }
     point_to_segment_mm(ax, ay, cx, cy, dx, dy)
         .min(point_to_segment_mm(bx, by, cx, cy, dx, dy))
-        .min(point_to_segment_mm(cx, cy, ax, ay, bx, by).min(point_to_segment_mm(dx, dy, ax, ay, bx, by)))
+        .min(
+            point_to_segment_mm(cx, cy, ax, ay, bx, by)
+                .min(point_to_segment_mm(dx, dy, ax, ay, bx, by)),
+        )
 }
 
 /// The set as shapes to extrude: each polygon with its holes, rings of

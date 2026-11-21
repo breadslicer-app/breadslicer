@@ -57,13 +57,20 @@ pub fn generate_chamfered_base_from_polygons(
     if thickness == 0.0 || !any_ring {
         return BufferGeometry::default();
     }
-    let angle = if chamfer_angle.is_finite() { chamfer_angle } else { 90.0 };
+    let angle = if chamfer_angle.is_finite() {
+        chamfer_angle
+    } else {
+        90.0
+    };
     let run = thickness * (90.0 - angle.clamp(45.0, 90.0)).to_radians().tan();
     // Every ring with whether it is a hole, polygon by polygon.
     let rings = |polys: &[PolygonWithHoles]| -> Vec<(Vec<Vector2>, bool)> {
         polys
             .iter()
-            .flat_map(|p| std::iter::once((p.outer.clone(), false)).chain(p.holes.iter().map(|h| (h.clone(), true))))
+            .flat_map(|p| {
+                std::iter::once((p.outer.clone(), false))
+                    .chain(p.holes.iter().map(|h| (h.clone(), true)))
+            })
             .collect()
     };
     let all = rings(polys);
@@ -86,7 +93,10 @@ pub fn generate_chamfered_base_from_polygons(
         for i in 0..n {
             let j = (i + 1) % n;
             let (a, b) = ((first + i) as u32, (first + j) as u32);
-            let (c, d) = ((top_count + first + j) as u32, (top_count + first + i) as u32);
+            let (c, d) = (
+                (top_count + first + j) as u32,
+                (top_count + first + i) as u32,
+            );
             if flip {
                 indices.extend([a, b, c, a, c, d]);
             } else {
@@ -134,7 +144,10 @@ pub fn generate_wall_from_polygons(
     settings: &RaftSettings,
     base_z: f64,
 ) -> Option<BufferGeometry> {
-    let (height, thickness) = (settings.wall_height.max(0.0), settings.wall_thickness.max(0.0));
+    let (height, thickness) = (
+        settings.wall_height.max(0.0),
+        settings.wall_thickness.max(0.0),
+    );
     if height == 0.0 || thickness == 0.0 {
         return None;
     }
@@ -205,7 +218,8 @@ pub fn build_raft_footprint_meshes(
         if raft.pads {
             outline = raft_shapes::pads(circles, margin)?;
             if let Some(clear) = clearance.filter(|c| !c.is_empty()) {
-                outline = difference_polygon_sets(&outline, &inflate_model_plate_clearance(clear)?)?;
+                outline =
+                    difference_polygon_sets(&outline, &inflate_model_plate_clearance(clear)?)?;
             }
         }
         if raft.peel_tabs {
@@ -231,18 +245,20 @@ pub fn build_raft_footprint_meshes(
         None
     } else if convex {
         let ring = &outline[0].outer;
-        Some(if raft.crenulation_spacing > 0.0 && raft.crenulation_gap_width > 0.0 {
-            generate_crenelated_wall_manual(
-                ring,
-                raft.wall_height,
-                raft.wall_thickness,
-                raft.crenulation_gap_width,
-                base_z,
-                raft.chamfer_angle,
-            )
-        } else {
-            generate_perimeter_wall(ring, raft.wall_height, raft.wall_thickness, base_z)
-        })
+        Some(
+            if raft.crenulation_spacing > 0.0 && raft.crenulation_gap_width > 0.0 {
+                generate_crenelated_wall_manual(
+                    ring,
+                    raft.wall_height,
+                    raft.wall_thickness,
+                    raft.crenulation_gap_width,
+                    base_z,
+                    raft.chamfer_angle,
+                )
+            } else {
+                generate_perimeter_wall(ring, raft.wall_height, raft.wall_thickness, base_z)
+            },
+        )
     } else {
         generate_wall_from_polygons(&outline, raft, base_z)
     };

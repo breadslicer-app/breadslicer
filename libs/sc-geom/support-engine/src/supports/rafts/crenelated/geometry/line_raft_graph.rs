@@ -70,7 +70,11 @@ fn in_circle(a: Vector2, b: Vector2, c: Vector2, p: Vector2) -> bool {
     let det = lift(a) * (b.0 * c.1 - b.1 * c.0) - lift(b) * (a.0 * c.1 - a.1 * c.0)
         + lift(c) * (a.0 * b.1 - a.1 * b.0);
     let turn = (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
-    if turn > 0.0 { det > 1e-10 } else { det < -1e-10 }
+    if turn > 0.0 {
+        det > 1e-10
+    } else {
+        det < -1e-10
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -144,13 +148,19 @@ pub fn build_line_raft_edge_pairs(
                     let (dx, dy) = (nodes[i].x - h.x, nodes[i].y - h.y);
                     (dx * dx + dy * dy, i)
                 })
-                .fold((f64::INFINITY, 0), |best, c| if c.0 < best.0 { c } else { best })
+                .fold(
+                    (f64::INFINITY, 0),
+                    |best, c| if c.0 < best.0 { c } else { best },
+                )
                 .1
         })
         .collect();
     let nearest: Vec<f64> = (0..n)
         .map(|i| {
-            let d = (0..n).filter(|&j| j != i).map(|j| length(i, j)).fold(f64::INFINITY, f64::min);
+            let d = (0..n)
+                .filter(|&j| j != i)
+                .map(|j| length(i, j))
+                .fold(f64::INFINITY, f64::min);
             if d.is_finite() { d } else { 0.0 }
         })
         .collect();
@@ -260,7 +270,14 @@ mod tests {
     /// and every root joined.
     #[test]
     fn a_square_with_a_middle_is_its_sides_and_spokes() {
-        let nodes = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0), (5.0, 5.0)].map(|(x, y)| Vector2::new(x, y));
+        let nodes = [
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (10.0, 10.0),
+            (0.0, 10.0),
+            (5.0, 5.0),
+        ]
+        .map(|(x, y)| Vector2::new(x, y));
         assert_eq!(delaunay_triangulate_2d(&nodes).len(), 4);
         let options = BuildLineRaftEdgePairsOptions {
             has_border_ring: false,
@@ -274,6 +291,18 @@ mod tests {
             .map(|(a, b)| (a.min(b), a.max(b)))
             .collect();
         edges.sort_unstable();
-        assert_eq!(edges, vec![(0, 1), (0, 3), (0, 4), (1, 2), (1, 4), (2, 3), (2, 4), (3, 4)]);
+        assert_eq!(
+            edges,
+            vec![
+                (0, 1),
+                (0, 3),
+                (0, 4),
+                (1, 2),
+                (1, 4),
+                (2, 3),
+                (2, 4),
+                (3, 4)
+            ]
+        );
     }
 }

@@ -14,7 +14,7 @@ use support_engine::supports::auto_support::auto_place::helpers::apply_zone_size
 use support_engine::supports::auto_support::settings::{SizingPreset, auto_support_constraints};
 use support_engine::supports::auto_support::zone_rules::{STABILIZATION_MAX_ANGLE_DEG, ZoneRules};
 use support_engine::supports::rafts::crenelated::geometry::compute_raft_footprint::raft_band_top_mm;
-use support_engine::supports::rafts::crenelated::raft_types::RaftBottomMode;
+use support_engine::supports::rafts::crenelated::raft_types::{RaftBottomMode, RaftSettings};
 
 use crate::zone_presets::ZonePreset;
 
@@ -238,11 +238,10 @@ impl SupportOptions {
             RaftMode::Lines => RaftBottomMode::Line,
             RaftMode::Off => RaftBottomMode::Off,
         };
-        // Through the store, as DragonFruit's panel does, only when the raft
-        // really changes: the store also resolves the rest of the raft.
+        // Only when the raft really changes.
         let apart = settings.raft_apart != o.one_raft;
         settings.raft_apart = o.one_raft;
-        let g = settings.rafts.global;
+        let g = settings.raft;
         if g.bottom_mode != mode
             || g.thickness != o.raft_thickness_mm
             || g.wall_enabled != o.raft_wall
@@ -250,17 +249,16 @@ impl SupportOptions {
             || g.pads != o.raft_pads
             || g.peel_tabs != o.raft_tabs
         {
-            settings.rafts.update_global(
-                |r| {
-                    r.bottom_mode = mode;
-                    r.thickness = o.raft_thickness_mm;
-                    r.wall_enabled = o.raft_wall;
-                    r.perforation_mm = o.raft_holes_mm;
-                    r.pads = o.raft_pads;
-                    r.peel_tabs = o.raft_tabs;
-                },
-                true,
-            );
+            settings.raft = RaftSettings {
+                bottom_mode: mode,
+                thickness: o.raft_thickness_mm,
+                wall_enabled: o.raft_wall,
+                perforation_mm: o.raft_holes_mm,
+                pads: o.raft_pads,
+                peel_tabs: o.raft_tabs,
+                ..g
+            }
+            .settled();
             return true;
         }
         apart
@@ -340,7 +338,7 @@ impl SupportOptions {
         }
         let mut settings = PipelineSettings::defaults(0.05);
         self.apply(&mut settings);
-        let top = raft_band_top_mm(&settings.rafts.global);
+        let top = raft_band_top_mm(&settings.raft);
         (top.is_finite() && top > 0.0).then_some(top)
     }
 
@@ -372,14 +370,14 @@ mod options_tests {
             "the defaults are DragonFruit's"
         );
         // But the raft: a raft of lines (#435).
-        assert_eq!(applied.rafts.global.bottom_mode, RaftBottomMode::Line);
+        assert_eq!(applied.raft.bottom_mode, RaftBottomMode::Line);
         let solid = SupportOptions {
             raft: RaftMode::Solid,
             ..Default::default()
         };
         let mut applied = base.clone();
         solid.apply(&mut applied);
-        assert_eq!(applied.rafts.global, base.rafts.global);
+        assert_eq!(applied.raft, base.raft);
     }
 
     #[test]

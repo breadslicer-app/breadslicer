@@ -20,6 +20,8 @@ pub use sc_mesh_core::MeshRole;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{CsgPolicy, NodeId, Scene, SceneError, bake_mesh_to_world};
 use support_engine::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
+use support_engine::geom::Vec3;
+use support_engine::geom::buffer_geometry::BufferGeometry;
 use support_engine::perf::{PerfEntry, PerfFrame};
 use support_engine::pipeline::{
     ModelInput, PipelineError, PipelineSettings, Stage, plan_supports_with, prescan_models,
@@ -27,8 +29,6 @@ use support_engine::pipeline::{
 use support_engine::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
 use support_engine::supports::support_type_registry::get_support_type_descriptor;
 use support_engine::supports::types::SupportState;
-use support_engine::geom::Vec3;
-use support_engine::geom::buffer_geometry::BufferGeometry;
 
 mod compare;
 mod document;
@@ -656,7 +656,6 @@ fn stage_label(stage: Stage) -> &'static str {
         Stage::ScanIslands => "Scanning islands",
         Stage::DeriveIslands => "Deriving islands",
         Stage::PlanSupports => "Placing supports",
-        Stage::BuildRafts => "Building rafts",
         Stage::Tessellate => "Tessellating supports",
     }
 }

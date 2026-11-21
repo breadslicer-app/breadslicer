@@ -1,6 +1,6 @@
 //! the `pipeline` facade. Over scenes built from the block-8a meshes it
 //! must give exactly what the stage-by-stage calls the parity tests use give
-//! (scan, derivation, plan with bracing, export rafts), report its stages in
+//! (scan, derivation, plan with bracing, support mesh), report its stages in
 //! order, and stop with `Cancelled` and no output at every stage boundary.
 
 use std::cell::RefCell;
@@ -8,13 +8,16 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
+use support_engine::bvh::{MeshBvh, Side};
+use support_engine::geom::buffer_geometry::BufferGeometry;
+use support_engine::geom::{Matrix4, Vec3};
 use support_engine::native::mesh_core::mesh::IndexedMesh;
 use support_engine::native::mesh_minima::scan_islands;
 use support_engine::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
 use support_engine::pipeline::{
-    CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, build_rafts,
-    generate_supports, generate_supports_with, plan_supports_with, prescan_models,
-    regions_on_tree_faces, support_soup, world_soup,
+    CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, generate_supports,
+    generate_supports_with, plan_supports_with, prescan_models, regions_on_tree_faces,
+    support_soup, world_soup,
 };
 use support_engine::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use support_engine::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
@@ -24,14 +27,10 @@ use support_engine::supports::auto_support::auto_place::plan::{
 use support_engine::supports::auto_support::parameter_sizing::SizingBands;
 use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_engine::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
-use support_engine::supports::rafts::crenelated::raft_export::RaftGroup;
 use support_engine::supports::rafts::crenelated::raft_types::{
     DEFAULT_RAFT_SETTINGS, RaftBottomMode, RaftSettings,
 };
 use support_engine::supports::types::SupportState;
-use support_engine::geom::buffer_geometry::BufferGeometry;
-use support_engine::geom::{Matrix4, Vec3};
-use support_engine::bvh::{MeshBvh, Side};
 use support_engine::volume_analysis::islands::use_islands::derive_islands;
 
 fn meshes() -> Value {
@@ -109,14 +108,11 @@ fn scenes() -> Vec<(Vec<ModelInput>, PipelineSettings)> {
     ];
     let sa = PipelineSettings::defaults(0.05);
     let mut sb = PipelineSettings::defaults(0.05);
-    sb.rafts.set_for_model(
-        "knot",
-        RaftSettings {
-            bottom_mode: RaftBottomMode::Line,
-            wall_enabled: false,
-            ..DEFAULT_RAFT_SETTINGS
-        },
-    );
+    sb.raft = RaftSettings {
+        bottom_mode: RaftBottomMode::Line,
+        wall_enabled: false,
+        ..DEFAULT_RAFT_SETTINGS
+    };
     vec![(a, sa), (b, sb)]
 }
 
@@ -126,22 +122,6 @@ fn id_gen() -> impl FnMut() -> String {
         next += 1;
         format!("id-{next}")
     }
-}
-
-fn wire_rafts(rafts: &[RaftGroup]) -> Value {
-    Value::Array(
-        rafts
-            .iter()
-            .map(|g| {
-                json!({
-                    "model": g.model_key,
-                    "meshes": g.meshes.iter().map(|m| json!({
-                        "position": m.position, "normal": m.normal, "index": m.index,
-                    })).collect::<Vec<_>>(),
-                })
-            })
-            .collect(),
-    )
 }
 
 fn triples(soup: &[f32]) -> Vec<[f32; 3]> {
@@ -185,7 +165,7 @@ fn by_stage(
     let mut per_model = Vec::new();
     for (i, m) in models.iter().enumerate() {
         let soup = &soups[i];
-        let has_raft = settings.rafts.for_model(Some(&m.id)).bottom_mode != RaftBottomMode::Off;
+        let has_raft = settings.raft.bottom_mode != RaftBottomMode::Off;
         let mesh = IndexedMesh::from_triangle_soup(soup, 1e-5);
         let combined = scan_islands(&mesh, 0.05, 0.05, 0.25, 4, Some(2), Some(angle), Some(0.25));
         let (regions, stability) = overhang_and_stability_from_soup(soup, angle, 0.25, has_raft);
@@ -245,12 +225,11 @@ fn by_stage(
             state = p.support;
         }
     }
-    let rafts = build_rafts(&state, models, &settings.rafts).unwrap();
     let soup = support_soup(&state, models, settings).unwrap();
     (
         per_model,
         state,
-        json!({ "rafts": wire_rafts(&rafts), "soup": soup.floats, "parts": soup.parts }),
+        json!({ "soup": soup.floats, "parts": soup.parts }),
     )
 }
 
@@ -268,7 +247,7 @@ fn facade_matches_the_stages_called_one_by_one() {
             &CancelToken::new(),
         )
         .unwrap();
-        let (per_model, state, rafts) = by_stage(models, settings);
+        let (per_model, state, drawn) = by_stage(models, settings);
         let facade_models: Vec<Value> = out
             .models
             .iter()
@@ -291,9 +270,9 @@ fn facade_matches_the_stages_called_one_by_one() {
             "scene {k}: support state"
         );
         assert_eq!(
-            json!({ "rafts": wire_rafts(&out.rafts), "soup": out.support_soup, "parts": out.support_parts }),
-            rafts,
-            "scene {k}: rafts and soup"
+            json!({ "soup": out.support_soup, "parts": out.support_parts }),
+            drawn,
+            "scene {k}: soup"
         );
         assert!(
             !out.support_soup.is_empty(),
@@ -303,16 +282,8 @@ fn facade_matches_the_stages_called_one_by_one() {
             !out.support.collections.roots.is_empty(),
             "scene {k}: supports were placed"
         );
-        assert!(!out.rafts.is_empty(), "scene {k}: rafts were built");
-        let keys: Vec<&str> = out.rafts.iter().map(|g| g.model_key.as_str()).collect();
-        // Scene 1: the shell's raft, and the knot's per-model line raft, built
-        // although the knot is hidden.
-        if k == 1 {
-            assert_eq!(keys, ["shell", "knot"], "scene 1: raft groups");
-        }
-
         // Stage reports: geometry for every model, then scan/derive/plan per
-        // model, then the rafts.
+        // model, then the support mesh.
         let n = models.len();
         let mut expected: Vec<(Stage, usize)> = (0..n).map(|i| (Stage::WorldGeometry, i)).collect();
         for i in 0..n {
@@ -322,7 +293,6 @@ fn facade_matches_the_stages_called_one_by_one() {
                 (Stage::PlanSupports, i),
             ]);
         }
-        expected.push((Stage::BuildRafts, n));
         expected.push((Stage::Tessellate, n));
         assert_eq!(stages, expected, "scene {k}: progress");
     }
@@ -345,7 +315,6 @@ fn run_digest(out: &support_engine::pipeline::PipelineOutput) -> Value {
     json!({
         "models": models,
         "support": serde_json::to_value(&out.support).unwrap(),
-        "rafts": wire_rafts(&out.rafts),
         "soup": out.support_soup,
         "parts": out.support_parts,
     })
@@ -455,7 +424,6 @@ fn planning_alone_gives_the_same_plans_without_drawing_them() {
             .unwrap();
             let without_drawing = |out: &support_engine::pipeline::PipelineOutput| {
                 let mut digest = run_digest(out);
-                digest["rafts"] = Value::Null;
                 digest["soup"] = Value::Null;
                 digest["parts"] = Value::Null;
                 digest
@@ -466,13 +434,11 @@ fn planning_alone_gives_the_same_plans_without_drawing_them() {
                 "scene {k}: same plans"
             );
             assert!(
-                planned.rafts.is_empty()
-                    && planned.support_soup.is_empty()
-                    && planned.support_parts.is_empty(),
+                planned.support_soup.is_empty() && planned.support_parts.is_empty(),
                 "scene {k}: nothing drawn"
             );
             assert!(
-                !stages.contains(&Stage::BuildRafts) && !stages.contains(&Stage::Tessellate),
+                !stages.contains(&Stage::Tessellate),
                 "scene {k}: no drawing stage reported"
             );
             // The BVHs handed back are the ones the world soups build.
@@ -488,7 +454,7 @@ fn planning_alone_gives_the_same_plans_without_drawing_them() {
 #[test]
 fn cancelling_at_any_stage_returns_cancelled() {
     let (models, settings) = scenes().swap_remove(0);
-    let total = 3 * models.len() + models.len() + 2;
+    let total = 3 * models.len() + models.len() + 1;
     for at in 0..total {
         let cancel = CancelToken::new();
         let mut seen = 0;

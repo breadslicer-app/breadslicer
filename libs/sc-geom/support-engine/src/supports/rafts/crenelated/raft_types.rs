@@ -1,54 +1,56 @@
-//! DragonFruit `src/supports/Rafts/Crenelated/RaftTypes.ts` and
-//! `RaftDefaults.ts`.
+//! What a raft is made of: its kind, its sizes, and the circles of the
+//! support roots it is drawn around.
 
 use serde::{Deserialize, Serialize};
 
+/// What the supports stand on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RaftBottomMode {
+    /// Each root's own foot on the plate.
     Off,
+    /// One plate under the roots.
     Solid,
+    /// Beams joining the roots.
     Line,
 }
 
+/// A raft's shape. Lengths in millimetres, the chamfer in degrees.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RaftSettings {
     pub bottom_mode: RaftBottomMode,
+    /// A wall around a solid raft's edge (a line raft has none).
     pub wall_enabled: bool,
-    /// mm
+    /// A solid raft's plate.
     pub thickness: f64,
-    /// degrees (45-90)
+    /// How steep the raft's sides are, 45° to 90° (upright).
     pub chamfer_angle: f64,
-    /// mm
     pub wall_height: f64,
-    /// mm
     pub wall_thickness: f64,
-    /// mm
+    /// The gaps in the wall, and how far apart they are (0: no gaps).
     pub crenulation_gap_width: f64,
-    /// mm
     pub crenulation_spacing: f64,
-    /// mm
+    /// A line raft's beams.
     pub line_width_mm: f64,
-    /// mm
     pub line_height_mm: f64,
-    /// Show the combined model+raft footprint border.
+    /// Whether the view outlines what the models and rafts take on the plate,
+    /// and how far past them (at most 0.05 mm).
     pub show_footprint_border: bool,
-    /// mm beyond the raft/model edge.
     pub footprint_border_margin: f64,
-    /// SoulCrafted (#138): a solid raft's holes between the supports, this
-    /// wide, mm; 0 for none.
+    /// A solid raft's holes between the supports, this wide (#138); 0 for
+    /// none.
     #[serde(default)]
     pub perforation_mm: f64,
-    /// SoulCrafted (#138): a pad under each support instead of one solid raft.
+    /// A pad under each support instead of one plate (#138).
     #[serde(default)]
     pub pads: bool,
-    /// SoulCrafted (#99): tabs off a solid raft's two ends, to lever it off.
+    /// Tabs off a solid raft's two ends, to lever it off (#99).
     #[serde(default)]
     pub peel_tabs: bool,
 }
 
-/// `DEFAULT_RAFT_SETTINGS`.
+/// The raft a set gets unless told otherwise.
 pub const DEFAULT_RAFT_SETTINGS: RaftSettings = RaftSettings {
     bottom_mode: RaftBottomMode::Solid,
     wall_enabled: true,
@@ -73,11 +75,22 @@ impl Default for RaftSettings {
     }
 }
 
-/// A support base footprint circle (mm).
+impl RaftSettings {
+    /// These settings as a raft can take them: a wall only on a solid raft,
+    /// and the outline's margin between 0 and 0.05 mm.
+    pub fn settled(self) -> Self {
+        RaftSettings {
+            wall_enabled: self.wall_enabled && self.bottom_mode == RaftBottomMode::Solid,
+            footprint_border_margin: self.footprint_border_margin.clamp(0.0, 0.05),
+            ..self
+        }
+    }
+}
+
+/// Where a support root stands on the plate, and its radius (mm).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SupportBaseCircle {
     pub x: f64,
     pub y: f64,
-    /// Radius (half the base diameter).
     pub r: f64,
 }

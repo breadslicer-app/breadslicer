@@ -239,11 +239,16 @@ fn clean_ring(ring: &[Vector2]) -> Vec<Vector2> {
     }
     let mut points: Vec<Vector2> = Vec::new();
     for &p in ring {
-        if points.last().is_none_or(|q| q.distance_to_squared(p) > RING_EPS * RING_EPS) {
+        if points
+            .last()
+            .is_none_or(|q| q.distance_to_squared(p) > RING_EPS * RING_EPS)
+        {
             points.push(p);
         }
     }
-    if points.len() >= 2 && points[0].distance_to_squared(points[points.len() - 1]) <= RING_EPS * RING_EPS {
+    if points.len() >= 2
+        && points[0].distance_to_squared(points[points.len() - 1]) <= RING_EPS * RING_EPS
+    {
         points.pop();
     }
     let m = points.len();
@@ -280,7 +285,11 @@ pub fn generate_crenelated_wall_manual(
     base_z: f64,
     chamfer_angle: f64,
 ) -> BufferGeometry {
-    let (height, thickness, gap) = (wall_height.max(0.0), wall_thickness.max(0.0), gap_width.max(0.0));
+    let (height, thickness, gap) = (
+        wall_height.max(0.0),
+        wall_thickness.max(0.0),
+        gap_width.max(0.0),
+    );
     if outline.len() < 3 || height == 0.0 || thickness == 0.0 {
         return BufferGeometry::default();
     }
@@ -357,7 +366,10 @@ pub fn generate_crenelated_wall_manual(
         }
         // One gap in the middle of the side, 1 mm in from each end.
         let middle = 1.0 + (length - 2.0).max(0.0) * 0.5;
-        let (gap_from, gap_to) = ((middle - gap * 0.5).max(0.0), (middle + gap * 0.5).min(length));
+        let (gap_from, gap_to) = (
+            (middle - gap * 0.5).max(0.0),
+            (middle + gap * 0.5).min(length),
+        );
         if gap_from > 0.1 {
             block(i, 0.0, gap_from / length);
         }
@@ -396,7 +408,8 @@ mod tests {
 
     #[test]
     fn a_square_plate_holds_its_frustum() {
-        let square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)].map(|(x, y)| Vector2::new(x, y));
+        let square =
+            [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)].map(|(x, y)| Vector2::new(x, y));
         let mut raft = RaftSettings::default();
         raft.thickness = 1.0;
         raft.chamfer_angle = 45.0;
@@ -405,9 +418,16 @@ mod tests {
         let six: f64 = p
             .chunks_exact(9)
             .map(|t| {
-                let v = |k: usize| [f64::from(t[k * 3]), f64::from(t[k * 3 + 1]), f64::from(t[k * 3 + 2])];
+                let v = |k: usize| {
+                    [
+                        f64::from(t[k * 3]),
+                        f64::from(t[k * 3 + 1]),
+                        f64::from(t[k * 3 + 2]),
+                    ]
+                };
                 let (a, b, c) = (v(0), v(1), v(2));
-                a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])
+                a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0])
             })
             .sum();
         // A frustum from 8 × 8 to 10 × 10, 1 high.
