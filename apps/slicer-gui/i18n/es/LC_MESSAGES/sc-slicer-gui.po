@@ -10886,3 +10886,37 @@ msgstr "Reparar al importar"
 msgctxt "PreferencesLayer"
 msgid "A model that comes in and cannot be sliced is repaired as it lands, with Caliper when it is installed. Models that slice are left alone."
 msgstr "Un modelo que entra y no se puede laminar se repara apenas llega, con Caliper si está instalado. Los que se laminan no se tocan."
+
+#: src/import_notes.rs
+#, rust-format
+msgctxt "ImportNotes"
+msgid "Left out {n} triangle that has no coordinates in the file."
+msgid_plural "Left out {n} triangles that have no coordinates in the file."
+msgstr[0] "Se dejó afuera {n} triángulo que no tiene coordenadas en el archivo."
+msgstr[1] "Se dejaron afuera {n} triángulos que no tienen coordenadas en el archivo."
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Repaired on import"
+msgstr "Reparado al importar"
+
+#: src/repair_on_import.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "The file could not be imported as it came: {n} triangle has no coordinates in space. It was left out, and the model repaired."
+msgid_plural "The file could not be imported as it came: {n} triangles have no coordinates in space. They were left out, and the model repaired."
+msgstr[0] "El archivo no se podía importar como vino: {n} triángulo no tiene coordenadas en el espacio. Se dejó afuera y se reparó el modelo."
+msgstr[1] "El archivo no se podía importar como vino: {n} triángulos no tienen coordenadas en el espacio. Se dejaron afuera y se reparó el modelo."
+
+#: src/repair_on_import.rs
+msgctxt "RepairDialog"
+msgid "Opened without some triangles"
+msgstr "Abierto sin algunos triángulos"
+
+#: src/repair_on_import.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "The file could not be imported as it came: {n} triangle has no coordinates in space. It was left out; the rest of the model is whole and slices."
+msgid_plural "The file could not be imported as it came: {n} triangles have no coordinates in space. They were left out; the rest of the model is whole and slices."
+msgstr[0] "El archivo no se podía importar como vino: {n} triángulo no tiene coordenadas en el espacio. Se dejó afuera; el resto del modelo está entero y se lamina."
+msgstr[1] "El archivo no se podía importar como vino: {n} triángulos no tienen coordenadas en el espacio. Se dejaron afuera; el resto del modelo está entero y se lamina."

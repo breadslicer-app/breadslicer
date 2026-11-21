@@ -485,11 +485,11 @@ mod binary_stl_malformed_tests {
         triangle[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
 
-    /// Pins that NaN bit patterns in any vertex f32 of a binary STL triangle
-    /// record are rejected, as the finite-only check of the ASCII reader
-    /// (`parse_finite_f32`) does, and that a NaN normal is not: it gives way
-    /// to the normal of the vertices. Each offset is a distinct field, so a
-    /// failure names the field.
+    /// Pins that a binary STL whose only triangle has a NaN in any vertex f32
+    /// is rejected (a triangle like that is left out, and nothing is left;
+    /// beside others it is left out and the file opens, #677), and that a
+    /// NaN normal is not: it gives way to the normal of the vertices. Each
+    /// offset is a distinct field, so a failure names the field.
     #[test]
     fn nan_in_any_vertex_field_is_an_error() {
         for offset in [0, 4, 8] {

@@ -30,6 +30,12 @@ fn display_stl_warning(warning: &LoadStlWarning, out: &mut dyn Write) {
                 "WARNING: binary STL header is not readable text; no mesh name was taken from it"
             );
         }
+        LoadStlWarning::FacetsWithoutCoordinates { count } => {
+            let _ = writeln!(
+                out,
+                "WARNING: left out {count} triangle(s) whose vertices are not numbers"
+            );
+        }
     }
 }
 

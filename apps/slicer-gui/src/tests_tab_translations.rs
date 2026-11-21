@@ -917,6 +917,7 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
     ),
     ("diagnostics/mod.rs", include_str!("diagnostics/mod.rs")),
     ("app_state.rs", include_str!("app_state.rs")),
+    ("repair_on_import.rs", include_str!("repair_on_import.rs")),
     ("arrange_run.rs", include_str!("arrange_run.rs")),
     ("arrange_run/fill.rs", include_str!("arrange_run/fill.rs")),
     ("controls_layout.rs", include_str!("controls_layout.rs")),

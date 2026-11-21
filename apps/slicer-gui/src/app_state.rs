@@ -861,6 +861,7 @@ impl AppState {
         let split_bodies = SplitBodies::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let repair_on_import = crate::repair_on_import::RepairOnImport::install(
             ctrl.document(),
+            ctrl.dialogs(),
             self.prefs.clone(),
             repair_run.clone(),
         );

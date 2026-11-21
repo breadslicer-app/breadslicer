@@ -238,6 +238,10 @@ struct Job {
     names: Vec<String>,
     /// Set when a refused slice asked for the run (#407).
     for_slice: Option<ForSlice>,
+    /// Why the run had to happen, when the person did not ask for it: a
+    /// file that could not be imported as it came (#677). It heads the card,
+    /// which then always shows.
+    reason: Option<slint::SharedString>,
 }
 
 /// What follows a run that a refused slice asked for (#407).
@@ -366,7 +370,7 @@ impl RepairRun {
         }) else {
             return;
         };
-        self.launch(&ui, scene, targets, names, None);
+        self.launch(&ui, scene, targets, names, None, None);
         self.follow_caliper();
     }
 
@@ -413,7 +417,7 @@ impl RepairRun {
             back_to,
             reslice: Box::new(reslice),
         };
-        self.launch(&ui, scene, targets, names, Some(for_slice));
+        self.launch(&ui, scene, targets, names, Some(for_slice), None);
         true
     }
 
@@ -421,7 +425,11 @@ impl RepairRun {
     /// (#677), as the Repair button does, on the tab shown. Returns false,
     /// starting nothing, while something else runs; true when the scene holds
     /// none of them any more, as there is nothing left to wait for.
-    pub(crate) fn repair_imported(self: &Rc<Self>, leaves: &[NodeId]) -> bool {
+    pub(crate) fn repair_imported(
+        self: &Rc<Self>,
+        leaves: &[NodeId],
+        reason: Option<slint::SharedString>,
+    ) -> bool {
         let Some(ui) = self.ui.upgrade() else {
             return true;
         };
@@ -445,7 +453,7 @@ impl RepairRun {
             return true;
         };
         if !targets.is_empty() {
-            self.launch(&ui, scene, targets, names, None);
+            self.launch(&ui, scene, targets, names, None, reason);
             self.follow_caliper();
         }
         true
@@ -459,6 +467,7 @@ impl RepairRun {
         targets: Vec<MeshTarget>,
         names: Vec<String>,
         for_slice: Option<ForSlice>,
+        reason: Option<slint::SharedString>,
     ) {
         let slot: RepairSlot = Arc::new(Mutex::new(None));
         let watch = Arc::new(RunWatch::default());
@@ -469,6 +478,7 @@ impl RepairRun {
             revision: self.document.scene_revision(),
             names,
             for_slice,
+            reason,
         });
         ui.set_repair_progress(0.0);
         ui.set_repair_phase(Default::default());
@@ -722,6 +732,20 @@ impl RepairRun {
                                 "Repair couldn't fix everything, so slicing didn't start again. {}",
                                 with_caliper(summary_message(&outcomes, &names))
                             ),
+                            details: caliper_details(details_text(&outcomes, &names, elapsed))
+                                .into(),
+                        });
+                    }
+                    None if job.reason.is_some() => {
+                        let reason = job.reason.clone().unwrap_or_default();
+                        self.dialogs.show_info(move || InfoTexts {
+                            heading: ctr!("RepairDialog", "Repaired on import"),
+                            message: format!(
+                                "{} {}",
+                                reason,
+                                with_caliper(summary_message(&outcomes, &names))
+                            )
+                            .into(),
                             details: caliper_details(details_text(&outcomes, &names, elapsed))
                                 .into(),
                         });

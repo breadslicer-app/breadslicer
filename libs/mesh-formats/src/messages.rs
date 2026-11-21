@@ -51,6 +51,10 @@ pub enum LoadStlWarning {
     /// comment field, so the document loads anyway; no mesh name is taken from
     /// it.
     HeaderNotText,
+    /// The binary reader left out triangles whose vertices are not numbers
+    /// (NaN or infinite): they have no place in space. What is left may have
+    /// holes, which a repair closes.
+    FacetsWithoutCoordinates { count: usize },
 }
 
 /// Warnings emitted by the 3MF reader for package content that loads

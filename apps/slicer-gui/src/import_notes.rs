@@ -123,6 +123,17 @@ impl Notes {
             match warning {
                 LoadMeshWarning::Obj(w) => obj.count(w),
                 LoadMeshWarning::Stl(LoadStlWarning::HeaderNotText) => {}
+                LoadMeshWarning::Stl(w @ LoadStlWarning::FacetsWithoutCoordinates { count }) => {
+                    self.add(
+                        ctr!(
+                            "ImportNotes",
+                            "Left out {n} triangle that has no coordinates in the file.",
+                            "Left out {n} triangles that have no coordinates in the file.",
+                            *count
+                        ),
+                        crate::scene_loader::describe_stl_warning(w),
+                    );
+                }
                 LoadMeshWarning::ThreeMf(w) => {
                     self.add(threemf_note(w), describe_threemf_warning(w));
                 }
