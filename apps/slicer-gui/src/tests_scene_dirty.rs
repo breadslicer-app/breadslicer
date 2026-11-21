@@ -501,6 +501,7 @@ mod unsaved_project_state_tests {
                 groups: Vec::new(),
                 hidden: Vec::new(),
                 locked: Vec::new(),
+                metadata: Vec::new(),
             }
         );
     }
@@ -539,6 +540,7 @@ mod unsaved_project_state_tests {
             groups: Vec::new(),
             hidden: Vec::new(),
             locked: Vec::new(),
+            metadata: Vec::new(),
         };
         let doc = SceneDocument::new();
         doc.install_project_graph(

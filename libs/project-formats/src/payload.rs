@@ -61,6 +61,22 @@ pub struct ProjectPayload {
     pub hidden: Vec<u32>,
     /// The locked models (#16), by their row: never picked in the view.
     pub locked: Vec<u32>,
+    /// What the file said about itself and its parts (#607): title,
+    /// designer, license, lasting ids and the like, written back on save so
+    /// opening and saving a file never loses them.
+    pub metadata: Vec<FileMetadata>,
+}
+
+/// One entry of a `.bread` file's metadata (#607): a key and its value,
+/// about one node or the whole file. Kept as the file had it; the entries of
+/// nodes that are gone by the next save are dropped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileMetadata {
+    /// The node it is about, or `None` for the whole file.
+    pub node: Option<sc_scene::NodeId>,
+    /// A key the format registers, such as `title`, or a program's own.
+    pub key: String,
+    pub value: Vec<u8>,
 }
 
 /// A finding of the review the person chose to ignore, by kind and place, so

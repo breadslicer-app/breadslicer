@@ -56,6 +56,7 @@ fn named_supports(mut mesh: IndexedMesh) -> IndexedMesh {
         name: Some(DF_SUPPORT_MESH_NAME.to_owned()),
         header_comment: None,
         declared_facet_normals: None,
+        role: sc_mesh_core::MeshRole::from_legacy_name(DF_SUPPORT_MESH_NAME),
     }));
     mesh
 }

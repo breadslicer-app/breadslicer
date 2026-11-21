@@ -208,6 +208,7 @@ mod reloaded_slices_tests {
             groups: Vec::new(),
             hidden: Vec::new(),
             locked: Vec::new(),
+            metadata: Vec::new(),
         }
     }
 

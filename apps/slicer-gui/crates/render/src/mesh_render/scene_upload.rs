@@ -2371,6 +2371,7 @@ mod leaf_buffer_limit_tests {
         IndexedMesh {
             meta: name.map(|n| MeshMetadata {
                 name: Some(n.to_string()),
+                role: sc_mesh_core::MeshRole::from_legacy_name(n),
                 ..Default::default()
             }),
             vertices: (0..vertex_count)

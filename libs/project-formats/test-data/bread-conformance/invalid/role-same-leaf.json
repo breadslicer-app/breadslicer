@@ -1,0 +1,5 @@
+{
+  "description": "The roles file with both entries naming the posts leaf, one as supports and one as a raft.",
+  "reason": "malformed",
+  "chunk": "ROLE"
+}

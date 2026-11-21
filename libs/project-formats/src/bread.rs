@@ -224,6 +224,7 @@ pub(crate) fn parse_settings(
         groups: doc.groups,
         hidden: doc.hidden,
         locked: doc.locked,
+        metadata: Vec::new(),
     }))
 }
 
@@ -253,7 +254,14 @@ pub fn write_bread_project_with_progress<W: Write>(
 ) -> Result<(), WriteBreadProjectError> {
     progress(WriteProgress::Serialize { done: 0, total: 1 });
     let settings = serialize_settings(payload, embed)?.into_bytes();
-    let file = bread_file::to_file(scene, Some(settings), supports, hollows, thumbnail)?;
+    let file = bread_file::to_file(
+        scene,
+        Some(settings),
+        supports,
+        hollows,
+        thumbnail,
+        &payload.metadata,
+    )?;
     progress(WriteProgress::Serialize { done: 1, total: 1 });
     bread_format::write_file(&file, writer).map_err(WriteBreadProjectError::Container)?;
     progress(WriteProgress::Compress { done: 1, total: 1 });
@@ -286,6 +294,7 @@ pub fn read_bread_project<R: Read>(mut reader: R) -> Result<LoadedProject, ReadB
         supports,
         hollows,
         surface_notes,
+        metadata,
     } = bread_file::from_file(file, drafts)?;
     let mut warnings: Vec<ReadProjectWarning> = surface_notes
         .iter()
@@ -293,10 +302,11 @@ pub fn read_bread_project<R: Read>(mut reader: R) -> Result<LoadedProject, ReadB
             reason: note.to_string(),
         })
         .collect();
-    let payload = match settings {
+    let mut payload = match settings {
         Some(bytes) => parse_settings(&bytes, &mut warnings)?.unwrap_or_default(),
         None => ProjectPayload::default(),
     };
+    payload.metadata = metadata;
     Ok(LoadedProject {
         scene,
         warnings,

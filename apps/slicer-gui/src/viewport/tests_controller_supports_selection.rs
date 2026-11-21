@@ -44,6 +44,7 @@ fn plate(pieces: &[(Piece, [f64; 3])], section: WorkspaceSection) -> ViewportCon
         if let Some(name) = name {
             mesh.meta = Some(MeshMetadata {
                 name: Some(name.to_owned()),
+                role: sc_mesh_core::MeshRole::from_legacy_name(name),
                 ..Default::default()
             });
         }

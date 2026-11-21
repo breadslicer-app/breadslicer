@@ -658,6 +658,7 @@ mod model_poses {
         let mut mesh = unit_cube_mesh();
         mesh.meta = Some(MeshMetadata {
             name: Some(sc_geom::df_supports::DF_SUPPORT_MESH_NAME.to_owned()),
+            role: Some(sc_mesh_core::MeshRole::Supports),
             ..Default::default()
         });
         Arc::new(mesh)

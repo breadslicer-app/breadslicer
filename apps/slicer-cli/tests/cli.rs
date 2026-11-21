@@ -68,6 +68,7 @@ fn tetrahedron_mesh(name: Option<&str>) -> IndexedMesh {
     IndexedMesh {
         meta: name.map(|n| MeshMetadata {
             name: Some(n.to_string()),
+            role: sc_mesh_core::MeshRole::from_legacy_name(n),
             ..Default::default()
         }),
         vertices,
@@ -2169,6 +2170,7 @@ mod repair_pipeline_trio_tests {
     fn named(mut mesh: IndexedMesh, name: &str) -> IndexedMesh {
         mesh.meta = Some(MeshMetadata {
             name: Some(name.to_string()),
+            role: sc_mesh_core::MeshRole::from_legacy_name(name),
             ..Default::default()
         });
         mesh

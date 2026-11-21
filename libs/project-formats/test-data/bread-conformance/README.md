@@ -23,6 +23,8 @@ what it reads matches the JSON.
 | `thumbnail` | the `THMB` payload, a PNG: `null` when there is none, or its `size` in bytes and its `sha256` |
 | `support_previews` | the `SPRV` previews, in order: each has `leaf`, the support leaf's node index, and `mesh`, as for the meshes |
 | `surface` | the `SURF` entries, in order: each has `leaf`, `kind`, the document `version`, and the document's `document_size` and `document_sha256` |
+| `roles` | the `ROLE` entries, in order: each has `leaf`, the node index, and `role`, `1` supports or `2` a raft |
+| `metadata` | the `META` entries a reader keeps, in order: each has `subject`, the node index or `null` for the whole file, `key`, and `value`: the text for a registered text key, the UUID as lowercase hex grouped 8-4-4-4-12 for `uuid`, and for a program's own key its `size` and `sha256` |
 
 Each mesh:
 
@@ -71,7 +73,7 @@ that it gives the expected one:
 | `crc` | stored bytes that do not match their CRC | [4.3](../SPEC.md#43-stored-bytes-and-checksum) |
 | `bad-payload` | stored bytes that are not exactly one valid frame, or that do not decompress to exactly the raw length | [4.4](../SPEC.md#44-reading-a-file) |
 | `chunk-count` | more or fewer chunks of a tag than the format allows, such as two scene chunks | [7.1](../SPEC.md#71-official-chunks) |
-| `malformed` | a payload that is malformed: cut short, padded, a value the format does not allow, a count larger than the bytes left can hold, or a chunk that names something that does not exist or breaks a rule about what it names | [3.3](../SPEC.md#33-malformed-payloads), [5.3](../SPEC.md#53-what-a-reader-checks), [6](../SPEC.md#6-mesh-mesh), [7.3](../SPEC.md#73-application-chunks), [9.2](../SPEC.md#92-reading-it), [10.2](../SPEC.md#102-reading-it) |
+| `malformed` | a payload that is malformed: cut short, padded, a value the format does not allow, a count larger than the bytes left can hold, or a chunk that names something that does not exist or breaks a rule about what it names | [3.3](../SPEC.md#33-malformed-payloads), [5.3](../SPEC.md#53-what-a-reader-checks), [6](../SPEC.md#6-mesh-mesh), [7.3](../SPEC.md#73-application-chunks), [9.2](../SPEC.md#92-reading-it), [10.2](../SPEC.md#102-reading-it), [11.2](../SPEC.md#112-reading-it) |
 | `no-such-vertex` | a triangle that names a vertex its mesh does not have | [6.4](../SPEC.md#64-triangles) |
 
 Some files hold a length or a count far larger than what backs it. A reader that allocates for it

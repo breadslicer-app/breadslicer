@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use rayon::prelude::*;
 use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
+pub use sc_mesh_core::MeshRole;
 use sc_scene::{CsgPolicy, NodeId, Scene, SceneError, bake_mesh_to_world};
 use support_gen_df::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
 use support_gen_df::perf::{PerfEntry, PerfFrame};
@@ -67,10 +68,12 @@ pub const PLATE_RAFT_NAME: &str = "Raft";
 
 /// Whether `mesh` is one raft for all (#556).
 pub fn is_plate_raft(mesh: &IndexedMesh) -> bool {
-    mesh.meta()
-        .as_ref()
-        .and_then(|m| m.name.as_deref())
-        .is_some_and(|name| name == PLATE_RAFT_NAME)
+    role_of(mesh) == Some(MeshRole::Raft)
+}
+
+/// What `mesh` is when it is not a model (#228).
+pub fn role_of(mesh: &IndexedMesh) -> Option<MeshRole> {
+    mesh.meta().as_ref().and_then(|m| m.role)
 }
 
 /// One raft for all (#556): a raft of lines under the roots of every set of
@@ -112,10 +115,7 @@ pub fn is_support_mesh_name(name: &str) -> bool {
 
 /// Whether `mesh` is generated supports.
 pub fn is_support_mesh(mesh: &IndexedMesh) -> bool {
-    mesh.meta()
-        .as_ref()
-        .and_then(|m| m.name.as_deref())
-        .is_some_and(is_support_mesh_name)
+    role_of(mesh) == Some(MeshRole::Supports)
 }
 
 pub use sc_mesh_core::presupported::{
@@ -132,7 +132,7 @@ pub fn is_any_support_mesh_name(name: &str) -> bool {
 /// a pre-supported file (#258). Neither is a model: a run supports neither,
 /// and neither is hollowed, oriented or arranged on its own.
 pub fn is_any_support_mesh(mesh: &IndexedMesh) -> bool {
-    is_support_mesh(mesh) || is_imported_supports(mesh) || is_plate_raft(mesh)
+    role_of(mesh).is_some()
 }
 
 /// What the run is asked for.
@@ -644,6 +644,8 @@ pub fn weld_parts(soup: &[f32], parts: &[usize], name: &str) -> Option<IndexedMe
     Some(IndexedMesh::new(
         Some(MeshMetadata {
             name: Some(name.to_owned()),
+            // The mesh is what its maker named it: supports or a raft (#228).
+            role: MeshRole::from_legacy_name(name),
             ..Default::default()
         }),
         vertices,

@@ -448,6 +448,7 @@ impl Bodies {
             name: m.name.clone(),
             header_comment: m.header_comment.clone(),
             declared_facet_normals: None,
+            role: m.role,
         });
         let normals: Vec<Option<Vec<[u32; 3]>>> = match normals {
             Some(lists) => lists.into_iter().map(Some).collect(),

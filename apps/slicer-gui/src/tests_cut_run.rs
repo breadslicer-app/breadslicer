@@ -583,6 +583,9 @@ fn imported(parts: &[IndexedMesh]) -> IndexedMesh {
         name: Some(sc_mesh_core::presupported::IMPORTED_SUPPORTS_NAME.to_owned()),
         header_comment: None,
         declared_facet_normals: None,
+        role: sc_mesh_core::MeshRole::from_legacy_name(
+            sc_mesh_core::presupported::IMPORTED_SUPPORTS_NAME,
+        ),
     };
     IndexedMesh::new(Some(meta), vertices, faces)
 }

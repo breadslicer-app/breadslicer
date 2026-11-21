@@ -28,7 +28,9 @@ use sc_mesh_spatial::{PrimedMesh, SceneSpatial};
 use sc_print_primitives::{
     AaLevel, AdaptiveLayers, MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId,
 };
-use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload, ReviewDecision};
+use sc_project_formats::{
+    EmbeddedProfile, FileMetadata, PlateSlices, ProjectPayload, ReviewDecision,
+};
 use sc_scene::Scene;
 use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind};
 use sc_scene::{
@@ -267,11 +269,19 @@ pub(crate) fn default_plate_names(count: u32) -> Vec<String> {
     (1..=count).map(|n| format!("Plate {n}")).collect()
 }
 
+/// What a project payload holds of its own: the scene's choices, the
+/// embedded profile documents, the review decisions and the file's metadata.
+type PayloadParts = (
+    PrintSelection,
+    Vec<EmbeddedProfile>,
+    Vec<ReviewDecision>,
+    Vec<FileMetadata>,
+);
+
 /// Splits a project payload into the scene's own choices, the embedded
-/// profile documents it carries and the review decisions kept with it.
-fn split_payload(
-    payload: ProjectPayload,
-) -> (PrintSelection, Vec<EmbeddedProfile>, Vec<ReviewDecision>) {
+/// profile documents it carries, the review decisions kept with it and the
+/// metadata its file had (#607).
+fn split_payload(payload: ProjectPayload) -> PayloadParts {
     let ProjectPayload {
         printer,
         resin,
@@ -286,6 +296,7 @@ fn split_payload(
         groups: _,
         hidden: _,
         locked: _,
+        metadata,
     } = payload;
     (
         PrintSelection {
@@ -297,6 +308,7 @@ fn split_payload(
         },
         embedded,
         review_decisions,
+        metadata,
     )
 }
 
@@ -387,6 +399,8 @@ pub(crate) struct SceneDocument {
     /// The findings the person chose to ignore (#432): the Review card
     /// keeps these up to date, and a project carries them.
     review_decisions: RefCell<Vec<ReviewDecision>>,
+    /// The metadata the project's file had (#607), written back on save.
+    file_metadata: RefCell<Vec<FileMetadata>>,
     /// The scene's plates and which is active (#545); a project carries how
     /// many.
     plates: Cell<crate::plates::Plates>,
@@ -576,6 +590,7 @@ impl SceneDocument {
             scene_generation: Cell::new(0),
             project_state_generation: Cell::new(0),
             review_decisions: RefCell::default(),
+            file_metadata: RefCell::default(),
             plates: Cell::new(crate::plates::Plates::one()),
             plate_volume: Cell::new(None),
             plate_names: RefCell::new(default_plate_names(1)),
@@ -717,19 +732,20 @@ impl SceneDocument {
             Some(p) => self.load_flag_rows(&p.hidden, &p.locked),
             None => self.clear_flags(),
         }
-        let (selection, embedded, decisions) = match project_payload {
+        let (selection, embedded, decisions, metadata) = match project_payload {
             Some(payload) => {
                 self.origin.set(DocumentOrigin::Project);
                 split_payload(payload)
             }
             None => {
                 self.origin.set(DocumentOrigin::PlainMesh);
-                (PrintSelection::default(), Vec::new(), Vec::new())
+                Default::default()
             }
         };
         *self.print_selection.borrow_mut() = selection;
         *self.embedded_profiles.borrow_mut() = embedded;
         *self.review_decisions.borrow_mut() = decisions;
+        *self.file_metadata.borrow_mut() = metadata;
         self.selection.set(Selection::None);
         // Object indices in the new scene have no relationship to the outgoing
         // one's, so any pending edits would target the wrong objects on replay.
@@ -859,6 +875,7 @@ impl SceneDocument {
             groups: self.group_rows(),
             hidden: self.flag_rows().0,
             locked: self.flag_rows().1,
+            metadata: self.file_metadata.borrow().clone(),
         }
     }
 
@@ -1163,10 +1180,11 @@ impl SceneDocument {
         if current != prepared {
             return SaveRecorded::Drifted;
         }
-        let (selection, embedded, decisions) = split_payload(payload);
+        let (selection, embedded, decisions, metadata) = split_payload(payload);
         *self.print_selection.borrow_mut() = selection;
         *self.embedded_profiles.borrow_mut() = embedded;
         *self.review_decisions.borrow_mut() = decisions;
+        *self.file_metadata.borrow_mut() = metadata;
         self.mark_saved();
         SaveRecorded::Clean
     }

@@ -1,0 +1,5 @@
+{
+  "description": "The metadata file with its metadata chunk written twice.",
+  "reason": "chunk-count",
+  "chunk": "META"
+}

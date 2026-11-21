@@ -44,7 +44,7 @@ use std::collections::HashMap;
 
 use rayon::prelude::*;
 
-use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
+use crate::indexed_mesh::{IndexedMesh, MeshMetadata, MeshRole};
 use crate::primitives::{IndexedTriangle, Vertex};
 use crate::shells::FaceShells;
 
@@ -57,12 +57,11 @@ pub fn is_imported_supports_name(name: &str) -> bool {
     name == IMPORTED_SUPPORTS_NAME
 }
 
-/// Whether `mesh` holds imported supports ([`IMPORTED_SUPPORTS_NAME`]).
+/// Whether `mesh` holds imported supports (#258, #228).
 pub fn is_imported_supports(mesh: &IndexedMesh) -> bool {
     mesh.meta()
         .as_ref()
-        .and_then(|m| m.name.as_deref())
-        .is_some_and(is_imported_supports_name)
+        .is_some_and(|m| m.role == Some(MeshRole::ImportedSupports))
 }
 
 /// Fewer shells than this: not a pre-supported file, and not read.
@@ -218,6 +217,7 @@ pub fn find_supports(mesh: &IndexedMesh) -> Option<Presupported> {
         name: Some(IMPORTED_SUPPORTS_NAME.to_owned()),
         header_comment: None,
         declared_facet_normals: None,
+        role: Some(MeshRole::ImportedSupports),
     };
     Some(Presupported {
         model: sub_mesh(mesh, &model_faces, mesh.meta().clone()),

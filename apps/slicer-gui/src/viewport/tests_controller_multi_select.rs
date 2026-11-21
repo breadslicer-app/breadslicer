@@ -41,6 +41,9 @@ fn plate(pieces: &[(Piece, [f64; 3])], section: WorkspaceSection) -> ViewportCon
         if let Piece::Supports = piece {
             mesh.meta = Some(MeshMetadata {
                 name: Some(sc_geom::df_supports::DF_SUPPORT_MESH_NAME.to_owned()),
+                role: sc_mesh_core::MeshRole::from_legacy_name(
+                    sc_geom::df_supports::DF_SUPPORT_MESH_NAME,
+                ),
                 ..Default::default()
             });
         }

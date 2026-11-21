@@ -503,6 +503,7 @@ mod scene_save_tests {
             groups: Vec::new(),
             hidden: Vec::new(),
             locked: Vec::new(),
+            metadata: Vec::new(),
         }
     }
 

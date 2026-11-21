@@ -1,0 +1,5 @@
+{
+  "description": "The roles file with its raft entry naming the supports leaf, which a supports entry already names as supports.",
+  "reason": "malformed",
+  "chunk": "ROLE"
+}

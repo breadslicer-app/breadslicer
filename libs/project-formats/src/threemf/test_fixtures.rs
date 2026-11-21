@@ -89,6 +89,7 @@ pub(super) fn full_payload() -> ProjectPayload {
         groups: Vec::new(),
         hidden: Vec::new(),
         locked: Vec::new(),
+        metadata: Vec::new(),
     }
 }
 
