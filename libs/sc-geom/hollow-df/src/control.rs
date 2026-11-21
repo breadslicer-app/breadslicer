@@ -138,3 +138,13 @@ impl<'a> Control<'a> {
         Ok(())
     }
 }
+
+impl std::fmt::Debug for Control<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Control")
+            .field("cancelled", &self.cancelled.is_some())
+            .field("token", &self.token)
+            .field("progress", &self.progress.is_some())
+            .finish()
+    }
+}

@@ -84,6 +84,7 @@ pub enum FanLeafResult {
 }
 
 /// The fan's tuning, as DragonFruit's positional arguments.
+#[derive(Debug)]
 pub struct FanArgs<'a> {
     pub target: Vec3,
     pub model_id: &'a str,

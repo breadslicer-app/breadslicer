@@ -105,6 +105,7 @@ pub const GRID_SPACING_FLOOR_MM: f64 = 1.2;
 /// through the index its tree already reordered, so its scan numbers them
 /// that way; a scan of the soup the tree was built from does not, and its
 /// regions are renumbered first (`pipeline`, #500).
+#[derive(Debug)]
 pub enum SurfaceSampler<'a> {
     Triangle {
         mesh: BvhMesh<'a>,

@@ -2680,7 +2680,7 @@ impl DfSupportSession {
     /// draws (a run without sizes scales its tips by the surface).
     fn size_of(&self, id: &str) -> Option<String> {
         let d = self.tip_diameter(id)?;
-        let same = |s: &&support_gen_df::supports::auto_support::zone_rules::SupportSize| {
+        let same = |s: &&SupportSize| {
             (s.tip_diameter_mm - d).abs() < 1e-6
         };
         self.settings
@@ -3699,7 +3699,7 @@ pub(crate) mod session_tests {
     fn new_knots<'a>(
         before: &DfSupportSession,
         edited: &'a DfSupportSession,
-    ) -> Vec<&'a support_gen_df::supports::types::Knot> {
+    ) -> Vec<&'a Knot> {
         edited
             .state
             .collections
@@ -5099,11 +5099,11 @@ pub(crate) mod session_tests {
             report
                 .lost
                 .iter()
-                .all(|l| l.why == crate::LostWhy::SurfaceChanged)
+                .all(|l| l.why == LostWhy::SurfaceChanged)
         );
-        assert_eq!(report.lost[1].kind, crate::HandEditKind::Added);
+        assert_eq!(report.lost[1].kind, HandEditKind::Added);
         assert!(dist(report.lost[1].at, added) < 0.05);
-        assert_eq!(report.lost[0].kind, crate::HandEditKind::Moved);
+        assert_eq!(report.lost[0].kind, HandEditKind::Moved);
         assert_eq!(tip_places(&kept), tip_places(&fresh), "nothing changed");
     }
 
@@ -5140,7 +5140,7 @@ pub(crate) mod session_tests {
         let shifted = moved.hand_log().placed[1].tip;
         assert!(dist(shifted, [added[0] + 3.0, added[1] - 2.0, added[2]]) < 1e-9);
         // An older build's document: no log.
-        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let mut value: Value = serde_json::from_slice(&bytes).unwrap();
         value.as_object_mut().unwrap().remove("handLog");
         let older = serde_json::to_vec(&value).unwrap();
         let legacy = DfSupportSession::from_document(&scene, 2, &older).unwrap();
@@ -5211,7 +5211,7 @@ pub(crate) mod session_tests {
         edited: &'a DfSupportSession,
     ) -> (
         &'a support_gen_df::supports::types::Brace,
-        [support_gen_df::three::Vec3; 2],
+        [Vec3; 2],
     ) {
         let c = &edited.state.collections;
         let brace = c
@@ -5448,8 +5448,8 @@ pub(crate) mod session_tests {
             report
                 .lost
                 .iter()
-                .any(|l| l.kind == crate::HandEditKind::Braced
-                    && l.why == crate::LostWhy::BraceEndsGone),
+                .any(|l| l.kind == HandEditKind::Braced
+                    && l.why == LostWhy::BraceEndsGone),
             "{report:?}"
         );
     }

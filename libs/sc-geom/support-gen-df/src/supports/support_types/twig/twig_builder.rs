@@ -25,7 +25,7 @@ fn twig_joint_diameter_for_disk(disk_contact_diameter: f64) -> f64 {
     twig_joint_diameter_for_local_diameter(disk_contact_diameter)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct TwigBuildInput<'a> {
     pub model_id: &'a str,
     pub a_pos: Vec3,

@@ -57,8 +57,8 @@ fn any_grid_dragonfruit_allows_fits_the_default_memory_limit() {
     // The largest grid of up to 192 voxels per side: a cube. Models that
     // hollowed before #263 are never coarsened by memory.
     let cube = crate::mesh::Aabb {
-        min: crate::mesh::Vec3::new(0.0, 0.0, 0.0),
-        max: crate::mesh::Vec3::new(192.0, 192.0, 192.0),
+        min: Vec3::new(0.0, 0.0, 0.0),
+        max: Vec3::new(192.0, 192.0, 192.0),
     };
     let grid = GridSpec::for_bbox_with_voxel(&cube, 1.0);
     assert!(grid.cell_count() * BYTES_PER_CELL <= GRID_MEMORY_LIMIT_BYTES);
@@ -350,7 +350,7 @@ fn cancel_stops_a_session_and_an_apply() {
 
 #[test]
 fn progress_reports_every_stage_in_order() {
-    let stages = std::sync::Mutex::new(Vec::new());
+    let stages = Mutex::new(Vec::new());
     let record = |s: Stage| stages.lock().unwrap().push(s);
     let session = Session::build(
         icosphere(10.0, 2),
@@ -2145,14 +2145,14 @@ fn a_cone_drain_removes_whole_infill_members() {
 
 /// A drawn region seen from above (the camera looking down -z), whose side
 /// runs slanted across the grid: `x = 6 + 0.1·y` on the plate's plane.
-fn slanted_region(perspective: bool) -> crate::solid::LassoRegion {
+fn slanted_region(perspective: bool) -> LassoRegion {
     let polygon = if perspective {
         // In the tangent plane of an eye 60 mm above z = 0.
         vec![[0.05, -0.5], [1.0, -0.5], [1.0, 0.5], [0.15, 0.5]]
     } else {
         vec![[3.0, -30.0], [30.0, -30.0], [30.0, 30.0], [9.0, 30.0]]
     };
-    crate::solid::LassoRegion {
+    LassoRegion {
         perspective,
         origin: [0.0, 0.0, 60.0],
         u: [1.0, 0.0, 0.0],
@@ -2217,7 +2217,7 @@ fn a_drawn_region_stays_solid_up_to_its_surface() {
 fn a_drawn_band_leaves_a_cavity_on_each_side() {
     let block = tessellated_box([-30.0, -10.0, -10.0], [30.0, 10.0, 10.0], 8);
     let session = Session::build(block, &GridRequest::default(), None, Control::none()).unwrap();
-    let band = crate::solid::LassoRegion {
+    let band = LassoRegion {
         perspective: false,
         origin: [0.0, 0.0, 60.0],
         u: [1.0, 0.0, 0.0],

@@ -177,6 +177,7 @@ pub struct AutoSupportPlan {
 }
 
 /// The run's inputs beyond the shared context.
+#[derive(Debug)]
 pub struct PlanInput<'a> {
     pub islands: &'a [DetectedIsland],
     pub model_id: &'a str,
@@ -197,7 +198,7 @@ pub struct PlanInput<'a> {
 }
 
 /// The zone rules' extra inputs (SoulCrafted, #360).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ZonePlanInput<'a> {
     /// The down-facing regions up to the stabilization angle.
     pub steep: &'a [DetectedIsland],

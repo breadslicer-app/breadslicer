@@ -12,6 +12,7 @@ use crate::native::islands::model::*;
 use crate::native::islands::rle::rle_label_components;
 
 /// Internal representation of a pending merge awaiting finalization.
+#[derive(Debug)]
 struct PendingMerge {
     merge_layer: u32,
     candidate_ids: Vec<IslandId>,
@@ -24,6 +25,7 @@ struct PendingMerge {
 ///
 /// All island creation, update, and merge logic flows through this type.
 /// External code only reads islands via `get_islands()`.
+#[derive(Debug)]
 pub struct IslandTracker {
     islands: HashMap<IslandId, Island>,
     next_id: u32,

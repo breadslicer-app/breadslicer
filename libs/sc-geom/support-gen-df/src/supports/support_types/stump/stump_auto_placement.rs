@@ -190,7 +190,7 @@ pub fn stump_model_collision(
 }
 
 /// `ContactOverrideRequest`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ContactOverrideRequest<'a> {
     pub tip_pos: Vec3,
     pub tip_normal: Vec3,

@@ -23,32 +23,3 @@ hollow-df-sc = { path = "hollow-df-sc", version = "0.0.1" }
 support-gen-family-dispatch = { path = "support-gen-family-dispatch", version = "0.0.1" }
 
 [dev-dependencies]
-
-# We chose a nested workspace root: this facade is a real package (for above).
-# It roots its own workspace for its sibling crates below.
-# So that, Cargo stops its ancestor search here, instead of walking up into the main app's own `[workspace]`.
-# It keeps this subsystem's internal boundaries self-contained rather than declared by the outer repo.
-[workspace]
-members = [
-    "generic-geom-alg-family-dispatch",
-    "hollow-df",
-    "hollow-df-sc",
-    "sc-geom-transport-inprocess",
-    "support-gen-chalyplex",
-    "support-gen-df",
-    "support-gen-df-sc",
-    "support-gen-family-dispatch",
-    "support-gen-trivial",
-]
-
-[workspace.lints.clippy]
-all = { level = "deny", priority = -1 }
-
-# Same debug info as the main workspace when this one is built on its own:
-# line tables for these crates (file and line in panics and backtraces), none
-# for dependencies, so the test executables stay small and link fast.
-[profile.dev]
-debug = "line-tables-only"
-
-[profile.dev.package."*"]
-debug = false

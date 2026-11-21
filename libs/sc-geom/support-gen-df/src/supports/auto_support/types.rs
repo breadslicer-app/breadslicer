@@ -13,7 +13,7 @@ use crate::three_mesh_bvh::Side;
 /// The model mesh as the auto-support passes read it: DragonFruit's
 /// `THREE.Mesh` (distance field and BVH rays), the side its material raycasts
 /// with, and the model's support-blocker mask (`getSupportBlockedTriangles`).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct AutoSupportMesh<'a> {
     pub mesh: ModelMesh<'a>,
     pub side: Side,

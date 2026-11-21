@@ -550,3 +550,23 @@ pub fn build_direction_fan(preferred: Option<Xy>, count: usize) -> Vec<Xy> {
         })
         .collect()
 }
+
+impl std::fmt::Debug for EscapeJointSearchOptions<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EscapeJointSearchOptions")
+            .field("clearance_mm", &self.clearance_mm)
+            .field("step_mm", &self.step_mm)
+            .field("max_lateral_mm", &self.max_lateral_mm)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for GridJointSearchOptions<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GridJointSearchOptions")
+            .field("clearance_mm", &self.clearance_mm)
+            .field("spacing_mm", &self.spacing_mm)
+            .field("max_lateral_mm", &self.max_lateral_mm)
+            .finish_non_exhaustive()
+    }
+}

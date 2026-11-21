@@ -205,7 +205,7 @@ fn build_tip_profile(
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct TrunkBuildInput<'a> {
     pub tip_pos: Vec3,
     pub tip_normal: Vec3,
@@ -266,6 +266,7 @@ pub fn build_trunk_data(
 
 /// The router's half of `buildTrunkData` with a mesh: the model's pooled
 /// distance field, the mesh's world matrix, and the run's router counters.
+#[derive(Debug)]
 pub struct TrunkRouter<'a> {
     pub sdf: &'a mut SdfCache,
     pub matrix_world: Matrix4,

@@ -106,6 +106,7 @@ pub enum GridPlacementDecision {
     },
 }
 
+#[derive(Debug)]
 pub struct DecideGridPlacementArgs<'a> {
     pub settings: &'a SupportSettings,
     pub snapshot: &'a SupportState,

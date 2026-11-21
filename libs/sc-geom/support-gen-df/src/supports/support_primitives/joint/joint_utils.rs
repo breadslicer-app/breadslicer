@@ -348,7 +348,7 @@ pub fn find_closest_segment<'a>(
 }
 
 /// What `moveJoint` needs beyond the trunk, joint and position.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct MoveJointContext<'a> {
     /// The model, for collision-based thickness adjustment (DragonFruit's `mesh`).
     pub mesh: Option<&'a dyn CollisionField>,

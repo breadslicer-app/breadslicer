@@ -35,7 +35,7 @@ use crate::three::{Matrix4, Ray};
 use crate::three_mesh_bvh::{BvhMesh, Intersection, MeshBvh, Side};
 
 /// The model mesh as the plan reads it: DragonFruit's `THREE.Mesh`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct PlanMesh<'a> {
     pub bvh: &'a MeshBvh,
     pub matrix: Matrix4,
@@ -337,7 +337,7 @@ pub fn compute_mesh_volume_mm3(bvh: &MeshBvh) -> f64 {
 }
 
 /// One host entity in the draft, with the type that owns it.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct HostEntry<'d> {
     pub host_type_id: SupportTypeId,
     pub host_id: &'d str,
@@ -849,6 +849,7 @@ pub fn find_merge_host(tip_pos: Vec3, model_id: &str, draft: &SupportState) -> O
 }
 
 /// The parts of a hosted branch's build input the caller chooses.
+#[derive(Debug)]
 pub struct HostedBranchInput<'k> {
     pub tip_pos: Vec3,
     pub tip_normal: Vec3,
@@ -1855,4 +1856,10 @@ pub fn validate_and_cull_orphans(
         }
     }
     (next, orphans)
+}
+
+impl std::fmt::Debug for PlanCtx<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlanCtx").finish_non_exhaustive()
+    }
 }

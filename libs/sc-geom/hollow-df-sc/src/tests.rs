@@ -985,22 +985,14 @@ fn narrowest_cavity_on_real_models() {
     };
     for path in paths.split('|') {
         let mesh = as_engine(&read_binary_stl(path));
-        let session = hollow_df::Session::build(
-            mesh,
-            &hollow_df::GridRequest::default(),
-            None,
-            hollow_df::Control::none(),
-        )
-        .unwrap();
+        let session = Session::build(mesh, &GridRequest::default(), None, Control::none()).unwrap();
         for width in [0.0, 2.0] {
-            let settings = hollow_df::HollowSettings {
+            let settings = HollowSettings {
                 min_cavity_width_mm: width,
-                ..hollow_df::HollowSettings::default()
+                ..HollowSettings::default()
             };
             let started = std::time::Instant::now();
-            let preview = session
-                .preview(&settings, hollow_df::Control::none())
-                .unwrap();
+            let preview = session.preview(&settings, Control::none()).unwrap();
             println!(
                 "{path}: width {width}: cavity {:.1} mm3 in {:.2} s",
                 preview.stats.cavity_volume_mm3,

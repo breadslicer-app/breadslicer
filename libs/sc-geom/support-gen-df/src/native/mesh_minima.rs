@@ -37,6 +37,7 @@ pub struct LocalMinimum {
     pub seed_triangle_id: u32,
 }
 
+#[derive(Debug)]
 pub struct AdjacencyList {
     pub offsets: Vec<usize>,
     pub targets: Vec<u32>,
@@ -97,6 +98,7 @@ impl AdjacencyList {
     }
 }
 
+#[derive(Debug)]
 pub struct ThreadLocalScanContext {
     visited_generation: Vec<u32>, // matches size: vert_count
     current_generation: u32,

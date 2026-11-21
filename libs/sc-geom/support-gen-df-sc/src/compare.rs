@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn a_token_is_16_bytes() {
-        assert_eq!(std::mem::size_of::<Token>(), 16);
+        assert_eq!(size_of::<Token>(), 16);
     }
 
     #[derive(Serialize)]
