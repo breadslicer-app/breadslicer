@@ -38,8 +38,8 @@ fn plate(pieces: &[(Piece, [f64; 3])], section: WorkspaceSection) -> ViewportCon
         let mut mesh = unit_cube_mesh();
         let name = match piece {
             Piece::Model => None,
-            Piece::Supports => Some(sc_geom::df_supports::DF_SUPPORT_MESH_NAME),
-            Piece::Raft => Some(sc_geom::df_supports::PLATE_RAFT_NAME),
+            Piece::Supports => Some(sc_geom::supports::SUPPORT_MESH_NAME),
+            Piece::Raft => Some(sc_geom::supports::PLATE_RAFT_NAME),
         };
         if let Some(name) = name {
             mesh.meta = Some(MeshMetadata {

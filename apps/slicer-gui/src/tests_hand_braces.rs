@@ -18,7 +18,7 @@ type Seen = ([f32; 2], [f32; 3]);
 /// it hands the brace tool.
 fn shaft_pixel(
     ctrl: &ViewportController,
-    session: &DfSupportSession,
+    session: &SupportSession,
     id: &str,
     low: f64,
     high: f64,
@@ -49,7 +49,7 @@ fn shaft_pixel(
 /// in sight low on its shaft, for which `fits` holds.
 fn trunk_pixels(
     ctrl: &ViewportController,
-    session: &DfSupportSession,
+    session: &SupportSession,
     lo: f64,
     hi: f64,
     fits: impl Fn([f32; 3], [f32; 3]) -> bool,
@@ -92,7 +92,7 @@ fn a_brace_is_laid_dropped_refused_and_removed_through_the_viewport() {
         let camera = camera_at([20.0, 25.0, 9.0], 0.6, -0.5, 40.0);
         let (ctrl, document, run) = wired_slab(&window, translation([10.0, 20.0, 9.0]), camera);
         let generated = in_force_session(&run).expect("editable");
-        let braces = |s: &DfSupportSession| s.state().collections.braces.len();
+        let braces = |s: &SupportSession| s.state().collections.braces.len();
         let goes = |a: [f32; 3], b: [f32; 3]| {
             generated
                 .brace_end_near(a.map(f64::from))

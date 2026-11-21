@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use sc_geom::df_supports::DfSupportSession;
+use sc_geom::supports::SupportSession;
 use sc_mesh_core::primitives::Vertex;
 use sc_mesh_core::transform::Transform3D;
 use sc_scene::NodeId;
@@ -31,7 +31,7 @@ pub(crate) struct ShownSet {
     pub(crate) leaf: NodeId,
     /// The model the supports stand on.
     pub(crate) model: NodeId,
-    pub(crate) session: Arc<DfSupportSession>,
+    pub(crate) session: Arc<SupportSession>,
     pub(crate) world: Transform3D,
 }
 

@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use sc_geom::df_supports::{is_imported_supports, scene_model_leaves};
+use sc_geom::supports::{is_imported_supports, scene_model_leaves};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::MeshMetadata;
 use sc_mesh_core::primitives::{IndexedTriangle, Vertex};

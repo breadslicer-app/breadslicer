@@ -276,8 +276,8 @@ export component MainWindow inherits Window {
     in property <string> move-trail-commands: "";
     in property <length> move-trail-start-x;
     in property <length> move-trail-start-y;
-    // The Supports tab options (DfSupportOptions) and presets, pushed by
-    // `DfSupportRun`.
+    // The Supports tab options (SupportOptions) and presets, pushed by
+    // `SupportRun`.
     in property <[string]> support-preset-names: [];
     in property <int> support-preset-index: -1;
     in property <int> support-sizing-index: 1;
@@ -801,7 +801,7 @@ export component MainWindow inherits Window {
     in property <string> support-gen-phase: "";
     in property <float> support-gen-progress: 0.0;
     // Whether the run in progress can be stopped from its panel (the
-    // DragonFruit generator can; the trivial one cannot).
+    // support engine can; the trivial one cannot).
     in property <bool> support-gen-cancelable: false;
 
     in property <int> slice-completed: 0;
@@ -1168,7 +1168,7 @@ export component MainWindow inherits Window {
     // bracing, raft), run on
     // the scene as a cancellable job. The supports and raft are pasted as one
     // undoable object. Shares the progress panel above.
-    callback df-support-requested();
+    callback generate-supports-requested();
     callback support-gen-cancel-requested();
     in property <bool> modal-transform-active: false;
     in property <string> modal-transform-status: "";
@@ -1414,7 +1414,7 @@ export component MainWindow inherits Window {
                 title: @tr("MenuBar" => "Generate Supports");
                 enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
                 activated => {
-                    root.df-support-requested();
+                    root.generate-supports-requested();
                 }
             }
         }
@@ -1960,7 +1960,7 @@ export component MainWindow inherits Window {
                             active: true;
                             enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
                             clicked => {
-                                root.df-support-requested();
+                                root.generate-supports-requested();
                             }
                         }
                         if root.workspace-section == WorkspaceSection.Slice: ToolButton {
@@ -3248,7 +3248,7 @@ export component MainWindow inherits Window {
                                     cancelable: root.support-gen-cancelable;
                                     last-run: root.supports-last-run;
                                     generate-requested => {
-                                        root.df-support-requested();
+                                        root.generate-supports-requested();
                                     }
                                     cancel-requested => {
                                         root.support-gen-cancel-requested();
@@ -3473,7 +3473,7 @@ export component MainWindow inherits Window {
                             cancelable: root.support-gen-cancelable;
                             last-run: root.supports-last-run;
                             generate-requested => {
-                                root.df-support-requested();
+                                root.generate-supports-requested();
                             }
                             cancel-requested => {
                                 root.support-gen-cancel-requested();
@@ -3764,7 +3764,7 @@ export component MainWindow inherits Window {
                     title: @tr("MenuBar" => "Generate Supports");
                     enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
                     activated => {
-                        root.df-support-requested();
+                        root.generate-supports-requested();
                     }
                 }
             }

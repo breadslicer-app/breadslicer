@@ -10,7 +10,7 @@
 //! and centres the camera on its focus point. A finding with a suggested fix
 //! offers it where the app's own tools apply it as one undoable edit:
 //! "Add support here" through the Supports tab's hand tool
-//! ([`DfSupportRun::add_tips_at`]). A suction cup, a cavity of a
+//! ([`SupportRun::add_tips_at`]). A suction cup, a cavity of a
 //! millilitre or more and any cavity in a model hollowed in this window
 //! offer "Add drain holes…", which opens the Hollow tab's drain tool on that
 //! model, so the person picks where the holes go (#158); a hollow with no
@@ -44,7 +44,7 @@
 //! of that slice, whole, is the new list:
 //!
 //! - islands get their tips ([`sc_review::plan_tips`]), all of them in one
-//!   undoable edit ([`DfSupportRun::start_supports_at`]);
+//!   undoable edit ([`SupportRun::start_supports_at`]);
 //! - the small resin traps are marked to fill, as "Fill all small traps"
 //!   does.
 //!
@@ -129,8 +129,8 @@ use sc_review::{
 use sc_scene::NodeId;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
-use crate::df_support_run::{
-    DfSupportRun, EditDropped, EditWatch, HandEdit, PointPlan, PointPlans, PointsEdit, Refusals,
+use crate::support_run::{
+    SupportRun, EditDropped, EditWatch, HandEdit, PointPlan, PointPlans, PointsEdit, Refusals,
     raft_lift_label,
 };
 use crate::error_dialog::InfoTexts;
@@ -230,7 +230,7 @@ fn model_poses(spatial: &SceneSpatial, plate: u32) -> Vec<ModelPose> {
         .map_while(|i| spatial.leaf_id_at_index(i))
         .filter_map(|leaf| {
             let mesh = scene.leaf_mesh_arc(leaf)?;
-            if sc_geom::df_supports::is_any_support_mesh(mesh) {
+            if sc_geom::supports::is_any_support_mesh(mesh) {
                 return None;
             }
             Some(ModelPose {
@@ -265,7 +265,7 @@ pub(crate) struct ReviewPanel {
     ui: slint::Weak<MainWindow>,
     document: Rc<SceneDocument>,
     ctrl: Rc<ViewportController>,
-    supports: Rc<DfSupportRun>,
+    supports: Rc<SupportRun>,
     hollow: Rc<HollowRun>,
     held: RefCell<Option<HeldReview>>,
     /// The cavities to fill and the findings left alone, kept across slices
@@ -409,7 +409,7 @@ impl ReviewPanel {
         bus: Rc<PreferencesBus>,
         document: Rc<SceneDocument>,
         ctrl: Rc<ViewportController>,
-        supports: Rc<DfSupportRun>,
+        supports: Rc<SupportRun>,
         hollow: Rc<HollowRun>,
     ) -> Rc<Self> {
         let panel = Rc::new(Self {
@@ -614,7 +614,7 @@ impl ReviewPanel {
     }
 
     /// The supports run, whose Generate goes on to the islands (#606).
-    pub(crate) fn supports(&self) -> &Rc<DfSupportRun> {
+    pub(crate) fn supports(&self) -> &Rc<SupportRun> {
         &self.supports
     }
 
@@ -2644,7 +2644,7 @@ impl IslandTips<'_> {
                         after: None,
                         size: tip
                             .small
-                            .then(|| sc_geom::df_supports::zone_presets::smallest_size().id),
+                            .then(|| sc_geom::supports::zone_presets::smallest_size().id),
                     };
                     (world(tip.at, self.origin()), plan)
                 })

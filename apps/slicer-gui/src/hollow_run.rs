@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! The Hollow tab (BS-8): hollows the selected model with the DragonFruit
-//! engine port (`sc_geom::df_hollow`) and drills drains where the model is
+//! The Hollow tab (BS-8): hollows the selected model with the hollowing
+//! engine (`sc_geom::hollow`) and drills drains where the model is
 //! clicked.
 //!
 //! A hollow replaces the leaf's mesh as one undoable edit. The driver keeps,
@@ -62,12 +62,12 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sc_geom::df_hollow::hollow_df::LassoRegion;
-use sc_geom::df_hollow::hollow_df::engine::{DEFAULT_PLUG_CLEARANCE_MM, DRAIN_PAST_WALL_MM};
-use sc_geom::df_hollow::hollow_df::{
+use sc_geom::hollow::hollow_engine::LassoRegion;
+use sc_geom::hollow::hollow_engine::engine::{DEFAULT_PLUG_CLEARANCE_MM, DRAIN_PAST_WALL_MM};
+use sc_geom::hollow::hollow_engine::{
     DrainDepth, GridRequest, HollowFill, HollowSettings, InfillMode, ResolutionBound, Stage,
 };
-use sc_geom::df_hollow::{
+use sc_geom::hollow::{
     DrillOutcome, DrillProbe, HOLLOW_ENGINE_VERSION, HollowKind, HollowOutcome, HollowPlug,
     HollowRequest, HollowResult, LeafFrame, PreparedHollow, WorldDrain, WorldSolidArea,
     start_drill_mesh, start_hollow_mesh,
@@ -179,7 +179,7 @@ pub(crate) struct HollowOptions {
 
 impl Default for HollowOptions {
     fn default() -> Self {
-        // DragonFruit's defaults; the drain shapes off, Damian's clearance.
+        // The engine's defaults; the drain shapes off, Damian's clearance.
         Self {
             wall_mm: 2.0,
             voxel_mm: 0.65,
@@ -1089,7 +1089,7 @@ impl HollowRun {
     /// drilled here as it was): drains are drilled into it as it is (#447),
     /// and nothing hollows it again.
     fn model_state(&self, mesh: &Arc<IndexedMesh>) -> i32 {
-        if sc_geom::df_supports::is_any_support_mesh(mesh) {
+        if sc_geom::supports::is_any_support_mesh(mesh) {
             return 2;
         }
         let drilled = self
@@ -1959,7 +1959,7 @@ impl HollowRun {
         if let Some((leaf, _)) = self.hollow_at(at) {
             return Some(leaf);
         }
-        let is_model = |mesh: &Arc<IndexedMesh>| !sc_geom::df_supports::is_any_support_mesh(mesh);
+        let is_model = |mesh: &Arc<IndexedMesh>| !sc_geom::supports::is_any_support_mesh(mesh);
         if let Some((leaf, ..)) = self.underside_below(at, is_model) {
             return Some(leaf);
         }
@@ -2897,7 +2897,7 @@ impl HollowRun {
             match &preview.cavity_piece {
                 Some((k, piece)) if *k == id => piece.clone(),
                 _ => {
-                    let mut piece = crate::df_support_run::overlay_of(&cavity, OverlayTint::Cavity);
+                    let mut piece = crate::support_run::overlay_of(&cavity, OverlayTint::Cavity);
                     for p in &mut piece.positions {
                         *p = world.apply_to_vertex(Vertex::new(*p)).coords();
                     }

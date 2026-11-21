@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use sc_geom::df_supports::DfSupportOptions;
+use sc_geom::supports::SupportOptions;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
@@ -22,9 +22,9 @@ use sc_scene::node::LeafPayload;
 use super::*;
 use crate::MessageAnswer;
 use crate::WorkspaceSection;
-use crate::df_support_run::DfSupportRun;
 use crate::hollow_run::HollowRun;
 use crate::preferences_bus::PreferencesSnapshot;
+use crate::support_run::SupportRun;
 use crate::test_support::slint_thread::on_fresh_slint_thread;
 use crate::viewport::ViewportController;
 
@@ -36,7 +36,7 @@ struct Window {
     ctrl: Rc<ViewportController>,
     document: Rc<SceneDocument>,
     slice: Rc<SliceRun>,
-    supports: Rc<DfSupportRun>,
+    supports: Rc<SupportRun>,
 }
 
 /// The window, with Generate's islands step (#606) off: these flows
@@ -85,7 +85,7 @@ fn window_with_prefs(graph: Scene, lift: bool) -> Window {
     let dialogs = ctrl.dialogs();
     dialogs.attach(&window);
     let repair = RepairRun::install(&window, document.clone(), dialogs.clone(), ctrl.clone());
-    let supports = DfSupportRun::install(
+    let supports = SupportRun::install(
         &window,
         bus.clone(),
         document.clone(),
@@ -139,7 +139,7 @@ struct Outcome {
 
 impl Window {
     fn generate(&self) {
-        self.supports.generate_now(DfSupportOptions::default());
+        self.supports.generate_now(SupportOptions::default());
         self.close_cards();
     }
 
@@ -571,7 +571,7 @@ fn generate_analyzes_the_islands_on_its_own() {
         for defect in [None, Some(Defect::Crack)] {
             let w = window_with_islands(one(slab(defect)));
             w.ctrl.set_section(WorkspaceSection::Supports);
-            w.supports.generate_now(DfSupportOptions::default());
+            w.supports.generate_now(SupportOptions::default());
             let shown = w.close_cards();
             assert!(
                 shown.iter().all(|c| c != "Supports generated"),
@@ -655,10 +655,10 @@ fn a_real_mini_through_generate_and_its_islands() {
         graph.add_root(leaf).expect("root");
         let w = window_with_prefs(graph, on_plate);
         w.ctrl.set_section(WorkspaceSection::Supports);
-        let zones = sc_geom::df_supports::zone_presets::minis_30();
-        let options = DfSupportOptions {
+        let zones = sc_geom::supports::zone_presets::minis_30();
+        let options = SupportOptions {
             zones: Some(zones),
-            ..DfSupportOptions::default()
+            ..SupportOptions::default()
         };
         let started = Instant::now();
         w.supports.press_generate_and_wait(options);
@@ -675,7 +675,7 @@ fn a_real_mini_through_generate_and_its_islands() {
                     ];
                     for leaf in (0..).map_while(|i| spatial.leaf_id_at_index(i)) {
                         let q = spatial.leaf(leaf).unwrap();
-                        if !sc_geom::df_supports::is_any_support_mesh(q.mesh()) {
+                        if !sc_geom::supports::is_any_support_mesh(q.mesh()) {
                             continue;
                         }
                         if let Some(a) = q.transformed_aabb(q.world_transform()) {
@@ -767,7 +767,7 @@ fn a_projects_leaves_and_what_its_slice_says() {
                     eprintln!(
                         "   {id:?} {:?} support={} faces={} bottom={:?}",
                         mesh.meta().as_ref().and_then(|m| m.name.clone()),
-                        sc_geom::df_supports::is_any_support_mesh(mesh),
+                        sc_geom::supports::is_any_support_mesh(mesh),
                         mesh.faces().len(),
                         query.minimum_world_z(query.world_transform()),
                     );
@@ -777,10 +777,10 @@ fn a_projects_leaves_and_what_its_slice_says() {
         tell(&w, "opened");
         if std::env::var("BREADSLICER_RAFT_GENERATE").is_ok_and(|v| v == "1") {
             w.ctrl.set_section(WorkspaceSection::Supports);
-            w.supports.press_generate_and_wait(DfSupportOptions {
-                zones: Some(sc_geom::df_supports::zone_presets::minis_30()),
+            w.supports.press_generate_and_wait(SupportOptions {
+                zones: Some(sc_geom::supports::zone_presets::minis_30()),
                 one_raft: true,
-                ..DfSupportOptions::default()
+                ..SupportOptions::default()
             });
             assert!(
                 !w.window.get_slicing_in_progress(),

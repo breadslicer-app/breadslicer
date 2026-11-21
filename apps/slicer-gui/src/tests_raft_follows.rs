@@ -10,7 +10,7 @@
 use super::*;
 
 /// Every tip of `session`, rounded to a micron and sorted.
-fn tips(session: &DfSupportSession) -> Vec<[i64; 3]> {
+fn tips(session: &SupportSession) -> Vec<[i64; 3]> {
     let mut places: Vec<[i64; 3]> = session
         .tips()
         .into_iter()
@@ -151,7 +151,7 @@ fn plate_rafts(document: &SceneDocument) -> Vec<(NodeId, Arc<sc_mesh_core::Index
                 .map_while(|i| spatial.leaf_id_at_index(i))
                 .filter_map(|leaf| {
                     let mesh = spatial.graph().leaf_mesh_arc(leaf)?;
-                    sc_geom::df_supports::is_plate_raft(mesh).then(|| (leaf, mesh.clone()))
+                    sc_geom::supports::is_plate_raft(mesh).then(|| (leaf, mesh.clone()))
                 })
                 .collect()
         })
@@ -159,7 +159,7 @@ fn plate_rafts(document: &SceneDocument) -> Vec<(NodeId, Arc<sc_mesh_core::Index
 }
 
 /// Ticks the plate's raft until the scene stands still with it.
-fn settle_rafts(document: &SceneDocument, run: &DfSupportRun) {
+fn settle_rafts(document: &SceneDocument, run: &SupportRun) {
     let volume = run.ctrl.build_volume();
     for _ in 0..400 {
         let revision = document.scene_revision();

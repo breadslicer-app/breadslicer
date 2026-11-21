@@ -26,7 +26,6 @@ use sc_sl1cer::contour::{ClosedRing, ContourStack};
 use crate::MainWindow;
 use crate::WorkspaceSection;
 use crate::clipboard::{self, Clipboard, clipboard_from_document_selection};
-use crate::df_support_run::{DfSupportRun, HandEdit};
 use crate::hollow_persist::{install_hollows, restore_hollows};
 use crate::hollow_run::HollowRun;
 use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
@@ -36,6 +35,7 @@ use crate::selection::{LeafId, Selection};
 use crate::support_persist::{
     DrawnSet, install_sets, restore_supports, sets_in_force, sets_of_model, support_owners,
 };
+use crate::support_run::{HandEdit, SupportRun};
 use crate::test_support::slint_thread::on_fresh_slint_thread;
 use crate::viewport::ViewportController;
 
@@ -56,7 +56,7 @@ struct Prepared {
     _ctrl: Rc<ViewportController>,
     document: Rc<SceneDocument>,
     hollow: Rc<HollowRun>,
-    supports: Rc<DfSupportRun>,
+    supports: Rc<SupportRun>,
     model: NodeId,
 }
 
@@ -76,8 +76,7 @@ fn window_with_cube(window: &MainWindow, at: [f64; 3]) -> Prepared {
     document.install_graph(graph, PathBuf::from("cube.stl"));
     let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
     let hollow = HollowRun::install(window, document.clone(), ctrl.dialogs(), ctrl.clone());
-    let supports =
-        DfSupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+    let supports = SupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
     Prepared {
         _ctrl: ctrl,
         document,
@@ -111,11 +110,10 @@ fn prepared(window: &MainWindow) -> Prepared {
     // On a solid raft: a raft of lines (the default since #435) is drawn
     // again where the copy lands, and its beams may join by a vertex more or
     // less there.
-    p.supports
-        .generate_now(sc_geom::df_supports::DfSupportOptions {
-            raft: sc_geom::df_supports::RaftMode::Solid,
-            ..Default::default()
-        });
+    p.supports.generate_now(sc_geom::supports::SupportOptions {
+        raft: sc_geom::supports::RaftMode::Solid,
+        ..Default::default()
+    });
     let (edit, refused) = p.supports.add_supports_at(&[[46.0, 34.0, 5.0]]);
     assert!(matches!(edit, HandEdit::Applied), "{edit:?} {refused:?}");
     let set = set_of(&p.document, p.model).expect("a set in force");
@@ -331,7 +329,7 @@ fn models(document: &SceneDocument) -> Vec<NodeId> {
                 .map_while(|i| s.leaf_id_at_index(i))
                 .filter(|&id| {
                     !s.leaf(id)
-                        .is_some_and(|q| sc_geom::df_supports::is_support_mesh(q.mesh()))
+                        .is_some_and(|q| sc_geom::supports::is_support_mesh(q.mesh()))
                 })
                 .collect()
         })
@@ -384,11 +382,11 @@ fn a_pasted_copy_keeps_its_hollow_and_supports_and_prints_the_same() {
         assert!(!Arc::ptr_eq(&copy_set_mesh, &original_set_mesh));
         // Drawn as supports, as the model's are.
         assert!(
-            sc_geom::df_supports::is_any_support_mesh(&original_set_mesh),
+            sc_geom::supports::is_any_support_mesh(&original_set_mesh),
             "the model's supports read as supports"
         );
         assert!(
-            sc_geom::df_supports::is_any_support_mesh(&copy_set_mesh),
+            sc_geom::supports::is_any_support_mesh(&copy_set_mesh),
             "the copy's supports read as supports: {:?}",
             copy_set_mesh.meta()
         );

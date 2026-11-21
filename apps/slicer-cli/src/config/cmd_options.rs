@@ -109,8 +109,8 @@ pub(crate) struct PlateOptions {
     pub verbose: bool,
     pub no_auto_place: bool,
     pub repair: bool,
-    pub df_supports: bool,
-    pub df_lift: f64,
+    pub generate_supports: bool,
+    pub support_lift: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -430,23 +430,23 @@ fn get_plate_options() -> impl Parser<PlateOptions> {
         )
         .switch();
 
-    let df_supports = long("df-supports")
+    let generate_supports = long("generate-supports")
         .help(
             "Generate supports and a raft before slicing, as the Supports tab does in the app. The supports are sliced with the scene.",
         )
         .switch();
 
-    let df_lift = long("df-lift")
+    let support_lift = long("support-lift")
         // Built once per parse; the help names the generator's own default.
         .help(&*Box::leak(
             format!(
-                "With --df-supports and auto-placement: the height in millimetres the scene is raised off the plate to make room for the supports (default {}).",
-                sc_geom::df_supports::DEFAULT_SUPPORT_LIFT_MM
+                "With --generate-supports and auto-placement: the height in millimetres the scene is raised off the plate to make room for the supports (default {}).",
+                sc_geom::supports::DEFAULT_SUPPORT_LIFT_MM
             )
             .into_boxed_str(),
         ))
         .argument::<f64>("MM")
-        .fallback(sc_geom::df_supports::DEFAULT_SUPPORT_LIFT_MM);
+        .fallback(sc_geom::supports::DEFAULT_SUPPORT_LIFT_MM);
 
     construct!(PlateOptions {
         printer_profile,
@@ -458,8 +458,8 @@ fn get_plate_options() -> impl Parser<PlateOptions> {
         verbose,
         no_auto_place,
         repair,
-        df_supports,
-        df_lift,
+        generate_supports,
+        support_lift,
     })
 }
 

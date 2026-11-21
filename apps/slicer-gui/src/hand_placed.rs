@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use sc_geom::df_supports::is_any_support_mesh;
+use sc_geom::supports::is_any_support_mesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_spatial::SceneSpatial;
 use sc_scene::NodeId;

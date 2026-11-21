@@ -137,12 +137,12 @@ pub(crate) fn drain_mouths(document: &SceneDocument) -> Vec<[f32; 3]> {
 }
 
 /// Where no tip may land (#465): each drain's channel, a little wider.
-pub(crate) fn drain_channels(document: &SceneDocument) -> Vec<sc_geom::df_supports::KeepOut> {
+pub(crate) fn drain_channels(document: &SceneDocument) -> Vec<sc_geom::supports::KeepOut> {
     let v = |p: [f32; 3]| p.map(f64::from);
     world_drains(document)
         .iter()
         .map(|d| {
-            sc_geom::df_supports::KeepOut::between(
+            sc_geom::supports::KeepOut::between(
                 v(d.mouth),
                 v(d.end),
                 f64::from(d.radius_mm + CHANNEL_MARGIN_MM),

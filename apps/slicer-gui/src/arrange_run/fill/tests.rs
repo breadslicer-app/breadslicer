@@ -364,12 +364,12 @@ fn fill_bed_on_a_real_model() {
     // the Miniatures preset on an M7 Pro, lifted as Generate lifts it.
     // `BREADSLICER_FILL_ONE_RAFT=1`: under one raft for all (#556).
     let one_raft = std::env::var_os("BREADSLICER_FILL_ONE_RAFT").is_some();
-    let options = sc_geom::df_supports::DfSupportOptions {
-        zones: Some(sc_geom::df_supports::zone_presets::minis_30()),
+    let options = sc_geom::supports::SupportOptions {
+        zones: Some(sc_geom::supports::zone_presets::minis_30()),
         one_raft,
         ..Default::default()
     };
-    let request = sc_geom::df_supports::DfSupportRequest {
+    let request = sc_geom::supports::SupportRequest {
         layer_height_mm: 0.05,
         pixel_pitch_mm: Some([0.016_8, 0.016_8]),
         options: options.clone(),
@@ -503,12 +503,12 @@ fn fill_then_generate_keeps_the_supports_on_the_plate() {
         floor: 0.0,
     };
     let one_raft = std::env::var_os("BREADSLICER_EDGE_ONE_RAFT").is_some();
-    let options = sc_geom::df_supports::DfSupportOptions {
-        zones: Some(sc_geom::df_supports::zone_presets::minis_30()),
+    let options = sc_geom::supports::SupportOptions {
+        zones: Some(sc_geom::supports::zone_presets::minis_30()),
         one_raft,
         ..Default::default()
     };
-    let request = sc_geom::df_supports::DfSupportRequest {
+    let request = sc_geom::supports::SupportRequest {
         layer_height_mm: 0.05,
         pixel_pitch_mm: Some([0.016_8, 0.024_8]),
         options: options.clone(),
@@ -597,7 +597,7 @@ fn fill_then_generate_keeps_the_supports_on_the_plate() {
             .unwrap();
         scene.add_root(leaf).unwrap();
     }
-    let outcome = sc_geom::df_supports::start_df_supports(&scene, request)
+    let outcome = sc_geom::supports::start_supports(&scene, request)
         .unwrap()
         .join()
         .unwrap();
@@ -634,7 +634,7 @@ fn fill_then_generate_keeps_the_supports_on_the_plate() {
             .iter()
             .map(|set| (&set.session, AffineTransform3D::identity()))
             .collect();
-        if let Some(raft) = sc_geom::df_supports::plate_raft(&sets) {
+        if let Some(raft) = sc_geom::supports::plate_raft(&sets) {
             let (a, b) = bounds(&raft, &AffineTransform3D::identity());
             raft_past = past(a, b);
         }

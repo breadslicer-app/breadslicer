@@ -137,7 +137,7 @@ pub(crate) fn model_shares(
         if mesh.faces().is_empty() || !on(leaf) {
             continue;
         }
-        let model = if sc_geom::df_supports::is_any_support_mesh(mesh) {
+        let model = if sc_geom::supports::is_any_support_mesh(mesh) {
             match model_of(leaf) {
                 Some(model) => model,
                 None => continue,

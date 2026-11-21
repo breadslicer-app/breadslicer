@@ -8,7 +8,7 @@
 //! dialog, then calls in here to produce the file.
 //!
 //! A save writes a project: the scene plus the project payload. "Save" and "Save
-//! As" write Breadslicer's `.bread` (#145), which keeps DragonFruit supports as
+//! As" write Breadslicer's `.bread` (#145), which keeps supports as
 //! data so they reopen editable, and never stores slices; "Save As 3MF" writes
 //! a 3MF project, with the supports as a mesh and the in-sync slices. The
 //! payload holds the scene's own printer, resin, first-layer height and printer
@@ -290,16 +290,16 @@ pub(crate) fn paint_left_out_texts() -> InfoTexts {
 pub(crate) fn supports_as_mesh_texts(why: SupportsAsMesh) -> InfoTexts {
     let message = match why {
         SupportsAsMesh::NoSession => ctr!(
-            "DfSupportDialog",
+            "SupportDialog",
             "These supports no longer match the models (or were opened as a mesh), so they were saved as a mesh: they will open, but cannot be edited by hand. Generate them again and save to keep them editable."
         ),
         SupportsAsMesh::NoRecipe => ctr!(
-            "DfSupportDialog",
+            "SupportDialog",
             "These supports cannot be kept as data, so they were saved as a mesh: they will open, but cannot be edited by hand."
         ),
     };
     InfoTexts {
-        heading: ctr!("DfSupportDialog", "Supports saved as a mesh"),
+        heading: ctr!("SupportDialog", "Supports saved as a mesh"),
         message,
         details: Default::default(),
     }

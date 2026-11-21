@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! DragonFruit supports kept as data, one set per model (#145, #197).
+//! Supports kept as data, one set per model (#145, #197).
 //!
 //! Each model's supports and raft are a leaf of their own. The document holds
 //! the editable support sessions ([`SupportSessions`]): every drawing of a
@@ -24,9 +24,8 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use sc_geom::df_supports::{
-    DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, DfSupportSession, RestoredSet,
-    is_support_mesh,
+use sc_geom::supports::{
+    RestoredSet, SUPPORT_DOCUMENT_VERSION, SUPPORT_GENERATOR, SupportSession, is_support_mesh,
 };
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
@@ -46,7 +45,7 @@ pub(crate) struct DrawnSet {
     pub(crate) leaf: NodeId,
     /// The model they stand on.
     pub(crate) model: NodeId,
-    pub(crate) session: Arc<DfSupportSession>,
+    pub(crate) session: Arc<SupportSession>,
     /// The mesh the session drew into the leaf.
     mesh: Arc<IndexedMesh>,
     /// The model's mesh and world transform then.
@@ -127,7 +126,7 @@ impl DrawnSet {
     pub(crate) fn unborn(
         spatial: &SceneSpatial,
         model: NodeId,
-        session: DfSupportSession,
+        session: SupportSession,
     ) -> Option<Self> {
         let (model_mesh, model_world) = model_state(spatial, model)?;
         Some(Self {
@@ -164,7 +163,7 @@ pub(crate) fn record(
     sessions: &RefCell<SupportSessions>,
     leaf: NodeId,
     model: NodeId,
-    session: Arc<DfSupportSession>,
+    session: Arc<SupportSession>,
 ) {
     let drawn = doc
         .with_scene(|spatial| {
@@ -434,7 +433,7 @@ pub(crate) fn review_sets(
             spatial
                 .graph()
                 .leaf_mesh_arc(id)
-                .is_some_and(|mesh| sc_geom::df_supports::is_plate_raft(mesh))
+                .is_some_and(|mesh| sc_geom::supports::is_plate_raft(mesh))
         })
         .map(|leaf| SupportSet {
             leaf,
@@ -539,8 +538,8 @@ pub(crate) fn support_documents(doc: &SceneDocument, spatial: &SceneSpatial) -> 
         kept.documents.push(SupportDocument {
             model: Some(model),
             leaf,
-            generator: DF_SUPPORT_GENERATOR.to_owned(),
-            version: DF_SUPPORT_DOCUMENT_VERSION,
+            generator: SUPPORT_GENERATOR.to_owned(),
+            version: SUPPORT_DOCUMENT_VERSION,
             document,
         });
     }
@@ -549,7 +548,7 @@ pub(crate) fn support_documents(doc: &SceneDocument, spatial: &SceneSpatial) -> 
 
 /// Whether `session` fits its models in `spatial` and draws the mesh the
 /// support leaf shows (the same size, as a reopened file would redraw it).
-fn drew(session: &DfSupportSession, spatial: &SceneSpatial, shown: &IndexedMesh) -> bool {
+fn drew(session: &SupportSession, spatial: &SceneSpatial, shown: &IndexedMesh) -> bool {
     session.fits_models_of(spatial.graph())
         && session.mesh().ok().flatten().is_some_and(|mesh| {
             mesh.vertices().len() == shown.vertices().len()
@@ -565,8 +564,8 @@ fn drew(session: &DfSupportSession, spatial: &SceneSpatial, shown: &IndexedMesh)
 static PUT_DOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Every distinct session the drawings hold.
-fn distinct_sessions(sessions: &RefCell<SupportSessions>) -> Vec<Arc<DfSupportSession>> {
-    let mut seen: Vec<Arc<DfSupportSession>> = Vec::new();
+fn distinct_sessions(sessions: &RefCell<SupportSessions>) -> Vec<Arc<SupportSession>> {
+    let mut seen: Vec<Arc<SupportSession>> = Vec::new();
     for drawn in sessions.borrow().iter() {
         if !seen.iter().any(|s| Arc::ptr_eq(s, &drawn.session)) {
             seen.push(drawn.session.clone());
@@ -588,10 +587,10 @@ pub(crate) fn put_down_all(sessions: &RefCell<SupportSessions>) {
 /// entering the Supports tab (#269), so the first hand edit is quick. A put
 /// down while it runs wins.
 pub(crate) fn warm_in_background(doc: &SceneDocument, sessions: &RefCell<SupportSessions>) {
-    let in_force: Vec<Arc<DfSupportSession>> = doc
+    let in_force: Vec<Arc<SupportSession>> = doc
         .with_scene(|spatial| {
             let leaves: Vec<NodeId> = sessions.borrow().iter().map(|d| d.leaf).collect();
-            let mut in_force_now: Vec<Arc<DfSupportSession>> = Vec::new();
+            let mut in_force_now: Vec<Arc<SupportSession>> = Vec::new();
             for leaf in leaves {
                 if let Some(drawn) = in_force(spatial, sessions, leaf)
                     && !in_force_now.iter().any(|s| Arc::ptr_eq(s, &drawn.session))
@@ -644,7 +643,7 @@ pub(crate) struct RestoredSupports {
 }
 
 /// Rebuilds the supports `documents` describe on `scene`, off the UI thread:
-/// each DragonFruit document becomes the editable sets of its models, their
+/// each support document becomes the editable sets of its models, their
 /// meshes in place of the empty mesh of its leaf (and new leaves for a file
 /// that kept every model's supports in one). A document that cannot be
 /// rebuilt (a newer or unknown generator, models that changed, a
@@ -655,7 +654,7 @@ pub(crate) fn restore_supports(
 ) -> RestoredSupports {
     let mut restored = RestoredSupports::default();
     // Copies whose sets were shown as one set's mesh come back so (#561).
-    let mut drawings = sc_geom::df_supports::Drawings::default();
+    let mut drawings = sc_geom::supports::Drawings::default();
     for document in documents {
         match rebuild(scene, &document, &mut drawings) {
             Ok(sets) => restored.sets.extend(sets),
@@ -671,18 +670,18 @@ pub(crate) fn restore_supports(
 fn rebuild(
     scene: &mut Scene,
     document: &SupportDocument,
-    drawings: &mut sc_geom::df_supports::Drawings,
+    drawings: &mut sc_geom::supports::Drawings,
 ) -> Result<Vec<RestoredSet>, String> {
-    if document.generator != DF_SUPPORT_GENERATOR {
+    if !sc_geom::supports::is_support_generator(&document.generator) {
         return Err(format!(
             "the supports were made by an unknown generator, \"{}\"",
             document.generator
         ));
     }
-    // The port is DragonFruit's code on saved input: a panic in it is
+    // The support engine on saved input: a panic in it is
     // supports that could not be rebuilt, not a failed open.
     let sets = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        DfSupportSession::restore_sets_sharing(
+        SupportSession::restore_sets_sharing(
             scene,
             document.leaf,
             document.model,

@@ -21,7 +21,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
-use sc_geom::df_supports::{is_any_support_mesh, is_imported_supports};
+use sc_geom::supports::{is_any_support_mesh, is_imported_supports};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::shells::FaceShells;

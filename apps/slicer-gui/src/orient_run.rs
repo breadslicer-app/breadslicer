@@ -41,7 +41,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use sc_geom::df_supports::is_any_support_mesh;
+use sc_geom::supports::is_any_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_orient::{
@@ -52,7 +52,7 @@ use sc_scene::{NodeId, PaintKind, SurfaceTags, surface_area};
 use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
-use crate::df_support_run::DfSupportRun;
+use crate::support_run::SupportRun;
 use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
@@ -361,7 +361,7 @@ pub(crate) struct OrientRun {
     document: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
     ctrl: Rc<ViewportController>,
-    supports: Rc<DfSupportRun>,
+    supports: Rc<SupportRun>,
     open: Cell<bool>,
     settings: Cell<OrientSettings>,
     analysis: RefCell<Option<(AnalysisKey, Arc<OrientAnalysis>)>>,
@@ -397,7 +397,7 @@ impl OrientRun {
         document: Rc<SceneDocument>,
         dialogs: Rc<DialogManager>,
         ctrl: Rc<ViewportController>,
-        supports: Rc<DfSupportRun>,
+        supports: Rc<SupportRun>,
     ) -> Rc<Self> {
         let brush = SurfaceBrush::new(document.clone(), PaintKind::Detail);
         ctrl.set_surface_brush(brush.clone());

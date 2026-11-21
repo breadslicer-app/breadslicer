@@ -26,7 +26,7 @@ mod clipboard;
 mod cut_gizmo;
 mod cut_run;
 mod default_envelope;
-mod df_support_run;
+mod support_run;
 mod diagnostics;
 mod error_dialog;
 mod export_print_file;

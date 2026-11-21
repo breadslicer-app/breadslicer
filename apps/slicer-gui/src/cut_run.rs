@@ -59,7 +59,7 @@ use sc_cut::{
     Cut, CutError, CutModel, Fit, Joint, MAGNET_PRESETS, Outline, PinShape, Plane, Section,
     add_joints, joint_points,
 };
-use sc_geom::df_supports::is_any_support_mesh;
+use sc_geom::supports::is_any_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_core::indexed_mesh::repair::repaired_copy;

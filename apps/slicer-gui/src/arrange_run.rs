@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use sc_arrange::{Across, Body, Outcome, Part, Placement, Plate, Settings};
-use sc_geom::df_supports::is_any_support_mesh;
+use sc_geom::supports::is_any_support_mesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
 use sc_scene_edit::SceneEdit;
@@ -1118,7 +1118,7 @@ fn gather_bodies(document: &SceneDocument, selection: bool) -> Option<Gathered> 
             };
             // One raft for all (#556) is drawn again where its sets go.
             if !is_any_support_mesh(query.mesh())
-                || sc_geom::df_supports::is_plate_raft(query.mesh())
+                || sc_geom::supports::is_plate_raft(query.mesh())
             {
                 continue;
             }
@@ -1127,7 +1127,7 @@ fn gather_bodies(document: &SceneDocument, selection: bool) -> Option<Gathered> 
             };
             // The supports a model came with (#259) belong to the model
             // they stand under.
-            let imported = sc_geom::df_supports::is_imported_supports(query.mesh());
+            let imported = sc_geom::supports::is_imported_supports(query.mesh());
             let model = if imported {
                 crate::imported_supports::owner_of(spatial, leaf, None)
             } else {
@@ -1429,7 +1429,7 @@ mod real_scene {
             let document = ctrl.document();
             document.install_graph(project.scene, path.clone());
             crate::support_persist::install_sets(&document, restored.sets);
-            let _supports = crate::df_support_run::DfSupportRun::install(
+            let _supports = crate::support_run::SupportRun::install(
                 &window,
                 bus,
                 document.clone(),

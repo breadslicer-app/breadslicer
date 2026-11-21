@@ -2279,7 +2279,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5491a308e0214554f07a81d8944abe45f552871c12e3c3c6e7e5d354039a6c4c"
 
 [[package]]
-name = "hollow-df"
+name = "hollow-engine"
 version = "0.0.1"
 dependencies = [
  "ahash",
@@ -2290,10 +2290,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "hollow-df-sc"
+name = "hollow-session"
 version = "0.0.1"
 dependencies = [
- "hollow-df",
+ "hollow-engine",
  "rayon",
  "sc-geom-transport-inprocess",
  "sc-mesh-core",
@@ -5396,11 +5396,11 @@ name = "sc-geom"
 version = "0.0.2"
 dependencies = [
  "generic-geom-alg-family-dispatch",
- "hollow-df-sc",
+ "hollow-session",
  "sc-geom-transport-inprocess",
- "support-gen-df-sc",
  "support-gen-family-dispatch",
  "support-gen-trivial",
+ "support-session",
 ]
 
 [[package]]
@@ -5702,7 +5702,7 @@ dependencies = [
  "sc-sla-formats",
  "sc-sla-formats-uvtools",
  "serde_json",
- "support-gen-df",
+ "support-engine",
  "tempfile",
  "windows-sys 0.61.2",
 ]
@@ -6377,16 +6377,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "support-gen-chalyplex"
-version = "0.0.1"
-
-[[package]]
-name = "support-gen-df"
+name = "support-engine"
 version = "0.0.1"
 dependencies = [
  "ahash",
  "indexmap",
- "libm",
  "rayon",
  "serde",
  "serde_json",
@@ -6394,20 +6389,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "support-gen-df-sc"
+name = "support-gen-chalyplex"
 version = "0.0.1"
-dependencies = [
- "ahash",
- "indexmap",
- "rayon",
- "sc-geom-transport-inprocess",
- "sc-mesh-core",
- "sc-mesh-formats",
- "sc-scene",
- "serde",
- "serde_json",
- "support-gen-df",
-]
 
 [[package]]
 name = "support-gen-family-dispatch"
@@ -6428,6 +6411,22 @@ dependencies = [
  "sc-scene",
  "sha2",
  "support-gen-family-dispatch",
+]
+
+[[package]]
+name = "support-session"
+version = "0.0.1"
+dependencies = [
+ "ahash",
+ "indexmap",
+ "rayon",
+ "sc-geom-transport-inprocess",
+ "sc-mesh-core",
+ "sc-mesh-formats",
+ "sc-scene",
+ "serde",
+ "serde_json",
+ "support-engine",
 ]
 
 [[package]]

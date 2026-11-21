@@ -32,7 +32,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sc_geom::df_supports::is_any_support_mesh;
+use sc_geom::supports::is_any_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::shells::{Bodies, BodyKind};
 use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind, SceneMetadata};

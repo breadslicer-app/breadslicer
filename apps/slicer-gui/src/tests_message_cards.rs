@@ -77,7 +77,7 @@ fn notice(shown: &Shown) {
     shown
         .manager
         .show_notice(MessageKey::SupportsGenerated, || InfoTexts {
-            heading: ctr!("DfSupportDialog", "Supports generated"),
+            heading: ctr!("SupportDialog", "Supports generated"),
             message: "412 supports on 3 models. 2 islands got 1 support each.".into(),
             details: "• dragon-rojo.stl: 180 supports, 1 island\n• busto-elfa.stl: 132 supports\n• torre-blanca.3mf: 100 supports, 1 island".into(),
         });
@@ -353,9 +353,9 @@ fn stale_supports(shown: &Shown, hand_edited: bool) {
     shown.manager.show_stale_supports(
         hand_edited,
         || InfoTexts {
-            heading: ctr!("DfSupportDialog", "Supports out of date"),
+            heading: ctr!("SupportDialog", "Supports out of date"),
             message: ctr!(
-                "DfSupportDialog",
+                "SupportDialog",
                 "This model's mesh changed since its supports were made (Repair and Hollow change it), so they can no longer be edited by hand."
             ),
             details: Default::default(),

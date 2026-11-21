@@ -699,11 +699,6 @@ msgctxt "MenuBar"
 msgid "Tools"
 msgstr "Outils"
 
-#: ui/main-window.slint:512
-msgctxt "MenuBar"
-msgid "Generate Supports (DragonFruit)…"
-msgstr "Générer les supports (DragonFruit)…"
-
 #: ui/main-window.slint:495 ui/main-window.slint:1068
 msgctxt "MenuBar"
 msgid "Generate Support (trivial for test)…"
@@ -1168,35 +1163,35 @@ msgctxt "ObjectList"
 msgid "Object {}"
 msgstr "Objet {}"
 
-#: src/df_support_run.rs:102
-msgctxt "DfSupportDialog"
+#: src/support_run.rs:102
+msgctxt "SupportDialog"
 msgid "Support generation failed"
 msgstr "Échec de la génération des supports"
 
-#: src/df_support_run.rs:167
-msgctxt "DfSupportDialog"
+#: src/support_run.rs:167
+msgctxt "SupportDialog"
 msgid "Supports discarded"
 msgstr "Supports abandonnés"
 
-#: src/df_support_run.rs:168
-msgctxt "DfSupportDialog"
+#: src/support_run.rs:168
+msgctxt "SupportDialog"
 msgid ""
 "The scene changed while supports were being generated; nothing was added."
 msgstr ""
 "La scène a changé pendant la génération des supports ; rien n'a été ajouté."
 
-#: src/df_support_run.rs:181
-msgctxt "DfSupportDialog"
+#: src/support_run.rs:181
+msgctxt "SupportDialog"
 msgid "No supports needed"
 msgstr "Aucun support nécessaire"
 
-#: src/df_support_run.rs:193
-msgctxt "DfSupportDialog"
+#: src/support_run.rs:193
+msgctxt "SupportDialog"
 msgid "The scene rejected the generated supports; nothing was changed."
 msgstr "La scène a rejeté les supports générés ; rien n'a été changé."
 
-#: src/df_support_run.rs:202
-msgctxt "DfSupportDialog"
+#: src/support_run.rs:202
+msgctxt "SupportDialog"
 msgid "Supports generated"
 msgstr "Supports générés"
 

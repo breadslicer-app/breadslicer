@@ -35,7 +35,7 @@
 //! - `SUPPORT_SCORECARD_DUMP`: a folder for each scene's tips, islands left and
 //!   triangles, to look at them.
 //!
-//! Every scene is prepared as the app and `slice --df-supports` prepare it:
+//! Every scene is prepared as the app and `slice --generate-supports` prepare it:
 //! centred on the plate of the Anycubic Photon Mono M7 Pro, lifted by the
 //! default support lift, supports generated with the default options for
 //! 0.05 mm layers and that printer's pixel (the same job the Supports tab
@@ -78,9 +78,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
-use sc_geom::df_supports::{
-    DF_SUPPORT_MESH_NAME, DfSupportOutcome, DfSupportRequest, is_support_mesh_name,
-    recommended_lift_mm, scene_model_leaves, settings_for, start_df_supports, zone_presets,
+use sc_geom::supports::{
+    SUPPORT_MESH_NAME, SupportOutcome, SupportRequest, is_support_mesh_name, recommended_lift_mm,
+    scene_model_leaves, settings_for, start_supports, zone_presets,
 };
 use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_core::transform::Transform3D;
@@ -102,24 +102,24 @@ use sc_scene::node::{LeafPayload, SceneMetadata};
 use sc_sl1cer::profile::AaLevel;
 use sc_sl1cer::{CancelToken as SliceCancel, sliceable_leaves};
 use serde_json::Value;
-use support_gen_df::features::slicing::support_world_triangles::{
+use support_engine::features::slicing::support_world_triangles::{
     SupportSliceInput, build_support_and_raft_world_parts,
 };
-use support_gen_df::pipeline::{
+use support_engine::pipeline::{
     CancelToken, ModelInput, PipelineOutput, PipelineSettings, plan_supports_with, world_soup,
 };
-use support_gen_df::supports::auto_support::auto_place::plan::SUPPORT_COVERAGE_RADIUS_MM;
-use support_gen_df::supports::auto_support::coverage::{
+use support_engine::supports::auto_support::auto_place::plan::SUPPORT_COVERAGE_RADIUS_MM;
+use support_engine::supports::auto_support::coverage::{
     compute_region_coverage, coverage_radius_for_area,
 };
-use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
-use support_gen_df::supports::support_primitives::contact_cone::types::ContactCone;
-use support_gen_df::supports::types::{Segment, SupportCollections, SupportState, Vec3};
-use support_gen_df::three::Matrix4;
-use support_gen_df::three::ray::Ray;
-use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
-use support_gen_df::volume_analysis::islands::types::DetectedIsland;
+use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
+use support_engine::supports::rafts::crenelated::raft_types::RaftBottomMode;
+use support_engine::supports::support_primitives::contact_cone::types::ContactCone;
+use support_engine::supports::types::{Segment, SupportCollections, SupportState, Vec3};
+use support_engine::three::Matrix4;
+use support_engine::three::ray::Ray;
+use support_engine::three_mesh_bvh::{MeshBvh, Side};
+use support_engine::volume_analysis::islands::types::DetectedIsland;
 
 /// The printer and material every scene is measured with.
 const PRINTER: &str = "printers/anycubic-photon-mono-m7-pro.toml";
@@ -397,7 +397,7 @@ fn state_digest(c: &SupportCollections) -> u64 {
 }
 
 /// The digest of the support meshes, vertex bits and faces in order.
-fn mesh_digest(outcome: &DfSupportOutcome) -> u64 {
+fn mesh_digest(outcome: &SupportOutcome) -> u64 {
     let mut h = Fnv::new();
     for set in &outcome.sets {
         let Some(mesh) = &set.mesh else {
@@ -1055,7 +1055,6 @@ fn placement(
                     tip_penetration_mm: settings.tip_penetration_mm,
                     tip_drawing: settings.tip_drawing,
                     shaft_style: settings.shaft_style,
-                    robust_raft_geometry: settings.robust_raft_geometry,
                     draw_rafts: true,
                 }) else {
                     return (false, false, true);
@@ -1762,7 +1761,7 @@ fn run_scene(
         })
         .fold(f64::NEG_INFINITY, f64::max);
     let pitch = printer.hardware.pixel_size_microns();
-    let mut request = DfSupportRequest {
+    let mut request = SupportRequest {
         layer_height_mm: LAYER_MM,
         pixel_pitch_mm: Some([pitch.x.value() / 1000.0, pitch.y.value() / 1000.0]),
         ..Default::default()
@@ -1783,10 +1782,10 @@ fn run_scene(
     }
 
     // The job the Supports tab runs, `runs` times.
-    let mut outcomes: Vec<(f64, DfSupportOutcome)> = Vec::new();
+    let mut outcomes: Vec<(f64, SupportOutcome)> = Vec::new();
     for _ in 0..runs {
         let t = Instant::now();
-        let outcome = start_df_supports(&scene, request.clone())
+        let outcome = start_supports(&scene, request.clone())
             .expect("start the support run")
             .join()
             .expect("the support run");
@@ -1849,7 +1848,7 @@ fn run_scene(
     let mut plate_scene = scene.clone();
     for set in &outcome.sets {
         if let Some(mesh) = &set.mesh {
-            add_mesh(&mut plate_scene, DF_SUPPORT_MESH_NAME, mesh.clone());
+            add_mesh(&mut plate_scene, SUPPORT_MESH_NAME, mesh.clone());
         }
     }
     let raft_top_mm = request.options.raft_top_mm();

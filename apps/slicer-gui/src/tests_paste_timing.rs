@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sc_geom::df_supports::{DF_SUPPORT_MESH_NAME, DfSupportRequest, start_df_supports};
+use sc_geom::supports::{SUPPORT_MESH_NAME, SupportRequest, start_supports};
 use sc_mesh_core::transform::Transform3D;
 use sc_scene::node::{LeafPayload, SceneMetadata};
 use sc_scene::{NodeId, Scene};
@@ -30,15 +30,9 @@ use crate::test_support::gpu_devices::shared_test_device;
 
 const PASTES: usize = 4;
 
-/// The STL named by `WOLVERINE_STL`, or the one under the checkout's `.local`.
+/// The STL named by `WOLVERINE_STL`.
 fn wolverine_path() -> PathBuf {
-    std::env::var_os("WOLVERINE_STL").map_or_else(
-        || {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../.local/df-oracle/corpus-wolverine/wolverine-3mf-pose.stl")
-        },
-        PathBuf::from,
-    )
+    std::env::var_os("WOLVERINE_STL").map_or_else(PathBuf::new, PathBuf::from)
 }
 
 fn ms(d: Duration) -> f64 {
@@ -60,12 +54,12 @@ fn wolverine_scene(supported: bool) -> Scene {
         .drop_at([x as f32, y as f32], (floor + lift) as f32)
         .expect("drop");
     if supported {
-        let request = DfSupportRequest {
+        let request = SupportRequest {
             layer_height_mm: 0.05,
             pixel_pitch_mm: Some([0.05, 0.05]),
             ..Default::default()
         };
-        let handle = start_df_supports(&scene, request).expect("supports start");
+        let handle = start_supports(&scene, request).expect("supports start");
         let outcome = loop {
             if let Some(result) = handle.try_poll() {
                 break result.expect("supports run");
@@ -75,7 +69,7 @@ fn wolverine_scene(supported: bool) -> Scene {
         for mesh in outcome.sets.into_iter().filter_map(|set| set.mesh) {
             eprintln!("supports: {} triangles", mesh.faces().len());
             let meta = Some(SceneMetadata {
-                name: Some(DF_SUPPORT_MESH_NAME.to_string()),
+                name: Some(SUPPORT_MESH_NAME.to_string()),
                 ..Default::default()
             });
             let leaf = scene
@@ -99,7 +93,7 @@ fn model_leaf(doc: &SceneDocument) -> NodeId {
             idx += 1;
             if !spatial
                 .leaf(id)
-                .is_some_and(|q| sc_geom::df_supports::is_support_mesh(q.mesh()))
+                .is_some_and(|q| sc_geom::supports::is_support_mesh(q.mesh()))
             {
                 return id;
             }

@@ -762,11 +762,6 @@ msgstr "Herramientas"
 
 #: ui/main-window.slint
 msgctxt "MenuBar"
-msgid "Generate Supports (DragonFruit)…"
-msgstr "Generar soportes (DragonFruit)…"
-
-#: ui/main-window.slint
-msgctxt "MenuBar"
 msgid "Generate Support (trivial for test)…"
 msgstr "Generar soporte (trivial, de prueba)…"
 
@@ -1270,35 +1265,35 @@ msgctxt "ObjectList"
 msgid "Object {}"
 msgstr "Objeto {}"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Support generation failed"
 msgstr "La generación de soportes falló"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Supports discarded"
 msgstr "Soportes descartados"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid ""
 "The scene changed while supports were being generated; nothing was added."
 msgstr ""
 "La escena cambió mientras se generaban los soportes; no se añadió nada."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "No supports needed"
 msgstr "No se necesitan soportes"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The scene rejected the generated supports; nothing was changed."
 msgstr "La escena rechazó los soportes generados; no se cambió nada."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Supports generated"
 msgstr "Soportes generados"
 
@@ -2622,8 +2617,8 @@ msgctxt "Review"
 msgid "No problems found"
 msgstr "No se encontraron problemas"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Supports are being generated; try again when they are done."
 msgstr "Se están generando los soportes; probá de nuevo cuando terminen."
 
@@ -2750,7 +2745,7 @@ msgctxt "Inspector"
 msgid "No raft"
 msgstr "Sin balsa"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
 msgctxt "Inspector"
 msgid "The raft takes {n} layer and will interfere with the model, leaving no room for supports under it. Lift the model to {} mm above the plate, or turn the raft off."
@@ -2758,7 +2753,7 @@ msgid_plural "The raft takes {n} layers and will interfere with the model, leavi
 msgstr[0] "La balsa ocupa {n} capa e interferirá con el modelo, sin dejar lugar para los soportes debajo. Elevá el modelo a {} mm sobre la plataforma, o desactivá la balsa."
 msgstr[1] "La balsa ocupa {n} capas e interferirá con el modelo, sin dejar lugar para los soportes debajo. Elevá el modelo a {} mm sobre la plataforma, o desactivá la balsa."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
 msgctxt "Inspector"
 msgid "Lift to {} mm"
@@ -2843,12 +2838,12 @@ msgid "Project files are saved as .bread files."
 msgstr "Los archivos de proyecto se guardan como archivos .bread."
 
 #: src/scene_loader.rs
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Supports not restored"
 msgstr "Soportes no restaurados"
 
 #: src/scene_loader.rs
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid ""
 "The project opened, but its supports could not be rebuilt and were left out. "
 "Generate them again."
@@ -2857,27 +2852,27 @@ msgstr ""
 "dejaron afuera. Volvé a generarlos."
 
 #: src/scene_save.rs
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Supports saved as a mesh"
 msgstr "Soportes guardados como malla"
 
 #: src/scene_save.rs
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "The scene has more than one set of supports, so they were saved as a mesh: they will open, but cannot be edited by hand. Keep one set and save again to keep them editable."
 msgstr "La escena tiene más de un juego de soportes, así que se guardaron como malla: se van a abrir, pero no se van a poder editar a mano. Dejá un solo juego y guardá de nuevo para que sigan siendo editables."
 
 #: src/scene_save.rs
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "These supports no longer match the models (or were opened as a mesh), so they were saved as a mesh: they will open, but cannot be edited by hand. Generate them again and save to keep them editable."
 msgstr "Estos soportes ya no coinciden con los modelos (o se abrieron como malla), así que se guardaron como malla: se van a abrir, pero no se van a poder editar a mano. Generalos de nuevo y guardá para que sigan siendo editables."
 
 #: src/scene_save.rs
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "These supports cannot be kept as data, so they were saved as a mesh: they will open, but cannot be edited by hand."
 msgstr "Estos soportes no se pueden guardar como datos, así que se guardaron como malla: se van a abrir, pero no se van a poder editar a mano."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "These supports were opened as a mesh, so they cannot be edited by hand. Generate supports again to edit them."
 msgstr "Estos soportes se abrieron como malla, así que no se pueden editar a mano. Generá soportes de nuevo para editarlos."
 
@@ -2963,19 +2958,19 @@ msgctxt "Review"
 msgid "Left by Fix All: it could not fix this. Change the model by hand."
 msgstr "Corregir todo lo dejó: no pudo corregir esto. Cambiá el modelo a mano."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "there is no model or support within reach of that point"
 msgstr "no hay ningún modelo ni soporte al alcance de ese punto"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "there is no route to the plate or to another support"
 msgstr "no hay camino a la cama ni a otro soporte"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "the supports could not be drawn: {}"
 msgstr "no se pudieron dibujar los soportes: {}"
 
@@ -3087,37 +3082,37 @@ msgctxt "AppearancePreferences"
 msgid "Your computer draws a heavy scene at about {} FPS. Recommended: {} FPS."
 msgstr "Tu computadora dibuja una escena pesada a unos {} FPS. Recomendado: {} FPS."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Select these supports, or their model, to remove them."
 msgstr "Seleccioná estos soportes, o su modelo, para quitarlos."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Supports regenerated"
 msgstr "Soportes regenerados"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The model's new pose got new supports, so the supports added or removed by hand are gone. Undo brings back the old pose with them."
 msgstr "La pose nueva del modelo tiene soportes nuevos, así que se perdieron los que agregaste o quitaste a mano. Deshacer trae de vuelta la pose anterior con ellos."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Workspace"
 msgid "Supports regenerated: same result as before."
 msgstr "Soportes regenerados: mismo resultado que antes."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Workspace"
 msgid "Supports generated. Finding the islands and supporting them…"
 msgstr "Soportes generados. Buscando las islas y poniéndoles soportes…"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Workspace"
 msgid "Supports regenerated: replaced the previous set."
 msgstr "Soportes regenerados: reemplazaron a los anteriores."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Workspace"
 msgid "Supports regenerated for the model's new pose."
 msgstr "Soportes regenerados para la pose nueva del modelo."
@@ -4969,34 +4964,34 @@ msgctxt "RepairDialog"
 msgid "Check: the fills cover {} % of its surface. If it is open on purpose (a plate, a relief without a back), it now prints as a thin solid."
 msgstr "Revisá: lo tapado cubre el {} % de su superficie. Si está abierto a propósito (una placa, un relieve sin fondo), ahora se imprime como un sólido fino."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Miniatures 20~65 mm"
 msgstr "Miniaturas 20~65 mm"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Figures 65~150 mm"
 msgstr "Figuras 65~150 mm"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Statues 150 mm+"
 msgstr "Estatuas 150 mm+"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
 msgctxt "Inspector"
 msgid "This preset sets the size and spacing of every support by zone: island first layers, their reinforcement, overhangs past {}° and stabilization."
 msgstr "Este preset elige el tamaño y la separación de cada soporte según la zona: primera capa de las islas, su refuerzo, voladizos de más de {}° y estabilización."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
 msgctxt "Inspector"
 msgid "Tips: {} mm."
 msgstr "Puntas: {} mm."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
 msgctxt "Inspector"
 msgid "Bracing: {} mm, from {} mm up."
@@ -5240,93 +5235,93 @@ msgctxt "Inspector"
 msgid "Keys 1–4 pick the tip: extra small, small, medium, large. Shift+click hangs the support from the nearest one, or places nothing."
 msgstr "Las teclas 1–4 eligen la punta: extra chica, chica, mediana, grande. Shift+clic cuelga el soporte del más cercano, o no pone nada."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
 msgctxt "Inspector"
 msgid "{} mm tip"
 msgstr "Punta de {} mm"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
 msgctxt "Inspector"
 msgid "{} mm tip, the preset's"
 msgstr "Punta de {} mm, la del preset"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Tip sized by the preset"
 msgstr "Punta según el preset"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "no support close enough to hang from"
 msgstr "no hay ningún soporte lo bastante cerca para colgarlo"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "no support below the tip to hang from"
 msgstr "no hay ningún soporte debajo de la punta para colgarlo"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "hanging from the supports nearby would lean too far"
 msgstr "colgarlo de los soportes cercanos lo inclinaría demasiado"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "it hits the model"
 msgstr "choca con el modelo"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "it would cross another support"
 msgstr "cruzaría otro soporte"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "the supports nearby carry all they can"
 msgstr "los soportes cercanos ya cargan todo lo que pueden"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "the surface there is too steep for a tip"
 msgstr "ahí la superficie es demasiado empinada para una punta"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Its own trunk: {}."
 msgstr "Tronco propio: {}."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Cannot hang it: {}."
 msgstr "No se puede colgar: {}."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Cannot place it: {}."
 msgstr "No se puede poner: {}."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Cannot place it: no support can reach that point."
 msgstr "No se puede poner: ningún soporte llega a ese punto."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Undone before it was placed; nothing was changed."
 msgstr "Se deshizo antes de ponerlo; no cambió nada."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The scene changed before the support was placed; nothing was changed."
 msgstr "La escena cambió antes de poner el soporte; no cambió nada."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Supports are being generated; the click was dropped."
 msgstr "Se están generando soportes; el clic se descartó."
 #: ui/main-window.slint ui/workspace/inspectors.slint
@@ -5434,7 +5429,7 @@ msgctxt "Inspector"
 msgid "Stabilize poses on a point or edge"
 msgstr "Estabilizar poses sobre un punto o borde"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
 msgctxt "Inspector"
 msgid "Recommended for this preset: {} mm."
@@ -5610,72 +5605,72 @@ msgctxt "Inspector"
 msgid "Remove support (click it)"
 msgstr "Quitar soporte (clic en él)"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "{n} support root, edited by hand."
 msgid_plural "{n} support roots, edited by hand."
 msgstr[0] "{n} raíz de soporte, editada a mano."
 msgstr[1] "{n} raíces de soporte, editadas a mano."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Support roots: {}, edited by hand. No support could hold {n} point: {}."
 msgid_plural "Support roots: {}, edited by hand. No support could hold {n} points: {}."
 msgstr[0] "Raíces de soporte: {}, editadas a mano. Ningún soporte pudo sostener {n} punto: {}."
 msgstr[1] "Raíces de soporte: {}, editadas a mano. Ningún soporte pudo sostener {n} puntos: {}."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Supports regenerated for the new pose. {} {} s."
 msgstr "Soportes regenerados para la pose nueva. {} {} s."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Models: {}, islands: {}, support roots: {}, triangles: {}."
 msgstr "Modelos: {}, islas: {}, raíces de soporte: {}, triángulos: {}."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Preparing scans…"
 msgstr "Preparando el análisis…"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "That edit failed inside the support engine; nothing was changed."
 msgstr "Esa edición falló dentro del motor de soportes; no se cambió nada."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "That was the last support; use Undo to bring it back."
 msgstr "Ese era el último soporte; usá Deshacer para recuperarlo."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The support mesh is not in the scene; generate supports again."
 msgstr "La malla de soportes no está en la escena; generá los soportes de nuevo."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The edit was refused: {}"
 msgstr "Se rechazó la edición: {}"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Supports out of date"
 msgstr "Soportes desactualizados"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The scene changed since the supports were made; generate them again to edit them."
 msgstr "La escena cambió desde que se hicieron los soportes; generalos de nuevo para editarlos."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "No supports to edit"
 msgstr "No hay soportes para editar"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Generate supports first; then add or remove them by hand."
 msgstr "Primero generá los soportes; después agregalos o quitalos a mano."
 
@@ -5830,51 +5825,51 @@ msgctxt "Inspector"
 msgid "Drag a box: every support it touches goes, from the selected supports only. B switches to a brush."
 msgstr "Arrastrá un recuadro: se va cada soporte que toque, solo de los soportes seleccionados. B pasa a pincel."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "other supports hang from it"
 msgstr "otros soportes cuelgan de él"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "the shaft would lean too far to print"
 msgstr "el tronco quedaría demasiado inclinado para imprimirse"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "an elbow stays between the parts below and above it"
 msgstr "un codo tiene que quedar entre la parte de abajo y la de arriba"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "the tip would be wider than its shaft"
 msgstr "la punta quedaría más ancha que su tronco"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Cannot move it there: {}."
 msgstr "No se puede mover ahí: {}."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Cannot move it there: no support can reach that point."
 msgstr "No se puede mover ahí: ningún soporte llega a ese punto."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Supports to remove: {}."
 msgstr "Soportes a quitar: {}."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Left where it was. {}"
 msgstr "Quedó donde estaba. {}"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "the surface there faces up; nothing below can reach it"
 msgstr "ahí la superficie mira hacia arriba; nada desde abajo llega"
 #: ui/start-dialog.slint
@@ -6050,13 +6045,13 @@ msgctxt "Review"
 msgid "The scene changed while Fix All ran; nothing was changed."
 msgstr "La escena cambió mientras corría Corregir todo; no cambió nada."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Supports are being edited; try again when that is done."
 msgstr "Se están editando los soportes; probá de nuevo cuando termine."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Cancelled; nothing was changed."
 msgstr "Cancelado; no cambió nada."
 
@@ -6157,8 +6152,8 @@ msgctxt "StaleSupportsDialog"
 msgid "Make them again; put back what was added, moved or removed by hand"
 msgstr "Los rehace y repone lo agregado, movido o quitado a mano"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid ""
 "This model's mesh changed since its supports were made (Repair and Hollow "
 "change it), so they can no longer be edited by hand."
@@ -6166,8 +6161,8 @@ msgstr ""
 "La malla de este modelo cambió desde que se hicieron sus soportes (Reparar y "
 "Ahuecar la cambian), así que ya no se pueden editar a mano."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid ""
 "The supports' mesh changed since they were made (Repair changes it), so they "
 "can no longer be edited by hand."
@@ -6175,42 +6170,42 @@ msgstr ""
 "La malla de los soportes cambió desde que se hicieron (Reparar la cambia), así "
 "que ya no se pueden editar a mano."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Supports recalculated"
 msgstr "Soportes recalculados"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "The edit made by hand was put back."
 msgid_plural "All {n} edits made by hand were put back."
 msgstr[0] "Se volvió a aplicar la edición hecha a mano."
 msgstr[1] "Se volvieron a aplicar las {n} ediciones hechas a mano."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The edit made by hand could not be kept:"
 msgstr "No se pudo conservar la edición hecha a mano:"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "{n} of your {} edits made by hand could not be kept:"
 msgid_plural "{n} of your {} edits made by hand could not be kept:"
 msgstr[0] "No se pudo conservar {n} de tus {} ediciones hechas a mano:"
 msgstr[1] "No se pudieron conservar {n} de tus {} ediciones hechas a mano:"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "…and {n} more."
 msgid_plural "…and {n} more."
 msgstr[0] "…y {n} más."
 msgstr[1] "…y {n} más."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid ""
 "These supports were saved by an older version, which did not record the "
 "supports removed or moved by hand: those are back where the run places them."
@@ -6219,40 +6214,40 @@ msgstr ""
 "soportes quitados o movidos a mano: esos volvieron a donde los pone la "
 "generación."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Undo brings back the supports as they were."
 msgstr "Deshacer trae de vuelta los soportes como estaban."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "the model surface there changed"
 msgstr "la superficie del modelo cambió ahí"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "no support can reach that point now"
 msgstr "ahora ningún soporte llega a ese punto"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "no support to hang it from there now"
 msgstr "ahora no hay ahí un soporte del que colgarlo"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "other supports of the new run hang from the one there"
 msgstr "otros soportes de la nueva generación cuelgan del que está ahí"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "support added at {}: {}"
 msgstr "soporte agregado en {}: {}"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "support moved to {}: {}"
 msgstr "soporte movido a {}: {}"
 
@@ -6295,90 +6290,90 @@ msgctxt "RepairDialog"
 msgid "Repair couldn't fix everything, so slicing didn't start again. {}"
 msgstr "La reparación no pudo arreglar todo, así que no se volvió a laminar. {}"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "both ends are on the same support"
 msgstr "los dos extremos están en el mismo soporte"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "the two supports hold different models"
 msgstr "los dos soportes sostienen modelos distintos"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "a brace joins trunks and branches only"
 msgstr "una riostra une solo troncos y ramas"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "an end is off its support: too near the tip, or too low"
 msgstr "un extremo queda fuera de su soporte: muy cerca de la punta o muy abajo"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "the supports are too close to brace"
 msgstr "los soportes están demasiado cerca para arriostrarlos"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "it would be longer than the preset lets a brace be"
 msgstr "quedaría más larga de lo que el preset deja que sea una riostra"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "it would be flatter than 45°: at 45° it ends off the other support"
 msgstr "quedaría más plana que 45°: a 45° termina fuera del otro soporte"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "it would cross the model"
 msgstr "atravesaría el modelo"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Click to lay the brace. Esc drops the first end."
 msgstr "Hacé clic para poner la riostra. Esc cancela el primer extremo."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Cannot brace them: {}."
 msgstr "No se pueden arriostrar: {}."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Cannot brace them: no brace fits there."
 msgstr "No se pueden arriostrar: ahí no entra ninguna riostra."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Now click the support to brace it to. Esc drops the first end."
 msgstr "Ahora hacé clic en el soporte al que va la riostra. Esc cancela el primer extremo."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "No trunk or branch there to brace from."
 msgstr "Ahí no hay tronco ni rama desde donde arriostrar."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The supports changed since the first end was picked; pick it again."
 msgstr "Los soportes cambiaron desde que elegiste el primer extremo; elegilo de nuevo."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Click another trunk or branch of the same supports to brace it to."
 msgstr "Hacé clic en otro tronco o rama de los mismos soportes para arriostrarlo."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "the supports it joined are no longer there"
 msgstr "los soportes que unía ya no están"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "brace from {}: {}"
 msgstr "riostra desde {}: {}"
 
@@ -6624,7 +6619,7 @@ msgstr ""
 "Tiene {} de las {} puntas que pide: no entran más en lo que ganó. Ponelas a "
 "mano en la pestaña Soportes, o dejala."
 
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "The scene rejected the new supports; nothing was changed."
 msgstr "La escena rechazó los soportes nuevos; no cambió nada."
 
@@ -6734,22 +6729,22 @@ msgctxt "ObjectList"
 msgid "Imported supports"
 msgstr "Soportes importados"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "A click removes this body of the imported supports."
 msgstr "Un clic quita este cuerpo de los soportes importados."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Removed {n} body of the imported supports."
 msgid_plural "Removed {n} bodies of the imported supports."
 msgstr[0] "Se quitó {n} cuerpo de los soportes importados."
 msgstr[1] "Se quitaron {n} cuerpos de los soportes importados."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Bodies of the imported supports to remove: {}."
 msgstr "Cuerpos de los soportes importados a quitar: {}."
 
@@ -6952,7 +6947,7 @@ msgid_plural "The plane crosses {n} parts: all are cut."
 msgstr[0] "El plano atraviesa 1 parte: se corta."
 msgstr[1] "El plano atraviesa {n} partes: se cortan todas."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
 msgctxt "Workspace"
 msgid "The raft of 1 set of supports changed; the supports stayed where they were."
@@ -7070,13 +7065,13 @@ msgctxt "Inspector"
 msgid "Go to the next island"
 msgstr "Ir a la siguiente isla"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "These supports are being made again for the model as it is now; place it again in a moment."
 msgstr "Estos soportes se están rehaciendo para el modelo como está ahora; volvé a ponerlo en un momento."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The model changed under its supports: they are being made again, keeping your edits."
 msgstr "El modelo cambió debajo de sus soportes: se están rehaciendo, conservando tus ediciones."
 
@@ -7354,77 +7349,77 @@ msgctxt "Inspector"
 msgid "Each zone places the size picked, this many mm apart."
 msgstr "Cada zona pone el tamaño elegido, a esta distancia en mm."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Made from {}, with changes"
 msgstr "Hecho a partir de {}, con cambios"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Preset {}"
 msgstr "Preset {}"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Custom preset"
 msgstr "Preset personalizado"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Miniatures"
 msgstr "Miniaturas"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Figures"
 msgstr "Figuras"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Statues"
 msgstr "Estatuas"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Overhangs"
 msgstr "Voladizos"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "faces past the angle"
 msgstr "caras más allá del ángulo"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Stabilization"
 msgstr "Estabilización"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "flat faces from {} mm²"
 msgstr "caras planas desde {} mm²"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "first layer from {} mm²"
 msgstr "primera capa desde {} mm²"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "every island"
 msgstr "todas las islas"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Islands"
 msgstr "Islas"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Island bodies"
 msgstr "Cuerpo de las islas"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "from {} mm³"
 msgstr "desde {} mm³"
@@ -7434,7 +7429,7 @@ msgctxt "Inspector"
 msgid "Reset to default"
 msgstr "Volver al valor original"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Made from {}"
 msgstr "Hecho a partir de {}"
@@ -7504,7 +7499,7 @@ msgctxt "Inspector"
 msgid "The sizes are not the ones that ship."
 msgstr "Los tamaños no son los de fábrica."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Hand supports"
 msgstr "Soportes a mano"
@@ -7554,86 +7549,86 @@ msgctxt "Inspector"
 msgid "Import"
 msgstr "Importar"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Current settings"
 msgstr "Ajustes actuales"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "That file could not be read."
 msgstr "No se pudo leer ese archivo."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "That file was made by a newer Breadslicer."
 msgstr "Ese archivo lo hizo un Breadslicer más nuevo."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "That file holds no support settings."
 msgstr "Ese archivo no trae ajustes de soportes."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "That is not a Breadslicer support settings file."
 msgstr "Ese no es un archivo de ajustes de soportes de Breadslicer."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "auto preset"
 msgstr "preset automático"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Hand sizes (XS S M L)"
 msgstr "Tamaños a mano (XS S M L)"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "manual supports"
 msgstr "soportes manuales"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Support settings exported."
 msgstr "Ajustes de soportes exportados."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "The file could not be written."
 msgstr "No se pudo escribir el archivo."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Hand sizes imported."
 msgstr "Tamaños a mano importados."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Imported {n} preset."
 msgid_plural "Imported {n} presets."
 msgstr[0] "Se importó {n} preset."
 msgstr[1] "Se importaron {n} presets."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Imported {n} preset and the hand sizes."
 msgid_plural "Imported {n} presets and the hand sizes."
 msgstr[0] "Se importaron {n} preset y los tamaños a mano."
 msgstr[1] "Se importaron {n} presets y los tamaños a mano."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "FileDialog"
 msgid "Import support settings"
 msgstr "Importar ajustes de soportes"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "FileDialog"
 msgid "Export support settings"
 msgstr "Exportar ajustes de soportes"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "FileDialog"
 msgid "Breadslicer support settings"
 msgstr "Ajustes de soportes de Breadslicer"
@@ -7668,32 +7663,32 @@ msgctxt "Inspector"
 msgid "{} of {} ticked"
 msgstr "{} de {} tildados"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Preset of Generate"
 msgstr "Preset de Generar"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Hand sizes"
 msgstr "Tamaños a mano"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "You have no presets of your own yet: change one and save it in PRESETS to share it."
 msgstr "Todavía no tenés presets propios: cambiá uno y guardalo en PRESETS para compartirlo."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "The file brings no presets."
 msgstr "El archivo no trae presets."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Automatic presets"
 msgstr "Presets automáticos"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "The file brings no hand sizes."
 msgstr "El archivo no trae tamaños a mano."
@@ -7708,38 +7703,38 @@ msgctxt "Inspector"
 msgid "A preset named as one of yours comes in under a new name; none of yours is replaced. A hand size ticked replaces yours."
 msgstr "Un preset con el mismo nombre que uno tuyo entra con otro nombre; ninguno tuyo se reemplaza. Un tamaño a mano tildado reemplaza el tuyo."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "{}, with your changes"
 msgstr "{}, con tus cambios"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Built-in, as it ships"
 msgstr "De fábrica, sin cambios"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Built-in, with your changes"
 msgstr "De fábrica, con tus cambios"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "{}, as it ships"
 msgstr "{}, de fábrica"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Your preset {}, made from {}"
 msgstr "Tu preset {}, hecho a partir de {}"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Supports run into a neighbour"
 msgstr "Soportes que chocan con un vecino"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "{} copies took the supports of a copy standing like them, and they run into a model beside them. Press Arrange all to space the models out."
 msgstr "{} copias recibieron los soportes de una copia apoyada igual, y chocan con un modelo de al lado. Apretá Acomodar todo para separar los modelos."
 
@@ -8770,15 +8765,15 @@ msgctxt "FileDialog"
 msgid "Lychee, Photon Workshop or CHITUBOX printer settings"
 msgstr "Ajustes de impresora de Lychee, Photon Workshop o CHITUBOX"
 
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Supports past the plate edge"
 msgstr "Soportes fuera de la cama"
 
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "The supports of {} model(s) reach past the edge of the plate and would not print. Press Arrange all to place the models with their supports on the plate."
 msgstr "Los soportes de {} modelo(s) se salen de la cama y no se imprimirían. Tocá Acomodar todo para ubicar los modelos con sus soportes dentro de la cama."
 
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Arrange all"
 msgstr "Acomodar todo"
 
@@ -9439,27 +9434,27 @@ msgctxt "SendToPrinter"
 msgid "Breadslicer slices for {} now; {} is set up as {}."
 msgstr "Breadslicer lamina ahora para {}; {} está configurada como {}."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "Raft drawn under the model"
 msgstr "Balsa debajo del modelo"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The raft of {} model(s) could not be cut clear of the models standing on the plate, and runs under them. Check it in the Slice tab before printing, or set the raft to Off or to Lines."
 msgstr "La balsa de {} modelo(s) no se pudo recortar alrededor de los modelos apoyados en la plataforma y pasa por debajo de ellos. Revisala en Laminar antes de imprimir, o poné la balsa en Ninguna o en Líneas."
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The raft covers a drain"
 msgstr "La balsa tapa un drenaje"
 
-#: src/df_support_run.rs
-msgctxt "DfSupportDialog"
+#: src/support_run.rs
+msgctxt "SupportDialog"
 msgid "The raft runs over {} drain hole(s) on the underside of a hollow model: the resin inside cannot get out there. Lift the model, move the drain, or set the raft to Off or to Lines."
 msgstr "La balsa pasa por encima de {} agujero(s) de drenaje en la base de un modelo hueco: la resina de adentro no puede salir por ahí. Levantá el modelo, mové el drenaje o poné la balsa en Ninguna o en Líneas."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 #, rust-format
 msgctxt "Inspector"
 msgid "One support did not fit once sized and was left out: Analyze islands shows what it held."
@@ -9664,24 +9659,24 @@ msgctxt "Inspector"
 msgid "various"
 msgstr "varios"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "{n} support picked: the numbers below draw it again; drag its trunk or an elbow to move it."
 msgid_plural "{n} supports picked: the numbers below draw them again; drag a trunk or an elbow to move it."
 msgstr[0] "{n} soporte elegido: los números de abajo lo dibujan de nuevo; arrastrá su tronco o un codo para moverlo."
 msgstr[1] "{n} soportes elegidos: los números de abajo los dibujan de nuevo; arrastrá un tronco o un codo para moverlo."
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Picked supports"
 msgstr "Soportes elegidos"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "Picked"
 msgstr "Elegidos"
 
-#: src/df_support_run.rs
+#: src/support_run.rs
 msgctxt "Inspector"
 msgid "{n} picked support holds others up and stays as it is: pick the ones at the ends."
 msgid_plural "{n} picked supports hold others up and stay as they are: pick the ones at the ends."
@@ -9839,11 +9834,11 @@ msgctxt "Inspector"
 msgid "Supports apart"
 msgstr "Separación entre soportes"
 
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Click where the row ends."
 msgstr "Hacé clic donde termina la fila."
 
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Click where the row ends: {n} support."
 msgid_plural "Click where the row ends: {n} supports."
 msgstr[0] "Hacé clic donde termina la fila: {n} soporte."
@@ -9865,11 +9860,11 @@ msgctxt "Inspector"
 msgid "Clear paint"
 msgstr "Borrar la pintura"
 
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "Paint where the supports go first, or Shift+click a face to take its plane."
 msgstr "Primero pintá donde van los soportes, o hacé Shift+clic en una cara para tomar su plano."
 
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "{n} tip on painted detail could not be kept off it; it takes the finest tip."
 msgid_plural "{n} tips on painted detail could not be kept off it; they take the finest tip."
 msgstr[0] "{n} punta sobre detalle pintado no se pudo sacar de ahí; lleva la punta más fina."
@@ -9887,7 +9882,7 @@ msgctxt "Inspector"
 msgid "Make editable at the same contacts"
 msgstr "Hacerlos editables en los mismos contactos"
 
-msgctxt "DfSupportDialog"
+msgctxt "SupportDialog"
 msgid "No contact tips were found in these imported supports; they stay as they are."
 msgstr "No se encontraron puntas de contacto en estos soportes importados; quedan como están."
 

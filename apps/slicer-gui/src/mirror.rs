@@ -68,7 +68,7 @@ pub(crate) fn mirror(document: &SceneDocument, models: &[NodeId], axis: MirrorAx
             .filter(|&id| {
                 spatial
                     .leaf(id)
-                    .is_some_and(|q| !sc_geom::df_supports::is_any_support_mesh(q.mesh()))
+                    .is_some_and(|q| !sc_geom::supports::is_any_support_mesh(q.mesh()))
             })
             .collect();
         if models.is_empty() {

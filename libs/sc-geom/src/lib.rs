@@ -47,9 +47,9 @@ pub use support_gen_trivial::{
     TrivialSupportInferredSpecs, TrivialSupportSpecs,
 };
 
-/// The DragonFruit support port, run on a scene (`support-gen-df-sc`).
-pub use support_gen_df_sc as df_supports;
+/// The DragonFruit support port, run on a scene (`support-session`).
+pub use support_session as supports;
 
-/// The DragonFruit hollowing port, run on a scene leaf (`hollow-df-sc`; the
-/// engine itself is `df_hollow::hollow_df`).
-pub use hollow_df_sc as df_hollow;
+/// The DragonFruit hollowing port, run on a scene leaf (`hollow-session`; the
+/// engine itself is `hollow::hollow_engine`).
+pub use hollow_session as hollow;

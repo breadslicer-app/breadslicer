@@ -28,7 +28,7 @@ use crate::i18n::ctr;
 use crate::preferences_bus::PreferencesBus;
 use crate::repair_run::RepairRun;
 use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
-use sc_geom::df_supports::is_any_support_mesh;
+use sc_geom::supports::is_any_support_mesh;
 
 /// How often the checks running and the models waiting for a busy window
 /// are looked at again.

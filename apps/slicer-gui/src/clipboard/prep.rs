@@ -30,7 +30,7 @@
 
 use std::sync::Arc;
 
-use sc_geom::df_supports::DfSupportSession;
+use sc_geom::supports::SupportSession;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{Aabb, IndexedMesh, Vertex};
 use sc_scene::node::{LeafPayload, SceneMetadata};
@@ -56,7 +56,7 @@ struct Piece {
 /// leaf that shows it.
 #[derive(Clone, Debug)]
 struct Set {
-    session: Arc<DfSupportSession>,
+    session: Arc<SupportSession>,
     piece: Piece,
 }
 

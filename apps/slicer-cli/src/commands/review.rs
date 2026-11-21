@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use sc_geom::df_supports::{SupportContact, recommended_lift_mm};
+use sc_geom::supports::{SupportContact, recommended_lift_mm};
 use sc_print_glue::{PlateFrame, SlicedPlate};
 use sc_print_profiles::ProfileLibraries;
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile};
@@ -41,7 +41,7 @@ use sc_review::{
 use sc_scene::{NodeId, Scene};
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
-use crate::commands::df_supports::{SupportSet, df_raft_top_mm};
+use crate::commands::generate_supports::{SupportSet, generated_raft_top_mm};
 use crate::commands::slice::{
     SlicedScene, load_and_slice, load_material_profile, load_printer_profile, slice_scene,
 };
@@ -82,13 +82,13 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
     // Generated supports stand on the raft their options build, scaled in Z
     // with them (#227).
     let raft_top_mm = options
-        .df_supports
-        .then(df_raft_top_mm)
+        .generate_supports
+        .then(generated_raft_top_mm)
         .flatten()
         .map(|top| plate.compensated_height_mm(top));
     // A model in the raft is pointed at the support lift: the default, or a
-    // higher --df-lift.
-    let support_lift_mm = raft_top_mm.map(|_| recommended_lift_mm(Some(options.df_lift)));
+    // higher --support-lift.
+    let support_lift_mm = raft_top_mm.map(|_| recommended_lift_mm(Some(options.support_lift)));
     let context = PlateContext {
         plate: &plate,
         raft_top_mm,
@@ -221,7 +221,7 @@ struct FixedList {
 /// Works through the list of `report` with no review in between: places the
 /// tips its islands need on the sets they fall on, draws those sets again,
 /// and reviews a new slice with `fills` cured. A plate with no set to edit
-/// gets no tip: the CLI generates supports only with `--df-supports`.
+/// gets no tip: the CLI generates supports only with `--generate-supports`.
 fn fix_the_list(
     mut scene: Scene,
     mut sets: Vec<SupportSet>,
@@ -236,7 +236,7 @@ fn fix_the_list(
     let plan = if sets.is_empty() {
         TipPlan::default()
     } else {
-        let smallest = sc_geom::df_supports::zone_presets::smallest_size().tip_diameter_mm;
+        let smallest = sc_geom::supports::zone_presets::smallest_size().tip_diameter_mm;
         plan_all_tips(
             &report.islands,
             &report.growths,
@@ -355,7 +355,7 @@ fn fix_the_list(
 /// Writes down the islands of `report` too small for any tip as notes, as the
 /// app's list does: the same list, whichever reads it.
 fn note_too_small(report: &mut ReviewReport, sets: &[SupportSet]) {
-    let smallest = sc_geom::df_supports::zone_presets::smallest_size().tip_diameter_mm;
+    let smallest = sc_geom::supports::zone_presets::smallest_size().tip_diameter_mm;
     let diameter_mm = sets
         .iter()
         .map(|set| set.session.tip_diameter_mm())
@@ -397,7 +397,7 @@ fn place_tip(
     let holds = |contacts: &[SupportContact]| {
         start.is_none_or(|start| start.held_by(&tip_cones(contacts, leaf, frame)))
     };
-    let smallest = sc_geom::df_supports::zone_presets::smallest_size().id;
+    let smallest = sc_geom::supports::zone_presets::smallest_size().id;
     let size = tip.small.then_some(smallest.as_str());
     match sets[i].session.add_tip_among(point, &others, size, &holds) {
         Ok(used) => {
@@ -969,7 +969,7 @@ mod review_output_tests {
     #[test]
     fn the_review_knows_the_raft_of_the_generated_supports() {
         // A raft of lines (#435): 0.6 mm.
-        let top = df_raft_top_mm().expect("the default supports stand on a raft");
+        let top = generated_raft_top_mm().expect("the default supports stand on a raft");
         assert!((top - 0.6).abs() < 1e-9, "{top}");
     }
 

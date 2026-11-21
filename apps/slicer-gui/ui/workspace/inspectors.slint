@@ -2218,7 +2218,7 @@ export component SupportsInspector inherits VerticalLayout {
     in property <float> progress;
     in property <bool> cancelable;
     in property <string> last-run;
-    // The options (DfSupportOptions), pushed by Rust after every change.
+    // The options (SupportOptions), pushed by Rust after every change.
     in property <[string]> preset-names;
     in property <int> preset-index: -1;
     in property <int> sizing-index: 1;
@@ -2294,7 +2294,7 @@ export component SupportsInspector inherits VerticalLayout {
     in property <float> lift;
     callback generate-requested();
     callback cancel-requested();
-    // An option change: its code (DfSupportRun::on_option) and value.
+    // An option change: its code (SupportRun::on_option) and value.
     callback option-changed(int, float);
     callback preset-picked(int);
     callback preset-save(string);

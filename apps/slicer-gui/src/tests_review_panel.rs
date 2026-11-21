@@ -657,7 +657,7 @@ mod model_poses {
     fn supports_mesh() -> Arc<IndexedMesh> {
         let mut mesh = unit_cube_mesh();
         mesh.meta = Some(MeshMetadata {
-            name: Some(sc_geom::df_supports::DF_SUPPORT_MESH_NAME.to_owned()),
+            name: Some(sc_geom::supports::SUPPORT_MESH_NAME.to_owned()),
             role: Some(sc_mesh_core::MeshRole::Supports),
             ..Default::default()
         });
@@ -729,7 +729,7 @@ mod fix_all {
     use slint::Model;
 
     use super::*;
-    use crate::df_support_run::DfSupportRun;
+    use crate::support_run::SupportRun;
     use crate::error_dialog::MessageClass;
     use crate::hollow_run::HollowRun;
     use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
@@ -1066,7 +1066,7 @@ mod fix_all {
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
             document.install_graph(plate(), PathBuf::from("plate.bread"));
-            let supports = DfSupportRun::install(
+            let supports = SupportRun::install(
                 &window,
                 bus.clone(),
                 document.clone(),
@@ -1227,7 +1227,7 @@ mod fix_all {
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
             document.install_graph(plate(), PathBuf::from("plate.bread"));
-            let supports = DfSupportRun::install(
+            let supports = SupportRun::install(
                 &window,
                 bus.clone(),
                 document.clone(),
@@ -1356,7 +1356,7 @@ mod fix_all {
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
             document.install_graph(plate(), PathBuf::from("plate.bread"));
-            let supports = DfSupportRun::install(
+            let supports = SupportRun::install(
                 &window,
                 bus.clone(),
                 document.clone(),
@@ -1473,7 +1473,7 @@ mod fix_all {
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
             document.install_graph(plate(), PathBuf::from("plate.bread"));
-            let supports = DfSupportRun::install(
+            let supports = SupportRun::install(
                 &window,
                 bus.clone(),
                 document.clone(),
@@ -1603,7 +1603,7 @@ mod fix_all {
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
             document.install_graph(plate(), PathBuf::from("plate.bread"));
-            let supports = DfSupportRun::install(
+            let supports = SupportRun::install(
                 &window,
                 bus.clone(),
                 document.clone(),
@@ -1763,7 +1763,7 @@ mod fix_all {
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
             document.install_graph(hollowed_plate(hollow_here), PathBuf::from("plate.bread"));
-            let supports = DfSupportRun::install(
+            let supports = SupportRun::install(
                 &window,
                 bus.clone(),
                 document.clone(),
@@ -1932,7 +1932,7 @@ mod fix_all {
                 let cube = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
                 add(&mut scene, unit_cube_mesh(), cube, [0.0, 0.0, 5.0]);
                 document.install_graph(scene, PathBuf::from("plate.bread"));
-                let supports = DfSupportRun::install(
+                let supports = SupportRun::install(
                     &window,
                     bus.clone(),
                     document.clone(),
@@ -2184,7 +2184,7 @@ mod fix_all {
         if !regenerate {
             crate::support_persist::install_sets(&document, restored.sets);
         }
-        let supports = DfSupportRun::install(
+        let supports = SupportRun::install(
             &window,
             bus.clone(),
             document.clone(),
@@ -2192,14 +2192,14 @@ mod fix_all {
             ctrl.clone(),
         );
         if regenerate {
-            let mut options = sc_geom::df_supports::DfSupportOptions::default();
+            let mut options = sc_geom::supports::SupportOptions::default();
             match std::env::var("BREADSLICER_CYCLE_PRESET").as_deref() {
-                Ok("minis") => options.zones = Some(sc_geom::df_supports::zone_presets::minis_30()),
+                Ok("minis") => options.zones = Some(sc_geom::supports::zone_presets::minis_30()),
                 Ok("figures70") => {
-                    options.zones = Some(sc_geom::df_supports::zone_presets::figures_70())
+                    options.zones = Some(sc_geom::supports::zone_presets::figures_70())
                 }
                 Ok("figures") => {
-                    options.zones = Some(sc_geom::df_supports::zone_presets::figures_150())
+                    options.zones = Some(sc_geom::supports::zone_presets::figures_150())
                 }
                 Ok(other) => panic!("BREADSLICER_CYCLE_PRESET: unknown preset {other:?}"),
                 Err(_) => {}
@@ -2420,7 +2420,7 @@ mod fix_all {
             let document = ctrl.document();
             document.install_graph(project.scene, path.clone());
             crate::support_persist::install_sets(&document, restored.sets);
-            let supports = DfSupportRun::install(
+            let supports = SupportRun::install(
                 &window,
                 bus.clone(),
                 document.clone(),
@@ -2625,7 +2625,7 @@ mod fix_all {
                     let resin = project.payload.resin.clone().expect("a resin");
                     document.install_graph(project.scene, path.clone());
                     crate::support_persist::install_sets(&document, restored.sets);
-                    let supports = DfSupportRun::install(
+                    let supports = SupportRun::install(
                         &window,
                         bus.clone(),
                         document.clone(),
@@ -2636,7 +2636,7 @@ mod fix_all {
                 }
                 None => {
                     document.install_graph(minis_plate(&paths), PathBuf::from("minis.bread"));
-                    let supports = DfSupportRun::install(
+                    let supports = SupportRun::install(
                         &window,
                         bus.clone(),
                         document.clone(),
@@ -2781,14 +2781,14 @@ mod fix_all {
         let ctrl = Rc::new(ViewportController::new_for_test());
         let document = ctrl.document();
         document.install_graph(island_plate(), PathBuf::from("island.bread"));
-        let supports = DfSupportRun::install(
+        let supports = SupportRun::install(
             &window,
             bus.clone(),
             document.clone(),
             ctrl.dialogs(),
             ctrl.clone(),
         );
-        supports.generate_now(sc_geom::df_supports::DfSupportOptions {
+        supports.generate_now(sc_geom::supports::SupportOptions {
             min_island_area_mm2: 1.0,
             ..Default::default()
         });
@@ -3479,7 +3479,7 @@ mod fix_all {
         let ctrl = Rc::new(ViewportController::new_for_test());
         let document = ctrl.document();
         document.install_graph(island_plate(), PathBuf::from("island.bread"));
-        let supports = DfSupportRun::install(
+        let supports = SupportRun::install(
             &window,
             bus.clone(),
             document.clone(),
@@ -3514,7 +3514,7 @@ mod fix_all {
     }
 
     /// The options each support set of the scene was made with.
-    fn set_options(w: &IslandWindow) -> Vec<sc_geom::df_supports::DfSupportOptions> {
+    fn set_options(w: &IslandWindow) -> Vec<sc_geom::supports::SupportOptions> {
         let sessions = w.document.support_sessions();
         w.document
             .with_scene(|spatial| {
@@ -3565,7 +3565,7 @@ mod fix_all {
         assert!(!born.is_empty(), "the tips started a set");
         assert!(
             born.iter()
-                .all(|o| o.zones == Some(sc_geom::df_supports::zone_presets::figures_70())),
+                .all(|o| o.zones == Some(sc_geom::supports::zone_presets::figures_70())),
             "with the tab's preset: {born:?}"
         );
         assert!(left.is_empty(), "{left:?}");
@@ -3962,7 +3962,7 @@ mod fix_all {
             if let Some(sets) = sets {
                 crate::support_persist::install_sets(&document, sets);
             }
-            let supports = DfSupportRun::install(
+            let supports = SupportRun::install(
                 &window,
                 bus.clone(),
                 document.clone(),
@@ -3972,9 +3972,9 @@ mod fix_all {
             if is_model {
                 // `BREADSLICER_FIX_ALL_RAFT=off` generates them without a raft.
                 let raft_off = std::env::var("BREADSLICER_FIX_ALL_RAFT").is_ok_and(|v| v == "off");
-                supports.generate_now(sc_geom::df_supports::DfSupportOptions {
+                supports.generate_now(sc_geom::supports::SupportOptions {
                     raft: if raft_off {
-                        sc_geom::df_supports::RaftMode::Off
+                        sc_geom::supports::RaftMode::Off
                     } else {
                         Default::default()
                     },

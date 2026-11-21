@@ -43,7 +43,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use sc_geom::df_supports::{DfSupportSession, scene_model_leaves};
+use sc_geom::supports::{SupportSession, scene_model_leaves};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_core::indexed_mesh::repair::RepairEnd;
@@ -81,13 +81,13 @@ const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// How far, in mm, a support's tip may be from the repaired model and still
 /// hold it (#477, #526): the reach the supports keep in step with their
 /// model by everywhere.
-const TIP_STILL_TOUCHES_MM: f64 = crate::df_support_run::HEAL_REACH_MM;
+const TIP_STILL_TOUCHES_MM: f64 = crate::support_run::HEAL_REACH_MM;
 
 /// A support set in force when the run started (#477).
 struct HeldSet {
     leaf: NodeId,
     model: NodeId,
-    session: Arc<DfSupportSession>,
+    session: Arc<SupportSession>,
 }
 
 /// A set whose model the run mended: its session on the mended model, or
@@ -95,7 +95,7 @@ struct HeldSet {
 struct MendedSet {
     leaf: NodeId,
     model: NodeId,
-    session: Option<Arc<DfSupportSession>>,
+    session: Option<Arc<SupportSession>>,
 }
 
 /// A mesh the repair run rewrote: the storage place plus the exact Arcs before
@@ -1095,7 +1095,7 @@ fn mended_sets(
                 .ok()
                 .and_then(|mut models| models.pop())
                 .map(|(_, model)| model);
-            // The port is DragonFruit's code: a panic in it leaves the set
+            // The support engine: a panic in it leaves the set
             // out of date, as before, not a failed repair.
             let session = now.and_then(|now| {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1802,13 +1802,11 @@ mod repair_run_tests {
             )
             .expect("leaf");
         graph.add_root(model).expect("root");
-        let outcome = sc_geom::df_supports::start_df_supports(
-            &graph,
-            sc_geom::df_supports::DfSupportRequest::default(),
-        )
-        .expect("the run starts")
-        .join()
-        .expect("supports");
+        let outcome =
+            sc_geom::supports::start_supports(&graph, sc_geom::supports::SupportRequest::default())
+                .expect("the run starts")
+                .join()
+                .expect("supports");
         let session = Arc::new(outcome.sets.into_iter().next().expect("a set").session);
         let before = graph.leaf_mesh_arc(model).expect("its mesh").clone();
         let after = Arc::new(mended);

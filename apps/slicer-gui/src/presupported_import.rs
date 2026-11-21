@@ -13,7 +13,7 @@
 //! puts the model and its supports, raft included, in two objects where the
 //! file's object stood, in one undo entry: the model keeps the file's name,
 //! and the supports are "Imported supports", which the engine, the review and
-//! the tools take as supports ([`sc_geom::df_supports::is_any_support_mesh`]).
+//! the tools take as supports ([`sc_geom::supports::is_any_support_mesh`]).
 //! Leave as is keeps the file as it came. A file whose supports are fused
 //! into the model, in one shell, cannot be separated: a notice says so.
 //!
@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 
-use sc_geom::df_supports::{is_any_support_mesh, is_imported_supports};
+use sc_geom::supports::{is_any_support_mesh, is_imported_supports};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::presupported::{Presupported, find_supports, fused_supports};
 use sc_mesh_core::shells::FaceShells;
