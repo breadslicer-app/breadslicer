@@ -5479,6 +5479,36 @@ impl ViewportController {
     /// Shows the scene panel's rows (#578): every plate, the objects on it
     /// under it (each by its row of the object list), and where each
     /// object's row stands, to bring the selected one into sight.
+    /// For each row of the object list, the row of the model its supports
+    /// hold up (#258): a set Breadslicer drew, or supports imported with a
+    /// pre-supported file. `None` for a model, and for one raft for all,
+    /// which holds up a whole plate.
+    fn support_owners_by_row(&self) -> Vec<Option<usize>> {
+        let document = self.session.document();
+        let sessions = document.support_sessions();
+        document
+            .with_scene(|spatial| {
+                let leaves: Vec<sc_scene::NodeId> =
+                    (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect();
+                leaves
+                    .iter()
+                    .map(|&id| {
+                        let query = spatial.leaf(id)?;
+                        let mesh = query.mesh();
+                        if !sc_geom::df_supports::is_any_support_mesh(mesh)
+                            || sc_geom::df_supports::is_plate_raft(mesh)
+                        {
+                            return None;
+                        }
+                        let model = crate::support_persist::model_of(&sessions, id)
+                            .or_else(|| crate::imported_supports::owner_of(spatial, id, None))?;
+                        leaves.iter().position(|&leaf| leaf == model)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn mirror_scene_rows(&self, ui: &MainWindow) {
         let document = self.session.document();
         let plates = document.plates();
@@ -5500,8 +5530,15 @@ impl ViewportController {
                 (objects, on_plate)
             })
             .unwrap_or_default();
-        let (mut rows, row_of) =
-            scene_rows(&names, plates.count(), plates.active(), &objects, &on_plate);
+        let owner = self.support_owners_by_row();
+        let (mut rows, row_of) = scene_rows(
+            &names,
+            plates.count(),
+            plates.active(),
+            &objects,
+            &on_plate,
+            &owner,
+        );
         // Hidden and locked models (#16): their rows, and their supports',
         // say so; only a model's own row offers the eye and the padlock.
         let hidden = document.hidden_leaves();
@@ -8340,17 +8377,55 @@ fn plate_length(mm: f32) -> String {
 #[path = "tests_plates.rs"]
 mod tests_plates;
 
-/// The scene panel's rows (#578): each plate, then the objects standing on
-/// it in the order of the object list; and, by object, the rank of its row.
+/// The scene panel's rows: each plate, then the objects standing on it in
+/// the list's order. An object `owner` names (a set of supports and the
+/// model it holds up, #258) is listed right under that model, a child of it,
+/// wherever the model stands; what stands past every plate goes under a
+/// heading of its own (#649). Returns the rows and each object's row.
 pub(crate) fn scene_rows(
     plate_names: &[String],
     plate_count: u32,
     active: u32,
     objects: &[String],
     on_plate: &[Option<u32>],
+    owner: &[Option<usize>],
 ) -> (Vec<crate::SceneRow>, Vec<i32>) {
     let mut rows = Vec::with_capacity(plate_count as usize + objects.len());
     let mut row_of = vec![0; objects.len()];
+    // An owner that is not an object of the list, or that is itself owned,
+    // leaves the object a row of its own.
+    let parent =
+        |i: usize| {
+            owner.get(i).copied().flatten().filter(|&o| {
+                o != i && o < objects.len() && owner.get(o).copied().flatten().is_none()
+            })
+        };
+    let mut push = |rows: &mut Vec<crate::SceneRow>, i: usize| {
+        row_of[i] = rows.len() as i32;
+        rows.push(crate::SceneRow {
+            plate: false,
+            index: i as i32,
+            text: objects[i].as_str().into(),
+            active: false,
+            ..Default::default()
+        });
+        let children: Vec<usize> = (0..objects.len())
+            .filter(|&c| parent(c) == Some(i))
+            .collect();
+        for (n, &c) in children.iter().enumerate() {
+            row_of[c] = rows.len() as i32;
+            rows.push(crate::SceneRow {
+                plate: false,
+                index: c as i32,
+                text: objects[c].as_str().into(),
+                active: false,
+                child: true,
+                last: n + 1 == children.len(),
+                ..Default::default()
+            });
+        }
+    };
+    let plate_of = |i: usize| on_plate.get(i).copied().flatten();
     for plate in 0..plate_count.max(1) {
         let name = plate_names
             .get(plate as usize)
@@ -8363,29 +8438,16 @@ pub(crate) fn scene_rows(
             active: plate == active,
             ..Default::default()
         });
-        for (i, name) in objects.iter().enumerate() {
-            if on_plate.get(i).copied().flatten() == Some(plate) {
-                row_of[i] = rows.len() as i32;
-                rows.push(crate::SceneRow {
-                    plate: false,
-                    index: i as i32,
-                    text: name.as_str().into(),
-                    active: false,
-                    ..Default::default()
-                });
+        for i in 0..objects.len() {
+            if parent(i).is_none() && plate_of(i) == Some(plate) {
+                push(&mut rows, i);
             }
         }
     }
     // What stands past every plate is on none of them (#649): under a heading of
     // its own, which picks no plate (index -1), and only when there is any.
     let off: Vec<usize> = (0..objects.len())
-        .filter(|&i| {
-            on_plate
-                .get(i)
-                .copied()
-                .flatten()
-                .is_none_or(|p| p >= plate_count.max(1))
-        })
+        .filter(|&i| parent(i).is_none() && plate_of(i).is_none_or(|p| p >= plate_count.max(1)))
         .collect();
     if !off.is_empty() {
         rows.push(crate::SceneRow {
@@ -8396,14 +8458,7 @@ pub(crate) fn scene_rows(
             ..Default::default()
         });
         for i in off {
-            row_of[i] = rows.len() as i32;
-            rows.push(crate::SceneRow {
-                plate: false,
-                index: i as i32,
-                text: objects[i].as_str().into(),
-                active: false,
-                ..Default::default()
-            });
+            push(&mut rows, i);
         }
     }
     (rows, row_of)
@@ -8419,7 +8474,7 @@ mod scene_rows_tests {
     fn an_object_past_every_plate_is_listed_off_the_plates() {
         let names = ["Plate 1".to_owned(), "Plate 2".to_owned()];
         let objects = ["a".to_owned(), "b".to_owned(), "c".to_owned()];
-        let (rows, row_of) = scene_rows(&names, 2, 0, &objects, &[Some(0), None, Some(1)]);
+        let (rows, row_of) = scene_rows(&names, 2, 0, &objects, &[Some(0), None, Some(1)], &[]);
         let seen: Vec<(bool, i32)> = rows.iter().map(|r| (r.plate, r.index)).collect();
         assert_eq!(
             seen,
@@ -8434,8 +8489,38 @@ mod scene_rows_tests {
         );
         assert_eq!(row_of, vec![1, 5, 3]);
         // With every object on a plate, no such heading.
-        let (rows, _) = scene_rows(&names, 2, 0, &objects, &[Some(0), Some(0), Some(1)]);
+        let (rows, _) = scene_rows(&names, 2, 0, &objects, &[Some(0), Some(0), Some(1)], &[]);
         assert!(rows.iter().all(|r| r.index >= 0));
+    }
+
+    /// Supports are listed right under the model they hold up, as its
+    /// children, wherever they stand; one raft for all (no owner) keeps a row
+    /// of its own.
+    #[test]
+    fn supports_are_listed_under_their_model() {
+        let names = ["Plate 1".to_owned(), "Plate 2".to_owned()];
+        let objects = ["Supports", "Boar", "Raft", "Wolf", "Imported supports"].map(str::to_owned);
+        // The Boar's supports came first in the scene and stand on plate 2.
+        let on_plate = [Some(1), Some(0), Some(0), Some(1), Some(1)];
+        let owner = [Some(1), None, None, None, Some(1)];
+        let (rows, row_of) = scene_rows(&names, 2, 0, &objects, &on_plate, &owner);
+        let seen: Vec<(i32, bool, bool, bool)> = rows
+            .iter()
+            .map(|r| (r.index, r.plate, r.child, r.last))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                (0, true, false, false),
+                (1, false, false, false),
+                (0, false, true, false),
+                (4, false, true, true),
+                (2, false, false, false),
+                (1, true, false, false),
+                (3, false, false, false),
+            ]
+        );
+        assert_eq!(row_of, vec![2, 1, 4, 6, 3]);
     }
 }
 
