@@ -13,6 +13,7 @@ import { PrinterPreferences, PrinterCard } from "./printer.slint";
 import { ResinPreferences, ResinRow } from "./resin.slint";
 import { SlicingPreferences } from "./slicing.slint";
 import { PrivacyPreferences } from "./privacy.slint";
+import { NetworkPrinterPreferences, NetworkPrinterRow } from "./network-printers.slint";
 
 export component PreferencesWindow inherits FramedWindow {
     // The app's own surface, not the platform style's (#507).
@@ -112,6 +113,20 @@ export component PreferencesWindow inherits FramedWindow {
     in property <bool> selected-printer-is-custom;
     callback export-materials-requested();
 
+    // Preferences > Network printers (#631).
+    in property <[NetworkPrinterRow]> network-rows;
+    in-out property <int> network-selected: -1;
+    in-out property <string> network-own-name;
+    in property <string> network-reported;
+    in property <[string]> network-printer-options;
+    in-out property <int> network-printer-index;
+    in property <[string]> network-resin-options;
+    in-out property <int> network-resin-index;
+    in-out property <string> network-note;
+    callback network-picked(int);
+    callback network-edited(int, string, int);
+    callback network-remove-requested();
+
     changed theme => {
         Palette.color-scheme =
             (root.theme == ThemePreference.Light) ? ColorScheme.light :
@@ -134,6 +149,7 @@ export component PreferencesWindow inherits FramedWindow {
                 model: [
                     @tr("PreferencesMenu" => "UI & Theme"),
                     @tr("PreferencesMenu" => "Printer"),
+                    @tr("PreferencesMenu" => "Network printers"),
                     @tr("PreferencesMenu" => "Resin"),
                     @tr("PreferencesMenu" => "Slicing"),
                     @tr("PreferencesMenu" => "Privacy"),
@@ -230,7 +246,27 @@ export component PreferencesWindow inherits FramedWindow {
                 }
                 selected-is-custom: root.selected-printer-is-custom;
             }
-            if(side-bar.current-item == 2) : ResinPreferences {
+            if(side-bar.current-item == 2) : NetworkPrinterPreferences {
+                rows: root.network-rows;
+                selected <=> root.network-selected;
+                own-name <=> root.network-own-name;
+                reported: root.network-reported;
+                printer-options: root.network-printer-options;
+                printer-index <=> root.network-printer-index;
+                resin-options: root.network-resin-options;
+                resin-index <=> root.network-resin-index;
+                note <=> root.network-note;
+                picked(i) => {
+                    root.network-picked(i);
+                }
+                edited(field, text, index) => {
+                    root.network-edited(field, text, index);
+                }
+                remove-requested => {
+                    root.network-remove-requested();
+                }
+            }
+            if(side-bar.current-item == 3) : ResinPreferences {
                 resin-rows: root.resin-rows;
                 selected-resin-index <=> root.selected-resin-index;
                 brand-tabs: root.resin-brand-tabs;
@@ -270,7 +306,7 @@ export component PreferencesWindow inherits FramedWindow {
                     root.export-materials-requested();
                 }
             }
-            if(side-bar.current-item == 3) : SlicingPreferences {
+            if(side-bar.current-item == 4) : SlicingPreferences {
                 current-aa-index <=> root.current-aa-index;
                 prescan-supports <=> root.prescan-supports;
                 aa-level-changed(i) => {
@@ -280,7 +316,7 @@ export component PreferencesWindow inherits FramedWindow {
                     root.prescan-supports-changed(on);
                 }
             }
-            if(side-bar.current-item == 4) : PrivacyPreferences {
+            if(side-bar.current-item == 5) : PrivacyPreferences {
                 diagnostic-log <=> root.diagnostic-log;
                 diagnostic-log-error: root.diagnostic-log-error;
                 diagnostic-log-changed(on) => {

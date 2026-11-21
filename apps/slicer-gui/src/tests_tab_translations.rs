@@ -889,6 +889,10 @@ const DIALOG_SLINT: &[(&str, &str)] = &[
         "privacy.slint",
         include_str!("../ui/preferences/privacy.slint"),
     ),
+    (
+        "network-printers.slint",
+        include_str!("../ui/preferences/network-printers.slint"),
+    ),
     ("main-window.slint", include_str!("../ui/main-window.slint")),
     ("mesh-viewer.slint", include_str!("../ui/mesh-viewer.slint")),
     (
@@ -946,6 +950,10 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
         include_str!("preferences_window/printer_dialog.rs"),
     ),
     (
+        "preferences_window/network_printers.rs",
+        include_str!("preferences_window/network_printers.rs"),
+    ),
+    (
         "preferences_window/profile_editor.rs",
         include_str!("preferences_window/profile_editor.rs"),
     ),
@@ -999,6 +1007,10 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
     (
         "preferences_window/printer_dialog.rs",
         include_str!("preferences_window/printer_dialog.rs"),
+    ),
+    (
+        "preferences_window/network_printers.rs",
+        include_str!("preferences_window/network_printers.rs"),
     ),
     (
         "preferences_window/profile_editor.rs",

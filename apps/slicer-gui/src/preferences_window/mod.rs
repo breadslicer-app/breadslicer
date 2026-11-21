@@ -5,6 +5,7 @@
 
 mod extend_dialog;
 mod fork_dialog;
+mod network_printers;
 mod preferences_follow;
 mod printer_dialog;
 mod profile_editor;
@@ -85,6 +86,7 @@ pub(crate) struct WiredPreferencesWindow {
     // Keeps the thumbnail-loading poll timer alive for the window's lifetime;
     // dropping it (when the window closes) stops the poll.
     _thumbnail_timer: Rc<Timer>,
+    _network_printers: network_printers::NetworkPrintersPage,
 }
 
 /// Points the "Test performance" button of `prefs` at `viewport`, the 3D view
@@ -763,10 +765,13 @@ pub(crate) fn build_preferences_window(
         }
     });
 
+    let network_printers = network_printers::wire(&prefs, bus, catalog_handle.clone());
+
     Ok(WiredPreferencesWindow {
         window: prefs,
         _subscription: subscription,
         _thumbnail_timer: thumbnail_timer,
+        _network_printers: network_printers,
     })
 }
 

@@ -8,7 +8,11 @@
 //! recognised by its mainboard id (its IP address may change). The printer
 //! profile is read from the model the printer reports until one is picked.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use sc_print_primitives::{MaterialId, NetworkProtocol, PrinterId};
+use sc_printer_link::sdcp::Printer;
 use serde_json::{Value, json};
 
 use crate::i18n::ctr;
@@ -200,6 +204,205 @@ pub(crate) fn kept_for(catalog: &ProfileCatalog, own: &OwnSettings) -> String {
         parts.push(own.note.clone());
     }
     parts.join("  ·  ")
+}
+
+/// The lists a network printer's fields pick from (#631): its printer
+/// profile, what its model names first, then the ones that take a print over
+/// the network; and the resins with settings for the profile it is, none
+/// first. Each list's ids go with its labels, and `*_at` is what it has now.
+#[derive(Debug, Default)]
+pub(crate) struct OwnChoices {
+    pub(crate) printers: Vec<Option<PrinterId>>,
+    pub(crate) printer_labels: Vec<slint::SharedString>,
+    pub(crate) printer_at: usize,
+    pub(crate) resins: Vec<Option<MaterialId>>,
+    pub(crate) resin_labels: Vec<slint::SharedString>,
+    pub(crate) resin_at: usize,
+    /// The printer profile it is: the one picked, or the one its model names.
+    pub(crate) its: Option<PrinterId>,
+}
+
+/// The lists for a printer that reports its model as `model` and was given
+/// `own`.
+pub(crate) fn own_choices(catalog: &ProfileCatalog, model: &str, own: &OwnSettings) -> OwnChoices {
+    let guess = guess_printer(model, catalog);
+    let its = own.printer.clone().or_else(|| guess.clone());
+
+    let mut printers = vec![None];
+    let mut printer_labels = vec![match &guess {
+        Some(guess) => ctr!(
+            "SendToPrinter",
+            "As it reports: {}",
+            printer_name(catalog, guess)
+        ),
+        None => ctr!("SendToPrinter", "Not set"),
+    }];
+    for entry in network_printers(catalog, its.as_ref()) {
+        printers.push(Some(entry.id.clone()));
+        printer_labels.push(printer_name(catalog, &entry.id).into());
+    }
+    let printer_at = own
+        .printer
+        .as_ref()
+        .and_then(|id| printers.iter().position(|p| p.as_ref() == Some(id)))
+        .unwrap_or(0);
+
+    let mut resins: Vec<Option<MaterialId>> = vec![None];
+    let mut resin_labels = vec![ctr!("SendToPrinter", "No resin of its own")];
+    if let Some(its) = &its {
+        for entry in resins_for(catalog, its) {
+            resins.push(Some(entry.id.clone()));
+            resin_labels.push(resin_name(catalog, &entry.id).into());
+        }
+    }
+    if let Some(resin) = &own.resin
+        && !resins.iter().any(|r| r.as_ref() == Some(resin))
+    {
+        resins.push(Some(resin.clone()));
+        resin_labels.push(resin_name(catalog, resin).into());
+    }
+    let resin_at = own
+        .resin
+        .as_ref()
+        .and_then(|id| resins.iter().position(|r| r.as_ref() == Some(id)))
+        .unwrap_or(0);
+
+    OwnChoices {
+        printers,
+        printer_labels,
+        printer_at,
+        resins,
+        resin_labels,
+        resin_at,
+        its,
+    }
+}
+
+/// The printers seen on the network, the one used last first, and what was
+/// given them, kept in a file of the app's own.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Known {
+    pub(crate) printers: Vec<Printer>,
+    pub(crate) own: HashMap<String, OwnSettings>,
+}
+
+impl Known {
+    pub(crate) fn read() -> Self {
+        let Some(folder) = data_folder() else {
+            return Self::default();
+        };
+        if let Ok(text) = std::fs::read_to_string(folder.join(KNOWN_FILE))
+            && let Ok(value) = serde_json::from_str::<Value>(&text)
+        {
+            return Self::from_json(&value);
+        }
+        // The single printer kept before the list (#630).
+        let old = std::fs::read_to_string(folder.join("network-printer.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|value| printer_from_json(&value));
+        Self {
+            printers: old.into_iter().collect(),
+            own: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn write(&self) {
+        let Some(folder) = data_folder() else {
+            return;
+        };
+        let _ = std::fs::create_dir_all(&folder);
+        if let Err(err) = std::fs::write(folder.join(KNOWN_FILE), self.to_json().to_string()) {
+            eprintln!("The network printers were not kept: {err}");
+        }
+    }
+
+    pub(crate) fn to_json(&self) -> Value {
+        let printers: Vec<Value> = self
+            .printers
+            .iter()
+            .map(|p| {
+                let mut value = printer_to_json(p);
+                if let Some(own) = self.own.get(&p.mainboard_id) {
+                    own.write_into(&mut value);
+                }
+                value
+            })
+            .collect();
+        json!({ "printers": printers })
+    }
+
+    pub(crate) fn from_json(value: &Value) -> Self {
+        let mut known = Self::default();
+        for entry in value
+            .get("printers")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(printer) = printer_from_json(entry) else {
+                continue;
+            };
+            let own = OwnSettings::read_from(entry);
+            if own.is_saved() {
+                known.own.insert(printer.mainboard_id.clone(), own);
+            }
+            known.printers.push(printer);
+        }
+        known
+    }
+}
+
+/// The file the network printers are kept in.
+const KNOWN_FILE: &str = "network-printers.json";
+
+/// Whether the network printers are kept in a file (not in tests that set
+/// no folder).
+pub(crate) fn printers_kept() -> bool {
+    data_folder().is_some()
+}
+
+/// The app's data folder; in tests, the one the test set.
+fn data_folder() -> Option<PathBuf> {
+    #[cfg(test)]
+    return TEST_FOLDER.with(|folder| folder.borrow().clone());
+    #[cfg(not(test))]
+    Some(sc_app_paths::project_dirs()?.data_local_dir().to_path_buf())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Where a test keeps the network printers; none unless it sets one.
+    static TEST_FOLDER: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Keeps the network printers in `folder` for the rest of this test thread.
+#[cfg(test)]
+pub(crate) fn keep_printers_in(folder: Option<PathBuf>) {
+    TEST_FOLDER.with(|kept| *kept.borrow_mut() = folder);
+}
+
+pub(crate) fn printer_to_json(printer: &Printer) -> Value {
+    json!({
+        "protocol": "sdcp",
+        "ip": printer.ip.to_string(),
+        "mainboard_id": printer.mainboard_id,
+        "name": printer.name,
+        "model": printer.model,
+        "firmware": printer.firmware,
+    })
+}
+
+pub(crate) fn printer_from_json(value: &Value) -> Option<Printer> {
+    let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
+    Some(Printer {
+        ip: text("ip")?.parse().ok()?,
+        mainboard_id: text("mainboard_id").filter(|id| !id.is_empty())?,
+        name: text("name").unwrap_or_default(),
+        model: text("model").unwrap_or_default(),
+        firmware: text("firmware").unwrap_or_default(),
+    })
 }
 
 #[cfg(test)]
