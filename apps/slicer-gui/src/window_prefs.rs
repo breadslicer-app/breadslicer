@@ -13,13 +13,8 @@
 //! subscription held by the window's builder; this module just defines *what*
 //! each window does when a snapshot arrives, not *when*.
 
-use crate::aa_level::aa_combo_index;
-use crate::language::LanguagePreference;
 use crate::preferences_bus::PreferencesSnapshot;
-use crate::slint_ui::{
-    AboutWindow, ExtendDialog, ForkDialog, MainWindow, MenuLayout, PreferencesWindow,
-    PrinterDialog, ProfileViewDialog,
-};
+use crate::slint_ui::{AboutWindow, MainWindow, MenuLayout};
 
 pub(crate) trait WindowPreferences {
     fn apply_preferences(&self, prefs: &PreferencesSnapshot);
@@ -45,36 +40,8 @@ impl WindowPreferences for MainWindow {
     }
 }
 
-impl WindowPreferences for PreferencesWindow {
-    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
-        self.set_theme(prefs.theme);
-        // Rebuild the language combo model against the active language so the
-        // "System" label re-translates, then point the combo at the current
-        // preference.
-        self.set_language_options(LanguagePreference::display_options());
-        self.set_current_language_index(prefs.language.combo_index());
-        self.set_current_aa_index(aa_combo_index(prefs.aa_level));
-        self.set_prescan_supports(prefs.prescan_supports);
-        self.set_smooth_models(prefs.smooth_models);
-        self.set_controls_options(slint::ModelRc::new(slint::VecModel::from(
-            crate::controls_layout::ControlsLayout::ALL
-                .iter()
-                .map(|l| slint::SharedString::from(l.label()))
-                .collect::<Vec<_>>(),
-        )));
-        self.set_current_controls_index(prefs.controls_layout.combo_index());
-        self.set_controls_summary(prefs.controls_layout.summary().into());
-        self.set_show_start_dialog(prefs.show_start_dialog);
-        self.set_current_frame_rate_index(prefs.frame_rate.combo_index());
-        self.set_current_gizmo_style_index(prefs.gizmo_style.combo_index());
-        self.set_current_gizmo_size_index(crate::gizmo::look::size_combo_index(prefs.gizmo_size));
-        self.set_diagnostic_log(prefs.diagnostic_log);
-        self.set_silenced_message_count(prefs.silenced_messages.len() as i32);
-        // Printer / resin selection is pushed separately (see
-        // `preferences_window::apply_printing`); the catalog-backed models are
-        // not part of the plain snapshot.
-    }
-}
+// Preferences is a card in the main window (#670): `preferences_window`
+// pushes the snapshot into it.
 
 impl WindowPreferences for AboutWindow {
     fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
@@ -86,33 +53,6 @@ impl WindowPreferences for AboutWindow {
 // The messages of a main window are drawn inside it (`error_dialog.rs`), so
 // they follow its theme; their texts built in Rust follow the language through
 // their manager.
-
-// The dialogs of the Preferences window. Their texts built in Rust follow the
-// language through their own follow.
-
-impl WindowPreferences for ProfileViewDialog {
-    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
-        self.set_theme(prefs.theme);
-    }
-}
-
-impl WindowPreferences for ForkDialog {
-    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
-        self.set_theme(prefs.theme);
-    }
-}
-
-impl WindowPreferences for PrinterDialog {
-    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
-        self.set_theme(prefs.theme);
-    }
-}
-
-impl WindowPreferences for ExtendDialog {
-    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
-        self.set_theme(prefs.theme);
-    }
-}
 
 /// Pushes the stored state of the floating panels (object list, Slice control
 /// panel, slice view) into a new main window. Call it once, when the window is

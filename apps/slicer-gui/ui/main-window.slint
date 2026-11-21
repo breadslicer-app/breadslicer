@@ -18,14 +18,9 @@ import { PrinterTile, PrinterWall } from "./workspace/printer-wall.slint";
 import { Card, Note, ScCheckBox, Segmented } from "./kit/controls.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { PresetCard, ShapeCallout, ShapeSize, ShareItem, SharePicker, ZoneRow } from "./workspace/support-shape.slint";
-import { ThemePreference } from "./preferences/appearance.slint";
-import { PreferencesWindow } from "./preferences/preferences-window.slint";
-import { ExtendDialog } from "extend-dialog.slint";
-import { ForkDialog } from "fork-dialog.slint";
-import { PrinterDialog } from "printer-dialog.slint";
+import { NetworkPrinterRow, PreferencesLayer, Prefs, PrefsHit, PrefsProfile, ThemePreference } from "./preferences/preferences-layer.slint";
 import { AppMessage, MessageAnswer, MessageKind, MessageLayer } from "message-layer.slint";
 import { RecentFileRow, StartLayer, StartOpen } from "start-dialog.slint";
-import { ProfileViewDialog } from "profile-view-dialog.slint";
 
 // Embeds Noto Sans into the executable and registers it process wide.
 // Text layout then resolves to this in-memory font instead of scanning
@@ -39,7 +34,7 @@ export { FrameState } from "kit/framed-window.slint";
 import { TimelineMark } from "workspace/layer-timeline.slint";
 export { TimelineMark }
 export { CaliperLink }
-export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, PrinterDialog, ProfileViewDialog, RecentFileRow, StartOpen, Theme, ThemePreference }
+export { AboutWindow, AppMessage, AxisView, MessageAnswer, MessageKind, NetworkPrinterRow, PointerModifiers, Prefs, PrefsHit, PrefsProfile, RecentFileRow, StartOpen, Theme, ThemePreference }
 
 // Load-pipeline phase shown by the floating progress panel. Values
 // mirror the Rust-side worker phases; the Rust poll maps between the
@@ -4102,6 +4097,12 @@ export component MainWindow inherits Window {
         dont-show-changed(on) => {
             root.start-dont-show-changed(on);
         }
+    }
+
+    // Preferences (#670), a card like Printer & resin.
+    PreferencesLayer {
+        width: 100%;
+        height: 100%;
     }
 
     // Printer & resin and the first run (#151, #608), over the start

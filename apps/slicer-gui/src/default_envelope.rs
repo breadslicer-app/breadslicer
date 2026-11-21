@@ -256,7 +256,6 @@ mod default_envelope_tests {
             PreferencesChange::MenuLayout,
             PreferencesChange::Language,
             PreferencesChange::DefaultResin,
-            PreferencesChange::Favourites,
             PreferencesChange::OutputFormat,
             PreferencesChange::AaLevel,
             PreferencesChange::PrescanSupports,

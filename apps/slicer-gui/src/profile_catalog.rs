@@ -271,47 +271,6 @@ pub(crate) fn refresh_catalog(handle: &Rc<RefCell<Rc<ProfileCatalog>>>) {
     ));
 }
 
-/// Loads the material profile behind a catalog entry. Regular entries resolve
-/// through the by-id cascade (user library shadowing the bundled roots); an id
-/// whose only file is an extension (its base profile is gone) falls back to the
-/// extension file itself so the data stays viewable.
-pub(crate) fn load_profile_for_view(
-    catalog: &ProfileCatalog,
-    index: i32,
-) -> Option<(MaterialProfile, Option<MaterialProfile>, ProfileSource)> {
-    let entry = catalog.materials().get(index as usize)?;
-    let libraries = ProfileLibraries::platform_default();
-
-    let profile = match libraries.load_material_by_id(&entry.id) {
-        Ok(profile) => profile,
-        Err(base_err) => {
-            let orphan = libraries.user_library_dir().and_then(|user_lib| {
-                load_material_extension_from_library(user_lib, &entry.id).ok()
-            });
-            match orphan {
-                Some(orphan_extension) => orphan_extension,
-                None => {
-                    eprintln!("{base_err}");
-                    return None;
-                }
-            }
-        }
-    };
-
-    let extension = catalog.extension_for(&entry.id).and_then(|_| {
-        let user_lib = libraries.user_library_dir()?;
-        match load_material_extension_from_library(user_lib, &entry.id) {
-            Ok(extension) => Some(extension),
-            Err(err) => {
-                eprintln!("{err}");
-                None
-            }
-        }
-    });
-
-    Some((profile, extension, entry.source))
-}
-
 /// Merges the printer profiles across `roots`, highest precedence first: the
 /// first root that lists an id owns it. A corrupt or unreadable winning copy is
 /// skipped with a warning and shadows any lower-precedence copy, so the entry

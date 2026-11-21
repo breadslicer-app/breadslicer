@@ -7,10 +7,9 @@
 use std::path::Path;
 
 use slint::ComponentHandle;
-use slint::platform::{Key, WindowEvent};
 
 use crate::test_support::slint_thread::{on_fresh_slint_thread, render_frames};
-use crate::{MainWindow, PreferencesWindow, WorkspaceSection};
+use crate::{MainWindow, WorkspaceSection};
 
 const SHOTS_ENV: &str = "BREADSLICER_UI_SHOTS";
 
@@ -173,30 +172,24 @@ fn the_pictures_of_the_app_are_written_when_asked() {
                 &format!("{language}-1-scene-panel-tree"),
             );
         });
+        // Preferences, a card over the window (#670): each of its pages.
         let dir = dir.clone();
         on_fresh_slint_thread(move || {
-            let window = PreferencesWindow::new().expect("a preferences window");
+            let window = MainWindow::new().expect("a main window");
             slint::select_bundled_translation(language).expect("bundled language");
             window.show().expect("the window shows");
             window
                 .window()
-                .set_size(slint::LogicalSize::new(900.0, 640.0));
-            window.set_theme(crate::ThemePreference::Dark);
-            for page in 0..6 {
+                .set_size(slint::LogicalSize::new(1280.0, 800.0));
+            let prefs = window.global::<crate::Prefs>();
+            prefs.set_open(true);
+            for page in 0..7 {
+                prefs.set_page(page);
                 write(
                     window.window(),
                     &dir,
                     &format!("{language}-preferences-{page}"),
                 );
-                for key in [Key::DownArrow, Key::Return] {
-                    let text: slint::SharedString = key.into();
-                    window
-                        .window()
-                        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
-                    window
-                        .window()
-                        .dispatch_event(WindowEvent::KeyReleased { text });
-                }
             }
         });
     }
@@ -352,14 +345,10 @@ fn the_pictures_of_the_cards_are_written_when_asked() {
     }
 }
 
-/// The other windows (#507): About, and the profile viewer, editor,
-/// duplicate and extend dialogs, in English and Spanish.
+/// The other window (#507): About, in English and Spanish.
 #[test]
 fn the_pictures_of_the_other_windows_are_written_when_asked() {
-    use crate::slint_ui::{
-        AboutWindow, ExtendDialog, ForkDialog, ProfileViewDialog, ProfileViewField,
-        ProfileViewSection,
-    };
+    use crate::slint_ui::AboutWindow;
 
     let Some(dir) = std::env::var_os(SHOTS_ENV).map(std::path::PathBuf::from) else {
         return;
@@ -373,65 +362,6 @@ fn the_pictures_of_the_other_windows_are_written_when_asked() {
             slint::select_bundled_translation(language).expect("bundled language");
             window.show().expect("the window shows");
             write(window.window(), &d, &format!("{language}-about"));
-        });
-        let d = dir.clone();
-        on_fresh_slint_thread(move || {
-            let window = ProfileViewDialog::new().expect("a profile viewer");
-            window.set_theme(crate::ThemePreference::Dark);
-            slint::select_bundled_translation(language).expect("bundled language");
-            window.show().expect("the window shows");
-            window
-                .window()
-                .set_size(slint::LogicalSize::new(520.0, 640.0));
-            let field = |label: &str, value: &str| ProfileViewField {
-                label: label.into(),
-                value: value.into(),
-            };
-            let sections = vec![
-                ProfileViewSection {
-                    title: "Profile".into(),
-                    highlighted: false,
-                    fields: std::rc::Rc::new(slint::VecModel::from(vec![
-                        field("Name", "Siraya Tech Fast ABS-Like Grey"),
-                        field("Maker", "Siraya Tech"),
-                    ]))
-                    .into(),
-                },
-                ProfileViewSection {
-                    title: "Anycubic Photon Mono M7 Pro".into(),
-                    highlighted: true,
-                    fields: std::rc::Rc::new(slint::VecModel::from(vec![
-                        field("Layer height", "0.05 mm"),
-                        field("Normal exposure", "2.0 s"),
-                        field("Bottom exposure", "25 s"),
-                    ]))
-                    .into(),
-                },
-            ];
-            window.set_profile_name("Siraya Tech Fast ABS-Like Grey".into());
-            window.set_sections(std::rc::Rc::new(slint::VecModel::from(sections)).into());
-            window.set_editable(true);
-            write(window.window(), &d, &format!("{language}-profile-view"));
-        });
-        let d = dir.clone();
-        on_fresh_slint_thread(move || {
-            let window = ForkDialog::new().expect("a duplicate dialog");
-            window.set_theme(crate::ThemePreference::Dark);
-            slint::select_bundled_translation(language).expect("bundled language");
-            window.show().expect("the window shows");
-            write(
-                window.window(),
-                &d,
-                &format!("{language}-profile-duplicate"),
-            );
-        });
-        let d = dir.clone();
-        on_fresh_slint_thread(move || {
-            let window = ExtendDialog::new().expect("an extend dialog");
-            window.set_theme(crate::ThemePreference::Dark);
-            slint::select_bundled_translation(language).expect("bundled language");
-            window.show().expect("the window shows");
-            write(window.window(), &d, &format!("{language}-profile-extend"));
         });
     }
 }

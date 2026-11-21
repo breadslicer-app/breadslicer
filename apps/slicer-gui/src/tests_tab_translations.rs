@@ -848,50 +848,16 @@ const DIALOG_SLINT: &[(&str, &str)] = &[
         include_str!("../ui/about-window.slint"),
     ),
     (
-        "printer-dialog.slint",
-        include_str!("../ui/printer-dialog.slint"),
-    ),
-    (
-        "profile-view-dialog.slint",
-        include_str!("../ui/profile-view-dialog.slint"),
-    ),
-    (
-        "extend-dialog.slint",
-        include_str!("../ui/extend-dialog.slint"),
-    ),
-    ("fork-dialog.slint", include_str!("../ui/fork-dialog.slint")),
-    (
         "framed-window.slint",
         include_str!("../ui/kit/framed-window.slint"),
     ),
     (
+        "preferences-layer.slint",
+        include_str!("../ui/preferences/preferences-layer.slint"),
+    ),
+    (
         "printer-wall.slint",
         include_str!("../ui/workspace/printer-wall.slint"),
-    ),
-    (
-        "preferences-window.slint",
-        include_str!("../ui/preferences/preferences-window.slint"),
-    ),
-    (
-        "appearance.slint",
-        include_str!("../ui/preferences/appearance.slint"),
-    ),
-    (
-        "printer.slint",
-        include_str!("../ui/preferences/printer.slint"),
-    ),
-    ("resin.slint", include_str!("../ui/preferences/resin.slint")),
-    (
-        "slicing.slint",
-        include_str!("../ui/preferences/slicing.slint"),
-    ),
-    (
-        "privacy.slint",
-        include_str!("../ui/preferences/privacy.slint"),
-    ),
-    (
-        "network-printers.slint",
-        include_str!("../ui/preferences/network-printers.slint"),
     ),
     ("main-window.slint", include_str!("../ui/main-window.slint")),
     ("mesh-viewer.slint", include_str!("../ui/mesh-viewer.slint")),
@@ -946,28 +912,8 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
         include_str!("preferences_window/mod.rs"),
     ),
     (
-        "preferences_window/printer_dialog.rs",
-        include_str!("preferences_window/printer_dialog.rs"),
-    ),
-    (
         "preferences_window/network_printers.rs",
         include_str!("preferences_window/network_printers.rs"),
-    ),
-    (
-        "preferences_window/profile_editor.rs",
-        include_str!("preferences_window/profile_editor.rs"),
-    ),
-    (
-        "preferences_window/extend_dialog.rs",
-        include_str!("preferences_window/extend_dialog.rs"),
-    ),
-    (
-        "preferences_window/fork_dialog.rs",
-        include_str!("preferences_window/fork_dialog.rs"),
-    ),
-    (
-        "preferences_window/profile_view_dialog.rs",
-        include_str!("preferences_window/profile_view_dialog.rs"),
     ),
     ("diagnostics/mod.rs", include_str!("diagnostics/mod.rs")),
     ("app_state.rs", include_str!("app_state.rs")),
@@ -989,32 +935,12 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
     ("mesh_loader.rs", include_str!("mesh_loader.rs")),
     ("orient_run.rs", include_str!("orient_run.rs")),
     (
-        "preferences_filters.rs",
-        include_str!("preferences_filters.rs"),
-    ),
-    (
-        "preferences_window/extend_dialog.rs",
-        include_str!("preferences_window/extend_dialog.rs"),
-    ),
-    (
-        "preferences_window/fork_dialog.rs",
-        include_str!("preferences_window/fork_dialog.rs"),
-    ),
-    (
         "preferences_window/mod.rs",
         include_str!("preferences_window/mod.rs"),
     ),
     (
-        "preferences_window/printer_dialog.rs",
-        include_str!("preferences_window/printer_dialog.rs"),
-    ),
-    (
         "preferences_window/network_printers.rs",
         include_str!("preferences_window/network_printers.rs"),
-    ),
-    (
-        "preferences_window/profile_editor.rs",
-        include_str!("preferences_window/profile_editor.rs"),
     ),
     (
         "presupported_import.rs",
@@ -1026,10 +952,6 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
         include_str!("printer_settings_import.rs"),
     ),
     (
-        "profile_extending/mod.rs",
-        include_str!("profile_extending/mod.rs"),
-    ),
-    (
         "profile_forking/mod.rs",
         include_str!("profile_forking/mod.rs"),
     ),
@@ -1038,7 +960,6 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
         "profile_transfer/mod.rs",
         include_str!("profile_transfer/mod.rs"),
     ),
-    ("profile_view/mod.rs", include_str!("profile_view/mod.rs")),
     ("recent_files.rs", include_str!("recent_files.rs")),
     ("repair_report.rs", include_str!("repair_report.rs")),
     ("repair_run.rs", include_str!("repair_run.rs")),
