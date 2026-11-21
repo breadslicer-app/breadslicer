@@ -12,7 +12,7 @@ use super::generate_crenelated_wall_manual::generate_crenelated_wall_manual;
 use super::generate_perimeter_wall::generate_perimeter_wall;
 use super::polygon_set_2d::PolygonWithHoles;
 use super::small::{inset_convex_polygon, signed_area_2d};
-use crate::clipper::ClipperError;
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::three::Vector2;
 use crate::three::buffer_geometry::{BufferGeometry, merge_geometries};
 use crate::three::math_utils::{js_hypot, js_max, js_min, js_tan};
@@ -235,7 +235,7 @@ pub fn build_raft_footprint_meshes(
     circles: &[SupportBaseCircle],
     raft: &RaftSettings,
     clearance: Option<&[PolygonWithHoles]>,
-) -> Result<RaftFootprintMeshes, ClipperError> {
+) -> Result<RaftFootprintMeshes, PolygonError> {
     let mut footprint = compute_raft_footprint_polygons(circles, raft, clearance, None)?;
     if footprint.is_empty() {
         return Ok(RaftFootprintMeshes::default());

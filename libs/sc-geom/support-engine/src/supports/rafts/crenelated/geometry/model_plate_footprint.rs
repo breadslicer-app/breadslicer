@@ -10,7 +10,7 @@
 
 use super::polygon_raster_2d::rasterize_polygons_to_region;
 use super::polygon_set_2d::{PolygonWithHoles, union_polygon_sets};
-use crate::clipper::ClipperError;
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::three::buffer_geometry::BufferGeometry;
 use crate::three::{Matrix4, Quaternion, Vec3, Vector2};
 
@@ -279,7 +279,7 @@ fn local_shadow_polygons(
 pub fn collect_model_plate_footprint(
     sources: &[PlateFootprintSource],
     band_top_mm: f64,
-) -> Result<Vec<PolygonWithHoles>, ClipperError> {
+) -> Result<Vec<PolygonWithHoles>, PolygonError> {
     if !band_top_mm.is_finite() || band_top_mm <= 0.0 {
         return Ok(Vec::new());
     }

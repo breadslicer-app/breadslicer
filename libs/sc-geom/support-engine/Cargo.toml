@@ -17,6 +17,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+i_float = "5.0.0"
+i_overlay = "9.1.0"
 engine-base = { path = "../engine-base", version = "0.1.0" }
 rayon = "1.12"
 ahash = "0.8.12"

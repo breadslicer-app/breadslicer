@@ -22,7 +22,7 @@ use super::generate_raft_from_footprint::generate_chamfered_base_from_polygons;
 use super::polygon_set_2d::{
     PolygonWithHoles, difference_polygon_sets, offset_polygon_set, polygon_set_to_shapes,
 };
-use crate::clipper::ClipperError;
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::supports::rafts::crenelated::raft_types::RaftSettings;
 use crate::three::Vector2;
 use crate::three::buffer_geometry::BufferGeometry;
@@ -81,7 +81,7 @@ pub fn robust_wall_from_polygons(
     polys: &[PolygonWithHoles],
     raft: &RaftSettings,
     base_z: f64,
-) -> Result<Option<BufferGeometry>, ClipperError> {
+) -> Result<Option<BufferGeometry>, PolygonError> {
     let wall_height = js_max(0.0, raft.wall_height);
     let wall_thickness = js_max(0.0, raft.wall_thickness);
     if wall_height == 0.0 || wall_thickness == 0.0 {
