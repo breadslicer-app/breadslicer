@@ -1,9 +1,9 @@
 //! DragonFruit `geometry/generateChamferedBeam.ts`: one line-raft beam as a
 //! chamfered prism from `start` to `end`.
 
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::math_utils::{js_max, js_min, js_tan};
-use crate::three::{Matrix4, Quaternion, Vec3};
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::math_utils::{js_max, js_min, js_tan};
+use crate::geom::{Matrix4, Quaternion, Vec3};
 
 pub fn generate_chamfered_beam(
     start: Vec3,

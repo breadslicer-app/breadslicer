@@ -65,8 +65,8 @@ use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_s
 use crate::supports::support_primitives::contact_cone::types::SupportTipProfile;
 use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
 use crate::supports::types::{LimitationCode, Vec3};
-use crate::three::Matrix4;
-use crate::three::math_utils::{deg_to_rad, js_cos, js_hypot, js_max, js_min, js_round, js_sin};
+use crate::geom::Matrix4;
+use crate::geom::math_utils::{deg_to_rad, js_cos, js_hypot, js_max, js_min, js_round, js_sin};
 
 /// What one placement asks the geometry, counted. The router's cost is the
 /// *number* of questions it puts to the distance field, so the run report needs

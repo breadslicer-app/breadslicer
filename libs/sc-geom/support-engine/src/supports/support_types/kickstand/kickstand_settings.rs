@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::types::KickstandPlacementLayout;
 use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
 use crate::supports::settings::types::SupportSettings;
-use crate::three::math_utils::{clamp, js_max, js_min};
+use crate::geom::math_utils::{clamp, js_max, js_min};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NumericConstraint {

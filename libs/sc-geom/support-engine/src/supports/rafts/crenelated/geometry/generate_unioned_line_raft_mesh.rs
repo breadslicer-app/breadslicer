@@ -11,10 +11,10 @@ use super::polygon_set_2d::{
 };
 use super::small::inset_convex_polygon;
 use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
-use crate::three::Vector2;
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::extrude_geometry::{ExtrudeOptions, extrude_geometry};
-use crate::three::math_utils::js_max;
+use crate::geom::Vector2;
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::extrude_geometry::{ExtrudeOptions, extrude_geometry};
+use crate::geom::math_utils::js_max;
 
 /// How many sides the round joint at each end of a beam has.
 const JOINT_SIDES: usize = 24;

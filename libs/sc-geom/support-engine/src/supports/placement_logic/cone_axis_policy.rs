@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{
+use crate::geom::math_utils::{
     clamp, deg_to_rad, js_atan2, js_cos, js_hypot, js_max, js_min, js_sin,
 };
 

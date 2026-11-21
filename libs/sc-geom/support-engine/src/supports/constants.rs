@@ -5,7 +5,7 @@
 //! Note: User-adjustable defaults are in Settings/defaults.ts
 //! This file contains only derived/calculated values.
 
-use crate::three::math_utils::js_max;
+use crate::geom::math_utils::js_max;
 
 // --- Joint Sizing ---
 /// How much larger the joint diameter is compared to the shaft/body diameter

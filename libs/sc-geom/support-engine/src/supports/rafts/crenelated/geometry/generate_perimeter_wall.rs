@@ -3,11 +3,11 @@
 //! thickness), extruded by the wall height and lifted onto the plate.
 
 use super::small::inset_convex_polygon;
-use crate::three::Vector2;
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::extrude_geometry::{ExtrudeOptions, extrude_geometry};
-use crate::three::math_utils::js_max;
-use crate::three::shape::{Path, Shape};
+use crate::geom::Vector2;
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::extrude_geometry::{ExtrudeOptions, extrude_geometry};
+use crate::geom::math_utils::js_max;
+use crate::geom::shape::{Path, Shape};
 
 /// `generatePerimeterWall(topProfile, { wallHeight, wallThickness, thickness })`.
 pub fn generate_perimeter_wall(
@@ -23,20 +23,8 @@ pub fn generate_perimeter_wall(
     }
     let inner = inset_convex_polygon(top_profile, wall_thickness);
 
-    let mut outer = Shape::new(None);
-    outer.path.move_to(top_profile[0].x, top_profile[0].y);
-    for p in &top_profile[1..] {
-        outer.path.line_to(p.x, p.y);
-    }
-    outer.path.close_path();
-
-    let mut hole = Path::new(None);
-    hole.move_to(inner[0].x, inner[0].y);
-    for p in &inner[1..] {
-        hole.line_to(p.x, p.y);
-    }
-    hole.close_path();
-    outer.holes.push(hole);
+    let mut outer = Shape::new(Some(top_profile));
+    outer.holes.push(Path::new(Some(&inner)));
 
     let mut geom = extrude_geometry(
         &[outer],

@@ -2,8 +2,8 @@
 
 use crate::supports::support_primitives::contact_cone::types::ContactDiskProfile;
 use crate::supports::types::Vec3;
-use crate::three::Quaternion;
-use crate::three::math_utils::{js_acos, js_max, js_min};
+use crate::geom::Quaternion;
+use crate::geom::math_utils::{js_acos, js_max, js_min};
 
 const DEFAULT_MIN_DISK_THICKNESS_MM: f64 = 0.1;
 const DEFAULT_STANDOFF_ANGLE_THRESHOLD_RAD: f64 = std::f64::consts::PI / 4.0;

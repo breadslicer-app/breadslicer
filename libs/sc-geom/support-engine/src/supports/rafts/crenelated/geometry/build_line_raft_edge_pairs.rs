@@ -5,8 +5,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::convex_hull_2d::convex_hull_2d;
-use crate::three::Vector2;
-use crate::three::math_utils::{js_max, js_min};
+use crate::geom::Vector2;
+use crate::geom::math_utils::{js_max, js_min};
 
 /// Bowyer–Watson over a super-triangle; triangles touching it are dropped.
 pub fn delaunay_triangulate_2d(points: &[Vector2]) -> Vec<[usize; 3]> {

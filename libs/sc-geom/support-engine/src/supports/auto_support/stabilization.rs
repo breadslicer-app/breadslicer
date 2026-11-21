@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use super::pose_stability::{measure_pose_stability, needs_topple_coverage, posed_positions};
 use crate::supports::rafts::crenelated::geometry::convex_hull_2d::{Vec2, convex_hull_2d};
-use crate::three::Matrix4;
-use crate::three::math_utils::{js_cos, js_hypot, js_max, js_min, js_round, js_sin};
+use crate::geom::Matrix4;
+use crate::geom::math_utils::{js_cos, js_hypot, js_max, js_min, js_round, js_sin};
 
 /// Low surface within this height of the minimum counts as the bearing locus.
 const BEARING_BAND_MM: f64 = 2.0;

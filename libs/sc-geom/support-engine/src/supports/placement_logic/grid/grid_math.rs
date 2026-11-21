@@ -1,6 +1,6 @@
 //! DragonFruit `src/supports/PlacementLogic/Grid/gridMath.ts`.
 
-use crate::three::math_utils::js_round;
+use crate::geom::math_utils::js_round;
 
 pub fn snap_to_grid_index(value_mm: f64, spacing_mm: f64) -> f64 {
     if spacing_mm <= 0.0 {

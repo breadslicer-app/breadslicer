@@ -7,7 +7,7 @@
 //! reads.
 
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
-use crate::three_mesh_bvh::BvhMesh;
+use crate::bvh::BvhMesh;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ModelMesh<'a> {

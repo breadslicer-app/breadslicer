@@ -17,8 +17,8 @@ use crate::supports::types::{
     Joint, Kickstand, KickstandProfile, Knot, LimitationCode, Roots, Segment, SupportEntity,
     Transform, Vec3,
 };
-use crate::three::Quaternion;
-use crate::three::math_utils::{clamp, js_acos, js_max, rad_to_deg};
+use crate::geom::Quaternion;
+use crate::geom::math_utils::{clamp, js_acos, js_max, rad_to_deg};
 
 #[derive(Clone, Copy, Debug)]
 pub struct KickstandBuildInput<'a> {

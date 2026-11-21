@@ -22,7 +22,7 @@ use sc_scene::{LeafPayload, NodeId, NodeKind, Scene};
 use serde::{Deserialize, Serialize};
 use support_engine::pipeline::ModelInput;
 use support_engine::supports::types::SupportState;
-use support_engine::three::Vec3;
+use support_engine::geom::Vec3;
 
 use crate::hand_log::HandLog;
 use crate::{SettingsRecipe, SupportSession, scene_model_leaves, scene_models};
@@ -421,7 +421,7 @@ pub struct Drawings(Vec<Drawing>);
 
 #[derive(Debug)]
 struct Drawing {
-    geometry: Arc<support_engine::three::buffer_geometry::BufferGeometry>,
+    geometry: Arc<support_engine::geom::buffer_geometry::BufferGeometry>,
     model: support_engine::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform,
     shape: (Vec<[f64; 3]>, [usize; 9]),
     leaf: sc_mesh_core::transform::Transform3D,

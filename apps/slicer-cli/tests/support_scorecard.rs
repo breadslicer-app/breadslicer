@@ -116,9 +116,9 @@ use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_engine::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use support_engine::supports::support_primitives::contact_cone::types::ContactCone;
 use support_engine::supports::types::{Segment, SupportCollections, SupportState, Vec3};
-use support_engine::three::Matrix4;
-use support_engine::three::ray::Ray;
-use support_engine::three_mesh_bvh::{MeshBvh, Side};
+use support_engine::geom::Matrix4;
+use support_engine::geom::ray::Ray;
+use support_engine::bvh::{MeshBvh, Side};
 use support_engine::volume_analysis::islands::types::DetectedIsland;
 
 /// The printer and material every scene is measured with.
@@ -1056,9 +1056,7 @@ fn placement(
                     tip_drawing: settings.tip_drawing,
                     shaft_style: settings.shaft_style,
                     draw_rafts: true,
-                }) else {
-                    return (false, false, true);
-                };
+                });
                 let mine: Vec<Tip> = tips_of(&mini);
                 let mut worst_body = (0.0f64, Vec3::new(0.0, 0.0, 0.0), usize::MAX);
                 let mut worst_tip = (0.0f64, Vec3::new(0.0, 0.0, 0.0), usize::MAX);

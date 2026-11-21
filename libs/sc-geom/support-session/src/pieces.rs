@@ -12,7 +12,7 @@ use support_engine::features::slicing::support_world_triangles::{
 };
 use support_engine::supports::support_primitives::contact_cone::types::ContactCone;
 use support_engine::supports::types::{ContactDisk, Segment};
-use support_engine::three::Vec3;
+use support_engine::geom::Vec3;
 
 use super::SupportSession;
 

@@ -2,7 +2,7 @@
 //! Andrew's monotone chain, counter-clockwise, collinear points dropped.
 
 /// A `THREE.Vector2`.
-pub use crate::three::Vector2 as Vec2;
+pub use crate::geom::Vector2 as Vec2;
 
 pub fn convex_hull_2d(points: &[Vec2]) -> Vec<Vec2> {
     if points.len() <= 1 {

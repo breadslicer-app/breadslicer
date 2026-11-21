@@ -7,7 +7,7 @@ use super::constants::influence_radius_mm;
 use super::settings::AutoSupportSettings;
 use super::types::{CandidatePoint, CandidateSource};
 use crate::supports::types::{SupportState, Vec3};
-use crate::three::math_utils::{js_max, js_round, js_to_fixed};
+use crate::geom::math_utils::{js_max, js_round, js_to_fixed};
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
 use crate::volume_analysis::islands::voxel_footprint::cell_key_bits;
 

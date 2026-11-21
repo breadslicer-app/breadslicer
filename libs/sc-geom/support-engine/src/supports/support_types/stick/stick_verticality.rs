@@ -7,7 +7,7 @@
 
 use crate::supports::support_types::shaft_verticality::shaft_vertical_cos;
 use crate::supports::types::Segment;
-use crate::three::math_utils::js_cos;
+use crate::geom::math_utils::js_cos;
 
 /// Cant beyond this is a wedged stick, not a bridge (calibration knob).
 pub const MAX_SHAFT_ANGLE_DEG: f64 = 20.0;

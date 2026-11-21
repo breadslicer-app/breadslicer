@@ -8,9 +8,9 @@
 
 use std::collections::HashSet;
 
-use crate::three::Ray;
-use crate::three::vector3::Vec3;
-use crate::three_mesh_bvh::{BvhMesh, Side};
+use crate::geom::Ray;
+use crate::geom::vector3::Vec3;
+use crate::bvh::{BvhMesh, Side};
 
 /// Whether a support contact at the given world point lands on blocked
 /// surface. The known face short-circuits (grid lattice path); otherwise an

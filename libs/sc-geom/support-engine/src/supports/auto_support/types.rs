@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::supports::model_mesh::ModelMesh;
 use crate::supports::types::Vec3;
-use crate::three_mesh_bvh::Side;
+use crate::bvh::Side;
 
 /// The model mesh as the auto-support passes read it: DragonFruit's
 /// `THREE.Mesh` (distance field and BVH rays), the side its material raycasts

@@ -16,8 +16,8 @@ use support_engine::supports::placement_logic_v3::smart_placement_v3::{
 use support_engine::supports::settings::types::SupportSettings;
 use support_engine::supports::support_primitives::contact_cone::types::DEFAULT_TIP_PROFILE;
 use support_engine::supports::types::LimitationCode;
-use support_engine::three::{Matrix4, Vec3};
-use support_engine::three_mesh_bvh::MeshBvh;
+use support_engine::geom::{Matrix4, Vec3};
+use support_engine::bvh::MeshBvh;
 
 /// The 12 triangles of a closed box, each face looking out.
 fn closed_box(lo: [f32; 3], hi: [f32; 3]) -> Vec<[f32; 3]> {

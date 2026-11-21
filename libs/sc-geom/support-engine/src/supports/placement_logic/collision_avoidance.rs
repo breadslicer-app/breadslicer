@@ -7,7 +7,7 @@
 //! DragonFruit makes of an `SDFCache`. The `SDFCache` port implements it.
 
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_max, js_min, js_round, lerp};
+use crate::geom::math_utils::{js_max, js_min, js_round, lerp};
 
 const DEFAULT_FRUSTUM_SEGMENT_COUNT: f64 = 5.0;
 /// Safety margin used only for contact-cone body sampling.

@@ -19,9 +19,9 @@ use i_overlay::mesh::float::outline::offset::OutlineOffset;
 use i_overlay::mesh::float::style::{LineJoin, OutlineStyle};
 
 use super::small::signed_area_2d;
-use crate::three::Vector2;
-use crate::three::math_utils::{js_hypot, js_max, js_min};
-use crate::three::shape::{Path as ShapePath, Shape};
+use crate::geom::Vector2;
+use crate::geom::math_utils::{js_hypot, js_max, js_min};
+use crate::geom::shape::{Path as ShapePath, Shape};
 
 /// A failure of a polygon operation. The booleans and offsets cannot fail;
 /// the type stays so the raft code keeps its fallbacks for a failure.

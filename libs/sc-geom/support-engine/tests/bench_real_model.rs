@@ -17,8 +17,8 @@ use support_engine::pipeline::{
 };
 use support_engine::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
 use support_engine::supports::types::SupportState;
-use support_engine::three::Vec3;
-use support_engine::three::buffer_geometry::BufferGeometry;
+use support_engine::geom::Vec3;
+use support_engine::geom::buffer_geometry::BufferGeometry;
 
 fn read_binary_stl(path: &str) -> Vec<f32> {
     let bytes = std::fs::read(path).expect("read STL");

@@ -22,7 +22,7 @@
 //! brace at those ends away.
 
 use serde::{Deserialize, Serialize};
-use support_engine::three::Vec3;
+use support_engine::geom::Vec3;
 
 use crate::shift::PlaneMotion;
 

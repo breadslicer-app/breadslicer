@@ -27,8 +27,8 @@ use support_engine::pipeline::{
 use support_engine::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
 use support_engine::supports::support_type_registry::get_support_type_descriptor;
 use support_engine::supports::types::SupportState;
-use support_engine::three::Vec3;
-use support_engine::three::buffer_geometry::BufferGeometry;
+use support_engine::geom::Vec3;
+use support_engine::geom::buffer_geometry::BufferGeometry;
 
 mod compare;
 mod document;

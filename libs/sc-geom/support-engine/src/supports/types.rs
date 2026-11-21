@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::support_primitives::contact_cone::types::{ContactCone, ContactDiskProfile};
 use super::support_type_registry::{SupportOriginId, SupportSelectionCategory, SupportTypeId};
 use super::support_types::kickstand::types::KickstandBuildResult;
-pub use crate::three::{Quaternion, Vec3};
+pub use crate::geom::{Quaternion, Vec3};
 
 // --- Basic Math Types ---
 

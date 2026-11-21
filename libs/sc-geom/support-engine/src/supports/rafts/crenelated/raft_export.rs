@@ -16,9 +16,9 @@ use super::geometry::generate_unioned_line_raft_mesh::{
 use super::geometry::model_plate_footprint::{PlateFootprintSource, collect_model_plate_footprint};
 use super::raft_types::{RaftBottomMode, SupportBaseCircle};
 use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::math_utils::js_max;
-use crate::three::{Vec3, Vector2};
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::math_utils::js_max;
+use crate::geom::{Vec3, Vector2};
 
 /// A support root as the raft reads it.
 #[derive(Debug, Clone, PartialEq)]

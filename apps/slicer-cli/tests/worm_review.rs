@@ -30,8 +30,8 @@ use support_engine::pipeline::world_soup;
 use support_engine::supports::model_mesh::ModelMesh;
 use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_engine::supports::support_types::trunk::cavity_bridge::attempt_cavity_bridge;
-use support_engine::three::{Matrix4, Vec3};
-use support_engine::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
+use support_engine::geom::{Matrix4, Vec3};
+use support_engine::bvh::{BvhMesh, MeshBvh, Side};
 
 /// Parts that start with no pixel of a tip under them and last: what
 /// supports must go under.

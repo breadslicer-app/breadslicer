@@ -13,7 +13,7 @@ use super::polygon_set_2d::{
 };
 use super::small::compute_footprint;
 use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
-use crate::three::math_utils::{js_max, js_min, js_tan};
+use crate::geom::math_utils::{js_max, js_min, js_tan};
 
 /// Material height of the raft body: beam height in line mode, plate
 /// thickness otherwise.

@@ -4,9 +4,9 @@
 
 use super::generate_perimeter_wall::generate_perimeter_wall;
 use super::small::{inset_convex_polygon, signed_area_2d};
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::math_utils::{clamp, js_acos, js_max, js_min, js_tan};
-use crate::three::{Vec3, Vector2};
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::math_utils::{clamp, js_acos, js_max, js_min, js_tan};
+use crate::geom::{Vec3, Vector2};
 
 const LOOP_EPS: f64 = 1e-4;
 

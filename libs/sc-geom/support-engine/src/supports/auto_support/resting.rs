@@ -11,8 +11,8 @@
 //! parity: a point inside two parts that overlap crosses an even number of
 //! faces, and is inside all the same.
 
-use crate::three::{Ray, Vec3};
-use crate::three_mesh_bvh::{BvhMesh, Side};
+use crate::geom::{Ray, Vec3};
+use crate::bvh::{BvhMesh, Side};
 
 /// How many layers of model material below a contact make it rest on it.
 pub const RESTING_LAYERS: f64 = 2.0;

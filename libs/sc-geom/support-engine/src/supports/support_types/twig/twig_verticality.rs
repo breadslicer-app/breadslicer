@@ -8,7 +8,7 @@
 
 use crate::supports::support_types::shaft_verticality::shaft_vertical_cos;
 use crate::supports::types::Segment;
-use crate::three::math_utils::js_cos;
+use crate::geom::math_utils::js_cos;
 
 pub const MAX_TWIG_SHAFT_ANGLE_DEG: f64 = 45.0;
 

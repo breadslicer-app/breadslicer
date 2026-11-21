@@ -22,7 +22,7 @@ pub use build::MeshBvhOptions;
 pub use closest_point_to_point::ClosestPointTarget;
 pub use raycast::{BvhMesh, Face, Intersection, Side};
 
-use crate::three::{Triangle, Vec3};
+use crate::geom::{Triangle, Vec3};
 
 /// One node: its bounds, then a leaf range of [`MeshBvh::order`] or the
 /// index of its right child (the left child is the next node).

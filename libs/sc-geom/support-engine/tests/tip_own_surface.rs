@@ -20,9 +20,9 @@ use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_engine::supports::support_primitives::contact_cone::types::{
     ContactCone, DEFAULT_TIP_PROFILE,
 };
-use support_engine::three::buffer_geometry::BufferGeometry;
-use support_engine::three::{Matrix4, Vec3};
-use support_engine::three_mesh_bvh::{MeshBvh, Side};
+use support_engine::geom::buffer_geometry::BufferGeometry;
+use support_engine::geom::{Matrix4, Vec3};
+use support_engine::bvh::{MeshBvh, Side};
 
 /// The 12 triangles of a closed box, each face looking out.
 fn closed_box(lo: [f32; 3], hi: [f32; 3]) -> Vec<[f32; 3]> {

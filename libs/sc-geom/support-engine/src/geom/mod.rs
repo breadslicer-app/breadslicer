@@ -1,9 +1,8 @@
-//! The three.js r181 math DragonFruit's support code is written against.
-//! See `NOTICE` for the MIT attribution.
+//! Vectors, matrices, rays, triangles and flat-shape extrusion for the support
+//! engine, on `glam` and `earcutr`.
 
 pub mod box3;
 pub mod buffer_geometry;
-pub mod earcut;
 pub mod extrude_geometry;
 pub mod line3;
 pub mod math_utils;

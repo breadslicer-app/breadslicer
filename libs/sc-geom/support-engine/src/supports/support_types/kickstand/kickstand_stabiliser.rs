@@ -27,7 +27,7 @@ use crate::supports::support_primitives::knot::segment_endpoints::{
 };
 use crate::supports::support_type_registry::is_kickstand_host_type;
 use crate::supports::types::{Kickstand, Knot, Roots, SupportState, Vec3};
-use crate::three::math_utils::{js_atan2, js_cos, js_max, js_min, js_sin};
+use crate::geom::math_utils::{js_atan2, js_cos, js_max, js_min, js_sin};
 use crate::volume_analysis::islands::voxel_footprint::number_key;
 
 const MIN_HEIGHT_FOR_MANDATORY_BRACING_MM: f64 = 15.0;
@@ -603,8 +603,8 @@ mod tests {
     use super::*;
     use crate::supports::support_type_registry::SupportTypeId;
     use crate::supports::types::{Joint, Segment, SupportEntity, Transform, Trunk};
-    use crate::three::Matrix4;
-    use crate::three_mesh_bvh::MeshBvh;
+    use crate::geom::Matrix4;
+    use crate::bvh::MeshBvh;
 
     /// A closed box.
     fn block(min: [f32; 3], max: [f32; 3]) -> MeshBvh {

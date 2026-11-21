@@ -8,9 +8,9 @@
 use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
 use crate::supports::support_primitives::contact_cone::types::ContactCone;
 use crate::supports::types::Vec3;
-use crate::three::Ray;
-use crate::three::math_utils::{js_hypot, js_max, js_min};
-use crate::three_mesh_bvh::{BvhMesh, Intersection, Side};
+use crate::geom::Ray;
+use crate::geom::math_utils::{js_hypot, js_max, js_min};
+use crate::bvh::{BvhMesh, Intersection, Side};
 
 const WHISKER_DIAGONAL: f64 = std::f64::consts::FRAC_1_SQRT_2;
 const WHISKER_OFFSETS: [(f64, f64); 8] = [

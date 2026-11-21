@@ -10,7 +10,7 @@ use crate::supports::placement_logic::collision_avoidance::{
 use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
 use crate::supports::support_primitives::contact_cone::types::ContactCone;
 use crate::supports::types::Vec3;
-use crate::three::math_utils::js_max;
+use crate::geom::math_utils::js_max;
 
 // Contact cones need to respect the model, but they can sit much closer than
 // shafts/roots without causing the oversized detours that a full 0.8mm margin induces.

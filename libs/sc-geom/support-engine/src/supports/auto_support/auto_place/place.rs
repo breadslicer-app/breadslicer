@@ -54,7 +54,7 @@ use crate::supports::support_types::trunk::trunk_builder::{
 };
 use crate::supports::support_types::trunk::trunk_route_resolution::get_resolved_snapped_root_pos;
 use crate::supports::types::{Knot, LimitationCode, SupportState, Vec3};
-use crate::three::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
+use crate::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
 
 /// Why a candidate was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

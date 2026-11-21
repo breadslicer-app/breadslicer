@@ -1,7 +1,7 @@
 //! DragonFruit `src/supports/SupportTypes/Trunk/trunkConstructionJoints.ts`.
 
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_max, js_min};
+use crate::geom::math_utils::{js_max, js_min};
 
 const MIN_INSERTED_BASE_SEGMENT_MM: f64 = 1.0;
 const MIN_INSERTED_TRANSITION_SEGMENT_MM: f64 = 0.5;

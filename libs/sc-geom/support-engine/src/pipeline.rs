@@ -55,9 +55,9 @@ use crate::supports::rafts::crenelated::raft_export::{
 use crate::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::types::SupportState;
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::{Matrix4, Vec3};
-use crate::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::{Matrix4, Vec3};
+use crate::bvh::{BvhMesh, MeshBvh, Side};
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
 use crate::volume_analysis::islands::use_islands::{
     DerivedIslands, IslandPanelSettings, derive_islands, overhang_region_to_island,

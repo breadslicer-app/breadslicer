@@ -51,9 +51,9 @@ use support_engine::supports::support_types::trunk::trunk_builder::{
 };
 use support_engine::supports::types::LimitationCode;
 use support_engine::supports::types::{Knot, SupportCollections, SupportState};
-use support_engine::three::ray::Ray;
-use support_engine::three::{Matrix4, Vec3};
-use support_engine::three_mesh_bvh::{MeshBvh, Side};
+use support_engine::geom::ray::Ray;
+use support_engine::geom::{Matrix4, Vec3};
+use support_engine::bvh::{MeshBvh, Side};
 
 use crate::document::ModelPrint;
 use crate::hand_log::{
@@ -179,7 +179,7 @@ impl PlacedBvh {
         point: Vec3,
         min_threshold: f64,
         max_threshold: f64,
-    ) -> Option<support_engine::three_mesh_bvh::ClosestPointTarget> {
+    ) -> Option<support_engine::bvh::ClosestPointTarget> {
         let mut hit = self.bvh.closest_point_to_point(
             point.apply_matrix4(&self.to_local),
             min_threshold,
@@ -190,9 +190,9 @@ impl PlacedBvh {
     }
 
     /// Face `face`, in world mm.
-    pub(crate) fn triangle(&self, face: usize) -> support_engine::three::Triangle {
+    pub(crate) fn triangle(&self, face: usize) -> support_engine::geom::Triangle {
         let t = self.bvh.triangle(face);
-        support_engine::three::Triangle::new(
+        support_engine::geom::Triangle::new(
             t.a.apply_matrix4(&self.to_world),
             t.b.apply_matrix4(&self.to_world),
             t.c.apply_matrix4(&self.to_world),
@@ -212,7 +212,7 @@ impl PlacedBvh {
         side: Side,
         near: f64,
         far: f64,
-    ) -> Option<support_engine::three_mesh_bvh::Intersection> {
+    ) -> Option<support_engine::bvh::Intersection> {
         let mut hit =
             self.bvh
                 .raycast_first(&ray.apply_matrix4(&self.to_local), side, near, far)?;
@@ -226,7 +226,7 @@ impl PlacedBvh {
 /// model geometry they were built from.
 static SHARED_BVHS: std::sync::Mutex<
     Vec<(
-        std::sync::Weak<support_engine::three::buffer_geometry::BufferGeometry>,
+        std::sync::Weak<support_engine::geom::buffer_geometry::BufferGeometry>,
         std::sync::Weak<MeshBvh>,
     )>,
 > = std::sync::Mutex::new(Vec::new());
@@ -236,7 +236,7 @@ static SHARED_BVHS: std::sync::Mutex<
 /// new one.
 fn shared_bvh(model: &ModelInput) -> Arc<MeshBvh> {
     let held = |list: &Vec<(
-        std::sync::Weak<support_engine::three::buffer_geometry::BufferGeometry>,
+        std::sync::Weak<support_engine::geom::buffer_geometry::BufferGeometry>,
         std::sync::Weak<MeshBvh>,
     )>| {
         list.iter().find_map(|(g, b)| {

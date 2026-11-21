@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 
 use super::constants::{MINIMA_RING_COUNT, MINIMA_RING_MIN_RISE_MM, MINIMA_RING_RADIUS_MM};
 use super::settings::AutoSupportSettings;
-use crate::three::Ray;
-use crate::three::math_utils::{js_cos, js_sin, js_tan};
-use crate::three::vector3::Vec3;
-use crate::three_mesh_bvh::{BvhMesh, Side};
+use crate::geom::Ray;
+use crate::geom::math_utils::{js_cos, js_sin, js_tan};
+use crate::geom::vector3::Vec3;
+use crate::bvh::{BvhMesh, Side};
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandClass, IslandSource};
 
 /// One reinforcement contact and the minima it rings.

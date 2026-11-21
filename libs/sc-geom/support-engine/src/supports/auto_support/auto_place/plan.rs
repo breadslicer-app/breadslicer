@@ -80,8 +80,8 @@ use crate::supports::support_type_registry::{
 };
 use crate::supports::support_types::trunk::trunk_replacement::max_connected_diameter::compute_forest_diameter_profile;
 use crate::supports::types::{Knot, SupportState, Vec3};
-use crate::three::Box3;
-use crate::three::math_utils::{js_max, js_min, js_round};
+use crate::geom::Box3;
+use crate::geom::math_utils::{js_max, js_min, js_round};
 use crate::utils::math::quantize_to_scale;
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
 

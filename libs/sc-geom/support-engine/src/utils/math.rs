@@ -1,7 +1,7 @@
 //! DragonFruit `src/utils/math.ts`: the numeric helpers (the viewport helper
 //! is the GUI's).
 
-use crate::three::math_utils::{js_max, js_min, js_round, js_to_fixed_number};
+use crate::geom::math_utils::{js_max, js_min, js_round, js_to_fixed_number};
 
 /// Constrain `value` to [`min`, `max`]. Resolves an inverted range (min > max)
 /// in favour of `min`. (Not three's `MathUtils.clamp`, which favours `max`.)

@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use super::parameter_sizing::SizingBands;
 use super::settings::SizingPreset;
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_max, js_min, js_round};
+use crate::geom::math_utils::{js_max, js_min, js_round};
 use crate::volume_analysis::islands::types::DetectedIsland;
 use crate::volume_analysis::islands::voxel_footprint::number_key;
 

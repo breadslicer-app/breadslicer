@@ -17,7 +17,7 @@ use crate::supports::support_type_registry::{
     PlacedSupport, SupportEntityValue, SupportTypeId, placement_of_resolved,
 };
 use crate::supports::types::{LimitationCode, Stump, Vec3};
-use crate::three::math_utils::{js_cos, js_hypot, js_max, js_min, js_sin};
+use crate::geom::math_utils::{js_cos, js_hypot, js_max, js_min, js_sin};
 
 /// How close to the model a stump's body may come, in mm.
 const STUMP_COLLISION_SAFETY_MM: f64 = 0.05;

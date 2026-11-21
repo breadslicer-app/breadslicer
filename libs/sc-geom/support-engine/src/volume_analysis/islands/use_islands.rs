@@ -27,7 +27,7 @@ use crate::native::overhang::{OverhangRegion, OverhangScan};
 use crate::supports::auto_support::pose_stability::CONSERVATIVE_P_SIGMA;
 use crate::supports::auto_support::types::js_compare;
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_max, js_min, js_round};
+use crate::geom::math_utils::{js_max, js_min, js_round};
 
 /// An `f32` as the frontend receives it: serde_json writes it (ryu's shortest
 /// decimal, whose tie choice can differ from `Display`'s) and JavaScript parses

@@ -6,7 +6,7 @@
 //! Rays against the tree: every hit, or the nearest.
 
 use super::{MeshBvh, NodeKind};
-use crate::three::{Matrix4, Ray, Triangle, Vec3};
+use crate::geom::{Matrix4, Ray, Triangle, Vec3};
 
 /// Which faces a ray hits: the ones it meets from their front, from their
 /// back, or both.

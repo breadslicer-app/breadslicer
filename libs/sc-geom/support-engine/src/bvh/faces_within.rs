@@ -7,7 +7,7 @@
 //! there touches (#491).
 
 use super::{MeshBvh, NodeKind, box_distance_sq};
-use crate::three::Vec3;
+use crate::geom::Vec3;
 
 impl MeshBvh {
     /// Calls `visit(face, distance)` for each triangle whose closest point lies

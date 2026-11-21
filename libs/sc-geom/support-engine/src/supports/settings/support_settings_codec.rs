@@ -5,7 +5,7 @@
 
 use super::types::SupportSettings;
 use crate::supports::placement_logic::cone_axis_policy::ConeAngleMode;
-use crate::three::math_utils::{js_max, js_min, js_round};
+use crate::geom::math_utils::{js_max, js_min, js_round};
 
 const CODEC_VERSION: u8 = 1;
 

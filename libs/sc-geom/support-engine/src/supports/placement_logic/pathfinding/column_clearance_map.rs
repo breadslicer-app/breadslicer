@@ -28,8 +28,8 @@
 
 use rayon::prelude::*;
 
-use crate::three::math_utils::{js_max, js_min};
-use crate::three::{Matrix4, Vec3};
+use crate::geom::math_utils::{js_max, js_min};
+use crate::geom::{Matrix4, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnVerdict {

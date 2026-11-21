@@ -3,8 +3,8 @@
 use super::types::{ContactCone, DEFAULT_TIP_PROFILE, SupportTipProfile};
 use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
 use crate::supports::types::Vec3;
-use crate::three::Quaternion;
-use crate::three::math_utils::{js_max, js_min};
+use crate::geom::Quaternion;
+use crate::geom::math_utils::{js_max, js_min};
 
 /// Calculate the socket position (where the cone connects to the joint).
 /// The socket is at pos + normal * length.

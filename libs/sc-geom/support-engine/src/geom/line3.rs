@@ -1,4 +1,9 @@
-//! three.js r181 `src/math/Line3.js` (MIT), the subset the support code calls.
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+//! A segment from `start` to `end`.
 
 use super::math_utils::clamp;
 use super::vector3::Vec3;
@@ -17,7 +22,7 @@ impl Line3 {
 
     #[inline]
     pub fn delta(self) -> Vec3 {
-        Vec3::sub_vectors(self.end, self.start)
+        self.end.sub(self.start)
     }
 
     #[inline]
@@ -30,27 +35,21 @@ impl Line3 {
         self.start.distance_to(self.end)
     }
 
+    /// The point `t` of the way from `start` to `end`.
     #[inline]
     pub fn at(self, t: f64) -> Vec3 {
-        self.delta().multiply_scalar(t).add(self.start)
+        self.start.add_scaled_vector(self.delta(), t)
     }
 
+    /// Where along the line (0 at `start`, 1 at `end`) `point` projects,
+    /// kept on the segment with `clamp_to_line`.
     pub fn closest_point_to_point_parameter(self, point: Vec3, clamp_to_line: bool) -> f64 {
-        let start_p = Vec3::sub_vectors(point, self.start);
-        let start_end = Vec3::sub_vectors(self.end, self.start);
-
-        let start_end2 = start_end.dot(start_end);
-        let start_end_start_p = start_end.dot(start_p);
-
-        let mut t = start_end_start_p / start_end2;
-        if clamp_to_line {
-            t = clamp(t, 0.0, 1.0);
-        }
-        t
+        let delta = self.delta();
+        let t = delta.dot(point.sub(self.start)) / delta.dot(delta);
+        if clamp_to_line { clamp(t, 0.0, 1.0) } else { t }
     }
 
     pub fn closest_point_to_point(self, point: Vec3, clamp_to_line: bool) -> Vec3 {
-        let t = self.closest_point_to_point_parameter(point, clamp_to_line);
-        self.delta().multiply_scalar(t).add(self.start)
+        self.at(self.closest_point_to_point_parameter(point, clamp_to_line))
     }
 }

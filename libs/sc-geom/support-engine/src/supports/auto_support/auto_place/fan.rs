@@ -22,7 +22,7 @@ use crate::supports::support_type_registry::{
 };
 use crate::supports::support_types::leaf::leaf_builder::{LeafBuildInput, build_leaf_data};
 use crate::supports::types::{Knot, SupportState, Vec3};
-use crate::three::math_utils::{js_atan2, js_hypot, js_min, js_sin};
+use crate::geom::math_utils::{js_atan2, js_hypot, js_min, js_sin};
 
 /// Why a fan-leaf attempt was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

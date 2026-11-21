@@ -43,7 +43,7 @@ use crate::supports::support_types::trunk::trunk_route_types::{
     SnappedRoute, SnappedRouteValidity, TrunkRouteValidity,
 };
 use crate::supports::types::{Knot, LimitationCode, Roots, SupportState, Trunk, Vec3};
-use crate::three::math_utils::{js_acos, js_hypot, js_max, js_min, rad_to_deg};
+use crate::geom::math_utils::{js_acos, js_hypot, js_max, js_min, rad_to_deg};
 
 /// Matches `validateAndCullOrphans`' post-thickening trunk check (segment
 /// diameter/2 + 0.15): a trunk that passes this gate must not die in the cull.

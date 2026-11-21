@@ -3,7 +3,7 @@
 
 use super::settings::AutoBracingPattern;
 use crate::supports::types::BraceDebugSection as BraceSection;
-use crate::three::math_utils::js_max;
+use crate::geom::math_utils::js_max;
 
 /// A pair to brace: two sample handles and their horizontal distance.
 #[derive(Debug, Clone, Copy, PartialEq)]

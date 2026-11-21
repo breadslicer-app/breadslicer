@@ -6,7 +6,7 @@
 //! The point of the mesh closest to a point.
 
 use super::{MeshBvh, NodeKind, box_distance_sq};
-use crate::three::Vec3;
+use crate::geom::Vec3;
 
 /// The closest point, its distance and the face it lies on.
 #[derive(Debug, Clone, Copy, PartialEq)]

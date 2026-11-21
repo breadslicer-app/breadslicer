@@ -1,6 +1,10 @@
-//! three.js r181 `src/extras/ShapeUtils.js` (MIT).
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 
-use super::earcut::earcut;
+//! Signed area and triangulation of a contour with holes (`earcutr`).
+
 use super::vector2::Vector2;
 
 /// `ShapeUtils.area`: signed, positive counter-clockwise.
@@ -27,9 +31,9 @@ fn remove_dup_end_pts(points: &mut Vec<Vector2>) {
     }
 }
 
-/// `ShapeUtils.triangulateShape(contour, holes)`: faces indexing the
-/// concatenation `[contour, ...holes]`. Like the JavaScript it trims a closing
-/// duplicate off the caller's contour and holes in place.
+/// The faces of `contour` minus `holes`, indexing the concatenation
+/// `[contour, ...holes]`. Trims a closing duplicate point off the caller's
+/// contour and holes in place.
 pub fn triangulate_shape(
     contour: &mut Vec<Vector2>,
     holes: &mut [Vec<Vector2>],
@@ -53,6 +57,7 @@ pub fn triangulate_shape(
             vertices.push(p.y);
         }
     }
-    let triangles = earcut(&vertices, &hole_indices, 2);
+    // A contour earcutr cannot read yields no faces, as a degenerate one does.
+    let triangles = earcutr::earcut(&vertices, &hole_indices, 2).unwrap_or_default();
     triangles.chunks(3).map(|t| [t[0], t[1], t[2]]).collect()
 }

@@ -24,8 +24,8 @@ use support_engine::supports::auto_support::zone_candidates::{
 use support_engine::supports::auto_support::zone_rules::{OverhangRule, SupportSize, ZoneRules};
 use support_engine::supports::model_mesh::ModelMesh;
 use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_engine::three::Matrix4;
-use support_engine::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
+use support_engine::geom::Matrix4;
+use support_engine::bvh::{BvhMesh, MeshBvh, Side};
 use support_engine::volume_analysis::islands::types::DetectedIsland;
 use support_engine::volume_analysis::islands::use_islands::overhang_region_to_island;
 

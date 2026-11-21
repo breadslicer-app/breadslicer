@@ -2,7 +2,7 @@
 //! DragonFruit declares identically in `autoSupport/settings.ts` and
 //! `autoBracing/settings.ts`; one copy here, used by both.
 
-use crate::three::math_utils::{js_max, js_min, js_round, js_to_fixed_number};
+use crate::geom::math_utils::{js_max, js_min, js_round, js_to_fixed_number};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NumericConstraint {

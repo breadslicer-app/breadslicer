@@ -55,10 +55,10 @@ use crate::supports::support_type_registry::{
 use crate::supports::types::{
     BezierCurve, ContactDisk, Joint, Knot, Roots, Segment, SegmentShape, SupportCollections, Vec3,
 };
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::math_utils::js_max;
-use crate::three::primitive_geometry::{cylinder_geometry, sphere_geometry};
-use crate::three::{Matrix4, Quaternion, Vector2};
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::math_utils::js_max;
+use crate::geom::primitive_geometry::{cylinder_geometry, sphere_geometry};
+use crate::geom::{Matrix4, Quaternion, Vector2};
 
 /// The detail level the scene's size picks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

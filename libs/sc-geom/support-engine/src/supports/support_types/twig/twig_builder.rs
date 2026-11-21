@@ -18,7 +18,7 @@ use crate::supports::support_primitives::contact_cone::types::{ContactDiskProfil
 use crate::supports::types::{
     ContactDisk, Joint, LimitationCode, Segment, SupportEntity, Twig, Vec3,
 };
-use crate::three::math_utils::js_max;
+use crate::geom::math_utils::js_max;
 
 /// A joint at a disk-end is 10% larger than that disk's contact diameter.
 fn twig_joint_diameter_for_disk(disk_contact_diameter: f64) -> f64 {

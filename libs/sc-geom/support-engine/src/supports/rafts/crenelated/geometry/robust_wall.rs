@@ -24,10 +24,10 @@ use super::polygon_set_2d::{
 };
 use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::supports::rafts::crenelated::raft_types::RaftSettings;
-use crate::three::Vector2;
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::extrude_geometry::{ExtrudeOptions, extrude_geometry};
-use crate::three::math_utils::{clamp, js_acos, js_max, js_min};
+use crate::geom::Vector2;
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::extrude_geometry::{ExtrudeOptions, extrude_geometry};
+use crate::geom::math_utils::{clamp, js_acos, js_max, js_min};
 
 /// `generateCrenelatedWallManual`'s straight-edge test and gap placement: one
 /// gap centred on every edge longer than 5 mm that turns less than 15° from

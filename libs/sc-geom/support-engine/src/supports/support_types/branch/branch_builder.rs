@@ -24,7 +24,7 @@ use crate::supports::support_primitives::contact_disk::contact_disk_interaction:
 use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
 use crate::supports::support_type_registry::SupportTypeId;
 use crate::supports::types::{Branch, Joint, Knot, Segment, SupportEntity, Vec3};
-use crate::three::math_utils::{deg_to_rad, js_atan2, js_cos, js_hypot, js_max, js_min, js_sin};
+use crate::geom::math_utils::{deg_to_rad, js_atan2, js_cos, js_hypot, js_max, js_min, js_sin};
 
 const BRANCH_CONE_COLLISION_SAFETY_MM: f64 = 0.3;
 /// Branch socket search: polar angles from surface normal. Capped at 30°
