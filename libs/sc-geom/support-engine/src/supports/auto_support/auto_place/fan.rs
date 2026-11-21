@@ -17,7 +17,7 @@ use crate::supports::auto_support::constants::{
 };
 use crate::supports::auto_support::support_draft::{draft_add_entity, draft_add_primitive};
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
-use crate::supports::support_type_registry::{
+use crate::supports::support_kinds::{
     PlacementPrimitive, SupportEntityValue, SupportOriginId, SupportTypeId,
 };
 use crate::supports::support_types::leaf::leaf_builder::{LeafBuildInput, build_leaf_data};

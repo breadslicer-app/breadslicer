@@ -12,6 +12,6 @@ pub mod rafts;
 pub mod rendering;
 pub mod settings;
 pub mod support_primitives;
-pub mod support_type_registry;
+pub mod support_kinds;
 pub mod support_types;
 pub mod types;

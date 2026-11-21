@@ -35,7 +35,7 @@ use crate::supports::support_primitives::knot::knot_utils::calculate_knot_positi
 use crate::supports::support_primitives::knot::segment_endpoints::{
     EndpointHosts, ShaftEntity, resolve_segment_endpoints,
 };
-use crate::supports::support_type_registry::{
+use crate::supports::support_kinds::{
     SupportTypeId, is_auto_braceable_shaft_type, is_lateral_stabiliser_type,
     lateral_stabiliser_types, parse_prefixed_segment_id,
 };

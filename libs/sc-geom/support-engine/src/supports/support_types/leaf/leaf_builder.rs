@@ -14,7 +14,7 @@ use crate::supports::support_primitives::contact_cone::types::{
     ContactCone, SupportTipProfile, TipPrimitive,
 };
 use crate::supports::support_primitives::contact_disk::contact_disk_interaction::recompute_contact_cone_for_moved_disk;
-use crate::supports::support_type_registry::SupportTypeId;
+use crate::supports::support_kinds::SupportTypeId;
 use crate::supports::types::{Knot, Leaf, SupportEntity, Vec3};
 
 #[derive(Clone, Copy, Debug)]

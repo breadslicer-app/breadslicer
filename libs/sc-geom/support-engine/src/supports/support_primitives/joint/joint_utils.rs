@@ -14,7 +14,7 @@ use crate::supports::support_primitives::knot::knot_utils::{
     KnotSplitRemap, remap_knot_across_split,
 };
 use crate::supports::support_primitives::knot::segment_endpoints::{ContactRef, ShaftEntity};
-use crate::supports::support_type_registry::{SupportEndpointKind, get_support_type_descriptor};
+use crate::supports::support_kinds::{SupportEndpointKind, get_support_type_descriptor};
 use crate::supports::types::{
     Branch, Joint, Kickstand, Knot, Roots, Segment, SegmentShape, Stick, Stump, Trunk, Twig, Vec3,
 };

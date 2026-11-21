@@ -18,7 +18,7 @@ use crate::supports::support_primitives::contact_cone::types::{
     ContactCone, SupportTipProfile, TipPrimitive,
 };
 use crate::supports::support_primitives::contact_disk::contact_disk_interaction::recompute_contact_cone_for_moved_disk;
-use crate::supports::support_type_registry::inline_root_id;
+use crate::supports::support_kinds::inline_root_id;
 use crate::supports::types::{Joint, Roots, Stump, SupportEntity, Transform, Vec3};
 use crate::geom::Quaternion;
 use crate::geom::math_utils::{js_max, js_min};

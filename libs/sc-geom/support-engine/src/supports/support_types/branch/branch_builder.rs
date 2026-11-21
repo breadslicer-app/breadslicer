@@ -22,7 +22,7 @@ use crate::supports::support_primitives::contact_cone::types::{
 };
 use crate::supports::support_primitives::contact_disk::contact_disk_interaction::recompute_contact_cone_for_moved_disk;
 use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
-use crate::supports::support_type_registry::SupportTypeId;
+use crate::supports::support_kinds::SupportTypeId;
 use crate::supports::types::{Branch, Joint, Knot, Segment, SupportEntity, Vec3};
 use crate::geom::math_utils::{deg_to_rad, js_atan2, js_cos, js_hypot, js_max, js_min, js_sin};
 

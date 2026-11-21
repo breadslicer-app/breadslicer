@@ -42,7 +42,7 @@ use support_engine::supports::auto_support::zone_rules::{SupportSize, ZoneRules}
 use support_engine::supports::placement_logic::cone_axis_policy::is_side_wall_contact;
 use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_engine::supports::rafts::crenelated::raft_types::RaftBottomMode;
-use support_engine::supports::support_type_registry::{
+use support_engine::supports::support_kinds::{
     SupportOriginId, SupportPlacementMetric, SupportPlacementSettingPath, SupportTypeId,
     near_plate_origin, select_type_for_placement,
 };

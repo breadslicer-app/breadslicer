@@ -42,7 +42,7 @@ use crate::supports::support_primitives::contact_cone::types::{
 };
 use crate::supports::support_primitives::contact_disk::contact_disk_interaction::recompute_contact_cone_for_moved_disk;
 use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
-use crate::supports::support_type_registry::SupportTypeId;
+use crate::supports::support_kinds::SupportTypeId;
 use crate::supports::types::{
     Joint, LimitationCode, Quaternion, Roots, Segment, SupportEntity, Transform, Trunk, Vec3,
     WarningCode,

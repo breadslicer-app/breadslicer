@@ -5,7 +5,7 @@
 //! `kickstandCollision` is covered by the parity fixture's mesh cases.)
 
 use support_engine::supports::settings::types::SupportSettings;
-use support_engine::supports::support_type_registry::SupportTypeId;
+use support_engine::supports::support_kinds::SupportTypeId;
 use support_engine::supports::support_types::contact_bridge::*;
 use support_engine::supports::support_types::kickstand::kickstand_builder::*;
 use support_engine::supports::support_types::kickstand::types::KickstandHostTarget;

@@ -25,7 +25,7 @@ use crate::supports::settings::types::SupportSettings;
 use crate::supports::support_primitives::knot::segment_endpoints::{
     EndpointHosts, ShaftEntity, resolve_segment_endpoints,
 };
-use crate::supports::support_type_registry::is_kickstand_host_type;
+use crate::supports::support_kinds::is_kickstand_host_type;
 use crate::supports::types::{Kickstand, Knot, Roots, SupportState, Vec3};
 use crate::geom::math_utils::{js_atan2, js_cos, js_max, js_min, js_sin};
 use crate::volume_analysis::islands::voxel_footprint::number_key;
@@ -601,7 +601,7 @@ pub fn generate_required_kickstands(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::supports::support_type_registry::SupportTypeId;
+    use crate::supports::support_kinds::SupportTypeId;
     use crate::supports::types::{Joint, Segment, SupportEntity, Transform, Trunk};
     use crate::geom::Matrix4;
     use crate::bvh::MeshBvh;

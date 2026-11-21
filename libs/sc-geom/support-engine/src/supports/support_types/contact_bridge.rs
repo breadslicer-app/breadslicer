@@ -16,7 +16,7 @@ use super::twig::twig_builder::{TwigBuildInput, build_twig};
 use super::twig::twig_verticality::is_twig_shaft_vertical_enough;
 use crate::supports::model_mesh::ModelMesh;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::support_type_registry::SupportTypeId;
+use crate::supports::support_kinds::SupportTypeId;
 use crate::supports::types::{LimitationCode, Stick, Twig, Vec3};
 
 #[derive(Clone, Copy, Debug)]

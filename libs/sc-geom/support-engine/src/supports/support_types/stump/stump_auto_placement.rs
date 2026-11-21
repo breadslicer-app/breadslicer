@@ -13,7 +13,7 @@ use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
-use crate::supports::support_type_registry::{
+use crate::supports::support_kinds::{
     PlacedSupport, SupportEntityValue, SupportTypeId, placement_of_resolved,
 };
 use crate::supports::types::{LimitationCode, Stump, Vec3};

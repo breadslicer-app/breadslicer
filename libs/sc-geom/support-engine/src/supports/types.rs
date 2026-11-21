@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::support_primitives::contact_cone::types::{ContactCone, ContactDiskProfile};
-use super::support_type_registry::{SupportOriginId, SupportSelectionCategory, SupportTypeId};
+use super::support_kinds::{SupportOriginId, SupportSelectionCategory, SupportTypeId};
 use super::support_types::kickstand::types::KickstandBuildResult;
 pub use crate::geom::{Quaternion, Vec3};
 
@@ -55,7 +55,7 @@ pub enum SupportGeneratedBy {
     AutoBracing,
 }
 
-/// Where an auto-placed support came from. Declared in `support_type_registry`
+/// Where an auto-placed support came from. Declared in `support_kinds`
 /// alongside what each origin implies; re-exported here for entity records.
 pub type SupportOrigin = SupportOriginId;
 

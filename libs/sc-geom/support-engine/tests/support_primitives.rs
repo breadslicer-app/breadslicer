@@ -281,7 +281,7 @@ fn split_fixture() -> (Roots, Trunk) {
         base: SupportEntity {
             id: "trunk-1".to_owned(),
             model_id: "model-1".to_owned(),
-            type_id: Some(support_engine::supports::support_type_registry::SupportTypeId::Trunk),
+            type_id: Some(support_engine::supports::support_kinds::SupportTypeId::Trunk),
             ..SupportEntity::default()
         },
         root_id: "root-1".to_owned(),
