@@ -3,12 +3,8 @@
 //! Settings are passed in (DragonFruit's `getSettings()`), ids come from
 //! `new_id` (`uuidv4()`), and the mesh is its collision field.
 
-use crate::supports::auto_support::parameter_sizing::{
-    SizeOverrides, apply_sizing_overrides_to_settings,
-};
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::rendering::support_builder::SupportData;
-use crate::supports::settings::support_settings_codec::encode_support_settings_hex;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::support_primitives::contact_cone::types::{
     ContactCone, SupportTipProfile, TipPrimitive,
@@ -94,14 +90,6 @@ pub fn build_leaf_data(
     let tip_contact_diameter_mm = input
         .tip_contact_diameter_mm
         .unwrap_or(settings.tip.contact_diameter_mm);
-    let settings_code_hex = encode_support_settings_hex(&apply_sizing_overrides_to_settings(
-        settings,
-        Some(&SizeOverrides {
-            tip_contact_diameter_mm: input.tip_contact_diameter_mm,
-            tip_body_diameter_mm: Some(host_diameter_mm),
-            ..SizeOverrides::default()
-        }),
-    ));
 
     let base_profile = SupportTipProfile {
         kind: Some(TipPrimitive::Disk),
@@ -153,7 +141,6 @@ pub fn build_leaf_data(
         base: SupportEntity {
             id: leaf_id.clone(),
             model_id: model_id.to_owned(),
-            settings_code_hex: Some(settings_code_hex),
             type_id: Some(SupportTypeId::Leaf),
             ..SupportEntity::default()
         },

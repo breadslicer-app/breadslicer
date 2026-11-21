@@ -12,7 +12,6 @@ use crate::supports::placement_logic::cone_axis_policy::{
     ConeAxisPolicyInput, resolve_cone_axis_policy,
 };
 use crate::supports::rendering::support_builder::SupportData;
-use crate::supports::settings::support_settings_codec::encode_support_settings_hex;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::support_primitives::contact_cone::types::{
     ContactCone, SupportTipProfile, TipPrimitive,
@@ -56,7 +55,6 @@ pub fn build_stump_data(
         mesh,
     } = *input;
 
-    let settings_code_hex = encode_support_settings_hex(settings);
     let cone_angle_mode = settings.tip.cone_angle_mode.unwrap_or_default();
     let adaptive_cone_angle_offset_deg =
         settings.tip.adaptive_cone_angle_offset_deg.unwrap_or(30.0);
@@ -162,7 +160,6 @@ pub fn build_stump_data(
         base: SupportEntity {
             id: stump_id.clone(),
             model_id: model_id.to_owned(),
-            settings_code_hex: Some(settings_code_hex),
             ..SupportEntity::default()
         },
         root_pos,

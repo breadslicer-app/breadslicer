@@ -259,7 +259,7 @@ fn append_brace_primitive(
 fn segment_bezier(segment: &Segment) -> Option<&BezierCurve> {
     match &segment.shape {
         SegmentShape::Bezier(curve) => Some(curve),
-        SegmentShape::Straight { .. } => None,
+        SegmentShape::Straight => None,
     }
 }
 

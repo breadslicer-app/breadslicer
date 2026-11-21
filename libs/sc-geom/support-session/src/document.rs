@@ -37,8 +37,11 @@ pub fn is_support_generator(name: &str) -> bool {
 }
 
 /// The document version this build writes; it reads every version up to it.
-/// Version 2 (#197): one model's supports per document.
-pub const SUPPORT_DOCUMENT_VERSION: u32 = 2;
+/// Version 2 (#197): one model's supports per document. Version 3 (#687):
+/// the support records hold only what the supports are; what earlier
+/// versions also held (interface state, per-support settings codes) is
+/// skipped when they are read.
+pub const SUPPORT_DOCUMENT_VERSION: u32 = 3;
 
 /// How far a model's bounds may drift through a save and reopen, in mm.
 const BOUNDS_TOLERANCE_MM: f32 = 1e-3;

@@ -308,7 +308,6 @@ pub fn build_kickstand_data(
         host_knot_id,
         host_segment_id: host.segment_id.clone(),
         host_min_t,
-        auto_bracing_generated: None,
         segments,
         profile: KickstandProfile {
             body_diameter_mm,

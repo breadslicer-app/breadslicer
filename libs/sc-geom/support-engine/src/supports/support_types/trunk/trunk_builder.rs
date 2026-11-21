@@ -18,9 +18,6 @@ use super::trunk_route_types::{
     SnappedRoute, SnappedRouteValidity, TrunkRoute, TrunkRouteKind, TrunkRouteResult,
     TrunkRouteValidity,
 };
-use crate::supports::auto_support::parameter_sizing::{
-    SizeOverrides, apply_sizing_overrides_to_settings,
-};
 use crate::supports::constants::get_joint_diameter;
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::placement_logic::grid::grid_math::grid_snapped_xy_from_key;
@@ -32,7 +29,6 @@ use crate::supports::placement_logic_v3::smart_placement_v3::{
     RouterStats, SmartPlacementV3Context, SmartPlacementV3Input, calculate_smart_placement_v3,
 };
 use crate::supports::rendering::support_builder::SupportData;
-use crate::supports::settings::support_settings_codec::encode_support_settings_hex;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::support_primitives::contact_cone::contact_cone_utils::{
     get_contact_cone_lowest_z, get_final_socket_position, get_socket_position,
@@ -158,22 +154,6 @@ pub struct TrunkOverrides {
     /// `sizeParameters` object over and the settings hex reads it; the tip
     /// profile does not.
     pub tip_penetration_mm: Option<f64>,
-}
-
-impl TrunkOverrides {
-    /// The object as `applySizingOverridesToSettings` reads it.
-    fn as_size_overrides(&self) -> SizeOverrides {
-        SizeOverrides {
-            shaft_diameter_mm: self.shaft_diameter_mm,
-            tip_contact_diameter_mm: self.tip_contact_diameter_mm,
-            tip_body_diameter_mm: self.tip_body_diameter_mm,
-            tip_length_mm: self.tip_length_mm,
-            tip_penetration_mm: self.tip_penetration_mm,
-            roots_diameter_mm: self.roots_diameter_mm,
-            roots_disk_height_mm: self.roots_disk_height_mm,
-            roots_cone_height_mm: self.roots_cone_height_mm,
-        }
-    }
 }
 
 fn build_tip_profile(
@@ -344,10 +324,6 @@ pub fn build_trunk_data_from_placement(
     // Hex must describe the geometry actually built — tier overrides applied
     // (auto supports) — or Support Studio loads the global parameters instead
     // of the support's own.
-    let settings_code_hex = encode_support_settings_hex(&apply_sizing_overrides_to_settings(
-        settings,
-        overrides.map(|o| o.as_size_overrides()).as_ref(),
-    ));
     let tip_profile = build_tip_profile(settings, overrides);
     let tip_disk_length_override_mm = overrides.and_then(|o| o.tip_disk_length_override_mm);
     let shaft_diameter = overrides
@@ -642,7 +618,6 @@ pub fn build_trunk_data_from_placement(
         base: SupportEntity {
             id: trunk_id.clone(),
             model_id: model_id.to_owned(),
-            settings_code_hex: Some(settings_code_hex),
             type_id: Some(SupportTypeId::Trunk),
             ..SupportEntity::default()
         },

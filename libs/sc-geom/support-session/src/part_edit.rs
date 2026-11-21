@@ -596,10 +596,7 @@ impl SupportSession {
             .find_map(|s| s.top_joint.as_ref().map(|j| j.diameter - s.diameter))
             .unwrap_or(0.1)
             .max(0.0);
-        let straight = SegmentShape::Straight {
-            explicit: false,
-            stray_bias: None,
-        };
+        let straight = SegmentShape::Straight;
         let mut joints: Vec<Joint> = Vec::with_capacity(elbows.len());
         for (e, p) in elbows {
             let id = e

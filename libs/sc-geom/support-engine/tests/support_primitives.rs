@@ -167,10 +167,7 @@ fn remap_preserves_world_position_on_a_straight_segment() {
     let start = Vec3::new(0.0, 0.0, 0.0);
     let end = Vec3::new(0.0, 0.0, 10.0);
     let mut straight = Segment::straight("seg-orig", 1.0);
-    straight.shape = SegmentShape::Straight {
-        explicit: true,
-        stray_bias: None,
-    };
+    straight.shape = SegmentShape::Straight;
 
     let split_t = 0.3;
     let split = Vec3::new(0.0, 0.0, 3.0);
@@ -268,10 +265,7 @@ fn split_fixture() -> (Roots, Trunk) {
         ..Roots::default()
     };
     let mut segment = Segment::straight("seg-orig", 1.0);
-    segment.shape = SegmentShape::Straight {
-        explicit: true,
-        stray_bias: None,
-    };
+    segment.shape = SegmentShape::Straight;
     segment.top_joint = Some(Joint {
         id: "j-top".to_owned(),
         pos: Vec3::new(0.0, 0.0, 10.0),
