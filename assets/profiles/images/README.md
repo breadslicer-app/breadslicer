@@ -72,3 +72,27 @@ A printer with no photo of its own shows a sibling with the same body:
 - `uniformation-gktwo-12k-upgrade.png`: same photo as uniformation-gktwo: the 12K upgrade is a new screen in the same body.
 - `uniz-ibee-klipper.png`: the IBEE with Klipper firmware.
 - `voxelab-proxima-6-svgx.png`: the Proxima 6 with SVGX firmware.
+
+## Printer photos added on 2026-11-21 (#216)
+
+The manufacturers' own product photos, gathered by the project's
+maintainer, cut out onto a transparent background and scaled to fit
+320 x 320 px; each depicts the maker's hardware, and product names are
+trademarks of their respective owners:
+
+- anet: `anet-n4`, `anet-n7`
+- concepts3d: `concepts3d-athena-8k`, `concepts3d-athena-12k`
+- creality: `creality-ct-133-pro`, `creality-halot-mage-s`, `creality-halot-play`, `creality-halot-r6`, `creality-halot-x1-neo`
+- emake3d: `emake3d-galaxy-1`
+- epax: `epax-dx1-pro`, `epax-dx10-pro-5k`, `epax-dx10-pro-8k`
+- flashforge: `flashforge-focus-8-9`, `flashforge-focus-13-3`, `flashforge-foto-8-9s`, `flashforge-foto-13-3`, `flashforge-hunter`
+- longer: `longer-orange-120`
+- nova3d: `nova3d-whale3-pro`
+- phrozen: `phrozen-shuffle-16`, `phrozen-sonic-mighty-revo-16k-max`
+- uniformation: `uniformation-gkone`, `uniformation-s10`
+- wanhao: `wanhao-cgr-mini-mono`, `wanhao-cgr-mono`
+
+A printer with no photo of its own shows a sibling:
+
+- `concepts3d-athena-8k.png`: the Athena II photo; no fair photo of the first Athena was found.
+- `epax-dx10-pro-5k.png` and `epax-dx10-pro-8k.png`: the same DX10 Pro body with a 5K or an 8K screen.
