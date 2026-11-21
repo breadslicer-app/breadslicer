@@ -10,7 +10,7 @@ use crate::geom::math_utils::js_max;
 use crate::geom::primitive_geometry::{cylinder_geometry, sphere_geometry};
 use crate::geom::{Matrix4, Quaternion, Vector2};
 use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
-use crate::supports::curves::bezier_utils::get_bezier_point_at_t;
+use crate::supports::bezier::get_bezier_point_at_t;
 use crate::supports::rafts::crenelated::geometry::compute_raft_footprint::{
     inflate_model_plate_clearance, raft_band_top_mm, raft_solid_height_mm, raft_wall_base_height_mm,
 };

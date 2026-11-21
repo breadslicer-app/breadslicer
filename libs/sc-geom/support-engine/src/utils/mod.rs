@@ -1,4 +1,4 @@
-//! DragonFruit `src/utils/`: the pieces the support code imports.
+//! Small helpers the support passes share.
 
 pub mod math;
 

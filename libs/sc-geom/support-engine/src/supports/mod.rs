@@ -3,7 +3,7 @@
 pub mod auto_bracing;
 pub mod auto_support;
 pub mod constants;
-pub mod curves;
+pub mod bezier;
 pub mod model_mesh;
 pub mod numeric_constraint;
 pub mod placement_logic;

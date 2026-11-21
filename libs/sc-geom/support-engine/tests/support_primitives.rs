@@ -2,7 +2,7 @@
 //! `jointInsertionKnotRemap.test.ts` and the taper half of `shaftTaperGeometry.test.ts`.
 
 use indexmap::IndexMap;
-use support_engine::supports::curves::bezier_utils::{
+use support_engine::supports::bezier::{
     get_bezier_point_at_t, subdivide_cubic_bezier,
 };
 use support_engine::supports::tips::{

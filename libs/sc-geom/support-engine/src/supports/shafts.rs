@@ -4,7 +4,7 @@
 use indexmap::IndexMap;
 
 use crate::supports::constants::get_joint_diameter;
-use crate::supports::curves::bezier_utils::{get_bezier_point_at_t, subdivide_cubic_bezier};
+use crate::supports::bezier::{get_bezier_point_at_t, subdivide_cubic_bezier};
 use crate::supports::support_kinds::{
     SupportEndpointKind, SupportTypeId, get_support_type_descriptor,
 };

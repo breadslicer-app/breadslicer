@@ -1,8 +1,7 @@
-//! The `NumericConstraint` / `clampNumeric` / `precisionFromStep` helpers that
-//! DragonFruit declares identically in `autoSupport/settings.ts` and
-//! `autoBracing/settings.ts`; one copy here, used by both.
+//! The range, step and default of a numeric setting, and a value brought
+//! into it.
 
-use crate::geom::math_utils::{js_max, js_min, js_round, js_to_fixed_number};
+use crate::geom::math_utils::{js_round, js_to_fixed_number};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NumericConstraint {
@@ -10,6 +9,7 @@ pub struct NumericConstraint {
     pub max: f64,
     pub step: f64,
     pub default_value: f64,
+    /// Whole numbers only.
     pub integer: bool,
 }
 
@@ -35,31 +35,15 @@ impl NumericConstraint {
     }
 }
 
-/// `precisionFromStep`: the decimals in `String(step)`.
-fn precision_from_step(step: f64) -> usize {
-    // JavaScript's shortest round-trip form, as Rust's `{}` Display also gives
-    // for these step values (none needs exponent notation).
-    let text = format!("{step}");
-    text.split('.').nth(1).map_or(0, str::len)
-}
-
-/// `clampNumeric(value, constraint)`: a non-finite (or absent) value takes the
-/// default; then clamp, snap to the step grid and round to the step's decimals.
-pub fn clamp_numeric(value: Option<f64>, constraint: NumericConstraint) -> f64 {
-    let raw = value
-        .filter(|v| v.is_finite())
-        .unwrap_or(constraint.default_value);
-
-    let clamped = js_min(constraint.max, js_max(constraint.min, raw));
-
-    if constraint.integer {
-        return js_round(clamped);
+/// `value` in the range (the default when it is missing or not finite),
+/// on a step from the minimum, with as many decimals as the step has.
+pub fn clamp_numeric(value: Option<f64>, c: NumericConstraint) -> f64 {
+    let within = |v: f64| v.max(c.min).min(c.max);
+    let v = within(value.filter(|v| v.is_finite()).unwrap_or(c.default_value));
+    if c.integer {
+        return js_round(v);
     }
-
-    let steps_from_min = js_round((clamped - constraint.min) / constraint.step);
-    let stepped = constraint.min + steps_from_min * constraint.step;
-    let precision = precision_from_step(constraint.step);
-    let rounded = js_to_fixed_number(stepped, precision);
-
-    js_min(constraint.max, js_max(constraint.min, rounded))
+    let on_step = c.min + js_round((v - c.min) / c.step) * c.step;
+    let decimals = format!("{}", c.step).split('.').nth(1).map_or(0, str::len);
+    within(js_to_fixed_number(on_step, decimals))
 }

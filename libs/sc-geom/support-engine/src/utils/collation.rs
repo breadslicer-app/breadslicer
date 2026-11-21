@@ -1,9 +1,7 @@
-//! `String.prototype.localeCompare` as Node's V8 runs it (ICU, `en-US`, the
-//! root collation at tertiary strength), for the ids DragonFruit sorts with
-//! it. Printable ASCII is collated exactly: punctuation and symbols, then
-//! digits, then letters, letters compared case-blind first and lowercase
-//! first on a tie. Anything else falls back to code-unit order after the
-//! ASCII levels, which no DragonFruit id reaches.
+//! The order ids are sorted in where a pass walks them in order: printable
+//! ASCII as a language-aware sort orders it (punctuation and symbols, then
+//! digits, then letters, case-blind first and lowercase first on a tie),
+//! anything else after it by UTF-16 code unit.
 
 use std::cmp::Ordering;
 
@@ -23,7 +21,7 @@ fn tertiary(c: char) -> u8 {
     u8::from(c.is_ascii_uppercase())
 }
 
-/// `a.localeCompare(b)` as an ordering.
+/// `a` against `b` in that order.
 pub fn js_locale_compare(a: &str, b: &str) -> Ordering {
     let pa = a.chars().map(primary);
     let pb = b.chars().map(primary);
@@ -44,7 +42,6 @@ mod tests {
 
     #[test]
     fn matches_v8_on_mixed_ids() {
-        // `[...].sort((a, b) => a.localeCompare(b))` under Node (V8 with full ICU).
         let mut ids = vec![
             "a-b", "ab", "a_b", "aB", "Ab", "a1", "a10", "a9", "id-10", "id-9", "id-1-x", "id-1x",
         ];
