@@ -86,5 +86,6 @@ pub(crate) fn cut(mesh: &IndexedMesh, plane: Plane) -> Result<Cut, CutError> {
         pieces,
         joined_by: Vec::new(),
         by_fallback: true,
+        cap: Default::default(),
     })
 }

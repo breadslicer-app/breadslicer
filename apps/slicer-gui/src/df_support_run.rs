@@ -14073,6 +14073,15 @@ mod hand_edit_tests {
                 assert!((tip[1] - 25.0).abs() < 0.3, "on the line: {tip:?}");
                 assert!((tip[2] - 9.0).abs() < 0.3, "on the underside: {tip:?}");
             }
+            // Nothing of it below the plate: the low end of a slanted brace
+            // stands on it.
+            let (support, _) = run.support_leaf().expect("the row's supports");
+            let lowest = world_mesh(&document, support)
+                .vertices()
+                .iter()
+                .map(|v| v.as_array()[2])
+                .fold(f32::INFINITY, f32::min);
+            assert!(lowest > -1e-4, "the row's supports reach below the plate: {lowest}");
             assert!(document.undo().unwrap());
             assert!(run.support_leaf().is_none(), "one undo takes the row out");
         });

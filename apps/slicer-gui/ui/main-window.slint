@@ -2112,6 +2112,11 @@ export component MainWindow inherits Window {
                             return false;
                         }
                         tab-tool-key(key) => {
+                            // Measure (#652), in every tab.
+                            if root.has-scene && (key == "q" || key == "Q") {
+                                root.measure-toggled(!root.measure-on);
+                                return true;
+                            }
                             if root.workspace-section == WorkspaceSection.Hollow && root.selection-valid
                                 && root.hollow-model-state != 2 && !root.hollow-running && (key == "d" || key == "D") {
                                 root.hollow-drain-tool = !root.hollow-drain-tool;
@@ -2562,7 +2567,7 @@ export component MainWindow inherits Window {
                         }
 
                         measure-chip-text := Text {
-                            text: @tr("Inspector" => "Measure");
+                            text: @tr("Inspector" => "Measure") + "  Q";
                             color: root.measure-on ? Theme.text : #8b959d;
                             font-size: 11px;
                             font-family: "Consolas";

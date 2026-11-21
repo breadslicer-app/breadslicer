@@ -137,3 +137,33 @@ fn the_narrowest_neck_is_where_a_cut_is_suggested() {
     // A plain block has none.
     assert!(crate::narrowings(&block(), [0.0, 0.0, 1.0]).is_empty());
 }
+
+#[test]
+fn a_stroke_cut_tells_where_its_surface_lies_inside_the_model() {
+    let mesh = block();
+    // From above the frame's u runs along y: the stroke is the plane x = 0.
+    let stroke = from_above(vec![[-15.0, 0.0], [15.0, 0.0]], Vec::new(), false);
+    let cut = stroke_cut(&mesh, &stroke).unwrap();
+    let (positions, indices) = &cut.cap;
+    assert!(!indices.is_empty());
+    for p in positions {
+        assert!(p[0].abs() < 1e-4, "{p:?} off the cut");
+    }
+    let area: f64 = indices
+        .chunks_exact(3)
+        .map(|t| {
+            let [a, b, c] = [0, 1, 2].map(|k| positions[t[k] as usize].map(f64::from));
+            let (u, v) = (
+                [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+                [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+            );
+            let n = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt() / 2.0
+        })
+        .sum();
+    assert!((area - 400.0).abs() < 1e-2, "{area}");
+}

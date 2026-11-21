@@ -1287,6 +1287,25 @@ impl CutRun {
                     tint: OverlayTint::Cavity,
                 }));
             }
+            // Where it goes through the model, once the cut is worked out,
+            // shown as a plane cut's section is.
+            if let Some(trial) = self.stroke_trial.borrow().as_ref()
+                && let Some(cut) = &trial.cut
+                && !cut.cap.1.is_empty()
+            {
+                let (positions, indices) = &cut.cap;
+                pieces.push(Arc::new(OverlayMesh {
+                    positions: positions
+                        .iter()
+                        .map(|p| trial.target.world.apply(p.map(f64::from)).map(|x| x as f32))
+                        .collect(),
+                    indices: indices
+                        .chunks_exact(3)
+                        .flat_map(|t| [t[0], t[1], t[2], t[0], t[2], t[1]])
+                        .collect(),
+                    tint: OverlayTint::Valid,
+                }));
+            }
             if !positions.is_empty() {
                 pieces.push(Arc::new(OverlayMesh {
                     positions,
@@ -1631,6 +1650,7 @@ impl CutRun {
                     }
                 }
                 self.describe_stroke();
+                self.show_stroke();
             }
             Worked::Ready(ready) => {
                 self.waiting.set(0);

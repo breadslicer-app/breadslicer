@@ -10356,6 +10356,10 @@ msgid "Orient, cut, arrange"
 msgstr "Orientar, cortar, acomodar"
 
 msgctxt "ShortcutsCard"
+msgid "Measure distances"
+msgstr "Medir distancias"
+
+msgctxt "ShortcutsCard"
 msgid "HOLLOW"
 msgstr "AHUECAR"
 

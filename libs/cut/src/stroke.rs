@@ -173,9 +173,11 @@ pub fn stroke_cut(mesh: &IndexedMesh, stroke: &Stroke) -> Result<Cut, CutError> 
             });
         region = region.intersection(&half);
     }
-    let solid = to_manifold(mesh)?;
+    let model_id = Manifold::reserve_ids(1);
+    let solid = to_manifold(mesh, model_id)?;
     let inside = solid.intersection(&region);
     let outside = solid.difference(&region);
+    let cap = faces_not_from(&inside, model_id);
     let mut pieces = Vec::new();
     for part in [inside, outside] {
         if part.status() != Error::NoError {
@@ -190,7 +192,41 @@ pub fn stroke_cut(mesh: &IndexedMesh, stroke: &Stroke) -> Result<Cut, CutError> 
         pieces,
         joined_by: Vec::new(),
         by_fallback: false,
+        cap,
     })
+}
+
+/// The triangles of `solid` that do not come from the mesh with
+/// `original`: where a boolean's other operand closed it.
+fn faces_not_from(solid: &Manifold, original: u32) -> (Vec<[f32; 3]>, Vec<u32>) {
+    let gl = solid.get_mesh_gl(-1);
+    let stride = gl.num_prop as usize;
+    let tris = gl.tri_verts.len() / 3;
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+    let mut moved: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    for (run, &id) in gl.run_original_id.iter().enumerate() {
+        if id == original {
+            continue;
+        }
+        let start = gl.run_index.get(run).map_or(0, |&i| i as usize / 3);
+        let end = gl
+            .run_index
+            .get(run + 1)
+            .map_or(tris, |&i| i as usize / 3)
+            .min(tris);
+        for t in start..end {
+            for &v in &gl.tri_verts[3 * t..3 * t + 3] {
+                let at = *moved.entry(v).or_insert_with(|| {
+                    let p = &gl.vert_properties[v as usize * stride..];
+                    positions.push([p[0], p[1], p[2]]);
+                    positions.len() as u32 - 1
+                });
+                indices.push(at);
+            }
+        }
+    }
+    (positions, indices)
 }
 
 /// An open stroke closed into a region: its ends run on straight past the
@@ -308,9 +344,10 @@ fn best_plane(points: &[[f64; 3]]) -> Option<([f64; 3], [f64; 3])> {
     (l > 1e-9).then(|| (c, normal.map(|v| v / l)))
 }
 
-fn to_manifold(mesh: &IndexedMesh) -> Result<Manifold, CutError> {
+fn to_manifold(mesh: &IndexedMesh, original: u32) -> Result<Manifold, CutError> {
     let gl = MeshGL {
         num_prop: 3,
+        run_original_id: vec![original],
         vert_properties: mesh
             .vertices()
             .iter()
